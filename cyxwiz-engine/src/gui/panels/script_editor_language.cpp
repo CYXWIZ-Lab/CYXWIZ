@@ -246,7 +246,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
 
 bool ScriptEditorPanel::HandleLanguageResult(const scripting::LanguageService::Result& result) {
     if (result.kind == scripting::LanguageService::Kind::Diagnostics) return HandleDiagnosticsResult(result);
-    return false;
+    return HandleCardResult(result);  // signatures, hover, definitions
 }
 
 void ScriptEditorPanel::AcceptCompletion() {

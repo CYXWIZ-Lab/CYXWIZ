@@ -69,6 +69,10 @@ std::vector<Signature> ParseSignatures(const std::string& text) {
         Signature s;
         s.name = Str(item, "name");
         s.doc = Str(item, "doc");
+        s.module = Str(item, "module");
+        s.returns = Str(item, "returns");
+        s.path = Str(item, "path");
+        s.line = Int(item, "line");
         auto it = item.find("index");
         s.index = it != item.end() && it->is_number_integer() ? it->get<int>() : -1;
         auto params = item.find("params");
@@ -211,6 +215,50 @@ std::pair<int, int> ProblemRange(const std::string& line_text, const Problem& pr
     int end = column;
     while (end < n && (word(line_text[static_cast<size_t>(end)]) || line_text[static_cast<size_t>(end)] == '.')) ++end;
     return {column, end > column ? end : column + 1};
+}
+
+std::vector<SignaturePiece> SignaturePieces(const Signature& signature) {
+    std::vector<SignaturePiece> out;
+    out.push_back({signature.name + "(", false});
+    for (size_t i = 0; i < signature.params.size(); ++i) {
+        out.push_back({signature.params[i], static_cast<int>(i) == signature.index});
+        if (i + 1 < signature.params.size()) out.push_back({", ", false});
+    }
+    out.push_back({signature.returns.empty() ? std::string(")") : ") " + signature.returns, false});
+    return out;
+}
+
+std::string LocationLabel(const std::string& path, int line, const std::string& module) {
+    if (!path.empty()) {
+        const size_t slash = path.find_last_of("/\\");
+        std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+        return line > 0 ? file + ":" + std::to_string(line) : file;
+    }
+    if (line > 0) return "line " + std::to_string(line);
+    return module;
+}
+
+std::string SignatureFooter(const Signature& signature) {
+    const int n = static_cast<int>(signature.params.size());
+    std::string text;
+    if (n == 0) text = "No parameters";
+    else if (signature.index >= 0 && signature.index < n)
+        text = "Parameter " + std::to_string(signature.index + 1) + " of " + std::to_string(n);
+    else text = std::to_string(n) + (n == 1 ? " parameter" : " parameters");
+    const std::string where = LocationLabel(signature.path, signature.line, signature.module);
+    if (!where.empty()) text += " \xC2\xB7 " + where;
+    return text;
+}
+
+std::string HoverHeadline(const Hover& hover) {
+    if (!hover.signature.empty()) {
+        if (hover.kind == "function") return "def " + hover.signature;
+        if (hover.kind == "class") return "class " + hover.signature;
+        return hover.signature;
+    }
+    if (!hover.type.empty()) return hover.name + ": " + hover.type;
+    if (hover.kind.empty()) return hover.name;
+    return hover.name + "  (" + hover.kind + ")";
 }
 
 }  // namespace cyxwiz::lang

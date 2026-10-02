@@ -249,6 +249,7 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     if (code_font) ImGui::PushFont(code_font);
     const bool changed = cell.editor.Render("##cell_code", ImVec2(width - 8.0f, view_h));
     if (code_font) ImGui::PopFont();
+    if (python) AfterCodeRender(cell.editor, cell.problems, cell.id);  // hover card, Ctrl+click
     if (editing) {
         const bool accepted = completion_just_accepted_;
         completion_just_accepted_ = false;

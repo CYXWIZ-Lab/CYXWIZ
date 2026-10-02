@@ -201,7 +201,9 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(script, "script.run_selection", "Run selection", "F9", "", true);
         add(script, "script.run_cell", "Run current cell", "Ctrl+Enter", "", true);
         add(script, "script.debug", "Start debugging", "F10", "", true);
-        add(script, "script.completion", "Completion", "Ctrl+Space", "", true);
+        add(script, "script.completion", "Completion (with the list open: show or hide details)", "Ctrl+Space", "", true);
+        add(script, "editor.go_to_definition", "Go to definition (also Ctrl+click)", "F12", "", true);
+        add(script, "editor.signature_help", "Show the signature of the call", "Ctrl+Shift+Space", "", true);
         add(script, "edit.find", "Find...", "Ctrl+F", "Edit");
         add(script, "edit.replace", "Replace...", "Ctrl+H", "Edit");
         add(script, "edit.go_to_line", "Go to Line...", "Ctrl+G", "Edit");

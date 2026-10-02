@@ -39,8 +39,12 @@ struct Hover {
 struct Signature {
     std::string name;
     std::vector<std::string> params;  // "limit: int=10"
+    std::string returns;              // "-> list[float]" (empty: not annotated)
     int index = -1;                   // the parameter being typed (-1: none)
     std::string doc;
+    std::string module;
+    std::string path;                 // where it is defined (empty: this text or builtin)
+    int line = 0;
 };
 
 struct Location {
@@ -86,5 +90,22 @@ std::string ProblemSummary(const std::vector<Problem>& problems);
 // column, or for an unused import the imported name (pyflakes points at the
 // start of the statement). At least one column.
 std::pair<int, int> ProblemRange(const std::string& line_text, const Problem& problem);
+
+// Signature help card (board 7): the call as pieces, the parameter being
+// typed marked; and its footer, "Parameter 3 of 5 · file.py:209".
+struct SignaturePiece {
+    std::string text;
+    bool active = false;
+};
+std::vector<SignaturePiece> SignaturePieces(const Signature& signature);
+std::string SignatureFooter(const Signature& signature);
+
+// Where a name is defined, for a card: "file.py:199", "line 12" (this text),
+// the module name, or "" when nothing is known.
+std::string LocationLabel(const std::string& path, int line, const std::string& module);
+
+// Hover card headline (board 8): "def load_vocab(path: Path) -> dict[str, int]",
+// "class Path(...)", "vocab: dict", or the name and its kind.
+std::string HoverHeadline(const Hover& hover);
 
 }  // namespace cyxwiz::lang

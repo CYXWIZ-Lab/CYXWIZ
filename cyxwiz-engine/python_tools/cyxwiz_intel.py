@@ -192,11 +192,20 @@ def signatures(source, line, column, path='', project_root='', namespace=None):
                 params.append(p.to_string())
             except Exception:
                 params.append(p.name)
+        try:
+            text = s.to_string()
+            returns = text[text.rfind(')') + 1:].strip() if text.rfind(')') >= 0 else ''
+        except Exception:
+            returns = ''
         out.append({
             'name': s.name,
             'params': params,
+            'returns': returns,
             'index': s.index if s.index is not None else -1,
             'doc': _short_doc(s, 400),
+            'module': s.module_name or '',
+            'path': str(s.module_path) if s.module_path else '',
+            'line': s.line or 0,
         })
     return out
 
@@ -218,7 +227,7 @@ def definition(source, line, column, path='', project_root='', namespace=None):
             'line': n.line or 0,
             'column': n.column or 0,
             'module': n.module_name or '',
-            'in_source': n.module_path is None or (path and os.path.normcase(str(n.module_path)) == os.path.normcase(path)),
+            'in_source': bool(n.module_path is None or (path and os.path.normcase(str(n.module_path)) == os.path.normcase(path))),
         })
     return out
 

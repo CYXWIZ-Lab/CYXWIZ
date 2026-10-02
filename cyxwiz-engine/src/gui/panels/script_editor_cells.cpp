@@ -118,6 +118,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     if (tab->show_variables) RenderNotebookVariables(*tab, 168.0f);
     completion_just_opened_ = false;
     RenderCompletionPopup();
+    RenderLanguageCards();
 }
 
 

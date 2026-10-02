@@ -482,6 +482,65 @@ private:
     void AcceptCompletion();
     void OpenCompletionList(bool fallback);
     bool HandleLanguageResult(const scripting::LanguageService::Result& result);
+    // Signature help (step 3.5), hover and go to definition (step 3.6):
+    // script_editor_language_cards.cpp. A target is the script or one cell.
+    struct CodeTarget {
+        std::uint64_t document_id = 0;
+        std::string cell_id;
+        bool operator==(const CodeTarget&) const = default;
+    };
+    enum class HoverState { Resting, Waiting, Shown, Nothing };
+    struct HoverCard {
+        CodeTarget target;      // document 0: none
+        int line = -1;
+        int key_col = -1;       // the word's first column, or -2 - problem index
+        editor::Pos pos;        // asked at (the word's start)
+        std::uint64_t version = 0;
+        double since = 0.0;
+        ImVec2 below;           // screen point under the hovered character
+        HoverState state = HoverState::Resting;
+        std::uint64_t request = 0;
+        lang::Hover info;
+        bool is_problem = false;
+        lang::Problem problem;
+        ImVec2 card_min, card_max;  // last frame's card, so the mouse can move onto it
+    };
+    CodeTarget ActiveCodeTarget();
+    CodeEditor* CodeEditorFor(const CodeTarget& target);
+    void RequestSignatures(bool manual);
+    void CloseSignatureHelp();
+    void UpdateSignatureHelp();
+    bool HandleSignaturesResult(const scripting::LanguageService::Result& result);
+    void RenderSignatureCard();
+    void UpdateHover(CodeEditor& code, const std::vector<lang::Problem>& problems, const std::string& cell_id);
+    bool HandleHoverResult(const scripting::LanguageService::Result& result);
+    void RenderHoverCard();
+    void GoToDefinition(const CodeTarget& target, CodeEditor& code, const editor::Pos& pos);
+    bool HandleDefinitionResult(const scripting::LanguageService::Result& result);
+    void ShowLanguageNote(const CodeEditor& code, std::string text);
+    void RenderLanguageNote();
+    bool HandleCardResult(const scripting::LanguageService::Result& result);
+    // After a code view drew: hover tracking and Ctrl+click (cell_id empty for the script).
+    void AfterCodeRender(CodeEditor& code, const std::vector<lang::Problem>& problems, const std::string& cell_id);
+    void RenderLanguageCards();
+    bool signature_open_ = false;
+    bool signature_manual_ = false;  // Ctrl+Shift+Space: ")" does not close it
+    std::vector<lang::Signature> signatures_;
+    CodeTarget signature_target_;
+    std::uint64_t signature_request_ = 0;
+    std::uint64_t signature_request_version_ = 0;
+    editor::Pos signature_request_pos_;
+    CodeTarget signature_seen_target_;
+    std::uint64_t signature_seen_version_ = 0;
+    editor::Pos signature_seen_pos_;
+    HoverCard hover_;
+    int hover_seen_frame_ = -1;
+    CodeTarget definition_target_;
+    std::uint64_t definition_request_ = 0;
+    std::string definition_name_;
+    std::string language_note_;  // "No definition found ...", shown for a moment
+    double language_note_until_ = 0.0;
+    ImVec2 language_note_at_;
     // Problems (step 3.4)
     struct PendingDiagnostics {
         std::uint64_t document_id = 0;

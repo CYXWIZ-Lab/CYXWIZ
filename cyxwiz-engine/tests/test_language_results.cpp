@@ -35,6 +35,39 @@ int main() {
         R"J([{"name": "encode_text", "params": ["text: str", "vocab: dict[str, int]", "tokenizer_type: str", "lowercase: bool", "max_length: int"], "index": 2, "doc": ""}])J");
     Check(s.size() == 1 && s[0].params.size() == 5 && s[0].index == 2 && s[0].params[2] == "tokenizer_type: str", "signature");
     Check(ParseSignatures(R"J([{"name": "f", "params": [], "index": null}])J")[0].index == -1, "no active parameter");
+    {
+        Signature sig = s[0];
+        sig.returns = "-> list[float]";
+        sig.path = "D:/demo/sentiment_analysis_inference.py";
+        sig.line = 209;
+        const auto pieces = SignaturePieces(sig);
+        Check(pieces.size() == 11 && pieces[0].text == "encode_text(" && pieces[5].active && pieces[5].text == "tokenizer_type: str" &&
+                  pieces.back().text == ") -> list[float]",
+              "signature pieces, the typed parameter marked");
+        Check(SignatureFooter(sig) == "Parameter 3 of 5 \xC2\xB7 sentiment_analysis_inference.py:209", "signature footer");
+        Signature none;
+        none.name = "f";
+        Check(SignatureFooter(none) == "No parameters" && SignaturePieces(none).size() == 2, "no parameters");
+        sig.index = -1;
+        sig.path.clear();
+        sig.line = 0;
+        sig.module = "mod";
+        Check(SignatureFooter(sig) == "5 parameters \xC2\xB7 mod", "no parameter typed yet");
+    }
+    {
+        Hover hf;
+        hf.name = "load_vocab";
+        hf.kind = "function";
+        hf.signature = "load_vocab(path: Path) -> dict[str, int]";
+        Check(HoverHeadline(hf) == "def load_vocab(path: Path) -> dict[str, int]", "hover headline: function");
+        Hover v;
+        v.name = "vocab";
+        v.kind = "variable";
+        v.type = "dict";
+        Check(HoverHeadline(v) == "vocab: dict", "hover headline: variable type");
+        Check(LocationLabel("", 12, "") == "line 12" && LocationLabel("/a/b.py", 0, "b") == "b.py" && LocationLabel("", 0, "json") == "json",
+              "location labels");
+    }
 
     const auto l = ParseLocations(R"J([{"name": "load_vocab", "path": "D:\\x\\a.py", "line": 199, "column": 4, "module": "a", "in_source": false}])J");
     Check(l.size() == 1 && l[0].line == 199 && l[0].column == 4 && !l[0].in_source, "definition");

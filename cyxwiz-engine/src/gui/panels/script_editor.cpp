@@ -64,6 +64,7 @@ void ScriptEditorPanel::Render() {
     PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) && tabs_[active_tab_index_])
         UpdateDiagnostics(*tabs_[active_tab_index_]);
+    UpdateSignatureHelp();
     if (!deferred_open_path_.empty()) {
         const std::string path = std::move(deferred_open_path_);
         deferred_open_path_.clear();
@@ -438,6 +439,11 @@ void ScriptEditorPanel::RenderCodeContextMenu(EditorTab& tab) {
     const bool engine_busy = scripting_engine_ && scripting_engine_->IsScriptRunning();
     const bool has_selection = !doc.SelectedText().empty();
     auto gap = []() { ImGui::Dummy(ImVec2(0.0f, 4.0f)); };
+    // Language (board 8): at the cursor the right-click placed.
+    if (ImGui::MenuItem("Go to definition", "F12")) GoToDefinition(ActiveCodeTarget(), tab.editor, doc.Primary().head);
+    if (ImGui::MenuItem("Show completions", "Ctrl+Space")) UpdateAutoCompletion(true);
+    if (ImGui::MenuItem("Show signature", "Ctrl+Shift+Space")) RequestSignatures(true);
+    gap();
     if (ImGui::MenuItem("Run selection", "F9", false, has_selection && !engine_busy)) RunSelection();
     if (ImGui::MenuItem("Run section", "Ctrl+Enter", false, !engine_busy)) RunCurrentSection();
     gap();
@@ -574,6 +580,7 @@ void ScriptEditorPanel::RenderEditor() {
     const float problems_height = tab->show_problems ? 168.0f : 0.0f;
     const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height - problems_height));
     completion_just_accepted_ = false;
+    AfterCodeRender(code, tab->problems, std::string());  // hover card, Ctrl+click
     if (find_.open && !narrow_find) {
         const ImVec2 after = ImGui::GetCursorScreenPos();
         RenderFindWidget(code, code_min, code_width, false);
@@ -607,6 +614,7 @@ void ScriptEditorPanel::RenderEditor() {
     completion_just_opened_ = false;
 
     RenderCompletionPopup();
+    RenderLanguageCards();
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {
@@ -700,6 +708,21 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
 
     // Typing, moving, selecting, clipboard and undo keys are the code view's.
     if (find_.open && !ctrl && !alt && ImGui::IsKeyPressed(ImGuiKey_F3)) FindStep(!shift);
+
+    // Language keys (P3, boards 7-8; Preferences > Shortcuts lists them).
+    if (CodeEditor* code = ActiveCodeEditor()) {
+        if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
+            hover_ = {};
+            GoToDefinition(ActiveCodeTarget(), *code, code->Doc().Primary().head);
+            return;
+        }
+        if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+            RequestSignatures(true);
+            completion_just_accepted_ = true;  // the editor must not type the space
+            return;
+        }
+        if (signature_open_ && !ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) CloseSignatureHelp();
+    }
 
     // Run, debug and notebook-toggle keys: one table decides, once per
     // frame (TOFIX133 P0 item 7; Preferences > Shortcuts lists the same).
