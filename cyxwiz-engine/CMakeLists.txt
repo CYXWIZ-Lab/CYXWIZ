@@ -1117,12 +1117,14 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_vars.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
         "${_cyxwiz_tools_dir}"
     COMMAND ${CMAKE_COMMAND} -E touch "${_cyxwiz_tools_dir}/.unpacked"
     DEPENDS ${_cyxwiz_tool_wheels}
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_vars.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
     COMMENT "Unpacking the Script Editor's language tools (jedi, parso, pyflakes)"
     VERBATIM
@@ -1134,6 +1136,10 @@ if(Python3_EXECUTABLE)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_intel.py"
                 "${_cyxwiz_tools_dir}")
     # Variable Explorer and Data Viewer reader (TOFIX133 P5).
+    # Debugger runtime (TOFIX133 P6).
+    add_test(NAME python_tools_debug
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_debug.py"
+                "${_cyxwiz_tools_dir}")
     add_test(NAME python_tools_vars
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_vars.py"
                 "${_cyxwiz_tools_dir}")

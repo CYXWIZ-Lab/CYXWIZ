@@ -16,8 +16,12 @@ touching the project's environment.
   P5): lists a namespace's variables, expands values, gives the Data Viewer
   bounded columns, copies, saves CSV, deletes. Standard library only; it
   never imports numpy or pandas itself.
-- `tests/test_cyxwiz_intel.py`, `tests/test_cyxwiz_vars.py`: run by ctest
-  against the unpacked folder.
+- `cyxwiz_debug.py`: the Script Editor debugger runtime (TOFIX133 P6):
+  breakpoints with conditions and hit counts, step over/into/out, pause,
+  stop on uncaught errors, the paused frames' values, Watch and the Console
+  in a paused frame. It pauses on the run's own thread with the GIL free.
+- `tests/test_cyxwiz_intel.py`, `tests/test_cyxwiz_vars.py`,
+  `tests/test_cyxwiz_debug.py`: run by ctest against the unpacked folder.
 
 | Package | Version | Licence | SHA-256 of the wheel |
 | --- | --- | --- | --- |
