@@ -458,7 +458,18 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
                              : 12.0f;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
 
-    if (focused_ && keyboard_enabled_) HandleKeyboard(avail.y, line_height);
+    if (focused_ && keyboard_enabled_) {
+        HandleKeyboard(avail.y, line_height);
+        // Keys edit the text after the caches above were brought up to date;
+        // catch up before drawing (after Enter the highlighter had one line
+        // too few and the new last line read past its end).
+        const auto edits = doc_.TakeLineEdits();
+        if (!edits.empty()) {
+            folds_.Update(doc_, edits);
+            TrackChanges(edits);
+        }
+        if (colorize_ && python_) highlighter_.Update(doc_);
+    }
 
     // Rows: lines, or wrapped pieces of them.
     const std::vector<int> visible = folds_.VisibleLines(doc_.LineCount());

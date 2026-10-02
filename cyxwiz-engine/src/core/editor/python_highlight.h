@@ -46,7 +46,11 @@ class Highlighter {
 public:
     // Brings the cache up to date with the document; cheap when little changed.
     void Update(const Document& document);
-    const std::vector<Span>& Spans(int line) const { return lines_[static_cast<size_t>(line)].spans; }
+    // A line the cache does not hold yet has no spans (drawn plain).
+    const std::vector<Span>& Spans(int line) const {
+        static const std::vector<Span> kNone;
+        return line >= 0 && static_cast<size_t>(line) < lines_.size() ? lines_[static_cast<size_t>(line)].spans : kNone;
+    }
     LineState StateAtStart(int line) const { return lines_[static_cast<size_t>(line)].in; }
     int RecolouredLastUpdate() const { return recoloured_; }
 
