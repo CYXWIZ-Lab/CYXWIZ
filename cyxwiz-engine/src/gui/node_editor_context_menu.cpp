@@ -27,6 +27,12 @@ void NodeEditor::ConfigureNode(int node_id) {
     selected_node_ids_.push_back(node_id);
     pending_focus_node_id_ = node_id;
 
+    // A Plot node opens its Plot window (TOFIX134 P2).
+    if (node->type == NodeType::Plot) {
+        OpenPlotNode(node_id);
+        return;
+    }
+
     if (properties_panel_) {
         properties_panel_->ConfigureNode(node);
     }

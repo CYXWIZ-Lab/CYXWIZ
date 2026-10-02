@@ -4,15 +4,18 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../../core/plot/plot_arrow_source.h"
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
 #include "../../data/data_table.h"
 
+#include <arrow/api.h>
 #include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 
 namespace cyxwiz::plot {
@@ -52,7 +55,66 @@ void PlotWindow::Open(const std::string& source_name, std::shared_ptr<DataTable>
     ImGui::SetWindowFocus(("Plot###" + id_).c_str());
 }
 
+void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<arrow::Table> table, size_t row_limit,
+                               size_t total_rows) {
+    source_name_ = source_name;
+    table_.reset();
+    arrow_table_ = std::move(table);
+    row_limit_ = row_limit;
+    total_rows_ = total_rows;
+    headers_.clear();
+    numeric_.clear();
+    if (arrow_table_) {
+        for (const auto& c : ArrowColumns(*arrow_table_)) {
+            headers_.push_back(c.name);
+            numeric_.push_back(c.numeric);
+        }
+    }
+    // First plot: a label column's counts, else a text column's counts, else
+    // the first numeric column's histogram.
+    if (spec_.x_column.empty() && spec_.y_columns.empty() && !headers_.empty()) {
+        int label = -1, text = -1, number = -1;
+        for (size_t i = 0; i < headers_.size(); ++i) {
+            std::string lower = headers_[i];
+            for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (label < 0 && (lower == "class" || lower == "label" || lower == "target" || lower == "y")) label = static_cast<int>(i);
+            if (text < 0 && !numeric_[i]) text = static_cast<int>(i);
+            if (number < 0 && numeric_[i]) number = static_cast<int>(i);
+        }
+        const int category = label >= 0 ? label : text;
+        if (category >= 0) {
+            spec_.kind = Kind::Bar;
+            spec_.x_column = headers_[static_cast<size_t>(category)];
+        } else if (number >= 0) {
+            spec_.kind = Kind::Histogram;
+            spec_.x_column = headers_[static_cast<size_t>(number)];
+        }
+        spec_.title = DefaultTitle(spec_);
+        std::snprintf(title_buf_, sizeof(title_buf_), "%s", spec_.title.c_str());
+        view_.RequestFit();
+    }
+    Rebuild();
+}
+
+void PlotWindow::ClearData(const std::string& source_name, const std::string& message) {
+    source_name_ = source_name;
+    table_.reset();
+    arrow_table_.reset();
+    headers_.clear();
+    numeric_.clear();
+    empty_message_ = message;
+    view_.Clear();
+}
+
+void PlotWindow::SetSpec(PlotSpec spec) {
+    spec_ = std::move(spec);
+    std::snprintf(title_buf_, sizeof(title_buf_), "%s", spec_.title.c_str());
+    view_.RequestFit();
+    Rebuild();
+}
+
 void PlotWindow::SetTable(std::shared_ptr<DataTable> table, size_t row_limit, size_t total_rows) {
+    arrow_table_.reset();
     table_ = std::move(table);
     row_limit_ = row_limit;
     total_rows_ = total_rows;
@@ -68,7 +130,8 @@ int PlotWindow::ColumnIndex(const std::string& name) const {
 }
 
 void PlotWindow::Rebuild() {
-    if (!table_) {
+    if (on_spec_changed) on_spec_changed(spec_);
+    if (!table_ && !arrow_table_) {
         view_.Clear();
         return;
     }
@@ -76,11 +139,26 @@ void PlotWindow::Rebuild() {
         dirty_ = true;
         return;
     }
-    // Copy the columns on the UI thread (the table is not thread-safe), then
-    // prepare off it.
     std::vector<std::string> needed = spec_.y_columns;
     needed.push_back(spec_.x_column);
     needed.push_back(spec_.color_column);
+    if (arrow_table_) {
+        // An Arrow table does not change: read and prepare off the UI thread.
+        busy_ = true;
+        dirty_ = false;
+        job_ = std::async(std::launch::async, [spec = spec_, table = arrow_table_, needed, limit = row_limit_,
+                                               total = total_rows_]() {
+            Source src = SourceFromArrow(*table, needed);
+            if (limit > 0) {
+                src.row_limit = limit;
+                src.total_rows = total;
+            }
+            return Prepare(spec, src);
+        });
+        return;
+    }
+    // Copy the columns on the UI thread (the table is not thread-safe), then
+    // prepare off it.
     Source src = SourceFromTable(*table_, needed, numeric_);
     src.row_limit = row_limit_;
     src.total_rows = total_rows_;
@@ -111,8 +189,10 @@ void PlotWindow::Render() {
         return;
     }
     const ui::Tokens& t = ui::CurrentTokens();
-    // Source line.
-    if (table_) {
+    // Source line (a Plot node draws its own status instead).
+    if (draw_header) {
+        draw_header();
+    } else if (table_) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::Bullet();
         ImGui::PopStyleColor();
@@ -126,7 +206,7 @@ void PlotWindow::Render() {
             ImGui::TextColored(t.text_dim, "preparing...");
         }
     } else {
-        ImGui::TextDisabled("No table. Open a table in the Table Viewer and choose Plot on a column.");
+        ImGui::TextDisabled("%s", empty_message_.c_str());
     }
 
     const float kinds_w = 190.0f, settings_w = 290.0f;
@@ -143,7 +223,16 @@ void PlotWindow::Render() {
         ui::FontScope heading(ui::Font::Medium);
         ImGui::TextUnformatted(spec_.title.c_str());
     }
-    view_.Draw(ImVec2(0, 0), vo);
+    if (!table_ && !arrow_table_) {
+        // No data: the reason where the plot would be.
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 12.0f, ImGui::GetCursorPosY() + avail.y * 0.4f));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + avail.x - 24.0f);
+        ImGui::TextDisabled("%s", empty_message_.c_str());
+        ImGui::PopTextWrapPos();
+    } else {
+        view_.Draw(ImVec2(0, 0), vo);
+    }
     ImGui::EndChild();
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
@@ -379,9 +468,9 @@ std::string PlotWindow::PythonScript() const {
             const std::string col = p.spec.kind == Kind::Histogram ? spec_.x_column
                                                                    : (spec_.y_columns.empty() ? "" : spec_.y_columns.front());
             const int c = ColumnIndex(col);
-            if (c < 0 || !table_) return "";
+            if (c < 0 || (!table_ && !arrow_table_)) return "";
             std::vector<double> values;
-            const Source src = SourceFromTable(*table_, {col}, numeric_);
+            const Source src = arrow_table_ ? SourceFromArrow(*arrow_table_, {col}) : SourceFromTable(*table_, {col}, numeric_);
             if (src.columns.empty()) return "";
             for (double v : src.columns.front().numbers)
                 if (std::isfinite(v)) values.push_back(v);

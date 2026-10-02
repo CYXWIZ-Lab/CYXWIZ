@@ -321,7 +321,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Analytics Nodes
             case NodeType::DescribeStats:
                 return ICON_TI_REPORT_ANALYTICS;
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
                 return ICON_TI_CHART_DOTS;
             case NodeType::SampleRows:
                 return ICON_TI_DICE;
@@ -587,7 +587,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesSplit:
             case NodeType::SeasonalNaive:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -951,7 +951,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1272,7 +1272,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1593,7 +1593,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -2085,7 +2085,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         // Analytics Nodes
         case NodeType::DescribeStats:
             return ICON_FA_CHART_BAR;
-        case NodeType::VisualizeData:
+        case NodeType::Plot:
             return ICON_FA_CHART_LINE;
         case NodeType::SampleRows:
             return ICON_FA_DICE;

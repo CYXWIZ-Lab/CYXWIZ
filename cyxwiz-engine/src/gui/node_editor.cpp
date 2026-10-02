@@ -763,6 +763,9 @@ void NodeEditor::Render() {
         for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
     }
 
+    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
+    RenderPlotNodes();
+
     // Render RL Training Dashboard (separate window)
     if (rl_dashboard_) {
         rl_dashboard_->Render();
@@ -2600,8 +2603,11 @@ void NodeEditor::RenderNodes() {
             );
         }
 
+        // Plot nodes show their data status below the node (TOFIX134 P2).
+        if (node.type == NodeType::Plot) {
+            DrawPlotNodeStatus(node);
+        } else if (!node.description.empty()) {
         // KNIME-style: Draw node description below the node (bound to node, moves with it)
-        if (!node.description.empty()) {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -4741,6 +4747,8 @@ bool NodeEditor::ExecuteDataPipeline() {
     }
 
     for (const auto& node : nodes_) {
+        // A Plot node shows data; it is not a pipeline step (TOFIX134 P2).
+        if (node.type == NodeType::Plot) continue;
         nlohmann::json node_json;
         node_json["id"] = node.id;
         node_json["type"] = GetNodeTypeName(node.type);
@@ -4766,6 +4774,7 @@ bool NodeEditor::ExecuteDataPipeline() {
             spdlog::error("Pipeline link {} references a missing node", link.id);
             return false;
         }
+        if (to_node->type == NodeType::Plot) continue;
         const auto from_pin = std::find_if(
             from_node->outputs.begin(), from_node->outputs.end(),
             [&link](const NodePin& pin) { return pin.id == link.from_pin; });

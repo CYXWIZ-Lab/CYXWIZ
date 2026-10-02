@@ -35,6 +35,24 @@ bool TryReadSerializedNodeType(const nlohmann::json& node_json,
     return true;
 }
 
+// Plot node types retired in TOFIX134 P2 (the single Plot node replaced
+// them); nullptr for any other type.
+const char* RetiredPlotNodeName(NodeType type) {
+    switch (type) {
+        case NodeType::BarChart: return "Bar Chart";
+        case NodeType::VisualizeData: return "Visualizer";
+        case NodeType::LinePlot: case NodeType::ScatterPlot: case NodeType::Histogram:
+        case NodeType::PieChart: case NodeType::AreaPlot: case NodeType::BoxPlot:
+        case NodeType::ViolinPlot: case NodeType::ErrorBarPlot: case NodeType::StepPlot:
+        case NodeType::HexbinPlot: case NodeType::Heatmap: case NodeType::ContourPlot:
+        case NodeType::Imshow: case NodeType::Plot3D: case NodeType::Scatter3D:
+        case NodeType::SurfacePlot: case NodeType::WireframePlot: case NodeType::PolarPlot:
+        case NodeType::QuiverPlot: case NodeType::StreamPlot: case NodeType::SpectrogramPlot:
+        case NodeType::NetworkGraph: return "plot template";
+        default: return nullptr;
+    }
+}
+
 bool HasParamValue(const std::map<std::string, std::string>& params,
                           const std::string& key) {
     auto it = params.find(key);
@@ -305,6 +323,12 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
             NodeType node_type = NodeType::Unknown;
             if (!TryReadSerializedNodeType(node_json, node_type)) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' has an unsupported type";
+                return false;
+            }
+            if (const char* retired = RetiredPlotNodeName(node_type)) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is a " + retired +
+                        " node, which the Plot node replaced: remove it from the file or rebuild the graph with "
+                        "a Plot node (its window picks the plot type)";
                 return false;
             }
 

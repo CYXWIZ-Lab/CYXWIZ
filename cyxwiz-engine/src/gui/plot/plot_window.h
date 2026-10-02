@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+namespace arrow {
+class Table;
+}
+
 namespace cyxwiz {
 class DataTable;
 }
@@ -33,6 +37,21 @@ public:
     void SetTable(std::shared_ptr<DataTable> table, size_t row_limit = 0, size_t total_rows = 0);
     const std::string& SourceName() const { return source_name_; }
 
+    // Plot node (TOFIX134 P2): an Arrow table, read off the UI thread. With
+    // no columns chosen yet a first plot is picked (a label column's counts,
+    // else the first numeric column's histogram).
+    void SetArrowTable(const std::string& source_name, std::shared_ptr<arrow::Table> table, size_t row_limit = 0,
+                       size_t total_rows = 0);
+    // No data (not connected, not available, not read yet): the message
+    // shows where the plot would be.
+    void ClearData(const std::string& source_name, const std::string& message);
+    void SetSpec(PlotSpec spec);
+    const PlotSpec& Spec() const { return spec_; }
+    // Drawn instead of the source line (the node's status and actions).
+    std::function<void()> draw_header;
+    // The plot type, columns or labels changed (saved in the node).
+    std::function<void(const PlotSpec&)> on_spec_changed;
+
     void Render();
     bool visible = false;
 
@@ -50,6 +69,8 @@ private:
     std::string id_;
     std::string source_name_;
     std::shared_ptr<DataTable> table_;
+    std::shared_ptr<arrow::Table> arrow_table_;
+    std::string empty_message_ = "No table. Open a table in the Table Viewer and choose Plot on a column.";
     std::vector<std::string> headers_;
     std::vector<bool> numeric_;
     size_t row_limit_ = 0, total_rows_ = 0;

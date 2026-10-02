@@ -1211,28 +1211,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
         {NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", {"image", "morphology"}},
         {NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", {"image", "augmentation"}},
-        {NodeType::LinePlot, NodeCategory::Visualization, "Line Plot", {"chart", "line", "plot"}},
-        {NodeType::ScatterPlot, NodeCategory::Visualization, "Scatter Plot", {"chart", "scatter", "plot"}},
-        {NodeType::Histogram, NodeCategory::Visualization, "Histogram", {"chart", "distribution"}},
-        {NodeType::PieChart, NodeCategory::Visualization, "Pie Chart", {"chart", "pie"}},
-        {NodeType::AreaPlot, NodeCategory::Visualization, "Area Plot", {"chart", "area", "plot"}},
-        {NodeType::BoxPlot, NodeCategory::Visualization, "Box Plot", {"chart", "box", "distribution"}},
-        {NodeType::ViolinPlot, NodeCategory::Visualization, "Violin Plot", {"chart", "violin", "distribution"}},
-        {NodeType::ErrorBarPlot, NodeCategory::Visualization, "Error Bar Plot", {"chart", "error", "plot"}},
-        {NodeType::StepPlot, NodeCategory::Visualization, "Step Plot", {"chart", "step", "plot"}},
-        {NodeType::HexbinPlot, NodeCategory::Visualization, "Hexbin Plot", {"chart", "hexbin", "plot"}},
-        {NodeType::Heatmap, NodeCategory::Visualization, "Heatmap", {"chart", "heatmap"}},
-        {NodeType::ContourPlot, NodeCategory::Visualization, "Contour Plot", {"chart", "contour", "plot"}},
-        {NodeType::Imshow, NodeCategory::Visualization, "Image Display", {"image", "imshow", "visualization"}},
-        {NodeType::Plot3D, NodeCategory::Visualization, "3D Plot", {"chart", "3d", "plot"}},
-        {NodeType::Scatter3D, NodeCategory::Visualization, "3D Scatter Plot", {"chart", "scatter", "3d"}},
-        {NodeType::SurfacePlot, NodeCategory::Visualization, "Surface Plot", {"chart", "surface", "3d"}},
-        {NodeType::WireframePlot, NodeCategory::Visualization, "Wireframe Plot", {"chart", "wireframe", "3d"}},
-        {NodeType::PolarPlot, NodeCategory::Visualization, "Polar Plot", {"chart", "polar", "plot"}},
-        {NodeType::QuiverPlot, NodeCategory::Visualization, "Quiver Plot", {"chart", "vector", "plot"}},
-        {NodeType::StreamPlot, NodeCategory::Visualization, "Stream Plot", {"chart", "stream", "plot"}},
-        {NodeType::SpectrogramPlot, NodeCategory::Visualization, "Spectrogram", {"audio", "spectrogram", "plot"}},
-        {NodeType::NetworkGraph, NodeCategory::Visualization, "Network Graph", {"graph", "network", "visualization"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };
 
@@ -1687,12 +1665,6 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Matrix", PinType::Dataset, true, "Long-form Pearson correlation matrix"}},
         {},
         NodeImplementationStatus::Implemented, 0});
-
-    RegisterNode({NodeType::VisualizeData, NodeCategory::Analytics, "Visualizer", ICON_FA_CHART_LINE,
-        {"plot", "chart", "visualize"}, 0, false, "Create visualizations", "", "",
-        {{"Table", PinType::Dataset, true, "Input"}}, {},
-        {{"chart_type", "enum", "scatter", "Type", {"scatter", "bar", "line", "histogram"}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::SampleRows, NodeCategory::Analytics, "Row Sampler", ICON_FA_DICE,
         {"sample", "head", "first", "limit"}, 0, false, "Take the first rows in source order",
@@ -4407,23 +4379,24 @@ void NodeMetadataRegistry::InitializeInterpretationNodes() {
 // implementations.
 // =============================================================================
 void NodeMetadataRegistry::InitializeVisualizationNodes() {
-    RegisterNode({NodeType::BarChart, NodeCategory::Visualization, "Bar Chart",
-        ICON_FA_CHART_COLUMN,
-        {"bar", "chart", "distribution", "histogram", "counts", "class"},
+    // One Plot node (TOFIX134 P2, owner D2 revision): the plot type is picked
+    // in its window. It plots the data at its position (the node result
+    // lane runs only the nodes above it); it is not a pipeline step and
+    // training skips it.
+    RegisterNode({NodeType::Plot, NodeCategory::Visualization, "Plot",
+        ICON_FA_CHART_SIMPLE,
+        {"plot", "chart", "graph", "visualize", "histogram", "scatter", "line", "bar", "pie", "box",
+         "violin", "heatmap", "area", "step", "stem", "error", "distribution"},
         0, false,
-        "Count and plot a categorical column. Cat 2 inspection — "
-        "double-click to open the rendering dialog. Pick a dataset + "
-        "column, the chart counts distinct values and renders an "
-        "ImPlot bar chart sorted by frequency with an imbalance flag "
-        "when max/min >= 10x.",
-        "", "",
-        {{"Data", PinType::Tensor, true, "Tabular stream to chart"},
-         {"Labels", PinType::Labels, false, "Optional label stream"}},
+        "A chart of the data at this point; double-click to open it and pick the plot type.",
+        "Connect any table: a Data Input, a transform or an evaluation node. Only the nodes above "
+        "the plot run, in the background; nodes that run only inside training cannot be plotted "
+        "yet and the node says so. The plot type, columns and labels are saved in the node; the "
+        "data is read again, never saved in the graph.",
+        "",
+        {{"Data", PinType::Tensor, false, "The table to plot"}},
         {},
-        {{"chart_type", "dropdown", "bar", "Orient", {"bar", "horizontal_bar"}, ""},
-         {"column", "string", "", "Column", {}, ""},
-         {"title", "string", "Bar Chart", "Title", {}, ""},
-         {"max_bars", "int", "20", "Top-N cap", {}, ""}},
+        {{"plot_spec", "string", "", "Plot settings (set in the Plot window)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 

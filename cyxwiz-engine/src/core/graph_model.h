@@ -486,7 +486,11 @@ enum class NodeType {
     WordFrequencyNode,  // Word frequency analysis
     TokenizerNode,      // Text tokenization
 
-    // ===== Visualization Nodes (Phase 8 - Plot Types) =====
+    // ===== Retired plot node types (TOFIX134 P2) =====
+    // Replaced by the single Plot node (appended below): its window picks the
+    // plot type. The slots stay so the numeric ids of the types after them
+    // do not move; nothing registers or creates these, and a saved graph
+    // that has one fails to load with a message naming the Plot node.
     // Basic 2D Plots
     LinePlot,           // Line plot (plot())
     ScatterPlot,        // Scatter plot (scatter())
@@ -567,6 +571,10 @@ enum class NodeType {
     // ===== Appended Data Studio Check step (TOFIX101 package E) =====
     // Appended to preserve existing serialized numeric NodeType ids.
     RowCountCheck,      // Pass through; stop the run when a row count is wrong
+
+    // ===== Appended Plot node (TOFIX134 P2) =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    Plot,               // Chart of the data at this point (one input, no output)
 
     // Special sentinel value
     Unknown

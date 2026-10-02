@@ -2,7 +2,8 @@
 
 What draws plots in the CyxWiz Engine today, and how to use each part. A
 new plot system (one Plot window with a plot-type picker, shared with the
-Dashboard) is being built in TOFIX134; this page describes what works now.
+Plot node and, later, the Dashboard) is being built in TOFIX134; this page
+describes what works now.
 
 ## Figures from Python (matplotlib)
 
@@ -61,6 +62,45 @@ or press **Plot** under the column's statistics. The Plot window opens:
 
 Plot colours come from the theme (Preferences > Theme): the series
 colours, the plot area (a shade of the window colour) and the text.
+
+## The Plot node (CyxWiz Studio canvas)
+
+Search **plot** on the canvas (or open Visualization in the node list) and
+add a **Plot** node. Connect the table you want to look at to its **Data**
+input, at any point of the graph:
+
+```
+Data Input (mnist_784.csv) --> Plot
+```
+
+- Under the node, two lines say what it shows: *Not connected*, *Not
+  available yet* (with the reason), *Not read yet*, *Reading N%*, the plot
+  and its column ("Bar · class") with the rows and the read time, *Out of
+  date*, or *Could not read the data*.
+- Double-click the node (or right-click > Configure, or **Open Dialog** in
+  Properties) to open its Plot window. The window is the same Plot window
+  as above, with a header: *Data at &lt;node&gt;*, rows × columns, the read
+  time, and **Refresh** (**Cancel** while it runs).
+- A loaded Data Input is read as it is. A node after it (a filter, a
+  transform) is run on its own with only the nodes above it; progress and
+  Cancel are in Task View. The first plot is picked for you: the counts of
+  a label column (class, label, target or y), otherwise of a text column,
+  otherwise a histogram of the first number column. The plot type, the
+  columns and the labels you choose are saved in the node.
+- When a node above changes, the plot keeps its data and says *Out of
+  date*; press **Refresh** to read again. Changes beside the plot (for
+  example a Dense layer) do not make it out of date.
+- Nodes that run only inside training (Train/Val/Test Split, DataLoader,
+  Normalize, layers) cannot be plotted yet: the window says so and offers
+  **Plot its input (&lt;node&gt;)**, which connects the Plot node to the node
+  before it.
+- A Data Input without a file says "has no data yet: open it, choose a
+  file and Apply".
+
+The old per-type plot entries (Bar Chart, Line Plot, Box Plot and the other
+"Coming Soon" plot nodes) are gone: the Plot window picks the type. A saved
+graph that still has one of them does not load; the message names the node
+so you can remove it and add a Plot node.
 
 ## Training Dashboard
 

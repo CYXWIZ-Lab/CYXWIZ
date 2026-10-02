@@ -35,6 +35,15 @@ int FirstInput(int node_id, const std::vector<gui::NodeLink>& links) {
 }
 
 bool Runnable(const gui::MLNode& n, std::string* why) {
+    // A Data Input with no file cannot be read (the run would fail with a
+    // validation code): say what to do instead.
+    if (n.type == gui::NodeType::DataInput) {
+        auto it = n.parameters.find("file_path");
+        if (it == n.parameters.end() || it->second.empty()) {
+            *why = n.name + " has no data yet: open it, choose a file and Apply.";
+            return false;
+        }
+    }
     if (n.type == gui::NodeType::Subgraph) {
         *why = n.name + " is a Preparation Recipe; recipes cannot be plotted from inside yet.";
         return false;

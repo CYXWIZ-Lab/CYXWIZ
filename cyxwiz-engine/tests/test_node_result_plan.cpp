@@ -104,6 +104,14 @@ int main() {
           "the reason in words: " + p.reason);
     Check(p.alternative_id == 1 && p.alternative_name == "Data Input", "offer to plot its input");
 
+    // A Data Input with no file says what to do (no run that fails).
+    nodes[0].parameters.erase("file_path");
+    p = PlanNodeResult(9, nodes, direct, none_loaded);
+    Check(p.state == NodeResultPlan::State::Unavailable &&
+              p.reason == "Data Input has no data yet: open it, choose a file and Apply." && p.alternative_id == -1,
+          "Data Input without a file: " + p.reason);
+    nodes[0].parameters["file_path"] = "mnist_784.csv";
+
     // Nothing wired in.
     p = PlanNodeResult(9, nodes, {}, none_loaded);
     Check(p.state == NodeResultPlan::State::NotConnected && p.feeder_id == -1, "not connected");

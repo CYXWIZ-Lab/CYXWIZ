@@ -935,7 +935,6 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::PReLU,
         gui::NodeType::Resize,
         gui::NodeType::HuggingFaceDataset,
-        gui::NodeType::LinePlot,
         gui::NodeType::PluginCustom,
     };
     for (const auto type : expected_catalog_previews) {
@@ -5376,7 +5375,6 @@ int main() {
         gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::CrossValidationNode,
-        gui::NodeType::VisualizeData,
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,
         gui::NodeType::AudioInput,
@@ -5480,7 +5478,6 @@ int main() {
         gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::CrossValidationNode,
-        gui::NodeType::VisualizeData,
         gui::NodeType::ExportExcel,
         gui::NodeType::TableSplitter,
         gui::NodeType::IFFTNode,
@@ -6291,17 +6288,22 @@ int main() {
               gui::NodeType::TimeDistributed, conflicting_head).has_value(),
           "conflicting TimeDistributed width aliases should fail closed");
 
-    const auto* bar_chart_meta = metadata.GetMetadata(gui::NodeType::BarChart);
-    Check(bar_chart_meta != nullptr, "BarChart metadata should exist");
-    Check(bar_chart_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
-          "BarChart should remain an implemented UI workflow node");
-    CheckSupportAxis(bar_chart_meta, "Implementation Owner", "ui_only", true, "BarChart");
-    CheckSupportAxis(bar_chart_meta, "Support State", "partial", true, "BarChart");
-    Check(cyxwiz::CanAddNodeToGraph(*bar_chart_meta),
+    // TOFIX134 P2: the Plot node replaced Bar Chart and the plot templates.
+    const auto* plot_meta = metadata.GetMetadata(gui::NodeType::Plot);
+    Check(plot_meta != nullptr, "Plot metadata should exist");
+    Check(plot_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "Plot should be an implemented UI workflow node");
+    CheckSupportAxis(plot_meta, "Implementation Owner", "ui_only", true, "Plot");
+    CheckSupportAxis(plot_meta, "Support State", "partial", true, "Plot");
+    Check(cyxwiz::CanAddNodeToGraph(*plot_meta),
           "frontend blocked state for UI-only partial nodes should come from support_axes");
     CheckSupportAxisReasonContains(
-        bar_chart_meta, "Implementation Owner", "UI/panel workflow surface",
-        "BarChart");
+        plot_meta, "Implementation Owner", "UI/panel workflow surface",
+        "Plot");
+    for (const auto retired : {gui::NodeType::BarChart, gui::NodeType::LinePlot, gui::NodeType::VisualizeData}) {
+        Check(metadata.GetMetadata(retired) == nullptr,
+              "retired plot node types are not registered: " + TypeId(retired));
+    }
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

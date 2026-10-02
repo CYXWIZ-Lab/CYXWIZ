@@ -567,7 +567,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
 
         // ===== Analytics Nodes - Purple =====
         case NodeType::DescribeStats:
-        case NodeType::VisualizeData:
+        case NodeType::Plot:
         case NodeType::SampleRows:
         case NodeType::CorrelationMatrix:
         case NodeType::ValueCounts:

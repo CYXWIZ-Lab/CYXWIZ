@@ -1,6 +1,5 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
-#include "visualization/bar_chart_dialog.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
@@ -1780,9 +1779,6 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     // Visualization framework — chart nodes live in their own TU
     // under src/gui/visualization/. BarChart is the first; Histogram /
     // LinePlot / ScatterPlot / PieChart follow the same shape.
-    RegisterDialog(NT::BarChart, [](MLNode* node) {
-        return std::make_unique<visualization::BarChartDialog>(node);
-    });
 }
 
 void NodeConfigDialogFactory::RegisterDialog(NodeType type, DialogCreator creator) {

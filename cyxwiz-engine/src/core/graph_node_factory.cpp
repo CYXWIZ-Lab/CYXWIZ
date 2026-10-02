@@ -71,7 +71,6 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
 
         // Analytics
         case NodeType::DescribeStats:
-        case NodeType::VisualizeData:
         case NodeType::SampleRows:
         case NodeType::CorrelationMatrix:
         case NodeType::ValueCounts:
@@ -2584,7 +2583,7 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::BarChart: {
+        case NodeType::Plot: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

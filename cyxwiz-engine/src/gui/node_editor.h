@@ -36,6 +36,11 @@ namespace cyxwiz {
 class LiveGraphCompile;
 }  // namespace cyxwiz
 
+namespace cyxwiz::plot {
+class PlotNodeLane;
+class PlotWindow;
+}  // namespace cyxwiz::plot
+
 namespace gui {
 class Properties;
 class ShapeInferenceEngine;
@@ -264,6 +269,8 @@ public:
 
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
+    // Configure a node as a double-click does (Properties "Open Dialog...").
+    void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     int GetSelectedNodeId() const { return selected_node_id_; }
     int GetSelectedNodeCount() const { return static_cast<int>(selected_node_ids_.size()); }
@@ -945,6 +952,17 @@ private:
     // ===== RL Training State =====
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
+
+    // Plot nodes (TOFIX134 P2): the result lane and one Plot window per
+    // opened Plot node (node_editor_plot.cpp).
+    std::shared_ptr<cyxwiz::plot::PlotNodeLane> plot_lane_;
+    std::map<int, std::shared_ptr<cyxwiz::plot::PlotWindow>> plot_windows_;
+    std::map<int, uint64_t> plot_window_data_versions_;
+    void OpenPlotNode(int node_id);
+    void RenderPlotNodes();
+    void DrawPlotNodeStatus(const MLNode& node);
+    void DrawPlotNodeHeader(int node_id);
+    void PlotNodeInput(int plot_id, int source_id);
     std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
