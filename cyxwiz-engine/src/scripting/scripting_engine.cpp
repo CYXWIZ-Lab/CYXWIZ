@@ -1667,7 +1667,11 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
             plot.width = width;
             plot.height = height;
             plot.label = label;
-            QueuePlot(plot);
+            // The capture stays installed after the run: a Console plt.show()
+            // goes straight to Plot Output instead of a run queue the next
+            // script clears (TOFIX134 P0 item 6).
+            if (script_running_) QueuePlot(plot);
+            else published_plots_.Publish({plot});
             spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
         };
 
