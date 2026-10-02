@@ -1,4 +1,5 @@
 #include "theme.h"
+#include "dock_style.h"
 #include <imgui.h>
 
 namespace gui {
@@ -156,17 +157,20 @@ void Theme::ApplyPreset(ThemePreset preset) {
         default:                           ApplyCyxWizDark(); break;
     }
 
-    HarmonizeSurfaces();
     ApplyStyleConfig();
     ApplyImNodesStyle();  // Apply matching node editor styling
     ApplyDockStyle();     // Apply matching dock tab styling
+    HarmonizeSurfaces();  // last: the dock style set its own tab colours
 }
 
-// Owner 2026-10-02: a list or table sits on the same background as the
-// window around it. Presets gave scrollbar tracks, table headers and grid
-// lines their own darker or lighter greys (Unreal Engine: window 41, header
-// 31, scrollbar track 20), so tables looked pasted on. These follow the
-// window now; each preset keeps its own text, accent and window colours.
+// Owner 2026-10-02: every surface follows the window background. Presets
+// (and the dock style after them) gave table headers, scrollbars, title
+// bars, dock tabs and the empty dock area their own darker or lighter greys
+// (Unreal Engine: window 41, table header 31, title bar 20/31, tabs 31, an
+// orange selected tab, scrollbar track 20 with a 77 thumb), so tables, docked
+// windows and title bars looked pasted on. These are derived from the window
+// colour now, in every theme; each preset keeps its own window, text and
+// accent colours, and the selected tab keeps the preset's accent overline.
 void Theme::HarmonizeSurfaces() {
     ImVec4* c = ImGui::GetStyle().Colors;
     const ImVec4 bg = c[ImGuiCol_WindowBg];
@@ -180,6 +184,41 @@ void Theme::HarmonizeSurfaces() {
     c[ImGuiCol_TableBorderLight] = toward_text(0.06f);
     c[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     c[ImGuiCol_TableRowBgAlt] = ImVec4(text.x, text.y, text.z, 0.025f);
+
+    // Scrollbar thumbs: a step toward the text, not a separate grey.
+    c[ImGuiCol_ScrollbarGrab] = toward_text(0.14f);
+    c[ImGuiCol_ScrollbarGrabHovered] = toward_text(0.22f);
+    c[ImGuiCol_ScrollbarGrabActive] = toward_text(0.30f);
+
+    // Lines (window border, separators) in the surface tone.
+    c[ImGuiCol_Border] = toward_text(0.10f);
+    c[ImGuiCol_Separator] = toward_text(0.10f);
+
+    // Window title bars, menu bars and the dock area: the window colour.
+    const ImVec4 solid(bg.x, bg.y, bg.z, 1.0f);
+    c[ImGuiCol_TitleBg] = solid;
+    c[ImGuiCol_TitleBgActive] = solid;
+    c[ImGuiCol_TitleBgCollapsed] = solid;
+    c[ImGuiCol_DockingEmptyBg] = solid;
+    c[ImGuiCol_MenuBarBg] = solid;  // the main menu and a window's own menu row
+
+    // Dock and window tabs: the window colour; the selected tab is marked by
+    // the preset's accent overline, a hovered one by a light wash.
+    DockStyle& dock = GetDockStyle();
+    DockTabStyle tabs = dock.GetStyle();
+    tabs.tab_bg = solid;
+    tabs.tab_bg_active = solid;
+    tabs.tab_bg_unfocused = solid;
+    tabs.tab_bg_hovered = toward_text(0.08f);
+    tabs.tab_text = ImVec4(text.x + (bg.x - text.x) * 0.35f, text.y + (bg.y - text.y) * 0.35f, text.z + (bg.z - text.z) * 0.35f, 1.0f);
+    tabs.tab_text_active = text;
+    tabs.tab_separator_color = toward_text(0.10f);
+    tabs.dock_bg = solid;
+    tabs.dock_border = toward_text(0.10f);
+    dock.SetStyle(tabs);  // writes the ImGui tab, dock and border colours
+    const ImVec4 mark = tabs.active_indicator_color;
+    c[ImGuiCol_TabSelectedOverline] = mark;
+    c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(mark.x, mark.y, mark.z, mark.w * 0.5f);
 }
 
 void Theme::ApplyConfig(const ThemeConfig& config) {
