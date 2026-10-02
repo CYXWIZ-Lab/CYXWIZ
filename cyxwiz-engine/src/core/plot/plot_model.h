@@ -35,6 +35,7 @@ enum Encoding : unsigned {
     kEncX = 1u << 0,
     kEncY = 1u << 1,
     kEncColor = 1u << 2,
+    kEncValue = 1u << 3,  // heatmap: a column summed per cell (else rows are counted)
 };
 
 struct KindInfo {
@@ -47,6 +48,7 @@ struct KindInfo {
     bool multi_y;       // more than one Y column (one series each)
     const char* x_hint; // what the X picker asks for
     const char* y_hint; // what the Y picker asks for ("" when unused)
+    const char* value_hint = "";  // what the value picker asks for (kEncValue)
 };
 
 // Every kind, in the order the plot-type list shows them.
@@ -81,6 +83,7 @@ struct PlotSpec {
     std::string x_column;               // empty: the row number
     std::vector<std::string> y_columns; // one series each
     std::string color_column;           // empty: no split
+    std::string value_column;           // heatmap cells: sum of this column (empty: count rows)
     std::string title;
     std::string x_label;                // empty: the column name
     std::string y_label;
@@ -92,6 +95,7 @@ struct PlotSpec {
     bool log_x = false;
     bool log_y = false;
     bool legend = true;
+    bool show_diagonal = false;         // line, scatter: a y = x reference line (ROC chance)
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive

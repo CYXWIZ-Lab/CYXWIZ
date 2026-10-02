@@ -5,6 +5,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../../core/plot/plot_arrow_source.h"
+#include "../../core/plot/plot_presets.h"
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
 #include "../../data/data_table.h"
@@ -72,6 +73,19 @@ void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<a
         }
     }
     ReadColumns();
+    // First plot of an evaluation table (Confusion Matrix, ROC, PR): its
+    // preset (board 5).
+    if (spec_.x_column.empty() && spec_.y_columns.empty() && arrow_table_) {
+        const auto first_value = [table = arrow_table_](const std::string& column) {
+            const Source one = SourceFromArrow(*table, {column}, 1);
+            return !one.columns.empty() && !one.columns.front().numbers.empty() ? one.columns.front().numbers.front() : NAN;
+        };
+        if (auto preset = EvaluationPreset(headers_, first_value)) {
+            spec_ = *preset;
+            std::snprintf(title_buf_, sizeof(title_buf_), "%s", spec_.title.c_str());
+            view_.RequestFit();
+        }
+    }
     // First plot: a label column's counts, else a text column's counts, else
     // the first numeric column's histogram.
     if (spec_.x_column.empty() && spec_.y_columns.empty() && !headers_.empty()) {
@@ -452,6 +466,9 @@ void PlotWindow::DrawSettings() {
     const float w = ImGui::GetContentRegionAvail().x;
 
     changed |= DrawRows(w);
+    // Axis names set by a preset follow their column: a new column drops them.
+    const std::string x_before = spec_.x_column;
+    const std::vector<std::string> y_before = spec_.y_columns;
 
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "DATA");
@@ -495,6 +512,16 @@ void PlotWindow::DrawSettings() {
                 changed = true;
             }
         }
+    }
+    if (k.optional & kEncValue) {
+        ImGui::TextColored(t.text_dim, "%s", k.value_hint);
+        changed |= picker_.Pick("##value", spec_.value_column, columns_, true, "(count rows)", w);
+    }
+    if (spec_.x_column != x_before) spec_.x_label.clear();
+    if (spec_.y_columns != y_before) spec_.y_label.clear();
+    if (spec_.kind == Kind::Line || spec_.kind == Kind::Scatter) {
+        changed |= ImGui::Checkbox("Show the y = x line", &spec_.show_diagonal);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A reference line where y equals x (chance on a ROC curve)");
     }
     if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D) {
         ImGui::TextColored(t.text_dim, "Bins");

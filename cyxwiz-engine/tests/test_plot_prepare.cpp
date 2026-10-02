@@ -1,6 +1,7 @@
 // Plot data preparation (TOFIX134 P1 step 1.3): every P1 kind from table
 // columns, with reduction, sampling, colour groups and honest labels.
 #include "../src/core/plot/plot_prepare.h"
+#include "../src/core/plot/plot_presets.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -260,6 +261,41 @@ int main() {
     PlotSpec scale_spec = Spec(Kind::Scatter, "class", {"v"}, "v");
     p = Prepare(scale_spec, rs);
     Check(p.colour_scale && !p.colour_diverging && p.colour_min == 0 && p.colour_max == 99, "0..99: one-sided scale");
+
+    // Evaluation tables (P2 presets): a Confusion Matrix node's long table
+    // opens as a heatmap of actual by predicted with its counts, labels in
+    // numeric order; ROC and PR open as lines with the score in the title.
+    Source cm;
+    cm.columns.push_back(Text("actual_label", {"1", "1", "0", "0", "10", "2"}));
+    cm.columns.push_back(Text("predicted_label", {"1", "0", "1", "0", "2", "10"}));
+    cm.columns.push_back(Numbers("count", {40, 3, 5, 52, 7, 1}));
+    cm.columns.push_back(Numbers("value", {40, 3, 5, 52, 7, 1}));
+    const auto none = [](const std::string&) { return NAN; };
+    const auto cm_preset = EvaluationPreset({"actual_label", "predicted_label", "count", "value"}, none);
+    Check(cm_preset && cm_preset->kind == Kind::Heatmap && cm_preset->x_column == "predicted_label" &&
+              cm_preset->y_columns == std::vector<std::string>({"actual_label"}) && cm_preset->value_column == "value" &&
+              cm_preset->x_label == "Predicted" && cm_preset->y_label == "Actual",
+          "confusion matrix preset");
+    p = Prepare(*cm_preset, cm);
+    Check(p.problem.empty() && p.row_names == std::vector<std::string>({"0", "1", "2", "10"}) &&
+              p.col_names == std::vector<std::string>({"0", "1", "2", "10"}),
+          "numeric labels in numeric order on both axes");
+    // Rows actual 0,1,2,10; columns predicted 0,1,2,10.
+    Check(p.grid == std::vector<double>({52, 5, 0, 0, 3, 40, 0, 0, 0, 0, 0, 1, 0, 0, 7, 0}), "cells hold the summed counts");
+    const auto roc = EvaluationPreset({"threshold", "fpr", "tpr", "auc"}, [](const std::string& c) { return c == "auc" ? 0.9731 : NAN; });
+    Check(roc && roc->kind == Kind::Line && roc->x_column == "fpr" && roc->y_columns.front() == "tpr" && roc->show_diagonal &&
+              roc->title == "ROC curve \xC2\xB7 AUC 0.973",
+          "ROC preset: " + (roc ? roc->title : std::string()));
+    const auto pr = EvaluationPreset({"threshold", "precision", "recall", "average_precision"},
+                                     [](const std::string&) { return 0.81234; });
+    Check(pr && pr->x_column == "recall" && pr->y_columns.front() == "precision" && !pr->show_diagonal &&
+              pr->title == "Precision-recall curve \xC2\xB7 AP 0.812",
+          "PR preset: " + (pr ? pr->title : std::string()));
+    Check(!EvaluationPreset({"class", "pixel1"}, none), "other tables get no preset");
+    PlotSpec back_spec;
+    Check(SpecFromJson(SpecToJson(*roc), back_spec) && back_spec.show_diagonal &&
+              SpecFromJson(SpecToJson(*cm_preset), back_spec) && back_spec.value_column == "value",
+          "diagonal and value column saved");
 
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));

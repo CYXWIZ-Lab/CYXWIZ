@@ -40,11 +40,34 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
   stem, pie), Distribution (box, violin, error bars), Grid and density
   (heatmap, 2D histogram). Pick one; the columns that still fit are kept.
-- **Data** (right): the X column (or the row number for lines), one or
-  more Y columns (one series each), **Colour by** a column (one series per
-  value; the 11 largest groups, the rest as "other"), bins, median and
-  mean lines, density, smoothing (moving average), the title. **Values**
-  lists count, missing, min, max, mean and median of the plotted column.
+- **Rows** (top of the right panel): **All**, **First** N rows, a **Range**
+  of rows (numbered from 1, as in the Table Viewer) or **Filter**:
+  conditions *column = != < <= > >= contains value*, all of which must
+  match ("class = 7" keeps 7,293 of MNIST's 70,000 rows). The label above
+  the plot says which rows are drawn; exports and the Python script use the
+  same rows. To filter for the whole graph, use a Filter Rows node.
+- **Data**: the X column (or the row number for lines), one or more Y
+  columns (one series each), **Colour by** a column, bins, median and mean
+  lines, density, smoothing (moving average), the title. **Values** lists
+  count, missing, min, max, mean and median of the plotted column.
+- **Choosing columns in a wide table**: every column field opens a list
+  with a search box. Each column shows its type (# number, Aa text), its
+  range and how often it is not 0 ("0 to 255 · 66.3% not 0"); columns with
+  one value (65 of MNIST's pixels) are hidden unless you untick that.
+  Up / Down move, Enter picks, Esc closes. Y values: **Add all N matches**
+  of the search, or a **Range** of columns ("pixel400" to "pixel409");
+  the chosen columns show as chips (click one to remove it). The legend
+  lists 12 series; hover shows all.
+- **Colour by a number column**: on a scatter, a column with more than 12
+  values colours each point on the theme's scale, with a colour bar named
+  after the column (values on both sides of 0 use the two-sided scale);
+  **Groups / Scale** switches. Other plot types split such a column into
+  six equal ranges. A column with up to 12 values (class 0-9) gives one
+  series per value.
+- **Heatmap**: **Cell values** sums a column per cell; without it, rows are
+  counted. Labels that are all numbers read in numeric order.
+- **Line and scatter**: **Show the y = x line** draws a reference line
+  (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the
   scatter point, the histogram bin and its share, the category, the pie
   slice, the box statistics, the heatmap cell). Drag to pan, wheel to zoom,
@@ -96,6 +119,26 @@ Data Input (mnist_784.csv) --> Plot
   before it.
 - A Data Input without a file says "has no data yet: open it, choose a
   file and Apply".
+
+### Model evaluation
+
+A Plot node after an evaluation node opens on the fitting plot:
+
+```
+Data Input (actual, predicted, score) --> Confusion Matrix --> Plot
+                                      \-> ROC Curve        --> Plot
+```
+
+- **Confusion Matrix** (actual_col, predicted_col): a heatmap of *Actual*
+  by *Predicted* with the counts in the cells (or the shares, when the node
+  normalizes); hover says "Actual 0 · Predicted 1 · value 38".
+- **ROC Curve** (actual_col, score_col, positive_label): the true positive
+  rate by the false positive rate, the AUC in the title ("ROC curve · AUC
+  0.931") and the y = x chance line.
+- **PR Curve**: precision by recall, the average precision in the title.
+
+The same tables read from a file get the same first plot. The type and
+columns can be changed like any plot.
 
 The old per-type plot entries (Bar Chart, Line Plot, Box Plot and the other
 "Coming Soon" plot nodes) are gone: the Plot window picks the type. A saved

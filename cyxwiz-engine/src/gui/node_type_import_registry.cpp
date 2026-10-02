@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 199> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -205,6 +205,11 @@ constexpr std::array<NodeTypeImportName, 199> kNodeTypeImportNames = {{
         {"FFTNode", NodeType::FFTNode},
         {"FilterDesigner", NodeType::FilterDesigner},
         {"Convolution1D", NodeType::Convolution1D},
+        // Evaluation tables and the Plot node (TOFIX134 P2): example graphs may use them.
+        {"ConfusionMatrixNode", NodeType::ConfusionMatrixNode},
+        {"ROCCurveNode", NodeType::ROCCurveNode},
+        {"PRCurveNode", NodeType::PRCurveNode},
+        {"Plot", NodeType::Plot},
 }};
 
 } // namespace

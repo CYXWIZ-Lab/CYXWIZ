@@ -386,6 +386,7 @@ if(CYXWIZ_BUILD_TESTS)
     # Plot data preparation for every P1 kind (TOFIX134 P1).
     add_executable(test_plot_prepare
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_presets.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"

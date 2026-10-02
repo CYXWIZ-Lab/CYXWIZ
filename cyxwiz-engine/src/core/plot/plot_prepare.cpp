@@ -36,6 +36,19 @@ std::string CellText(const SourceColumn& c, size_t row) {
     return out.str();
 }
 
+std::string Trim(const std::string& v) {
+    const size_t a = v.find_first_not_of(" \t");
+    if (a == std::string::npos) return "";
+    return v.substr(a, v.find_last_not_of(" \t") - a + 1);
+}
+
+bool ParseNumber(const std::string& text, double& out) {
+    if (text.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(text.c_str(), &end);
+    return end && *end == '\0' && std::isfinite(out);
+}
+
 double Number(const Source& src, const SourceColumn* c, size_t row) {
     if (!c) {  // no X column: the row's place in the table
         return row < src.row_index.size() ? src.row_index[row] : static_cast<double>(row);
@@ -425,7 +438,7 @@ void PrepareErrorBars(Prepared& p, const SourceColumn* xcol, const SourceColumn*
     p.label = {DataLabel::State::Exact, total, total};
 }
 
-void PrepareHeatmap(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol) {
+void PrepareHeatmap(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol, const SourceColumn* vcol) {
     std::vector<std::string> cols, rows;
     std::unordered_map<std::string, int> ci, ri;
     std::map<std::pair<int, int>, double> counts;
@@ -442,16 +455,42 @@ void PrepareHeatmap(Prepared& p, const SourceColumn* xcol, const SourceColumn* y
             ri[cy] = static_cast<int>(rows.size());
             rows.push_back(cy);
         }
-        counts[{ri[cy], ci[cx]}] += 1.0;
+        // A value column is summed per cell (a confusion matrix's counts);
+        // otherwise rows are counted.
+        double add = 1.0;
+        if (vcol) {
+            add = r < vcol->numbers.size() ? vcol->numbers[r] : NAN;
+            if (!std::isfinite(add)) continue;
+        }
+        counts[{ri[cy], ci[cx]}] += add;
     }
+    // Labels that are all numbers (class labels 0..9) read in numeric order
+    // on both axes; others keep the order they first appear in.
+    const auto numeric_order = [](const std::vector<std::string>& names) {
+        std::vector<int> order(names.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::vector<double> values(names.size());
+        for (size_t i = 0; i < names.size(); ++i)
+            if (!ParseNumber(Trim(names[i]), values[i])) return order;
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return values[static_cast<size_t>(a)] < values[static_cast<size_t>(b)]; });
+        return order;
+    };
+    const std::vector<int> row_order = numeric_order(rows), col_order = numeric_order(cols);
+    std::vector<int> row_at(rows.size()), col_at(cols.size());  // old index -> drawn index
+    for (size_t i = 0; i < row_order.size(); ++i) row_at[static_cast<size_t>(row_order[i])] = static_cast<int>(i);
+    for (size_t i = 0; i < col_order.size(); ++i) col_at[static_cast<size_t>(col_order[i])] = static_cast<int>(i);
     p.grid_rows = static_cast<int>(rows.size());
     p.grid_cols = static_cast<int>(cols.size());
     p.grid.assign(static_cast<size_t>(p.grid_rows) * static_cast<size_t>(p.grid_cols), 0.0);
-    size_t total = 0;
-    for (const auto& [rc, c] : counts) {
-        p.grid[static_cast<size_t>(rc.first) * static_cast<size_t>(p.grid_cols) + static_cast<size_t>(rc.second)] = c;
-        total += static_cast<size_t>(c);
-    }
+    for (const auto& [rc, c] : counts)
+        p.grid[static_cast<size_t>(row_at[static_cast<size_t>(rc.first)]) * static_cast<size_t>(p.grid_cols) +
+               static_cast<size_t>(col_at[static_cast<size_t>(rc.second)])] = c;
+    std::vector<std::string> sorted_rows, sorted_cols;
+    for (int i : row_order) sorted_rows.push_back(rows[static_cast<size_t>(i)]);
+    for (int i : col_order) sorted_cols.push_back(cols[static_cast<size_t>(i)]);
+    rows = std::move(sorted_rows);
+    cols = std::move(sorted_cols);
+    const size_t total = n;
     p.row_names = rows;
     p.col_names = cols;
     p.label = {DataLabel::State::Exact, total, total};
@@ -491,19 +530,6 @@ void PrepareHistogram2D(Prepared& p, const SourceColumn* xcol, const SourceColum
     p.label = {DataLabel::State::Exact, pts.size(), pts.size()};
 }
 
-std::string Trim(const std::string& v) {
-    const size_t a = v.find_first_not_of(" \t");
-    if (a == std::string::npos) return "";
-    return v.substr(a, v.find_last_not_of(" \t") - a + 1);
-}
-
-bool ParseNumber(const std::string& text, double& out) {
-    if (text.empty()) return false;
-    char* end = nullptr;
-    out = std::strtod(text.c_str(), &end);
-    return end && *end == '\0' && std::isfinite(out);
-}
-
 template <typename T>
 bool Compare(const T& a, const std::string& op, const T& b) {
     if (op == "=") return a == b;
@@ -541,6 +567,7 @@ std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
     add(spec.x_column);
     for (const auto& y : spec.y_columns) add(y);
     add(spec.color_column);
+    add(spec.value_column);
     if (spec.rows == RowMode::Filter)
         for (const auto& c : spec.conditions) add(c.column);
     return out;
@@ -702,6 +729,11 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
             ys.push_back(y);
         }
     }
+    const SourceColumn* value = nullptr;
+    if (!spec.value_column.empty() && (kind.optional & kEncValue)) {
+        value = column(spec.value_column, true);
+        if (!value) return p;
+    }
     const SourceColumn* colour = nullptr;
     if (!spec.color_column.empty() && (kind.optional & kEncColor)) {
         colour = column(spec.color_column, false);
@@ -733,7 +765,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
-        case Kind::Heatmap: PrepareHeatmap(p, xcol, ys.front()); break;
+        case Kind::Heatmap: PrepareHeatmap(p, xcol, ys.front(), value); break;
         case Kind::Histogram2D: PrepareHistogram2D(p, xcol, ys.front()); break;
     }
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && !ys.empty())

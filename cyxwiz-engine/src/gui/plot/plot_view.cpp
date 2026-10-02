@@ -600,6 +600,24 @@ void PlotView::DrawPlot(ImVec2 size) {
         }
     }
 
+    // A y = x reference line (ROC chance) across the data's extent.
+    if (p.spec.show_diagonal && (kind == Kind::Line || kind == Kind::Scatter)) {
+        double lo = 0, hi = 0;
+        bool first = true;
+        for (const auto& s : p.series)
+            for (size_t k = 0; k < std::min(s.x.size(), s.y.size()); ++k) {
+                const double a = std::min(s.x[k], s.y[k]), b = std::max(s.x[k], s.y[k]);
+                lo = first ? a : std::min(lo, a);
+                hi = first ? b : std::max(hi, b);
+                first = false;
+            }
+        if (!first && hi > lo) {
+            const double xs[2] = {lo, hi}, ys[2] = {lo, hi};
+            ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.8f), 1.2f);
+            ImPlot::PlotLine("y = x", xs, ys, 2);
+        }
+    }
+
     if (ImPlot::IsPlotHovered() && pending_->action == Pending::Action::None) DrawHover();
     const ImPlotRect lim = ImPlot::GetPlotLimits();
     range_ = AxisRange{lim.X.Min, lim.X.Max, lim.Y.Min, lim.Y.Max, log_y_};
@@ -753,8 +771,12 @@ void PlotView::DrawHover() {
             const int c = static_cast<int>(std::floor(m.x));
             const int r = p.grid_rows - 1 - static_cast<int>(std::floor(m.y));
             if (c < 0 || r < 0 || c >= p.grid_cols || r >= p.grid_rows) break;
-            begin(p.row_names[static_cast<size_t>(r)] + " \xC2\xB7 " + p.col_names[static_cast<size_t>(c)]);
-            TooltipRow(ColourOf((0)), "rows", Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
+            // "Actual 0 · Predicted 1": each value with its axis name.
+            const std::string yl = YLabel(p), xl = XLabel(p);
+            begin((yl.empty() ? std::string() : yl + " ") + p.row_names[static_cast<size_t>(r)] + " \xC2\xB7 " +
+                  (xl.empty() ? std::string() : xl + " ") + p.col_names[static_cast<size_t>(c)]);
+            TooltipRow(ColourOf((0)), p.spec.value_column.empty() ? std::string("rows") : p.spec.value_column,
+                       Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
             break;
         }
         case Kind::Histogram2D: {

@@ -227,6 +227,12 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     }
 
     o << "<g clip-path=\"url(#area)\">\n";
+    if (p.spec.show_diagonal && (p.spec.kind == Kind::Line || p.spec.kind == Kind::Scatter)) {
+        const double lo = std::max(range.x0, range.y0), hi = std::min(range.x1, range.y1);
+        if (hi > lo)
+            o << "<line x1=\"" << f.X(lo) << "\" y1=\"" << f.Y(lo) << "\" x2=\"" << f.X(hi) << "\" y2=\"" << f.Y(hi)
+              << "\" stroke=\"" << st.text_dim << "\" stroke-width=\"1.2\"/>\n";
+    }
     switch (p.spec.kind) {
         case Kind::Line:
         case Kind::Area:

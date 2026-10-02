@@ -20,7 +20,8 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Box, "box", "Box", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Violin, "violin", "Violin", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::ErrorBars, "error_bars", "Error bars", Group::Distribution, kEncX | kEncY, 0, false, "Groups", "Values (mean and spread)"},
-        {Kind::Heatmap, "heatmap", "Heatmap", Group::GridDensity, kEncX | kEncY, 0, false, "Columns (categories)", "Rows (categories)"},
+        {Kind::Heatmap, "heatmap", "Heatmap", Group::GridDensity, kEncX | kEncY, kEncValue, false, "Columns (categories)", "Rows (categories)",
+         "Cell values (optional: count rows)"},
         {Kind::Histogram2D, "histogram_2d", "2D histogram", Group::GridDensity, kEncX | kEncY, 0, false, "X values", "Y values"},
     };
     return kinds;
@@ -89,6 +90,8 @@ std::string SpecToJson(const PlotSpec& s) {
     j["x"] = s.x_column;
     j["y"] = s.y_columns;
     j["color"] = s.color_column;
+    j["value"] = s.value_column;
+    j["diagonal"] = s.show_diagonal;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -131,6 +134,8 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
         for (const auto& y : j["y"])
             if (y.is_string()) out.y_columns.push_back(y.get<std::string>());
     out.color_column = j.value("color", std::string());
+    out.value_column = j.value("value", std::string());
+    out.show_diagonal = j.value("diagonal", false);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());
