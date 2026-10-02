@@ -650,7 +650,7 @@ std::string ColumnSummary::Text() const {
         if (distinct == 0) return "no numbers";
         if (distinct == 1) return "always " + Short(min);
         char buf[96];
-        std::snprintf(buf, sizeof(buf), "%s\xE2\x80\x93%s \xC2\xB7 %.1f%% not 0", Short(min).c_str(), Short(max).c_str(),
+        std::snprintf(buf, sizeof(buf), "%s to %s \xC2\xB7 %.1f%% not 0", Short(min).c_str(), Short(max).c_str(),
                       100.0 * not_zero);
         return buf;
     }

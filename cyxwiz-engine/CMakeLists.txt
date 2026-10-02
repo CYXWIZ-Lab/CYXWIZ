@@ -398,6 +398,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_window.cpp
+    src/gui/plot/column_picker.cpp
     src/core/plot/node_result_plan.cpp
     src/core/plot/plot_arrow_source.cpp
     src/gui/panels/training_plot_panel_global.cpp

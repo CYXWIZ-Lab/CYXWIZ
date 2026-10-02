@@ -13,6 +13,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -70,6 +71,7 @@ void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<a
             numeric_.push_back(c.numeric);
         }
     }
+    ReadColumns();
     // First plot: a label column's counts, else a text column's counts, else
     // the first numeric column's histogram.
     if (spec_.x_column.empty() && spec_.y_columns.empty() && !headers_.empty()) {
@@ -102,12 +104,14 @@ void PlotWindow::ClearData(const std::string& source_name, const std::string& me
     arrow_table_.reset();
     headers_.clear();
     numeric_.clear();
+    columns_.clear();
     empty_message_ = message;
     view_.Clear();
 }
 
 void PlotWindow::SetSpec(PlotSpec spec) {
     spec_ = std::move(spec);
+    condition_values_.clear();  // re-read from the spec
     std::snprintf(title_buf_, sizeof(title_buf_), "%s", spec_.title.c_str());
     view_.RequestFit();
     Rebuild();
@@ -120,7 +124,48 @@ void PlotWindow::SetTable(std::shared_ptr<DataTable> table, size_t row_limit, si
     total_rows_ = total_rows;
     headers_ = table_ ? table_->GetHeaders() : std::vector<std::string>{};
     numeric_ = table_ ? NumericColumns(*table_) : std::vector<bool>{};
+    ReadColumns();
     Rebuild();
+}
+
+size_t PlotWindow::TableRows() const {
+    if (arrow_table_) return static_cast<size_t>(arrow_table_->num_rows());
+    return table_ ? table_->GetRowCount() : 0;
+}
+
+void PlotWindow::ReadColumns() {
+    // Names and types now; the summaries follow.
+    columns_.clear();
+    for (size_t i = 0; i < headers_.size(); ++i) {
+        ColumnSummary c;
+        c.name = headers_[i];
+        c.numeric = numeric_[i];
+        columns_.push_back(std::move(c));
+    }
+    if (arrow_table_) {
+        // An Arrow table does not change: one column at a time off the UI
+        // thread (a wide table is never copied whole).
+        columns_job_ = std::async(std::launch::async, [table = arrow_table_]() {
+            std::vector<ColumnSummary> out;
+            for (const auto& c : ArrowColumns(*table)) {
+                const Source one = SourceFromArrow(*table, {c.name});
+                if (one.columns.empty()) {
+                    ColumnSummary plain;
+                    plain.name = c.name;
+                    plain.numeric = c.numeric;
+                    out.push_back(std::move(plain));
+                } else {
+                    out.push_back(SummarizeColumn(one.columns.front()));
+                }
+            }
+            return out;
+        });
+    } else if (table_ && headers_.size() * table_->GetRowCount() <= 2000000) {
+        // A DataTable is read on the UI thread, so only small ones.
+        const Source all = SourceFromTable(*table_, headers_, numeric_);
+        for (auto& c : columns_)
+            if (const SourceColumn* sc = all.Find(c.name)) c = SummarizeColumn(*sc);
+    }
 }
 
 int PlotWindow::ColumnIndex(const std::string& name) const {
@@ -139,9 +184,7 @@ void PlotWindow::Rebuild() {
         dirty_ = true;
         return;
     }
-    std::vector<std::string> needed = spec_.y_columns;
-    needed.push_back(spec_.x_column);
-    needed.push_back(spec_.color_column);
+    const std::vector<std::string> needed = ColumnsNeeded(spec_);
     if (arrow_table_) {
         // An Arrow table does not change: read and prepare off the UI thread.
         busy_ = true;
@@ -168,6 +211,10 @@ void PlotWindow::Rebuild() {
 }
 
 void PlotWindow::Poll() {
+    if (columns_job_.valid() && columns_job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        std::vector<ColumnSummary> read = columns_job_.get();
+        if (read.size() == columns_.size()) columns_ = std::move(read);  // still the same table
+    }
     if (!busy_ || !job_.valid()) return;
     if (job_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
     view_.SetData(job_.get());
@@ -287,6 +334,115 @@ void PlotWindow::DrawKinds() {
     ImGui::TextColored(t.text_faint, "3D: P4");
 }
 
+bool PlotWindow::DrawRows(float w) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    bool changed = false;
+    ImGui::TextColored(t.text_dim, "ROWS");
+    static const char* const kModes[] = {"All", "First", "Range", "Filter"};
+    int mode = static_cast<int>(spec_.rows);
+    if (ui::SegmentedControl("##rows", kModes, 4, &mode)) {
+        spec_.rows = static_cast<RowMode>(mode);
+        if (spec_.rows == RowMode::Filter && spec_.conditions.empty()) spec_.conditions.push_back({});
+        changed = true;
+    }
+    const std::string all = Thousands(static_cast<long long>(TableRows()));
+    switch (spec_.rows) {
+        case RowMode::All: ImGui::TextColored(t.text_dim, "All %s rows.", all.c_str()); break;
+        case RowMode::First: {
+            int n = static_cast<int>(std::min<size_t>(spec_.first_rows, 2000000000));
+            ImGui::SetNextItemWidth(w * 0.45f);
+            if (ImGui::InputInt("##first", &n, 0, 0)) {
+                spec_.first_rows = static_cast<size_t>(std::max(1, n));
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "of %s rows", all.c_str());
+            break;
+        }
+        case RowMode::Range: {
+            int from = static_cast<int>(std::min<size_t>(spec_.row_from, 2000000000));
+            int to = static_cast<int>(std::min<size_t>(spec_.row_to, 2000000000));
+            const float field = (w - ImGui::CalcTextSize("to").x - ImGui::GetStyle().ItemSpacing.x * 2) * 0.5f;
+            ImGui::SetNextItemWidth(field);
+            if (ImGui::InputInt("##from", &from, 0, 0)) {
+                spec_.row_from = static_cast<size_t>(std::max(1, from));
+                spec_.row_to = std::max(spec_.row_to, spec_.row_from);
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "to");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(field);
+            if (ImGui::InputInt("##to", &to, 0, 0)) {
+                spec_.row_to = std::max(spec_.row_from, static_cast<size_t>(std::max(1, to)));
+                changed = true;
+            }
+            ImGui::TextColored(t.text_dim, "Rows are numbered from 1, of %s.", all.c_str());
+            break;
+        }
+        case RowMode::Filter: {
+            if (condition_values_.size() != spec_.conditions.size()) {
+                condition_values_.assign(spec_.conditions.size(), {});
+                for (size_t i = 0; i < spec_.conditions.size(); ++i)
+                    std::snprintf(condition_values_[i].data(), condition_values_[i].size(), "%s",
+                                  spec_.conditions[i].value.c_str());
+            }
+            const auto& ops = ConditionOps();
+            const float remove_w = ImGui::CalcTextSize(ICON_FA_XMARK).x + 8.0f;
+            const float gap = ImGui::GetStyle().ItemSpacing.x;
+            for (size_t i = 0; i < spec_.conditions.size(); ++i) {
+                RowCondition& c = spec_.conditions[i];
+                ImGui::PushID(static_cast<int>(i));
+                const float col_w = (w - remove_w - gap * 3) * 0.46f, op_w = (w - remove_w - gap * 3) * 0.24f;
+                const std::string col_id = "##cond_col" + std::to_string(i);
+                changed |= picker_.Pick(col_id.c_str(), c.column, columns_, false, nullptr, col_w);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(op_w);
+                if (ImGui::BeginCombo("##op", c.op.c_str())) {
+                    for (const auto& op : ops)
+                        if (ImGui::Selectable(op.c_str(), op == c.op)) {
+                            c.op = op;
+                            changed = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(std::max(30.0f, w - col_w - op_w - remove_w - gap * 3));
+                if (ImGui::InputTextWithHint("##value", "value", condition_values_[i].data(), condition_values_[i].size())) {
+                    c.value = condition_values_[i].data();
+                    changed = true;
+                }
+                ImGui::SameLine();
+                bool removed = false;
+                if (ui::LinkButton(ICON_FA_XMARK "##remove")) {
+                    spec_.conditions.erase(spec_.conditions.begin() + static_cast<std::ptrdiff_t>(i));
+                    condition_values_.erase(condition_values_.begin() + static_cast<std::ptrdiff_t>(i));
+                    changed = removed = true;
+                }
+                if (!removed && ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this condition");
+                ImGui::PopID();
+                if (removed) break;
+            }
+            if (ui::LinkButton("Add condition")) {
+                spec_.conditions.push_back({});
+                condition_values_.push_back({});
+                changed = true;
+            }
+            const Prepared& p = view_.Data();
+            if (view_.HasData() && p.problem.empty() && !p.label.selection.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(t.text_dim, "%s of %s rows match.", Thousands(static_cast<long long>(p.rows_selected)).c_str(),
+                                   Thousands(static_cast<long long>(p.rows_total)).c_str());
+            }
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_faint, "All conditions must match. To filter for the whole graph, use a Filter Rows node.");
+            ImGui::PopTextWrapPos();
+            break;
+        }
+    }
+    return changed;
+}
+
 void PlotWindow::DrawSettings() {
     const ui::Tokens& t = ui::CurrentTokens();
     const KindInfo& k = Info(spec_.kind);
@@ -295,77 +451,49 @@ void PlotWindow::DrawSettings() {
     const bool auto_title = spec_.title == DefaultTitle(spec_);
     const float w = ImGui::GetContentRegionAvail().x;
 
+    changed |= DrawRows(w);
+
+    ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "DATA");
     // X / categories / values.
     if ((k.required | k.optional) & kEncX) {
         ImGui::TextColored(t.text_dim, "%s", k.x_hint);
-        ImGui::SetNextItemWidth(w);
-        const bool numeric_only = NumericX(spec_.kind);
-        const std::string preview = spec_.x_column.empty() ? std::string("(row number)") : spec_.x_column;
-        if (ImGui::BeginCombo("##x", preview.c_str())) {
-            if (!(k.required & kEncX) && ImGui::Selectable("(row number)", spec_.x_column.empty())) {
-                spec_.x_column.clear();
-                changed = true;
-            }
-            for (size_t i = 0; i < headers_.size(); ++i) {
-                if (numeric_only && !numeric_[i]) continue;
-                if (ImGui::Selectable(headers_[i].c_str(), headers_[i] == spec_.x_column)) {
-                    spec_.x_column = headers_[i];
-                    changed = true;
-                }
-            }
-            ImGui::EndCombo();
-        }
+        changed |= picker_.Pick("##x", spec_.x_column, columns_, NumericX(spec_.kind),
+                                (k.required & kEncX) ? nullptr : "(row number)", w);
     }
     // Y: several (one series each) or one.
     if ((k.required | k.optional) & kEncY) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
-        const bool text_ok = spec_.kind == Kind::Heatmap;
+        const bool numeric_only = spec_.kind != Kind::Heatmap;
         if (k.multi_y) {
-            for (size_t i = 0; i < headers_.size(); ++i) {
-                if (!numeric_[i]) continue;
-                bool on = std::find(spec_.y_columns.begin(), spec_.y_columns.end(), headers_[i]) != spec_.y_columns.end();
-                if (ImGui::Checkbox(headers_[i].c_str(), &on)) {
-                    if (on) spec_.y_columns.push_back(headers_[i]);
-                    else spec_.y_columns.erase(std::remove(spec_.y_columns.begin(), spec_.y_columns.end(), headers_[i]),
-                                               spec_.y_columns.end());
-                    changed = true;
-                }
+            changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
+            if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_dim, "%zu series: the legend lists %zu, hover shows all.", spec_.y_columns.size(),
+                                   kMaxLegendSeries);
+                ImGui::PopTextWrapPos();
             }
         } else {
-            ImGui::SetNextItemWidth(w);
-            const std::string preview = spec_.y_columns.empty() ? std::string(k.required & kEncY ? "(choose)" : "(none)")
-                                                                : spec_.y_columns.front();
-            if (ImGui::BeginCombo("##y", preview.c_str())) {
-                if (!(k.required & kEncY) && ImGui::Selectable("(none)", spec_.y_columns.empty())) {
-                    spec_.y_columns.clear();
-                    changed = true;
-                }
-                for (size_t i = 0; i < headers_.size(); ++i) {
-                    if (!text_ok && !numeric_[i]) continue;
-                    if (ImGui::Selectable(headers_[i].c_str(), !spec_.y_columns.empty() && spec_.y_columns.front() == headers_[i])) {
-                        spec_.y_columns = {headers_[i]};
-                        changed = true;
-                    }
-                }
-                ImGui::EndCombo();
+            std::string y = spec_.y_columns.empty() ? std::string() : spec_.y_columns.front();
+            if (picker_.Pick("##y", y, columns_, numeric_only, (k.required & kEncY) ? nullptr : "(none)", w)) {
+                spec_.y_columns.clear();
+                if (!y.empty()) spec_.y_columns.push_back(y);
+                changed = true;
             }
         }
     }
     if (k.optional & kEncColor) {
         ImGui::TextColored(t.text_dim, "Colour by");
-        ImGui::SetNextItemWidth(w);
-        if (ImGui::BeginCombo("##colour", spec_.color_column.empty() ? "(none)" : spec_.color_column.c_str())) {
-            if (ImGui::Selectable("(none)", spec_.color_column.empty())) {
-                spec_.color_column.clear();
+        changed |= picker_.Pick("##colour", spec_.color_column, columns_, false, "(none)", w);
+        // A number column on a scatter: groups or a colour scale.
+        const int c = ColumnIndex(spec_.color_column);
+        if (spec_.kind == Kind::Scatter && c >= 0 && numeric_[static_cast<size_t>(c)]) {
+            static const char* const kModes[] = {"Groups", "Scale"};
+            int mode = view_.HasData() && view_.Data().colour_scale ? 1 : 0;
+            if (ui::SegmentedControl("##colour_mode", kModes, 2, &mode)) {
+                spec_.color_mode = mode == 1 ? ColourMode::Scale : ColourMode::Groups;
                 changed = true;
             }
-            for (const auto& hname : headers_)
-                if (ImGui::Selectable(hname.c_str(), hname == spec_.color_column)) {
-                    spec_.color_column = hname;
-                    changed = true;
-                }
-            ImGui::EndCombo();
         }
     }
     if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D) {
@@ -470,9 +598,14 @@ std::string PlotWindow::PythonScript() const {
             const int c = ColumnIndex(col);
             if (c < 0 || (!table_ && !arrow_table_)) return "";
             std::vector<double> values;
-            const Source src = arrow_table_ ? SourceFromArrow(*arrow_table_, {col}) : SourceFromTable(*table_, {col}, numeric_);
-            if (src.columns.empty()) return "";
-            for (double v : src.columns.front().numbers)
+            std::vector<std::string> read = ColumnsNeeded(spec_);
+            if (std::find(read.begin(), read.end(), col) == read.end()) read.push_back(col);
+            const Source src = arrow_table_ ? SourceFromArrow(*arrow_table_, read) : SourceFromTable(*table_, read, numeric_);
+            const RowSelection rows = SelectRows(spec_, src);  // the same rows as the plot
+            if (!rows.problem.empty()) return "";
+            const SourceColumn* values_column = (rows.all ? src : rows.source).Find(col);
+            if (!values_column) return "";
+            for (double v : values_column->numbers)
                 if (std::isfinite(v)) values.push_back(v);
             return plotscript::MatplotlibScript(p.spec.kind == Kind::Histogram ? K::Histogram : K::Box, spec_.title, values);
         }

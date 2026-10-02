@@ -265,7 +265,7 @@ int main() {
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
     cs1 = SummarizeColumn(Numbers("pixel407", {0, 0, 255, 128}));
-    Check(!cs1.OneValue() && cs1.distinct == 3 && cs1.Text() == "0\xE2\x80\x93" "255 \xC2\xB7 50.0% not 0",
+    Check(!cs1.OneValue() && cs1.distinct == 3 && cs1.Text() == "0 to 255 \xC2\xB7 50.0% not 0",
           "range and share not 0: " + cs1.Text());
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());

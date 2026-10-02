@@ -1,6 +1,7 @@
 #include "plot_view.h"
 
 #include "plot_style.h"
+#include "../../core/plot/plot_prepare.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
@@ -75,6 +76,20 @@ ImVec4 LabelColour(DataLabel::State s) {
     return t.text_dim;
 }
 
+// The legend lists the first kMaxLegendSeries series; the rest are drawn
+// and shown on hover ("##" hides an ImPlot item from the legend).
+std::string LegendLabel(const Prepared& p, size_t i, const std::string& label) {
+    return p.series.size() > kMaxLegendSeries && i >= kMaxLegendSeries ? "##" + label : label;
+}
+
+// Colour of a value on the plot's colour scale (a missing value: faint).
+ImVec4 ScaleColourOf(const Prepared& p, double v) {
+    if (!std::isfinite(v)) return ui::CurrentTokens().text_faint;
+    const double span = p.colour_max - p.colour_min;
+    const float t = static_cast<float>(span > 0 ? std::clamp((v - p.colour_min) / span, 0.0, 1.0) : 0.0);
+    return ImPlot::SampleColormap(t, p.colour_diverging ? DivergingColormap() : SequentialColormap());
+}
+
 // Nearest index of `x` in an ascending array.
 size_t NearestSorted(const std::vector<double>& xs, double x) {
     auto it = std::lower_bound(xs.begin(), xs.end(), x);
@@ -102,8 +117,13 @@ void PlotView::SetData(Prepared data) {
     const bool kind_changed = !has_data_ || data.spec.kind != data_.spec.kind ||
                               data.spec.x_column != data_.spec.x_column || data.spec.y_columns != data_.spec.y_columns;
     const bool log_changed = has_data_ && data.spec.log_y != data_.spec.log_y;
+    // Other rows (Rows in the Data panel) or another colour: fit to them.
+    const bool rows_changed = has_data_ && (data.label.selection != data_.label.selection ||
+                                            data.rows_selected != data_.rows_selected ||
+                                            data.spec.color_column != data_.spec.color_column);
     data_ = std::move(data);
     has_data_ = true;
+    if (rows_changed) fit_ = true;
     // New values keep the user's Log Y and Legend; a new plot or a changed
     // log setting takes the spec's.
     if (kind_changed || log_changed) log_y_ = data_.spec.log_y;
@@ -167,6 +187,9 @@ void PlotView::ExportMenu(const Options& o) {
             for (int i = 0; i < 6; ++i) st.series[i] = HexColour(t.series[i].x, t.series[i].y, t.series[i].z);
             st.scale_low = HexColour(t.scale_sequential[0].x, t.scale_sequential[0].y, t.scale_sequential[0].z);
             st.scale_high = HexColour(t.scale_sequential[3].x, t.scale_sequential[3].y, t.scale_sequential[3].z);
+            st.diverging_low = HexColour(t.scale_diverging[0].x, t.scale_diverging[0].y, t.scale_diverging[0].z);
+            st.diverging_mid = HexColour(t.scale_diverging[1].x, t.scale_diverging[1].y, t.scale_diverging[1].z);
+            st.diverging_high = HexColour(t.scale_diverging[2].x, t.scale_diverging[2].y, t.scale_diverging[2].z);
             std::ofstream(*path, std::ios::binary) << ToSvg(data_, range_, st);
             note_ = "Saved " + *path;
             note_until_ = ImGui::GetTime() + 4.0;
@@ -210,7 +233,10 @@ void PlotView::DrawToolbar(const Options& o) {
         ui::StatusPill(("##label" + id_).c_str(), label.c_str(), LabelColour(data_.label.state));
         if (ImGui::IsItemHovered()) {
             switch (data_.label.state) {
-                case DataLabel::State::Exact: ImGui::SetTooltip("All values are drawn."); break;
+                case DataLabel::State::Exact:
+                    ImGui::SetTooltip(data_.label.selection.empty() ? "All values are drawn."
+                                                                    : "All values of the chosen rows are drawn (Rows in the Data panel).");
+                    break;
                 case DataLabel::State::Reduced:
                     ImGui::SetTooltip("Long series are drawn with the lowest and highest value of each step,\nso spikes stay visible. Hover values and exports use all points.");
                     break;
@@ -328,9 +354,11 @@ void PlotView::DrawPlot(ImVec2 size) {
     const Prepared& p = data_;
     const Kind kind = p.spec.kind;
     const ui::Tokens& t = ui::CurrentTokens();
-    const bool scale_bar = kind == Kind::Heatmap || kind == Kind::Histogram2D;
+    const bool scale_bar = kind == Kind::Heatmap || kind == Kind::Histogram2D || p.colour_scale;
     ImVec2 plot_size = size;
-    if (scale_bar) plot_size.x = std::max(100.0f, size.x - 76.0f);
+    // A colour bar with a column name needs room for its ticks and the name.
+    const float bar_w = p.colour_scale ? 60.0f + ImGui::GetTextLineHeight() + 8.0f : 60.0f;
+    if (scale_bar) plot_size.x = std::max(100.0f, size.x - bar_w - 16.0f);
 
     // No mouse-position text: the hover card shows the values.
     ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText;
@@ -431,7 +459,8 @@ void PlotView::DrawPlot(ImVec2 size) {
                 const auto& s = p.series[i];
                 const ImVec4 c = ColourOf((i));
                 const bool smoothed = !s.smooth_y.empty();
-                const char* label = s.label.c_str();
+                const std::string legend_label = LegendLabel(p, i, s.label);
+                const char* label = legend_label.c_str();
                 if (kind == Kind::Area) {
                     ImPlot::SetNextFillStyle(c, 0.25f);
                     ImPlot::PlotShaded(label, s.x.data(), s.y.data(), n(s.x), 0.0);
@@ -446,7 +475,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                     ImPlot::PlotLine(label, s.x.data(), s.y.data(), n(s.x));
                 }
                 if (smoothed) {
-                    const std::string sl = s.label + ", smoothed (" + std::to_string(p.spec.smooth) + ")";
+                    const std::string sl = LegendLabel(p, i, s.label + ", smoothed (" + std::to_string(p.spec.smooth) + ")");
                     ImPlot::SetNextLineStyle(ui::Mix(c, t.text_bright, 0.35f), 2.6f);
                     ImPlot::PlotLine(sl.c_str(), s.smooth_x.data(), s.smooth_y.data(), n(s.smooth_x));
                 }
@@ -455,8 +484,22 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Scatter:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
+                if (p.colour_scale) {
+                    // Invisible markers keep the axes fitting the points; each
+                    // point is then drawn in its colour on the scale.
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(t.text, 0.0f), 0.0f);
+                    ImPlot::PlotScatter(("##" + s.label).c_str(), s.x.data(), s.y.data(), n(s.x));
+                    ImDrawList* dl = ImPlot::GetPlotDrawList();
+                    ImPlot::PushPlotClipRect();
+                    for (size_t k = 0; k < s.x.size(); ++k) {
+                        const ImVec4 c = ScaleColourOf(p, k < s.c.size() ? s.c[k] : NAN);
+                        dl->AddCircleFilled(ImPlot::PlotToPixels(s.x[k], s.y[k]), 2.5f, ui::ToU32(ui::WithAlpha(c, 0.8f)), 8);
+                    }
+                    ImPlot::PopPlotClipRect();
+                    continue;
+                }
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf((i)), 0.7f), 0.0f);
-                ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
+                ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
         case Kind::Histogram: {
@@ -552,7 +595,12 @@ void PlotView::DrawPlot(ImVec2 size) {
     frame_min_ = ImGui::GetItemRectMin();
     frame_max_ = ImGui::GetItemRectMax();
 
-    if (scale_bar) {
+    if (scale_bar && p.colour_scale) {
+        // The colour bar of a scatter coloured by a number column.
+        ImGui::SameLine();
+        ImPlot::ColormapScale(p.colour_label.c_str(), p.colour_min, p.colour_max, ImVec2(bar_w, plot_size.y), "%g", 0,
+                              p.colour_diverging ? DivergingColormap() : SequentialColormap());
+    } else if (scale_bar) {
         double peak = 0;
         for (double v : p.grid) peak = std::max(peak, v);
         ImGui::SameLine();
@@ -621,6 +669,9 @@ void PlotView::DrawHover() {
                 begin(s.label);
                 TooltipRow(ColourOf((bs)), XLabel(p), Value(s.x[bk]));
                 TooltipRow(ColourOf((bs)), p.spec.y_columns.empty() ? "y" : p.spec.y_columns.front(), Value(s.y[bk]));
+                if (p.colour_scale && bk < s.c.size())
+                    TooltipRow(ScaleColourOf(p, s.c[bk]), p.colour_label,
+                               std::isfinite(s.c[bk]) ? Value(s.c[bk]) : std::string("missing"));
             }
             break;
         }

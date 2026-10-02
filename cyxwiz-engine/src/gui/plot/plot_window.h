@@ -5,9 +5,11 @@
 // Table Viewer's Quick Plot; later it hosts the Plot node (P2) and grows into
 // the Dashboard (P3). Data is prepared off the UI thread.
 
+#include "column_picker.h"
 #include "plot_view.h"
 #include "../../core/plot/plot_prepare.h"
 
+#include <array>
 #include <functional>
 #include <future>
 #include <memory>
@@ -63,6 +65,13 @@ private:
     void Poll();
     void DrawKinds();
     void DrawSettings();
+    // ROWS section (TOFIX134 P2 board 6); true when the selection changed.
+    bool DrawRows(float width);
+    // Column names and types of the table, then their summaries (range,
+    // share not 0, one value) for the column picker, read off the UI thread
+    // for an Arrow table.
+    void ReadColumns();
+    size_t TableRows() const;
     std::string PythonScript() const;
     int ColumnIndex(const std::string& name) const;
 
@@ -73,6 +82,11 @@ private:
     std::string empty_message_ = "No table. Open a table in the Table Viewer and choose Plot on a column.";
     std::vector<std::string> headers_;
     std::vector<bool> numeric_;
+    std::vector<ColumnSummary> columns_;
+    std::future<std::vector<ColumnSummary>> columns_job_;
+    ColumnPicker picker_;
+    // Text of each filter condition's value (spec_.conditions[i].value).
+    std::vector<std::array<char, 128>> condition_values_;
     size_t row_limit_ = 0, total_rows_ = 0;
     PlotSpec spec_;
     PlotView view_;
