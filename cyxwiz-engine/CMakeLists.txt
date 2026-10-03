@@ -149,6 +149,8 @@ set(ENGINE_SOURCES
     src/core/dataset_profiler.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
+    src/core/dashboard/dashboard_runtime.cpp
+    src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -1513,6 +1515,29 @@ if(WIN32)
 endif()
 set_target_properties(test_dataset_profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
+
+# ===== Test: Dashboard runtime (TOFIX134 P3.7) =====
+add_executable(test_dashboard_runtime
+    tests/test_dashboard_runtime.cpp
+    src/core/dashboard/dashboard_runtime.cpp
+    src/core/dashboard/dashboard_model.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+    src/core/plot/plot_model.cpp
+    src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_image.cpp
+    src/core/plot/world_map.cpp
+    src/core/series_decimation.cpp
+)
+target_include_directories(test_dashboard_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_dashboard_runtime PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_dashboard_runtime PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_dashboard_runtime PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME dashboard_runtime_contract COMMAND test_dashboard_runtime)
 
 # ===== Test: Sparse Feature Dataset Contract =====
 add_executable(test_sparse_feature_dataset

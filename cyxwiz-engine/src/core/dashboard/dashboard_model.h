@@ -18,6 +18,7 @@
 #include "../plot/plot_model.h"
 #include "../session_query_engine.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -86,6 +87,9 @@ struct DashboardSpec {
     std::string title;
     std::vector<WidgetSpec> widgets;
     FilterState filters;
+    // Column -> type when every widget last bound (a renamed column is then
+    // offered as the rebind for a field that is gone).
+    std::map<std::string, std::string> known_types;
     int next_id = 1;
     std::string NewId() { return "w" + std::to_string(next_id++); }
     WidgetSpec* Find(const std::string& id);

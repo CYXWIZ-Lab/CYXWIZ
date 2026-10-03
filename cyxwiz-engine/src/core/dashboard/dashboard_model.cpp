@@ -211,6 +211,7 @@ std::string DashboardToJson(const DashboardSpec& spec) {
     j["version"] = DashboardSpec::kVersion;
     j["title"] = spec.title;
     j["next_id"] = spec.next_id;
+    j["known_types"] = spec.known_types;
     j["widgets"] = json::array();
     for (const auto& w : spec.widgets) {
         json o;
@@ -263,6 +264,8 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
     DashboardSpec out;
     out.title = j.value("title", std::string());
     out.next_id = std::max(1, j.value("next_id", 1));
+    if (j.contains("known_types") && j["known_types"].is_object())
+        out.known_types = j["known_types"].get<std::map<std::string, std::string>>();
     if (j.contains("widgets") && j["widgets"].is_array())
         for (const auto& o : j["widgets"]) {
             WidgetSpec w;
