@@ -31,34 +31,91 @@ void Normalise(std::vector<Point2>& p, bool keep_aspect) {
 
 }  // namespace
 
-std::vector<int> FindGroups(int n, const std::vector<Edge>& edges) {
-    std::vector<std::vector<std::pair<int, double>>> adj(static_cast<size_t>(std::max(0, n)));
+namespace {
+
+// Louvain's local moving on one level: `self` is each node's own internal
+// weight (aggregated groups), `edges` the links between different nodes.
+std::vector<int> LocalMoving(int n, const std::vector<Edge>& edges, const std::vector<double>& self) {
+    std::vector<std::vector<std::pair<int, double>>> adj(static_cast<size_t>(n));
+    std::vector<double> k(static_cast<size_t>(n), 0.0);
+    double m2 = 0;  // twice the total weight
+    for (int i = 0; i < n; ++i) {
+        k[static_cast<size_t>(i)] += 2 * self[static_cast<size_t>(i)];
+        m2 += 2 * self[static_cast<size_t>(i)];
+    }
     for (const auto& e : edges) {
-        if (e.a < 0 || e.b < 0 || e.a >= n || e.b >= n || e.a == e.b) continue;
         adj[static_cast<size_t>(e.a)].push_back({e.b, e.weight});
         adj[static_cast<size_t>(e.b)].push_back({e.a, e.weight});
+        k[static_cast<size_t>(e.a)] += e.weight;
+        k[static_cast<size_t>(e.b)] += e.weight;
+        m2 += 2 * e.weight;
     }
-    std::vector<int> label(static_cast<size_t>(std::max(0, n)));
+    std::vector<int> label(static_cast<size_t>(n));
     std::iota(label.begin(), label.end(), 0);
-    for (int round = 0; round < 50; ++round) {
-        bool changed = false;
+    if (m2 <= 0) return label;
+    std::vector<double> tot(k);  // the sum of degrees per group
+    for (int pass = 0; pass < 50; ++pass) {
+        bool moved = false;
         for (int i = 0; i < n; ++i) {
-            if (adj[static_cast<size_t>(i)].empty()) continue;
-            std::map<int, double> votes;  // ordered: ties go to the smaller label
-            for (const auto& [j, w] : adj[static_cast<size_t>(i)]) votes[label[static_cast<size_t>(j)]] += w;
-            int best = label[static_cast<size_t>(i)];
-            double best_w = votes.count(best) ? votes[best] : -1.0;
-            for (const auto& [l, w] : votes)
-                if (w > best_w + 1e-12) {
-                    best = l;
-                    best_w = w;
+            const size_t si = static_cast<size_t>(i);
+            if (adj[si].empty()) continue;
+            std::map<int, double> to;  // weight from i into each neighbouring group
+            for (const auto& [j, w] : adj[si]) to[label[static_cast<size_t>(j)]] += w;
+            const int own = label[si];
+            tot[static_cast<size_t>(own)] -= k[si];
+            int best = own;
+            double best_gain = (to.count(own) ? to[own] : 0.0) - tot[static_cast<size_t>(own)] * k[si] / m2;
+            for (const auto& [g, w] : to) {
+                const double gain = w - tot[static_cast<size_t>(g)] * k[si] / m2;
+                if (gain > best_gain + 1e-12) {
+                    best = g;
+                    best_gain = gain;
                 }
-            if (best != label[static_cast<size_t>(i)]) {
-                label[static_cast<size_t>(i)] = best;
-                changed = true;
+            }
+            tot[static_cast<size_t>(best)] += k[si];
+            if (best != own) {
+                label[si] = best;
+                moved = true;
             }
         }
-        if (!changed) break;
+        if (!moved) break;
+    }
+    return label;
+}
+
+}  // namespace
+
+std::vector<int> FindGroups(int n, const std::vector<Edge>& edges) {
+    // Louvain: local moving, then each group becomes one node (its inside
+    // weight kept) and the moving runs again, while groups still merge.
+    std::vector<int> label(static_cast<size_t>(std::max(0, n)));
+    std::iota(label.begin(), label.end(), 0);
+    std::vector<Edge> level;
+    for (const auto& e : edges)
+        if (e.a >= 0 && e.b >= 0 && e.a < n && e.b < n && e.a != e.b && e.weight > 0) level.push_back(e);
+    std::vector<double> self(static_cast<size_t>(std::max(0, n)), 0.0);
+    int nodes = n;
+    for (int round = 0; round < 10 && nodes > 1; ++round) {
+        const auto moved = LocalMoving(nodes, level, self);
+        // Compact the group numbers of this level.
+        std::map<int, int> compact;
+        for (int g : moved) compact.emplace(g, static_cast<int>(compact.size()));
+        const int groups = static_cast<int>(compact.size());
+        for (int& l : label) l = compact[moved[static_cast<size_t>(l)]];
+        if (groups == nodes) break;
+        // The next level: a node per group, links summed, inside links as self weight.
+        std::vector<double> next_self(static_cast<size_t>(groups), 0.0);
+        for (int i = 0; i < nodes; ++i) next_self[static_cast<size_t>(compact[moved[static_cast<size_t>(i)]])] += self[static_cast<size_t>(i)];
+        std::map<std::pair<int, int>, double> sum;
+        for (const auto& e : level) {
+            int a = compact[moved[static_cast<size_t>(e.a)]], b = compact[moved[static_cast<size_t>(e.b)]];
+            if (a == b) next_self[static_cast<size_t>(a)] += e.weight;
+            else sum[{std::min(a, b), std::max(a, b)}] += e.weight;
+        }
+        level.clear();
+        for (const auto& [ab, w] : sum) level.push_back({ab.first, ab.second, w});
+        self = std::move(next_self);
+        nodes = groups;
     }
     // Renumber by size (largest first, then the smaller first label).
     std::map<int, int> size;

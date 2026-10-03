@@ -107,6 +107,8 @@ public:
     // 3D: turns the view (degrees; NaN elevation: the default view). The view
     // the user turns to is reported once they let go (to save in the plot).
     void SetView(double elevation, double azimuth);
+    // Network / Tree: back to the computed layout (moved nodes and folds undone).
+    void ResetGraphLayout();
     // The colour series i is drawn with (a picked colour, else the theme's).
     ImVec4 DrawnColour(size_t i) const { return ColourOf(i); }
     std::function<void(double elevation, double azimuth)> on_view_changed;
@@ -114,7 +116,8 @@ public:
 private:
     void DrawToolbar(const Options& options);
     void DrawPlot(ImVec2 size);
-    void Draw3D(ImVec2 size);         // Scatter 3D, Line 3D, Surface (plot_view3d.cpp)
+    void Draw3D(ImVec2 size);         // Scatter 3D, Line 3D, Surface, Mesh (plot_view3d.cpp)
+    void DrawGraph(ImVec2 size);      // Network, Tree (plot_view_graph.cpp)
     void DrawImages(ImVec2 size);     // Image: a grid of pictures (ImGui, not ImPlot)
     void DrawPairPlot(ImVec2 size);   // Pair plot: an ImPlot subplot grid
     void DrawSankey();                // Sankey, Treemap: drawn in pixels inside the plot
@@ -168,6 +171,14 @@ private:
         double x, y, z, c;
     };
     std::vector<Hover3D> hover3d_;
+    // Network / Tree: positions (x right, y up) after moves and folds.
+    std::vector<ImVec2> graph_pos_;
+    std::vector<char> graph_moved_, graph_fold_;
+    bool graph_layout_dirty_ = true;
+    int hot_graph_ = -1, graph_drag_ = -1;
+    ImVec2 graph_press_{};
+    ImVec2 hot_min_{}, hot_max_{};   // the node under the mouse last frame (pixels): where a press grabs it
+    bool graph_dragging_ = false;
 };
 
 }  // namespace cyxwiz::plot

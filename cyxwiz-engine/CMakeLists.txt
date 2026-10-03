@@ -435,6 +435,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/plot/plot_window.cpp
     src/gui/plot/column_picker.cpp
     src/core/plot/node_result_plan.cpp
@@ -1252,6 +1253,7 @@ pybind11_add_module(cyxwiz_plotting
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -3770,6 +3772,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -3881,6 +3884,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -5112,6 +5116,7 @@ add_executable(test_training_manager_session
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -5774,6 +5779,7 @@ add_executable(test_engine_node_parity
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_view3d.cpp
+    src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp

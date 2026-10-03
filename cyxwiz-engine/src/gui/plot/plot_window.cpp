@@ -32,7 +32,7 @@ namespace {
 
 bool NumericX(Kind k) {
     return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap && k != Kind::Confusion && k != Kind::Roc &&
-           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance && k != Kind::MapRegions;
+           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance && k != Kind::MapRegions && k != Kind::Network && k != Kind::Tree;
 }
 
 std::string DefaultTitle(const PlotSpec& s) {
@@ -553,10 +553,11 @@ bool PlotWindow::DrawColours(float w) {
     if (!view_.HasData() || !view_.Data().problem.empty()) return false;
     const ui::Tokens& t = ui::CurrentTokens();
     const Prepared& d = view_.Data();
-    const bool scaled = d.colour_scale || !d.grid.empty() || !d.hex_v.empty() || !d.region_value.empty() || !d.qx.empty() ||
+    const bool scaled = d.colour_scale || !d.grid.empty() || !d.mesh_tri.empty() || !d.hex_v.empty() || !d.region_value.empty() || !d.qx.empty() ||
                         !d.stream_lines.empty() || (d.spec.kind == Kind::Image && !d.spec.image_grey);
     std::vector<std::string> names;
-    if (!d.colour_scale) {
+    if (!d.graph_groups.empty()) names = d.graph_groups;  // Network / Tree: a colour per group or label
+    else if (!d.colour_scale) {
         if (d.spec.kind == Kind::Pie) names = d.categories;
         else
             for (const auto& s : d.series) names.push_back(s.label);
@@ -713,7 +714,7 @@ void PlotWindow::DrawSettings() {
     } else if (((k.required | k.optional) & kEncY) && !surface) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
         const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion && spec_.kind != Kind::Sankey &&
-                                  spec_.kind != Kind::Treemap;
+                                  spec_.kind != Kind::Treemap && spec_.kind != Kind::Network && spec_.kind != Kind::Tree;
         if (k.multi_y) {
             changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
             if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin &&
@@ -741,6 +742,8 @@ void PlotWindow::DrawSettings() {
         const bool treemap = spec_.kind == Kind::Treemap;
         ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)"
                                              : treemap                ? "Colour (a number; empty: by the top group)"
+                                             : spec_.kind == Kind::Tree    ? "Label (colours the boxes)"
+                                             : spec_.kind == Kind::Network ? "Node column (for Colour nodes by: A column)"
                                                                       : "Colour by");
         changed |= picker_.Pick("##colour", spec_.color_column, columns_, treemap, treemap ? "(top group)" : "(none)", w);
         // A number column on a scatter: groups or a colour scale.
@@ -1037,8 +1040,63 @@ void PlotWindow::DrawSettings() {
             ImGui::PopTextWrapPos();
         }
     }
+    // P4 group 2 (board 17): the graph options.
+    if (spec_.kind == Kind::Network) {
+        const auto segmented = [&](const char* label, const char* id, const char* const* names, int count, auto& field) {
+            ImGui::TextColored(t.text_dim, "%s", label);
+            int v = static_cast<int>(field);
+            if (ui::SegmentedControl(id, names, count, &v)) {
+                field = static_cast<std::remove_reference_t<decltype(field)>>(v);
+                changed = true;
+            }
+        };
+        static const char* const kLayout[] = {"Force", "Layered", "Circle"};
+        segmented("Layout", "##graph_layout", kLayout, 3, spec_.graph_layout);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Force: linked nodes pull together. Layered: left to right along the links (pipelines, model graphs). Circle: by group.");
+        static const char* const kColour[] = {"Groups found", "A column", "One colour"};
+        segmented("Colour nodes by", "##node_colour", kColour, 3, spec_.node_colour);
+        static const char* const kSize[] = {"Links", "Weight", "Same"};
+        segmented("Node size", "##node_size", kSize, 3, spec_.node_size);
+        static const char* const kLabels[] = {"Top", "All", "None"};
+        segmented("Labels", "##node_labels", kLabels, 3, spec_.node_labels);
+        if (spec_.node_labels == PlotSpec::NodeLabels::Top) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputInt("##label_top", &spec_.label_top, 0, 0)) {
+                spec_.label_top = std::clamp(spec_.label_top, 1, 1000);
+                changed = true;
+            }
+        }
+        changed |= ImGui::Checkbox("Directed (arrows)", &spec_.directed);
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && d.metrics.size() >= 2 && d.metrics[0].first == "nodes") {
+            ImGui::TextColored(t.text_faint, "%s nodes \xC2\xB7 %s links \xC2\xB7 %zu %s", Thousands(static_cast<long long>(d.metrics[0].second)).c_str(),
+                               Thousands(static_cast<long long>(d.metrics[1].second)).c_str(), d.graph_groups.size(),
+                               spec_.node_colour == PlotSpec::NodeColour::Groups ? "groups found" : "colours");
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Drag to pan, wheel to zoom, drag a node to move it; hover a node for its links.");
+        ImGui::PopTextWrapPos();
+    }
+    if (spec_.kind == Kind::Tree) {
+        ImGui::TextColored(t.text_dim, "Direction");
+        static const char* const kDir[] = {"Top-down", "Left-right"};
+        int dir = spec_.tree_left_right ? 1 : 0;
+        if (ui::SegmentedControl("##tree_dir", kDir, 2, &dir)) {
+            spec_.tree_left_right = dir == 1;
+            changed = true;
+        }
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && d.metrics.size() >= 3 && d.metrics[0].first == "nodes") {
+            ImGui::TextColored(t.text_faint, "%s nodes \xC2\xB7 %.0f %s \xC2\xB7 %.0f levels", Thousands(static_cast<long long>(d.metrics[0].second)).c_str(),
+                               d.metrics[1].second, d.metrics[1].second == 1 ? "root" : "roots", d.metrics[2].second + 1);
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Click a box to fold its branch; drag to pan, wheel to zoom. A parent that is not a node makes a root.");
+        ImGui::PopTextWrapPos();
+    }
     // P4 group 1 (board 16): how a surface is drawn, and how scattered rows go on a grid.
-    if (surface) {
+    if (surface || spec_.kind == Kind::Mesh) {
         ImGui::TextColored(t.text_dim, "Draw");
         static const char* const kDraw[] = {"Fill", "Lines", "Both"};
         int draw = static_cast<int>(spec_.surface_draw);
@@ -1048,9 +1106,16 @@ void PlotWindow::DrawSettings() {
         }
         changed |= ImGui::Checkbox("Shade", &spec_.shade);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Light from the upper left, so slopes show");
-        ImGui::SameLine();
-        changed |= ImGui::Checkbox("Contours on the floor", &spec_.floor_contours);
-        if (!grid_surface) {
+        if (surface) {
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Contours on the floor", &spec_.floor_contours);
+        } else {
+            const Prepared& d = view_.Data();
+            if (view_.HasData() && !d.metrics.empty() && d.metrics[0].first == "triangles")
+                ImGui::TextColored(t.text_faint, "%s points joined into %s triangles", Thousands(static_cast<long long>(d.mesh_x.size())).c_str(),
+                                   Thousands(static_cast<long long>(d.metrics[0].second)).c_str());
+        }
+        if (surface && !grid_surface) {
             ImGui::TextColored(t.text_dim, "Grid cells across (scattered rows)");
             ImGui::SetNextItemWidth(w);
             if (ImGui::InputInt("##surface_bins", &spec_.bins, 0, 0)) {

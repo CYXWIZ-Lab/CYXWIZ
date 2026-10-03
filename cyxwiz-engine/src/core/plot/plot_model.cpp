@@ -124,6 +124,12 @@ std::vector<std::pair<std::string, std::string>> SpecSummary(const PlotSpec& s) 
     };
     if (s.kind == Kind::Surface && s.surface_from == PlotSpec::SurfaceFrom::Grid) {
         add("grid columns", list(s.y_columns));
+    } else if (s.kind == Kind::Network || s.kind == Kind::Tree) {
+        const bool net = s.kind == Kind::Network;
+        add(net ? "source" : "node", s.x_column);
+        add(net ? "target" : "parent", list(s.y_columns));
+        add(net ? "weight" : "value", s.value_column);
+        add(net ? "node column" : "label", s.color_column);
     } else {
         add("X", s.x_column);
         add(k.multi_y && s.y_columns.size() > 1 ? "Y" : "Y", list(s.y_columns));

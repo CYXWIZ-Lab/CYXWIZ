@@ -21,6 +21,7 @@
 #include <implot3d_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <numeric>
@@ -118,7 +119,8 @@ void PlotView::Draw3D(ImVec2 size) {
     const Kind kind = p.spec.kind;
     const ui::Tokens& t = ui::CurrentTokens();
     const bool surface = kind == Kind::Surface;
-    const bool bar = surface || p.colour_scale;
+    const bool mesh = kind == Kind::Mesh;
+    const bool bar = surface || mesh || p.colour_scale;
     const float bar_w = 60.0f + ImGui::GetTextLineHeight() + 8.0f;
     ImVec2 plot_size = size;
     if (bar) plot_size.x = std::max(120.0f, size.x - bar_w - 16.0f);
@@ -305,6 +307,77 @@ void PlotView::Draw3D(ImVec2 size) {
                 if (unused_v > 0) dl.PrimUnreserve(unused_v / 4 * 6, unused_v);
             }
         }
+    } else if (mesh && !p.mesh_tri.empty()) {
+        // Mesh: one vertex per point, shaded with the normals of the triangles around it.
+        const size_t nv = p.mesh_x.size();
+        std::vector<ImPlot3DPoint> ndc(nv), nrm(nv, ImPlot3DPoint(0, 0, 0));
+        std::vector<ImVec2> pix(nv);
+        std::vector<char> ok(nv, 0);
+        for (size_t i = 0; i < nv; ++i) {
+            const ImPlot3DPoint pt(static_cast<float>(p.mesh_x[i]), static_cast<float>(p.mesh_y[i]), static_cast<float>(p.mesh_z[i]));
+            if (!inside(pt.x, pt.y, pt.z)) continue;
+            ndc[i] = ImPlot3D::PlotToNDC(pt);
+            pix[i] = ImPlot3D::PlotToPixels(pt);
+            ok[i] = 1;
+            hover3d_.push_back({pix[i], pt.x, pt.y, pt.z, NAN});
+        }
+        std::vector<std::array<size_t, 3>> tris;
+        for (size_t k = 0; k + 2 < p.mesh_tri.size(); k += 3) {
+            const std::array<size_t, 3> tri{static_cast<size_t>(p.mesh_tri[k]), static_cast<size_t>(p.mesh_tri[k + 1]), static_cast<size_t>(p.mesh_tri[k + 2])};
+            if (!ok[tri[0]] || !ok[tri[1]] || !ok[tri[2]]) continue;
+            tris.push_back(tri);
+            ImPlot3DPoint fn = (ndc[tri[1]] - ndc[tri[0]]).Cross(ndc[tri[2]] - ndc[tri[0]]);
+            if (fn.z < 0) fn = -fn;
+            for (size_t v : tri) nrm[v] += fn;
+        }
+        const bool fill = p.spec.surface_draw != PlotSpec::SurfaceDraw::Lines;
+        const bool lines = p.spec.surface_draw != PlotSpec::SurfaceDraw::Fill;
+        if (fill && !tris.empty() && dl._VtxCurrentIdx + nv < ImDrawList3D::MaxIdx()) {
+            ImPlot3DPoint light(-0.45f, -0.55f, 0.7f);
+            light.Normalize();
+            size_t used = 0;
+            for (char o : ok) used += o ? 1 : 0;
+            dl.PrimReserve(static_cast<int>(tris.size() * 3), static_cast<int>(used));
+            std::vector<unsigned> index(nv, 0);
+            for (size_t i = 0; i < nv; ++i) {
+                if (!ok[i]) continue;
+                float shade = 1.0f;
+                if (p.spec.shade && nrm[i].LengthSquared() > 0) {
+                    ImPlot3DPoint n = nrm[i];
+                    n.Normalize();
+                    shade = 0.62f + 0.45f * std::max(0.0f, n.Dot(light));
+                }
+                ImDrawVert& v = *dl._VtxWritePtr++;
+                v.pos = pix[i];
+                v.uv = uv;
+                v.col = Shade(SurfaceColour(p, p.mesh_z[i]), shade);
+                index[i] = dl._VtxCurrentIdx++;
+            }
+            for (const auto& tri : tris) {
+                for (int c = 0; c < 3; ++c) dl._IdxWritePtr[c] = static_cast<ImDrawIdx>(index[tri[static_cast<size_t>(c)]]);
+                dl._IdxWritePtr += 3;
+                *dl._ZWritePtr++ = Depth(plot, (ndc[tri[0]] + ndc[tri[1]] + ndc[tri[2]]) / 3.0f);
+            }
+        }
+        if (lines) {
+            // Each edge once.
+            std::vector<std::pair<size_t, size_t>> edges;
+            for (const auto& tri : tris)
+                for (int c = 0; c < 3; ++c) {
+                    size_t a = tri[static_cast<size_t>(c)], b = tri[static_cast<size_t>((c + 1) % 3)];
+                    if (a > b) std::swap(a, b);
+                    edges.push_back({a, b});
+                }
+            std::sort(edges.begin(), edges.end());
+            edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+            const size_t room = (ImDrawList3D::MaxIdx() - dl._VtxCurrentIdx) / 4;
+            if (edges.size() > room) edges.resize(room);
+            const ImU32 col = fill ? Shade(t.plot_bg, 1.0f, 0.6f) : ImGui::ColorConvertFloat4ToU32(t.series[0]);
+            dl.PrimReserve(static_cast<int>(edges.size() * 6), static_cast<int>(edges.size() * 4));
+            for (const auto& [a, b] : edges) AddSegment(dl, pix[a], pix[b], 0.5f, col, uv, Depth(plot, (ndc[a] + ndc[b]) * 0.5f) + 1e-3f);
+            const int unused_v = static_cast<int>(dl.VtxBuffer.Data + dl.VtxBuffer.Size - dl._VtxWritePtr);
+            if (unused_v > 0) dl.PrimUnreserve(unused_v / 4 * 6, unused_v);
+        }
     } else {
         // Points and paths: projected here, sorted back to front, drawn in pixels.
         ImDrawList* draw = ImPlot3D::GetPlotDrawList();
@@ -422,7 +495,7 @@ void PlotView::Draw3D(ImVec2 size) {
 
     if (bar) {
         ImGui::SameLine();
-        if (surface)
+        if (surface || mesh)
             ImPlot::ColormapScale((zl + "##scale3d").c_str(), p.grid_lo, p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0, ImVec2(bar_w, plot_size.y),
                                   "%g", 0, ScaleColormap(p.spec, p.grid_diverging));
         else

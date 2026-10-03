@@ -228,6 +228,17 @@ void PlotView::SetData(Prepared data) {
                                             data.rows_selected != data_.rows_selected ||
                                             data.spec.color_column != data_.spec.color_column);
     if (kind_changed || data.tree_levels != data_.tree_levels) tree_zoom_.clear();
+    // Network / Tree: a new graph or layout drops the user's moves and folds;
+    // turning a tree keeps its folds and fits the new shape.
+    if (kind_changed || data.graph_nodes.size() != data_.graph_nodes.size() || data.spec.graph_layout != data_.spec.graph_layout) {
+        graph_pos_.clear();
+        graph_moved_.clear();
+        graph_fold_.clear();
+    } else if (data.spec.tree_left_right != data_.spec.tree_left_right) {
+        std::fill(graph_moved_.begin(), graph_moved_.end(), 0);
+        fit_ = true;
+    }
+    graph_layout_dirty_ = true;
     data_ = std::move(data);
     has_data_ = true;
     if (rows_changed) fit_ = true;
@@ -371,13 +382,15 @@ void PlotView::DrawToolbar(const Options& o) {
     const char* own = ICON_FA_WINDOW_RESTORE;
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const bool three_d = has_data_ && Info(data_.spec.kind).group == Group::ThreeD;
+    const bool graph = has_data_ && (data_.spec.kind == Kind::Network || data_.spec.kind == Kind::Tree);
     const char* views[] = {"Turn", "Top", "Front", "Side"};
     float views_w = 0.0f;
     if (three_d)
         for (const char* v : views) views_w += ui::ButtonWidth(v, ui::ButtonSize::Small) + gap;
-    const float w = views_w + (o.tool_fit ? ui::ButtonWidth("Fit", ui::ButtonSize::Small) + gap : 0.0f) +
-                    (o.tool_log && !three_d ? ui::ButtonWidth("Log Y", ui::ButtonSize::Small) + gap : 0.0f) +
-                    (o.tool_legend ? ui::ButtonWidth("Legend", ui::ButtonSize::Small) + gap : 0.0f) +
+    const float w = views_w + (graph ? ui::ButtonWidth("Re-layout", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_fit ? ui::ButtonWidth("Fit", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_log && !three_d && !graph ? ui::ButtonWidth("Log Y", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_legend && !graph ? ui::ButtonWidth("Legend", ui::ButtonSize::Small) + gap : 0.0f) +
                     ui::ButtonWidth("Export", ui::ButtonSize::Small) +
                     (o.own_window_button ? ui::ButtonWidth(own, ui::ButtonSize::Small) + gap : 0.0f);
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w;
@@ -392,6 +405,11 @@ void PlotView::DrawToolbar(const Options& o) {
             ImGui::SameLine();
         }
     }
+    if (graph) {
+        if (ui::GhostButton(("Re-layout##" + id_).c_str(), usable)) ResetGraphLayout();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the computed layout: moved nodes and folded branches return");
+        ImGui::SameLine();
+    }
     if (o.tool_fit) {
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
         ImGui::SameLine();
@@ -400,14 +418,14 @@ void PlotView::DrawToolbar(const Options& o) {
                          data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind) &&
                          !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals &&
                          !IsPixelKind(data_.spec.kind) && data_.spec.kind != Kind::MapPoints && !three_d;
-    if (o.tool_log && !three_d) {  // 3D: no log axis
+    if (o.tool_log && !three_d && !graph) {  // 3D and graphs: no log axis
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
             fit_ = true;
         }
         ImGui::SameLine();
     }
-    if (o.tool_legend) {
+    if (o.tool_legend && !graph) {  // graphs: the groups are in the Colour section
         if (ui::GhostButton(("Legend##" + id_).c_str(), usable, nullptr, legend_)) legend_ = !legend_;
         ImGui::SameLine();
     }
@@ -636,6 +654,10 @@ void PlotView::DrawPlot(ImVec2 size) {
     }
     if (Info(kind).group == Group::ThreeD) {
         Draw3D(size);
+        return;
+    }
+    if (kind == Kind::Network || kind == Kind::Tree) {
+        DrawGraph(size);
         return;
     }
     const ui::Tokens& t = ui::CurrentTokens();

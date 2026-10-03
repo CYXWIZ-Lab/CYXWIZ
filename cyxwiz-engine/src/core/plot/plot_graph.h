@@ -21,7 +21,7 @@ struct Point2 {
 };
 
 // Groups of nodes that link more to each other than to the rest (weighted
-// label propagation, nodes in index order, ties to the smaller label),
+// modularity: Louvain, nodes in index order, so the same every time),
 // numbered by size: group 0 is the largest.
 std::vector<int> FindGroups(int nodes, const std::vector<Edge>& edges);
 
