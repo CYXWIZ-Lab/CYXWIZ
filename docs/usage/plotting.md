@@ -217,6 +217,11 @@ or press **Plot** under the column's statistics. The Plot window opens:
     **Draw**: **Fill**, **Lines** (wireframe) or **Both**. **Shade** lights
     the fill from the upper left so slopes show. **Contours on the floor**
     draws the level lines under the surface.
+  - **Mesh**: X, Y and Z rows that are not on a grid (survey points, sensor
+    readings) joined into triangles (Delaunay on X and Y). **Draw** and
+    **Shade** work as on a surface, and the colour follows Z on the scale.
+    Above 5,000 points it joins a reproducible sample. The panel says how
+    many triangles it made (800 volcano points make 1,574).
   - Drag the plot to turn it, right-drag to move it, and use the wheel to
     zoom; double-click to fit. **Turn** (the
     default turned view), **Top**, **Front** and **Side** are in the
@@ -229,6 +234,37 @@ or press **Plot** under the column's statistics. The Plot window opens:
   grid as a shaded surface (94 to 195 m) and Spotify as a Scatter 3D of
   artist_popularity, duration and album tracks, coloured by
   track_popularity.
+- **Graphs**:
+  - **Network**: one row per link, with **Source** and **Target** columns
+    (names or numbers) and an optional **Weight**. Links between the same
+    pair are added up; a node linked to itself is left out. Up to 5,000
+    nodes.
+    - **Layout**: **Force** (linked nodes pull together; the same picture
+      every time), **Layered** (left to right along the links, for
+      pipelines and model graphs; **Directed** draws arrows) or **Circle**
+      (by group).
+    - **Colour nodes by**: **Groups found** (nodes that link more to each
+      other than to the rest), **A column** (pick it as **Node column**) or
+      **One colour**. **Node size**: by **Links**, by **Weight** or the
+      **Same**. **Labels**: the **Top** N nodes (12), **All** or **None**;
+      labels that would cover each other are left out.
+    - Drag to pan, wheel to zoom. Drag a node to move it; **Re-layout**
+      puts every node back. Hover a node for its group and its links.
+  - **Tree**: one row per node, with **Node** and **Parent** columns (a
+    parent that is not a node, or an empty one, makes a root), an optional
+    **Value** (shown under the name) and **Label** (colours the boxes).
+    - **Direction**: **Top-down** or **Left-right**.
+    - A box is as wide as the room to its neighbours, so a long name ends
+      in "..."; hover shows it in full.
+    - Click a box to fold its branch ("+N" shows how many are hidden);
+      click again to unfold. Folds stay when you turn the tree.
+  - Export: PNG, SVG, or CSV (Network: the nodes with their group and
+    links, then the links; Tree: the rows; Mesh: the triangle corners).
+
+  Example: `p4_graphs.cyxgraph` (test project): `les_miserables.csv`
+  (77 characters, 254 links, 6 groups found) as a Network,
+  `spotify_tree.csv` (a depth-3 tree for track_popularity >= 60) as a Tree,
+  and `volcano_points.csv` as a Mesh.
 - **Colour** (every plot):
   - **The scale** (when the plot colours by values: heatmaps, contours,
     surfaces, maps, scatter colour scales): **Theme** (the default),
