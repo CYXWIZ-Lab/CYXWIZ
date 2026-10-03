@@ -68,6 +68,7 @@ private:
     void RenderTruthSummarySection(MLNode& node);
     void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderPresetsSection(MLNode& node);
+    void RenderViewSettings(MLNode& node);  // Plot / Dashboard nodes: saved settings in words
     // Word + POS fusion card on a Concatenate (properties_sequence_fusion.cpp).
     void RenderSequenceFusionSection(MLNode& node);
     // AS COMPILED card: the selected node as the compiler built it

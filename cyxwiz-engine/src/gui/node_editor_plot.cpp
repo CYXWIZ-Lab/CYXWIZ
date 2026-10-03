@@ -363,6 +363,12 @@ void NodeEditor::RenderDashboardWindows() {
             continue;
         }
         auto& window = it->second;
+        // The node's layout changed elsewhere (undo, redo, a reload): the window follows.
+        {
+            auto spec_it = node->parameters.find("dashboard_spec");
+            if (spec_it != node->parameters.end() && !spec_it->second.empty() && spec_it->second != window->SavedJson())
+                window->SetSpecJson(spec_it->second);
+        }
         const Lane::Status& st = plot_lane_->StatusOf(id);
         const bool has_data = st.table && !st.dataset_name.empty() &&
                               (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);
@@ -395,6 +401,13 @@ void NodeEditor::RenderPlotNodes() {
             continue;
         }
         auto& window = it->second;
+        // The node's settings changed elsewhere (undo, redo, a reload): the window follows.
+        {
+            auto spec_it = node->parameters.find("plot_spec");
+            if (spec_it != node->parameters.end() && !spec_it->second.empty() &&
+                spec_it->second != cyxwiz::plot::SpecToJson(window->Spec()))
+                window->SetSpec(SpecOf(*node));
+        }
         const Lane::Status& st = plot_lane_->StatusOf(id);
         uint64_t& shown = plot_window_data_versions_[id];
         const bool has_data = st.table && (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);

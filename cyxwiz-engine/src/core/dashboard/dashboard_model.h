@@ -111,6 +111,8 @@ struct DashboardSpec {
 };
 
 std::string DashboardToJson(const DashboardSpec& spec);
+// The saved layout in words, for the node's Properties ("Widgets", "Filters", "Title").
+std::vector<std::pair<std::string, std::string>> DashboardSummary(const DashboardSpec& spec);
 // false + problem when the text is not a dashboard this version reads.
 bool DashboardFromJson(const std::string& json, DashboardSpec& spec, std::string* problem = nullptr);
 

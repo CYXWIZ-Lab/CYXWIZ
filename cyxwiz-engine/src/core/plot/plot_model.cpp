@@ -2,6 +2,8 @@
 
 #include "plot_scales.h"
 
+#include <cstdio>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -97,6 +99,60 @@ const char* GroupLabel(Group group) {
 const std::vector<std::string>& ConditionOps() {
     static const std::vector<std::string> ops = {"=", "!=", "<", "<=", ">", ">=", "contains"};
     return ops;
+}
+
+std::vector<std::pair<std::string, std::string>> SpecSummary(const PlotSpec& s) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    const KindInfo& k = Info(s.kind);
+    rows.push_back({"Type", std::string(k.label) + " (" + GroupLabel(k.group) + ")"});
+    // Columns: up to four by name, a long list as first .. last (count).
+    const auto list = [](const std::vector<std::string>& cols) {
+        if (cols.size() > 4) return cols.front() + " .. " + cols.back() + " (" + std::to_string(cols.size()) + ")";
+        std::string out;
+        for (const auto& c : cols) out += (out.empty() ? "" : ", ") + c;
+        return out;
+    };
+    std::string data;
+    const auto add = [&](const std::string& what, const std::string& col) {
+        if (!col.empty()) data += (data.empty() ? "" : " \xC2\xB7 ") + what + " " + col;
+    };
+    if (s.kind == Kind::Surface && s.surface_from == PlotSpec::SurfaceFrom::Grid) {
+        add("grid columns", list(s.y_columns));
+    } else {
+        add("X", s.x_column);
+        add(k.multi_y && s.y_columns.size() > 1 ? "Y" : "Y", list(s.y_columns));
+        add("Z", s.z_column);
+        add("colour by", s.color_column);
+        add(k.value_hint[0] ? "value" : "value", s.value_column);
+    }
+    rows.push_back({"Data", data.empty() ? std::string("no columns chosen yet") : data});
+    switch (s.rows) {
+        case RowMode::All: break;
+        case RowMode::First: rows.push_back({"Rows", "first " + Thousands(static_cast<long long>(s.first_rows))}); break;
+        case RowMode::Range:
+            rows.push_back({"Rows", Thousands(static_cast<long long>(s.row_from)) + " to " + Thousands(static_cast<long long>(s.row_to))});
+            break;
+        case RowMode::Filter: rows.push_back({"Rows", ConditionsText(s.conditions)}); break;
+    }
+    std::string colour;
+    if (const ScaleInfo* scale = FindScale(s.colour_scale)) colour = scale->label;
+    if (s.colour_reverse) colour += colour.empty() ? "theme scale, reversed" : ", reversed";
+    if (std::isfinite(s.scale_lo) && std::isfinite(s.scale_hi)) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%g to %g", s.scale_lo, s.scale_hi);
+        colour += (colour.empty() ? "theme scale, " : ", ") + std::string(buf);
+    }
+    size_t picked = 0;
+    for (const auto& c : s.series_colours) picked += c.empty() ? 0 : 1;
+    if (picked > 0) colour += (colour.empty() ? "" : "; ") + std::to_string(picked) + (picked == 1 ? " series colour" : " series colours");
+    if (!colour.empty()) rows.push_back({"Colour", colour});
+    if (std::isfinite(s.view_elevation) && std::isfinite(s.view_azimuth)) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "turned (elevation %.0f\xC2\xB0, azimuth %.0f\xC2\xB0)", s.view_elevation, s.view_azimuth);
+        rows.push_back({"View", buf});
+    }
+    if (!s.title.empty()) rows.push_back({"Title", s.title});
+    return rows;
 }
 
 std::string ConditionsText(const std::vector<RowCondition>& conditions) {

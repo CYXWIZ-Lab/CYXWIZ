@@ -10,6 +10,10 @@
 #include "../core/data_registry.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/parquet_backed_dataset.h"
+#include "../core/dashboard/dashboard_model.h"
+#include "../core/plot/plot_model.h"
+#include "ui_buttons.h"
+#include "ui_tokens.h"
 #include "node_editor.h"
 #include "node_config_dialog.h"
 #include <imgui.h>
@@ -405,22 +409,22 @@ void Properties::RenderOpenDialogButton(MLNode& node) {
     float avail_width = ImGui::GetContentRegionAvail().x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_width - button_width) * 0.5f);
 
-    // Styled "Open Dialog" button (similar to KNIME)
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.35f, 0.55f, 1.0f));
-
-    if (ImGui::Button("Open Dialog...", ImVec2(button_width, 0))) {
+    // The node's window: the Plot window, the Dashboard, or its dialog (theme style).
+    const char* label = node.type == NodeType::Plot ? "Open Plot window" : node.type == NodeType::Dashboard ? "Open Dashboard" : "Open Dialog...";
+    if (cyxwiz::ui::PrimaryButton(label, true, nullptr, cyxwiz::ui::ButtonSize::Regular, button_width)) {
         ConfigureNode(&node);
     }
-
-    ImGui::PopStyleColor(3);
 
     // Tooltip
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
-        ImGui::Text("Open detailed configuration dialog");
-        ImGui::TextDisabled("(Configure all settings with preview)");
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) {
+            ImGui::Text("Pick the plot type, columns, rows and colours");
+            ImGui::TextDisabled("(reads the data at this node)");
+        } else {
+            ImGui::Text("Open detailed configuration dialog");
+            ImGui::TextDisabled("(Configure all settings with preview)");
+        }
         ImGui::EndTooltip();
     }
 }
@@ -544,6 +548,10 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
             RenderNodeProperties(node);
             return;
         }
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) {
+            RenderViewSettings(node);
+            return;
+        }
         properties_metadata::RenderParametersContent(
             node,
             metadata,
@@ -552,6 +560,61 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
             [this]() { InvalidateShapes(); });
     } else {
         section_parameters_open_ = false;
+    }
+}
+
+// Plot and Dashboard nodes: the settings saved by their window, in words, with
+// the saved text under Details (read-only). They are changed in the window.
+void Properties::RenderViewSettings(MLNode& node) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    const bool plot = node.type == NodeType::Plot;
+    const char* key = plot ? "plot_spec" : "dashboard_spec";
+    auto it = node.parameters.find(key);
+    const std::string json = it != node.parameters.end() ? it->second : std::string();
+    std::vector<std::pair<std::string, std::string>> rows;
+    std::string problem;
+    if (plot) {
+        cyxwiz::plot::PlotSpec spec;
+        if (json.empty() || cyxwiz::plot::SpecFromJson(json, spec, &problem)) rows = cyxwiz::plot::SpecSummary(spec);
+    } else {
+        cyxwiz::dashboard::DashboardSpec spec;
+        if (json.empty() || cyxwiz::dashboard::DashboardFromJson(json, spec, &problem)) rows = cyxwiz::dashboard::DashboardSummary(spec);
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    if (!problem.empty()) {
+        ImGui::TextColored(t.warning, "The saved settings could not be read: %s", problem.c_str());
+        ImGui::TextColored(t.text_dim, "Opening the %s starts from the defaults.", plot ? "Plot window" : "Dashboard");
+    } else if (json.empty() && plot) {
+        ImGui::TextColored(t.text_dim, "Not set up yet: open the Plot window to pick the plot type and columns.");
+    }
+    if (!rows.empty() && ImGui::BeginTable("##view_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##k", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Widgets ").x + 8.0f);
+        ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+        for (const auto& [k, v] : rows) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(t.text_dim, "%s", k.c_str());
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", v.c_str());
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(t.text_faint, "Data is read when the %s opens; only these settings are saved in the graph.",
+                       plot ? "plot" : "dashboard");
+    ImGui::PopTextWrapPos();
+    if (!json.empty() && ImGui::TreeNode("Details##view_settings_json")) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Saved as %s (set by the %s, read-only here)", key, plot ? "Plot window" : "Dashboard");
+        ImGui::PopTextWrapPos();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_window);
+        ImGui::BeginChild("##json", ImVec2(-1, ImGui::GetTextLineHeight() * 8), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleColor();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(json.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+        if (cyxwiz::ui::SecondaryButton("Copy", true, nullptr, cyxwiz::ui::ButtonSize::Small)) ImGui::SetClipboardText(json.c_str());
+        ImGui::TreePop();
     }
 }
 

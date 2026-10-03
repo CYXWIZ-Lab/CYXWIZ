@@ -275,8 +275,8 @@ Data Input (mnist_784.csv) --> Plot
   available yet* (with the reason), *Not read yet*, *Reading N%*, the plot
   and its column ("Bar · class") with the rows and the read time, *Out of
   date*, or *Could not read the data*.
-- Double-click the node (or right-click > Configure, or **Open Dialog** in
-  Properties) to open its Plot window. The window is the same Plot window
+- Double-click the node (or right-click > Configure, or **Open Plot window**
+  in Properties) to open its Plot window. The window is the same Plot window
   as above, with a header: *Data at &lt;node&gt;*, rows × columns, the read
   time, and **Refresh** (**Cancel** while it runs).
 - A loaded Data Input is read as it is. A node after it (a filter, a
@@ -294,6 +294,13 @@ Data Input (mnist_784.csv) --> Plot
   before it.
 - A Data Input without a file says "has no data yet: open it, choose a
   file and Apply".
+- **Properties** shows the node's saved settings in words: the plot type,
+  the data (for example "grid columns V1 .. V61 (61)"), the rows, the colour
+  and the 3D view. **Details** shows the saved text (`plot_spec`) read-only,
+  with **Copy**. The data itself is never saved in the graph; it is read
+  when the plot opens. The settings are changed in the Plot window; an open
+  Plot window follows Undo and Redo. A Dashboard node shows its widgets and
+  filters the same way (`dashboard_spec`).
 
 ### Model evaluation
 

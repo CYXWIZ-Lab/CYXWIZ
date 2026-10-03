@@ -45,6 +45,8 @@ public:
     std::function<void(const std::string& dataset, const std::string& sql)> on_open_query;
 
     void SetSpecJson(const std::string& json);
+    // The layout as last saved to the node (to notice a change made elsewhere: undo, reload).
+    const std::string& SavedJson() const { return saved_json_; }
     // The data at the node: a registry dataset (catalog name) and how to call it.
     void SetData(const std::string& dataset_name, const std::string& title);
     void ClearData(const std::string& message);

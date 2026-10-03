@@ -209,6 +209,28 @@ void DashboardSpec::RemoveAutomatic() {
     for (const auto& id : gone) filters.ClearWidget(id);
 }
 
+std::vector<std::pair<std::string, std::string>> DashboardSummary(const DashboardSpec& spec) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    size_t automatic = 0, query = 0;
+    for (const auto& w : spec.widgets) {
+        automatic += w.automatic ? 1 : 0;
+        query += w.IsQuery() ? 1 : 0;
+    }
+    std::string widgets = std::to_string(spec.widgets.size()) + (spec.widgets.size() == 1 ? " widget" : " widgets");
+    if (spec.widgets.empty()) widgets = spec.automatic_done ? "no widgets" : "automatic layout on the first open";
+    else {
+        std::string parts;
+        if (automatic) parts += std::to_string(automatic) + " automatic";
+        if (spec.widgets.size() > automatic) parts += (parts.empty() ? "" : ", ") + std::to_string(spec.widgets.size() - automatic) + " added";
+        if (query) parts += (parts.empty() ? "" : ", ") + std::to_string(query) + " from queries";
+        widgets += " (" + parts + ")";
+    }
+    rows.push_back({"Widgets", widgets});
+    if (!spec.filters.Empty()) rows.push_back({"Filters", spec.filters.Text()});
+    if (!spec.title.empty()) rows.push_back({"Title", spec.title});
+    return rows;
+}
+
 std::string DashboardToJson(const DashboardSpec& spec) {
     json j;
     j["version"] = DashboardSpec::kVersion;

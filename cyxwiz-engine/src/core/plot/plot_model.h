@@ -226,6 +226,11 @@ std::string SpecToJson(const PlotSpec& spec);
 bool SpecFromJson(const std::string& json, PlotSpec& spec, std::string* problem = nullptr);
 // What is missing for this kind ("" when the spec can be drawn).
 std::string MissingEncoding(const PlotSpec& spec);
+// The saved settings in words, for the node's Properties: ("Type",
+// "Surface"), ("Data", "grid columns V1 .. V61 (61)"), ("Rows", ...),
+// ("Colour", "Viridis"), ("View", ...), ("Title", ...); rows that say
+// nothing (all rows, the theme) are left out.
+std::vector<std::pair<std::string, std::string>> SpecSummary(const PlotSpec& spec);
 
 // Whether the drawn data is all of it (TOFIX134: nothing is cut silently).
 struct DataLabel {

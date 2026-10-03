@@ -197,7 +197,36 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 38 kinds, colour scales, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    {
+        // The settings in words (node Properties): a grid surface, then rows and colours.
+        PlotSpec v;
+        v.kind = Kind::Surface;
+        v.surface_from = PlotSpec::SurfaceFrom::Grid;
+        for (int i = 1; i <= 61; ++i) v.y_columns.push_back("V" + std::to_string(i));
+        auto rows = SpecSummary(v);
+        Check(rows.size() == 2 && rows[0].second == "Surface (3D)" && rows[1].second == "grid columns V1 .. V61 (61)", "surface summary: " + rows[1].second);
+        v.colour_scale = "viridis";
+        v.colour_reverse = true;
+        v.view_elevation = -47.5;
+        v.view_azimuth = 105;
+        v.title = "Maunga Whau";
+        rows = SpecSummary(v);
+        Check(rows.size() == 5 && rows[2].first == "Colour" && rows[2].second == "Viridis, reversed" && rows[3].first == "View" &&
+                  rows[3].second.find("elevation -48") != std::string::npos && rows[4].second == "Maunga Whau", "colour, view, title rows");
+        PlotSpec sc;
+        sc.kind = Kind::Scatter;
+        sc.x_column = "a";
+        sc.y_columns = {"b"};
+        sc.color_column = "label";
+        sc.rows = RowMode::Filter;
+        sc.conditions = {{"class", "=", "7"}};
+        sc.series_colours = {"", "#5ec8b8"};
+        rows = SpecSummary(sc);
+        Check(rows[1].second == "X a \xC2\xB7 Y b \xC2\xB7 colour by label" && rows[2].second == "class = 7" && rows[3].second == "1 series colour",
+              "scatter summary: " + rows[1].second);
+        Check(SpecSummary(PlotSpec{})[1].second == "no columns chosen yet", "a new plot says so");
+    }
+    std::cout << "plot model: 38 kinds, colour scales, settings in words, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

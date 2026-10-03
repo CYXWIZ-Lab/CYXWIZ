@@ -138,6 +138,22 @@ int main() {
     Check(d.widgets.size() == 2 && d.Find(hist.id) && !d.Find(bars.id) && d.filters.predicates.size() == 1 &&
               d.filters.predicates[0].source_widget == hist.id, "automatic widgets and their filters removed");
 
+    // The layout in words (node Properties).
+    {
+        DashboardSpec s;
+        Check(DashboardSummary(s).size() == 1 && DashboardSummary(s)[0].second == "automatic layout on the first open", "new dashboard");
+        WidgetSpec a;
+        a.automatic = true;
+        WidgetSpec q;
+        q.query = "SELECT 1 FROM t";
+        s.widgets = {a, a, q};
+        s.automatic_done = true;
+        s.filters.Set(FilterPredicate{"album_type", FilterPredicate::Op::In, {"single"}, 0, 0, "w1"});
+        const auto summary = DashboardSummary(s);
+        Check(summary.size() == 2 && summary[0].second == "3 widgets (2 automatic, 1 added, 1 from queries)" && summary[1].second == "album_type = single",
+              "widgets and filters: " + summary[0].second);
+    }
+
     // Widget kinds: KPI, Table and every plot kind.
     Check(WidgetKinds().size() == 3 + plot::Kinds().size(), "every plot kind is a widget kind (plus KPI, Table, Missing values)");
     const WidgetKind* h = FindWidgetKind("plot.histogram");
