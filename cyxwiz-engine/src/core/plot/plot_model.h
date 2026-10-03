@@ -49,9 +49,14 @@ enum class Kind {
     Residuals,
     LearningCurve,
     Importance,
+    // P2b group 5 (approved board 12): flows, hierarchies and maps.
+    Sankey,
+    Treemap,
+    MapPoints,
+    MapRegions,
 };
 
-enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults };
+enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults, FlowsHierarchies, Maps };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -166,6 +171,15 @@ struct PlotSpec {
     enum class Best { Auto, Highest, Lowest };
     Best best = Best::Auto;                      // learning curve: Auto = lowest for a loss / error
     int top_n = 20;                              // feature importance
+    // P2b group 5 (approved board 12). Sankey: y_columns are the steps (left
+    // to right), value_column the summed value (empty: rows). Treemap:
+    // y_columns are the groups (outer to inner), value_column the size,
+    // color_column a number for the colour scale (empty: by the top group).
+    // Map points: x = longitude, y = latitude, value = size, colour.
+    // Map regions: x = country (name or ISO code), y = the value.
+    int sankey_top = 8;                          // per step: the largest categories, the rest as "other"
+    enum class RegionAgg { Sum, Mean };
+    RegionAgg region_agg = RegionAgg::Sum;       // several rows for one country
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -227,6 +241,8 @@ struct Series {
     // Colour by a number column as a scale: the value per point (NaN when
     // missing), with all_c beside all_x / all_y.
     std::vector<double> c, all_c;
+    // Map points: the size value per point (NaN when missing), with all_z.
+    std::vector<double> z, all_z;
     bool x_sorted = false;  // x ascends (hover finds the nearest x by search)
     int colour = -1;        // theme series colour index; -1: by position
     bool markers = false;   // lines: also a marker at every point
@@ -314,6 +330,43 @@ struct Prepared {
     double baseline = NAN;
     int best_series = -1;
     size_t best_index = 0;
+    // Sankey: the step columns, the nodes (per step, largest first, "other"
+    // last) and the bands between neighbouring steps, laid out on 0..1 with
+    // y from the top; the total value of the rows drawn.
+    struct SankeyNode {
+        int step = 0;
+        std::string name;
+        double value = 0, y0 = 0, y1 = 0;
+    };
+    struct SankeyLink {
+        int from = 0, to = 0;  // node indices
+        double value = 0, y_from = 0, y_to = 0, thickness = 0;
+    };
+    std::vector<std::string> sankey_steps;
+    std::vector<SankeyNode> sankey_nodes;
+    std::vector<SankeyLink> sankey_links;
+    double sankey_total = 0;
+    // Treemap: the leaves (their path, outer group first), each leaf's size
+    // and colour value (NaN without a colour column), the group columns and
+    // the top-level names (a leaf's `top` indexes them; colour without a
+    // colour column). Laid out by TreemapLayout (plot_layout.h).
+    struct TreeLeaf {
+        std::vector<std::string> path;
+        double size = 0;
+        double colour = NAN;
+        int top = 0;
+    };
+    std::vector<TreeLeaf> tree_leaves;
+    std::vector<std::string> tree_levels, tree_tops;
+    // Map points: the size scale (Series::z) over size_min..size_max.
+    double size_min = 0, size_max = 0;
+    std::string size_label;
+    // Map regions: the value per country (WorldCountries() order; NaN when no
+    // row names it) and its rows, coloured over grid_lo..grid_hi (log when
+    // spec.log_colour); the region texts that matched no country, with rows.
+    std::vector<double> region_value;
+    std::vector<size_t> region_rows;
+    std::vector<std::pair<std::string, size_t>> unmatched;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

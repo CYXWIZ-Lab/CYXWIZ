@@ -48,6 +48,14 @@ const std::vector<KindInfo>& Kinds() {
          "X (training rows or epoch)", "Curves (train, validation)"},
         {Kind::Importance, "feature_importance", "Feature importance", Group::ModelResults, kEncX | kEncY, 0, false, "Feature",
          "Importance"},
+        {Kind::Sankey, "sankey", "Sankey", Group::FlowsHierarchies, kEncY, kEncValue, true, "", "Steps (two or more, left to right)",
+         "Value (summed; empty: count rows)"},
+        {Kind::Treemap, "treemap", "Treemap", Group::FlowsHierarchies, kEncY, kEncValue | kEncColor, true, "",
+         "Groups (outer to inner)", "Size (summed; empty: count rows)"},
+        {Kind::MapPoints, "map_points", "Map: points", Group::Maps, kEncX | kEncY, kEncValue | kEncColor, false, "Longitude",
+         "Latitude", "Size"},
+        {Kind::MapRegions, "map_regions", "Map: regions", Group::Maps, kEncX | kEncY, 0, false, "Country (name or ISO code)",
+         "Value"},
     };
     return kinds;
 }
@@ -72,6 +80,8 @@ const char* GroupLabel(Group group) {
         case Group::VectorFields: return "Vector fields";
         case Group::Images: return "Images";
         case Group::ModelResults: return "Model results";
+        case Group::FlowsHierarchies: return "Flows and hierarchies";
+        case Group::Maps: return "Maps";
     }
     return "";
 }
@@ -162,6 +172,8 @@ std::string SpecToJson(const PlotSpec& s) {
     j["spread"] = s.spread_columns;
     j["best"] = s.best == PlotSpec::Best::Highest ? "highest" : s.best == PlotSpec::Best::Lowest ? "lowest" : "auto";
     j["top_n"] = s.top_n;
+    j["sankey_top"] = s.sankey_top;
+    j["region_agg"] = s.region_agg == PlotSpec::RegionAgg::Mean ? "mean" : "sum";
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -273,6 +285,11 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     else if (best == "lowest") out.best = PlotSpec::Best::Lowest;
     else return fail("unknown best '" + best + "'");
     out.top_n = std::clamp(j.value("top_n", 20), 1, 500);
+    out.sankey_top = std::clamp(j.value("sankey_top", 8), 1, 50);
+    const std::string agg = j.value("region_agg", std::string("sum"));
+    if (agg == "sum") out.region_agg = PlotSpec::RegionAgg::Sum;
+    else if (agg == "mean") out.region_agg = PlotSpec::RegionAgg::Mean;
+    else return fail("unknown region aggregation '" + agg + "'");
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());

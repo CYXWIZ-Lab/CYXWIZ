@@ -27,8 +27,8 @@ int main() {
         Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
         Check(k.required != 0, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 31, "31 kinds (P1 13 + P2b groups 1 to 4)");
-    Check(!FindKind("sankey"), "unknown kind not found");
+    Check(Kinds().size() == 35, "35 kinds (P1 13 + P2b groups 1 to 5)");
+    Check(!FindKind("sunburst"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
           "histogram is a basic kind");
     Check(std::string(GroupLabel(Group::GridDensity)) == "Grid and density", "group label");
@@ -60,15 +60,18 @@ int main() {
     m.spread_columns = {"train_sd", ""};
     m.best = PlotSpec::Best::Lowest;
     m.top_n = 7;
+    m.sankey_top = 5;
+    m.region_agg = PlotSpec::RegionAgg::Mean;
     Check(SpecFromJson(SpecToJson(m), back) && back.kind == Kind::LearningCurve && back.confusion_show == PlotSpec::ConfusionShow::All &&
               back.positive_class == "tested_positive" && back.calibration_bins == 15 && back.spread_columns.size() == 2 &&
-              back.spread_columns[0] == "train_sd" && back.best == PlotSpec::Best::Lowest && back.top_n == 7,
+              back.spread_columns[0] == "train_sd" && back.best == PlotSpec::Best::Lowest && back.top_n == 7 &&
+              back.sankey_top == 5 && back.region_agg == PlotSpec::RegionAgg::Mean,
           "model results fields round trip");
     std::string problem;
     PlotSpec untouched;
     Check(!SpecFromJson("{\"version\":2,\"kind\":\"line\"}", untouched, &problem) && problem.find("version 2") != std::string::npos,
           "a newer version is refused with a reason");
-    Check(!SpecFromJson("{\"version\":1,\"kind\":\"sankey\"}", untouched, &problem) && problem.find("sankey") != std::string::npos,
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"sunburst\"}", untouched, &problem) && problem.find("sunburst") != std::string::npos,
           "an unknown kind is refused with its name");
     Check(!SpecFromJson("not json", untouched, &problem), "text that is not JSON is refused");
     Check(SpecFromJson("{\"version\":1,\"kind\":\"scatter\",\"bins\":0,\"extra\":1}", back) && back.bins == 1 &&
@@ -142,7 +145,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 31 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 35 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

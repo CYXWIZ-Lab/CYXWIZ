@@ -1,6 +1,7 @@
 #include "plot_prepare.h"
 
 #include "plot_image.h"
+#include "world_map.h"
 #include "../series_decimation.h"
 
 #include <algorithm>
@@ -192,8 +193,9 @@ void PrepareLines(Prepared& p, const Source& src, const SourceColumn* xcol, cons
 }
 
 void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<const SourceColumn*>& ys,
-                    const Groups& groups, const SourceColumn* scale) {
+                    const Groups& groups, const SourceColumn* scale, const SourceColumn* size = nullptr) {
     const auto colour_at = [&](size_t r) { return scale && r < scale->numbers.size() ? scale->numbers[r] : NAN; };
+    const auto size_at = [&](size_t r) { return size && r < size->numbers.size() ? size->numbers[r] : NAN; };
     // Rows with a finite x and y, sampled evenly and the same way each time.
     std::vector<size_t> rows;
     const size_t n = xcol->numbers.size();
@@ -220,6 +222,7 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
                 s.x.push_back(xcol->numbers[r]);
                 s.y.push_back(y->numbers[r]);
                 if (scale) s.c.push_back(colour_at(r));
+                if (size) s.z.push_back(size_at(r));
             }
             if (rows.size() < all_rows.size()) {
                 for (size_t r : all_rows) {
@@ -228,10 +231,17 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
                     s.all_x.push_back(xcol->numbers[r]);
                     s.all_y.push_back(y->numbers[r]);
                     if (scale) s.all_c.push_back(colour_at(r));
+                    if (size) s.all_z.push_back(size_at(r));
                 }
             }
             if (!s.x.empty()) p.series.push_back(std::move(s));
         }
+    }
+    if (size) {
+        const ColumnStats st = Summarize(size->numbers);
+        p.size_label = size->name;
+        p.size_min = st.min;
+        p.size_max = st.max > st.min ? st.max : st.min + 1.0;
     }
     if (scale) {
         // The scale spans the colour values of the plotted rows; values on
@@ -1788,6 +1798,258 @@ void PrepareImportance(Prepared& p, const Source& src, const SourceColumn* featu
     if (shown < rows.size()) p.label.selection = "top " + std::to_string(shown);
 }
 
+// ---- P2b group 5 (approved board 12): flows, hierarchies and maps ----
+
+constexpr size_t kMaxTreeLeaves = 3000;
+
+// A cell as a category name ("(missing)" for an empty text or a NaN).
+std::string CategoryOf(const SourceColumn& c, size_t r) {
+    if (c.numeric && (r >= c.numbers.size() || !std::isfinite(c.numbers[r]))) return "(missing)";
+    std::string t = CellText(c, r);
+    return t.empty() ? std::string("(missing)") : t;
+}
+
+// The weight of a row: its value (finite, not negative) or 1; NaN to skip.
+double WeightOf(const SourceColumn* value, size_t r) {
+    if (!value) return 1.0;
+    const double v = r < value->numbers.size() ? value->numbers[r] : NAN;
+    return std::isfinite(v) && v >= 0 ? v : NAN;
+}
+
+void PrepareSankey(Prepared& p, const std::vector<const SourceColumn*>& steps, const SourceColumn* value) {
+    if (steps.size() < 2) {
+        p.problem = "Choose two or more step columns.";
+        return;
+    }
+    size_t rows = steps.front()->size();
+    for (const auto* c : steps) rows = std::min(rows, c->size());
+    const size_t n_steps = steps.size();
+    // Totals per step and name, then the largest kept per step.
+    std::vector<std::unordered_map<std::string, double>> totals(n_steps);
+    std::vector<double> weight(rows);
+    size_t used = 0;
+    for (size_t r = 0; r < rows; ++r) {
+        weight[r] = WeightOf(value, r);
+        if (!std::isfinite(weight[r])) continue;
+        ++used;
+        for (size_t s = 0; s < n_steps; ++s) totals[s][CategoryOf(*steps[s], r)] += weight[r];
+    }
+    if (used == 0) {
+        p.problem = value ? "No rows have a value (0 or more) in " + value->name + "." : "No rows to draw.";
+        return;
+    }
+    const size_t top = static_cast<size_t>(std::max(1, p.spec.sankey_top));
+    std::vector<std::unordered_map<std::string, int>> node_of(n_steps);
+    for (size_t s = 0; s < n_steps; ++s) {
+        std::vector<std::pair<double, std::string>> order;
+        for (const auto& [name, v] : totals[s]) order.emplace_back(v, name);
+        std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+        const bool other = order.size() > top + 1;  // "other" only when it joins two or more
+        const size_t keep = other ? top : order.size();
+        double rest = 0;
+        for (size_t k = 0; k < order.size(); ++k) {
+            if (k < keep) {
+                node_of[s][order[k].second] = static_cast<int>(p.sankey_nodes.size());
+                p.sankey_nodes.push_back({static_cast<int>(s), order[k].second, order[k].first, 0, 0});
+            } else {
+                rest += order[k].first;
+            }
+        }
+        if (other) {
+            const int o = static_cast<int>(p.sankey_nodes.size());
+            p.sankey_nodes.push_back({static_cast<int>(s), "other", rest, 0, 0});
+            for (size_t k = keep; k < order.size(); ++k) node_of[s][order[k].second] = o;
+        }
+        p.sankey_steps.push_back(steps[s]->name);
+    }
+    // Bands between neighbouring steps.
+    std::map<std::pair<int, int>, double> flows;
+    double total = 0;
+    for (size_t r = 0; r < rows; ++r) {
+        if (!std::isfinite(weight[r])) continue;
+        total += weight[r];
+        for (size_t s = 0; s + 1 < n_steps; ++s)
+            flows[{node_of[s][CategoryOf(*steps[s], r)], node_of[s + 1][CategoryOf(*steps[s + 1], r)]}] += weight[r];
+    }
+    if (total <= 0) {
+        p.problem = "The values add up to 0.";
+        return;
+    }
+    // Layout on 0..1: one scale for every step, the steps centred.
+    constexpr double kGap = 0.025;
+    size_t most = 0;
+    std::vector<size_t> count(n_steps, 0);
+    for (const auto& nd : p.sankey_nodes) most = std::max(most, ++count[static_cast<size_t>(nd.step)]);
+    const double scale = (1.0 - kGap * static_cast<double>(most - 1)) / total;
+    std::vector<double> cursor(n_steps, -1.0);
+    for (auto& nd : p.sankey_nodes) {
+        const size_t s = static_cast<size_t>(nd.step);
+        if (cursor[s] < 0) cursor[s] = (1.0 - (total * scale + kGap * static_cast<double>(count[s] - 1))) / 2.0;
+        nd.y0 = cursor[s];
+        nd.y1 = nd.y0 + nd.value * scale;
+        cursor[s] = nd.y1 + kGap;
+    }
+    std::vector<double> out_at(p.sankey_nodes.size()), in_at(p.sankey_nodes.size());
+    for (size_t i = 0; i < p.sankey_nodes.size(); ++i) out_at[i] = in_at[i] = p.sankey_nodes[i].y0;
+    for (const auto& [ends, v] : flows) {  // ordered by source, then target
+        Prepared::SankeyLink l;
+        l.from = ends.first;
+        l.to = ends.second;
+        l.value = v;
+        l.thickness = v * scale;
+        l.y_from = out_at[static_cast<size_t>(l.from)];
+        l.y_to = in_at[static_cast<size_t>(l.to)];
+        out_at[static_cast<size_t>(l.from)] += l.thickness;
+        in_at[static_cast<size_t>(l.to)] += l.thickness;
+        p.sankey_links.push_back(l);
+    }
+    p.sankey_total = total;
+    p.label = {DataLabel::State::Exact, used, rows};
+}
+
+void PrepareTreemap(Prepared& p, const std::vector<const SourceColumn*>& groups, const SourceColumn* value, const SourceColumn* colour) {
+    if (groups.size() > 4) {
+        p.problem = "Choose up to four group columns.";
+        return;
+    }
+    if (colour && !colour->numeric) {
+        p.problem = colour->name + " is not numeric: colour a treemap by a number column, or leave Colour empty to colour by the top group.";
+        return;
+    }
+    size_t rows = groups.front()->size();
+    for (const auto* c : groups) rows = std::min(rows, c->size());
+    struct Acc {
+        double size = 0, colour_sum = 0;
+        size_t colour_n = 0;
+    };
+    std::map<std::vector<std::string>, Acc> leaves;
+    size_t used = 0;
+    for (size_t r = 0; r < rows; ++r) {
+        const double w = WeightOf(value, r);
+        if (!std::isfinite(w)) continue;
+        ++used;
+        std::vector<std::string> path;
+        for (const auto* g : groups) path.push_back(CategoryOf(*g, r));
+        Acc& a = leaves[path];
+        a.size += w;
+        if (colour && r < colour->numbers.size() && std::isfinite(colour->numbers[r])) {
+            a.colour_sum += colour->numbers[r];
+            ++a.colour_n;
+        }
+    }
+    if (used == 0) {
+        p.problem = value ? "No rows have a size (0 or more) in " + value->name + "." : "No rows to draw.";
+        return;
+    }
+    // The top groups by size (their colour when there is no colour column).
+    std::unordered_map<std::string, double> top_size;
+    for (const auto& [path, a] : leaves) top_size[path.front()] += a.size;
+    std::vector<std::pair<double, std::string>> tops;
+    for (const auto& [name, v] : top_size) tops.emplace_back(v, name);
+    std::sort(tops.begin(), tops.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+    std::unordered_map<std::string, int> top_of;
+    for (const auto& t : tops) {
+        top_of[t.second] = static_cast<int>(p.tree_tops.size());
+        p.tree_tops.push_back(t.second);
+    }
+    for (const auto& [path, a] : leaves) {
+        if (a.size <= 0) continue;
+        Prepared::TreeLeaf leaf;
+        leaf.path = path;
+        leaf.size = a.size;
+        leaf.colour = a.colour_n > 0 ? a.colour_sum / static_cast<double>(a.colour_n) : NAN;
+        leaf.top = top_of[path.front()];
+        p.tree_leaves.push_back(std::move(leaf));
+    }
+    for (const auto* g : groups) p.tree_levels.push_back(g->name);
+    const size_t all = p.tree_leaves.size();
+    p.label = {DataLabel::State::Exact, used, rows};
+    if (all > kMaxTreeLeaves) {
+        std::stable_sort(p.tree_leaves.begin(), p.tree_leaves.end(), [](const auto& a, const auto& b) { return a.size > b.size; });
+        p.tree_leaves.resize(kMaxTreeLeaves);
+        p.label = {DataLabel::State::Truncated, kMaxTreeLeaves, all};
+        p.label.selection = "largest " + Thousands(static_cast<long long>(kMaxTreeLeaves)) + " of " + Thousands(static_cast<long long>(all)) + " groups";
+    }
+    if (colour) {
+        bool first = true;
+        for (const auto& l : p.tree_leaves) {
+            if (!std::isfinite(l.colour)) continue;
+            p.colour_min = first ? l.colour : std::min(p.colour_min, l.colour);
+            p.colour_max = first ? l.colour : std::max(p.colour_max, l.colour);
+            first = false;
+        }
+        p.colour_scale = true;
+        p.colour_label = colour->name;
+        if (p.colour_max <= p.colour_min) p.colour_max = p.colour_min + 1.0;
+        if (!first && p.colour_min < 0.0 && p.colour_max > 0.0) {
+            const double m = std::max(-p.colour_min, p.colour_max);
+            p.colour_diverging = true;
+            p.colour_min = -m;
+            p.colour_max = m;
+        }
+    }
+}
+
+// Longitude and latitude in range (or a hint that they are swapped).
+std::string CheckLonLat(const SourceColumn& lon, const SourceColumn& lat) {
+    for (double v : lon.numbers)
+        if (std::isfinite(v) && (v < -180.0 || v > 180.0))
+            return lon.name + " has " + Short(v) + ": a longitude is between -180 and 180.";
+    for (double v : lat.numbers)
+        if (std::isfinite(v) && (v < -90.0 || v > 90.0))
+            return lat.name + " has " + Short(v) + ": a latitude is between -90 and 90 (are longitude and latitude swapped?).";
+    return "";
+}
+
+void PrepareRegions(Prepared& p, const SourceColumn* region, const SourceColumn* value) {
+    const auto& countries = WorldCountries();
+    std::vector<double> sum(countries.size(), 0.0);
+    std::vector<size_t> n(countries.size(), 0);
+    std::unordered_map<std::string, size_t> unmatched;
+    std::unordered_map<std::string, int> found;  // region text -> country (each text looked up once)
+    size_t used = 0, rows = std::min(region->size(), value->numbers.size());
+    for (size_t r = 0; r < rows; ++r) {
+        if (!std::isfinite(value->numbers[r])) continue;
+        const std::string text = Trim(CellText(*region, r));
+        if (text.empty() || (region->numeric && !std::isfinite(region->numbers[r]))) continue;
+        auto it = found.find(text);
+        if (it == found.end()) it = found.emplace(text, FindCountry(text)).first;
+        if (it->second < 0) {
+            ++unmatched[text];
+            continue;
+        }
+        sum[static_cast<size_t>(it->second)] += value->numbers[r];
+        ++n[static_cast<size_t>(it->second)];
+        ++used;
+    }
+    p.region_value.assign(countries.size(), NAN);
+    p.region_rows = n;
+    size_t matched = 0;
+    bool first = true;
+    for (size_t i = 0; i < countries.size(); ++i) {
+        if (n[i] == 0) continue;
+        const double v = p.spec.region_agg == PlotSpec::RegionAgg::Mean ? sum[i] / static_cast<double>(n[i]) : sum[i];
+        p.region_value[i] = v;
+        ++matched;
+        if (p.spec.log_colour && v <= 0) continue;
+        p.grid_lo = first ? v : std::min(p.grid_lo, v);
+        p.grid_hi = first ? v : std::max(p.grid_hi, v);
+        first = false;
+    }
+    for (const auto& [text, count] : unmatched) p.unmatched.emplace_back(text, count);
+    std::sort(p.unmatched.begin(), p.unmatched.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+    if (matched == 0) {
+        p.problem = p.unmatched.empty() ? "No rows have a country and a value."
+                                        : "No country matches the names in " + region->name + " (for example '" + p.unmatched.front().first + "').";
+        return;
+    }
+    if (p.grid_hi <= p.grid_lo) p.grid_hi = p.grid_lo + 1.0;
+    p.metrics.emplace_back("countries", static_cast<double>(matched));
+    p.metrics.emplace_back("rows", static_cast<double>(used));
+    if (!p.unmatched.empty()) p.metrics.emplace_back("not matched", static_cast<double>(p.unmatched.size()));
+    p.label = {DataLabel::State::Exact, used, used};
+}
+
 }  // namespace
 
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
@@ -1974,7 +2236,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     const bool numeric_x = spec.kind != Kind::Bar && spec.kind != Kind::Pie && spec.kind != Kind::ErrorBars &&
                            spec.kind != Kind::Heatmap && spec.kind != Kind::Polar && spec.kind != Kind::Confusion &&
                            spec.kind != Kind::Roc && spec.kind != Kind::PrCurve && spec.kind != Kind::Calibration &&
-                           spec.kind != Kind::Importance;
+                           spec.kind != Kind::Importance && spec.kind != Kind::MapRegions;
     const SourceColumn* xcol = nullptr;
     if (!spec.x_column.empty() && (kind.required | kind.optional) & kEncX) {
         xcol = column(spec.x_column, numeric_x);
@@ -1984,7 +2246,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     if ((kind.required | kind.optional) & kEncY) {
         const size_t take = kind.multi_y ? spec.y_columns.size() : std::min<size_t>(1, spec.y_columns.size());
         for (size_t i = 0; i < take; ++i) {
-            const SourceColumn* y = column(spec.y_columns[i], spec.kind != Kind::Heatmap && spec.kind != Kind::Confusion);
+            const SourceColumn* y = column(spec.y_columns[i], spec.kind != Kind::Heatmap && spec.kind != Kind::Confusion &&
+                                                                  spec.kind != Kind::Sankey && spec.kind != Kind::Treemap);
             if (!y) return p;
             ys.push_back(y);
         }
@@ -2013,7 +2276,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     // A scatter coloured by a number column with many values draws a scale
     // (or when asked); everything else colours groups.
     const SourceColumn* scale = nullptr;
-    if (colour && colour->numeric && spec.kind == Kind::Scatter &&
+    if (colour && colour->numeric && (spec.kind == Kind::Scatter || spec.kind == Kind::MapPoints) &&
         (spec.color_mode == ColourMode::Scale ||
          (spec.color_mode == ColourMode::Auto && CountDistinct(*colour, kMaxColorGroups) > kMaxColorGroups))) {
         scale = colour;
@@ -2051,6 +2314,15 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::Residuals: PrepareResiduals(p, xcol, ys.front()); break;
         case Kind::LearningCurve: PrepareLearningCurve(p, src, xcol, ys); break;
         case Kind::Importance: PrepareImportance(p, src, xcol, ys.front()); break;
+        case Kind::Sankey: PrepareSankey(p, ys, value); break;
+        case Kind::Treemap: PrepareTreemap(p, ys, value, colour ? colour : scale); break;
+        case Kind::MapPoints:
+            p.problem = CheckLonLat(*xcol, *ys.front());
+            if (p.problem.empty()) PrepareScatter(p, xcol, ys, groups, scale, value);
+            if (p.spec.x_label.empty()) p.spec.x_label = "longitude";
+            if (p.spec.y_label.empty()) p.spec.y_label = "latitude";
+            break;
+        case Kind::MapRegions: PrepareRegions(p, xcol, ys.front()); break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -2066,14 +2338,15 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     }
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
         spec.kind != Kind::Matrix && spec.kind != Kind::Polar && spec.kind != Kind::PairPlot && spec.kind != Kind::Parallel &&
-        spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && !ys.empty() && ys.front()->numeric)
+        spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && spec.kind != Kind::Sankey && spec.kind != Kind::Treemap &&
+        spec.kind != Kind::MapPoints && !ys.empty() && ys.front()->numeric)
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
     // The rows chosen; a kind that said what it drew (quiver: every Nth arrow) keeps that.
     if (!selection.text.empty()) p.label.selection = selection.text;
     if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty() &&
-        p.multi_group.empty())
+        p.multi_group.empty() && p.sankey_nodes.empty() && p.tree_leaves.empty() && p.region_value.empty())
         p.problem = "No values to draw.";
     return p;
 }

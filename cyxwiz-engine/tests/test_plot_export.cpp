@@ -116,6 +116,7 @@ int main() {
     cat.columns.push_back(Numbers("v", {1, 2, 3, 4, 5}));
     cat.columns.push_back(Numbers("w", {2, 1, 4, 3, 5}));
     cat.columns.push_back(Numbers("prob", {0.1, 0.9, 0.4, 0.2, 0.7}));
+    cat.columns.push_back(Text("country", {"France", "Spain", "Peru", "Chile", "Japan"}));
     for (const auto& k : Kinds()) {
         PlotSpec s;
         s.kind = k.kind;
@@ -128,6 +129,12 @@ int main() {
         if (k.kind == Kind::Confusion) s.y_columns = {"pred"};
         if (k.kind == Kind::Calibration) s.y_columns = {"prob"};
         if (k.kind == Kind::Importance) s.x_column = "pred";
+        if (k.kind == Kind::Sankey) s.y_columns = {"truth", "pred"};
+        if (k.kind == Kind::Treemap) s.y_columns = {"truth", "pred"};
+        if (k.kind == Kind::MapRegions) {
+            s.x_column = "country";
+            s.y_columns = {"v"};
+        }
         if (k.kind == Kind::Matrix || k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) s.y_columns = {"v", "w"};
         // Vector fields read a grid of arrows: a 6 x 6 rotation.
         Source field;
@@ -182,6 +189,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 31 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 35 kinds, colour scale. OK\n";
     return 0;
 }

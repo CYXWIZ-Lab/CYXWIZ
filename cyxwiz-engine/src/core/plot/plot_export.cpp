@@ -6,6 +6,9 @@
 #include <iomanip>
 #include <sstream>
 
+#include "plot_layout.h"
+#include "world_map.h"
+
 namespace cyxwiz::plot {
 
 namespace {
@@ -258,6 +261,56 @@ std::string ToCsv(const Prepared& p) {
                     out << CsvCell(Category(p, i)) << ',' << Num(p.series[0].y[i]) << ','
                         << (i < p.series[0].low.size() ? Num(p.series[0].low[i]) : std::string()) << '\n';
             break;
+        case Kind::Sankey:
+            out << "from_step,from,to_step,to,value\n";
+            for (const auto& l : p.sankey_links) {
+                const auto& a = p.sankey_nodes[static_cast<size_t>(l.from)];
+                const auto& b = p.sankey_nodes[static_cast<size_t>(l.to)];
+                out << CsvCell(p.sankey_steps[static_cast<size_t>(a.step)]) << ',' << CsvCell(a.name) << ','
+                    << CsvCell(p.sankey_steps[static_cast<size_t>(b.step)]) << ',' << CsvCell(b.name) << ',' << Num(l.value) << '\n';
+            }
+            break;
+        case Kind::Treemap:
+            for (const auto& level : p.tree_levels) out << CsvCell(level) << ',';
+            out << CsvCell(p.spec.value_column.empty() ? "rows" : p.spec.value_column);
+            if (p.colour_scale) out << ',' << CsvCell("mean of " + p.colour_label);
+            out << '\n';
+            for (const auto& l : p.tree_leaves) {
+                for (const auto& name : l.path) out << CsvCell(name) << ',';
+                out << Num(l.size);
+                if (p.colour_scale) out << ',' << Num(l.colour);
+                out << '\n';
+            }
+            break;
+        case Kind::MapPoints:
+            out << "series,longitude,latitude";
+            if (!p.size_label.empty()) out << ',' << CsvCell(p.size_label);
+            if (p.colour_scale) out << ',' << CsvCell(p.colour_label);
+            out << '\n';
+            for (const auto& s : p.series) {
+                const bool all = !s.all_x.empty();
+                const auto& xs = all ? s.all_x : s.x;
+                const auto& ys = all ? s.all_y : s.y;
+                const auto& zs = all ? s.all_z : s.z;
+                const auto& cs = all ? s.all_c : s.c;
+                for (size_t i = 0; i < std::min(xs.size(), ys.size()); ++i) {
+                    out << CsvCell(s.label) << ',' << Num(xs[i]) << ',' << Num(ys[i]);
+                    if (!p.size_label.empty()) out << ',' << (i < zs.size() ? Num(zs[i]) : std::string());
+                    if (p.colour_scale) out << ',' << (i < cs.size() ? Num(cs[i]) : std::string());
+                    out << '\n';
+                }
+            }
+            break;
+        case Kind::MapRegions: {
+            out << "country,iso_a3," << CsvCell(p.spec.y_columns.empty() ? "value" : p.spec.y_columns.front()) << ",rows,matched\n";
+            const auto& countries = WorldCountries();
+            for (size_t i = 0; i < countries.size() && i < p.region_value.size(); ++i)
+                if (std::isfinite(p.region_value[i]))
+                    out << CsvCell(countries[i].name) << ',' << countries[i].iso_a3 << ',' << Num(p.region_value[i]) << ','
+                        << p.region_rows[i] << ",yes\n";
+            for (const auto& [text, rows] : p.unmatched) out << CsvCell(text) << ",,," << rows << ",no\n";
+            break;
+        }
     }
     return out.str();
 }
@@ -325,7 +378,8 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     o << std::fixed << std::setprecision(1);
     const bool title = !p.spec.title.empty();
     const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar || p.spec.kind == Kind::Image ||
-                     p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel;
+                     p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel || p.spec.kind == Kind::Sankey ||
+                     p.spec.kind == Kind::Treemap;
     Frame f{64, title ? 40.0 : 16.0, st.width - 64.0 - 18.0, st.height - (title ? 40.0 : 16.0) - 46.0, range};
     if (!(f.r.x1 > f.r.x0)) f.r.x1 = f.r.x0 + 1;
     if (!(f.r.y1 > f.r.y0)) f.r.y1 = f.r.y0 + 1;
@@ -774,6 +828,100 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
             break;
     }
     o << "</g>\n";
+
+    // P2b group 5.
+    const auto map_outline = [&](bool regions) {
+        const auto& countries = WorldCountries();
+        o << "<g clip-path=\"url(#area)\">\n";
+        for (size_t i = 0; i < countries.size(); ++i) {
+            std::string fill = st.grid;
+            if (regions && i < p.region_value.size() && std::isfinite(p.region_value[i])) {
+                double v = p.region_value[i], lo = p.grid_lo, hi = p.grid_hi;
+                if (p.spec.log_colour) {
+                    v = std::log10(std::max(v, lo));
+                    lo = std::log10(lo);
+                    hi = std::log10(hi);
+                }
+                fill = RangeColour(v, lo, hi, false, st);
+            }
+            for (const auto& ring : countries[i].rings) {
+                o << "<path fill=\"" << fill << "\" stroke=\"" << st.background << "\" stroke-width=\"0.5\" d=\"";
+                for (size_t k = 0; k + 1 < ring.size(); k += 2) o << (k == 0 ? 'M' : 'L') << f.X(ring[k]) << ',' << f.Y(ring[k + 1]);
+                o << "Z\"/>\n";
+            }
+        }
+        o << "</g>\n";
+    };
+    switch (p.spec.kind) {
+        case Kind::MapRegions: map_outline(true); break;
+        case Kind::MapPoints: {
+            map_outline(false);
+            o << "<g clip-path=\"url(#area)\">\n";
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& sr = p.series[i];
+                for (size_t k = 0; k < std::min(sr.x.size(), sr.y.size()); ++k) {
+                    double r = 2.5;
+                    if (k < sr.z.size() && std::isfinite(sr.z[k]))
+                        r = 2.0 + 8.0 * std::sqrt(std::clamp((sr.z[k] - p.size_min) / (p.size_max - p.size_min), 0.0, 1.0));
+                    const std::string fill = p.colour_scale ? ScaleColour(p, st, k < sr.c.size() ? sr.c[k] : NAN) : colour(i);
+                    o << "<circle cx=\"" << f.X(sr.x[k]) << "\" cy=\"" << f.Y(sr.y[k]) << "\" r=\"" << r << "\" fill=\"" << fill
+                      << "\" fill-opacity=\"0.75\"/>\n";
+                }
+            }
+            o << "</g>\n";
+            break;
+        }
+        case Kind::Sankey: {
+            const size_t steps = p.sankey_steps.size();
+            const double node_w = 12, label_w = 140;
+            const auto sx = [&](int step) {
+                return f.left + (steps > 1 ? static_cast<double>(step) / static_cast<double>(steps - 1) : 0.0) * (f.width - node_w - label_w);
+            };
+            const auto sy = [&](double y) { return f.top + y * f.height; };
+            std::vector<int> first_of_step(steps, -1);
+            for (size_t i = 0; i < p.sankey_nodes.size(); ++i)
+                if (first_of_step[static_cast<size_t>(p.sankey_nodes[i].step)] < 0) first_of_step[static_cast<size_t>(p.sankey_nodes[i].step)] = static_cast<int>(i);
+            for (const auto& l : p.sankey_links) {
+                const auto& a = p.sankey_nodes[static_cast<size_t>(l.from)];
+                const auto& b = p.sankey_nodes[static_cast<size_t>(l.to)];
+                const double x0 = sx(a.step) + node_w, x1 = sx(b.step), mx = (x0 + x1) / 2;
+                const double y0 = sy(l.y_from), y1 = sy(l.y_to), t = l.thickness * f.height;
+                const size_t c = a.step == 0 ? static_cast<size_t>(l.from) : static_cast<size_t>(l.from - first_of_step[static_cast<size_t>(a.step)]) + 3;
+                o << "<path fill=\"" << colour(c) << "\" fill-opacity=\"0.35\" d=\"M" << x0 << ',' << y0 << " C" << mx << ',' << y0 << ' ' << mx << ','
+                  << y1 << ' ' << x1 << ',' << y1 << " L" << x1 << ',' << y1 + t << " C" << mx << ',' << y1 + t << ' ' << mx << ',' << y0 + t << ' ' << x0
+                  << ',' << y0 + t << " Z\"/>\n";
+            }
+            for (const auto& nd : p.sankey_nodes) {
+                const double x = sx(nd.step), y0 = sy(nd.y0), y1 = sy(nd.y1);
+                o << "<rect x=\"" << x << "\" y=\"" << y0 << "\" width=\"" << node_w << "\" height=\"" << std::max(1.0, y1 - y0) << "\" fill=\"" << st.text << "\"/>"
+                  << "<text x=\"" << x + node_w + 5 << "\" y=\"" << (y0 + y1) / 2 + 4 << "\" fill=\"" << st.text << "\">" << Xml(nd.name) << " <tspan fill=\""
+                  << st.text_dim << "\">" << Num(nd.value) << "</tspan></text>\n";
+            }
+            for (size_t k = 0; k < steps; ++k)
+                o << "<text x=\"" << sx(static_cast<int>(k)) << "\" y=\"" << f.top + f.height + 18 << "\" fill=\"" << st.text_dim << "\">" << Xml(p.sankey_steps[k]) << "</text>\n";
+            break;
+        }
+        case Kind::Treemap: {
+            const auto rects = TreemapLayout(p, {}, f.width, f.height, 16.0);
+            for (const auto& r : rects) {
+                const double x = f.left + r.x, y = f.top + r.y;
+                if (!r.leaf) {
+                    o << "<rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << r.w << "\" height=\"" << r.h << "\" fill=\"" << st.grid << "\"/>\n";
+                    if (r.h > 16 * 2.6 && r.w > 48)
+                        o << "<text x=\"" << x + 4 << "\" y=\"" << y + 12 << "\" fill=\"" << st.text << "\" font-size=\"11\" font-weight=\"600\">"
+                          << Xml(r.path.back()) << "</text>\n";
+                    continue;
+                }
+                const std::string fill = p.colour_scale ? ScaleColour(p, st, r.colour) : colour(static_cast<size_t>(r.top));
+                o << "<rect x=\"" << x + 0.5 << "\" y=\"" << y + 0.5 << "\" width=\"" << std::max(0.0, r.w - 1) << "\" height=\"" << std::max(0.0, r.h - 1)
+                  << "\" fill=\"" << fill << "\"/>\n";
+                if (r.w > 50 && r.h > 18)
+                    o << "<text x=\"" << x + 4 << "\" y=\"" << y + 13 << "\" fill=\"" << st.background << "\" font-size=\"10.5\">" << Xml(r.path.back()) << "</text>\n";
+            }
+            break;
+        }
+        default: break;
+    }
 
     // Model results: their figures top left (AUC, RMSE, ...).
     if (!p.metrics.empty()) {

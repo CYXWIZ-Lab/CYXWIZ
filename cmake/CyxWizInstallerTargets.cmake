@@ -387,6 +387,8 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_plot_prepare
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_presets.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
@@ -399,6 +401,8 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_export.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
@@ -409,6 +413,8 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"

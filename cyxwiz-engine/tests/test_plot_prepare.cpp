@@ -1,6 +1,8 @@
 // Plot data preparation (TOFIX134 P1 step 1.3): every P1 kind from table
 // columns, with reduction, sampling, colour groups and honest labels.
+#include "../src/core/plot/plot_layout.h"
 #include "../src/core/plot/plot_prepare.h"
+#include "../src/core/plot/world_map.h"
 #include "../src/core/plot/plot_presets.h"
 #include "../src/core/plot/plot_image.h"
 
@@ -718,6 +720,98 @@ int main() {
               p.label.state == DataLabel::State::Truncated, "importance: top 3, largest first");
     }
 
+    // ---- Flows, hierarchies and maps (P2b group 5) ----
+    {
+        // Sankey: 6 rows over two steps; flows add up and the layout stacks.
+        Source sk;
+        sk.columns.push_back(Text("from", {"a", "a", "a", "b", "b", "c"}));
+        sk.columns.push_back(Text("to", {"x", "x", "y", "y", "y", "y"}));
+        sk.columns.push_back(Numbers("w", {1, 1, 2, 1, 1, 4}));
+        p = Prepare(Spec(Kind::Sankey, "", {"from", "to"}), sk);
+        Check(p.problem.empty() && p.sankey_nodes.size() == 5 && p.sankey_links.size() == 4 && p.sankey_total == 6,
+              "sankey: 5 nodes, 4 bands, 6 rows (" + p.problem + ")");
+        Check(p.sankey_nodes[0].name == "a" && p.sankey_nodes[0].value == 3 && p.sankey_nodes[3].name == "y" && p.sankey_nodes[3].value == 4,
+              "sankey: largest first per step");
+        double into_y = 0;
+        for (const auto& lk : p.sankey_links)
+            if (p.sankey_nodes[static_cast<size_t>(lk.to)].name == "y") into_y += lk.value;
+        Check(into_y == 4, "sankey: what flows into y is its value");
+        const auto& ny = p.sankey_nodes[3];
+        const auto& nx = p.sankey_nodes[4];
+        Check(nx.name == "x" && std::fabs((ny.y1 - ny.y0) / (nx.y1 - nx.y0) - 2.0) < 1e-9 && nx.y0 > ny.y1, "sankey: heights follow the values, stacked");
+        Check(std::fabs(p.sankey_links[0].y_from - p.sankey_nodes[0].y0) < 1e-12, "sankey: the first band starts at the top of its node");
+        PlotSpec skw = Spec(Kind::Sankey, "", {"from", "to"});
+        skw.value_column = "w";
+        p = Prepare(skw, sk);
+        Check(p.sankey_total == 10 && p.sankey_nodes[0].name == "a" && p.sankey_nodes[1].name == "c" && p.sankey_nodes[1].value == 4, "sankey: summed value, ties by name");
+        skw.sankey_top = 1;
+        p = Prepare(skw, sk);
+        Check(p.sankey_nodes[1].name == "other" && p.sankey_nodes[1].value == 6, "sankey: the rest as other");
+        Check(Prepare(Spec(Kind::Sankey, "", {"from"}), sk).problem == "Choose two or more step columns.", "sankey: one step refused");
+
+        // Treemap: areas follow the sizes and fill the box.
+        Source tm;
+        tm.columns.push_back(Text("continent", {"A", "A", "B", "B", "B"}));
+        tm.columns.push_back(Text("country", {"a1", "a2", "b1", "b2", "b3"}));
+        tm.columns.push_back(Numbers("pop", {10, 30, 20, 25, 15}));
+        tm.columns.push_back(Numbers("gdp", {1, 2, 3, 4, 5}));
+        PlotSpec ts = Spec(Kind::Treemap, "", {"continent", "country"});
+        ts.value_column = "pop";
+        ts.color_column = "gdp";
+        p = Prepare(ts, tm);
+        Check(p.problem.empty() && p.tree_leaves.size() == 5 && p.tree_tops == std::vector<std::string>({"B", "A"}) && p.colour_scale &&
+                  p.colour_min == 1 && p.colour_max == 5, "treemap: leaves, tops by size, colour scale (" + p.problem + ")");
+        const auto flat = TreemapLayout(p, {}, 100, 60, 0.0);
+        double leaf_area = 0;
+        for (const auto& r : flat)
+            if (r.leaf) {
+                leaf_area += r.w * r.h;
+                Check(r.x >= -1e-9 && r.y >= -1e-9 && r.x + r.w <= 100 + 1e-9 && r.y + r.h <= 60 + 1e-9, "treemap: inside the box");
+            }
+        Check(std::fabs(leaf_area - 6000) < 1e-6, "treemap: the leaves fill the box");
+        for (const auto& r : flat)
+            if (r.leaf && r.path.back() == "a2") Check(std::fabs(r.w * r.h - 6000.0 * 30 / 100) < 1e-6, "treemap: area follows size");
+        const auto zoomed = TreemapLayout(p, {"A"}, 100, 60, 0.0);
+        Check(zoomed.size() == 2 && zoomed[0].path.back() == "a2", "treemap: zoom into A");
+        const auto sq = Squarify({6, 6, 4, 3, 2, 2, 1}, 0, 0, 6, 4);
+        Check(std::fabs(sq[0].w * sq[0].h - 6) < 1e-9 && std::fabs(sq[6].w * sq[6].h - 1) < 1e-9, "squarify: the classic example");
+
+        // Map regions: names and ISO codes, unmatched listed.
+        Check(FindCountry("France") >= 0 && FindCountry("FRA") == FindCountry("france") && FindCountry("United States") == FindCountry("USA") &&
+                  FindCountry("UK") == FindCountry("GBR") && FindCountry("Atlantis") < 0, "world map: names, codes, aliases");
+        Check(CountryAt(2.35, 48.85) == FindCountry("France") && CountryAt(-30, 30) < 0, "world map: Paris is in France, the Atlantic is sea");
+        Check(CountryAt(28.2, -29.5) == FindCountry("Lesotho"), "world map: Lesotho inside South Africa");
+        Source rg;
+        rg.columns.push_back(Text("country", {"France", "FRA", "Germany", "Atlantis", "Atlantis"}));
+        rg.columns.push_back(Numbers("v", {1, 2, 5, 7, 8}));
+        PlotSpec region_spec = Spec(Kind::MapRegions, "country", {"v"});
+        p = Prepare(region_spec, rg);
+        const size_t fr = static_cast<size_t>(FindCountry("France"));
+        Check(p.problem.empty() && p.region_value[fr] == 3 && p.region_rows[fr] == 2 && p.unmatched.size() == 1 &&
+                  p.unmatched[0].first == "Atlantis" && p.unmatched[0].second == 2, "regions: summed, unmatched listed (" + p.problem + ")");
+        region_spec.region_agg = PlotSpec::RegionAgg::Mean;
+        Check(Prepare(region_spec, rg).region_value[fr] == 1.5, "regions: mean");
+        Source no_match;
+        no_match.columns.push_back(Text("country", {"Atlantis"}));
+        no_match.columns.push_back(Numbers("v", {1}));
+        Check(Prepare(Spec(Kind::MapRegions, "country", {"v"}), no_match).problem.find("Atlantis") != std::string::npos, "regions: nothing matched");
+
+        // Map points: sizes kept beside the points; out-of-range refused.
+        Source mp;
+        mp.columns.push_back(Numbers("lon", {2.35, -0.13, 13.4}));
+        mp.columns.push_back(Numbers("lat", {48.85, 51.5, 52.5}));
+        mp.columns.push_back(Numbers("mag", {3, 5, 4}));
+        PlotSpec map_spec = Spec(Kind::MapPoints, "lon", {"lat"});
+        map_spec.value_column = "mag";
+        p = Prepare(map_spec, mp);
+        Check(p.problem.empty() && p.series[0].z == std::vector<double>({3, 5, 4}) && p.size_min == 3 && p.size_max == 5, "map points: sizes");
+        Check(Prepare(Spec(Kind::MapPoints, "lat", {"lon"}), mp).problem.empty(), "map points: swapped but in range is allowed");
+        Source bad;
+        bad.columns.push_back(Numbers("lon", {200}));
+        bad.columns.push_back(Numbers("lat", {10}));
+        Check(Prepare(Spec(Kind::MapPoints, "lon", {"lat"}), bad).problem.find("between -180 and 180") != std::string::npos, "map points: longitude range");
+    }
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -727,7 +821,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 31 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance. OK\n";
+    std::cout << "plot prepare: 35 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance, sankey, treemap, map regions, map points. OK\n";
     return 0;
 }
