@@ -49,6 +49,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include <implot3d.h>
 #include "gui/plot/plot_style.h"
 #include "gui/plot/plot_capture_gl.h"
 #include <imnodes.h>
@@ -355,6 +356,7 @@ bool CyxWizApp::Initialize() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     implot_context_ = ImPlot::CreateContext();  // the one ImPlot context (TOFIX134 P0 item 1)
+    ImPlot3D::CreateContext();                  // 3D plots (TOFIX134 P4)
     cyxwiz::plot::InstallPlotViewHooks();  // PNG export, save dialog, image copy (TOFIX134 P1)
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
@@ -863,6 +865,7 @@ void CyxWizApp::Shutdown() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImNodes::DestroyContext();  // Cleanup ImNodes context
+    ImPlot3D::DestroyContext();
     ImPlot::DestroyContext(implot_context_);  // the Engine's context, whatever is current
     implot_context_ = nullptr;
     ImGui::DestroyContext();

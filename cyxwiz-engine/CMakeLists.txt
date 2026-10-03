@@ -593,6 +593,10 @@ set(ENGINE_SOURCES
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)
     external/imnodes/imnodes.cpp
+    # ImPlot3D 0.2 (3D plots, TOFIX134 P4; vendored, see external/implot3d/SOURCE.md)
+    external/implot3d/implot3d.cpp
+    external/implot3d/implot3d_items.cpp
+    external/implot3d/implot3d_meshes.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
@@ -988,7 +992,11 @@ target_include_directories(cyxwiz-engine BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/implot3d
 )
+# Vendored ImPlot3D: compiled as upstream ships it, without our warning level.
+set_source_files_properties(external/implot3d/implot3d.cpp external/implot3d/implot3d_items.cpp external/implot3d/implot3d_meshes.cpp
+    PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/W0>")
 
 include(CyxWizInstallerTargets)
 
