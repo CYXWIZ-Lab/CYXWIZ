@@ -136,6 +136,7 @@ std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const Da
     std::vector<WidgetSpec> out;
     int slot = 0;
     const auto place = [&](WidgetSpec& w) {
+        w.plot.legend = !w.plot.color_column.empty();  // one series needs no legend
         w.at = {(slot % 3) * 4, (slot / 3) * 3, 4, 3};
         ++slot;
         w.automatic = true;
@@ -161,7 +162,8 @@ std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const Da
         if (target && c.name == *target) continue;
         const ProfiledColumn* p = profile_of(c.name);
         if (!p) continue;
-        if (c.role == ColumnRole::Category && categories < 6 && p->facts.distinct >= 2 && p->facts.distinct <= 1000) {
+        // Bars stay readable up to 30 values (more: the Profile tab lists the top ones).
+        if (c.role == ColumnRole::Category && categories < 6 && p->facts.distinct >= 2 && p->facts.distinct <= 30) {
             WidgetSpec w;
             w.type = WidgetType::Plot;
             w.plot.kind = plot::Kind::Bar;

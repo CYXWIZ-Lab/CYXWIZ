@@ -124,7 +124,9 @@ void DataStudioPanel::RenderTabBar() {
             if (query_editor_) query_editor_->Render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Profile")) {
+        if (show_profile_) ImGui::SetWindowFocus();
+        if (ImGui::BeginTabItem("Profile", nullptr, show_profile_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+            show_profile_ = false;
             if (profile_) profile_->Render();
             ImGui::EndTabItem();
         }

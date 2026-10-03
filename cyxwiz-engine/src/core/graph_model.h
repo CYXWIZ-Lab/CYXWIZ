@@ -576,6 +576,9 @@ enum class NodeType {
     // Appended to preserve existing serialized numeric NodeType ids.
     Plot,               // Chart of the data at this point (one input, no output)
 
+    // ===== Appended Dashboard node (TOFIX134 P3) =====
+    Dashboard,          // Dashboard of the data at this point (one input, no output)
+
     // Special sentinel value
     Unknown
 };

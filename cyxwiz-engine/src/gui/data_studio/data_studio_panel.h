@@ -83,6 +83,13 @@ public:
         open_node_editor_callback_ = std::move(cb);
     }
 
+    // Opens Data Studio on a dataset's Profile tab (a dashboard's "Edit roles").
+    void ShowProfile(const std::string& dataset_name) {
+        SetActiveDataset(dataset_name);
+        visible_ = true;
+        show_profile_ = true;
+    }
+
     // Query results open in the Table Viewer through this (MainWindow).
     void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
         if (query_editor_) query_editor_->on_open_table = std::move(cb);
@@ -96,6 +103,7 @@ private:
 
     // State
     std::string active_dataset_;
+    bool show_profile_ = false;  // select the Profile tab (and focus) next frame
     int selected_tab_;
     bool visible_;
 

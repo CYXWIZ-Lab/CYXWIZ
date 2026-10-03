@@ -811,6 +811,12 @@ MainWindow::MainWindow()
             spdlog::info("Opened Node Editor panel from Data Studio");
         }
     });
+    // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
+    if (node_editor_) {
+        node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
+            if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
+        });
+    }
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
         if (table_viewer_ && table) {

@@ -36,6 +36,9 @@ namespace cyxwiz {
 class LiveGraphCompile;
 }  // namespace cyxwiz
 
+namespace cyxwiz::dashboard {
+class DashboardWindow;
+}
 namespace cyxwiz::plot {
 class PlotNodeLane;
 class PlotWindow;
@@ -271,6 +274,8 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     // Configure a node as a double-click does (Properties "Open Dialog...").
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
+    void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
@@ -996,6 +1001,12 @@ private:
     void DrawPlotNodeStatus(const MLNode& node);
     void DrawPlotNodeHeader(int node_id);
     void PlotNodeInput(int plot_id, int source_id);
+    // Dashboard nodes (TOFIX134 P3): the same lane, one Dashboard window each.
+    std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
+    std::map<int, uint64_t> dashboard_data_versions_;
+    std::function<void(const std::string&)> open_data_studio_profile_;
+    void OpenDashboardNode(int node_id);
+    void RenderDashboardWindows();
     std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====

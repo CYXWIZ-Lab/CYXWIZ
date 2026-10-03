@@ -323,6 +323,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_REPORT_ANALYTICS;
             case NodeType::Plot:
                 return ICON_TI_CHART_DOTS;
+            case NodeType::Dashboard:
+                return ICON_TI_LAYOUT_COLUMNS;
             case NodeType::SampleRows:
                 return ICON_TI_DICE;
             case NodeType::CorrelationMatrix:
@@ -588,6 +590,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::SeasonalNaive:
             case NodeType::SignalScope:
             case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -952,6 +955,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
             case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1273,6 +1277,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
             case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1594,6 +1599,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
             case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -2087,6 +2093,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_CHART_BAR;
         case NodeType::Plot:
             return ICON_FA_CHART_LINE;
+        case NodeType::Dashboard:
+            return ICON_FA_TABLE_COLUMNS;
         case NodeType::SampleRows:
             return ICON_FA_DICE;
         case NodeType::CorrelationMatrix:

@@ -4398,6 +4398,24 @@ void NodeMetadataRegistry::InitializeVisualizationNodes() {
         {},
         {{"plot_spec", "string", "", "Plot settings (set in the Plot window)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    // The Dashboard node (TOFIX134 P3, approved board 13): the same window
+    // family as Plot, starting with an automatic layout of the data at its
+    // position; widgets are KPIs, tables and every plot type.
+    RegisterNode({NodeType::Dashboard, NodeCategory::Visualization, "Dashboard",
+        ICON_FA_TABLE_COLUMNS,
+        {"dashboard", "kpi", "overview", "profile", "explore", "eda", "summary", "report", "widgets", "filter"},
+        0, false,
+        "A dashboard of the data at this point; double-click to open it.",
+        "Connect any table. The dashboard starts with an automatic layout from the data's profile and "
+        "column roles (the target, a card per column, correlations); add, remove and arrange widgets, and "
+        "click a bar to filter every widget. The layout and filters are saved in the node; the data is read "
+        "again, never saved in the graph.",
+        "",
+        {{"Data", PinType::Tensor, false, "The table to look at"}},
+        {},
+        {{"dashboard_spec", "string", "", "Dashboard layout (set in the Dashboard window)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

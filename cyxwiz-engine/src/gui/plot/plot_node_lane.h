@@ -49,6 +49,7 @@ public:
         float progress = 0.0f;         // Running
         std::string progress_text;
         std::shared_ptr<arrow::Table> table;
+        std::string dataset_name;      // the registry name of `table` (a loaded Data Input or the run's result)
         std::string read_at;           // "16:42" when the table was read
         uint64_t data_version = 0;     // bumps when `table` changes
     };

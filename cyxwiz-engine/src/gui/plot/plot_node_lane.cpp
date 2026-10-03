@@ -87,6 +87,7 @@ void PlotNodeLane::ReadLoaded(Entry& e) {
         return;
     }
     s.table = dataset->GetArrowTable();
+    s.dataset_name = e.plan.dataset_name;
     s.read_at = ClockNow();
     ++s.data_version;
     s.state = Status::State::Ready;
@@ -134,6 +135,7 @@ void PlotNodeLane::Finish(Entry& e) {
             auto dataset = it != results.end() ? DataRegistry::Instance().GetArrowDataset(it->second) : nullptr;
             if (dataset && dataset->GetArrowTable()) {
                 s.table = dataset->GetArrowTable();
+                s.dataset_name = it->second;
                 s.read_at = ClockNow();
                 ++s.data_version;
                 s.state = Status::State::Ready;
@@ -160,7 +162,7 @@ void PlotNodeLane::Poll(const std::vector<gui::MLNode>& nodes, const std::vector
     last_plan_time_ = now;
     std::vector<int> alive;
     for (const auto& n : nodes) {
-        if (n.type != gui::NodeType::Plot) continue;
+        if (n.type != gui::NodeType::Plot && n.type != gui::NodeType::Dashboard) continue;
         alive.push_back(n.id);
         Plan(n.id, entries_[n.id], nodes, links);
     }

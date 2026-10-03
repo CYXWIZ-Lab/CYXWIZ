@@ -2281,7 +2281,7 @@ void NodeEditor::RenderNodes() {
         }
 
         // Plot nodes show their data status below the node (TOFIX134 P2).
-        if (node.type == NodeType::Plot) {
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) {
             DrawPlotNodeStatus(node);
         } else if (!node.description.empty()) {
         // KNIME-style: Draw node description below the node (bound to node, moves with it)
@@ -4422,8 +4422,8 @@ bool NodeEditor::ExecuteDataPipeline() {
     }
 
     for (const auto& node : nodes_) {
-        // A Plot node shows data; it is not a pipeline step (TOFIX134 P2).
-        if (node.type == NodeType::Plot) continue;
+        // Plot and Dashboard nodes show data; they are not pipeline steps (TOFIX134 P2, P3).
+        if (node.type == NodeType::Plot || node.type == NodeType::Dashboard) continue;
         nlohmann::json node_json;
         node_json["id"] = node.id;
         node_json["type"] = GetNodeTypeName(node.type);
@@ -4449,7 +4449,7 @@ bool NodeEditor::ExecuteDataPipeline() {
             spdlog::error("Pipeline link {} references a missing node", link.id);
             return false;
         }
-        if (to_node->type == NodeType::Plot) continue;
+        if (to_node->type == NodeType::Plot || to_node->type == NodeType::Dashboard) continue;
         const auto from_pin = std::find_if(
             from_node->outputs.begin(), from_node->outputs.end(),
             [&link](const NodePin& pin) { return pin.id == link.from_pin; });

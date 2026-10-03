@@ -67,6 +67,20 @@ public:
         bool own_window_button = true;
     };
 
+    // A click on a bar, a pie slice or a histogram bin (not a drag): what
+    // was clicked, for a dashboard's cross-filter. TakeClick() hands it over once.
+    struct Click {
+        enum class What { Category, Range } what = What::Category;
+        std::string field;   // the column it is a value of
+        std::string value;   // Category
+        double lo = 0, hi = 0;  // Range
+    };
+    std::optional<Click> TakeClick() {
+        auto c = click_;
+        click_.reset();
+        return c;
+    }
+
     void SetData(Prepared data);
     const Prepared& Data() const { return data_; }
     bool HasData() const { return has_data_; }
@@ -117,6 +131,8 @@ private:
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
+    std::optional<Click> click_;
+    void DetectClick();
     int hot_node_ = -1, hot_link_ = -1;          // sankey: under the mouse
     std::vector<TreeRect> tree_rects_;           // treemap: last frame's layout (pixels)
     int hot_rect_ = -1;

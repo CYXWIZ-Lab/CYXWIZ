@@ -6,6 +6,8 @@
 #include "icons.h"
 #include "plot/plot_node_lane.h"
 #include "plot/plot_window.h"
+#include "dashboard/dashboard_window.h"
+#include "../core/dashboard/dashboard_model.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 
@@ -75,7 +77,17 @@ cyxwiz::plot::PlotSpec SpecOf(const MLNode& node) {
 void NodeEditor::DrawPlotNodeStatus(const MLNode& node) {
     if (!plot_lane_) return;
     const Lane::Status& st = plot_lane_->StatusOf(node.id);
-    const auto [line1, line2] = StatusLines(st, SpecOf(node));
+    auto [line1, line2] = StatusLines(st, SpecOf(node));
+    if (node.type == NodeType::Dashboard && (st.state == State::Ready || st.state == State::Idle)) {
+        cyxwiz::dashboard::DashboardSpec spec;
+        auto it = node.parameters.find("dashboard_spec");
+        if (it != node.parameters.end() && !it->second.empty()) cyxwiz::dashboard::DashboardFromJson(it->second, spec);
+        if (st.state == State::Ready)
+            line1 = spec.widgets.empty() ? std::string("Dashboard \xC2\xB7 automatic layout on open")
+                                         : "Dashboard \xC2\xB7 " + std::to_string(spec.widgets.size()) + " widgets";
+        else
+            line2 = "Open the dashboard to read " + (st.feeder_name.empty() ? std::string("its input") : st.feeder_name) + ".";
+    }
     const auto& t = cyxwiz::ui::CurrentTokens();
     const ImVec2 pos = ImNodes::GetNodeScreenSpacePos(node.id);
     const ImVec2 dims = ImNodes::GetNodeDimensions(node.id);
@@ -199,10 +211,60 @@ void NodeEditor::DrawPlotNodeHeader(int node_id) {
     }
 }
 
+void NodeEditor::OpenDashboardNode(int node_id) {
+    MLNode* node = FindNodeById(node_id);
+    if (!node) return;
+    if (!plot_lane_) plot_lane_ = std::make_shared<cyxwiz::plot::PlotNodeLane>();
+    auto& window = dashboard_windows_[node_id];
+    if (!window) {
+        window = std::make_shared<cyxwiz::dashboard::DashboardWindow>("dashboard_node_" + std::to_string(node_id));
+        auto it = node->parameters.find("dashboard_spec");
+        if (it != node->parameters.end()) window->SetSpecJson(it->second);
+        window->draw_header = [this, node_id]() { DrawPlotNodeHeader(node_id); };
+        // The layout and filters are saved in the node.
+        window->on_spec_changed = [this, node_id](const std::string& json) {
+            if (MLNode* n = FindNodeById(node_id))
+                if (n->parameters["dashboard_spec"] != json) n->parameters["dashboard_spec"] = json;
+        };
+        window->on_edit_roles = [this](const std::string& dataset) {
+            if (open_data_studio_profile_) open_data_studio_profile_(dataset);
+        };
+        dashboard_data_versions_[node_id] = ~0ull;
+    }
+    window->visible = true;
+    const Lane::Status& st = plot_lane_->StatusOf(node_id);
+    if (!st.table && st.state != State::Running) plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
+}
+
+void NodeEditor::RenderDashboardWindows() {
+    for (auto it = dashboard_windows_.begin(); it != dashboard_windows_.end();) {
+        const int id = it->first;
+        MLNode* node = FindNodeById(id);
+        if (!node || node->type != NodeType::Dashboard) {  // the node was deleted
+            plot_lane_->Forget(id);
+            dashboard_data_versions_.erase(id);
+            it = dashboard_windows_.erase(it);
+            continue;
+        }
+        auto& window = it->second;
+        const Lane::Status& st = plot_lane_->StatusOf(id);
+        const bool has_data = st.table && !st.dataset_name.empty() &&
+                              (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);
+        if (has_data) {
+            window->SetData(st.dataset_name, node->name + " \xC2\xB7 " + st.feeder_name);
+        } else {
+            const auto [line1, line2] = StatusLines(st, cyxwiz::plot::PlotSpec{});
+            window->ClearData(line1 + ". " + line2);
+        }
+        window->Render();
+        ++it;
+    }
+}
+
 void NodeEditor::RenderPlotNodes() {
     bool any_plot = false;
-    for (const auto& n : nodes_) any_plot = any_plot || n.type == NodeType::Plot;
-    if (!any_plot && plot_windows_.empty()) return;
+    for (const auto& n : nodes_) any_plot = any_plot || n.type == NodeType::Plot || n.type == NodeType::Dashboard;
+    if (!any_plot && plot_windows_.empty() && dashboard_windows_.empty()) return;
     if (!plot_lane_) plot_lane_ = std::make_shared<cyxwiz::plot::PlotNodeLane>();
     plot_lane_->Poll(nodes_, links_, task_owner_token_);
 
@@ -233,6 +295,7 @@ void NodeEditor::RenderPlotNodes() {
         window->Render();
         ++it;
     }
+    RenderDashboardWindows();
 }
 
 }  // namespace gui

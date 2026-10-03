@@ -2595,7 +2595,8 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::Plot: {
+        case NodeType::Plot:
+        case NodeType::Dashboard: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

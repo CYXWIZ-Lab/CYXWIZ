@@ -191,7 +191,7 @@ bool Properties::ConfigureNode(MLNode* node) {
         return false;
     }
     // A Plot node opens its Plot window, owned by the node editor.
-    if (node->type == NodeType::Plot && node_editor_) {
+    if ((node->type == NodeType::Plot || node->type == NodeType::Dashboard) && node_editor_) {
         node_editor_->OpenNodeConfiguration(node->id);
         return true;
     }
@@ -391,7 +391,7 @@ void Properties::RenderGeneralSection(MLNode& node) {
 
 void Properties::RenderOpenDialogButton(MLNode& node) {
     // Check if this node type should have an "Open Dialog" button
-    bool should_show = ShouldShowOpenDialogButton(node.type) || node.type == NodeType::Plot;
+    bool should_show = ShouldShowOpenDialogButton(node.type) || node.type == NodeType::Plot || node.type == NodeType::Dashboard;
     if (!should_show) {
         return;
     }

@@ -1350,6 +1350,9 @@ void PlotView::DrawPlot(ImVec2 size) {
     }
 
     if (ImPlot::IsPlotHovered() && pending_->action == Pending::Action::None) DrawHover();
+    // A click (not a drag to pan) on a bar, slice or bin.
+    if (ImPlot::IsPlotHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 16.0f)
+        DetectClick();
     const ImPlotRect lim = ImPlot::GetPlotLimits();
     range_ = AxisRange{lim.X.Min, lim.X.Max, lim.Y.Min, lim.Y.Max, log_y_};
     ImPlot::EndPlot();
@@ -1560,6 +1563,53 @@ void PlotView::DrawWorld(bool regions) {
         }
     }
     ImPlot::PopPlotClipRect();
+}
+
+void PlotView::DetectClick() {
+    const Prepared& p = data_;
+    const ImPlotPoint m = ImPlot::GetPlotMousePos();
+    Click c;
+    c.field = p.spec.x_column;
+    if (c.field.empty()) return;
+    switch (p.spec.kind) {
+        case Kind::Bar: {
+            const int i = static_cast<int>(std::lround(m.x));
+            if (i < 0 || i >= static_cast<int>(p.categories.size()) || std::fabs(m.x - i) > 0.45) return;
+            if (p.categories[static_cast<size_t>(i)] == "other") return;  // not one value
+            c.value = p.categories[static_cast<size_t>(i)];
+            break;
+        }
+        case Kind::Pie: {
+            if (p.series.empty()) return;
+            const double dx = m.x - 0.5, dy = m.y - 0.5;
+            if (dx * dx + dy * dy > 0.16) return;
+            double angle = std::atan2(dy, dx) * 180.0 / 3.141592653589793 - 90.0;
+            while (angle < 0) angle += 360.0;
+            double total = 0, acc = 0;
+            for (double v : p.series[0].y) total += std::max(0.0, v);
+            for (size_t k = 0; k < p.series[0].y.size() && total > 0; ++k) {
+                acc += std::max(0.0, p.series[0].y[k]) / total * 360.0;
+                if (angle <= acc) {
+                    if (k >= p.categories.size() || p.categories[k] == "other") return;
+                    c.value = p.categories[k];
+                    break;
+                }
+            }
+            if (c.value.empty()) return;
+            break;
+        }
+        case Kind::Histogram: {
+            if (p.edges.size() < 2 || m.x < p.edges.front() || m.x > p.edges.back()) return;
+            const double width = p.edges[1] - p.edges[0];
+            const size_t b = std::min(p.edges.size() - 2, static_cast<size_t>((m.x - p.edges.front()) / width));
+            c.what = Click::What::Range;
+            c.lo = p.edges[b];
+            c.hi = p.edges[b + 1];
+            break;
+        }
+        default: return;
+    }
+    click_ = c;
 }
 
 void PlotView::DrawHover() {
