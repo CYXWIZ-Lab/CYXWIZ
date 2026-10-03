@@ -232,6 +232,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 38 kinds, colour scale, 3D CSV, picked scale and series colour. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 41 kinds, colour scale, 3D CSV, picked scale and series colour. OK\n";
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "plot_prepare.h"
 
+#include "plot_graph.h"
 #include "plot_image.h"
 #include "world_map.h"
 #include "../series_decimation.h"
@@ -13,6 +14,7 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 
@@ -2298,6 +2300,213 @@ void PrepareSurface(Prepared& p, const SourceColumn* xcol, const std::vector<con
     }
 }
 
+// ---- P4 group 2 (approved board 17): Network, Tree, Mesh ----
+
+// Network: one node per source / target text, links summed per pair (a
+// self-link is left out), groups found or from a column, then the layout.
+void PrepareNetwork(Prepared& p, const SourceColumn* src, const SourceColumn* dst, const SourceColumn* weight, const SourceColumn* colour) {
+    std::unordered_map<std::string, int> index;
+    const auto node = [&](const std::string& name) {
+        auto it = index.find(name);
+        if (it != index.end()) return it->second;
+        const int i = static_cast<int>(p.graph_nodes.size());
+        index.emplace(name, i);
+        Prepared::GraphNode n;
+        n.name = name;
+        p.graph_nodes.push_back(std::move(n));
+        return i;
+    };
+    std::map<std::pair<int, int>, double> pairs;
+    const size_t rows = std::min(src->size(), dst->size());
+    size_t used = 0;
+    for (size_t r = 0; r < rows; ++r) {
+        const std::string a = Trim(CellText(*src, r)), b = Trim(CellText(*dst, r));
+        if (a.empty() || b.empty()) continue;
+        double w = 1.0;
+        if (weight) {
+            w = r < weight->numbers.size() ? weight->numbers[r] : NAN;
+            if (!std::isfinite(w)) continue;
+        }
+        const int ia = node(a), ib = node(b);
+        if (colour && p.graph_nodes[static_cast<size_t>(ia)].label.empty()) p.graph_nodes[static_cast<size_t>(ia)].label = CellText(*colour, r);
+        ++used;
+        if (ia == ib) continue;
+        const auto key = p.spec.directed ? std::make_pair(ia, ib) : std::make_pair(std::min(ia, ib), std::max(ia, ib));
+        pairs[key] += w;
+        if (p.graph_nodes.size() > kMaxGraphNodes) break;
+    }
+    if (p.graph_nodes.size() > kMaxGraphNodes) {
+        p.graph_nodes.clear();
+        p.problem = "More than " + Thousands(static_cast<long long>(kMaxGraphNodes)) + " nodes: choose fewer rows (Rows in the Data panel).";
+        return;
+    }
+    if (p.graph_nodes.empty()) {
+        p.problem = "No rows have both a " + src->name + " and a " + dst->name + ".";
+        return;
+    }
+    std::vector<Edge> edges;
+    for (const auto& [k, w] : pairs) {
+        p.graph_links.push_back({k.first, k.second, w});
+        edges.push_back({k.first, k.second, w});
+        auto& na = p.graph_nodes[static_cast<size_t>(k.first)];
+        auto& nb = p.graph_nodes[static_cast<size_t>(k.second)];
+        ++na.links;
+        ++nb.links;
+        na.weight += w;
+        nb.weight += w;
+    }
+    const int n = static_cast<int>(p.graph_nodes.size());
+    std::vector<int> groups(static_cast<size_t>(n), 0);
+    if (p.spec.node_colour == PlotSpec::NodeColour::Groups) {
+        groups = FindGroups(n, edges);
+        int count = 0;
+        for (int g : groups) count = std::max(count, g + 1);
+        for (int g = 0; g < count; ++g) p.graph_groups.push_back("group " + std::to_string(g + 1));
+    } else if (p.spec.node_colour == PlotSpec::NodeColour::Column && colour) {
+        std::map<std::string, int> names;
+        for (const auto& nd : p.graph_nodes)
+            if (!names.count(nd.label)) names.emplace(nd.label, 0);
+        int g = 0;
+        for (auto& [name, idx] : names) {
+            idx = g++;
+            p.graph_groups.push_back(name.empty() ? "(none)" : name);
+        }
+        for (int i = 0; i < n; ++i) groups[static_cast<size_t>(i)] = names[p.graph_nodes[static_cast<size_t>(i)].label];
+    } else {
+        p.graph_groups.push_back("nodes");
+    }
+    std::vector<Point2> pos;
+    switch (p.spec.graph_layout) {
+        case PlotSpec::GraphLayout::Force: pos = ForceLayout(n, edges); break;
+        case PlotSpec::GraphLayout::Layered: pos = LayeredLayout(n, edges); break;
+        case PlotSpec::GraphLayout::Circle: pos = CircleLayout(groups); break;
+    }
+    for (int i = 0; i < n; ++i) {
+        auto& nd = p.graph_nodes[static_cast<size_t>(i)];
+        nd.group = groups[static_cast<size_t>(i)];
+        nd.x = pos[static_cast<size_t>(i)].x;
+        nd.y = pos[static_cast<size_t>(i)].y;
+    }
+    p.label = {DataLabel::State::Exact, used, used};
+    p.metrics.push_back({"nodes", static_cast<double>(n)});
+    p.metrics.push_back({"links", static_cast<double>(p.graph_links.size())});
+}
+
+// Tree: one node per row (node, parent), parents found by name (a missing
+// parent makes a root), laid out top-down (or left-right).
+void PrepareTree(Prepared& p, const SourceColumn* node_col, const SourceColumn* parent_col, const SourceColumn* value, const SourceColumn* colour) {
+    std::unordered_map<std::string, int> index;
+    std::vector<std::string> parent_name;
+    const size_t rows = std::min(node_col->size(), parent_col->size());
+    for (size_t r = 0; r < rows; ++r) {
+        const std::string name = Trim(CellText(*node_col, r));
+        if (name.empty() || index.count(name)) continue;
+        if (p.graph_nodes.size() >= kMaxGraphNodes) {
+            p.graph_nodes.clear();
+            p.problem = "More than " + Thousands(static_cast<long long>(kMaxGraphNodes)) + " nodes: choose fewer rows (Rows in the Data panel).";
+            return;
+        }
+        index.emplace(name, static_cast<int>(p.graph_nodes.size()));
+        Prepared::GraphNode n;
+        n.name = name;
+        n.weight = value && r < value->numbers.size() ? value->numbers[r] : NAN;
+        if (colour) n.label = CellText(*colour, r);
+        p.graph_nodes.push_back(std::move(n));
+        parent_name.push_back(Trim(CellText(*parent_col, r)));
+    }
+    if (p.graph_nodes.empty()) {
+        p.problem = "No rows have a " + node_col->name + ".";
+        return;
+    }
+    std::vector<int> parent(p.graph_nodes.size(), -1);
+    for (size_t i = 0; i < parent.size(); ++i) {
+        auto it = index.find(parent_name[i]);
+        if (it != index.end() && it->second != static_cast<int>(i)) parent[i] = it->second;
+    }
+    std::vector<int> depth;
+    const auto pos = TreeLayout(parent, &depth);
+    std::map<std::string, int> labels;
+    for (const auto& nd : p.graph_nodes)
+        if (!nd.label.empty()) labels.emplace(nd.label, 0);
+    int g = 0;
+    for (auto& [name, idx] : labels) {
+        idx = g++;
+        p.graph_groups.push_back(name);
+    }
+    for (size_t i = 0; i < parent.size(); ++i) {
+        auto& nd = p.graph_nodes[i];
+        nd.parent = parent[i];
+        nd.depth = depth[i];
+        nd.x = pos[i].x;
+        nd.y = pos[i].y;
+        nd.group = nd.label.empty() ? 0 : labels[nd.label];
+        if (parent[i] >= 0) {
+            p.graph_links.push_back({parent[i], static_cast<int>(i), 1.0});
+            ++p.graph_nodes[static_cast<size_t>(parent[i])].links;
+            ++nd.links;
+        }
+    }
+    p.label = {DataLabel::State::Exact, p.graph_nodes.size(), p.graph_nodes.size()};
+    int roots = 0, max_depth = 0;
+    for (const auto& nd : p.graph_nodes) {
+        roots += nd.parent < 0 ? 1 : 0;
+        max_depth = std::max(max_depth, nd.depth);
+    }
+    p.metrics.push_back({"nodes", static_cast<double>(p.graph_nodes.size())});
+    p.metrics.push_back({"roots", static_cast<double>(roots)});
+    p.metrics.push_back({"depth", static_cast<double>(max_depth)});
+}
+
+// Mesh: X, Y, Z rows joined into Delaunay triangles (repeated x, y points
+// keep the first; beyond kMaxMeshPoints a reproducible sample).
+void PrepareMesh(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol, const SourceColumn* zcol) {
+    std::vector<size_t> rows;
+    const size_t n = std::min({xcol->numbers.size(), ycol->numbers.size(), zcol->numbers.size()});
+    std::set<std::pair<double, double>> seen;
+    for (size_t r = 0; r < n; ++r) {
+        const double x = xcol->numbers[r], y = ycol->numbers[r], z = zcol->numbers[r];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
+        if (!seen.insert({x, y}).second) continue;
+        rows.push_back(r);
+    }
+    if (rows.size() < 3) {
+        p.problem = "A mesh needs at least three rows with different " + xcol->name + ", " + ycol->name + " and a " + zcol->name + ".";
+        return;
+    }
+    const size_t total = rows.size();
+    if (rows.size() > kMaxMeshPoints) {
+        std::mt19937_64 rng(0x5eed);
+        std::shuffle(rows.begin(), rows.end(), rng);
+        rows.resize(kMaxMeshPoints);
+        std::sort(rows.begin(), rows.end());
+        p.label = {DataLabel::State::Sampled, rows.size(), total};
+    } else {
+        p.label = {DataLabel::State::Exact, total, total};
+    }
+    std::vector<Point2> pts;
+    for (size_t r : rows) {
+        p.mesh_x.push_back(xcol->numbers[r]);
+        p.mesh_y.push_back(ycol->numbers[r]);
+        p.mesh_z.push_back(zcol->numbers[r]);
+        pts.push_back({xcol->numbers[r], ycol->numbers[r]});
+    }
+    for (const auto& t : Triangulate(pts))
+        for (int v : t) p.mesh_tri.push_back(v);
+    if (p.mesh_tri.empty()) {
+        p.problem = "The points lie on a line: no triangles.";
+        return;
+    }
+    ZRange(p.mesh_x, p.x_min, p.x_max);
+    ZRange(p.mesh_y, p.y_min, p.y_max);
+    ZRange(p.mesh_z, p.z_min, p.z_max);
+    p.grid_lo = p.z_min;
+    p.grid_hi = p.z_max;
+    p.z_label = zcol->name;
+    if (p.spec.x_label.empty()) p.spec.x_label = xcol->name;
+    if (p.spec.y_label.empty()) p.spec.y_label = ycol->name;
+    p.metrics.push_back({"triangles", static_cast<double>(p.mesh_tri.size() / 3)});
+}
+
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
     std::vector<std::string> out;
     const auto add = [&](const std::string& name) {
@@ -2483,7 +2692,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     const bool numeric_x = spec.kind != Kind::Bar && spec.kind != Kind::Pie && spec.kind != Kind::ErrorBars &&
                            spec.kind != Kind::Heatmap && spec.kind != Kind::Polar && spec.kind != Kind::Confusion &&
                            spec.kind != Kind::Roc && spec.kind != Kind::PrCurve && spec.kind != Kind::Calibration &&
-                           spec.kind != Kind::Importance && spec.kind != Kind::MapRegions;
+                           spec.kind != Kind::Importance && spec.kind != Kind::MapRegions && spec.kind != Kind::Network &&
+                           spec.kind != Kind::Tree;
     const SourceColumn* xcol = nullptr;
     // A surface from grid columns uses no X (a column left from X, Y, Z is ignored).
     const bool grid_surface = spec.kind == Kind::Surface && spec.surface_from == PlotSpec::SurfaceFrom::Grid;
@@ -2496,7 +2706,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         const size_t take = kind.multi_y ? spec.y_columns.size() : std::min<size_t>(1, spec.y_columns.size());
         for (size_t i = 0; i < take; ++i) {
             const SourceColumn* y = column(spec.y_columns[i], spec.kind != Kind::Heatmap && spec.kind != Kind::Confusion &&
-                                                                  spec.kind != Kind::Sankey && spec.kind != Kind::Treemap);
+                                                                  spec.kind != Kind::Sankey && spec.kind != Kind::Treemap &&
+                                                                  spec.kind != Kind::Network && spec.kind != Kind::Tree);
             if (!y) return p;
             ys.push_back(y);
         }
@@ -2585,6 +2796,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::Scatter3D: PrepareXYZ(p, xcol, ys.front(), zcol, groups, scale, value); break;
         case Kind::Line3D: PrepareXYZ(p, xcol, ys.front(), zcol, groups, nullptr, nullptr); break;
         case Kind::Surface: PrepareSurface(p, xcol, ys, zcol); break;
+        case Kind::Mesh: PrepareMesh(p, xcol, ys.front(), zcol); break;
+        case Kind::Network: PrepareNetwork(p, xcol, ys.front(), value, colour ? colour : scale); break;
+        case Kind::Tree: PrepareTree(p, xcol, ys.front(), value, colour ? colour : scale); break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -2601,7 +2815,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
         spec.kind != Kind::Matrix && spec.kind != Kind::Polar && spec.kind != Kind::PairPlot && spec.kind != Kind::Parallel &&
         spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && spec.kind != Kind::Sankey && spec.kind != Kind::Treemap &&
-        spec.kind != Kind::MapPoints && spec.kind != Kind::Surface && !ys.empty() && ys.front()->numeric)
+        spec.kind != Kind::MapPoints && spec.kind != Kind::Surface && spec.kind != Kind::Network && spec.kind != Kind::Tree &&
+        spec.kind != Kind::Mesh && !ys.empty() && ys.front()->numeric)
         p.stats = Summarize(ys.front()->numbers);
     // The colour picker's range (board 16) replaces the data's on every scale.
     if (std::isfinite(spec.scale_lo) && std::isfinite(spec.scale_hi) && spec.scale_hi > spec.scale_lo) {
@@ -2621,7 +2836,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     // The rows chosen; a kind that said what it drew (quiver: every Nth arrow) keeps that.
     if (!selection.text.empty()) p.label.selection = selection.text;
     if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty() &&
-        p.multi_group.empty() && p.sankey_nodes.empty() && p.tree_leaves.empty() && p.region_value.empty())
+        p.multi_group.empty() && p.sankey_nodes.empty() && p.tree_leaves.empty() && p.region_value.empty() && p.graph_nodes.empty() &&
+        p.mesh_tri.empty())
         p.problem = "No values to draw.";
     return p;
 }

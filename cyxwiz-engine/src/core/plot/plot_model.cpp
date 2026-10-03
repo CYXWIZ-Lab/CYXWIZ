@@ -65,6 +65,11 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Line3D, "line3d", "Line 3D", Group::ThreeD, kEncX | kEncY | kEncZ, kEncColor, false, "X", "Y"},
         // Surface: X, Y, Z columns or grid columns (Y); MissingEncoding checks by the source.
         {Kind::Surface, "surface", "Surface", Group::ThreeD, 0, kEncX | kEncY | kEncZ, true, "X", "Y"},
+        {Kind::Mesh, "mesh", "Mesh", Group::ThreeD, kEncX | kEncY | kEncZ, 0, false, "X", "Y"},
+        {Kind::Network, "network", "Network", Group::Graphs, kEncX | kEncY, kEncValue | kEncColor, false, "Source", "Target",
+         "Weight (optional)"},
+        {Kind::Tree, "tree", "Tree", Group::Graphs, kEncX | kEncY, kEncValue | kEncColor, false, "Node", "Parent (empty: a root)",
+         "Value (optional)"},
     };
     return kinds;
 }
@@ -92,6 +97,7 @@ const char* GroupLabel(Group group) {
         case Group::FlowsHierarchies: return "Flows and hierarchies";
         case Group::Maps: return "Maps";
         case Group::ThreeD: return "3D";
+        case Group::Graphs: return "Graphs";
     }
     return "";
 }
@@ -250,6 +256,15 @@ std::string SpecToJson(const PlotSpec& s) {
     if (s.colour_reverse) j["scale_reverse"] = true;
     if (std::isfinite(s.scale_lo) && std::isfinite(s.scale_hi)) j["scale_range"] = {s.scale_lo, s.scale_hi};
     if (!s.series_colours.empty()) j["series_colours"] = s.series_colours;
+    if (s.kind == Kind::Network || s.kind == Kind::Tree) {
+        j["graph_layout"] = s.graph_layout == PlotSpec::GraphLayout::Layered ? "layered" : s.graph_layout == PlotSpec::GraphLayout::Circle ? "circle" : "force";
+        j["node_colour"] = s.node_colour == PlotSpec::NodeColour::Column ? "column" : s.node_colour == PlotSpec::NodeColour::One ? "one" : "groups";
+        j["node_size"] = s.node_size == PlotSpec::NodeSize::Weight ? "weight" : s.node_size == PlotSpec::NodeSize::Same ? "same" : "links";
+        j["node_labels"] = s.node_labels == PlotSpec::NodeLabels::All ? "all" : s.node_labels == PlotSpec::NodeLabels::None ? "none" : "top";
+        j["label_top"] = s.label_top;
+        j["directed"] = s.directed;
+        j["tree_left_right"] = s.tree_left_right;
+    }
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -396,6 +411,30 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
         out.scale_hi = j["scale_range"][1].get<double>();
     }
     if (j.contains("series_colours") && j["series_colours"].is_array()) out.series_colours = j["series_colours"].get<std::vector<std::string>>();
+    const auto pick = [&](const char* key, const char* fallback, std::initializer_list<const char*> ids, int& out_index) {
+        const std::string v = j.value(key, std::string(fallback));
+        int i = 0;
+        for (const char* id : ids) {
+            if (v == id) {
+                out_index = i;
+                return true;
+            }
+            ++i;
+        }
+        return false;
+    };
+    int choice = 0;
+    if (!pick("graph_layout", "force", {"force", "layered", "circle"}, choice)) return fail("unknown graph layout");
+    out.graph_layout = static_cast<PlotSpec::GraphLayout>(choice);
+    if (!pick("node_colour", "groups", {"groups", "column", "one"}, choice)) return fail("unknown node colour");
+    out.node_colour = static_cast<PlotSpec::NodeColour>(choice);
+    if (!pick("node_size", "links", {"links", "weight", "same"}, choice)) return fail("unknown node size");
+    out.node_size = static_cast<PlotSpec::NodeSize>(choice);
+    if (!pick("node_labels", "top", {"top", "all", "none"}, choice)) return fail("unknown node labels");
+    out.node_labels = static_cast<PlotSpec::NodeLabels>(choice);
+    out.label_top = std::clamp(j.value("label_top", 12), 1, 1000);
+    out.directed = j.value("directed", false);
+    out.tree_left_right = j.value("tree_left_right", false);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());

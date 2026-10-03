@@ -426,6 +426,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -1243,6 +1244,7 @@ pybind11_add_module(cyxwiz_plotting
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -1399,6 +1401,7 @@ add_executable(test_plot_arrow_source
     tests/test_plot_arrow_source.cpp
     src/core/plot/plot_arrow_source.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -1550,6 +1553,7 @@ add_executable(test_dashboard_runtime
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/world_map.cpp
     src/core/series_decimation.cpp
@@ -3758,6 +3762,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -3868,6 +3873,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -5098,6 +5104,7 @@ add_executable(test_training_manager_session
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp
@@ -5759,6 +5766,7 @@ add_executable(test_engine_node_parity
     src/core/plot/plot_model.cpp
     src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_layout.cpp

@@ -919,6 +919,72 @@ int main() {
         Check(p.problem.empty() && p.grid_lo == 0 && p.grid_hi == 10 && p.z_min == 1 && p.z_max == 4, "picked range on the colour, not the Z axis");
     }
 
+    // P4 group 2: Network, Tree, Mesh.
+    {
+        // Two cliques a..e and f..j, one light link e-f, a repeated row and a self-link.
+        std::vector<std::string> srcs, dsts;
+        std::vector<double> ws;
+        const std::string node_letters = "abcdefghij";
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < 5; ++i)
+                for (int j = i + 1; j < 5; ++j) {
+                    srcs.push_back(std::string(1, node_letters[static_cast<size_t>(c * 5 + i)]));
+                    dsts.push_back(std::string(1, node_letters[static_cast<size_t>(c * 5 + j)]));
+                    ws.push_back(2);
+                }
+        srcs.push_back("e"); dsts.push_back("f"); ws.push_back(0.5);
+        srcs.push_back("b"); dsts.push_back("a"); ws.push_back(1);   // repeats a-b (undirected): summed
+        srcs.push_back("c"); dsts.push_back("c"); ws.push_back(9);   // a self-link: left out
+        Source net;
+        net.columns.push_back(Text("source", srcs));
+        net.columns.push_back(Text("target", dsts));
+        net.columns.push_back(Numbers("weight", ws));
+        PlotSpec ns = Spec(Kind::Network, "source", {"target"});
+        ns.value_column = "weight";
+        p = Prepare(ns, net);
+        Check(p.problem.empty() && p.graph_nodes.size() == 10 && p.graph_links.size() == 21, "10 nodes, 21 links: " + std::to_string(p.graph_links.size()));
+        Check(p.graph_nodes[0].name == "a" && p.graph_nodes[0].weight == 2 * 4 + 1 && p.graph_nodes[0].links == 4, "a: 4 links, weight 9 (a-b summed)");
+        Check(p.graph_groups.size() == 2 && p.graph_nodes[0].group == p.graph_nodes[4].group && p.graph_nodes[0].group != p.graph_nodes[9].group,
+              "two groups found");
+        for (const auto& nd : p.graph_nodes) Check(nd.x >= 0 && nd.x <= 1 && nd.y >= 0 && nd.y <= 1, "positions 0..1");
+        ns.graph_layout = PlotSpec::GraphLayout::Circle;
+        ns.node_colour = PlotSpec::NodeColour::One;
+        p = Prepare(ns, net);
+        Check(p.problem.empty() && p.graph_groups.size() == 1, "one colour");
+
+        // Tree: CEO -> {CTO, CFO}, CTO -> {Dev1, Dev2}; Ghost's parent is missing (a root).
+        Source org;
+        org.columns.push_back(Text("name", {"CEO", "CTO", "CFO", "Dev1", "Dev2", "Ghost"}));
+        org.columns.push_back(Text("boss", {"", "CEO", "CEO", "CTO", "CTO", "Nobody"}));
+        org.columns.push_back(Numbers("salary", {300, 200, 190, 100, 110, 1}));
+        org.columns.push_back(Text("team", {"exec", "tech", "money", "tech", "tech", "?"}));
+        PlotSpec ts = Spec(Kind::Tree, "name", {"boss"}, "team");
+        ts.value_column = "salary";
+        p = Prepare(ts, org);
+        Check(p.problem.empty() && p.graph_nodes.size() == 6 && p.graph_links.size() == 4, "6 nodes, 4 links");
+        Check(p.graph_nodes[3].parent == 1 && p.graph_nodes[3].depth == 2 && p.graph_nodes[5].parent == -1 && p.graph_nodes[1].weight == 200,
+              "parents, depth, value");
+        Check(std::fabs(p.graph_nodes[1].x - (p.graph_nodes[3].x + p.graph_nodes[4].x) / 2) < 1e-12, "CTO over its developers");
+        Check(p.graph_groups.size() == 4 && p.graph_nodes[3].label == "tech", "labels as groups");
+        Check(p.metrics.size() == 3 && p.metrics[1].second == 2 && p.metrics[2].second == 2, "2 roots, depth 2");
+
+        // Mesh: a 3 x 3 grid of points (one repeated) -> 8 triangles.
+        Source m;
+        m.columns.push_back(Numbers("x", {0, 1, 2, 0, 1, 2, 0, 1, 2, 1}));
+        m.columns.push_back(Numbers("y", {0, 0, 0, 1, 1, 1, 2, 2, 2, 1}));
+        m.columns.push_back(Numbers("z", {0, 1, 0, 1, 4, 1, 0, 1, 0, 99}));
+        PlotSpec mesh_spec = Spec(Kind::Mesh, "x", {"y"});
+        mesh_spec.z_column = "z";
+        p = Prepare(mesh_spec, m);
+        Check(p.problem.empty() && p.mesh_x.size() == 9 && p.mesh_tri.size() == 8 * 3 && p.z_max == 4 && p.grid_hi == 4,
+              "mesh: 9 points (repeat dropped), 8 triangles: " + std::to_string(p.mesh_tri.size() / 3));
+        Source line;
+        line.columns.push_back(Numbers("x", {0, 1, 2}));
+        line.columns.push_back(Numbers("y", {0, 1, 2}));
+        line.columns.push_back(Numbers("z", {0, 1, 2}));
+        Check(Prepare(mesh_spec, line).problem.find("line") != std::string::npos, "points on a line: no mesh");
+    }
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -929,6 +995,6 @@ int main() {
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
     std::cout << "plot prepare: 38 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance, sankey, treemap, map regions, map points, scatter 3D, line 3D, surface (grid, regular, binned). OK\n";
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance, sankey, treemap, map regions, map points, scatter 3D, line 3D, surface (grid, regular, binned), network, tree, mesh. OK\n";
     return 0;
 }

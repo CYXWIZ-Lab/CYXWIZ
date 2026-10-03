@@ -436,17 +436,24 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_prepare PRIVATE nlohmann_json::nlohmann_json)
+    # Graph and mesh algorithms (TOFIX134 P4 group 2).
+    add_executable(test_plot_graph
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+    )
     # Plot exports: CSV and SVG (TOFIX134 P1).
     add_executable(test_plot_export
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_export.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_export.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
@@ -460,6 +467,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
@@ -556,7 +564,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
-            test_plot_model test_plot_prepare test_plot_export
+            test_plot_model test_plot_prepare test_plot_export test_plot_graph
             test_plot_table_source test_node_result_plan)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20

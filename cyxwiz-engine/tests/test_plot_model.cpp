@@ -29,7 +29,25 @@ int main() {
         // A surface's columns depend on its source (X, Y, Z or grid columns): MissingEncoding.
         Check(k.required != 0 || k.kind == Kind::Surface, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 38, "38 kinds (P1 13 + P2b groups 1 to 5 + P4 3D group 1)");
+    Check(Kinds().size() == 41, "41 kinds (P1 13 + P2b groups 1 to 5 + P4 groups 1 and 2)");
+    {
+        PlotSpec g;
+        g.kind = Kind::Network;
+        g.x_column = "s";
+        g.y_columns = {"t"};
+        g.graph_layout = PlotSpec::GraphLayout::Layered;
+        g.node_colour = PlotSpec::NodeColour::Column;
+        g.node_size = PlotSpec::NodeSize::Weight;
+        g.node_labels = PlotSpec::NodeLabels::None;
+        g.label_top = 5;
+        g.directed = true;
+        PlotSpec gb;
+        Check(SpecFromJson(SpecToJson(g), gb) && gb.graph_layout == PlotSpec::GraphLayout::Layered && gb.node_colour == PlotSpec::NodeColour::Column &&
+                  gb.node_size == PlotSpec::NodeSize::Weight && gb.node_labels == PlotSpec::NodeLabels::None && gb.label_top == 5 && gb.directed,
+              "graph options round trip");
+        Check(!SpecFromJson("{\"version\":1,\"kind\":\"network\",\"graph_layout\":\"spiral\"}", gb), "unknown layout refused");
+        Check(std::string(GroupLabel(Info(Kind::Tree).group)) == "Graphs" && Info(Kind::Mesh).group == Group::ThreeD, "groups");
+    }
     {
         // 3D: the spec round trip and what is missing.
         PlotSpec t;

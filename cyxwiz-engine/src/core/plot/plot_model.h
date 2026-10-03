@@ -58,9 +58,13 @@ enum class Kind {
     Scatter3D,
     Line3D,
     Surface,
+    // P4 group 2 (approved board 17): graphs and the triangulated mesh.
+    Network,
+    Tree,
+    Mesh,
 };
 
-enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults, FlowsHierarchies, Maps, ThreeD };
+enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults, FlowsHierarchies, Maps, ThreeD, Graphs };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -210,6 +214,21 @@ struct PlotSpec {
     bool colour_reverse = false;
     double scale_lo = NAN, scale_hi = NAN;
     std::vector<std::string> series_colours;
+    // P4 group 2 (board 17). Network: x = source, y = target, value =
+    // weight, colour = a column of the source rows for the node colour.
+    // Tree: x = node, y = parent, value = a number shown (and sized), colour
+    // = a class / label column.
+    enum class GraphLayout { Force, Layered, Circle };
+    GraphLayout graph_layout = GraphLayout::Force;
+    enum class NodeColour { Groups, Column, One };
+    NodeColour node_colour = NodeColour::Groups;
+    enum class NodeSize { Links, Weight, Same };
+    NodeSize node_size = NodeSize::Links;
+    enum class NodeLabels { Top, All, None };
+    NodeLabels node_labels = NodeLabels::Top;
+    int label_top = 12;
+    bool directed = false;
+    bool tree_left_right = false;
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -410,6 +429,27 @@ struct Prepared {
     // 3D: the Z range of the drawn data.
     double z_min = 0, z_max = 0;
     std::string z_label;
+    // Network / Tree: the nodes (positions 0..1, y from the top) and links.
+    struct GraphNode {
+        std::string name;
+        double x = 0, y = 0;
+        int group = 0;           // Groups: found; Column: the value's index; One: 0
+        int links = 0;           // degree
+        double weight = 0;       // weighted degree (Network), value (Tree; NaN without)
+        int depth = 0;           // Tree
+        int parent = -1;         // Tree
+        std::string label;       // Tree: the class / label value; Network: the colour column value
+    };
+    struct GraphLink {
+        int a = 0, b = 0;
+        double weight = 1;
+    };
+    std::vector<GraphNode> graph_nodes;
+    std::vector<GraphLink> graph_links;
+    std::vector<std::string> graph_groups;  // the group / label names, by group index
+    // Mesh: the points used and their triangles (index triples into mesh_x..z).
+    std::vector<double> mesh_x, mesh_y, mesh_z;
+    std::vector<int> mesh_tri;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

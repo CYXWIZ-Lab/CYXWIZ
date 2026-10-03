@@ -332,6 +332,36 @@ std::string ToCsv(const Prepared& p) {
                 }
             }
             break;
+        case Kind::Network:
+        case Kind::Tree: {
+            // The nodes with their place in the picture, then the links.
+            const bool tree = p.spec.kind == Kind::Tree;
+            out << (tree ? "node,parent,depth,value,label,x,y\n" : "node,group,links,weight,x,y\n");
+            for (const auto& n : p.graph_nodes) {
+                if (tree)
+                    out << CsvCell(n.name) << ',' << CsvCell(n.parent >= 0 ? p.graph_nodes[static_cast<size_t>(n.parent)].name : std::string()) << ','
+                        << n.depth << ',' << Num(n.weight) << ',' << CsvCell(n.label) << ',' << Num(n.x) << ',' << Num(n.y) << '\n';
+                else
+                    out << CsvCell(n.name) << ',' << CsvCell(static_cast<size_t>(n.group) < p.graph_groups.size() ? p.graph_groups[static_cast<size_t>(n.group)] : "")
+                        << ',' << n.links << ',' << Num(n.weight) << ',' << Num(n.x) << ',' << Num(n.y) << '\n';
+            }
+            if (!tree) {
+                out << "\nsource,target,weight\n";
+                for (const auto& l : p.graph_links)
+                    out << CsvCell(p.graph_nodes[static_cast<size_t>(l.a)].name) << ',' << CsvCell(p.graph_nodes[static_cast<size_t>(l.b)].name) << ','
+                        << Num(l.weight) << '\n';
+            }
+            break;
+        }
+        case Kind::Mesh:
+            // Each triangle's corners.
+            out << "triangle,x,y," << CsvCell(p.z_label.empty() ? "z" : p.z_label) << '\n';
+            for (size_t t = 0; t + 2 < p.mesh_tri.size(); t += 3)
+                for (int c = 0; c < 3; ++c) {
+                    const size_t v = static_cast<size_t>(p.mesh_tri[t + static_cast<size_t>(c)]);
+                    out << t / 3 + 1 << ',' << Num(p.mesh_x[v]) << ',' << Num(p.mesh_y[v]) << ',' << Num(p.mesh_z[v]) << '\n';
+                }
+            break;
         case Kind::Surface: {
             // The grid's cells (open cells left out), at the cell centres, bottom row first.
             out << CsvCell(p.spec.x_label.empty() ? "x" : p.spec.x_label) << ',' << CsvCell(p.spec.y_label.empty() ? "y" : p.spec.y_label)
@@ -432,6 +462,41 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& sty
         return o.str();
     }
     const bool title = !p.spec.title.empty();
+    if (p.spec.kind == Kind::Network || p.spec.kind == Kind::Tree) {
+        // Links, then nodes (circles; tree: boxes) with names, on the frame.
+        const bool tree = p.spec.kind == Kind::Tree;
+        const double left = 30, top = p.spec.title.empty() ? 24.0 : 48.0, w = st.width - 60.0, h = st.height - top - 30.0;
+        const auto px = [&](const Prepared::GraphNode& n) { return left + (tree && p.spec.tree_left_right ? n.y : n.x) * w; };
+        const auto py = [&](const Prepared::GraphNode& n) { return top + (tree && p.spec.tree_left_right ? n.x : n.y) * h; };
+        o << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << st.width << "\" height=\"" << st.height
+          << "\" font-family=\"Inter, Segoe UI, sans-serif\" font-size=\"11\">\n<rect width=\"100%\" height=\"100%\" fill=\"" << st.background << "\"/>\n";
+        if (!p.spec.title.empty()) o << "<text x=\"" << left << "\" y=\"26\" fill=\"" << st.text << "\" font-size=\"15\" font-weight=\"600\">" << Xml(p.spec.title) << "</text>\n";
+        double max_w = 0;
+        for (const auto& l : p.graph_links) max_w = std::max(max_w, l.weight);
+        for (const auto& l : p.graph_links) {
+            const auto& a = p.graph_nodes[static_cast<size_t>(l.a)];
+            const auto& b = p.graph_nodes[static_cast<size_t>(l.b)];
+            const double width = tree ? 1.2 : 0.6 + 2.4 * (max_w > 0 ? l.weight / max_w : 0);
+            o << "<line x1=\"" << px(a) << "\" y1=\"" << py(a) << "\" x2=\"" << px(b) << "\" y2=\"" << py(b) << "\" stroke=\"" << st.text_dim
+              << "\" stroke-opacity=\"0.5\" stroke-width=\"" << width << "\"/>\n";
+        }
+        double max_size = 1;
+        for (const auto& n : p.graph_nodes) max_size = std::max(max_size, p.spec.node_size == PlotSpec::NodeSize::Weight ? n.weight : static_cast<double>(n.links));
+        for (const auto& n : p.graph_nodes) {
+            const std::string fill = st.series[static_cast<size_t>(std::max(0, n.group)) % 6];
+            if (tree) {
+                o << "<rect x=\"" << px(n) - 40 << "\" y=\"" << py(n) - 9 << "\" width=\"80\" height=\"18\" rx=\"4\" fill=\"" << fill
+                  << "\" fill-opacity=\"0.35\"/><text x=\"" << px(n) << "\" y=\"" << py(n) + 4 << "\" fill=\"" << st.text
+                  << "\" text-anchor=\"middle\">" << Xml(n.name) << "</text>\n";
+            } else {
+                const double size = p.spec.node_size == PlotSpec::NodeSize::Same ? 1.0
+                                    : (p.spec.node_size == PlotSpec::NodeSize::Weight ? n.weight : static_cast<double>(n.links)) / max_size;
+                o << "<circle cx=\"" << px(n) << "\" cy=\"" << py(n) << "\" r=\"" << 3 + 9 * std::sqrt(std::max(0.0, size)) << "\" fill=\"" << fill << "\"/>\n";
+            }
+        }
+        o << "</svg>\n";
+        return o.str();
+    }
     const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar || p.spec.kind == Kind::Image ||
                      p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel || p.spec.kind == Kind::Sankey ||
                      p.spec.kind == Kind::Treemap;
