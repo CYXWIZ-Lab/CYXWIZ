@@ -311,6 +311,42 @@ std::string ToCsv(const Prepared& p) {
             for (const auto& [text, rows] : p.unmatched) out << CsvCell(text) << ",,," << rows << ",no\n";
             break;
         }
+        case Kind::Scatter3D:
+        case Kind::Line3D:
+            out << "series,x,y," << CsvCell(p.z_label.empty() ? "z" : p.z_label);
+            if (p.colour_scale) out << ',' << CsvCell(p.colour_label);
+            if (!p.size_label.empty()) out << ',' << CsvCell(p.size_label);
+            out << '\n';
+            for (const auto& s : p.series) {
+                const bool all = !s.all_x.empty();
+                const auto& xs = all ? s.all_x : s.x;
+                const auto& ys = all ? s.all_y : s.y;
+                const auto& zs = all ? s.all_z3 : s.z3;
+                const auto& cs = all ? s.all_c : s.c;
+                const auto& ss = all ? s.all_z : s.z;
+                for (size_t i = 0; i < std::min({xs.size(), ys.size(), zs.size()}); ++i) {
+                    out << CsvCell(s.label) << ',' << Num(xs[i]) << ',' << Num(ys[i]) << ',' << Num(zs[i]);
+                    if (p.colour_scale) out << ',' << (i < cs.size() ? Num(cs[i]) : std::string());
+                    if (!p.size_label.empty()) out << ',' << (i < ss.size() ? Num(ss[i]) : std::string());
+                    out << '\n';
+                }
+            }
+            break;
+        case Kind::Surface: {
+            // The grid's cells (open cells left out), at the cell centres, bottom row first.
+            out << CsvCell(p.spec.x_label.empty() ? "x" : p.spec.x_label) << ',' << CsvCell(p.spec.y_label.empty() ? "y" : p.spec.y_label)
+                << ',' << CsvCell(p.z_label.empty() ? "z" : p.z_label) << '\n';
+            const int R = p.grid_rows, C = p.grid_cols;
+            if (R > 0 && C > 0) {
+                const double dx = (p.x_max - p.x_min) / C, dy = (p.y_max - p.y_min) / R;
+                for (int r = R - 1; r >= 0; --r)
+                    for (int c = 0; c < C; ++c) {
+                        const double z = p.grid[static_cast<size_t>(r) * static_cast<size_t>(C) + static_cast<size_t>(c)];
+                        if (std::isfinite(z)) out << Num(p.x_min + (c + 0.5) * dx) << ',' << Num(p.y_max - (r + 0.5) * dy) << ',' << Num(z) << '\n';
+                    }
+            }
+            break;
+        }
     }
     return out.str();
 }
@@ -376,6 +412,13 @@ std::string ScaleColour(const Prepared& p, const SvgStyle& st, double v) {
 std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st) {
     std::ostringstream o;
     o << std::fixed << std::setprecision(1);
+    if (Info(p.spec.kind).group == Group::ThreeD) {
+        // SVG is 2D: a 3D plot is saved as PNG (the view) or CSV (its data).
+        o << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << st.width << "\" height=\"" << st.height << "\">\n"
+          << "<rect width=\"100%\" height=\"100%\" fill=\"" << st.background << "\"/>\n<text x=\"24\" y=\"40\" fill=\"" << st.text
+          << "\" font-family=\"Inter, Segoe UI, sans-serif\" font-size=\"14\">3D plots are saved as PNG or CSV.</text>\n</svg>\n";
+        return o.str();
+    }
     const bool title = !p.spec.title.empty();
     const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar || p.spec.kind == Kind::Image ||
                      p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel || p.spec.kind == Kind::Sankey ||

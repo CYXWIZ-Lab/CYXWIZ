@@ -2065,6 +2065,239 @@ void PrepareRegions(Prepared& p, const SourceColumn* region, const SourceColumn*
 
 }  // namespace
 
+// ---- P4 group 1 (approved board 16): 3D ----
+
+// The Z range of finite values (lo == hi widened so a flat plot still has a box).
+void ZRange(const std::vector<double>& v, double& lo, double& hi) {
+    bool first = true;
+    for (double z : v) {
+        if (!std::isfinite(z)) continue;
+        lo = first ? z : std::min(lo, z);
+        hi = first ? z : std::max(hi, z);
+        first = false;
+    }
+    if (first) lo = 0, hi = 1;
+    if (hi <= lo) { lo -= 0.5; hi += 0.5; }
+}
+
+// Scatter 3D: points with finite x, y, z (a reproducible sample beyond
+// kMax3DPoints); Line 3D: the rows in order per group (every Nth row beyond
+// kMax3DPoints, the label says reduced).
+void PrepareXYZ(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol, const SourceColumn* zcol, const Groups& groups,
+                const SourceColumn* scale, const SourceColumn* size) {
+    const bool line = p.spec.kind == Kind::Line3D;
+    const auto num = [](const SourceColumn* c, size_t r) { return c && r < c->numbers.size() ? c->numbers[r] : NAN; };
+    std::vector<size_t> rows;
+    const size_t n = std::min({xcol->numbers.size(), ycol->numbers.size(), zcol->numbers.size()});
+    for (size_t r = 0; r < n; ++r)
+        if (std::isfinite(xcol->numbers[r]) && std::isfinite(ycol->numbers[r]) && std::isfinite(zcol->numbers[r])) rows.push_back(r);
+    if (rows.empty()) {
+        p.problem = "No rows have numbers in " + xcol->name + ", " + ycol->name + " and " + zcol->name + ".";
+        return;
+    }
+    const size_t total = rows.size();
+    const std::vector<size_t> all_rows = rows;
+    if (rows.size() > kMax3DPoints) {
+        if (line) {
+            const size_t every = (rows.size() + kMax3DPoints - 1) / kMax3DPoints;
+            std::vector<size_t> kept;
+            for (size_t i = 0; i < rows.size(); i += every) kept.push_back(rows[i]);
+            rows = std::move(kept);
+            p.label = {DataLabel::State::Reduced, rows.size(), total};
+        } else {
+            std::mt19937_64 rng(0x5eed);
+            std::shuffle(rows.begin(), rows.end(), rng);
+            rows.resize(kMax3DPoints);
+            std::sort(rows.begin(), rows.end());
+            p.label = {DataLabel::State::Sampled, rows.size(), total};
+        }
+    } else {
+        p.label = {DataLabel::State::Exact, total, total};
+    }
+    for (size_t g = 0; g < groups.names.size(); ++g) {
+        Series s;
+        s.label = groups.names[g].empty() ? zcol->name : groups.names[g];
+        const auto take = [&](const std::vector<size_t>& from, bool all) {
+            for (size_t r : from) {
+                if (groups.of_row[r] != static_cast<int>(g)) continue;
+                (all ? s.all_x : s.x).push_back(xcol->numbers[r]);
+                (all ? s.all_y : s.y).push_back(ycol->numbers[r]);
+                (all ? s.all_z3 : s.z3).push_back(zcol->numbers[r]);
+                if (scale) (all ? s.all_c : s.c).push_back(num(scale, r));
+                if (size) (all ? s.all_z : s.z).push_back(num(size, r));
+            }
+        };
+        take(rows, false);
+        if (rows.size() < all_rows.size()) take(all_rows, true);
+        if (!s.x.empty()) p.series.push_back(std::move(s));
+    }
+    std::vector<double> xs, ys, zs;
+    for (size_t r : all_rows) {
+        xs.push_back(xcol->numbers[r]);
+        ys.push_back(ycol->numbers[r]);
+        zs.push_back(zcol->numbers[r]);
+    }
+    ZRange(xs, p.x_min, p.x_max);
+    ZRange(ys, p.y_min, p.y_max);
+    ZRange(zs, p.z_min, p.z_max);
+    p.z_label = zcol->name;
+    if (size) {
+        const ColumnStats st = Summarize(size->numbers);
+        p.size_label = size->name;
+        p.size_min = st.min;
+        p.size_max = st.max > st.min ? st.max : st.min + 1.0;
+    }
+    if (scale) {
+        const ColumnStats st = Summarize(scale->numbers);
+        p.colour_scale = true;
+        p.colour_label = scale->name;
+        p.colour_min = st.min;
+        p.colour_max = st.max > st.min ? st.max : st.min + 1.0;
+        if (st.count > 0 && TwoSided(st.min, st.max)) {
+            const double m = std::max(-st.min, st.max);
+            p.colour_diverging = true;
+            p.colour_min = -m;
+            p.colour_max = m;
+        }
+    }
+}
+
+// Surface: a grid of Z with row 0 at y_max over cell centres (the contour
+// layout), from grid columns (the rows as they are; at most kMaxSurfaceRows,
+// else every Nth row) or from X, Y, Z columns binned bins x bins (mean Z,
+// cells under min_cell_rows rows open). Floor contour lines when asked.
+void PrepareSurface(Prepared& p, const SourceColumn* xcol, const std::vector<const SourceColumn*>& ys, const SourceColumn* zcol) {
+    const PlotSpec& spec = p.spec;
+    if (spec.surface_from == PlotSpec::SurfaceFrom::Grid) {
+        const int C = static_cast<int>(ys.size());
+        size_t n = 0;
+        for (const auto* y : ys) n = std::max(n, y->numbers.size());
+        if (C < 2 || n < 2) {
+            p.problem = "A surface needs at least two grid columns and two rows.";
+            return;
+        }
+        const size_t every = (n + kMaxSurfaceRows - 1) / kMaxSurfaceRows;
+        std::vector<size_t> rows;
+        for (size_t r = 0; r < n; r += every) rows.push_back(r);
+        const int R = static_cast<int>(rows.size());
+        p.grid.assign(static_cast<size_t>(R) * static_cast<size_t>(C), NAN);
+        for (int k = 0; k < R; ++k)
+            for (int c = 0; c < C; ++c) {
+                const auto& col = ys[static_cast<size_t>(c)]->numbers;
+                const size_t r = rows[static_cast<size_t>(k)];
+                // Data row k is y = k + 1, drawn with row 0 at the top.
+                p.grid[static_cast<size_t>(R - 1 - k) * static_cast<size_t>(C) + static_cast<size_t>(c)] = r < col.size() ? col[r] : NAN;
+            }
+        p.grid_rows = R;
+        p.grid_cols = C;
+        p.x_min = 0.5;
+        p.x_max = C + 0.5;
+        p.y_min = 0.5;
+        p.y_max = static_cast<double>(n) + 0.5;
+        if (every > 1) {
+            // Rows were skipped: their y is still the row number.
+            p.y_max = static_cast<double>((R - 1) * every + 1) + 0.5 * every;
+            p.y_min = 1.0 - 0.5 * every;
+        }
+        if (p.spec.x_label.empty()) p.spec.x_label = "column";
+        if (p.spec.y_label.empty()) p.spec.y_label = "row";
+        p.z_label = "value";
+        const size_t cells = static_cast<size_t>(R) * static_cast<size_t>(C);
+        p.label = {every > 1 ? DataLabel::State::Reduced : DataLabel::State::Exact, cells, n * static_cast<size_t>(C)};
+    } else {
+        const SourceColumn* ycol = ys.front();
+        const int bins = std::clamp(spec.bins, 4, 200);
+        std::vector<std::array<double, 3>> pts;
+        const size_t n = std::min({xcol->numbers.size(), ycol->numbers.size(), zcol->numbers.size()});
+        for (size_t r = 0; r < n; ++r) {
+            const double x = xcol->numbers[r], y = ycol->numbers[r], z = zcol->numbers[r];
+            if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) pts.push_back({x, y, z});
+        }
+        if (pts.empty()) {
+            p.problem = "No rows have numbers in " + xcol->name + ", " + ycol->name + " and " + zcol->name + ".";
+            return;
+        }
+        // Rows already on a regular grid (few distinct x and y) keep their own
+        // grid: one cell per x and y value.
+        std::vector<double> dx, dy;
+        for (const auto& q : pts) {
+            dx.push_back(q[0]);
+            dy.push_back(q[1]);
+        }
+        const auto distinct = [](std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            v.erase(std::unique(v.begin(), v.end()), v.end());
+            return v;
+        };
+        const std::vector<double> ux = distinct(dx), uy = distinct(dy);
+        const bool on_grid = ux.size() >= 2 && uy.size() >= 2 && ux.size() <= 400 && uy.size() <= 400 &&
+                             ux.size() * uy.size() <= pts.size() * 2;
+        const auto evenly = [](const std::vector<double>& u) {
+            const double step = (u.back() - u.front()) / static_cast<double>(u.size() - 1);
+            for (size_t i = 0; i < u.size(); ++i)
+                if (std::fabs(u[i] - (u.front() + step * static_cast<double>(i))) > step * 1e-6) return false;
+            return true;
+        };
+        int nx = bins, ny = bins;
+        double x0, x1, y0, y1;
+        if (on_grid && evenly(ux) && evenly(uy)) {
+            nx = static_cast<int>(ux.size());
+            ny = static_cast<int>(uy.size());
+            const double sx = (ux.back() - ux.front()) / (nx - 1), sy = (uy.back() - uy.front()) / (ny - 1);
+            x0 = ux.front() - sx / 2;
+            x1 = ux.back() + sx / 2;
+            y0 = uy.front() - sy / 2;
+            y1 = uy.back() + sy / 2;
+        } else {
+            x0 = ux.front();
+            x1 = ux.back();
+            y0 = uy.front();
+            y1 = uy.back();
+            if (x1 <= x0) { x0 -= 0.5; x1 += 0.5; }
+            if (y1 <= y0) { y0 -= 0.5; y1 += 0.5; }
+        }
+        const size_t cells = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+        std::vector<double> sum(cells, 0.0), cnt(cells, 0.0);
+        for (const auto& q : pts) {
+            const int c = std::clamp(static_cast<int>((q[0] - x0) / (x1 - x0) * nx), 0, nx - 1);
+            const int r = std::clamp(ny - 1 - static_cast<int>((q[1] - y0) / (y1 - y0) * ny), 0, ny - 1);
+            sum[static_cast<size_t>(r) * static_cast<size_t>(nx) + static_cast<size_t>(c)] += q[2];
+            cnt[static_cast<size_t>(r) * static_cast<size_t>(nx) + static_cast<size_t>(c)] += 1.0;
+        }
+        // On a grid every cell is one row: no minimum applies.
+        const double min_rows = on_grid ? 1.0 : static_cast<double>(std::max(1, spec.min_cell_rows));
+        p.grid.assign(cells, NAN);
+        size_t open = 0;
+        for (size_t i = 0; i < cells; ++i) {
+            if (cnt[i] >= min_rows) p.grid[i] = sum[i] / cnt[i];
+            else ++open;
+        }
+        p.grid_rows = ny;
+        p.grid_cols = nx;
+        p.x_min = x0;
+        p.x_max = x1;
+        p.y_min = y0;
+        p.y_max = y1;
+        p.z_label = zcol->name;
+        if (p.spec.x_label.empty()) p.spec.x_label = xcol->name;
+        if (p.spec.y_label.empty()) p.spec.y_label = ycol->name;
+        p.label = {DataLabel::State::Exact, pts.size(), pts.size()};
+        p.metrics.push_back({"open cells", static_cast<double>(open)});
+    }
+    double lo = 0, hi = 0;
+    ZRange(p.grid, lo, hi);
+    p.grid_lo = p.z_min = lo;
+    p.grid_hi = p.z_max = hi;
+    if (spec.floor_contours) {
+        const int levels = std::clamp(spec.levels, 1, 50);
+        for (int k = 1; k <= levels; ++k) {
+            const double level = lo + (hi - lo) * k / (levels + 1);
+            p.contour_levels.push_back(level);
+            p.contour_segments.push_back(ContourSegments(p, level));
+        }
+    }
+}
+
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
     std::vector<std::string> out;
     const auto add = [&](const std::string& name) {
@@ -2074,6 +2307,7 @@ std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
     for (const auto& y : spec.y_columns) add(y);
     add(spec.color_column);
     add(spec.value_column);
+    if ((Info(spec.kind).required | Info(spec.kind).optional) & kEncZ) add(spec.z_column);
     if (Info(spec.kind).required & kEncVector) {
         add(spec.u_column);
         add(spec.v_column);
@@ -2251,7 +2485,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
                            spec.kind != Kind::Roc && spec.kind != Kind::PrCurve && spec.kind != Kind::Calibration &&
                            spec.kind != Kind::Importance && spec.kind != Kind::MapRegions;
     const SourceColumn* xcol = nullptr;
-    if (!spec.x_column.empty() && (kind.required | kind.optional) & kEncX) {
+    // A surface from grid columns uses no X (a column left from X, Y, Z is ignored).
+    const bool grid_surface = spec.kind == Kind::Surface && spec.surface_from == PlotSpec::SurfaceFrom::Grid;
+    if (!spec.x_column.empty() && (kind.required | kind.optional) & kEncX && !grid_surface) {
         xcol = column(spec.x_column, numeric_x);
         if (!xcol) return p;
     }
@@ -2273,6 +2509,12 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         vcol = column(spec.v_column, true);
         if (!vcol) return p;
     }
+    const SourceColumn* zcol = nullptr;
+    if (!spec.z_column.empty() && ((kind.required | kind.optional) & kEncZ) &&
+        !(spec.kind == Kind::Surface && spec.surface_from == PlotSpec::SurfaceFrom::Grid)) {
+        zcol = column(spec.z_column, true);
+        if (!zcol) return p;
+    }
     const SourceColumn* value = nullptr;
     if (!spec.value_column.empty() && (kind.optional & kEncValue)) {
         value = column(spec.value_column, true);
@@ -2289,7 +2531,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     // A scatter coloured by a number column with many values draws a scale
     // (or when asked); everything else colours groups.
     const SourceColumn* scale = nullptr;
-    if (colour && colour->numeric && (spec.kind == Kind::Scatter || spec.kind == Kind::MapPoints) &&
+    if (colour && colour->numeric && (spec.kind == Kind::Scatter || spec.kind == Kind::MapPoints || spec.kind == Kind::Scatter3D) &&
         (spec.color_mode == ColourMode::Scale ||
          (spec.color_mode == ColourMode::Auto && CountDistinct(*colour, kMaxColorGroups) > kMaxColorGroups))) {
         scale = colour;
@@ -2340,6 +2582,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
             if (p.spec.x_label.empty()) p.spec.x_label = "longitude";
             if (p.spec.y_label.empty()) p.spec.y_label = "latitude";
             break;
+        case Kind::Scatter3D: PrepareXYZ(p, xcol, ys.front(), zcol, groups, scale, value); break;
+        case Kind::Line3D: PrepareXYZ(p, xcol, ys.front(), zcol, groups, nullptr, nullptr); break;
+        case Kind::Surface: PrepareSurface(p, xcol, ys, zcol); break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -2356,7 +2601,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
         spec.kind != Kind::Matrix && spec.kind != Kind::Polar && spec.kind != Kind::PairPlot && spec.kind != Kind::Parallel &&
         spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && spec.kind != Kind::Sankey && spec.kind != Kind::Treemap &&
-        spec.kind != Kind::MapPoints && !ys.empty() && ys.front()->numeric)
+        spec.kind != Kind::MapPoints && spec.kind != Kind::Surface && !ys.empty() && ys.front()->numeric)
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};

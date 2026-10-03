@@ -56,6 +56,11 @@ const std::vector<KindInfo>& Kinds() {
          "Latitude", "Size"},
         {Kind::MapRegions, "map_regions", "Map: regions", Group::Maps, kEncX | kEncY, 0, false, "Country (name or ISO code)",
          "Value"},
+        {Kind::Scatter3D, "scatter3d", "Scatter 3D", Group::ThreeD, kEncX | kEncY | kEncZ, kEncColor | kEncValue, false, "X", "Y",
+         "Size"},
+        {Kind::Line3D, "line3d", "Line 3D", Group::ThreeD, kEncX | kEncY | kEncZ, kEncColor, false, "X", "Y"},
+        // Surface: X, Y, Z columns or grid columns (Y); MissingEncoding checks by the source.
+        {Kind::Surface, "surface", "Surface", Group::ThreeD, 0, kEncX | kEncY | kEncZ, true, "X", "Y"},
     };
     return kinds;
 }
@@ -82,6 +87,7 @@ const char* GroupLabel(Group group) {
         case Group::ModelResults: return "Model results";
         case Group::FlowsHierarchies: return "Flows and hierarchies";
         case Group::Maps: return "Maps";
+        case Group::ThreeD: return "3D";
     }
     return "";
 }
@@ -175,6 +181,13 @@ std::string SpecToJson(const PlotSpec& s) {
     j["top_n"] = s.top_n;
     j["sankey_top"] = s.sankey_top;
     j["region_agg"] = s.region_agg == PlotSpec::RegionAgg::Mean ? "mean" : "sum";
+    j["z"] = s.z_column;
+    j["surface_from"] = s.surface_from == PlotSpec::SurfaceFrom::Grid ? "grid" : "xyz";
+    j["surface_draw"] = s.surface_draw == PlotSpec::SurfaceDraw::Lines ? "lines" : s.surface_draw == PlotSpec::SurfaceDraw::Both ? "both" : "fill";
+    j["shade"] = s.shade;
+    j["floor_contours"] = s.floor_contours;
+    j["min_cell_rows"] = s.min_cell_rows;
+    if (std::isfinite(s.view_elevation) && std::isfinite(s.view_azimuth)) j["view"] = {s.view_elevation, s.view_azimuth};
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -296,6 +309,23 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     if (agg == "sum") out.region_agg = PlotSpec::RegionAgg::Sum;
     else if (agg == "mean") out.region_agg = PlotSpec::RegionAgg::Mean;
     else return fail("unknown region aggregation '" + agg + "'");
+    out.z_column = j.value("z", std::string());
+    const std::string surface_from = j.value("surface_from", std::string("xyz"));
+    if (surface_from == "xyz") out.surface_from = PlotSpec::SurfaceFrom::XYZ;
+    else if (surface_from == "grid") out.surface_from = PlotSpec::SurfaceFrom::Grid;
+    else return fail("unknown surface source '" + surface_from + "'");
+    const std::string draw = j.value("surface_draw", std::string("fill"));
+    if (draw == "fill") out.surface_draw = PlotSpec::SurfaceDraw::Fill;
+    else if (draw == "lines") out.surface_draw = PlotSpec::SurfaceDraw::Lines;
+    else if (draw == "both") out.surface_draw = PlotSpec::SurfaceDraw::Both;
+    else return fail("unknown surface drawing '" + draw + "'");
+    out.shade = j.value("shade", true);
+    out.floor_contours = j.value("floor_contours", true);
+    out.min_cell_rows = std::clamp(j.value("min_cell_rows", 5), 1, 100000);
+    if (j.contains("view") && j["view"].is_array() && j["view"].size() == 2) {
+        out.view_elevation = j["view"][0].get<double>();
+        out.view_azimuth = j["view"][1].get<double>();
+    }
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());
@@ -342,6 +372,14 @@ std::string MissingEncoding(const PlotSpec& s) {
     const KindInfo& k = Info(s.kind);
     if ((k.required & kEncX) && s.x_column.empty()) return std::string("Choose ") + k.x_hint + ".";
     if ((k.required & kEncY) && s.y_columns.empty()) return std::string("Choose ") + k.y_hint + ".";
+    if ((k.required & kEncZ) && s.z_column.empty()) return "Choose Z.";
+    if (s.kind == Kind::Surface) {
+        if (s.surface_from == PlotSpec::SurfaceFrom::Grid)
+            return s.y_columns.size() < 2 ? "Choose the grid columns (two or more)." : "";
+        if (s.x_column.empty()) return "Choose X.";
+        if (s.y_columns.empty()) return "Choose Y.";
+        if (s.z_column.empty()) return "Choose Z.";
+    }
     if ((k.required & kEncVector) && (s.u_column.empty() || s.v_column.empty()))
         return s.vector_from == PlotSpec::VectorFrom::UV ? "Choose the arrow columns (u and v)."
                                                          : "Choose the direction and length columns.";

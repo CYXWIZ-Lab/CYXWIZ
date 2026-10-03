@@ -54,9 +54,13 @@ enum class Kind {
     Treemap,
     MapPoints,
     MapRegions,
+    // P4 group 1 (approved board 16): 3D.
+    Scatter3D,
+    Line3D,
+    Surface,
 };
 
-enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults, FlowsHierarchies, Maps };
+enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults, FlowsHierarchies, Maps, ThreeD };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -66,6 +70,7 @@ enum Encoding : unsigned {
     kEncColor = 1u << 2,
     kEncValue = 1u << 3,  // heatmap: a column summed per cell (else rows are counted)
     kEncVector = 1u << 4, // quiver, stream: the arrow columns (u, v or direction, length)
+    kEncZ = 1u << 5,      // 3D: the Z column
 };
 
 struct KindInfo {
@@ -183,6 +188,21 @@ struct PlotSpec {
     int sankey_top = 8;                          // per step: the largest categories, the rest as "other"
     enum class RegionAgg { Sum, Mean };
     RegionAgg region_agg = RegionAgg::Sum;       // several rows for one country
+    // P4 group 1 (approved board 16). Scatter 3D / Line 3D: x, y, z columns,
+    // colour (groups or scale), value = size. Surface from X, Y, Z columns
+    // (a grid, or scattered rows binned bins x bins: mean Z per cell, cells
+    // under min_cell_rows rows left open) or from grid columns (y_columns are
+    // the grid's columns, the rows its rows).
+    std::string z_column;
+    enum class SurfaceFrom { XYZ, Grid };
+    SurfaceFrom surface_from = SurfaceFrom::XYZ;
+    enum class SurfaceDraw { Fill, Lines, Both };
+    SurfaceDraw surface_draw = SurfaceDraw::Fill;
+    bool shade = true;                           // light shading on the fill
+    bool floor_contours = true;                  // contour lines projected on the floor
+    int min_cell_rows = 5;
+    // The 3D view (degrees; NaN: the default view), saved with the plot.
+    double view_elevation = NAN, view_azimuth = NAN;
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -246,6 +266,8 @@ struct Series {
     std::vector<double> c, all_c;
     // Map points: the size value per point (NaN when missing), with all_z.
     std::vector<double> z, all_z;
+    // 3D (Scatter 3D, Line 3D): the Z coordinate, with all_z3 beside all_x / all_y.
+    std::vector<double> z3, all_z3;
     bool x_sorted = false;  // x ascends (hover finds the nearest x by search)
     int colour = -1;        // theme series colour index; -1: by position
     bool markers = false;   // lines: also a marker at every point
@@ -370,6 +392,12 @@ struct Prepared {
     std::vector<double> region_value;
     std::vector<size_t> region_rows;
     std::vector<std::pair<std::string, size_t>> unmatched;
+    // Surface: the grid of Z (grid_rows x grid_cols, row 0 at y_max, NaN =
+    // open) over the cell centres of x_min..x_max, y_min..y_max, coloured over
+    // grid_lo..grid_hi; floor contours in contour_levels / contour_segments.
+    // 3D: the Z range of the drawn data.
+    double z_min = 0, z_max = 0;
+    std::string z_label;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

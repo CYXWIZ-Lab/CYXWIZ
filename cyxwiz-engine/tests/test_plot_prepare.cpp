@@ -6,6 +6,7 @@
 #include "../src/core/plot/plot_presets.h"
 #include "../src/core/plot/plot_image.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -837,6 +838,74 @@ int main() {
         Check(Prepare(Spec(Kind::MapPoints, "lon", {"lat"}), bad).problem.find("between -180 and 180") != std::string::npos, "map points: longitude range");
     }
 
+    // P4 3D: scatter / line points, a surface from grid columns and from
+    // X, Y, Z (a regular grid kept, scattered rows binned with open cells).
+    {
+        Source s3;
+        s3.columns.push_back(Numbers("x", {0, 1, 2, 3, NAN}));
+        s3.columns.push_back(Numbers("y", {0, 1, 4, 9, 1}));
+        s3.columns.push_back(Numbers("z", {1, 2, 3, 4, 5}));
+        s3.columns.push_back(Numbers("pop", {10, 20, 30, 40, 50}));
+        PlotSpec sp = Spec(Kind::Scatter3D, "x", {"y"}, "pop");
+        sp.z_column = "z";
+        sp.color_mode = ColourMode::Scale;
+        p = Prepare(sp, s3);
+        Check(p.problem.empty() && p.series.size() == 1 && p.series[0].z3 == std::vector<double>({1, 2, 3, 4}) && p.colour_scale &&
+                  p.series[0].c.size() == 4 && p.z_min == 1 && p.z_max == 4 && p.x_max == 3 && p.label.shown == 4, "scatter 3D: 4 finite rows");
+        sp.kind = Kind::Line3D;
+        sp.color_column.clear();
+        p = Prepare(sp, s3);
+        Check(p.problem.empty() && p.series[0].x == std::vector<double>({0, 1, 2, 3}) && p.series[0].z3.size() == 4, "line 3D in row order");
+
+        // Grid columns: 3 rows x 2 columns; row 1 is y = 1 (drawn at the bottom).
+        Source g3;
+        g3.columns.push_back(Numbers("V1", {1, 2, 3}));
+        g3.columns.push_back(Numbers("V2", {4, 5, NAN}));
+        PlotSpec gs = Spec(Kind::Surface, "", {"V1", "V2"});
+        gs.surface_from = PlotSpec::SurfaceFrom::Grid;
+        p = Prepare(gs, g3);
+        Check(p.problem.empty() && p.grid_rows == 3 && p.grid_cols == 2 && p.grid[4] == 1 && p.grid[5] == 4 && p.grid[0] == 3 &&
+                  std::isnan(p.grid[1]) && p.x_min == 0.5 && p.x_max == 2.5 && p.y_max == 3.5 && p.grid_lo == 1 && p.grid_hi == 5,
+              "grid surface: row 1 at the bottom, missing cell open");
+        Check(!p.contour_levels.empty() && p.contour_levels.size() == p.contour_segments.size(), "floor contours");
+
+        // X, Y, Z on a regular 3 x 2 grid: kept as it is (one cell per point).
+        Source xyz;
+        xyz.columns.push_back(Numbers("x", {0, 1, 2, 0, 1, 2}));
+        xyz.columns.push_back(Numbers("y", {0, 0, 0, 10, 10, 10}));
+        xyz.columns.push_back(Numbers("z", {1, 2, 3, 4, 5, 6}));
+        PlotSpec xs3 = Spec(Kind::Surface, "x", {"y"});
+        xs3.z_column = "z";
+        p = Prepare(xs3, xyz);
+        Check(p.problem.empty() && p.grid_cols == 3 && p.grid_rows == 2 && p.grid[0] == 4 && p.grid[5] == 3 && p.x_min == -0.5 &&
+                  p.x_max == 2.5 && p.y_min == -5 && p.y_max == 15, "a regular grid keeps its cells");
+
+        // Scattered rows: binned 4 x 4, cells under 2 rows open.
+        Source sc3;
+        std::vector<double> sx3, sy3, sz;
+        for (int i = 0; i < 40; ++i) {
+            sx3.push_back((i * 37 % 100) / 10.0);
+            sy3.push_back((i * 53 % 100) / 10.0);
+            sz.push_back(i);
+        }
+        sc3.columns.push_back(Numbers("x", sx3));
+        sc3.columns.push_back(Numbers("y", sy3));
+        sc3.columns.push_back(Numbers("z", sz));
+        PlotSpec bs3 = Spec(Kind::Surface, "x", {"y"});
+        bs3.z_column = "z";
+        bs3.bins = 4;
+        bs3.min_cell_rows = 2;
+        bs3.floor_contours = false;
+        p = Prepare(bs3, sc3);
+        size_t open = 0, filled = 0;
+        for (double z_cell : p.grid) (std::isnan(z_cell) ? open : filled) += 1;
+        Check(p.problem.empty() && p.grid_rows == 4 && p.grid_cols == 4 && open + filled == 16 && filled > 0 && p.contour_levels.empty() &&
+                  !p.metrics.empty() && p.metrics[0].second == static_cast<double>(open), "scattered rows binned, cells under 2 rows open");
+        bs3.min_cell_rows = 1000;
+        p = Prepare(bs3, sc3);
+        Check(p.problem.empty() && std::all_of(p.grid.begin(), p.grid.end(), [](double cell) { return std::isnan(cell); }), "every cell under the minimum: all open");
+    }
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -846,7 +915,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 35 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance, sankey, treemap, map regions, map points. OK\n";
+    std::cout << "plot prepare: 38 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance, sankey, treemap, map regions, map points, scatter 3D, line 3D, surface (grid, regular, binned). OK\n";
     return 0;
 }

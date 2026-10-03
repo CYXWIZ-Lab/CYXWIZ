@@ -42,6 +42,8 @@ struct Source {
 constexpr size_t kMaxLinePoints = 4000;
 constexpr size_t kMaxScatterPoints = 50000;
 constexpr size_t kMaxColorGroups = 12;
+constexpr size_t kMax3DPoints = 100000;   // Scatter 3D sample / Line 3D every Nth row beyond this
+constexpr size_t kMaxSurfaceRows = 1000;  // Surface from grid columns: every Nth row beyond this
 constexpr size_t kMaxCategories = 200;
 constexpr size_t kMaxPieSlices = 12;
 constexpr int kViolinSteps = 64;

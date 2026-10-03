@@ -25,9 +25,39 @@ int main() {
     for (const auto& k : Kinds()) {
         Check(ids.insert(k.id).second, std::string("unique id ") + k.id);
         Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
-        Check(k.required != 0, std::string("kind needs at least one column: ") + k.id);
+        // A surface's columns depend on its source (X, Y, Z or grid columns): MissingEncoding.
+        Check(k.required != 0 || k.kind == Kind::Surface, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 35, "35 kinds (P1 13 + P2b groups 1 to 5)");
+    Check(Kinds().size() == 38, "38 kinds (P1 13 + P2b groups 1 to 5 + P4 3D group 1)");
+    {
+        // 3D: the spec round trip and what is missing.
+        PlotSpec t;
+        t.kind = Kind::Surface;
+        t.surface_from = PlotSpec::SurfaceFrom::Grid;
+        t.y_columns = {"V1"};
+        Check(MissingEncoding(t) == "Choose the grid columns (two or more).", "grid surface needs two columns");
+        t.y_columns = {"V1", "V2"};
+        t.surface_draw = PlotSpec::SurfaceDraw::Both;
+        t.shade = false;
+        t.min_cell_rows = 3;
+        t.view_elevation = 30;
+        t.view_azimuth = -50;
+        PlotSpec tb;
+        Check(MissingEncoding(t).empty() && SpecFromJson(SpecToJson(t), tb) && tb.surface_from == PlotSpec::SurfaceFrom::Grid &&
+                  tb.surface_draw == PlotSpec::SurfaceDraw::Both && !tb.shade && tb.floor_contours && tb.min_cell_rows == 3 &&
+                  tb.view_elevation == 30 && tb.view_azimuth == -50, "surface options round trip");
+        t.surface_from = PlotSpec::SurfaceFrom::XYZ;
+        t.x_column = "x";
+        Check(MissingEncoding(t) == "Choose Z.", "an X, Y, Z surface needs Z");
+        PlotSpec sc;
+        sc.kind = Kind::Scatter3D;
+        sc.x_column = "a";
+        sc.y_columns = {"b"};
+        Check(MissingEncoding(sc) == "Choose Z.", "scatter 3D needs Z");
+        sc.z_column = "c";
+        Check(SpecFromJson(SpecToJson(sc), tb) && tb.z_column == "c" && !std::isfinite(tb.view_elevation), "z kept; no view saved");
+        Check(std::string(GroupLabel(Info(Kind::Line3D).group)) == "3D", "3D group");
+    }
     Check(!FindKind("sunburst"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
           "histogram is a basic kind");
@@ -145,7 +175,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 35 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 38 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

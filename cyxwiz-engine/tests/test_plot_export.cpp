@@ -136,6 +136,13 @@ int main() {
             s.y_columns = {"v"};
         }
         if (k.kind == Kind::Matrix || k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) s.y_columns = {"v", "w"};
+        // 3D: x, y and z (a surface from X, Y, Z; its cells need one row each here).
+        if (Info(k.kind).group == Group::ThreeD) {
+            s.x_column = "v";
+            s.y_columns = {"w"};
+            s.z_column = "prob";
+            s.min_cell_rows = 1;
+        }
         // Vector fields read a grid of arrows: a 6 x 6 rotation.
         Source field;
         if (k.required & kEncVector) {
@@ -165,6 +172,20 @@ int main() {
     }
     Check(HexColour(1.0f, 0.5f, 0.0f) == "#ff8000", "hex colour");
 
+    // 3D: the surface CSV lists the filled cells at their centres, bottom row first.
+    {
+        Source grid;
+        grid.columns.push_back(Numbers("V1", {1, 2}));
+        grid.columns.push_back(Numbers("V2", {3, NAN}));
+        PlotSpec gs;
+        gs.kind = Kind::Surface;
+        gs.surface_from = PlotSpec::SurfaceFrom::Grid;
+        gs.y_columns = {"V1", "V2"};
+        const std::string surface_csv = ToCsv(Prepare(gs, grid));
+        Check(surface_csv == "column,row,value\n1,1,1\n2,1,3\n1,2,2\n", "surface CSV: " + surface_csv);
+        Check(ToSvg(Prepare(gs, grid), AxisRange{}, SvgStyle{}).find("saved as PNG or CSV") != std::string::npos, "3D SVG says PNG or CSV");
+    }
+
     // Colour scale (P2 board 6): the CSV keeps the colour value, the SVG
     // points take the scale's ends, a missing value the dim text colour.
     Source sc;
@@ -189,6 +210,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 35 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 38 kinds, colour scale, 3D CSV. OK\n";
     return 0;
 }
