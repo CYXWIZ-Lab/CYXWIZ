@@ -10,6 +10,7 @@
 #include "../../core/plot/plot_prepare.h"
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <future>
 #include <memory>
@@ -91,6 +92,8 @@ private:
     PlotSpec spec_;
     PlotView view_;
     std::future<Prepared> job_;
+    // Set when the window goes: a long image job (mean per class) stops reading.
+    std::shared_ptr<std::atomic<bool>> stop_ = std::make_shared<std::atomic<bool>>(false);
     bool busy_ = false;
     bool dirty_ = false;
     char title_buf_[256] = {};

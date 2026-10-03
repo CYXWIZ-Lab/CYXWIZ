@@ -79,6 +79,8 @@ public:
 private:
     void DrawToolbar(const Options& options);
     void DrawPlot(ImVec2 size);
+    void DrawImages(ImVec2 size);     // Image: a grid of pictures (ImGui, not ImPlot)
+    void DrawPairPlot(ImVec2 size);   // Pair plot: an ImPlot subplot grid
     void DrawHover();
     ImVec4 ColourOf(size_t i) const;
     void ExportMenu(const Options& options);
@@ -106,6 +108,7 @@ private:
     bool drawing_own_window_ = false;
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
+    int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
 };
 
 }  // namespace cyxwiz::plot

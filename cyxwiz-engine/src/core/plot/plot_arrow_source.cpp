@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace cyxwiz::plot {
 
@@ -158,11 +159,9 @@ Source SourceFromArrow(const arrow::Table& table, const std::vector<std::string>
 
 Source SourceFromArrowRows(const arrow::Table& table, const std::vector<std::string>& columns, const std::vector<size_t>& rows) {
     Source src;
+    std::unordered_set<std::string> seen;
     for (const auto& name : columns) {
-        if (name.empty()) continue;
-        bool seen = false;
-        for (const auto& c : src.columns) seen = seen || c.name == name;
-        if (seen) continue;
+        if (name.empty() || !seen.insert(name).second) continue;
         const int index = table.schema()->GetFieldIndex(name);
         if (index < 0) continue;
         const auto& column = table.column(index);
@@ -176,9 +175,13 @@ Source SourceFromArrowRows(const arrow::Table& table, const std::vector<std::str
         SourceColumn col;
         col.name = name;
         col.numeric = IsNumeric(*column->type());
+        size_t k = 0;  // the chunk of the previous row: ascending rows walk forward
         for (size_t r : rows) {
-            const auto it = std::upper_bound(starts.begin(), starts.end(), static_cast<int64_t>(r));
-            const size_t k = static_cast<size_t>(it - starts.begin()) - 1;
+            const auto row = static_cast<int64_t>(r);
+            if (row < starts[k] || (k + 1 < starts.size() && row >= starts[k + 1])) {
+                const auto it = std::upper_bound(starts.begin(), starts.end(), row);
+                k = static_cast<size_t>(it - starts.begin()) - 1;
+            }
             const int64_t i = static_cast<int64_t>(r) - starts[k];
             const auto& chunk = *column->chunk(static_cast<int>(k));
             if (i < 0 || i >= chunk.length()) {

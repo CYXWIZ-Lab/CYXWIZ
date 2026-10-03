@@ -5,6 +5,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../../core/plot/plot_arrow_source.h"
+#include "../../core/plot/plot_image.h"
 #include "../../core/plot/plot_presets.h"
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <numeric>
 
 namespace cyxwiz::plot {
 
@@ -42,6 +44,7 @@ std::string DefaultTitle(const PlotSpec& s) {
 PlotWindow::PlotWindow(std::string id) : id_(std::move(id)), view_(id_ + "_view") {}
 
 PlotWindow::~PlotWindow() {
+    stop_->store(true);
     if (job_.valid()) job_.wait();
 }
 
@@ -199,6 +202,43 @@ void PlotWindow::Rebuild() {
         return;
     }
     const std::vector<std::string> needed = ColumnsNeeded(spec_);
+    if (arrow_table_ && spec_.kind == Kind::Image) {
+        // Image: the label and filter columns in full, then the pixels only
+        // for the rows shown (the mean per class reads them in chunks).
+        busy_ = true;
+        dirty_ = false;
+        job_ = std::async(std::launch::async, [spec = spec_, table = arrow_table_, stop = stop_]() {
+            std::vector<std::string> meta_cols;
+            if (!spec.y_columns.empty()) meta_cols.push_back(spec.y_columns.front());  // the row count
+            if (!spec.color_column.empty()) meta_cols.push_back(spec.color_column);
+            if (spec.rows == RowMode::Filter)
+                for (const auto& c : spec.conditions) meta_cols.push_back(c.column);
+            const Source meta = SourceFromArrow(*table, meta_cols);
+            const RowSelection selection = SelectRows(spec, meta);
+            if (!selection.problem.empty()) {
+                Prepared failed;
+                failed.spec = spec;
+                failed.problem = selection.problem;
+                return failed;
+            }
+            std::vector<size_t> chosen;
+            if (selection.all) {
+                chosen.resize(meta.Rows());
+                std::iota(chosen.begin(), chosen.end(), 0);
+            } else {
+                for (double r : selection.source.row_index) chosen.push_back(static_cast<size_t>(r));
+            }
+            std::vector<std::string> read_cols = spec.y_columns;
+            if (!spec.color_column.empty()) read_cols.push_back(spec.color_column);
+            Prepared p = PrepareImage(spec, chosen, [&](const std::vector<size_t>& rows) {
+                return stop->load() ? Source{} : SourceFromArrowRows(*table, read_cols, rows);
+            });
+            p.rows_total = meta.Rows();
+            if (!selection.text.empty()) p.label.selection = selection.text;
+            return p;
+        });
+        return;
+    }
     if (arrow_table_) {
         // An Arrow table does not change: read and prepare off the UI thread.
         busy_ = true;
@@ -323,7 +363,8 @@ void PlotWindow::DrawKinds() {
                 const bool auto_title = spec_.title == DefaultTitle(spec_);
                 spec_.kind = k.kind;
                 // Keep what still fits; Box/Violin read values from Y.
-                if ((k.kind == Kind::Box || k.kind == Kind::Violin || k.kind == Kind::Kde || k.kind == Kind::Matrix) &&
+                if ((k.kind == Kind::Box || k.kind == Kind::Violin || k.kind == Kind::Kde || k.kind == Kind::Matrix ||
+                     k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) &&
                     spec_.y_columns.empty() && !spec_.x_column.empty())
                     spec_.y_columns = {spec_.x_column};
                 if ((k.required & kEncX) && spec_.x_column.empty() && !spec_.y_columns.empty())
@@ -485,7 +526,8 @@ void PlotWindow::DrawSettings() {
         const bool numeric_only = spec_.kind != Kind::Heatmap;
         if (k.multi_y) {
             changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
-            if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin) {
+            if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin &&
+                spec_.kind != Kind::Image && spec_.kind != Kind::Matrix && spec_.kind != Kind::PairPlot && spec_.kind != Kind::Parallel) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(t.text_dim, "%zu series: the legend lists %zu, hover shows all.", spec_.y_columns.size(),
                                    kMaxLegendSeries);
@@ -501,7 +543,7 @@ void PlotWindow::DrawSettings() {
         }
     }
     if (k.optional & kEncColor) {
-        ImGui::TextColored(t.text_dim, "Colour by");
+        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)" : "Colour by");
         changed |= picker_.Pick("##colour", spec_.color_column, columns_, false, "(none)", w);
         // A number column on a scatter: groups or a colour scale.
         const int c = ColumnIndex(spec_.color_column);
@@ -568,6 +610,69 @@ void PlotWindow::DrawSettings() {
     }
     if (spec_.kind == Kind::Hexbin && spec_.value_column.empty())
         changed |= ImGui::Checkbox("Colour by the log of the count", &spec_.log_colour);
+    // P2b group 3 options (board 10).
+    if (spec_.kind == Kind::Image) {
+        ImGui::TextColored(t.text_dim, "Show");
+        static const char* const kModes[] = {"One row", "Gallery", "Mean per class"};
+        int mode = static_cast<int>(spec_.image_mode);
+        if (ui::SegmentedControl("##image_mode", kModes, 3, &mode)) {
+            spec_.image_mode = static_cast<PlotSpec::ImageMode>(mode);
+            changed = true;
+        }
+        if (spec_.image_mode == PlotSpec::ImageMode::OneRow) {
+            const int rows = view_.HasData() ? static_cast<int>(view_.Data().img_rows) : 0;
+            ImGui::TextColored(t.text_dim, "Row (of %s)", Thousands(rows).c_str());
+            ImGui::SetNextItemWidth(w * 0.4f);
+            if (ImGui::InputInt("##image_row", &spec_.image_row, 0, 0)) {
+                spec_.image_row = std::clamp(spec_.image_row, 1, std::max(1, rows));
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Previous") && spec_.image_row > 1) {
+                --spec_.image_row;
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Next") && spec_.image_row < rows) {
+                ++spec_.image_row;
+                changed = true;
+            }
+        } else if (spec_.image_mode == PlotSpec::ImageMode::Gallery) {
+            ImGui::TextColored(t.text_dim, "Pictures at most");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##gallery_max", &spec_.gallery_max, 0, 0)) {
+                spec_.gallery_max = std::clamp(spec_.gallery_max, 1, 400);
+                changed = true;
+            }
+        }
+        ImGui::TextColored(t.text_dim, "Width (0: square)");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##image_width", &spec_.image_width, 0, 0)) {
+            spec_.image_width = std::clamp(spec_.image_width, 0, 4096);
+            changed = true;
+        }
+        ImGui::TextColored(t.text_dim, "Channels");
+        static const char* const kChannels[] = {"Auto", "1 (grey or scale)", "3 (red, green, blue)"};
+        int ch = spec_.image_channels == 3 ? 2 : spec_.image_channels == 1 ? 1 : 0;
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##image_channels", &ch, kChannels, 3)) {
+            spec_.image_channels = ch == 2 ? 3 : ch == 1 ? 1 : 0;
+            changed = true;
+        }
+        const bool rgb = view_.HasData() && view_.Data().img_channels == 3;
+        if (rgb) changed |= ImGui::Checkbox("Three planes (all red, then green, then blue)", &spec_.image_planar);
+        ImGui::TextColored(t.text_dim, "Values");
+        static const char* const kRange[] = {"Auto (lowest to highest)", "0 to 255", "0 to 1"};
+        int range = static_cast<int>(spec_.image_range);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##image_range", &range, kRange, 3)) {
+            spec_.image_range = static_cast<PlotSpec::ImageRange>(range);
+            changed = true;
+        }
+        if (!rgb) changed |= ImGui::Checkbox("Grey", &spec_.image_grey);
+        changed |= ImGui::Checkbox("Invert", &spec_.image_invert);
+    }
+    if (spec_.kind == Kind::PairPlot) changed |= ImGui::Checkbox("Histograms on the diagonal", &spec_.pair_histogram);
     // P2b group 2 options (board 9).
     if (spec_.kind == Kind::Polar) {
         ImGui::TextColored(t.text_dim, "Angle in");
@@ -677,6 +782,7 @@ void PlotWindow::DrawSettings() {
     // The script is built on click (a histogram reads the whole column).
     const bool new_kind = spec_.kind == Kind::Kde || spec_.kind == Kind::Matrix || spec_.kind == Kind::Hexbin ||
                           spec_.kind == Kind::Polar || spec_.kind == Kind::Quiver || spec_.kind == Kind::Stream ||
+                          spec_.kind == Kind::Image || spec_.kind == Kind::PairPlot || spec_.kind == Kind::Parallel ||
                           spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
                           (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&

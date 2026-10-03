@@ -38,9 +38,11 @@ Variable Explorer), then either right-click a column and choose **Plot**
 or press **Plot** under the column's statistics. The Plot window opens:
 
 - **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
-  stem, pie), Distribution (box, violin, KDE, error bars), Grid and density
-  (heatmap, matrix, 2D histogram, hexbin, contour, filled contour), Vector
-  fields (quiver, stream); Basic also has polar. Pick
+  stem, pie, polar), Distribution (box, violin, KDE, parallel coordinates,
+  error bars), Grid and density
+  (heatmap, matrix, pair plot, 2D histogram, hexbin, contour, filled
+  contour), Images (image), Vector
+  fields (quiver, stream). Pick
   one; the columns that still fit are kept.
 - **Rows** (top of the right panel): **All**, **First** N rows, a **Range**
   of rows (numbered from 1, as in the Table Viewer) or **Filter**:
@@ -98,6 +100,25 @@ or press **Plot** under the column's statistics. The Plot window opens:
   scaled to fit their spacing. A dense grid shows **every Nth arrow** (0:
   about 600 at most); the label says so, and hover and exports use every
   row. Hover: the length, the direction it points to and u, v.
+- **Image** (Images): any table whose number columns make a picture. Choose
+  the **Pixel columns** (search "pixel" and **Add all matches**, or a
+  range), and optionally a **Label** column. The shape is square when the
+  count is a square (784 columns: 28 x 28), 3 channels when the count / 3 is
+  a square (3,072: 32 x 32 RGB, as CIFAR-10; tick **Three planes** when the
+  columns are all red, then green, then blue), else set **Width**.
+  **Show**: **One row** (Previous / Next), a **Gallery** of the chosen rows
+  (the Rows section picks them, e.g. class = 7; **Pictures at most**), or the
+  **Mean per class** (the average picture of each label, with its count).
+  **Values**: Auto (lowest to highest), 0 to 255 or 0 to 1; **Grey** or the
+  theme scale; **Invert**. Hover gives the row, the label, the pixel and its
+  value. Only the rows shown are read, so wide tables stay quick.
+- **Pair plot** (Grid and density): 2 to 6 number columns; every pair as a
+  scatter (sampled to 2,000 rows) and each column alone on the diagonal (a
+  KDE per **Colour by** group, or **Histograms on the diagonal**).
+- **Parallel coordinates** (Distribution): two or more number columns, each
+  on its own vertical axis (its lowest and highest value at the ends), one
+  line per row (1,000 at most) coloured by group. Hover highlights the
+  nearest line and lists its values.
 - **Stream**: the same columns as Quiver; lines that follow the field
   (rows of a grid are used as they are, other tables are averaged onto a
   40 x 40 grid), coloured by speed, with an arrowhead on each line.

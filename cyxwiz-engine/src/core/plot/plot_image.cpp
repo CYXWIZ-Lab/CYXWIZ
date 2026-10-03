@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <map>
 #include <sstream>
+#include <unordered_map>
 
 namespace cyxwiz::plot {
 
@@ -70,12 +71,23 @@ Prepared PrepareImage(const PlotSpec& spec, const std::vector<size_t>& chosen,
     const size_t pixels = static_cast<size_t>(p.img_w) * static_cast<size_t>(p.img_h);
     const size_t n = spec.y_columns.size();
     const size_t per_channel = n / static_cast<size_t>(p.img_channels);
-    // The picture of one row of a source: channels last, missing as NaN.
-    const auto picture_of = [&](const Source& src, size_t r, std::vector<double>& out) {
+    // The pixel columns of a source, found once (a wide table has hundreds).
+    std::vector<const SourceColumn*> cols;
+    const auto columns_of = [&](const Source& src) {
+        std::unordered_map<std::string, const SourceColumn*> by_name;
+        for (const auto& c : src.columns) by_name[c.name] = &c;
+        cols.assign(n, nullptr);
+        for (size_t k = 0; k < n; ++k) {
+            auto it = by_name.find(spec.y_columns[k]);
+            if (it != by_name.end() && it->second->numeric) cols[k] = it->second;
+        }
+    };
+    // The picture of one row of a source (after columns_of): channels last, missing as NaN.
+    const auto picture_of = [&](size_t r, std::vector<double>& out) {
         out.assign(pixels * static_cast<size_t>(p.img_channels), NAN);
         for (size_t k = 0; k < n; ++k) {
-            const SourceColumn* c = src.Find(spec.y_columns[k]);
-            if (!c || !c->numeric || r >= c->numbers.size()) continue;
+            const SourceColumn* c = cols[k];
+            if (!c || r >= c->numbers.size()) continue;
             size_t pixel, channel;
             if (p.img_channels == 3 && spec.image_planar) {
                 channel = k / per_channel;
@@ -102,11 +114,13 @@ Prepared PrepareImage(const PlotSpec& spec, const std::vector<size_t>& chosen,
             const Source src = read(rows);
             const SourceColumn* label = src.Find(spec.color_column);
             if (!label) {
+                if (src.columns.empty()) break;  // the reader stopped (the window closed)
                 p.problem = "Column '" + spec.color_column + "' is not in the table.";
                 return p;
             }
+            columns_of(src);
             for (size_t r = 0; r < rows.size(); ++r) {
-                picture_of(src, r, one);
+                picture_of(r, one);
                 auto& [sum, count] = sums[LabelText(*label, r)];
                 if (sum.empty()) {
                     sum.assign(one.size(), 0.0);
@@ -158,8 +172,9 @@ Prepared PrepareImage(const PlotSpec& spec, const std::vector<size_t>& chosen,
         for (size_t i : places) rows.push_back(chosen[i]);
         const Source src = read(rows);
         const SourceColumn* label = spec.color_column.empty() ? nullptr : src.Find(spec.color_column);
+        columns_of(src);
         for (size_t r = 0; r < rows.size(); ++r) {
-            picture_of(src, r, one);
+            picture_of(r, one);
             raw.push_back(one);
             Prepared::Picture pic;
             pic.row = places[r] + 1;

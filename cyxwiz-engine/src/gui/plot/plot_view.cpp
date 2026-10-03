@@ -310,7 +310,8 @@ void PlotView::DrawToolbar(const Options& o) {
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
         ImGui::SameLine();
     }
-    const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && !IsGridKind(data_.spec.kind);
+    const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && data_.spec.kind != Kind::Image &&
+                         data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind);
     if (o.tool_log) {
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
@@ -392,9 +393,159 @@ void PlotView::DrawOwnWindow(const Options& o) {
     ImGui::End();
 }
 
+void PlotView::DrawImages(ImVec2 size) {
+    const Prepared& p = data_;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##images", size);
+    const bool hovered = ImGui::IsItemHovered();
+    frame_min_ = origin;
+    frame_max_ = ImVec2(origin.x + size.x, origin.y + size.y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(frame_min_, frame_max_, ui::ToU32(t.plot_bg), 4.0f);
+    if (p.pictures.empty() || p.img_w <= 0 || p.img_h <= 0) return;
+    const int cols = PictureColumns(p);
+    const int rows = static_cast<int>((p.pictures.size() + static_cast<size_t>(cols) - 1) / static_cast<size_t>(cols));
+    const float caption = ImGui::GetTextLineHeight() + 4.0f;
+    const float cell = std::max(8.0f, std::min((size.x - 8.0f) / cols, (size.y - 8.0f) / rows - caption));
+    const float px = cell * 0.94f / static_cast<float>(std::max(p.img_w, p.img_h));
+    const ImVec2 mouse = ImGui::GetMousePos();
+    int hover_pic = -1, hover_x = -1, hover_y = -1;
+    dl->PushClipRect(frame_min_, frame_max_, true);
+    for (size_t i = 0; i < p.pictures.size(); ++i) {
+        const auto& pic = p.pictures[i];
+        const float ox = origin.x + 4.0f + static_cast<float>(static_cast<int>(i) % cols) * cell;
+        const float oy = origin.y + 4.0f + static_cast<float>(static_cast<int>(i) / cols) * (cell + caption);
+        for (int y = 0; y < p.img_h; ++y)
+            for (int x = 0; x < p.img_w; ++x) {
+                const size_t k = (static_cast<size_t>(y) * static_cast<size_t>(p.img_w) + static_cast<size_t>(x)) * static_cast<size_t>(p.img_channels);
+                if (k >= pic.pix.size()) continue;
+                ImVec4 c;
+                if (p.img_channels == 3) {
+                    const auto ch = [&](size_t j) {
+                        const float v = std::isfinite(pic.pix[k + j]) ? pic.pix[k + j] : 0.0f;
+                        return p.spec.image_invert ? 1.0f - v : v;
+                    };
+                    c = ImVec4(ch(0), ch(1), ch(2), 1.0f);
+                } else {
+                    if (!std::isfinite(pic.pix[k])) continue;
+                    const float v = p.spec.image_invert ? 1.0f - pic.pix[k] : pic.pix[k];
+                    c = p.spec.image_grey ? ImVec4(v, v, v, 1.0f) : ImPlot::SampleColormap(v, SequentialColormap());
+                }
+                const ImVec2 a(ox + x * px, oy + y * px), b(ox + (x + 1) * px, oy + (y + 1) * px);
+                dl->AddRectFilled(a, b, ui::ToU32(c));
+                if (hovered && mouse.x >= a.x && mouse.x < b.x && mouse.y >= a.y && mouse.y < b.y) {
+                    hover_pic = static_cast<int>(i);
+                    hover_x = x;
+                    hover_y = y;
+                }
+            }
+        std::string text = pic.label;
+        if (pic.row > 0) text = "row " + Thousands(static_cast<long long>(pic.row)) + (text.empty() ? "" : " \xC2\xB7 " + text);
+        else text += "  (" + Thousands(static_cast<long long>(pic.count)) + ")";
+        dl->AddText(ImVec2(ox, oy + p.img_h * px + 2.0f), ui::ToU32(t.text_dim), text.c_str());
+    }
+    dl->PopClipRect();
+    if (hover_pic >= 0) {
+        // The pixel under the mouse, in the table's units.
+        const auto& pic = p.pictures[static_cast<size_t>(hover_pic)];
+        const size_t k = (static_cast<size_t>(hover_y) * static_cast<size_t>(p.img_w) + static_cast<size_t>(hover_x)) * static_cast<size_t>(p.img_channels);
+        const auto raw = [&](size_t j) { return std::isfinite(pic.pix[k + j]) ? Value(p.img_lo + pic.pix[k + j] * (p.img_hi - p.img_lo)) : std::string("missing"); };
+        ImGui::BeginTooltip();
+        ImGui::TextColored(t.text_bright, "%s", pic.row > 0 ? ("row " + Thousands(static_cast<long long>(pic.row)) + (pic.label.empty() ? "" : " \xC2\xB7 " + pic.label)).c_str()
+                                                             : (pic.label + " (mean of " + Thousands(static_cast<long long>(pic.count)) + " rows)").c_str());
+        ImGui::TextColored(t.text_dim, "x %d, y %d", hover_x, hover_y);
+        if (p.img_channels == 3) ImGui::Text("r %s  g %s  b %s", raw(0).c_str(), raw(1).c_str(), raw(2).c_str());
+        else ImGui::Text("value %s", raw(0).c_str());
+        ImGui::EndTooltip();
+    }
+}
+
+void PlotView::DrawPairPlot(ImVec2 size) {
+    const Prepared& p = data_;
+    const int n = static_cast<int>(p.multi_cols.size());
+    if (n < 2) return;
+    ImPlotSubplotFlags sflags = ImPlotSubplotFlags_NoTitle | ImPlotSubplotFlags_NoResize | ImPlotSubplotFlags_ShareItems | ImPlotSubplotFlags_NoMenus;
+    if (!legend_) sflags |= ImPlotSubplotFlags_NoLegend;
+    if (!ImPlot::BeginSubplots("##pairs", n, n, size, sflags)) return;
+    // Points per group (sampled rows), built once per frame.
+    const size_t groups = std::max<size_t>(1, p.multi_groups.size());
+    std::vector<std::vector<size_t>> rows_of(groups);
+    for (size_t r = 0; r < p.multi_group.size(); ++r)
+        rows_of[static_cast<size_t>(std::clamp(p.multi_group[r], 0, static_cast<int>(groups) - 1))].push_back(r);
+    std::vector<double> xs, ys;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            const std::string id = "##pair" + std::to_string(i) + "_" + std::to_string(j);
+            if (!ImPlot::BeginPlot(id.c_str(), ImVec2(-1, -1), ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText)) continue;
+            const ImPlotAxisFlags xf = i == n - 1 ? ImPlotAxisFlags_None : ImPlotAxisFlags_NoTickLabels;
+            const ImPlotAxisFlags yf = (j == 0 && i != j) ? ImPlotAxisFlags_None : ImPlotAxisFlags_NoTickLabels;
+            ImPlot::SetupAxes(i == n - 1 ? p.multi_cols[static_cast<size_t>(j)].c_str() : nullptr,
+                              j == 0 ? p.multi_cols[static_cast<size_t>(i)].c_str() : nullptr, xf, yf);
+            const double xlo = p.multi_lo[static_cast<size_t>(j)], xhi = p.multi_hi[static_cast<size_t>(j)];
+            const double mx = (xhi - xlo) * 0.04;
+            if (i == j) {
+                double peak = 0;
+                for (const auto& g : p.pair_diag[static_cast<size_t>(i)])
+                    for (double v : g) peak = std::max(peak, v);
+                ImPlot::SetupAxesLimits(xlo - mx, xhi + mx, 0, peak > 0 ? peak * 1.1 : 1.0, ImPlotCond_Always);
+                for (size_t g = 0; g < p.pair_diag[static_cast<size_t>(i)].size(); ++g) {
+                    const auto& d = p.pair_diag[static_cast<size_t>(i)][g];
+                    xs.clear();
+                    const int steps = static_cast<int>(d.size());
+                    const bool hist = p.spec.pair_histogram;
+                    for (int k = 0; k < steps; ++k)
+                        xs.push_back(hist ? xlo + (xhi - xlo) * (k + 0.5) / steps : xlo + (xhi - xlo) * k / std::max(1, steps - 1));
+                    const std::string label = g < p.multi_groups.size() && !p.multi_groups[g].empty() ? p.multi_groups[g] : std::string("rows");
+                    if (hist) {
+                        ImPlot::SetNextFillStyle(SeriesColour(g), 0.55f);
+                        ImPlot::PlotBars(label.c_str(), xs.data(), d.data(), steps, (xhi - xlo) / steps * 0.95);
+                    } else {
+                        ImPlot::SetNextLineStyle(SeriesColour(g), 1.6f);
+                        ImPlot::PlotLine(label.c_str(), xs.data(), d.data(), steps);
+                    }
+                }
+            } else {
+                const double ylo = p.multi_lo[static_cast<size_t>(i)], yhi = p.multi_hi[static_cast<size_t>(i)];
+                const double my = (yhi - ylo) * 0.04;
+                ImPlot::SetupAxesLimits(xlo - mx, xhi + mx, ylo - my, yhi + my, ImPlotCond_Always);
+                for (size_t g = 0; g < groups; ++g) {
+                    xs.clear();
+                    ys.clear();
+                    for (size_t r : rows_of[g]) {
+                        xs.push_back(p.multi_values[static_cast<size_t>(j)][r]);
+                        ys.push_back(p.multi_values[static_cast<size_t>(i)][r]);
+                    }
+                    const std::string label = g < p.multi_groups.size() && !p.multi_groups[g].empty() ? p.multi_groups[g] : std::string("rows");
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.8f, ui::WithAlpha(SeriesColour(g), 0.7f), 0.0f);
+                    ImPlot::PlotScatter(label.c_str(), xs.data(), ys.data(), static_cast<int>(xs.size()));
+                }
+                if (ImPlot::IsPlotHovered()) {
+                    const ImPlotPoint m = ImPlot::GetPlotMousePos();
+                    ImGui::BeginTooltip();
+                    ImGui::Text("%s %s", p.multi_cols[static_cast<size_t>(j)].c_str(), Value(m.x).c_str());
+                    ImGui::Text("%s %s", p.multi_cols[static_cast<size_t>(i)].c_str(), Value(m.y).c_str());
+                    ImGui::EndTooltip();
+                }
+            }
+            ImPlot::EndPlot();
+        }
+    ImPlot::EndSubplots();
+    frame_min_ = ImGui::GetItemRectMin();
+    frame_max_ = ImGui::GetItemRectMax();
+}
+
 void PlotView::DrawPlot(ImVec2 size) {
     const Prepared& p = data_;
     const Kind kind = p.spec.kind;
+    if (kind == Kind::Image) {
+        DrawImages(size);
+        return;
+    }
+    if (kind == Kind::PairPlot) {
+        DrawPairPlot(size);
+        return;
+    }
     const ui::Tokens& t = ui::CurrentTokens();
     const bool scale_bar = IsGridKind(kind) || p.colour_scale;
     ImVec2 plot_size = size;
@@ -410,7 +561,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
     if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Polar && kind != Kind::Box && kind != Kind::Violin &&
-        !IsGridKind(kind))
+        kind != Kind::Parallel && !IsGridKind(kind))
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
@@ -420,6 +571,11 @@ void PlotView::DrawPlot(ImVec2 size) {
     if (kind == Kind::Pie) {
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
+    } else if (kind == Kind::Parallel) {
+        // One vertical axis per column at x = 0, 1, ...; y is each column's 0..1.
+        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks, ImPlotAxisFlags_NoDecorations);
+        const double n = static_cast<double>(std::max<size_t>(2, p.multi_cols.size()));
+        ImPlot::SetupAxesLimits(-0.25, n - 0.75, -0.06, 1.1, ImPlotCond_Always);
     } else if (kind == Kind::Polar) {
         // Its own rings and spokes; the radius 1 is the largest value. The
         // limits follow the plot's shape so -1.25..1.25 fits both ways
@@ -472,6 +628,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     switch (kind) {
         case Kind::Bar:
         case Kind::ErrorBars: set_ticks(ImAxis_X1, p.categories, 0.0); break;
+        case Kind::Parallel: set_ticks(ImAxis_X1, p.multi_cols, 0.0); break;
         case Kind::Box:
         case Kind::Violin: {
             set_ticks(ImAxis_X1, series_names, 0.0);
@@ -699,6 +856,60 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, p.grid_lo,
                                 p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0, numbers ? format : nullptr, lo, hi);
             ImPlot::PopColormap();
+            break;
+        }
+        case Kind::Parallel: {
+            // A line per sampled row, coloured by group; the hovered one on top.
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            const size_t cols = p.multi_cols.size();
+            const auto at = [&](size_t c, double v) {
+                return ImPlot::PlotToPixels(static_cast<double>(c), (v - p.multi_lo[c]) / (p.multi_hi[c] - p.multi_lo[c]));
+            };
+            // The line nearest the mouse (6 px).
+            int hot = -1;
+            if (ImPlot::IsPlotHovered()) {
+                const ImVec2 mouse = ImGui::GetMousePos();
+                float best = 36.0f;
+                for (size_t r = 0; r < p.multi_group.size(); ++r)
+                    for (size_t c = 0; c + 1 < cols; ++c) {
+                        const ImVec2 a = at(c, p.multi_values[c][r]), b = at(c + 1, p.multi_values[c + 1][r]);
+                        if (mouse.x < a.x || mouse.x > b.x) continue;
+                        const float u = (mouse.x - a.x) / std::max(1.0f, b.x - a.x);
+                        const float y = a.y + (b.y - a.y) * u, d = (y - mouse.y) * (y - mouse.y);
+                        if (d < best) {
+                            best = d;
+                            hot = static_cast<int>(r);
+                        }
+                    }
+            }
+            hovered_row_ = hot;
+            ImPlot::PushPlotClipRect();
+            std::vector<ImVec2> pts(cols);
+            for (size_t r = 0; r < p.multi_group.size(); ++r) {
+                for (size_t c = 0; c < cols; ++c) pts[c] = at(c, p.multi_values[c][r]);
+                const ImVec4 colour = SeriesColour(static_cast<size_t>(std::max(0, p.multi_group[r])));
+                dl->AddPolyline(pts.data(), static_cast<int>(cols), ui::ToU32(ui::WithAlpha(colour, hot >= 0 ? 0.18f : 0.4f)), ImDrawFlags_None, 1.0f);
+            }
+            if (hot >= 0) {
+                for (size_t c = 0; c < cols; ++c) pts[c] = at(c, p.multi_values[c][static_cast<size_t>(hot)]);
+                dl->AddPolyline(pts.data(), static_cast<int>(cols), ui::ToU32(t.text_bright), ImDrawFlags_None, 2.2f);
+            }
+            // The axes, each with its top and bottom value.
+            for (size_t c = 0; c < cols; ++c) {
+                const ImVec2 top = at(c, p.multi_hi[c]), bottom = at(c, p.multi_lo[c]);
+                dl->AddLine(top, bottom, ui::ToU32(t.text_dim), 1.2f);
+                const std::string hi = Value(p.multi_hi[c]), lo = Value(p.multi_lo[c]);
+                const ImVec2 hs = ImGui::CalcTextSize(hi.c_str());
+                dl->AddText(ImVec2(top.x - hs.x * 0.5f, top.y - hs.y - 2.0f), ui::ToU32(t.text_dim), hi.c_str());
+                const ImVec2 ls = ImGui::CalcTextSize(lo.c_str());
+                dl->AddText(ImVec2(bottom.x - ls.x * 0.5f, bottom.y + 2.0f), ui::ToU32(t.text_dim), lo.c_str());
+            }
+            ImPlot::PopPlotClipRect();
+            // Legend entries for the groups.
+            for (size_t g = 0; g < p.multi_groups.size() && p.multi_groups.size() > 1; ++g) {
+                ImPlot::SetNextLineStyle(SeriesColour(g), 2.0f);
+                ImPlot::PlotDummy(p.multi_groups[g].c_str());
+            }
             break;
         }
         case Kind::Polar: {
@@ -1037,6 +1248,17 @@ void PlotView::DrawHover() {
             begin(XLabel(p) + " " + Value(p.x_min + dx * c) + " to " + Value(p.x_min + dx * (c + 1)));
             TooltipRow(ColourOf((0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
                        Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) + " rows");
+            break;
+        }
+        case Kind::Parallel: {
+            if (hovered_row_ < 0 || static_cast<size_t>(hovered_row_) >= p.multi_group.size()) break;
+            const size_t r = static_cast<size_t>(hovered_row_);
+            const int g = p.multi_group[r];
+            begin(g >= 0 && static_cast<size_t>(g) < p.multi_groups.size() && !p.multi_groups[static_cast<size_t>(g)].empty()
+                      ? p.multi_groups[static_cast<size_t>(g)]
+                      : std::string("row"));
+            for (size_t c = 0; c < p.multi_cols.size(); ++c)
+                TooltipRow(SeriesColour(static_cast<size_t>(std::max(0, g))), p.multi_cols[c], Value(p.multi_values[c][r]));
             break;
         }
         case Kind::Polar: {
