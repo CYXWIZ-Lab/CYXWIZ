@@ -355,15 +355,15 @@ void PlotView::Draw3D(ImVec2 size) {
         // Legend entries for groups: ImPlot3D lists items it drew, so each
         // series adds one with a single point outside the box (nothing shows).
         if (p.series.size() > 1) {
-            const double nan = NAN;
+            const double nan[2] = {NAN, NAN};  // two points: a line needs two to be listed
             for (size_t si = 0; si < p.series.size(); ++si) {
                 const ImVec4 c = ColourOf(si);
                 if (line) {
                     ImPlot3D::SetNextLineStyle(c, 2.0f);
-                    ImPlot3D::PlotLine(p.series[si].label.c_str(), &nan, &nan, &nan, 1);
+                    ImPlot3D::PlotLine(p.series[si].label.c_str(), nan, nan, nan, 2);
                 } else {
                     ImPlot3D::SetNextMarkerStyle(ImPlot3DMarker_Circle, 4.0f, c, 0.0f, c);
-                    ImPlot3D::PlotScatter(p.series[si].label.c_str(), &nan, &nan, &nan, 1);
+                    ImPlot3D::PlotScatter(p.series[si].label.c_str(), nan, nan, nan, 2);
                 }
             }
         }
