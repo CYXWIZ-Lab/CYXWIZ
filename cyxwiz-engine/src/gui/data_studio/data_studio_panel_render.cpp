@@ -42,6 +42,9 @@ void DataStudioPanel::Render() {
     if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
+    // Opened from elsewhere (a dashboard): bring the panel forward, also when
+    // it is a hidden dock tab (its Begin returns false until focused).
+    if (show_profile_) ImGui::SetNextWindowFocus();
     if (ImGui::Begin("Data Studio", &visible_)) {
         RenderToolbar();
         ImGui::Spacing();
@@ -124,7 +127,6 @@ void DataStudioPanel::RenderTabBar() {
             if (query_editor_) query_editor_->Render();
             ImGui::EndTabItem();
         }
-        if (show_profile_) ImGui::SetWindowFocus();
         if (ImGui::BeginTabItem("Profile", nullptr, show_profile_ ? ImGuiTabItemFlags_SetSelected : 0)) {
             show_profile_ = false;
             if (profile_) profile_->Render();
