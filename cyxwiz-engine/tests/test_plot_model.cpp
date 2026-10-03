@@ -27,7 +27,7 @@ int main() {
         Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
         Check(k.required != 0, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 24, "24 kinds (P1 13 + P2b groups 1 to 3)");
+    Check(Kinds().size() == 31, "31 kinds (P1 13 + P2b groups 1 to 4)");
     Check(!FindKind("sankey"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
           "histogram is a basic kind");
@@ -51,6 +51,19 @@ int main() {
               back.color_column == "label" && back.title == s.title && back.bins == 40 && back.smooth == 7 &&
               back.density && back.show_mean && back.show_median && back.log_y && !back.log_x && !back.legend,
           "round trip keeps every field");
+    // Model results fields (P2b group 4).
+    PlotSpec m;
+    m.kind = Kind::LearningCurve;
+    m.confusion_show = PlotSpec::ConfusionShow::All;
+    m.positive_class = "tested_positive";
+    m.calibration_bins = 15;
+    m.spread_columns = {"train_sd", ""};
+    m.best = PlotSpec::Best::Lowest;
+    m.top_n = 7;
+    Check(SpecFromJson(SpecToJson(m), back) && back.kind == Kind::LearningCurve && back.confusion_show == PlotSpec::ConfusionShow::All &&
+              back.positive_class == "tested_positive" && back.calibration_bins == 15 && back.spread_columns.size() == 2 &&
+              back.spread_columns[0] == "train_sd" && back.best == PlotSpec::Best::Lowest && back.top_n == 7,
+          "model results fields round trip");
     std::string problem;
     PlotSpec untouched;
     Check(!SpecFromJson("{\"version\":2,\"kind\":\"line\"}", untouched, &problem) && problem.find("version 2") != std::string::npos,
@@ -129,7 +142,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 24 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 31 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

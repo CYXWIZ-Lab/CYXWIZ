@@ -212,6 +212,52 @@ std::string ToCsv(const Prepared& p) {
                 }
             break;
         }
+        case Kind::Confusion:
+            out << "actual,predicted,count,share\n";
+            for (int r = 0; r < p.grid_rows; ++r)
+                for (int c = 0; c < p.grid_cols; ++c) {
+                    const size_t k = static_cast<size_t>(r * p.grid_cols + c);
+                    out << CsvCell(p.row_names[static_cast<size_t>(r)]) << ',' << CsvCell(p.col_names[static_cast<size_t>(c)]) << ','
+                        << Num(k < p.grid_counts.size() ? p.grid_counts[k] : NAN) << ','
+                        << (p.spec.confusion_show == PlotSpec::ConfusionShow::Counts ? std::string() : Num(p.grid[k])) << '\n';
+                }
+            break;
+        case Kind::Roc:
+        case Kind::PrCurve:
+            out << (p.spec.kind == Kind::Roc ? "threshold,false_positive_rate,true_positive_rate\n" : "threshold,recall,precision\n");
+            if (!p.series.empty())
+                for (size_t i = 0; i < p.series[0].x.size(); ++i)
+                    out << Num(p.series[0].c[i]) << ',' << Num(p.series[0].x[i]) << ',' << Num(p.series[0].y[i]) << '\n';
+            break;
+        case Kind::Calibration:
+            out << "mean_predicted,share_positive,rows\n";
+            if (!p.series.empty())
+                for (size_t i = 0; i < p.series[0].x.size(); ++i)
+                    out << Num(p.series[0].x[i]) << ',' << Num(p.series[0].y[i]) << ',' << Num(p.series[0].low[i]) << '\n';
+            break;
+        case Kind::Residuals:
+            out << "predicted,residual\n";
+            if (!p.series.empty()) {
+                const auto& s = p.series[0];
+                const auto& xs = s.all_x.empty() ? s.x : s.all_x;
+                const auto& ys = s.all_y.empty() ? s.y : s.all_y;
+                for (size_t i = 0; i < std::min(xs.size(), ys.size()); ++i) out << Num(xs[i]) << ',' << Num(ys[i]) << '\n';
+            }
+            break;
+        case Kind::LearningCurve:
+            out << "series,x,y,low,high\n";
+            for (const auto& s : p.series)
+                for (size_t i = 0; i < std::min(s.x.size(), s.y.size()); ++i)
+                    out << CsvCell(s.label) << ',' << Num(s.x[i]) << ',' << Num(s.y[i]) << ',' << (i < s.low.size() ? Num(s.low[i]) : std::string())
+                        << ',' << (i < s.high.size() ? Num(s.high[i]) : std::string()) << '\n';
+            break;
+        case Kind::Importance:
+            out << "feature," << CsvCell(p.series.empty() ? "importance" : p.series[0].label) << ",spread\n";
+            if (!p.series.empty())
+                for (size_t i = 0; i < p.series[0].y.size(); ++i)
+                    out << CsvCell(Category(p, i)) << ',' << Num(p.series[0].y[i]) << ','
+                        << (i < p.series[0].low.size() ? Num(p.series[0].low[i]) : std::string()) << '\n';
+            break;
     }
     return out.str();
 }
@@ -291,7 +337,8 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     o << "<defs><clipPath id=\"area\"><rect x=\"" << f.left << "\" y=\"" << f.top << "\" width=\"" << f.width << "\" height=\"" << f.height << "\"/></clipPath></defs>\n";
 
     // Axes: grid, ticks and labels (categories under bars).
-    const bool grid_names = p.spec.kind == Kind::Heatmap || p.spec.kind == Kind::Matrix;
+    const bool grid_names = p.spec.kind == Kind::Heatmap || p.spec.kind == Kind::Matrix || p.spec.kind == Kind::Confusion;
+    const bool importance = p.spec.kind == Kind::Importance;
     const bool categorical_x = p.spec.kind == Kind::Bar || p.spec.kind == Kind::ErrorBars || grid_names;
     if (!pie) {
         if (categorical_x) {
@@ -307,7 +354,12 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 o << "<text x=\"" << f.X(t) << "\" y=\"" << f.top + f.height + 16 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"middle\">" << Num(t) << "</text>\n";
             }
         }
-        if (grid_names) {
+        if (importance) {
+            // Features down the side, the largest on top.
+            const size_t n = p.categories.size();
+            for (size_t i = 0; i < n; ++i)
+                o << "<text x=\"" << f.left - 8 << "\" y=\"" << f.Y(static_cast<double>(n - 1 - i)) + 4 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"end\">" << Xml(p.categories[i]) << "</text>\n";
+        } else if (grid_names) {
             for (size_t i = 0; i < p.row_names.size() && i < 60; ++i)
                 o << "<text x=\"" << f.left - 8 << "\" y=\"" << f.Y(f.r.y1 - (static_cast<double>(i) + 0.5)) + 4 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"end\">" << Xml(p.row_names[i]) << "</text>\n";
         } else {
@@ -320,7 +372,7 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
             }
         }
         const std::string xl = !p.spec.x_label.empty() ? p.spec.x_label : p.spec.x_column;
-        std::string yl = p.spec.y_label;
+        std::string yl = importance ? std::string() : p.spec.y_label;
         if (yl.empty()) yl = p.spec.kind == Kind::Histogram ? (p.spec.density ? "density" : "count")
                              : !p.spec.y_columns.empty() ? p.spec.y_columns.front() : "";
         o << "<text x=\"" << f.left + f.width / 2 << "\" y=\"" << st.height - 10 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"middle\">" << Xml(xl) << "</text>\n";
@@ -328,7 +380,8 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     }
 
     o << "<g clip-path=\"url(#area)\">\n";
-    if (p.spec.show_diagonal && (p.spec.kind == Kind::Line || p.spec.kind == Kind::Scatter)) {
+    if (p.spec.show_diagonal && (p.spec.kind == Kind::Line || p.spec.kind == Kind::Scatter || p.spec.kind == Kind::Roc ||
+                                 p.spec.kind == Kind::Calibration)) {
         const double lo = std::max(range.x0, range.y0), hi = std::min(range.x1, range.y1);
         if (hi > lo)
             o << "<line x1=\"" << f.X(lo) << "\" y1=\"" << f.Y(lo) << "\" x2=\"" << f.X(hi) << "\" y2=\"" << f.Y(hi)
@@ -643,8 +696,93 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 }
             break;
         }
+        case Kind::Confusion: {
+            // Cells: the count, and the share under it unless counts are shown.
+            const double x0 = f.r.x0, y1 = f.r.y1;
+            const bool share = p.spec.confusion_show != PlotSpec::ConfusionShow::Counts;
+            for (int r = 0; r < p.grid_rows; ++r)
+                for (int c = 0; c < p.grid_cols; ++c) {
+                    const size_t k = static_cast<size_t>(r * p.grid_cols + c);
+                    const double top = y1 - r;
+                    const double t = p.grid_hi > p.grid_lo ? (p.grid[k] - p.grid_lo) / (p.grid_hi - p.grid_lo) : 0.0;
+                    o << "<rect x=\"" << f.X(x0 + c) << "\" y=\"" << f.Y(top) << "\" width=\"" << f.X(x0 + c + 1) - f.X(x0 + c) << "\" height=\""
+                      << f.Y(top - 1) - f.Y(top) << "\" fill=\"" << RangeColour(p.grid[k], p.grid_lo, p.grid_hi, false, st) << "\"/>\n";
+                    if (p.grid_rows <= 20) {
+                        const double cx = f.X(x0 + c + 0.5), cy = f.Y(top - 0.5);
+                        const std::string ink = t > 0.55 ? st.background : st.text;
+                        o << "<text x=\"" << cx << "\" y=\"" << cy + (share ? -2 : 4) << "\" fill=\"" << ink << "\" text-anchor=\"middle\" font-weight=\"600\">"
+                          << Num(p.grid_counts[k]) << "</text>\n";
+                        if (share)
+                            o << "<text x=\"" << cx << "\" y=\"" << cy + 13 << "\" fill=\"" << ink << "\" text-anchor=\"middle\" font-size=\"10\">"
+                              << Num(std::round(p.grid[k] * 1000.0) / 10.0) << "%</text>\n";
+                    }
+                }
+            break;
+        }
+        case Kind::Roc:
+        case Kind::PrCurve:
+        case Kind::Calibration:
+            if (p.spec.kind == Kind::PrCurve && std::isfinite(p.baseline))
+                o << "<line x1=\"" << f.left << "\" y1=\"" << f.Y(p.baseline) << "\" x2=\"" << f.left + f.width << "\" y2=\"" << f.Y(p.baseline)
+                  << "\" stroke=\"" << st.text_dim << "\" stroke-dasharray=\"4 4\"/>\n";
+            if (!p.series.empty()) {
+                const auto& s = p.series[0];
+                if (p.spec.kind == Kind::PrCurve) {  // a step down at each threshold
+                    o << "<path fill=\"none\" stroke=\"" << colour(0) << "\" stroke-width=\"1.8\" d=\"";
+                    for (size_t k = 0; k < s.x.size(); ++k) o << (k == 0 ? "M" : " H") << f.X(s.x[k]) << (k == 0 ? " " : " V") << f.Y(s.y[k]);
+                    o << "\"/>\n";
+                } else {
+                    o << "<polyline fill=\"none\" stroke=\"" << colour(0) << "\" stroke-width=\"1.8\" points=\"" << Points(f, s.x, s.y) << "\"/>\n";
+                }
+                if (p.spec.kind == Kind::Calibration)
+                    for (size_t k = 0; k < s.x.size(); ++k)
+                        o << "<circle cx=\"" << f.X(s.x[k]) << "\" cy=\"" << f.Y(s.y[k]) << "\" r=\"3\" fill=\"" << colour(0) << "\"/>\n";
+            }
+            break;
+        case Kind::Residuals:
+            o << "<line x1=\"" << f.left << "\" y1=\"" << f.Y(0) << "\" x2=\"" << f.left + f.width << "\" y2=\"" << f.Y(0) << "\" stroke=\"" << st.text_dim << "\"/>\n";
+            if (!p.series.empty())
+                for (size_t k = 0; k < std::min(p.series[0].x.size(), p.series[0].y.size()); ++k)
+                    o << "<circle cx=\"" << f.X(p.series[0].x[k]) << "\" cy=\"" << f.Y(p.series[0].y[k]) << "\" r=\"2\" fill=\"" << colour(0) << "\" fill-opacity=\"0.6\"/>\n";
+            break;
+        case Kind::LearningCurve:
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& s = p.series[i];
+                if (s.low.size() == s.x.size() && !s.x.empty()) {
+                    std::vector<double> bx(s.x.rbegin(), s.x.rend()), by(s.low.rbegin(), s.low.rend());
+                    o << "<polygon fill=\"" << colour(i) << "\" fill-opacity=\"0.2\" points=\"" << Points(f, s.x, s.high) << Points(f, bx, by) << "\"/>\n";
+                }
+                o << "<polyline fill=\"none\" stroke=\"" << colour(i) << "\" stroke-width=\"1.8\" points=\"" << Points(f, s.x, s.y) << "\"/>\n";
+                if (static_cast<int>(i) == p.best_series && p.best_index < s.x.size())
+                    o << "<circle cx=\"" << f.X(s.x[p.best_index]) << "\" cy=\"" << f.Y(s.y[p.best_index]) << "\" r=\"5\" fill=\"none\" stroke=\"" << st.text << "\" stroke-width=\"1.5\"/>\n";
+            }
+            break;
+        case Kind::Importance:
+            if (!p.series.empty()) {
+                const auto& s = p.series[0];
+                const size_t n = s.y.size();
+                for (size_t k = 0; k < n; ++k) {
+                    const double y = static_cast<double>(n - 1 - k);
+                    const double a = f.X(std::min(0.0, s.y[k])), b = f.X(std::max(0.0, s.y[k]));
+                    o << "<rect x=\"" << a << "\" y=\"" << f.Y(y + 0.33) << "\" width=\"" << b - a << "\" height=\"" << f.Y(y - 0.33) - f.Y(y + 0.33)
+                      << "\" fill=\"" << colour(0) << "\"/>\n";
+                    if (k < s.low.size() && s.low[k] > 0)
+                        o << "<line x1=\"" << f.X(s.y[k] - s.low[k]) << "\" y1=\"" << f.Y(y) << "\" x2=\"" << f.X(s.y[k] + s.high[k]) << "\" y2=\"" << f.Y(y)
+                          << "\" stroke=\"" << st.text << "\" stroke-width=\"1.2\"/>\n";
+                }
+            }
+            break;
     }
     o << "</g>\n";
+
+    // Model results: their figures top left (AUC, RMSE, ...).
+    if (!p.metrics.empty()) {
+        double y = f.top + 18;
+        for (const auto& [name, v] : p.metrics) {
+            o << "<text x=\"" << f.left + 10 << "\" y=\"" << y << "\" fill=\"" << st.text << "\">" << Xml(name) << " " << Num(std::round(v * 1000.0) / 1000.0) << "</text>\n";
+            y += 16;
+        }
+    }
 
     // Legend: the series names, top right.
     if (p.spec.legend && (p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel) && p.multi_groups.size() > 1) {

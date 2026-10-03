@@ -115,6 +115,7 @@ int main() {
     cat.columns.push_back(Text("truth", {"cat", "dog", "dog", "cat", "bird"}));
     cat.columns.push_back(Numbers("v", {1, 2, 3, 4, 5}));
     cat.columns.push_back(Numbers("w", {2, 1, 4, 3, 5}));
+    cat.columns.push_back(Numbers("prob", {0.1, 0.9, 0.4, 0.2, 0.7}));
     for (const auto& k : Kinds()) {
         PlotSpec s;
         s.kind = k.kind;
@@ -122,6 +123,11 @@ int main() {
         if (k.required & kEncX) s.x_column = categories ? "pred" : "v";
         if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
         if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
+        // Model results: actual labels against predictions, scores and probabilities.
+        if (k.kind == Kind::Confusion || k.kind == Kind::Roc || k.kind == Kind::PrCurve || k.kind == Kind::Calibration) s.x_column = "truth";
+        if (k.kind == Kind::Confusion) s.y_columns = {"pred"};
+        if (k.kind == Kind::Calibration) s.y_columns = {"prob"};
+        if (k.kind == Kind::Importance) s.x_column = "pred";
         if (k.kind == Kind::Matrix || k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) s.y_columns = {"v", "w"};
         // Vector fields read a grid of arrows: a 6 x 6 rotation.
         Source field;
@@ -176,6 +182,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 24 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 31 kinds, colour scale. OK\n";
     return 0;
 }

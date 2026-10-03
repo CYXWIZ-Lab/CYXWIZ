@@ -5,8 +5,10 @@
 // and what the drawn data is (Prepared, with a label that says whether all
 // values are shown). Pure: no ImGui, no ImPlot; the renderer is gui/plot.
 
+#include <cmath>
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::plot {
@@ -39,9 +41,17 @@ enum class Kind {
     Image,
     PairPlot,
     Parallel,
+    // P2b group 4 (approved board 11): model results from plain columns.
+    Confusion,
+    Roc,
+    PrCurve,
+    Calibration,
+    Residuals,
+    LearningCurve,
+    Importance,
 };
 
-enum class Group { Basic, Distribution, GridDensity, VectorFields, Images };
+enum class Group { Basic, Distribution, GridDensity, VectorFields, Images, ModelResults };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -145,6 +155,17 @@ struct PlotSpec {
     bool image_invert = false;
     int gallery_max = 40;                        // gallery: pictures at most
     bool pair_histogram = false;                 // pair plot diagonal: histogram instead of KDE
+    // P2b group 4 (approved board 11). Model results read x_column as the
+    // actual (or x / feature) and y_columns as the predicted / score /
+    // probability / curves / importance.
+    enum class ConfusionShow { Counts, ByActual, ByPredicted, All };
+    ConfusionShow confusion_show = ConfusionShow::ByActual;  // the colour and the second number
+    std::string positive_class;                  // ROC, PR, calibration: "" = auto
+    int calibration_bins = 10;
+    std::vector<std::string> spread_columns;     // learning curve (one per curve), importance (one)
+    enum class Best { Auto, Highest, Lowest };
+    Best best = Best::Auto;                      // learning curve: Auto = lowest for a loss / error
+    int top_n = 20;                              // feature importance
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -284,6 +305,15 @@ struct Prepared {
     // histogram) over pair_steps points across the column's range.
     std::vector<std::vector<std::vector<double>>> pair_diag;
     int pair_steps = 0;
+    // Model results: the figures shown with the plot ("AUC" 0.871, "RMSE"
+    // 20.8, ...), the confusion counts behind shares (grid layout), the
+    // positive class used, the PR baseline, and a learning curve's best point.
+    std::vector<std::pair<std::string, double>> metrics;
+    std::vector<double> grid_counts;
+    std::string positive_label;
+    double baseline = NAN;
+    int best_series = -1;
+    size_t best_index = 0;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

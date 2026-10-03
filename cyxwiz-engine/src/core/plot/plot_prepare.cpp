@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <map>
 #include <numeric>
@@ -1425,6 +1426,368 @@ void PrepareParallel(Prepared& p, const std::vector<const SourceColumn*>& ys, co
     SampleRows(p, ys, groups, kMaxParallelLines);
 }
 
+// ---- P2b group 4 (approved board 11): model results ----
+
+// Distinct texts of a column in a readable order (numbers numerically).
+std::vector<std::string> LabelsOf(const SourceColumn& c, size_t cap) {
+    std::vector<std::string> names;
+    std::unordered_map<std::string, bool> seen;
+    for (size_t r = 0; r < c.size(); ++r) {
+        if (c.numeric && (r >= c.numbers.size() || !std::isfinite(c.numbers[r]))) continue;
+        const std::string k = CellText(c, r);
+        if (seen.emplace(k, true).second) {
+            names.push_back(k);
+            if (names.size() > cap) break;
+        }
+    }
+    std::vector<double> v(names.size());
+    bool numbers = true;
+    for (size_t i = 0; i < names.size() && numbers; ++i) numbers = ParseNumber(Trim(names[i]), v[i]);
+    std::vector<size_t> order(names.size());
+    std::iota(order.begin(), order.end(), 0);
+    if (numbers) std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return v[a] < v[b]; });
+    else std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return names[a] < names[b]; });
+    std::vector<std::string> out;
+    for (size_t i : order) out.push_back(names[i]);
+    return out;
+}
+
+// The positive class: the spec's, else a name that says so (1, true, yes,
+// positive), else the last in order.
+std::string PositiveOf(const PlotSpec& spec, const std::vector<std::string>& labels) {
+    if (!spec.positive_class.empty()) return spec.positive_class;
+    for (const auto& l : labels) {
+        std::string lower = l;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (lower == "1" || lower == "true" || lower == "yes" || lower.find("positive") != std::string::npos) return l;
+    }
+    return labels.empty() ? std::string() : labels.back();
+}
+
+void PrepareConfusion(Prepared& p, const SourceColumn* actual, const SourceColumn* predicted) {
+    // One axis of labels for both (actual rows, predicted columns).
+    std::vector<std::string> labels = LabelsOf(*actual, 60);
+    for (const auto& l : LabelsOf(*predicted, 60))
+        if (std::find(labels.begin(), labels.end(), l) == labels.end()) labels.push_back(l);
+    if (labels.size() > 60) {
+        p.problem = "More than 60 classes: a confusion matrix needs fewer.";
+        return;
+    }
+    {  // keep the readable order for the merged list
+        SourceColumn c;
+        c.numeric = false;
+        c.text = labels;
+        labels = LabelsOf(c, 60);
+    }
+    std::unordered_map<std::string, size_t> at;
+    for (size_t i = 0; i < labels.size(); ++i) at[labels[i]] = i;
+    const size_t n = labels.size();
+    std::vector<double> counts(n * n, 0.0);
+    size_t total = 0, right = 0;
+    for (size_t r = 0; r < std::min(actual->size(), predicted->size()); ++r) {
+        if ((actual->numeric && !std::isfinite(actual->numbers[r])) || (predicted->numeric && !std::isfinite(predicted->numbers[r]))) continue;
+        auto a = at.find(CellText(*actual, r)), b = at.find(CellText(*predicted, r));
+        if (a == at.end() || b == at.end()) continue;
+        counts[a->second * n + b->second] += 1.0;
+        ++total;
+        if (a->second == b->second) ++right;
+    }
+    p.row_names = p.col_names = labels;
+    p.grid_rows = p.grid_cols = static_cast<int>(n);
+    p.grid_counts = counts;
+    p.grid.assign(n * n, 0.0);
+    for (size_t r = 0; r < n; ++r)
+        for (size_t c = 0; c < n; ++c) {
+            double row = 0, col = 0;
+            for (size_t k = 0; k < n; ++k) {
+                row += counts[r * n + k];
+                col += counts[k * n + c];
+            }
+            const double v = counts[r * n + c];
+            switch (p.spec.confusion_show) {
+                case PlotSpec::ConfusionShow::Counts: p.grid[r * n + c] = v; break;
+                case PlotSpec::ConfusionShow::ByActual: p.grid[r * n + c] = row > 0 ? v / row : 0; break;
+                case PlotSpec::ConfusionShow::ByPredicted: p.grid[r * n + c] = col > 0 ? v / col : 0; break;
+                case PlotSpec::ConfusionShow::All: p.grid[r * n + c] = total > 0 ? v / static_cast<double>(total) : 0; break;
+            }
+        }
+    p.grid_lo = 0;
+    p.grid_hi = p.spec.confusion_show == PlotSpec::ConfusionShow::Counts ? std::max(1.0, *std::max_element(counts.begin(), counts.end())) : 1.0;
+    if (p.spec.x_label.empty()) p.spec.x_label = "Predicted";
+    if (p.spec.y_label.empty()) p.spec.y_label = "Actual";
+    p.metrics.emplace_back("accuracy", total > 0 ? static_cast<double>(right) / static_cast<double>(total) : NAN);
+    p.metrics.emplace_back("rows", static_cast<double>(total));
+    p.label = {DataLabel::State::Exact, total, total};
+}
+
+// Positive flags and scores of the rows with both (for ROC, PR, calibration).
+bool ScoredRows(Prepared& p, const SourceColumn* actual, const SourceColumn* score, std::vector<int>& positive, std::vector<double>& s) {
+    const auto labels = LabelsOf(*actual, 1000);
+    p.positive_label = PositiveOf(p.spec, labels);
+    if (labels.size() < 2) {
+        p.problem = "The actual column needs at least two classes.";
+        return false;
+    }
+    for (size_t r = 0; r < std::min(actual->size(), score->numbers.size()); ++r) {
+        if (!std::isfinite(score->numbers[r]) || (actual->numeric && !std::isfinite(actual->numbers[r]))) continue;
+        positive.push_back(CellText(*actual, r) == p.positive_label ? 1 : 0);
+        s.push_back(score->numbers[r]);
+    }
+    const auto pos = std::count(positive.begin(), positive.end(), 1);
+    if (pos == 0 || pos == static_cast<long long>(positive.size())) {
+        p.problem = "No rows of one class: the positive class '" + p.positive_label + "' needs both classes.";
+        return false;
+    }
+    return true;
+}
+
+// Sorted by score (highest first): the true / false positive counts at each
+// distinct threshold.
+struct Sweep {
+    std::vector<double> threshold, tp, fp;
+    double pos = 0, neg = 0;
+};
+Sweep SweepOf(const std::vector<int>& positive, const std::vector<double>& s) {
+    std::vector<size_t> order(s.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return s[a] > s[b]; });
+    Sweep w;
+    double tp = 0, fp = 0;
+    for (size_t i = 0; i < order.size(); ++i) {
+        if (positive[order[i]]) tp += 1; else fp += 1;
+        if (i + 1 == order.size() || s[order[i + 1]] != s[order[i]]) {
+            w.threshold.push_back(s[order[i]]);
+            w.tp.push_back(tp);
+            w.fp.push_back(fp);
+        }
+    }
+    w.pos = tp;
+    w.neg = fp;
+    return w;
+}
+
+void PrepareRoc(Prepared& p, const SourceColumn* actual, const SourceColumn* score) {
+    std::vector<int> positive;
+    std::vector<double> s;
+    if (!ScoredRows(p, actual, score, positive, s)) return;
+    const Sweep w = SweepOf(positive, s);
+    Series line;
+    line.label = "ROC";
+    line.x = {0.0};
+    line.y = {0.0};
+    line.c = {INFINITY};
+    double auc = 0;
+    for (size_t i = 0; i < w.tp.size(); ++i) {
+        const double x = w.fp[i] / w.neg, y = w.tp[i] / w.pos;
+        auc += (x - line.x.back()) * (y + line.y.back()) / 2;
+        line.x.push_back(x);
+        line.y.push_back(y);
+        line.c.push_back(w.threshold[i]);
+    }
+    line.x_sorted = true;
+    p.series.push_back(std::move(line));
+    p.spec.show_diagonal = true;
+    if (p.spec.x_label.empty()) p.spec.x_label = "False positive rate";
+    if (p.spec.y_label.empty()) p.spec.y_label = "True positive rate";
+    p.metrics.emplace_back("AUC", auc);
+    p.label = {DataLabel::State::Exact, s.size(), s.size()};
+}
+
+void PreparePrCurve(Prepared& p, const SourceColumn* actual, const SourceColumn* score) {
+    std::vector<int> positive;
+    std::vector<double> s;
+    if (!ScoredRows(p, actual, score, positive, s)) return;
+    const Sweep w = SweepOf(positive, s);
+    Series line;
+    line.label = "precision";
+    double ap = 0, last_recall = 0;
+    for (size_t i = 0; i < w.tp.size(); ++i) {
+        const double recall = w.tp[i] / w.pos, precision = w.tp[i] / (w.tp[i] + w.fp[i]);
+        ap += (recall - last_recall) * precision;  // average precision (as scikit-learn)
+        last_recall = recall;
+        line.x.push_back(recall);
+        line.y.push_back(precision);
+        line.c.push_back(w.threshold[i]);
+    }
+    p.series.push_back(std::move(line));
+    p.baseline = w.pos / (w.pos + w.neg);
+    if (p.spec.x_label.empty()) p.spec.x_label = "Recall";
+    if (p.spec.y_label.empty()) p.spec.y_label = "Precision";
+    p.metrics.emplace_back("AP", ap);
+    p.metrics.emplace_back("positive share", p.baseline);
+    p.label = {DataLabel::State::Exact, s.size(), s.size()};
+}
+
+void PrepareCalibration(Prepared& p, const SourceColumn* actual, const SourceColumn* prob) {
+    std::vector<int> positive;
+    std::vector<double> s;
+    if (!ScoredRows(p, actual, prob, positive, s)) return;
+    for (double v : s)
+        if (v < 0.0 || v > 1.0) {
+            p.problem = prob->name + " has values outside 0..1: calibration needs probabilities.";
+            return;
+        }
+    const int bins = std::clamp(p.spec.calibration_bins, 2, 100);
+    std::vector<double> sum_p(static_cast<size_t>(bins), 0.0), sum_y(sum_p.size(), 0.0), n(sum_p.size(), 0.0);
+    double brier = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const int b = std::clamp(static_cast<int>(s[i] * bins), 0, bins - 1);
+        sum_p[static_cast<size_t>(b)] += s[i];
+        sum_y[static_cast<size_t>(b)] += positive[i];
+        n[static_cast<size_t>(b)] += 1.0;
+        brier += (s[i] - positive[i]) * (s[i] - positive[i]);
+    }
+    Series rel;
+    rel.label = "positive share";
+    rel.markers = true;
+    double ece = 0;
+    for (size_t b = 0; b < n.size(); ++b) {
+        if (n[b] <= 0) continue;
+        const double mp = sum_p[b] / n[b], fy = sum_y[b] / n[b];
+        rel.x.push_back(mp);
+        rel.y.push_back(fy);
+        rel.low.push_back(n[b]);  // rows in the bin
+        ece += n[b] / static_cast<double>(s.size()) * std::fabs(fy - mp);
+    }
+    rel.x_sorted = true;
+    p.series.push_back(std::move(rel));
+    p.edges.resize(static_cast<size_t>(bins) + 1);
+    for (int b = 0; b <= bins; ++b) p.edges[static_cast<size_t>(b)] = static_cast<double>(b) / bins;
+    p.categories.clear();
+    p.grid_counts = n;  // rows per bin, all bins
+    p.spec.show_diagonal = true;
+    if (p.spec.x_label.empty()) p.spec.x_label = "Mean predicted probability";
+    if (p.spec.y_label.empty()) p.spec.y_label = "Share positive";
+    p.metrics.emplace_back("Brier", brier / static_cast<double>(s.size()));
+    p.metrics.emplace_back("ECE", ece);
+    p.label = {DataLabel::State::Exact, s.size(), s.size()};
+}
+
+void PrepareResiduals(Prepared& p, const SourceColumn* actual, const SourceColumn* predicted) {
+    std::vector<double> a, f;
+    for (size_t r = 0; r < std::min(actual->numbers.size(), predicted->numbers.size()); ++r)
+        if (std::isfinite(actual->numbers[r]) && std::isfinite(predicted->numbers[r])) {
+            a.push_back(actual->numbers[r]);
+            f.push_back(predicted->numbers[r]);
+        }
+    if (a.empty()) {
+        p.problem = "No rows have numbers in both " + actual->name + " and " + predicted->name + ".";
+        return;
+    }
+    double ss_res = 0, abs_sum = 0, mean = 0;
+    for (double v : a) mean += v;
+    mean /= static_cast<double>(a.size());
+    double ss_tot = 0;
+    Series s;
+    s.label = "residual";
+    for (size_t i = 0; i < a.size(); ++i) {
+        const double e = a[i] - f[i];
+        ss_res += e * e;
+        abs_sum += std::fabs(e);
+        ss_tot += (a[i] - mean) * (a[i] - mean);
+        s.x.push_back(f[i]);
+        s.y.push_back(e);
+    }
+    // Large tables: draw an even sample, keep all for hover and export.
+    if (s.x.size() > kMaxScatterPoints) {
+        s.all_x = s.x;
+        s.all_y = s.y;
+        std::vector<size_t> rows(s.x.size());
+        std::iota(rows.begin(), rows.end(), 0);
+        std::mt19937_64 rng(0x5eed);
+        std::shuffle(rows.begin(), rows.end(), rng);
+        rows.resize(kMaxScatterPoints);
+        std::sort(rows.begin(), rows.end());
+        std::vector<double> xs, ys;
+        for (size_t r : rows) {
+            xs.push_back(s.all_x[r]);
+            ys.push_back(s.all_y[r]);
+        }
+        s.x = std::move(xs);
+        s.y = std::move(ys);
+        p.label = {DataLabel::State::Sampled, s.x.size(), a.size()};
+    } else {
+        p.label = {DataLabel::State::Exact, a.size(), a.size()};
+    }
+    p.series.push_back(std::move(s));
+    if (p.spec.x_label.empty()) p.spec.x_label = "Predicted";
+    if (p.spec.y_label.empty()) p.spec.y_label = "Actual - predicted";
+    const double n = static_cast<double>(a.size());
+    p.metrics.emplace_back("RMSE", std::sqrt(ss_res / n));
+    p.metrics.emplace_back("MAE", abs_sum / n);
+    p.metrics.emplace_back("R\xC2\xB2", ss_tot > 0 ? 1.0 - ss_res / ss_tot : NAN);
+    p.stats = Summarize(p.series[0].all_y.empty() ? p.series[0].y : p.series[0].all_y);
+}
+
+void PrepareLearningCurve(Prepared& p, const Source& src, const SourceColumn* xcol, const std::vector<const SourceColumn*>& ys) {
+    size_t total = 0;
+    for (size_t i = 0; i < ys.size(); ++i) {
+        const SourceColumn* spread = i < p.spec.spread_columns.size() && !p.spec.spread_columns[i].empty()
+                                         ? src.Find(p.spec.spread_columns[i]) : nullptr;
+        Series s;
+        s.label = ys[i]->name;
+        for (size_t r = 0; r < std::min(xcol->numbers.size(), ys[i]->numbers.size()); ++r) {
+            if (!std::isfinite(xcol->numbers[r]) || !std::isfinite(ys[i]->numbers[r])) continue;
+            s.x.push_back(xcol->numbers[r]);
+            s.y.push_back(ys[i]->numbers[r]);
+            if (spread && spread->numeric) {
+                const double d = r < spread->numbers.size() && std::isfinite(spread->numbers[r]) ? spread->numbers[r] : 0.0;
+                s.low.push_back(ys[i]->numbers[r] - d);
+                s.high.push_back(ys[i]->numbers[r] + d);
+            }
+        }
+        s.x_sorted = std::is_sorted(s.x.begin(), s.x.end());
+        total += s.x.size();
+        p.series.push_back(std::move(s));
+    }
+    // The best point of the last curve (validation): lowest for a loss or
+    // an error, else highest (or as the spec says).
+    if (!p.series.empty() && !p.series.back().y.empty()) {
+        const auto& last = p.series.back();
+        std::string lower = last.label;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        bool lowest = p.spec.best == PlotSpec::Best::Lowest;
+        if (p.spec.best == PlotSpec::Best::Auto)
+            lowest = lower.find("loss") != std::string::npos || lower.find("error") != std::string::npos ||
+                     lower.find("mse") != std::string::npos || lower.find("mae") != std::string::npos;
+        const auto it = lowest ? std::min_element(last.y.begin(), last.y.end()) : std::max_element(last.y.begin(), last.y.end());
+        p.best_series = static_cast<int>(p.series.size()) - 1;
+        p.best_index = static_cast<size_t>(it - last.y.begin());
+        p.metrics.emplace_back("best " + last.label, *it);
+        p.metrics.emplace_back("at " + xcol->name, last.x[p.best_index]);
+    }
+    p.label = {DataLabel::State::Exact, total, total};
+}
+
+void PrepareImportance(Prepared& p, const Source& src, const SourceColumn* feature, const SourceColumn* importance) {
+    const SourceColumn* spread = !p.spec.spread_columns.empty() && !p.spec.spread_columns.front().empty()
+                                     ? src.Find(p.spec.spread_columns.front()) : nullptr;
+    struct Row { std::string name; double v, d; };
+    std::vector<Row> rows;
+    for (size_t r = 0; r < std::min(feature->size(), importance->numbers.size()); ++r) {
+        if (!std::isfinite(importance->numbers[r])) continue;
+        const double d = spread && spread->numeric && r < spread->numbers.size() && std::isfinite(spread->numbers[r]) ? spread->numbers[r] : NAN;
+        rows.push_back({CellText(*feature, r), importance->numbers[r], d});
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.v > b.v; });
+    const size_t shown = std::min(rows.size(), static_cast<size_t>(std::max(1, p.spec.top_n)));
+    Series s;
+    s.label = importance->name;
+    for (size_t i = 0; i < shown; ++i) {
+        p.categories.push_back(rows[i].name);
+        s.x.push_back(static_cast<double>(i));
+        s.y.push_back(rows[i].v);
+        if (spread) {
+            s.low.push_back(std::isfinite(rows[i].d) ? rows[i].d : 0.0);
+            s.high.push_back(std::isfinite(rows[i].d) ? rows[i].d : 0.0);
+        }
+    }
+    p.series.push_back(std::move(s));
+    if (p.spec.x_label.empty()) p.spec.x_label = importance->name;
+    p.label = shown < rows.size() ? DataLabel{DataLabel::State::Truncated, shown, rows.size()} : DataLabel{DataLabel::State::Exact, shown, shown};
+    if (shown < rows.size()) p.label.selection = "top " + std::to_string(shown);
+}
+
 }  // namespace
 
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
@@ -1440,6 +1803,8 @@ std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
         add(spec.u_column);
         add(spec.v_column);
     }
+    if (spec.kind == Kind::LearningCurve || spec.kind == Kind::Importance)
+        for (const auto& c : spec.spread_columns) add(c);
     if (spec.rows == RowMode::Filter)
         for (const auto& c : spec.conditions) add(c.column);
     return out;
@@ -1607,7 +1972,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         return c;
     };
     const bool numeric_x = spec.kind != Kind::Bar && spec.kind != Kind::Pie && spec.kind != Kind::ErrorBars &&
-                           spec.kind != Kind::Heatmap && spec.kind != Kind::Polar;
+                           spec.kind != Kind::Heatmap && spec.kind != Kind::Polar && spec.kind != Kind::Confusion &&
+                           spec.kind != Kind::Roc && spec.kind != Kind::PrCurve && spec.kind != Kind::Calibration &&
+                           spec.kind != Kind::Importance;
     const SourceColumn* xcol = nullptr;
     if (!spec.x_column.empty() && (kind.required | kind.optional) & kEncX) {
         xcol = column(spec.x_column, numeric_x);
@@ -1617,7 +1984,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     if ((kind.required | kind.optional) & kEncY) {
         const size_t take = kind.multi_y ? spec.y_columns.size() : std::min<size_t>(1, spec.y_columns.size());
         for (size_t i = 0; i < take; ++i) {
-            const SourceColumn* y = column(spec.y_columns[i], spec.kind != Kind::Heatmap);
+            const SourceColumn* y = column(spec.y_columns[i], spec.kind != Kind::Heatmap && spec.kind != Kind::Confusion);
             if (!y) return p;
             ys.push_back(y);
         }
@@ -1677,6 +2044,13 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::PairPlot: PreparePairPlot(p, ys, groups); break;
         case Kind::Parallel: PrepareParallel(p, ys, groups); break;
         case Kind::Image: break;  // prepared above
+        case Kind::Confusion: PrepareConfusion(p, xcol, ys.front()); break;
+        case Kind::Roc: PrepareRoc(p, xcol, ys.front()); break;
+        case Kind::PrCurve: PreparePrCurve(p, xcol, ys.front()); break;
+        case Kind::Calibration: PrepareCalibration(p, xcol, ys.front()); break;
+        case Kind::Residuals: PrepareResiduals(p, xcol, ys.front()); break;
+        case Kind::LearningCurve: PrepareLearningCurve(p, src, xcol, ys); break;
+        case Kind::Importance: PrepareImportance(p, src, xcol, ys.front()); break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -1692,7 +2066,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     }
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
         spec.kind != Kind::Matrix && spec.kind != Kind::Polar && spec.kind != Kind::PairPlot && spec.kind != Kind::Parallel &&
-        !ys.empty())
+        spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && !ys.empty() && ys.front()->numeric)
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};

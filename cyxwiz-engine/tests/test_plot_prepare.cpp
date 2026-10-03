@@ -632,6 +632,92 @@ int main() {
     Check(p.multi_group.size() == 1000 && p.label.state == DataLabel::State::Sampled && p.multi_hi[0] == 4999 && p.multi_lo[1] == -4999,
           "parallel: 1,000 of 5,000 lines on each column's range");
 
+    // ---- Model results (P2b group 4) ----
+    {
+    // Confusion: rows actual, columns predicted, shares by actual.
+    Source conf_src;
+    conf_src.columns.push_back(Text("actual", {"no", "no", "no", "yes", "yes", "yes", "yes"}));
+    conf_src.columns.push_back(Text("pred", {"no", "no", "yes", "yes", "yes", "yes", "no"}));
+    p = Prepare(Spec(Kind::Confusion, "actual", {"pred"}), conf_src);
+    Check(p.problem.empty() && p.row_names == std::vector<std::string>({"no", "yes"}) &&
+              p.grid_counts == std::vector<double>({2, 1, 1, 3}), "confusion counts: " + p.problem);
+    Check(std::fabs(p.grid[0] - 2.0 / 3.0) < 1e-12 && std::fabs(p.grid[3] - 0.75) < 1e-12, "confusion shares by actual");
+    Check(p.metrics.size() == 2 && std::fabs(p.metrics[0].second - 5.0 / 7.0) < 1e-12, "confusion accuracy");
+    // ROC: a perfect score has AUC 1, a reversed one 0, all tied 0.5.
+    Source roc_src;
+    roc_src.columns.push_back(Numbers("y", {0, 0, 0, 1, 1}));
+    roc_src.columns.push_back(Numbers("s", {0.1, 0.2, 0.3, 0.8, 0.9}));
+    roc_src.columns.push_back(Numbers("r", {0.9, 0.8, 0.7, 0.2, 0.1}));
+    roc_src.columns.push_back(Numbers("t", {0.5, 0.5, 0.5, 0.5, 0.5}));
+    p = Prepare(Spec(Kind::Roc, "y", {"s"}), roc_src);
+    Check(p.problem.empty() && p.positive_label == "1" && std::fabs(p.metrics[0].second - 1.0) < 1e-12, "ROC: perfect AUC 1 (" + p.problem + ")");
+    Check(p.series[0].x.front() == 0 && p.series[0].x.back() == 1 && p.series[0].y.back() == 1, "ROC from (0,0) to (1,1)");
+    Check(std::fabs(Prepare(Spec(Kind::Roc, "y", {"r"}), roc_src).metrics[0].second) < 1e-12, "ROC: reversed AUC 0");
+    Check(std::fabs(Prepare(Spec(Kind::Roc, "y", {"t"}), roc_src).metrics[0].second - 0.5) < 1e-12, "ROC: all tied AUC 0.5");
+    PlotSpec neg = Spec(Kind::Roc, "y", {"s"});
+    neg.positive_class = "0";
+    Check(std::fabs(Prepare(neg, roc_src).metrics[0].second) < 1e-12, "ROC: the chosen positive class");
+    // PR: perfect AP 1, baseline the positive share.
+    p = Prepare(Spec(Kind::PrCurve, "y", {"s"}), roc_src);
+    Check(std::fabs(p.metrics[0].second - 1.0) < 1e-12 && std::fabs(p.baseline - 0.4) < 1e-12, "PR: AP 1, baseline 0.4");
+    // AP on a known order: positives at ranks 1 and 3 -> (1 + 2/3) / 2.
+    Source ap;
+    ap.columns.push_back(Text("y", {"yes", "no", "yes", "no"}));
+    ap.columns.push_back(Numbers("s", {0.9, 0.8, 0.7, 0.6}));
+    p = Prepare(Spec(Kind::PrCurve, "y", {"s"}), ap);
+    Check(p.positive_label == "yes" && std::fabs(p.metrics[0].second - (1.0 + 2.0 / 3.0) / 2.0) < 1e-12, "PR: average precision");
+    // Calibration: bin b holds p = b/10 + 0.05 with b + 1 positives of 10,
+    // so every bin is 0.05 off the diagonal.
+    Source cal;
+    std::vector<double> cal_y, cp;
+    for (int bin = 0; bin < 10; ++bin)
+        for (int i = 0; i < 10; ++i) {
+            cp.push_back(bin / 10.0 + 0.05);
+            cal_y.push_back(i <= bin ? 1 : 0);
+        }
+    cal.columns.push_back(Numbers("y", cal_y));
+    cal.columns.push_back(Numbers("p", cp));
+    p = Prepare(Spec(Kind::Calibration, "y", {"p"}), cal);
+    Check(p.problem.empty() && p.series[0].x.size() == 10 && std::fabs(p.series[0].x[3] - 0.35) < 1e-9 &&
+              std::fabs(p.series[0].y[3] - 0.4) < 1e-12 && p.series[0].low[3] == 10, "calibration bins: " + p.problem);
+    Check(std::fabs(p.metrics[1].second - 0.05) < 1e-9, "calibration ECE 0.05");
+    Source over;
+    over.columns.push_back(Numbers("y", {0, 1}));
+    over.columns.push_back(Numbers("s", {0.5, 2}));
+    Check(!Prepare(Spec(Kind::Calibration, "y", {"s"}), over).problem.empty(), "calibration refuses values above 1");
+    // Residuals: RMSE, MAE and R squared.
+    Source res;
+    res.columns.push_back(Numbers("a", {1, 2, 3, 4}));
+    res.columns.push_back(Numbers("f", {1, 3, 3, 3}));
+    p = Prepare(Spec(Kind::Residuals, "a", {"f"}), res);
+    Check(p.series[0].y == std::vector<double>({0, -1, 0, 1}) && std::fabs(p.metrics[0].second - std::sqrt(0.5)) < 1e-12 &&
+              std::fabs(p.metrics[1].second - 0.5) < 1e-12 && std::fabs(p.metrics[2].second - 0.6) < 1e-12,
+          "residuals: RMSE, MAE, R squared");
+    // Learning curve: bands from the spread, the best validation point.
+    Source lc;
+    lc.columns.push_back(Numbers("n", {100, 200, 300, 400}));
+    lc.columns.push_back(Numbers("train", {0.9, 0.88, 0.87, 0.86}));
+    lc.columns.push_back(Numbers("val_loss", {0.6, 0.4, 0.35, 0.38}));
+    lc.columns.push_back(Numbers("sd", {0.1, 0.1, 0.1, 0.1}));
+    PlotSpec lcs = Spec(Kind::LearningCurve, "n", {"train", "val_loss"});
+    lcs.spread_columns = {"", "sd"};
+    p = Prepare(lcs, lc);
+    Check(p.series.size() == 2 && p.series[0].low.empty() && p.series[1].low.size() == 4 && std::fabs(p.series[1].high[0] - 0.7) < 1e-12,
+          "learning curve: band on the second curve");
+    Check(p.best_series == 1 && p.best_index == 2, "learning curve: a loss is best at its lowest");
+    lcs.best = PlotSpec::Best::Highest;
+    Check(Prepare(lcs, lc).best_index == 0, "learning curve: highest when asked");
+    // Importance: sorted largest first, top N.
+    Source imp;
+    imp.columns.push_back(Text("feature", {"a", "b", "c", "d"}));
+    imp.columns.push_back(Numbers("gain", {0.1, 0.4, 0.2, 0.3}));
+    PlotSpec imp_spec = Spec(Kind::Importance, "feature", {"gain"});
+    imp_spec.top_n = 3;
+    p = Prepare(imp_spec, imp);
+    Check(p.categories == std::vector<std::string>({"b", "d", "c"}) && p.series[0].y == std::vector<double>({0.4, 0.3, 0.2}) &&
+              p.label.state == DataLabel::State::Truncated, "importance: top 3, largest first");
+    }
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -641,7 +727,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 24 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel. OK\n";
+    std::cout << "plot prepare: 31 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel, confusion, ROC, PR, calibration, residuals, learning curve, importance. OK\n";
     return 0;
 }

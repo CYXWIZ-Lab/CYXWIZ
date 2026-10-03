@@ -37,6 +37,17 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Quiver, "quiver", "Quiver", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
         {Kind::Stream, "stream", "Stream", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
         {Kind::Image, "image", "Image", Group::Images, kEncY, kEncColor, true, "", "Pixel columns"},
+        {Kind::Confusion, "confusion_matrix", "Confusion matrix", Group::ModelResults, kEncX | kEncY, 0, false, "Actual", "Predicted"},
+        {Kind::Roc, "roc_curve", "ROC curve", Group::ModelResults, kEncX | kEncY, 0, false, "Actual", "Score (of the positive class)"},
+        {Kind::PrCurve, "pr_curve", "Precision-recall curve", Group::ModelResults, kEncX | kEncY, 0, false, "Actual",
+         "Score (of the positive class)"},
+        {Kind::Calibration, "calibration", "Calibration", Group::ModelResults, kEncX | kEncY, 0, false, "Actual",
+         "Probability (of the positive class)"},
+        {Kind::Residuals, "residuals", "Residuals", Group::ModelResults, kEncX | kEncY, 0, false, "Actual", "Predicted"},
+        {Kind::LearningCurve, "learning_curve", "Learning curve", Group::ModelResults, kEncX | kEncY, 0, true,
+         "X (training rows or epoch)", "Curves (train, validation)"},
+        {Kind::Importance, "feature_importance", "Feature importance", Group::ModelResults, kEncX | kEncY, 0, false, "Feature",
+         "Importance"},
     };
     return kinds;
 }
@@ -60,6 +71,7 @@ const char* GroupLabel(Group group) {
         case Group::GridDensity: return "Grid and density";
         case Group::VectorFields: return "Vector fields";
         case Group::Images: return "Images";
+        case Group::ModelResults: return "Model results";
     }
     return "";
 }
@@ -141,6 +153,15 @@ std::string SpecToJson(const PlotSpec& s) {
     j["image_invert"] = s.image_invert;
     j["gallery_max"] = s.gallery_max;
     j["pair_histogram"] = s.pair_histogram;
+    j["confusion_show"] = s.confusion_show == PlotSpec::ConfusionShow::Counts       ? "counts"
+                          : s.confusion_show == PlotSpec::ConfusionShow::ByPredicted ? "by_predicted"
+                          : s.confusion_show == PlotSpec::ConfusionShow::All         ? "all"
+                                                                                     : "by_actual";
+    j["positive_class"] = s.positive_class;
+    j["calibration_bins"] = s.calibration_bins;
+    j["spread"] = s.spread_columns;
+    j["best"] = s.best == PlotSpec::Best::Highest ? "highest" : s.best == PlotSpec::Best::Lowest ? "lowest" : "auto";
+    j["top_n"] = s.top_n;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -235,6 +256,23 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     out.image_invert = j.value("image_invert", false);
     out.gallery_max = std::clamp(j.value("gallery_max", 40), 1, 400);
     out.pair_histogram = j.value("pair_histogram", false);
+    const std::string show = j.value("confusion_show", std::string("by_actual"));
+    if (show == "by_actual") out.confusion_show = PlotSpec::ConfusionShow::ByActual;
+    else if (show == "counts") out.confusion_show = PlotSpec::ConfusionShow::Counts;
+    else if (show == "by_predicted") out.confusion_show = PlotSpec::ConfusionShow::ByPredicted;
+    else if (show == "all") out.confusion_show = PlotSpec::ConfusionShow::All;
+    else return fail("unknown confusion display '" + show + "'");
+    out.positive_class = j.value("positive_class", std::string());
+    out.calibration_bins = std::clamp(j.value("calibration_bins", 10), 2, 100);
+    if (j.contains("spread") && j["spread"].is_array())
+        for (const auto& c : j["spread"])
+            if (c.is_string()) out.spread_columns.push_back(c.get<std::string>());
+    const std::string best = j.value("best", std::string("auto"));
+    if (best == "auto") out.best = PlotSpec::Best::Auto;
+    else if (best == "highest") out.best = PlotSpec::Best::Highest;
+    else if (best == "lowest") out.best = PlotSpec::Best::Lowest;
+    else return fail("unknown best '" + best + "'");
+    out.top_n = std::clamp(j.value("top_n", 20), 1, 500);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());
