@@ -318,6 +318,21 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_dataset_contract
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/column_role_store.cpp"
+    )
+    target_link_libraries(test_dataset_contract PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dataset_contract PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_contract_contract
+        COMMAND test_dataset_contract
+    )
+
     add_executable(test_dataset_catalog
         "${_cyxwiz_installer_engine_dir}/tests/test_dataset_catalog.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dataset_catalog.cpp"

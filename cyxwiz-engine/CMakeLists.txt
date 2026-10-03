@@ -144,6 +144,8 @@ set(ENGINE_SOURCES
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
     src/core/arrow_data_table.cpp
+    src/core/dataset_contract.cpp
+    src/core/column_role_store.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
