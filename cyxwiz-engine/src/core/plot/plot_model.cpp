@@ -17,6 +17,7 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Step, "step", "Step", Group::Basic, kEncY, kEncX | kEncColor, true, "X (optional: row number)", "Y values"},
         {Kind::Stem, "stem", "Stem", Group::Basic, kEncY, kEncX, true, "X (optional: row number)", "Y values"},
         {Kind::Pie, "pie", "Pie", Group::Basic, kEncX, kEncY, false, "Categories", "Values (optional: count rows)"},
+        {Kind::Polar, "polar", "Polar", Group::Basic, kEncX | kEncY, kEncColor, false, "Angle", "Radius"},
         {Kind::Box, "box", "Box", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Violin, "violin", "Violin", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Kde, "kde", "KDE", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
@@ -31,6 +32,8 @@ const std::vector<KindInfo>& Kinds() {
          "Z (optional: density of rows)"},
         {Kind::FilledContour, "filled_contour", "Filled contour", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values",
          "Y values", "Z (optional: density of rows)"},
+        {Kind::Quiver, "quiver", "Quiver", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
+        {Kind::Stream, "stream", "Stream", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
     };
     return kinds;
 }
@@ -52,6 +55,7 @@ const char* GroupLabel(Group group) {
         case Group::Basic: return "Basic";
         case Group::Distribution: return "Distribution";
         case Group::GridDensity: return "Grid and density";
+        case Group::VectorFields: return "Vector fields";
     }
     return "";
 }
@@ -110,6 +114,17 @@ std::string SpecToJson(const PlotSpec& s) {
                                                                       : "pearson";
     j["levels"] = s.levels;
     j["log_colour"] = s.log_colour;
+    j["u"] = s.u_column;
+    j["v"] = s.v_column;
+    j["vector_from"] = s.vector_from == PlotSpec::VectorFrom::DirectionLength ? "direction" : "uv";
+    j["wind_from"] = s.wind_from;
+    j["arrow_every"] = s.arrow_every;
+    j["stream_density"] = s.stream_density;
+    j["angle_unit"] = s.angle_unit == PlotSpec::AngleUnit::Degrees      ? "degrees"
+                      : s.angle_unit == PlotSpec::AngleUnit::Radians    ? "radians"
+                      : s.angle_unit == PlotSpec::AngleUnit::Categories ? "categories"
+                                                                        : "auto";
+    j["polar_points"] = s.polar_points;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -168,6 +183,22 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     else return fail("unknown matrix values '" + matrix + "'");
     out.levels = std::clamp(j.value("levels", 7), 1, 50);
     out.log_colour = j.value("log_colour", false);
+    out.u_column = j.value("u", std::string());
+    out.v_column = j.value("v", std::string());
+    const std::string from = j.value("vector_from", std::string("uv"));
+    if (from == "uv") out.vector_from = PlotSpec::VectorFrom::UV;
+    else if (from == "direction") out.vector_from = PlotSpec::VectorFrom::DirectionLength;
+    else return fail("unknown vector columns '" + from + "'");
+    out.wind_from = j.value("wind_from", false);
+    out.arrow_every = std::clamp(j.value("arrow_every", 0), 0, 1000);
+    out.stream_density = std::clamp(j.value("stream_density", 1.0), 0.2, 5.0);
+    const std::string unit = j.value("angle_unit", std::string("auto"));
+    if (unit == "auto") out.angle_unit = PlotSpec::AngleUnit::Auto;
+    else if (unit == "degrees") out.angle_unit = PlotSpec::AngleUnit::Degrees;
+    else if (unit == "radians") out.angle_unit = PlotSpec::AngleUnit::Radians;
+    else if (unit == "categories") out.angle_unit = PlotSpec::AngleUnit::Categories;
+    else return fail("unknown angle unit '" + unit + "'");
+    out.polar_points = j.value("polar_points", false);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());
@@ -214,6 +245,9 @@ std::string MissingEncoding(const PlotSpec& s) {
     const KindInfo& k = Info(s.kind);
     if ((k.required & kEncX) && s.x_column.empty()) return std::string("Choose ") + k.x_hint + ".";
     if ((k.required & kEncY) && s.y_columns.empty()) return std::string("Choose ") + k.y_hint + ".";
+    if ((k.required & kEncVector) && (s.u_column.empty() || s.v_column.empty()))
+        return s.vector_from == PlotSpec::VectorFrom::UV ? "Choose the arrow columns (u and v)."
+                                                         : "Choose the direction and length columns.";
     return "";
 }
 

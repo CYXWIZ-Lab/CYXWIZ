@@ -27,8 +27,8 @@ int main() {
         Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
         Check(k.required != 0, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 18, "18 kinds (P1 13 + P2b group 1)");
-    Check(!FindKind("quiver"), "unknown kind not found");
+    Check(Kinds().size() == 21, "21 kinds (P1 13 + P2b groups 1 and 2)");
+    Check(!FindKind("sankey"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
           "histogram is a basic kind");
     Check(std::string(GroupLabel(Group::GridDensity)) == "Grid and density", "group label");
@@ -55,7 +55,7 @@ int main() {
     PlotSpec untouched;
     Check(!SpecFromJson("{\"version\":2,\"kind\":\"line\"}", untouched, &problem) && problem.find("version 2") != std::string::npos,
           "a newer version is refused with a reason");
-    Check(!SpecFromJson("{\"version\":1,\"kind\":\"quiver\"}", untouched, &problem) && problem.find("quiver") != std::string::npos,
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"sankey\"}", untouched, &problem) && problem.find("sankey") != std::string::npos,
           "an unknown kind is refused with its name");
     Check(!SpecFromJson("not json", untouched, &problem), "text that is not JSON is refused");
     Check(SpecFromJson("{\"version\":1,\"kind\":\"scatter\",\"bins\":0,\"extra\":1}", back) && back.bins == 1 &&
@@ -129,7 +129,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 18 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 21 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

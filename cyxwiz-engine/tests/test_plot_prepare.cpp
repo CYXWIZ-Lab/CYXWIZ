@@ -421,6 +421,110 @@ int main() {
               back_g1.matrix_values == PlotSpec::MatrixValues::Spearman,
           "group 1 options saved");
 
+    // ---- P2b group 2 (board 9) ----
+    // Polar, categories: 12 months share the turn in numeric order and close the line.
+    Source pl;
+    std::vector<std::string> months;
+    std::vector<double> radius;
+    for (int m = 12; m >= 1; --m) {
+        months.push_back(std::to_string(m));
+        radius.push_back(100.0 + m);
+    }
+    pl.columns.push_back(Text("month", months));
+    pl.columns.push_back(Numbers("passengers", radius));
+    p = Prepare(Spec(Kind::Polar, "month", {"passengers"}), pl);
+    Check(p.problem.empty() && p.polar_closed && p.polar_names.size() == 12 && p.polar_names.front() == "1" &&
+              p.series.size() == 1 && p.series[0].x.size() == 12,
+          "polar categories: 12 names in numeric order, closed");
+    Check(std::fabs(p.series[0].x[3] - 3.0 / 12 * 6.283185307179586) < 1e-12 && p.series[0].y[3] == 104 && p.polar_rmax == 112,
+          "April at a quarter turn with its radius");
+    Source pd;
+    pd.columns.push_back(Numbers("deg", {0, 90, 180}));
+    pd.columns.push_back(Numbers("r", {1, 2, 3}));
+    p = Prepare(Spec(Kind::Polar, "deg", {"r"}), pd);
+    Check(!p.polar_closed && std::fabs(p.series[0].x[1] - 1.5707963267948966) < 1e-12, "polar numbers: degrees by default");
+    PlotSpec rad_spec = Spec(Kind::Polar, "deg", {"r"});
+    rad_spec.angle_unit = PlotSpec::AngleUnit::Radians;
+    Check(Prepare(rad_spec, pd).series[0].x[1] == 90, "radians as given");
+
+    // Quiver: direction + length (90 degrees = east), the wind turned round, and every Nth.
+    Source qd;
+    qd.columns.push_back(Numbers("x", {0, 1}));
+    qd.columns.push_back(Numbers("y", {0, 0}));
+    qd.columns.push_back(Numbers("dir", {90, 0}));
+    qd.columns.push_back(Numbers("speed", {2, 3}));
+    PlotSpec qs = Spec(Kind::Quiver, "x", {"y"});
+    qs.u_column = "dir";
+    qs.v_column = "speed";
+    qs.vector_from = PlotSpec::VectorFrom::DirectionLength;
+    p = Prepare(qs, qd);
+    Check(p.problem.empty() && p.qx.size() == 2 && std::fabs(p.qu[0] - 2) < 1e-12 && std::fabs(p.qv[0]) < 1e-12 &&
+              std::fabs(p.qv[1] - 3) < 1e-12 && p.grid_hi == 3,
+          "quiver: east 2, north 3, coloured up to the longest");
+    qs.wind_from = true;
+    p = Prepare(qs, qd);
+    Check(std::fabs(p.qu[0] + 2) < 1e-12 && std::fabs(p.qv[1] + 3) < 1e-12, "wind: where it comes from, so the arrow turns round");
+    Check(Prepare(Spec(Kind::Quiver, "x", {"y"}), qd).problem == "Choose the arrow columns (u and v).", "quiver asks for its arrows");
+    Source qg;
+    std::vector<double> qgx, qgy, qgu, qgv;
+    for (int j = 0; j < 60; ++j)
+        for (int i = 0; i < 80; ++i) {
+            qgx.push_back(i * 0.25);
+            qgy.push_back(j * 0.25);
+            qgu.push_back(1.0);
+            qgv.push_back(0.5);
+        }
+    qg.columns.push_back(Numbers("lon", qgx));
+    qg.columns.push_back(Numbers("lat", qgy));
+    qg.columns.push_back(Numbers("u", qgu));
+    qg.columns.push_back(Numbers("v", qgv));
+    PlotSpec qgs = Spec(Kind::Quiver, "lon", {"lat"});
+    qgs.u_column = "u";
+    qgs.v_column = "v";
+    qgs.arrow_every = 4;
+    p = Prepare(qgs, qg);
+    Check(p.qx.size() == 4800 && p.q_drawn.size() == 300 && p.q_every == 4 && p.label.state == DataLabel::State::Sampled,
+          "an 80 x 60 grid shows every 4th each way: 300 of 4,800");
+    qgs.arrow_every = 0;
+    p = Prepare(qgs, qg);
+    Check(p.q_drawn.size() <= 600 && p.q_drawn.size() >= 200, "as many as fit: about 600 at most");
+
+    // Stream: a rotating field (u = -y, v = x) keeps every line at its radius.
+    Source sf;
+    std::vector<double> sx, sy, su, sv;
+    for (int j = 0; j <= 40; ++j)
+        for (int i = 0; i <= 40; ++i) {
+            const double x = -1.0 + i * 0.05, y = -1.0 + j * 0.05;
+            sx.push_back(x);
+            sy.push_back(y);
+            su.push_back(-y);
+            sv.push_back(x);
+        }
+    sf.columns.push_back(Numbers("x", sx));
+    sf.columns.push_back(Numbers("y", sy));
+    sf.columns.push_back(Numbers("u", su));
+    sf.columns.push_back(Numbers("v", sv));
+    PlotSpec ss = Spec(Kind::Stream, "x", {"y"});
+    ss.u_column = "u";
+    ss.v_column = "v";
+    p = Prepare(ss, sf);
+    Check(p.problem.empty() && p.stream_lines.size() >= 5 && p.grid_rows == 41 && p.grid_cols == 41, "stream: lines over a 41 x 41 field");
+    for (const auto& line : p.stream_lines) {
+        const double r0 = std::hypot(line[0], line[1]);
+        if (r0 < 0.2 || r0 > 0.9) continue;  // away from the centre and the corners
+        for (size_t k = 0; k + 1 < line.size(); k += 2)
+            Check(std::fabs(std::hypot(line[k], line[k + 1]) - r0) < 0.06, "a streamline of a rotation stays on its circle");
+    }
+    PlotSpec back_g2;
+    qs.arrow_every = 3;
+    qs.stream_density = 1.5;
+    qs.angle_unit = PlotSpec::AngleUnit::Categories;
+    qs.polar_points = true;
+    Check(SpecFromJson(SpecToJson(qs), back_g2) && back_g2.u_column == "dir" && back_g2.v_column == "speed" &&
+              back_g2.vector_from == PlotSpec::VectorFrom::DirectionLength && back_g2.wind_from && back_g2.arrow_every == 3 &&
+              back_g2.stream_density == 1.5 && back_g2.angle_unit == PlotSpec::AngleUnit::Categories && back_g2.polar_points,
+          "group 2 options saved");
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -430,7 +534,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 18 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars. OK\n";
+    std::cout << "plot prepare: 21 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream. OK\n";
     return 0;
 }

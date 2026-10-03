@@ -123,7 +123,27 @@ int main() {
         if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
         if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
         if (k.kind == Kind::Matrix) s.y_columns = {"v", "w"};
-        const Prepared kp = Prepare(s, cat);
+        // Vector fields read a grid of arrows: a 6 x 6 rotation.
+        Source field;
+        if (k.required & kEncVector) {
+            std::vector<double> fx, fy, fu, fv;
+            for (int j = 0; j < 6; ++j)
+                for (int i = 0; i < 6; ++i) {
+                    fx.push_back(i);
+                    fy.push_back(j);
+                    fu.push_back(2.5 - j);
+                    fv.push_back(i - 2.5);
+                }
+            field.columns.push_back(Numbers("x", fx));
+            field.columns.push_back(Numbers("y", fy));
+            field.columns.push_back(Numbers("u", fu));
+            field.columns.push_back(Numbers("v", fv));
+            s.x_column = "x";
+            s.y_columns = {"y"};
+            s.u_column = "u";
+            s.v_column = "v";
+        }
+        const Prepared kp = Prepare(s, (k.required & kEncVector) ? field : cat);
         Check(kp.problem.empty(), std::string(k.id) + ": prepared (" + kp.problem + ")");
         const std::string doc = ToSvg(kp, AxisRange{0, 5, 0, 6, false}, SvgStyle{});
         Check(doc.find("</svg>") != std::string::npos, std::string(k.id) + ": SVG written");
@@ -156,6 +176,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 18 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 21 kinds, colour scale. OK\n";
     return 0;
 }

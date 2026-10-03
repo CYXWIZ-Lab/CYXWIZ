@@ -122,6 +122,36 @@ std::string ToCsv(const Prepared& p) {
                         << CsvCell(c < static_cast<int>(p.col_names.size()) ? p.col_names[static_cast<size_t>(c)] : "") << ','
                         << Num(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) << '\n';
             break;
+        case Kind::Polar: {
+            // The angle as it was given: the category, degrees or radians.
+            const bool names = !p.polar_names.empty();
+            const bool radians = p.spec.angle_unit == PlotSpec::AngleUnit::Radians;
+            out << "series,angle" << (names ? "" : radians ? "_radians" : "_degrees") << ",radius\n";
+            for (const auto& s : p.series)
+                for (size_t i = 0; i < std::min(s.x.size(), s.y.size()); ++i) {
+                    std::string a;
+                    if (names) {
+                        const size_t k = static_cast<size_t>(std::llround(s.x[i] / 6.283185307179586 * static_cast<double>(p.polar_names.size())));
+                        a = CsvCell(k < p.polar_names.size() ? p.polar_names[k] : "");
+                    } else {
+                        a = Num(radians ? s.x[i] : s.x[i] * 360.0 / 6.283185307179586);
+                    }
+                    out << CsvCell(s.label) << ',' << a << ',' << Num(s.y[i]) << '\n';
+                }
+            break;
+        }
+        case Kind::Quiver:
+            out << "x,y,u,v,length\n";
+            for (size_t i = 0; i < p.qx.size(); ++i)
+                out << Num(p.qx[i]) << ',' << Num(p.qy[i]) << ',' << Num(p.qu[i]) << ',' << Num(p.qv[i]) << ','
+                    << Num(std::hypot(p.qu[i], p.qv[i])) << '\n';
+            break;
+        case Kind::Stream:
+            out << "line,x,y\n";
+            for (size_t l = 0; l < p.stream_lines.size(); ++l)
+                for (size_t k = 0; k + 1 < p.stream_lines[l].size(); k += 2)
+                    out << l + 1 << ',' << Num(p.stream_lines[l][k]) << ',' << Num(p.stream_lines[l][k + 1]) << '\n';
+            break;
         case Kind::Hexbin:
             out << "x,y," << (p.spec.value_column.empty() ? "count" : "mean of " + p.spec.value_column) << '\n';
             for (size_t i = 0; i < p.hex_x.size(); ++i) out << Num(p.hex_x[i]) << ',' << Num(p.hex_y[i]) << ',' << Num(p.hex_v[i]) << '\n';
@@ -214,7 +244,7 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     std::ostringstream o;
     o << std::fixed << std::setprecision(1);
     const bool title = !p.spec.title.empty();
-    const bool pie = p.spec.kind == Kind::Pie;
+    const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar;
     Frame f{64, title ? 40.0 : 16.0, st.width - 64.0 - 18.0, st.height - (title ? 40.0 : 16.0) - 46.0, range};
     if (!(f.r.x1 > f.r.x0)) f.r.x1 = f.r.x0 + 1;
     if (!(f.r.y1 > f.r.y0)) f.r.y1 = f.r.y0 + 1;
@@ -391,6 +421,61 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
             }
             break;
         }
+        case Kind::Polar: {
+            // Rings at round radii, spokes (the category names or every 30
+            // degrees), then the lines or points; 0 at the top, clockwise.
+            const double cx = f.left + f.width / 2, cy = f.top + f.height / 2, rad = std::min(f.width, f.height) / 2.3;
+            const double rmax = p.polar_rmax > 0 ? p.polar_rmax : 1.0;
+            const auto px = [&](double a, double r) { return cx + r / rmax * rad * std::sin(a); };
+            const auto py = [&](double a, double r) { return cy - r / rmax * rad * std::cos(a); };
+            for (double t : Ticks(0, rmax))
+                if (t > 0 && t <= rmax)
+                    o << "<circle cx=\"" << cx << "\" cy=\"" << cy << "\" r=\"" << t / rmax * rad << "\" fill=\"none\" stroke=\"" << st.grid << "\"/>"
+                      << "<text x=\"" << cx + 3 << "\" y=\"" << cy - t / rmax * rad - 2 << "\" fill=\"" << st.text_dim << "\" font-size=\"10\">" << Num(t) << "</text>\n";
+            const size_t spokes = !p.polar_names.empty() ? std::min<size_t>(p.polar_names.size(), 36) : 12;
+            for (size_t k = 0; k < spokes; ++k) {
+                const double a = static_cast<double>(k) / static_cast<double>(spokes) * 6.283185307179586;
+                o << "<line x1=\"" << cx << "\" y1=\"" << cy << "\" x2=\"" << px(a, rmax) << "\" y2=\"" << py(a, rmax) << "\" stroke=\"" << st.grid << "\"/>";
+                const std::string name = !p.polar_names.empty() ? p.polar_names[k] : Num(static_cast<double>(k) * 30.0);
+                o << "<text x=\"" << px(a, rmax * 1.1) << "\" y=\"" << py(a, rmax * 1.1) + 4 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"middle\">" << Xml(name) << "</text>\n";
+            }
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& sr = p.series[i];
+                const std::string c = colour(sr.colour >= 0 ? static_cast<size_t>(sr.colour) : i);
+                if (p.spec.polar_points) {
+                    for (size_t k = 0; k < sr.x.size(); ++k)
+                        o << "<circle cx=\"" << px(sr.x[k], sr.y[k]) << "\" cy=\"" << py(sr.x[k], sr.y[k]) << "\" r=\"2.5\" fill=\"" << c << "\"/>\n";
+                } else {
+                    o << "<polyline fill=\"none\" stroke=\"" << c << "\" stroke-width=\"1.8\" points=\"";
+                    for (size_t k = 0; k < sr.x.size(); ++k) o << px(sr.x[k], sr.y[k]) << ',' << py(sr.x[k], sr.y[k]) << ' ';
+                    if (p.polar_closed && !sr.x.empty()) o << px(sr.x[0], sr.y[0]) << ',' << py(sr.x[0], sr.y[0]);
+                    o << "\"/>\n";
+                }
+            }
+            break;
+        }
+        case Kind::Quiver:
+            for (size_t i : p.q_drawn) {
+                const double x0 = f.X(p.qx[i]), y0 = f.Y(p.qy[i]);
+                const double x1 = f.X(p.qx[i] + p.qu[i] * p.q_scale), y1 = f.Y(p.qy[i] + p.qv[i] * p.q_scale);
+                const double len = std::hypot(x1 - x0, y1 - y0);
+                if (len < 0.5) continue;
+                const double ux = (x1 - x0) / len, uy = (y1 - y0) / len, hs = std::min(5.0, len * 0.45);
+                const std::string c = RangeColour(std::hypot(p.qu[i], p.qv[i]), p.grid_lo, p.grid_hi, false, st);
+                o << "<line x1=\"" << x0 << "\" y1=\"" << y0 << "\" x2=\"" << x1 << "\" y2=\"" << y1 << "\" stroke=\"" << c << "\" stroke-width=\"1.3\"/>"
+                  << "<polygon fill=\"" << c << "\" points=\"" << x1 << ',' << y1 << ' ' << x1 - ux * hs - uy * hs * 0.6 << ',' << y1 - uy * hs + ux * hs * 0.6 << ' '
+                  << x1 - ux * hs + uy * hs * 0.6 << ',' << y1 - uy * hs - ux * hs * 0.6 << "\"/>\n";
+            }
+            break;
+        case Kind::Stream:
+            for (size_t l = 0; l < p.stream_lines.size(); ++l) {
+                const auto& ln = p.stream_lines[l];
+                o << "<polyline fill=\"none\" stroke=\"" << RangeColour(l < p.stream_speed.size() ? p.stream_speed[l] : 0.0, p.grid_lo, p.grid_hi, false, st)
+                  << "\" stroke-width=\"1.3\" points=\"";
+                for (size_t k = 0; k + 1 < ln.size(); k += 2) o << f.X(ln[k]) << ',' << f.Y(ln[k + 1]) << ' ';
+                o << "\"/>\n";
+            }
+            break;
         case Kind::Hexbin:
             for (size_t i = 0; i < p.hex_x.size(); ++i) {
                 const double v = p.spec.log_colour ? std::log1p(p.hex_v[i]) : p.hex_v[i];

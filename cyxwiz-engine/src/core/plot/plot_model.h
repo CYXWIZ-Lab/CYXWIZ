@@ -31,9 +31,13 @@ enum class Kind {
     Hexbin,
     Contour,
     FilledContour,
+    // P2b group 2 (approved board 9).
+    Polar,
+    Quiver,
+    Stream,
 };
 
-enum class Group { Basic, Distribution, GridDensity };
+enum class Group { Basic, Distribution, GridDensity, VectorFields };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -42,6 +46,7 @@ enum Encoding : unsigned {
     kEncY = 1u << 1,
     kEncColor = 1u << 2,
     kEncValue = 1u << 3,  // heatmap: a column summed per cell (else rows are counted)
+    kEncVector = 1u << 4, // quiver, stream: the arrow columns (u, v or direction, length)
 };
 
 struct KindInfo {
@@ -111,6 +116,16 @@ struct PlotSpec {
     MatrixValues matrix_values = MatrixValues::Pearson;
     int levels = 7;                              // contour levels
     bool log_colour = false;                     // hexbin: colour by the log of the count
+    // P2b group 2 (approved board 9).
+    std::string u_column, v_column;              // quiver, stream: the arrow columns
+    enum class VectorFrom { UV, DirectionLength };
+    VectorFrom vector_from = VectorFrom::UV;     // u, v; or degrees clockwise from north and a length
+    bool wind_from = false;                      // the direction says where it comes from (wind)
+    int arrow_every = 0;                         // quiver: show every Nth arrow (0: as many as fit)
+    double stream_density = 1.0;                 // stream: lines per area
+    enum class AngleUnit { Auto, Degrees, Radians, Categories };
+    AngleUnit angle_unit = AngleUnit::Auto;      // polar: Auto = categories for text, degrees for numbers
+    bool polar_points = false;                   // polar: points instead of lines
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -207,6 +222,25 @@ struct Prepared {
     // steps (matplotlib's layout: vertices (+-sx/2, +-sy/6), (0, +-sy/3)).
     std::vector<double> hex_x, hex_y, hex_v;
     double hex_sx = 0, hex_sy = 0;
+    // Polar: Series x = angle in radians (0 at the top, clockwise), y =
+    // radius; the angle names of categories, the largest radius, and
+    // whether each line closes (categories go round the whole turn).
+    std::vector<std::string> polar_names;
+    double polar_rmax = 0;
+    bool polar_closed = false;
+    // Quiver: every row's arrow (u, v in data units), the rows drawn (a
+    // dense grid shows every Nth), how much to stretch u, v so arrows fit
+    // their spacing, and the step.
+    std::vector<double> qx, qy, qu, qv;
+    std::vector<size_t> q_drawn;
+    double q_scale = 1.0;
+    int q_every = 1;
+    // Stream: the lines (x0, y0, x1, y1, ... per line) with the speed at
+    // each line's middle, and the field on a grid (grid_rows x grid_cols,
+    // row 0 at the top) for hover.
+    std::vector<std::vector<double>> stream_lines;
+    std::vector<double> stream_speed;
+    std::vector<double> field_u, field_v;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

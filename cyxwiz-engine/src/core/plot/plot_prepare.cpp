@@ -1012,6 +1012,318 @@ void PrepareContour(Prepared& p, const SourceColumn* xcol, const SourceColumn* y
     p.label = {DataLabel::State::Exact, pts.size(), pts.size()};
 }
 
+// ---- P2b group 2 (approved board 9) ----
+
+constexpr double kTwoPi = 6.283185307179586;
+
+// Polar: angle (0 at the top, clockwise) and radius per row, one series per
+// colour group. Categories share the turn and close each line.
+void PreparePolar(Prepared& p, const SourceColumn* acol, const SourceColumn* rcol, const Groups& groups) {
+    PlotSpec::AngleUnit unit = p.spec.angle_unit;
+    if (unit == PlotSpec::AngleUnit::Auto) unit = acol->numeric ? PlotSpec::AngleUnit::Degrees : PlotSpec::AngleUnit::Categories;
+    std::vector<double> angle(acol->size(), NAN);
+    if (unit == PlotSpec::AngleUnit::Categories) {
+        // Categories in numeric order when they are all numbers, else as they come.
+        std::vector<std::string> names;
+        std::unordered_map<std::string, size_t> index;
+        for (size_t r = 0; r < acol->size(); ++r) {
+            const std::string k = CellText(*acol, r);
+            if (!index.count(k)) {
+                index[k] = names.size();
+                names.push_back(k);
+            }
+        }
+        std::vector<double> values(names.size());
+        bool numbers = true;
+        for (size_t i = 0; i < names.size() && numbers; ++i) numbers = ParseNumber(Trim(names[i]), values[i]);
+        std::vector<size_t> order(names.size());
+        std::iota(order.begin(), order.end(), 0);
+        if (numbers) std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return values[a] < values[b]; });
+        std::vector<size_t> at(names.size());
+        for (size_t i = 0; i < order.size(); ++i) {
+            at[order[i]] = i;
+            p.polar_names.push_back(names[order[i]]);
+        }
+        const double n = static_cast<double>(std::max<size_t>(1, names.size()));
+        for (size_t r = 0; r < acol->size(); ++r) angle[r] = static_cast<double>(at[index[CellText(*acol, r)]]) / n * kTwoPi;
+        p.polar_closed = true;
+    } else {
+        const double k = unit == PlotSpec::AngleUnit::Degrees ? kTwoPi / 360.0 : 1.0;
+        for (size_t r = 0; r < acol->numbers.size(); ++r) angle[r] = acol->numbers[r] * k;
+    }
+    size_t total = 0;
+    for (size_t g = 0; g < groups.names.size(); ++g) {
+        Series s;
+        s.label = groups.names[g].empty() ? rcol->name : groups.names[g];
+        std::vector<std::pair<double, double>> pts;
+        for (size_t r = 0; r < rcol->numbers.size() && r < angle.size(); ++r) {
+            if (groups.of_row[r] != static_cast<int>(g)) continue;
+            const double a = angle[r], rr = rcol->numbers[r];
+            if (!std::isfinite(a) || !std::isfinite(rr)) continue;
+            pts.emplace_back(a, rr);
+        }
+        // Categories go round in angle order (one point per category and group).
+        if (p.polar_closed) std::stable_sort(pts.begin(), pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& [a, rr] : pts) {
+            s.x.push_back(a);
+            s.y.push_back(rr);
+            p.polar_rmax = std::max(p.polar_rmax, std::fabs(rr));
+        }
+        total += pts.size();
+        if (!s.x.empty()) {
+            s.colour = static_cast<int>(g);
+            p.series.push_back(std::move(s));
+        }
+    }
+    if (p.polar_rmax <= 0) p.polar_rmax = 1.0;
+    p.stats = Summarize(rcol->numbers);
+    p.label = {DataLabel::State::Exact, total, total};
+}
+
+// Arrow components of a row: u, v as given, or a compass direction
+// (degrees clockwise from north) and a length; wind directions say where
+// the wind comes from, so they are turned round.
+bool ArrowOf(const PlotSpec& spec, double a, double b, double& u, double& v) {
+    if (!std::isfinite(a) || !std::isfinite(b)) return false;
+    if (spec.vector_from == PlotSpec::VectorFrom::UV) {
+        u = a;
+        v = b;
+        return true;
+    }
+    const double t = a * kTwoPi / 360.0;
+    u = b * std::sin(t);
+    v = b * std::cos(t);
+    if (spec.wind_from) {
+        u = -u;
+        v = -v;
+    }
+    return true;
+}
+
+// The distinct values of a column, sorted (a grid's x or y positions).
+std::vector<double> Distinct(const std::vector<double>& v, size_t cap) {
+    std::vector<double> d;
+    for (double x : v)
+        if (std::isfinite(x)) d.push_back(x);
+    std::sort(d.begin(), d.end());
+    d.erase(std::unique(d.begin(), d.end()), d.end());
+    if (d.size() > cap) d.clear();
+    return d;
+}
+
+void PrepareQuiver(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol, const SourceColumn* ucol, const SourceColumn* vcol) {
+    const size_t n = std::min({xcol->numbers.size(), ycol->numbers.size(), ucol->numbers.size(), vcol->numbers.size()});
+    double maxlen = 0;
+    for (size_t r = 0; r < n; ++r) {
+        double u, v;
+        if (!std::isfinite(xcol->numbers[r]) || !std::isfinite(ycol->numbers[r]) ||
+            !ArrowOf(p.spec, ucol->numbers[r], vcol->numbers[r], u, v))
+            continue;
+        p.qx.push_back(xcol->numbers[r]);
+        p.qy.push_back(ycol->numbers[r]);
+        p.qu.push_back(u);
+        p.qv.push_back(v);
+        maxlen = std::max(maxlen, std::hypot(u, v));
+    }
+    if (p.qx.empty()) {
+        p.problem = "No rows have numbers in all four columns.";
+        return;
+    }
+    p.x_min = *std::min_element(p.qx.begin(), p.qx.end());
+    p.x_max = *std::max_element(p.qx.begin(), p.qx.end());
+    p.y_min = *std::min_element(p.qy.begin(), p.qy.end());
+    p.y_max = *std::max_element(p.qy.begin(), p.qy.end());
+    if (p.x_max <= p.x_min) { p.x_min -= 0.5; p.x_max += 0.5; }
+    if (p.y_max <= p.y_min) { p.y_min -= 0.5; p.y_max += 0.5; }
+    // A grid (x and y take few values) thins every Nth each way; other
+    // tables every Nth row. As many as fit: about 600 arrows.
+    constexpr size_t kMaxArrows = 600;
+    const auto xs = Distinct(p.qx, 2000), ys = Distinct(p.qy, 2000);
+    const bool grid = !xs.empty() && !ys.empty() && xs.size() * ys.size() <= p.qx.size() * 2;
+    int every = p.spec.arrow_every;
+    if (every <= 0) {
+        every = 1;
+        const double ratio = static_cast<double>(p.qx.size()) / kMaxArrows;
+        if (ratio > 1) every = static_cast<int>(std::ceil(grid ? std::sqrt(ratio) : ratio));
+    }
+    p.q_every = every;
+    for (size_t i = 0; i < p.qx.size(); ++i) {
+        bool keep;
+        if (grid) {
+            const size_t ix = static_cast<size_t>(std::lower_bound(xs.begin(), xs.end(), p.qx[i]) - xs.begin());
+            const size_t iy = static_cast<size_t>(std::lower_bound(ys.begin(), ys.end(), p.qy[i]) - ys.begin());
+            keep = ix % static_cast<size_t>(every) == 0 && iy % static_cast<size_t>(every) == 0;
+        } else {
+            keep = i % static_cast<size_t>(every) == 0;
+        }
+        if (keep) p.q_drawn.push_back(i);
+    }
+    // The longest arrow spans 90% of the spacing of the drawn arrows.
+    const double spacing = grid ? std::min((p.x_max - p.x_min) / std::max<size_t>(1, xs.size() - 1),
+                                           (p.y_max - p.y_min) / std::max<size_t>(1, ys.size() - 1)) * every
+                                : std::sqrt((p.x_max - p.x_min) * (p.y_max - p.y_min) / static_cast<double>(p.q_drawn.size()));
+    p.q_scale = maxlen > 0 ? 0.9 * spacing / maxlen : 1.0;
+    p.grid_lo = 0.0;
+    p.grid_hi = maxlen > 0 ? maxlen : 1.0;
+    p.label = p.q_drawn.size() < p.qx.size() ? DataLabel{DataLabel::State::Sampled, p.q_drawn.size(), p.qx.size()}
+                                             : DataLabel{DataLabel::State::Exact, p.qx.size(), p.qx.size()};
+    if (p.q_drawn.size() < p.qx.size()) p.label.selection = "every " + std::to_string(every) + (grid ? " each way" : " rows");
+}
+
+// Stream: the field on a grid (a grid table as it is, other tables binned
+// to 40 x 40 means), then lines traced both ways from evenly spaced starts,
+// each stopping where another line already runs.
+void PrepareStream(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol, const SourceColumn* ucol, const SourceColumn* vcol) {
+    std::vector<std::array<double, 4>> rows;
+    const size_t n = std::min({xcol->numbers.size(), ycol->numbers.size(), ucol->numbers.size(), vcol->numbers.size()});
+    for (size_t r = 0; r < n; ++r) {
+        double u, v;
+        if (!std::isfinite(xcol->numbers[r]) || !std::isfinite(ycol->numbers[r]) ||
+            !ArrowOf(p.spec, ucol->numbers[r], vcol->numbers[r], u, v))
+            continue;
+        rows.push_back({xcol->numbers[r], ycol->numbers[r], u, v});
+    }
+    if (rows.size() < 4) {
+        p.problem = "A stream needs a field: at least 4 rows with numbers in all four columns.";
+        return;
+    }
+    std::vector<double> xv, yv;
+    for (const auto& q : rows) {
+        xv.push_back(q[0]);
+        yv.push_back(q[1]);
+    }
+    auto xs = Distinct(xv, 400), ys = Distinct(yv, 400);
+    const bool grid = xs.size() >= 2 && ys.size() >= 2 && xs.size() * ys.size() <= rows.size() * 2;
+    int C, R;
+    double x0, x1, y0, y1;
+    if (grid) {
+        C = static_cast<int>(xs.size());
+        R = static_cast<int>(ys.size());
+        x0 = xs.front();
+        x1 = xs.back();
+        y0 = ys.front();
+        y1 = ys.back();
+    } else {
+        C = R = 40;
+        x0 = *std::min_element(xv.begin(), xv.end());
+        x1 = *std::max_element(xv.begin(), xv.end());
+        y0 = *std::min_element(yv.begin(), yv.end());
+        y1 = *std::max_element(yv.begin(), yv.end());
+    }
+    if (x1 <= x0) x1 = x0 + 1;
+    if (y1 <= y0) y1 = y0 + 1;
+    // Field values at grid points (r = 0 is the lowest y here; flipped to
+    // the top-first convention for hover at the end).
+    std::vector<double> U(static_cast<size_t>(R * C), 0.0), V(U.size(), 0.0), cnt(U.size(), 0.0);
+    for (const auto& q : rows) {
+        int c, r;
+        if (grid) {
+            c = static_cast<int>(std::lower_bound(xs.begin(), xs.end(), q[0]) - xs.begin());
+            r = static_cast<int>(std::lower_bound(ys.begin(), ys.end(), q[1]) - ys.begin());
+        } else {
+            c = std::clamp(static_cast<int>((q[0] - x0) / (x1 - x0) * (C - 1) + 0.5), 0, C - 1);
+            r = std::clamp(static_cast<int>((q[1] - y0) / (y1 - y0) * (R - 1) + 0.5), 0, R - 1);
+        }
+        const size_t k = static_cast<size_t>(r * C + c);
+        U[k] += q[2];
+        V[k] += q[3];
+        cnt[k] += 1.0;
+    }
+    double vmax = 0;
+    for (size_t k = 0; k < U.size(); ++k) {
+        if (cnt[k] > 0) {
+            U[k] /= cnt[k];
+            V[k] /= cnt[k];
+        }
+        vmax = std::max(vmax, std::hypot(U[k], V[k]));
+    }
+    // Bilinear field in grid units (gx 0..C-1, gy 0..R-1).
+    const auto field = [&](double gx, double gy, double& u, double& v) {
+        if (gx < 0 || gy < 0 || gx > C - 1 || gy > R - 1) return false;
+        const int c0 = std::min(static_cast<int>(gx), C - 2), r0 = std::min(static_cast<int>(gy), R - 2);
+        const double fx = gx - c0, fy = gy - r0;
+        const auto at = [&](const std::vector<double>& F, int r, int c) { return F[static_cast<size_t>(r * C + c)]; };
+        u = (1 - fy) * ((1 - fx) * at(U, r0, c0) + fx * at(U, r0, c0 + 1)) + fy * ((1 - fx) * at(U, r0 + 1, c0) + fx * at(U, r0 + 1, c0 + 1));
+        v = (1 - fy) * ((1 - fx) * at(V, r0, c0) + fx * at(V, r0, c0 + 1)) + fy * ((1 - fx) * at(V, r0 + 1, c0) + fx * at(V, r0 + 1, c0 + 1));
+        return true;
+    };
+    // Occupancy: a coarse mask of cells a line already runs through.
+    const int M = std::clamp(static_cast<int>(30 * p.spec.stream_density), 6, 150);
+    std::vector<int> mask(static_cast<size_t>(M * M), -1);
+    const auto cell = [&](double gx, double gy) {
+        const int mx = std::clamp(static_cast<int>(gx / (C - 1) * M), 0, M - 1);
+        const int my = std::clamp(static_cast<int>(gy / (R - 1) * M), 0, M - 1);
+        return my * M + mx;
+    };
+    // Steps in grid units, with u, v turned into grid units per unit time.
+    const double kx = (C - 1) / (x1 - x0), ky = (R - 1) / (y1 - y0);
+    const double step = 0.25 * std::min((C - 1.0) / M, (R - 1.0) / M) + 0.05;
+    const auto trace = [&](double gx, double gy, double dir, int line, std::vector<std::pair<double, double>>& out) {
+        for (int k = 0; k < 4000; ++k) {
+            double u, v;
+            if (!field(gx, gy, u, v)) break;
+            double sx = u * kx, sy = v * ky;
+            const double sp = std::hypot(sx, sy);
+            if (sp < 1e-12 * (vmax * (kx + ky) + 1e-300)) break;
+            // Midpoint (RK2) step of fixed length along the field.
+            double mx = gx + dir * 0.5 * step * sx / sp, my = gy + dir * 0.5 * step * sy / sp;
+            if (!field(mx, my, u, v)) break;
+            sx = u * kx;
+            sy = v * ky;
+            const double sp2 = std::hypot(sx, sy);
+            if (sp2 <= 0) break;
+            gx += dir * step * sx / sp2;
+            gy += dir * step * sy / sp2;
+            if (gx < 0 || gy < 0 || gx > C - 1 || gy > R - 1) break;
+            const int m = cell(gx, gy);
+            if (mask[static_cast<size_t>(m)] >= 0 && mask[static_cast<size_t>(m)] != line) break;
+            mask[static_cast<size_t>(m)] = line;
+            out.emplace_back(gx, gy);
+        }
+    };
+    int line = 0;
+    for (int my = 0; my < M; ++my)
+        for (int mx = 0; mx < M; ++mx) {
+            if (mask[static_cast<size_t>(my * M + mx)] >= 0) continue;
+            const double sx0 = (mx + 0.5) / M * (C - 1), sy0 = (my + 0.5) / M * (R - 1);
+            double u0, v0;
+            if (!field(sx0, sy0, u0, v0) || std::hypot(u0, v0) <= vmax * 1e-6) continue;
+            mask[static_cast<size_t>(my * M + mx)] = line;
+            std::vector<std::pair<double, double>> back, fwd;
+            trace(sx0, sy0, -1.0, line, back);
+            trace(sx0, sy0, 1.0, line, fwd);
+            std::vector<double> pts;
+            for (auto it = back.rbegin(); it != back.rend(); ++it) pts.insert(pts.end(), {x0 + it->first / kx, y0 + it->second / ky});
+            pts.insert(pts.end(), {x0 + sx0 / kx, y0 + sy0 / ky});
+            for (const auto& q : fwd) pts.insert(pts.end(), {x0 + q.first / kx, y0 + q.second / ky});
+            if (pts.size() >= 6) {
+                const size_t mid = (pts.size() / 4) * 2;
+                double um, vm;
+                field((pts[mid] - x0) * kx, (pts[mid + 1] - y0) * ky, um, vm);
+                p.stream_lines.push_back(std::move(pts));
+                p.stream_speed.push_back(std::hypot(um, vm));
+            }
+            ++line;
+        }
+    // The field for hover, row 0 at the top (highest y), like the grids.
+    p.grid_rows = R;
+    p.grid_cols = C;
+    p.field_u.assign(static_cast<size_t>(R * C), 0.0);
+    p.field_v.assign(p.field_u.size(), 0.0);
+    for (int r = 0; r < R; ++r)
+        for (int c = 0; c < C; ++c) {
+            p.field_u[static_cast<size_t>((R - 1 - r) * C + c)] = U[static_cast<size_t>(r * C + c)];
+            p.field_v[static_cast<size_t>((R - 1 - r) * C + c)] = V[static_cast<size_t>(r * C + c)];
+        }
+    p.x_min = x0;
+    p.x_max = x1;
+    p.y_min = y0;
+    p.y_max = y1;
+    p.grid_lo = 0.0;
+    p.grid_hi = vmax > 0 ? vmax : 1.0;
+    p.label = {DataLabel::State::Exact, rows.size(), rows.size()};
+}
+
 }  // namespace
 
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
@@ -1023,6 +1335,10 @@ std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
     for (const auto& y : spec.y_columns) add(y);
     add(spec.color_column);
     add(spec.value_column);
+    if (Info(spec.kind).required & kEncVector) {
+        add(spec.u_column);
+        add(spec.v_column);
+    }
     if (spec.rows == RowMode::Filter)
         for (const auto& c : spec.conditions) add(c.column);
     return out;
@@ -1169,7 +1485,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         return c;
     };
     const bool numeric_x = spec.kind != Kind::Bar && spec.kind != Kind::Pie && spec.kind != Kind::ErrorBars &&
-                           spec.kind != Kind::Heatmap;
+                           spec.kind != Kind::Heatmap && spec.kind != Kind::Polar;
     const SourceColumn* xcol = nullptr;
     if (!spec.x_column.empty() && (kind.required | kind.optional) & kEncX) {
         xcol = column(spec.x_column, numeric_x);
@@ -1183,6 +1499,14 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
             if (!y) return p;
             ys.push_back(y);
         }
+    }
+    const SourceColumn* ucol = nullptr;
+    const SourceColumn* vcol = nullptr;
+    if (kind.required & kEncVector) {
+        ucol = column(spec.u_column, true);
+        if (!ucol) return p;
+        vcol = column(spec.v_column, true);
+        if (!vcol) return p;
     }
     const SourceColumn* value = nullptr;
     if (!spec.value_column.empty() && (kind.optional & kEncValue)) {
@@ -1225,6 +1549,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::Hexbin: PrepareHexbin(p, xcol, ys.front(), value); break;
         case Kind::Contour:
         case Kind::FilledContour: PrepareContour(p, xcol, ys.front(), value); break;
+        case Kind::Polar: PreparePolar(p, xcol, ys.front(), groups); break;
+        case Kind::Quiver: PrepareQuiver(p, xcol, ys.front(), ucol, vcol); break;
+        case Kind::Stream: PrepareStream(p, xcol, ys.front(), ucol, vcol); break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -1239,12 +1566,13 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         if (p.grid_hi <= 0.0) p.grid_hi = 1.0;
     }
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
-        spec.kind != Kind::Matrix && !ys.empty())
+        spec.kind != Kind::Matrix && spec.kind != Kind::Polar && !ys.empty())
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
     p.label.selection = selection.text;
-    if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty()) p.problem = "No values to draw.";
+    if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty())
+        p.problem = "No values to draw.";
     return p;
 }
 
