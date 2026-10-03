@@ -14,6 +14,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+
+#include "../../core/plot/plot_layout.h"
 #include <vector>
 
 namespace cyxwiz::plot {
@@ -84,6 +86,9 @@ private:
     void DrawPlot(ImVec2 size);
     void DrawImages(ImVec2 size);     // Image: a grid of pictures (ImGui, not ImPlot)
     void DrawPairPlot(ImVec2 size);   // Pair plot: an ImPlot subplot grid
+    void DrawSankey();                // Sankey, Treemap: drawn in pixels inside the plot
+    void DrawTreemap();
+    void DrawWorld(bool regions);     // Maps: the built-in country outlines
     void DrawHover();
     ImVec4 ColourOf(size_t i) const;
     void ExportMenu(const Options& options);
@@ -112,6 +117,11 @@ private:
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
+    int hot_node_ = -1, hot_link_ = -1;          // sankey: under the mouse
+    std::vector<TreeRect> tree_rects_;           // treemap: last frame's layout (pixels)
+    int hot_rect_ = -1;
+    std::vector<std::string> tree_zoom_;         // treemap: the group zoomed into (empty: all)
+    int hot_country_ = -1;                       // map regions: under the mouse
 };
 
 }  // namespace cyxwiz::plot

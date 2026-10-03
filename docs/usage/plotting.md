@@ -162,6 +162,42 @@ or press **Plot** under the column's statistics. The Plot window opens:
   gives AUC 0.871; PR gives AP 0.767; Calibration gives Brier 0.143. A
   Spotify popularity regression gives RMSE 20.76 and R² 0.265 over 2,575
   rows.
+- **Flows and hierarchies**:
+  - **Sankey**: two or more **Steps** columns, left to right (text or
+    numbers as categories). Each band joins a category of one step to one
+    of the next; its width is the rows, or the sum of a **Value** column. A
+    ready flow table works the same way: Steps = source, target and Value =
+    the flow. **Largest per step** (8) keeps the biggest categories and
+    joins the rest as *other*. Hover a node for its total and share, a band
+    for its value and share of where it starts.
+  - **Treemap**: one to four **Groups** columns (outer to inner) and a
+    **Size** (summed; empty: rows). The rectangles' areas follow the size.
+    **Colour** takes a number column (the mean per rectangle on the theme
+    scale), or leave it empty to colour by the top group. Click a group to
+    zoom into it; right-click, or click the path at the top ("All > Asia"),
+    to go back. The 3,000 largest groups are drawn (the label says when
+    there are more).
+- **Maps** (built-in world map: Natural Earth 1:110m country outlines,
+  public domain, shipped with the Engine, works offline):
+  - **Map: points**: **Longitude** and **Latitude** columns (degrees), an
+    optional **Size** column and **Colour by** (a number makes a scale, text
+    makes groups). The map frames the points; pan and zoom like any plot.
+    Hover gives the row's values and the country under it. A longitude
+    outside -180..180 or a latitude outside -90..90 is refused with a hint
+    (columns swapped?).
+  - **Map: regions**: a **Country** column (names such as "France" or
+    "United States", ISO codes FRA / FR, and common names like UK or Viet
+    Nam) and a **Value**. Several rows for one country: **Sum** or **Mean**.
+    **Colour by the log of the value** for values across orders of
+    magnitude. Names that match no country are listed under the controls
+    (and in the CSV export); countries with no rows stay grey. Hover gives
+    the country, its ISO code, the value and the rows.
+
+  Example: `world_countries.csv` (Natural Earth population and GDP)
+  as a Treemap of continent > country sized by population and coloured by
+  GDP per person, and as Map: regions of gdp_per_person (log); the USGS
+  earthquake feed (`earthquakes_month.csv`) as Map: points sized by
+  magnitude and coloured by depth.
 - **Line and scatter**: **Show the y = x line** draws a reference line
   (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the

@@ -2,6 +2,7 @@
 
 #include "plot_style.h"
 #include "../../core/plot/plot_prepare.h"
+#include "../../core/plot/world_map.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
@@ -55,7 +56,47 @@ bool IsLineLike(Kind k) {
 // Grid kinds lay out their own axes and draw a colour bar.
 bool IsGridKind(Kind k) {
     return k == Kind::Heatmap || k == Kind::Histogram2D || k == Kind::Matrix || k == Kind::Hexbin || k == Kind::Contour ||
-           k == Kind::FilledContour || k == Kind::Quiver || k == Kind::Stream || k == Kind::Confusion;
+           k == Kind::FilledContour || k == Kind::Quiver || k == Kind::Stream || k == Kind::Confusion || k == Kind::MapRegions;
+}
+
+// Drawn in pixels inside an undecorated plot.
+bool IsPixelKind(Kind k) {
+    return k == Kind::Sankey || k == Kind::Treemap;
+}
+
+// A map region's colour: the theme scale over the plot's range (log10 when asked).
+ImVec4 RegionColourOf(const Prepared& p, double v) {
+    double lo = p.grid_lo, hi = p.grid_hi;
+    if (p.spec.log_colour) {
+        v = std::log10(std::max(v, lo));
+        lo = std::log10(lo);
+        hi = std::log10(hi);
+    }
+    const float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
+    return ImPlot::SampleColormap(t, SequentialColormap());
+}
+
+// Dark or light text on a fill, whichever reads.
+ImU32 InkOn(const ImVec4& fill) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float lum = 0.2126f * fill.x + 0.7152f * fill.y + 0.0722f * fill.z;
+    return ui::ToU32(lum > 0.55f ? t.plot_bg : t.text_bright);
+}
+
+// A point on a cubic band edge from (x0, y0) to (x1, y1) with both control
+// points at the middle x; t found from x by bisection.
+float BandEdgeY(float x0, float y0, float x1, float y1, float x) {
+    const float mx = (x0 + x1) * 0.5f;
+    float lo = 0.0f, hi = 1.0f, t = 0.5f;
+    for (int i = 0; i < 24; ++i) {
+        t = (lo + hi) * 0.5f;
+        const float u = 1.0f - t;
+        const float bx = u * u * u * x0 + 3 * u * u * t * mx + 3 * u * t * t * mx + t * t * t * x1;
+        if (bx < x) lo = t;
+        else hi = t;
+    }
+    const float u = 1.0f - t;
+    return u * u * u * y0 + 3 * u * u * t * y0 + 3 * u * t * t * y1 + t * t * t * y1;
 }
 
 // Curves on 0..1 both ways (model results).
@@ -71,7 +112,7 @@ std::string MetricText(const std::string& name, double v) {
     if (!std::isfinite(v)) return "n/a";
     char buf[48];
     if (name == "accuracy" || name == "positive share") std::snprintf(buf, sizeof(buf), "%.1f%%", v * 100.0);
-    else if (name == "rows") return Thousands(static_cast<long long>(std::llround(v)));
+    else if (name == "rows" || name == "countries" || name == "not matched") return Thousands(static_cast<long long>(std::llround(v)));
     else if (name.rfind("at ", 0) == 0 || std::fabs(v) >= 10.0) std::snprintf(buf, sizeof(buf), "%.4g", v);
     else std::snprintf(buf, sizeof(buf), "%.3f", v);
     return buf;
@@ -186,6 +227,7 @@ void PlotView::SetData(Prepared data) {
     const bool rows_changed = has_data_ && (data.label.selection != data_.label.selection ||
                                             data.rows_selected != data_.rows_selected ||
                                             data.spec.color_column != data_.spec.color_column);
+    if (kind_changed || data.tree_levels != data_.tree_levels) tree_zoom_.clear();
     data_ = std::move(data);
     has_data_ = true;
     if (rows_changed) fit_ = true;
@@ -334,7 +376,8 @@ void PlotView::DrawToolbar(const Options& o) {
     }
     const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && data_.spec.kind != Kind::Image &&
                          data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind) &&
-                         !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals;
+                         !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals &&
+                         !IsPixelKind(data_.spec.kind) && data_.spec.kind != Kind::MapPoints;
     if (o.tool_log) {
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
@@ -580,18 +623,20 @@ void PlotView::DrawPlot(ImVec2 size) {
     ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText;
     if (!legend_) flags |= ImPlotFlags_NoLegend;
     if (kind == Kind::Pie) flags |= ImPlotFlags_Equal | ImPlotFlags_NoMouseText;
+    if (kind == Kind::MapPoints || kind == Kind::MapRegions) flags |= ImPlotFlags_Equal;
+    if (IsPixelKind(kind)) flags |= ImPlotFlags_NoLegend;
 
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
     if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Polar && kind != Kind::Box && kind != Kind::Violin &&
-        kind != Kind::Parallel && !IsGridKind(kind) && !IsUnitKind(kind))
+        kind != Kind::Parallel && !IsGridKind(kind) && !IsUnitKind(kind) && !IsPixelKind(kind) && kind != Kind::MapPoints)
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
     if (!ImPlot::BeginPlot(plot_id.c_str(), plot_size, flags)) return;
 
     const std::string xl = XLabel(p), yl = YLabel(p);
-    if (kind == Kind::Pie) {
+    if (kind == Kind::Pie || IsPixelKind(kind)) {
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
     } else if (kind == Kind::Parallel) {
@@ -686,6 +731,23 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Roc:
         case Kind::PrCurve:
         case Kind::Calibration: ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.04, cond); break;
+        case Kind::MapRegions: ImPlot::SetupAxesLimits(-180, 180, -60, 85, cond); break;
+        case Kind::MapPoints: {
+            // The points' extent with a margin, inside the world (a plain fit
+            // is stretched by the equal aspect).
+            double x0 = 180, x1 = -180, y0 = 90, y1 = -90;
+            for (const auto& sr : p.series)
+                for (size_t k = 0; k < std::min(sr.x.size(), sr.y.size()); ++k) {
+                    x0 = std::min(x0, sr.x[k]);
+                    x1 = std::max(x1, sr.x[k]);
+                    y0 = std::min(y0, sr.y[k]);
+                    y1 = std::max(y1, sr.y[k]);
+                }
+            if (x1 < x0 || x_range_.on || y_range_.on) break;
+            const double mx = std::max(2.0, (x1 - x0) * 0.06), my = std::max(2.0, (y1 - y0) * 0.06);
+            ImPlot::SetupAxesLimits(std::max(-180.0, x0 - mx), std::min(180.0, x1 + mx), std::max(-90.0, y0 - my), std::min(90.0, y1 + my), cond);
+            break;
+        }
         case Kind::Importance: {
             // Features down the side, the largest on top.
             const size_t count = p.categories.size();
@@ -1206,10 +1268,44 @@ void PlotView::DrawPlot(ImVec2 size) {
                 }
             }
             break;
+        case Kind::Sankey: DrawSankey(); break;
+        case Kind::Treemap: DrawTreemap(); break;
+        case Kind::MapRegions: DrawWorld(true); break;
+        case Kind::MapPoints: {
+            DrawWorld(false);
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            const double span = p.size_max - p.size_min;
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& sr = p.series[i];
+                const ImVec4 c = ColourOf(i);
+                // A small marker per point keeps the fit and the legend; the
+                // sized and coloured circles are drawn over it.
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c, 0.0f);
+                ImPlot::PlotScatter((p.series.size() > 1 ? LegendLabel(p, i, sr.label) : std::string("##points")).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                ImPlot::PushPlotClipRect();
+                for (size_t k = 0; k < sr.x.size(); ++k) {
+                    float r = 3.0f;
+                    if (k < sr.z.size() && std::isfinite(sr.z[k]) && span > 0)
+                        r = 2.0f + 9.0f * static_cast<float>(std::sqrt(std::clamp((sr.z[k] - p.size_min) / span, 0.0, 1.0)));
+                    ImVec4 fill = c;
+                    if (p.colour_scale) {
+                        // A quarter up the scale at least: its low end is the plot colour.
+                        const double cv = k < sr.c.size() ? sr.c[k] : NAN;
+                        const double span_c = p.colour_max - p.colour_min;
+                        const float tc = static_cast<float>(span_c > 0 && std::isfinite(cv) ? std::clamp((cv - p.colour_min) / span_c, 0.0, 1.0) : 0.0);
+                        fill = std::isfinite(cv) ? ImPlot::SampleColormap(0.25f + 0.75f * tc, p.colour_diverging ? DivergingColormap() : SequentialColormap())
+                                                 : t.text_faint;
+                    }
+                    dl->AddCircleFilled(ImPlot::PlotToPixels(sr.x[k], sr.y[k]), r, ui::ToU32(ui::WithAlpha(fill, 0.72f)), 12);
+                }
+                ImPlot::PopPlotClipRect();
+            }
+            break;
+        }
         default: break;
     }
 
-    // Model results: their figures in the top left corner.
+    // Model results: their figures in the top left corner (maps: bottom left, over the ocean).
     if (!p.metrics.empty() && kind != Kind::Confusion) {
         std::vector<std::string> lines;
         if (!p.positive_label.empty()) lines.push_back("positive: " + p.positive_label);
@@ -1219,7 +1315,8 @@ void PlotView::DrawPlot(ImVec2 size) {
         for (const auto& l : lines) wide = std::max(wide, ImGui::CalcTextSize(l.c_str()).x);
         const float line = ImGui::GetTextLineHeightWithSpacing();
         ImDrawList* dl = ImPlot::GetPlotDrawList();
-        const ImVec2 a(corner.x + 10.0f, corner.y + 10.0f);
+        ImVec2 a(corner.x + 10.0f, corner.y + 10.0f);
+        if (kind == Kind::MapRegions) a.y = corner.y + ImPlot::GetPlotSize().y - 18.0f - line * static_cast<float>(lines.size());
         dl->AddRectFilled(a, ImVec2(a.x + wide + 16.0f, a.y + line * static_cast<float>(lines.size()) + 8.0f),
                           ui::ToU32(ui::WithAlpha(t.plot_bg, 0.88f)), 6.0f);
         for (size_t i = 0; i < lines.size(); ++i)
@@ -1271,11 +1368,198 @@ void PlotView::DrawPlot(ImVec2 size) {
             lo = std::log1p(std::max(0.0, lo));
             hi = std::log1p(std::max(0.0, hi));
         }
+        const bool log10 = kind == Kind::MapRegions && p.spec.log_colour;
+        if (log10) {
+            lo = std::log10(p.grid_lo);
+            hi = std::log10(p.grid_hi);
+        }
         ImGui::SameLine();
-        const char* scale_label = log ? "log(1 + count)##scale" : kind == Kind::Quiver ? "length##scale" : kind == Kind::Stream ? "speed##scale" : "##scale";
+        const char* scale_label = log ? "log(1 + count)##scale" : log10 ? "log10##scale" : kind == Kind::Quiver ? "length##scale" : kind == Kind::Stream ? "speed##scale" : "##scale";
         ImPlot::ColormapScale(scale_label, lo, hi, ImVec2(60, plot_size.y), "%g", 0,
                               p.grid_diverging ? DivergingColormap() : SequentialColormap());
     }
+}
+
+// Sankey: steps left to right, a node per category, bands between them.
+void PlotView::DrawSankey() {
+    const Prepared& p = data_;
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImDrawList* dl = ImPlot::GetPlotDrawList();
+    const ImVec2 pp = ImPlot::GetPlotPos(), ps = ImPlot::GetPlotSize();
+    const float line = ImGui::GetTextLineHeight(), node_w = 12.0f, pad = 8.0f;
+    const size_t steps = p.sankey_steps.size();
+    if (steps < 2) return;
+    // Room for the labels of the last step.
+    float label_w = 0;
+    for (const auto& nd : p.sankey_nodes)
+        if (static_cast<size_t>(nd.step) + 1 == steps)
+            label_w = std::max(label_w, ImGui::CalcTextSize((nd.name + "  " + Thousands(static_cast<long long>(std::llround(nd.value)))).c_str()).x);
+    label_w = std::min(label_w + 10.0f, ps.x * 0.3f);
+    const float top = pp.y + line + 10.0f, h = ps.y - (line + 10.0f) - pad;
+    const auto sx = [&](int step) { return pp.x + pad + static_cast<float>(step) / static_cast<float>(steps - 1) * (ps.x - 2 * pad - node_w - label_w); };
+    const auto sy = [&](double y) { return top + static_cast<float>(y) * h; };
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const bool hovered = ImPlot::IsPlotHovered();
+    hot_node_ = hot_link_ = -1;
+    for (size_t i = 0; i < p.sankey_nodes.size() && hovered; ++i) {
+        const auto& nd = p.sankey_nodes[i];
+        const float x = sx(nd.step);
+        if (mouse.x >= x - 2 && mouse.x <= x + node_w + 2 && mouse.y >= sy(nd.y0) && mouse.y <= std::max(sy(nd.y1), sy(nd.y0) + 2)) hot_node_ = static_cast<int>(i);
+    }
+    // First node of each step: band colours by the source's place in its step.
+    std::vector<int> first(steps, -1);
+    for (size_t i = 0; i < p.sankey_nodes.size(); ++i)
+        if (first[static_cast<size_t>(p.sankey_nodes[i].step)] < 0) first[static_cast<size_t>(p.sankey_nodes[i].step)] = static_cast<int>(i);
+    for (size_t li = 0; li < p.sankey_links.size(); ++li) {
+        const auto& l = p.sankey_links[li];
+        const auto& a = p.sankey_nodes[static_cast<size_t>(l.from)];
+        const auto& b = p.sankey_nodes[static_cast<size_t>(l.to)];
+        const float x0 = sx(a.step) + node_w, x1 = sx(b.step), y0 = sy(l.y_from), y1 = sy(l.y_to);
+        const float th = std::max(1.0f, static_cast<float>(l.thickness) * h);
+        if (hovered && hot_node_ < 0 && mouse.x > x0 && mouse.x < x1) {
+            const float e = BandEdgeY(x0, y0, x1, y1, mouse.x);
+            if (mouse.y >= e && mouse.y <= e + th) hot_link_ = static_cast<int>(li);
+        }
+        const size_t colour = a.step == 0 ? static_cast<size_t>(l.from) : static_cast<size_t>(l.from - first[static_cast<size_t>(a.step)]) + 3;
+        const bool hot = hot_link_ == static_cast<int>(li) || hot_node_ == l.from || hot_node_ == l.to;
+        const float mx = (x0 + x1) * 0.5f;
+        dl->PathLineTo(ImVec2(x0, y0));
+        dl->PathBezierCubicCurveTo(ImVec2(mx, y0), ImVec2(mx, y1), ImVec2(x1, y1), 24);
+        dl->PathLineTo(ImVec2(x1, y1 + th));
+        dl->PathBezierCubicCurveTo(ImVec2(mx, y1 + th), ImVec2(mx, y0 + th), ImVec2(x0, y0 + th), 24);
+        dl->PathFillConcave(ui::ToU32(ui::WithAlpha(SeriesColour(colour), hot ? 0.62f : 0.32f)));
+    }
+    std::vector<float> label_floor(steps, -FLT_MAX);  // the bottom of the last label drawn per step
+    for (size_t i = 0; i < p.sankey_nodes.size(); ++i) {
+        const auto& nd = p.sankey_nodes[i];
+        const float x = sx(nd.step), y0 = sy(nd.y0), y1 = std::max(sy(nd.y1), y0 + 1.0f);
+        dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + node_w, y1), ui::ToU32(hot_node_ == static_cast<int>(i) ? t.text_bright : t.text), 2.0f);
+        const ImVec2 at(x + node_w + 5.0f, (y0 + y1) * 0.5f - line * 0.5f);
+        float& floor = label_floor[static_cast<size_t>(nd.step)];
+        if (at.y < floor + 1.0f) continue;  // would overlap the label above (hover shows it)
+        floor = at.y + line;
+        const std::string value = Thousands(static_cast<long long>(std::llround(nd.value)));
+        const float name_w = ImGui::CalcTextSize(nd.name.c_str()).x, value_w = ImGui::CalcTextSize(value.c_str()).x;
+        dl->AddRectFilled(ImVec2(at.x - 3.0f, at.y - 1.0f), ImVec2(at.x + name_w + 6.0f + value_w + 3.0f, at.y + line + 1.0f),
+                          ui::ToU32(ui::WithAlpha(t.plot_bg, 0.72f)), 3.0f);
+        dl->AddText(at, ui::ToU32(t.text_bright), nd.name.c_str());
+        dl->AddText(ImVec2(at.x + name_w + 6.0f, at.y), ui::ToU32(t.text_dim), value.c_str());
+    }
+    for (size_t k = 0; k < steps; ++k)
+        dl->AddText(ImVec2(sx(static_cast<int>(k)), pp.y + 4.0f), ui::ToU32(t.text_dim), p.sankey_steps[k].c_str());
+}
+
+// Treemap: nested rectangles; click a group to zoom into it, right-click or
+// the path at the top to go back.
+void PlotView::DrawTreemap() {
+    const Prepared& p = data_;
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImDrawList* dl = ImPlot::GetPlotDrawList();
+    const ImVec2 pp = ImPlot::GetPlotPos(), ps = ImPlot::GetPlotSize();
+    const float line = ImGui::GetTextLineHeight();
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const bool hovered = ImPlot::IsPlotHovered();
+    // The path zoomed into: "All > Asia", each part clickable.
+    float crumb_h = 0;
+    if (!tree_zoom_.empty()) {
+        crumb_h = line + 8.0f;
+        float x = pp.x + 6.0f;
+        for (size_t k = 0; k <= tree_zoom_.size(); ++k) {
+            const std::string part = k == 0 ? std::string("All") : tree_zoom_[k - 1];
+            const ImVec2 sz = ImGui::CalcTextSize(part.c_str());
+            const bool last = k == tree_zoom_.size();
+            const bool over = hovered && !last && mouse.x >= x && mouse.x <= x + sz.x && mouse.y >= pp.y + 4 && mouse.y <= pp.y + 4 + sz.y;
+            dl->AddText(ImVec2(x, pp.y + 4.0f), ui::ToU32(last ? t.text_bright : over ? t.accent_text : t.text_dim), part.c_str());
+            if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                tree_zoom_.resize(k);
+                return;
+            }
+            x += sz.x;
+            if (!last) {
+                dl->AddText(ImVec2(x + 4.0f, pp.y + 4.0f), ui::ToU32(t.text_faint), ">");
+                x += ImGui::CalcTextSize(">").x + 8.0f;
+            }
+        }
+    }
+    const float header = line + 6.0f;
+    tree_rects_ = TreemapLayout(p, tree_zoom_, ps.x - 2.0f, ps.y - crumb_h - 2.0f, header);
+    for (auto& r : tree_rects_) {
+        r.x += pp.x + 1.0;
+        r.y += pp.y + crumb_h + 1.0;
+    }
+    hot_rect_ = -1;
+    for (size_t i = 0; i < tree_rects_.size() && hovered; ++i) {
+        const auto& r = tree_rects_[i];
+        if (mouse.x >= r.x && mouse.x < r.x + r.w && mouse.y >= r.y && mouse.y < r.y + r.h) hot_rect_ = static_cast<int>(i);  // deepest wins
+    }
+    const ImVec4 group_fill = ui::Mix(t.plot_bg, t.text_dim, 0.14f);
+    for (size_t i = 0; i < tree_rects_.size(); ++i) {
+        const auto& r = tree_rects_[i];
+        const ImVec2 a(static_cast<float>(r.x), static_cast<float>(r.y)), b(static_cast<float>(r.x + r.w), static_cast<float>(r.y + r.h));
+        if (!r.leaf) {
+            dl->AddRectFilled(a, b, ui::ToU32(group_fill), 3.0f);
+            if (r.h > header * 2.6 && r.w > header * 3.0) {
+                const std::string text = r.path.back() + "  " + Thousands(static_cast<long long>(std::llround(r.size)));
+                dl->PushClipRect(a, b, true);
+                dl->AddText(ImVec2(a.x + 5.0f, a.y + 3.0f), ui::ToU32(t.text_bright), r.path.back().c_str());
+                dl->AddText(ImVec2(a.x + 5.0f + ImGui::CalcTextSize(r.path.back().c_str()).x + 8.0f, a.y + 3.0f), ui::ToU32(t.text_dim),
+                            Thousands(static_cast<long long>(std::llround(r.size))).c_str());
+                dl->PopClipRect();
+            }
+            continue;
+        }
+        ImVec4 fill = p.colour_scale ? ScaleColourOf(p, r.colour) : SeriesColour(static_cast<size_t>(r.top));
+        if (hot_rect_ == static_cast<int>(i)) fill = ui::Mix(fill, t.text_bright, 0.18f);
+        dl->AddRectFilled(ImVec2(a.x + 0.5f, a.y + 0.5f), ImVec2(b.x - 0.5f, b.y - 0.5f), ui::ToU32(fill), 2.0f);
+        if (r.w > 40 && r.h > line + 6) {
+            dl->PushClipRect(a, b, true);
+            dl->AddText(ImVec2(a.x + 4.0f, a.y + 3.0f), InkOn(fill), r.path.back().c_str());
+            if (r.h > line * 2 + 8)
+                dl->AddText(ImVec2(a.x + 4.0f, a.y + 3.0f + line), InkOn(fill), Thousands(static_cast<long long>(std::llround(r.size))).c_str());
+            dl->PopClipRect();
+        }
+    }
+    // Click: zoom into the group under the mouse; right-click: back one level.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hot_rect_ >= 0) {
+        const auto& r = tree_rects_[static_cast<size_t>(hot_rect_)];
+        std::vector<std::string> target = r.path;
+        if (r.leaf) target.pop_back();
+        if (target.size() > tree_zoom_.size() && target.size() < p.tree_levels.size()) tree_zoom_ = target;
+        else if (r.leaf && r.path.size() > tree_zoom_.size() + 1 && r.path.size() >= 2) tree_zoom_.assign(r.path.begin(), r.path.begin() + static_cast<std::ptrdiff_t>(tree_zoom_.size()) + 1);
+    }
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !tree_zoom_.empty()) tree_zoom_.pop_back();
+}
+
+// Maps: the countries (regions coloured by their value), separated by thin
+// gaps in the plot colour.
+void PlotView::DrawWorld(bool regions) {
+    const Prepared& p = data_;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto& countries = WorldCountries();
+    ImDrawList* dl = ImPlot::GetPlotDrawList();
+    const ImPlotRect lim = ImPlot::GetPlotLimits();
+    const ImVec4 land = ui::Mix(t.plot_bg, t.text_dim, 0.32f);
+    const ImPlotPoint m = ImPlot::GetPlotMousePos();
+    hot_country_ = regions && ImPlot::IsPlotHovered() ? CountryAt(m.x, m.y) : -1;
+    std::vector<ImVec2> pts;
+    ImPlot::PushPlotClipRect();
+    // The sea: the world's extent a shade off the plot colour.
+    dl->AddRectFilled(ImPlot::PlotToPixels(-180, 90), ImPlot::PlotToPixels(180, -90), ui::ToU32(ui::Mix(t.plot_bg, t.text_dim, 0.07f)));
+    for (size_t i = 0; i < countries.size(); ++i) {
+        const Country& c = countries[i];
+        if (c.lon_max < lim.X.Min || c.lon_min > lim.X.Max || c.lat_max < lim.Y.Min || c.lat_min > lim.Y.Max) continue;
+        ImVec4 fill = land;
+        if (regions && i < p.region_value.size() && std::isfinite(p.region_value[i])) fill = RegionColourOf(p, p.region_value[i]);
+        for (const auto& ring : c.rings) {
+            pts.clear();
+            for (size_t k = 0; k + 1 < ring.size(); k += 2) pts.push_back(ImPlot::PlotToPixels(ring[k], ring[k + 1]));
+            if (pts.size() < 3) continue;
+            dl->AddConcavePolyFilled(pts.data(), static_cast<int>(pts.size()), ui::ToU32(fill));
+            const bool hot = static_cast<int>(i) == hot_country_;
+            dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), ui::ToU32(hot ? t.text_bright : t.plot_bg), ImDrawFlags_Closed, hot ? 1.6f : 0.8f);
+        }
+    }
+    ImPlot::PopPlotClipRect();
 }
 
 void PlotView::DrawHover() {
@@ -1631,6 +1915,89 @@ void PlotView::DrawHover() {
             if (k < sr.low.size() && sr.low[k] > 0) v += " \xC2\xB1 " + Value(sr.low[k]);
             TooltipRow(ColourOf(0), sr.label, v);
             TooltipRow(ColourOf(0), "rank", std::to_string(k + 1) + " of " + std::to_string(sr.y.size()));
+            break;
+        }
+        case Kind::Sankey: {
+            const auto value_text = [&](double v, double of) {
+                char share[32];
+                std::snprintf(share, sizeof(share), "  (%.1f%%)", of > 0 ? 100.0 * v / of : 0.0);
+                return Thousands(static_cast<long long>(std::llround(v))) + share;
+            };
+            const std::string what = p.spec.value_column.empty() ? "rows" : p.spec.value_column;
+            if (hot_node_ >= 0) {
+                const auto& nd = p.sankey_nodes[static_cast<size_t>(hot_node_)];
+                begin(p.sankey_steps[static_cast<size_t>(nd.step)] + ": " + nd.name);
+                TooltipRow(t.text, what, value_text(nd.value, p.sankey_total));
+            } else if (hot_link_ >= 0) {
+                const auto& l = p.sankey_links[static_cast<size_t>(hot_link_)];
+                const auto& a = p.sankey_nodes[static_cast<size_t>(l.from)];
+                const auto& b = p.sankey_nodes[static_cast<size_t>(l.to)];
+                begin(a.name + " > " + b.name);
+                TooltipRow(t.text, what, value_text(l.value, a.value));
+                TooltipRow(t.text, "", "of " + a.name + " (" + p.sankey_steps[static_cast<size_t>(a.step)] + ")");
+            }
+            break;
+        }
+        case Kind::Treemap: {
+            if (hot_rect_ < 0 || static_cast<size_t>(hot_rect_) >= tree_rects_.size()) break;
+            const auto& r = tree_rects_[static_cast<size_t>(hot_rect_)];
+            std::string path;
+            for (const auto& part : r.path) path += (path.empty() ? "" : " > ") + part;
+            begin(path);
+            double total = 0;
+            for (const auto& q : tree_rects_)
+                if (q.depth == 0) total += q.size;
+            char share[32];
+            std::snprintf(share, sizeof(share), "  (%.1f%%)", total > 0 ? 100.0 * r.size / total : 0.0);
+            const ImVec4 c = p.colour_scale && r.leaf ? ScaleColourOf(p, r.colour) : SeriesColour(static_cast<size_t>(r.top));
+            TooltipRow(c, p.spec.value_column.empty() ? std::string("rows") : p.spec.value_column,
+                       Thousands(static_cast<long long>(std::llround(r.size))) + share);
+            if (p.colour_scale && r.leaf) TooltipRow(c, "mean of " + p.colour_label, std::isfinite(r.colour) ? Value(r.colour) : std::string("missing"));
+            if (!r.leaf) ImGui::TextColored(t.text_dim, "Click to zoom in");
+            else if (!tree_zoom_.empty()) ImGui::TextColored(t.text_dim, "Right-click to go back");
+            break;
+        }
+        case Kind::MapPoints: {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            float best = 144.0f;
+            size_t bs = 0, bk = 0;
+            bool found = false;
+            for (size_t i = 0; i < p.series.size(); ++i)
+                for (size_t k = 0; k < p.series[i].x.size(); ++k) {
+                    const ImVec2 q = ImPlot::PlotToPixels(p.series[i].x[k], p.series[i].y[k]);
+                    const float d = (q.x - mouse.x) * (q.x - mouse.x) + (q.y - mouse.y) * (q.y - mouse.y);
+                    if (d < best) {
+                        best = d;
+                        bs = i;
+                        bk = k;
+                        found = true;
+                    }
+                }
+            if (!found) break;
+            const auto& sr = p.series[bs];
+            begin(p.series.size() > 1 ? sr.label : Value(sr.y[bk]) + ", " + Value(sr.x[bk]));
+            const ImVec4 c = p.colour_scale ? ScaleColourOf(p, bk < sr.c.size() ? sr.c[bk] : NAN) : ColourOf(bs);
+            TooltipRow(c, XLabel(p), Value(sr.x[bk]));
+            TooltipRow(c, YLabel(p), Value(sr.y[bk]));
+            if (bk < sr.z.size()) TooltipRow(c, p.size_label, std::isfinite(sr.z[bk]) ? Value(sr.z[bk]) : std::string("missing"));
+            if (p.colour_scale && bk < sr.c.size()) TooltipRow(c, p.colour_label, std::isfinite(sr.c[bk]) ? Value(sr.c[bk]) : std::string("missing"));
+            const int country = CountryAt(sr.x[bk], sr.y[bk]);
+            if (country >= 0) ImGui::TextColored(t.text_dim, "%s", WorldCountries()[static_cast<size_t>(country)].name.c_str());
+            break;
+        }
+        case Kind::MapRegions: {
+            if (hot_country_ < 0) break;
+            const size_t i = static_cast<size_t>(hot_country_);
+            const Country& c = WorldCountries()[i];
+            begin(c.name + (c.iso_a3.empty() ? std::string() : " (" + c.iso_a3 + ")"));
+            if (i < p.region_value.size() && std::isfinite(p.region_value[i])) {
+                const std::string what = (p.spec.region_agg == PlotSpec::RegionAgg::Mean ? "mean of " : "") +
+                                         (p.spec.y_columns.empty() ? std::string("value") : p.spec.y_columns.front());
+                TooltipRow(RegionColourOf(p, p.region_value[i]), what, Value(p.region_value[i]));
+                TooltipRow(RegionColourOf(p, p.region_value[i]), "rows", Thousands(static_cast<long long>(p.region_rows[i])));
+            } else {
+                ImGui::TextColored(t.text_dim, "No rows name this country.");
+            }
             break;
         }
         case Kind::Contour:

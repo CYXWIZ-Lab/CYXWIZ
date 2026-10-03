@@ -192,6 +192,13 @@ void PrepareLines(Prepared& p, const Source& src, const SourceColumn* xcol, cons
     else p.label = {DataLabel::State::Exact, total, total};
 }
 
+// A two-sided colour scale (centred on 0) when the values lie well on both
+// sides of 0: the smaller side at least a tenth of the larger. A few values
+// just below 0 (earthquakes 3 km above sea level) keep the one-sided scale.
+bool TwoSided(double lo, double hi) {
+    return lo < 0.0 && hi > 0.0 && std::min(-lo, hi) >= 0.1 * std::max(-lo, hi);
+}
+
 void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<const SourceColumn*>& ys,
                     const Groups& groups, const SourceColumn* scale, const SourceColumn* size = nullptr) {
     const auto colour_at = [&](size_t r) { return scale && r < scale->numbers.size() ? scale->numbers[r] : NAN; };
@@ -251,7 +258,7 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
         p.colour_label = scale->name;
         p.colour_min = st.min;
         p.colour_max = st.max > st.min ? st.max : st.min + 1.0;
-        if (st.count > 0 && st.min < 0.0 && st.max > 0.0) {
+        if (st.count > 0 && TwoSided(st.min, st.max)) {
             const double m = std::max(-st.min, st.max);
             p.colour_diverging = true;
             p.colour_min = -m;
@@ -1981,7 +1988,7 @@ void PrepareTreemap(Prepared& p, const std::vector<const SourceColumn*>& groups,
         p.colour_scale = true;
         p.colour_label = colour->name;
         if (p.colour_max <= p.colour_min) p.colour_max = p.colour_min + 1.0;
-        if (!first && p.colour_min < 0.0 && p.colour_max > 0.0) {
+        if (!first && TwoSided(p.colour_min, p.colour_max)) {
             const double m = std::max(-p.colour_min, p.colour_max);
             p.colour_diverging = true;
             p.colour_min = -m;
@@ -2322,7 +2329,11 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
             if (p.spec.x_label.empty()) p.spec.x_label = "longitude";
             if (p.spec.y_label.empty()) p.spec.y_label = "latitude";
             break;
-        case Kind::MapRegions: PrepareRegions(p, xcol, ys.front()); break;
+        case Kind::MapRegions:
+            PrepareRegions(p, xcol, ys.front());
+            if (p.spec.x_label.empty()) p.spec.x_label = "longitude";
+            if (p.spec.y_label.empty()) p.spec.y_label = "latitude";
+            break;
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;

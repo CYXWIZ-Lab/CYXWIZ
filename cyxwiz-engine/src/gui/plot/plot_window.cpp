@@ -28,7 +28,7 @@ namespace {
 
 bool NumericX(Kind k) {
     return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap && k != Kind::Confusion && k != Kind::Roc &&
-           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance;
+           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance && k != Kind::MapRegions;
 }
 
 std::string DefaultTitle(const PlotSpec& s) {
@@ -525,7 +525,8 @@ void PlotWindow::DrawSettings() {
     // Y: several (one series each) or one.
     if ((k.required | k.optional) & kEncY) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
-        const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion;
+        const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion && spec_.kind != Kind::Sankey &&
+                                  spec_.kind != Kind::Treemap;
         if (k.multi_y) {
             changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
             if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin &&
@@ -545,8 +546,11 @@ void PlotWindow::DrawSettings() {
         }
     }
     if (k.optional & kEncColor) {
-        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)" : "Colour by");
-        changed |= picker_.Pick("##colour", spec_.color_column, columns_, false, "(none)", w);
+        const bool treemap = spec_.kind == Kind::Treemap;
+        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)"
+                                             : treemap                ? "Colour (a number; empty: by the top group)"
+                                                                      : "Colour by");
+        changed |= picker_.Pick("##colour", spec_.color_column, columns_, treemap, treemap ? "(top group)" : "(none)", w);
         // A number column on a scatter: groups or a colour scale.
         const int c = ColumnIndex(spec_.color_column);
         if (spec_.kind == Kind::Scatter && c >= 0 && numeric_[static_cast<size_t>(c)]) {
@@ -560,7 +564,7 @@ void PlotWindow::DrawSettings() {
     }
     if (k.optional & kEncValue) {
         ImGui::TextColored(t.text_dim, "%s", k.value_hint);
-        changed |= picker_.Pick("##value", spec_.value_column, columns_, true, "(count rows)", w);
+        changed |= picker_.Pick("##value", spec_.value_column, columns_, true, spec_.kind == Kind::MapPoints ? "(one size)" : "(count rows)", w);
     }
     if (spec_.x_column != x_before) spec_.x_label.clear();
     if (spec_.y_columns != y_before) spec_.y_label.clear();
@@ -805,6 +809,46 @@ void PlotWindow::DrawSettings() {
             changed = true;
         }
     }
+    // P2b group 5 options (board 12).
+    if (spec_.kind == Kind::Sankey) {
+        ImGui::TextColored(t.text_dim, "Largest per step (the rest as other)");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##sankey_top", &spec_.sankey_top, 0, 0)) {
+            spec_.sankey_top = std::clamp(spec_.sankey_top, 1, 50);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Treemap) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Click a group to zoom into it; right-click or the path at the top goes back.");
+        ImGui::PopTextWrapPos();
+    }
+    if (spec_.kind == Kind::MapRegions) {
+        ImGui::TextColored(t.text_dim, "Several rows for one country");
+        static const char* const kAgg[] = {"Sum", "Mean"};
+        int agg = static_cast<int>(spec_.region_agg);
+        if (ui::SegmentedControl("##region_agg", kAgg, 2, &agg)) {
+            spec_.region_agg = static_cast<PlotSpec::RegionAgg>(agg);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Colour by the log of the value", &spec_.log_colour);
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && !d.unmatched.empty()) {
+            std::string names;
+            for (size_t i = 0; i < d.unmatched.size() && i < 8; ++i)
+                names += (i ? ", " : "") + d.unmatched[i].first + " (" + Thousands(static_cast<long long>(d.unmatched[i].second)) + ")";
+            if (d.unmatched.size() > 8) names += ", ...";
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.warning, "%zu %s not matched: %s", d.unmatched.size(), d.unmatched.size() == 1 ? "name" : "names", names.c_str());
+            ImGui::TextColored(t.text_faint, "Use a country name or its ISO code (FRA or FR). The CSV export lists every name.");
+            ImGui::PopTextWrapPos();
+        }
+    }
+    if (spec_.kind == Kind::MapPoints) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Built-in world map (Natural Earth country outlines, offline). Fit zooms to the points.");
+        ImGui::PopTextWrapPos();
+    }
     if (spec_.kind == Kind::Histogram) {
         changed |= ImGui::Checkbox("Show median", &spec_.show_median);
         changed |= ImGui::Checkbox("Show mean", &spec_.show_mean);
@@ -878,7 +922,8 @@ void PlotWindow::DrawSettings() {
                           spec_.kind == Kind::Polar || spec_.kind == Kind::Quiver || spec_.kind == Kind::Stream ||
                           spec_.kind == Kind::Image || spec_.kind == Kind::PairPlot || spec_.kind == Kind::Parallel ||
                           spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
-                          Info(spec_.kind).group == Group::ModelResults ||
+                          Info(spec_.kind).group == Group::ModelResults || Info(spec_.kind).group == Group::FlowsHierarchies ||
+                          Info(spec_.kind).group == Group::Maps ||
                           (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&
                             spec_.kind != Kind::Histogram2D && !new_kind && view_.HasData() && view_.Data().problem.empty();

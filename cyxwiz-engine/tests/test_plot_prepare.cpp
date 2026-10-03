@@ -265,6 +265,16 @@ int main() {
     PlotSpec scale_spec = Spec(Kind::Scatter, "class", {"v"}, "v");
     p = Prepare(scale_spec, rs);
     Check(p.colour_scale && !p.colour_diverging && p.colour_min == 0 && p.colour_max == 99, "0..99: one-sided scale");
+    {
+        Source few;
+        few.columns.push_back(Numbers("x", {0, 1, 2, 3}));
+        few.columns.push_back(Numbers("y", {0, 1, 2, 3}));
+        few.columns.push_back(Numbers("depth", {-3, 10, 300, 600}));
+        PlotSpec fs = Spec(Kind::Scatter, "x", {"y"}, "depth");
+        fs.color_mode = ColourMode::Scale;
+        p = Prepare(fs, few);
+        Check(p.colour_scale && !p.colour_diverging && p.colour_min == -3 && p.colour_max == 600, "a few values just below 0: one-sided scale");
+    }
 
     // Evaluation tables (P2 presets): a Confusion Matrix node's long table
     // opens as a heatmap of actual by predicted with its counts, labels in
