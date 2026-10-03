@@ -38,6 +38,8 @@ class LiveGraphCompile;
 
 namespace cyxwiz::dashboard {
 class DashboardWindow;
+struct DashboardTarget;
+struct WidgetSpec;
 }
 namespace cyxwiz::plot {
 class PlotNodeLane;
@@ -276,6 +278,12 @@ public:
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
+    // whether each shows `dataset`; the Data Input a new one would read; the add
+    // itself is applied in the editor's next frame (node 0: a new Dashboard node).
+    std::vector<cyxwiz::dashboard::DashboardTarget> DashboardTargets(const std::string& dataset);
+    std::string DashboardSourceFor(const std::string& dataset) const;
+    void QueueDashboardWidget(int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget);
     // A dashboard's "Open in Data Studio" / "Open in Query tab": dataset and SQL.
     void SetOpenDataStudioQueryCallback(std::function<void(const std::string&, const std::string&)> cb) { open_data_studio_query_ = std::move(cb); }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
@@ -1009,6 +1017,15 @@ private:
     std::function<void(const std::string&)> open_data_studio_profile_;
     std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
     void OpenDashboardNode(int node_id);
+    // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.
+    int DataInputOf(const std::string& dataset) const;
+    struct PendingDashboardWidget {
+        int node_id = 0;
+        std::string dataset;
+        std::shared_ptr<cyxwiz::dashboard::WidgetSpec> widget;
+    };
+    std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
+    void ApplyPendingDashboardWidgets();
     void RenderDashboardWindows();
     std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 

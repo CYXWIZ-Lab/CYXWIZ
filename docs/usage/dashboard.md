@@ -110,6 +110,22 @@ drawn from a reproducible sample of that many rows (the widget says
   SELECT "track_popularity" FROM "Spotify" WHERE CAST("album_type" AS VARCHAR) IN ('single')
   ```
 
+## Widgets from Data Studio
+
+Data Studio's Visualize tab and Query results have **Add to Dashboard**
+(see [Data Studio](data_studio.md)). A plot arrives as an ordinary widget.
+A query arrives as a **query widget**: it runs its SQL over the rows the
+dashboard shows, so the filters apply. For example
+
+```sql
+SELECT album_type, count(*) AS tracks, avg(track_popularity) AS popularity
+FROM Spotify GROUP BY album_type
+```
+
+shows 5,856 / 2,219 / 507 tracks, and only *single* (2,219) when
+album_type = single is filtered. Its settings show the query and **Edit in
+Query tab**; its bars do not set filters (its columns are the query's).
+
 ## When the data changes
 
 - New values or rows: every widget updates; the layout stays.

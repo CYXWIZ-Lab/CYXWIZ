@@ -6,6 +6,7 @@
 #include "../../core/dataset_catalog.h"
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/session_query_service.h"
+#include "../dashboard/dashboard_links.h"
 #include "../editor_fonts.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -139,6 +140,25 @@ void QueryEditor::RenderResult() {
     if (on_open_table && ui::LinkButton("Open in Table Viewer")) on_open_table(DataTableFromArrow(*r.table, "Query result"));
     ImGui::SameLine();
     if (ui::LinkButton("Plot")) OpenPlot();
+    ImGui::SameLine();
+    // Add to Dashboard: a query widget on the picked dataset (board 15).
+    {
+        std::string why;
+        const dashboard::WidgetSpec widget = dashboard::QueryResultWidget(result_sql_, current_dataset_, r.table->schema(), &why);
+        if (ui::LinkButton("Add to Dashboard")) ImGui::OpenPopup("##query_add_to_dashboard");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", why.empty() ? "Adds this query as a widget: it reads the dashboard's rows, so its filters apply."
+                                                : why.c_str());
+        if (ImGui::BeginPopup("##query_add_to_dashboard")) {
+            if (!why.empty()) {
+                ImGui::TextColored(t.warning, "%s", why.c_str());
+            } else {
+                ImGui::TextColored(t.text_dim, "Add \"%s\" (%s) to", widget.title.c_str(), plot::Info(widget.plot.kind).label);
+                if (dashboard::DrawAddToDashboardItems(active_registry_, widget)) save_note_ = "Added to the dashboard as a query widget.";
+            }
+            ImGui::EndPopup();
+        }
+    }
     ImGui::SameLine();
     if (ui::LinkButton("Save as Dataset")) ImGui::OpenPopup("Save query result");
     if (ImGui::BeginPopupModal("Save query result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

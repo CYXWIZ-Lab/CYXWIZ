@@ -8,6 +8,7 @@
 #include "../../core/session_query_service.h"
 #include "../icons.h"
 #include "../plot/plot_view.h"
+#include "dashboard_links.h"
 #include "../plot/plot_window.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
@@ -74,7 +75,21 @@ std::string WidgetTitle(const WidgetSpec& w) {
 
 }  // namespace
 
-DashboardWindow::DashboardWindow(std::string id) : id_(std::move(id)) {}
+DashboardWindow::DashboardWindow(std::string id, Mode mode) : id_(std::move(id)), mode_(mode) {}
+
+void DashboardWindow::Select(const std::string& widget_id) {
+    selected_ = widget_id;
+    focus_ = true;
+    scroll_to_selected_ = true;
+}
+
+void DashboardWindow::RemoveWidget(const std::string& id) {
+    spec_.filters.ClearWidget(id);
+    spec_.widgets.erase(std::remove_if(spec_.widgets.begin(), spec_.widgets.end(), [&](const WidgetSpec& x) { return x.id == id; }),
+                        spec_.widgets.end());
+    views_.erase(id);
+    if (selected_ == id) selected_.clear();
+}
 
 DashboardWindow::~DashboardWindow() {
     if (profile_task_) AsyncTaskManager::Instance().Cancel(profile_task_);
@@ -167,9 +182,12 @@ void DashboardWindow::EnsureProfile() {
             profile_error_.clear();
             profile_ = result;
             RebuildContract();
-            // A new dashboard starts with the automatic layout.
-            if (spec_.widgets.empty()) {
-                spec_.widgets = AutomaticWidgets(*profile_, contract_, spec_);
+            // A new dashboard starts with the automatic layout (before widgets added from Data Studio).
+            if (mode_ == Mode::Dashboard && !spec_.automatic_done) {
+                auto autos = AutomaticWidgets(*profile_, contract_, spec_);
+                autos.insert(autos.end(), spec_.widgets.begin(), spec_.widgets.end());
+                spec_.widgets = std::move(autos);
+                spec_.automatic_done = true;
                 SaveIfChanged();
             }
         },
@@ -194,12 +212,17 @@ void DashboardWindow::SaveIfChanged() {
 }
 
 std::string DashboardWindow::FirstField(FieldNeed need, const std::string& other) const {
-    for (const auto& c : contract_.columns) {
-        if (c.name == other || c.role == ColumnRole::Id || c.role == ColumnRole::Ignore) continue;
-        if (need == FieldNeed::Number && !NumberType(c.type)) continue;
-        if (need == FieldNeed::Category && !(c.role == ColumnRole::Category || (c.role == ColumnRole::Target && !NumberType(c.type)))) continue;
-        return c.name;
-    }
+    const auto fits = [&](const ColumnContract& c) {
+        if (c.name == other || c.role == ColumnRole::Id || c.role == ColumnRole::Ignore) return false;
+        if (need == FieldNeed::Number && !NumberType(c.type)) return false;
+        if (need == FieldNeed::Category && !(c.role == ColumnRole::Category || (c.role == ColumnRole::Target && !NumberType(c.type)))) return false;
+        return true;
+    };
+    // The target first when it fits, then the columns in order.
+    for (const auto& c : contract_.columns)
+        if (c.role == ColumnRole::Target && fits(c)) return c.name;
+    for (const auto& c : contract_.columns)
+        if (fits(c)) return c.name;
     return {};
 }
 
@@ -212,6 +235,7 @@ void DashboardWindow::AddWidget(const std::string& kind_id) {
     w.at = {0, 1000, kind->type == WidgetType::Kpi ? 2 : 4, kind->type == WidgetType::Kpi ? 1 : 3};
     if (kind->type == WidgetType::Plot) {
         w.plot.kind = kind->plot_kind;
+        w.plot.legend = false;  // one series; Colour by turns it on in the Plot window
         const auto& info = plot::Info(kind->plot_kind);
         if (info.required & plot::kEncX) w.plot.x_column = FirstField(kind->x_need);
         if (info.required & plot::kEncY) {
@@ -233,6 +257,10 @@ void DashboardWindow::Render() {
     if (!visible) return;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(1360, 860), ImGuiCond_FirstUseEver);
+    if (focus_) {
+        ImGui::SetNextWindowFocus();
+        focus_ = false;
+    }
     const std::string title = "Dashboard" + (title_.empty() ? std::string() : " \xC2\xB7 " + title_) + "###" + id_;
     if (!ImGui::Begin(title.c_str(), &visible)) {
         ImGui::End();
@@ -248,9 +276,8 @@ void DashboardWindow::Render() {
     EnsureProfile();
     if (profile_) {
         // Roles may have changed in Data Studio or in the graph.
-        static double roles_at = 0;
-        if (ImGui::GetTime() - roles_at > 1.0) {
-            roles_at = ImGui::GetTime();
+        if (ImGui::GetTime() - roles_at_ > 1.0) {
+            roles_at_ = ImGui::GetTime();
             RebuildContract();
         }
         session_.Poll(spec_, contract_, *profile_);
@@ -325,6 +352,7 @@ void DashboardWindow::DrawToolbar() {
         // The automatic widgets first, the hand-made ones after them.
         autos.insert(autos.end(), spec_.widgets.begin(), spec_.widgets.end());
         spec_.widgets = std::move(autos);
+        spec_.automatic_done = true;
         selected_.clear();
         SaveIfChanged();
     }
@@ -472,16 +500,21 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
     const ui::Tokens& t = ui::CurrentTokens();
     const bool selected = w.id == selected_;
     ImGui::PushID(w.id.c_str());
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, selected ? ui::Mix(t.plot_bg, t.accent, 0.10f) : t.plot_bg);
+    if (selected && scroll_to_selected_) {  // a widget just added from Data Studio
+        ImGui::SetScrollHereY(0.0f);
+        scroll_to_selected_ = false;
+    }
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, selected && mode_ == Mode::Dashboard ? ui::Mix(t.plot_bg, t.accent, 0.10f) : t.plot_bg);
     ImGui::BeginChild("##card", ImVec2(width, height), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor();
     const WidgetResult& r = session_.ResultOf(w.id);
     // Header: the title selects the widget; the state at the right.
     {
         ui::FontScope medium(ui::Font::Medium);
-        if (ImGui::Selectable(WidgetTitle(w).c_str(), false, 0, ImVec2(width * 0.6f, 0))) selected_ = selected ? std::string() : w.id;
+        if (mode_ == Mode::Visualize) ImGui::TextUnformatted(WidgetTitle(w).c_str());
+        else if (ImGui::Selectable(WidgetTitle(w).c_str(), false, 0, ImVec2(width * 0.6f, 0))) selected_ = selected ? std::string() : w.id;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to edit this widget");
+    if (mode_ == Mode::Dashboard && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to edit this widget");
     // The state after the title, on its line (the body starts below).
     if (r.state == WidgetResult::State::Running) {
         ImGui::SameLine();
@@ -599,11 +632,13 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                 }
                 view->SetHighlight(picked, lo, hi);
                 plot::PlotView::Options o;
-                o.toolbar = false;
+                o.toolbar = mode_ == Mode::Visualize;  // Visualize: Fit and Export on its one plot
                 o.own_window_button = false;
                 view->Draw(body, o);
                 // A click on a bar, slice or bin filters the other widgets (again: clears).
-                if (auto click = view->TakeClick()) {
+                auto click = view->TakeClick();
+                if (mode_ == Mode::Visualize || w.IsQuery()) click.reset();  // no shared filter here / the query's own columns
+                if (click) {
                     FilterPredicate p;
                     p.field = click->field;
                     p.source_widget = w.id;
@@ -637,7 +672,7 @@ void DashboardWindow::DrawSettings(float width) {
         selected_.clear();
         return;
     }
-    ImGui::TextColored(t.text_dim, "WIDGET");
+    ImGui::TextColored(t.text_dim, mode_ == Mode::Visualize ? "PLOT" : "WIDGET");
     ImGui::SameLine();
     ImGui::TextUnformatted(WidgetTitle(*w).c_str());
     if (title_for_ != w->id) {
@@ -682,6 +717,25 @@ void DashboardWindow::DrawSettings(float width) {
                     if (ImGui::Selectable(k.label.c_str(), k.plot_kind == w->plot.kind)) w->plot.kind = k.plot_kind;
                 }
                 ImGui::EndCombo();
+            }
+            if (w->IsQuery()) {
+                // A query widget: its columns are the query's; the query is edited in Data Studio.
+                std::string cols = w->plot.x_column;
+                for (const auto& y : w->plot.y_columns) cols += (cols.empty() ? "" : ", ") + y;
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_dim, "From a query over the rows shown here (columns %s):", cols.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_window);
+                ImGui::BeginChild("##query", ImVec2(-1, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::PopStyleColor();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(w->query.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndChild();
+                if (ui::SecondaryButton("Edit in Query tab", static_cast<bool>(on_open_query), "Data Studio is not available", ui::ButtonSize::Small))
+                    on_open_query(dataset_, w->query);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens the query in Data Studio; Add to Dashboard from there adds the changed one.");
+                break;
             }
             const WidgetKind& kind = KindOf(*w);
             const auto& info = plot::Info(w->plot.kind);
@@ -761,6 +815,10 @@ void DashboardWindow::DrawSettings(float width) {
         ImGui::SameLine();
         if (ui::SecondaryButton("Copy", true, nullptr, ui::ButtonSize::Small)) ImGui::SetClipboardText(sql.c_str());
     }
+    if (mode_ == Mode::Visualize) {
+        SaveIfChanged();
+        return;
+    }
     // Size and place.
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "SIZE AND PLACE");
@@ -788,17 +846,129 @@ void DashboardWindow::DrawSettings(float width) {
         spec_.widgets[i].at.x = 0;
     }
     ImGui::Spacing();
-    if (ui::DangerButton("Remove widget")) {
-        const std::string id = selected_;
-        spec_.filters.ClearWidget(id);
-        spec_.widgets.erase(std::remove_if(spec_.widgets.begin(), spec_.widgets.end(), [&](const WidgetSpec& x) { return x.id == id; }),
-                            spec_.widgets.end());
-        views_.erase(id);
-        selected_.clear();
-    }
+    if (ui::DangerButton("Remove widget")) RemoveWidget(selected_);
     ImGui::SameLine();
     if (ui::LinkButton("Done")) selected_.clear();
     SaveIfChanged();
+}
+
+void DashboardWindow::RenderEmbedded() {
+    if (editor_) editor_->Render();
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (dataset_.empty() || !message_.empty()) {
+        ImGui::TextColored(t.text_dim, "%s", message_.empty() ? "Pick a dataset above to plot it." : message_.c_str());
+        return;
+    }
+    EnsureProfile();
+    if (profile_) {
+        if (ImGui::GetTime() - roles_at_ > 1.0) {
+            roles_at_ = ImGui::GetTime();
+            RebuildContract();
+        }
+        session_.Poll(spec_, contract_, *profile_);
+    }
+    DrawVisualizeToolbar();
+    if (!profile_) {
+        ImGui::TextColored(profile_error_.empty() ? t.info : t.error, "%s",
+                           profile_error_.empty() ? ICON_FA_SPINNER " Looking at the data (profile in Task View)..." : profile_error_.c_str());
+        return;
+    }
+    if (spec_.widgets.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "No plots yet: New plot offers every plot type; its columns start from the data's roles.");
+        return;
+    }
+    if (!spec_.Find(selected_)) selected_ = spec_.widgets.front().id;
+    const float list_w = 200.0f, settings_w = 270.0f;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float centre_w = ImGui::GetContentRegionAvail().x - list_w - settings_w - 2 * gap;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
+    ImGui::BeginChild("##plots", ImVec2(list_w, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
+    DrawPlotList();
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginChild("##plot", ImVec2(centre_w, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    if (WidgetSpec* w = spec_.Find(selected_)) DrawCard(*w, ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
+    ImGui::BeginChild("##plot_settings", ImVec2(settings_w, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
+    DrawSettings(settings_w);
+    ImGui::EndChild();
+}
+
+void DashboardWindow::DrawVisualizeToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (ui::SecondaryButton(ICON_FA_PLUS " New plot", profile_ != nullptr, "Looking at the data first")) ImGui::OpenPopup("##new_plot");
+    if (ImGui::BeginPopup("##new_plot")) {
+        std::string group;
+        for (const auto& k : WidgetKinds()) {
+            if (k.type != WidgetType::Plot) continue;
+            if (k.group != group) {
+                if (!group.empty()) ImGui::Separator();
+                group = k.group;
+                ImGui::TextColored(t.text_dim, "%s", group.c_str());
+            }
+            if (ImGui::MenuItem(k.label.c_str())) AddWidget(k.id);
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    const WidgetSpec* selected = spec_.Find(selected_);
+    if (ui::SecondaryButton(ICON_FA_TABLE_COLUMNS " Add to Dashboard", selected != nullptr, "Make a plot first")) ImGui::OpenPopup("##add_to_dashboard");
+    if (ImGui::IsItemHovered() && selected) ImGui::SetTooltip("Copies this plot into a dashboard on the same data.");
+    if (ImGui::BeginPopup("##add_to_dashboard")) {
+        if (selected) {
+            ImGui::TextColored(t.text_dim, "Add \"%s\" to", WidgetTitle(*selected).c_str());
+            if (DrawAddToDashboardItems(dataset_, *selected)) {
+                note_ = "Added to the dashboard.";
+                note_until_ = ImGui::GetTime() + 4.0;
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Remove", selected != nullptr, "No plot selected")) RemoveWidget(selected_);
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Clear all", !spec_.widgets.empty(), "No plots")) {
+        spec_.widgets.clear();
+        views_.clear();
+        selected_.clear();
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    const size_t n = spec_.widgets.size();
+    if (!note_.empty() && ImGui::GetTime() < note_until_) ImGui::TextColored(t.text_dim, "%s", note_.c_str());
+    else ImGui::TextColored(t.text_dim, "%zu %s \xC2\xB7 this session", n, n == 1 ? "plot" : "plots");
+    if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_)) {
+        const std::string data = "Data at " + entry->Shown() + " \xC2\xB7 " + Thousands(static_cast<double>(entry->rows)) + " rows";
+        const float w = ImGui::CalcTextSize(data.c_str()).x;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8.0f, ImGui::GetContentRegionMax().x - w));
+        ImGui::TextColored(t.text_faint, "%s", data.c_str());
+    }
+}
+
+void DashboardWindow::DrawPlotList() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TextColored(t.text_dim, "PLOTS");
+    for (const auto& w : spec_.widgets) {
+        ImGui::PushID(w.id.c_str());
+        const bool sel = w.id == selected_;
+        const float line = ImGui::GetTextLineHeight();
+        const ImVec2 at = ImGui::GetCursorPos();
+        if (ImGui::Selectable("##plot", sel, 0, ImVec2(0, line * 2 + 2))) selected_ = w.id;
+        ImGui::SetCursorPos(ImVec2(at.x + 4, at.y));
+        ImGui::TextUnformatted(WidgetTitle(w).c_str());
+        ImGui::SetCursorPos(ImVec2(at.x + 4, at.y + line + 2));
+        ImGui::TextColored(t.text_dim, "%s", KindOf(w).label.c_str());
+        ImGui::PopID();
+    }
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Click a plot to edit it; the list keeps every plot made here.");
+    ImGui::PopTextWrapPos();
 }
 
 void DashboardWindow::OpenInPlotWindow(WidgetSpec& w) {

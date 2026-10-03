@@ -6,6 +6,10 @@
 // filter: clicking a bar, slice or bin filters every other widget. Fields are
 // listed with their roles (edited in Data Studio). The layout and filters are
 // saved in the node (on_spec_changed). UI thread only.
+//
+// Visualize mode (P3.11, board 15): Data Studio's Visualize tab is the same
+// window drawn inside the tab: a list of plots, the selected one large, its
+// settings; no filters or summary; plots live for the session.
 
 #include "../../core/dashboard/dashboard_model.h"
 #include "../../core/dashboard/dashboard_session.h"
@@ -29,7 +33,8 @@ namespace cyxwiz::dashboard {
 
 class DashboardWindow {
 public:
-    explicit DashboardWindow(std::string id);
+    enum class Mode { Dashboard, Visualize };
+    explicit DashboardWindow(std::string id, Mode mode = Mode::Dashboard);
     ~DashboardWindow();
 
     bool visible = false;
@@ -44,6 +49,10 @@ public:
     void SetData(const std::string& dataset_name, const std::string& title);
     void ClearData(const std::string& message);
     void Render();
+    // Visualize mode: draws into the current window (the Data Studio tab).
+    void RenderEmbedded();
+    // Selects a widget (its settings open) and brings the window forward.
+    void Select(const std::string& widget_id);
 
 private:
     void EnsureProfile();
@@ -52,6 +61,9 @@ private:
     void AddWidget(const std::string& kind_id);
     std::string FirstField(FieldNeed need, const std::string& other = {}) const;
     void DrawToolbar();
+    void DrawVisualizeToolbar();
+    void DrawPlotList();
+    void RemoveWidget(const std::string& widget_id);
     void DrawFilters();
     void DrawFields(float width);
     void DrawStrip();
@@ -64,6 +76,10 @@ private:
     void FinishExport();
 
     std::string id_;
+    Mode mode_ = Mode::Dashboard;
+    bool focus_ = false;
+    bool scroll_to_selected_ = false;
+    double roles_at_ = 0;
     std::string title_;
     std::string dataset_;
     std::string message_ = "Not read yet: refresh to read the data at this node.";

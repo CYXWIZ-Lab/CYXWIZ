@@ -61,6 +61,11 @@ rows) and the time. Then:
 - **Plot**: opens the Plot window on the result (a category and a number
   open as bars, two numbers as a scatter, one number as a histogram; change
   the type there).
+- **Add to Dashboard**: the query becomes a widget of a dashboard on the
+  picked dataset (see Visualize below for the menu). The widget runs the
+  query over the dashboard's rows, so its filters apply. A category and a
+  number become bars, two numbers a scatter, one number a histogram. The
+  query has to read the picked dataset.
 - **Save as Dataset**: runs the query again over all rows and saves the
   result under a name; it then appears in the Dataset list and can be named
   in other queries.
@@ -126,5 +131,21 @@ under the details (Spotify: artist_popularity and artist_followers +0.64).
 
 ## Visualize
 
-Visualize still works on the picked dataset as before; it becomes a
-one-chart builder on the same plot types with the Dashboard.
+Quick plots of the picked dataset, with the same plot types, plot view and
+settings as the Dashboard.
+
+- **New plot** lists every plot type, grouped (Basic, Distribution, Grid and
+  density, ...). A new plot starts with fitting columns, the target first
+  (Spotify: a Histogram opens on track_popularity).
+- **PLOTS** on the left lists the plots made here with their types; click
+  one to show and edit it. Each dataset keeps its own list for the session.
+- The plot has its toolbar (Fit, Log Y, Legend, Export as PNG, SVG or CSV).
+- On the right: title, plot type, the columns (with their roles), Colour by,
+  **All settings in the Plot window**, and **View SQL** (the query the plot
+  runs, Open in Query tab, Copy).
+- **Remove** and **Clear all** remove the selected plot or all of them.
+- **Add to Dashboard** copies the plot into a Dashboard node on the same
+  data: the dashboards of the open graph are listed (one on other data is
+  greyed, with the reason), plus **New Dashboard node on Spotify**, which
+  adds a Dashboard connected to the Data Input with the automatic layout
+  and this plot. The dashboard opens with the plot selected.

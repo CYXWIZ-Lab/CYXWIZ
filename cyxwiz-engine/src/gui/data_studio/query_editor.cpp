@@ -36,6 +36,7 @@ void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
     // Queries name the table as people call it (the Data Input node's name).
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_name);
     current_dataset_ = entry ? entry->Shown() : dataset_name;
+    active_registry_ = dataset_name;
     // A fresh editor names the picked dataset.
     if (std::strcmp(query_buffer_, kPlaceholder) == 0 && !dataset_name.empty()) {
         const std::string q = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(current_dataset_) + " LIMIT 100";

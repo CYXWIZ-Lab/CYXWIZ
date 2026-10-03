@@ -144,6 +144,7 @@
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
 #include "data_studio/data_studio_panel.h"
+#include "dashboard/dashboard_links.h"
 #include "../plugin/plugin_manager.h"
 #include "../plugin/plugin_context.h"
 #include "../plugin/registries/plugin_panel_registry.h"
@@ -819,6 +820,13 @@ MainWindow::MainWindow()
         node_editor_->SetOpenDataStudioQueryCallback([this](const std::string& dataset, const std::string& sql) {
             if (data_studio_panel_) data_studio_panel_->ShowQuery(dataset, sql);
         });
+        // Add to Dashboard from Data Studio's Visualize and Query tabs (TOFIX134 P3.11).
+        auto& links = cyxwiz::dashboard::DashboardLinks();
+        links.list = [this](const std::string& dataset) { return node_editor_->DashboardTargets(dataset); };
+        links.new_source = [this](const std::string& dataset) { return node_editor_->DashboardSourceFor(dataset); };
+        links.add = [this](int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget) {
+            node_editor_->QueueDashboardWidget(node_id, dataset, widget);
+        };
     }
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {

@@ -55,7 +55,8 @@ private:
     std::string ExampleTable() const;
 
     char query_buffer_[8192] = {};
-    std::string current_dataset_;
+    std::string current_dataset_;   // as people call it (the examples, Add to Dashboard)
+    std::string active_registry_;   // the picked dataset's catalog name
     std::string last_error_;
     std::string running_sql_;
     uint64_t task_id_ = 0;
