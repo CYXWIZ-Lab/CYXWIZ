@@ -44,6 +44,10 @@ namespace cyxwiz {
 // auto-install or auto-load, configuration locked.
 struct DuckDBConnectorPolicy {
     bool allow_external_access = true;
+    // With external access off: folders DuckDB may still read (the session
+    // query service's own attachment folder and the Parquet cache). User SQL
+    // could read files there too, so only engine-owned folders belong here.
+    std::vector<std::string> allowed_directories;
 };
 
 class DuckDBConnector {
@@ -114,6 +118,10 @@ public:
      * - Date/time functions
      */
     std::shared_ptr<arrow::Table> Query(const std::string& sql);
+
+    // The same with `?` / `$1` parameters bound to values (never pasted into
+    // the text). nullptr on error (GetLastError()).
+    std::shared_ptr<arrow::Table> QueryWithParams(const std::string& sql, std::vector<duckdb::Value> params);
 
     /**
      * Execute SQL query that doesn't return data (CREATE, INSERT, UPDATE, DELETE)

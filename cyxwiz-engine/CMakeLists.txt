@@ -141,6 +141,8 @@ set(ENGINE_SOURCES
     src/core/text_arrow_adapter.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
+    src/core/session_query_engine.cpp
+    src/core/session_query_service.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -1476,6 +1478,20 @@ endif()
 set_target_properties(test_arrow_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Session query engine (TOFIX134 P3.2) =====
+add_executable(test_session_query_engine
+    tests/test_session_query_engine.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+)
+target_include_directories(test_session_query_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_session_query_engine PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_session_query_engine PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_session_query_engine PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME session_query_engine_contract COMMAND test_session_query_engine)
 
 # ===== Test: Sparse Feature Dataset Contract =====
 add_executable(test_sparse_feature_dataset

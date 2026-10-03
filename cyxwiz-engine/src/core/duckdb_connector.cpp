@@ -219,6 +219,7 @@ DuckDBConnector::DuckDBConnector(const DuckDBConnectorPolicy& policy) {
             config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
             config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
             config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
+            for (const auto& dir : policy.allowed_directories) config.options.allowed_directories.insert(dir);
             config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
         }
         db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config);
@@ -438,6 +439,32 @@ std::shared_ptr<arrow::Table> DuckDBConnector::Query(const std::string& sql) {
     } catch (const duckdb::Exception& e) {
         last_error_ = e.what();
         spdlog::error("Query exception: {}", last_error_);
+        return nullptr;
+    }
+}
+
+std::shared_ptr<arrow::Table> DuckDBConnector::QueryWithParams(const std::string& sql, std::vector<duckdb::Value> params) {
+    if (!conn_) {
+        last_error_ = "DuckDB connection not initialized";
+        return nullptr;
+    }
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) {
+            last_error_ = prepared->GetError();
+            return nullptr;
+        }
+        duckdb::vector<duckdb::Value> values(params.begin(), params.end());
+        auto result = prepared->Execute(values, false);
+        if (!result || result->HasError()) {
+            last_error_ = result ? result->GetError() : std::string("no result");
+            return nullptr;
+        }
+        auto table = ResultToArrow(std::move(result));
+        if (!table) last_error_ = "the result could not be converted to a table";
+        return table;
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
         return nullptr;
     }
 }
