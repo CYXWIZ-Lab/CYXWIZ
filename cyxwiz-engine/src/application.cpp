@@ -18,6 +18,7 @@
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
 #include "core/data_registry.h"
+#include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
 #include "core/engine_config.h"
@@ -651,6 +652,14 @@ void CyxWizApp::Update(float delta_time) {
 
     // Process async task completion callbacks
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    // Dataset changes (loaded, replaced, removed) to their subscribers, on this thread.
+    // Each change is logged once (one subscriber for the app's lifetime).
+    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
+        const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
+        spdlog::info("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
+    });
+    (void)catalog_log;
+    cyxwiz::DatasetCatalog::Instance().Pump();
 }
 
 void CyxWizApp::RenderPythonWait() {

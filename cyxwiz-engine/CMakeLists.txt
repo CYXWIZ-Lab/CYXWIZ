@@ -114,6 +114,8 @@ set(ENGINE_SOURCES
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
@@ -1445,6 +1447,8 @@ add_executable(test_arrow_integration
     src/core/duckdb_connector.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
 )
@@ -2807,6 +2811,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -2904,6 +2910,8 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -2998,6 +3006,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -3170,6 +3180,8 @@ add_executable(test_graph_compiler_deferred_nodes
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3282,6 +3294,8 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3324,6 +3338,8 @@ add_executable(test_bert_encoder_contracts
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3365,6 +3381,8 @@ add_executable(test_recurrent_backend_placement
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3713,6 +3731,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/arrow_dataset.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
@@ -3791,6 +3811,8 @@ add_executable(test_text_gui_training_launch
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/sparse_feature_dataset.cpp
     src/core/sparse_feature_dataset_batcher.cpp
@@ -3940,6 +3962,8 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -3994,6 +4018,8 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -4048,6 +4074,8 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -4101,6 +4129,8 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -4155,6 +4185,8 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -4205,6 +4237,8 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
@@ -4284,6 +4318,8 @@ add_executable(cyxwiz-graph-compile-check
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
@@ -4364,6 +4400,8 @@ add_executable(test_compiled_node_presentation
     src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
@@ -4571,6 +4609,8 @@ add_executable(test_data_preview_service
     src/core/data_preview_service.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
@@ -5359,6 +5399,8 @@ add_executable(test_pipeline_materializer_cache
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/sparse_feature_dataset.cpp
     src/core/dataset_base.cpp
@@ -5676,6 +5718,8 @@ add_executable(test_engine_node_parity
     src/core/node_executors/row_count_check_operator.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
 )
 target_include_directories(test_engine_node_parity PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

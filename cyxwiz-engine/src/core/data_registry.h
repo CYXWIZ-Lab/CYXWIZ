@@ -34,6 +34,7 @@ namespace cyxwiz {
 
 // Forward declarations
 class DatasetHandle;
+struct DatasetCatalogItem;
 
 /** Immutable snapshot used by debugger and Properties-panel consumers. */
 struct SparseFeatureDatasetInfo {
@@ -556,6 +557,10 @@ public:
     bool HasDataset(const std::string& name) const;
     std::vector<DatasetInfo> ListDatasets() const;
     std::vector<std::string> GetDatasetNames() const;
+    // Every entry of every map, read under the registry lock (cheap: names,
+    // sizes, identities). The dataset catalog (dataset_catalog.h) builds its
+    // list and change events from this; other code should ask the catalog.
+    std::vector<DatasetCatalogItem> CatalogItems() const;
 
     // Type detection
     static DatasetType DetectType(const std::string& path);

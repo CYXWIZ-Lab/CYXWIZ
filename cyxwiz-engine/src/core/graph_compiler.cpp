@@ -217,6 +217,8 @@ DatasetModality DatasetModalityFromNode(const gui::MLNode& node) {
 DatasetStorageKind DatasetStorageKindFromRegistry(
     const std::string& dataset_name) {
     if (dataset_name.empty()) return DatasetStorageKind::Unknown;
+    // The Engine's dataset catalog decides; a Server Node job's catalog may not.
+    if (auto kind = GraphDatasetStorageKind(dataset_name)) return *kind;
     if (GraphArrowDataset(dataset_name)) {
         return DatasetStorageKind::InMemoryArrow;
     }

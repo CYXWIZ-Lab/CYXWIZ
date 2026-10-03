@@ -6,6 +6,8 @@
 // registry (gui/loaders/data_loader.cpp); hosts without loaders keep the
 // defaults: no dataset is registered, categories carry no loader facts.
 
+#include "dataset_partitions.h"
+
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -58,6 +60,9 @@ struct GraphDatasetCatalog {
     std::function<std::optional<GraphTextDatasetInfo>(const std::string& name)> text_info;
     // The file a tabular dataset was loaded from (source fingerprinting).
     std::function<std::optional<std::string>(const std::string& name)> source_path;
+    // What backs a dataset (the Engine answers from its dataset catalog);
+    // unset: the compiler works it out from the lookups above.
+    std::function<DatasetStorageKind(const std::string& name)> storage_kind;
 };
 
 void SetGraphDatasetCatalog(GraphDatasetCatalog catalog);
@@ -69,5 +74,7 @@ std::shared_ptr<const SparseFeatureDataset> GraphSparseDataset(const std::string
 bool GraphDatasetIsKind(const std::string& name, GraphDatasetKind kind);
 std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& name);
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name);
+// The catalog's answer; nullopt when the installed catalog has no storage_kind.
+std::optional<DatasetStorageKind> GraphDatasetStorageKind(const std::string& name);
 
 }  // namespace cyxwiz

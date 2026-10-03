@@ -318,6 +318,19 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_dataset_catalog
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_catalog.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_catalog.cpp"
+    )
+    set_target_properties(test_dataset_catalog PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_catalog_contract
+        COMMAND test_dataset_catalog
+    )
+
     add_executable(test_python_scan_cache
         "${_cyxwiz_installer_engine_dir}/tests/test_python_scan_cache.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/python_scan_cache.cpp"
