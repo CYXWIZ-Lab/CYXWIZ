@@ -318,6 +318,22 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_dashboard_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+    )
+    target_link_libraries(test_dashboard_model PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dashboard_model PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dashboard_model_contract
+        COMMAND test_dashboard_model
+    )
+
     add_executable(test_dataset_contract
         "${_cyxwiz_installer_engine_dir}/tests/test_dataset_contract.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"

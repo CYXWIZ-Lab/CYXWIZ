@@ -148,6 +148,7 @@ set(ENGINE_SOURCES
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
     src/core/project_column_roles.cpp
+    src/core/dashboard/dashboard_model.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
