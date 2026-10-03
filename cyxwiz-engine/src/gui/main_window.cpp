@@ -816,6 +816,9 @@ MainWindow::MainWindow()
         node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
             if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
         });
+        node_editor_->SetOpenDataStudioQueryCallback([this](const std::string& dataset, const std::string& sql) {
+            if (data_studio_panel_) data_studio_panel_->ShowQuery(dataset, sql);
+        });
     }
     // Query results open in the Table Viewer (TOFIX134 P3.3).
     data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {

@@ -229,6 +229,9 @@ void NodeEditor::OpenDashboardNode(int node_id) {
         window->on_edit_roles = [this](const std::string& dataset) {
             if (open_data_studio_profile_) open_data_studio_profile_(dataset);
         };
+        window->on_open_query = [this](const std::string& dataset, const std::string& sql) {
+            if (open_data_studio_query_) open_data_studio_query_(dataset, sql);
+        };
         dashboard_data_versions_[node_id] = ~0ull;
     }
     window->visible = true;

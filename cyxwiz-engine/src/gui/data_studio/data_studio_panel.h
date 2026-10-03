@@ -90,6 +90,10 @@ public:
         show_profile_ = true;
     }
 
+    // Opens Data Studio's Query tab on a dataset with this SQL in the editor
+    // (a dashboard's "Open in Data Studio" / "Open in Query tab"); it runs.
+    void ShowQuery(const std::string& dataset_name, const std::string& sql);
+
     // Query results open in the Table Viewer through this (MainWindow).
     void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
         if (query_editor_) query_editor_->on_open_table = std::move(cb);
@@ -104,6 +108,7 @@ private:
     // State
     std::string active_dataset_;
     bool show_profile_ = false;  // select the Profile tab (and focus) next frame
+    bool show_query_ = false;    // select the Query tab (and focus) next frame
     int selected_tab_;
     bool visible_;
 

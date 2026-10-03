@@ -276,6 +276,8 @@ public:
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // A dashboard's "Open in Data Studio" / "Open in Query tab": dataset and SQL.
+    void SetOpenDataStudioQueryCallback(std::function<void(const std::string&, const std::string&)> cb) { open_data_studio_query_ = std::move(cb); }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
@@ -1005,6 +1007,7 @@ private:
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;
     std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
     void OpenDashboardNode(int node_id);
     void RenderDashboardWindows();
     std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread

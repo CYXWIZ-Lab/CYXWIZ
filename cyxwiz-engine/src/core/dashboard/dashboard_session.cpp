@@ -156,6 +156,21 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
     }
 }
 
+QueryRequest DashboardSession::RequestFor(const WidgetSpec& w, const DatasetProfile& profile, const FilterState& filters,
+                                         const std::string& table) const {
+    if (w.type == WidgetType::Kpi) return KpiQuery(w, table, filters);
+    if (w.type == WidgetType::Missing) {
+        std::vector<std::string> cols;
+        for (const auto& c : profile.columns) cols.push_back(c.facts.name);
+        std::map<std::string, std::vector<std::string>> texts;
+        if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_))
+            if (const auto* s = ProjectColumnRoles().Find(RoleSourceKey(entry->source_path, entry->Shown()))) texts = s->missing_text;
+        return MissingQuery(w, table, filters, cols, texts);
+    }
+    // Plots read a reproducible sample only when the table is bigger than the cap.
+    return WidgetQuery(w, table, filters, w.type == WidgetType::Plot && profile.rows > kRowCap ? kRowCap : 0);
+}
+
 void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile, const std::string& fingerprint, const FilterState& filters) {
     WidgetSpec w = in;
     // Histogram bins over the column's whole range, so filtered and all rows line up.
@@ -165,21 +180,12 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
                 w.plot.range_lo = c->min;
                 w.plot.range_hi = c->max;
             }
-    QueryRequest request;
-    if (w.type == WidgetType::Kpi) request = KpiQuery(w, dataset_, filters);
-    else if (w.type == WidgetType::Missing) {
-        std::vector<std::string> cols;
-        for (const auto& c : profile.columns) cols.push_back(c.facts.name);
-        std::map<std::string, std::vector<std::string>> texts;
-        if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_))
-            if (const auto* s = ProjectColumnRoles().Find(RoleSourceKey(entry->source_path, entry->Shown()))) texts = s->missing_text;
-        request = MissingQuery(w, dataset_, filters, cols, texts);
-    } else request = WidgetQuery(w, dataset_, filters, w.type == WidgetType::Plot ? kRowCap : 0);
+    QueryRequest request = RequestFor(w, profile, filters, dataset_);
     // The same over all rows (grey behind), when filters apply to this bar or histogram.
     std::vector<QueryParam> unused;
     const bool with_all = w.type == WidgetType::Plot && (w.plot.kind == plot::Kind::Bar || w.plot.kind == plot::Kind::Histogram) &&
                           !filters.WhereFor(w.id, unused).empty();
-    const QueryRequest all_request = with_all ? WidgetQuery(w, dataset_, FilterState{}, kRowCap) : QueryRequest{};
+    const QueryRequest all_request = with_all ? WidgetQuery(w, dataset_, FilterState{}, profile.rows > kRowCap ? kRowCap : 0) : QueryRequest{};
     // The row count decides whether the plot is drawn from a sample.
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
     const bool sampled = w.type == WidgetType::Plot && entry && entry->rows > kRowCap;

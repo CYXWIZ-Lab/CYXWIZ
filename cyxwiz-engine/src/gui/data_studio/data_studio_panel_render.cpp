@@ -44,7 +44,7 @@ void DataStudioPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
     // Opened from elsewhere (a dashboard): bring the panel forward, also when
     // it is a hidden dock tab (its Begin returns false until focused).
-    if (show_profile_) ImGui::SetNextWindowFocus();
+    if (show_profile_ || show_query_) ImGui::SetNextWindowFocus();
     if (ImGui::Begin("Data Studio", &visible_)) {
         RenderToolbar();
         ImGui::Spacing();
@@ -123,7 +123,8 @@ void DataStudioPanel::RenderDatasetSelector() {
 void DataStudioPanel::RenderTabBar() {
     // Unified Canvas Phase 5: Removed Pipeline tab (moved to Node Editor)
     if (ImGui::BeginTabBar("DataStudioTabs")) {
-        if (ImGui::BeginTabItem("Query")) {
+        if (ImGui::BeginTabItem("Query", nullptr, show_query_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+            show_query_ = false;
             if (query_editor_) query_editor_->Render();
             ImGui::EndTabItem();
         }

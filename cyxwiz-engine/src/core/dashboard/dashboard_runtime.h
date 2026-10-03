@@ -45,6 +45,12 @@ QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const Filte
 QueryRequest StripQuery(const std::string& table, const FilterState& filters, const DatasetProfile& profile, const std::string& target,
                         bool target_numeric, const std::map<std::string, std::vector<std::string>>& missing_text = {});
 
+// The query as text to read or run elsewhere (View SQL, the Query tab): the
+// bound values written in as literals (texts quoted, numbers exact).
+std::string InlineParams(const std::string& sql, const std::vector<QueryParam>& params);
+// The dashboard's rows under all its filters, as SQL (Open in Data Studio).
+std::string FilteredRowsSql(const std::string& table, const FilterState& filters);
+
 // The automatic widgets (marked automatic), laid out three across.
 std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const DatasetContract& contract, DashboardSpec& spec);
 

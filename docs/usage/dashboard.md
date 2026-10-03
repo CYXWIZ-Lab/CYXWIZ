@@ -85,8 +85,30 @@ inferred ones.
 - **Re-query** runs every widget's query again.
 
 Widgets read only the columns they need, through the shared query service,
-and plots are prepared in the background; very large tables are drawn from
-a reproducible sample of 1,000,000 rows (the widget says *sampled*).
+and plots are prepared in the background; tables over 1,000,000 rows are
+drawn from a reproducible sample of that many rows (the widget says
+*sampled*).
+
+## Export, SQL and Data Studio
+
+- **Export PNG** (toolbar) saves the summary strip and widgets as they are
+  on screen; scroll first if the widgets you want are below.
+- **Open in Data Studio** (toolbar) opens the Query tab on the rows the
+  dashboard shows, the dataset with the current filters, and runs it:
+
+  ```sql
+  SELECT * FROM "Spotify" WHERE CAST("album_type" AS VARCHAR) IN ('single')
+  ```
+
+  (2,219 rows). From there: Table Viewer, Plot, or Save as Dataset.
+- **View SQL** (a widget's settings) shows the query that widget runs, with
+  the other widgets' filters and the values written in; **Open in Query
+  tab** runs it in Data Studio and **Copy** puts it on the clipboard. For
+  the target histogram under the filter above:
+
+  ```sql
+  SELECT "track_popularity" FROM "Spotify" WHERE CAST("album_type" AS VARCHAR) IN ('single')
+  ```
 
 ## When the data changes
 

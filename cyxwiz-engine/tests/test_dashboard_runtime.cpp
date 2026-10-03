@@ -169,6 +169,23 @@ int main() {
         Check(by_year.WhereFor("other", yp) == "year(TRY_CAST(\"release\" AS DATE)) BETWEEN ? AND ?" && by_year.Text() == "release year 1990 to 1991",
               "year filter: " + by_year.Text());
 
+        // SQL as text (View SQL, Open in Data Studio): values written in, and it runs.
+        {
+            std::vector<QueryParam> ps = {QueryParam::Of(std::string("it's")), QueryParam::Of(2.5), QueryParam::Of(int64_t(7))};
+            Check(InlineParams("SELECT '?' AS \"a?\" WHERE x IN (?) AND y = ? AND z = ?", ps) ==
+                      "SELECT '?' AS \"a?\" WHERE x IN ('it''s') AND y = 2.5 AND z = 7", "inline: quoted ? untouched, quotes doubled");
+            const std::string rows_sql = FilteredRowsSql("Spotify", spec.filters);
+            Check(rows_sql == "SELECT * FROM \"Spotify\" WHERE CAST(\"album_type\" AS VARCHAR) IN ('single')", "filtered rows: " + rows_sql);
+            QueryRequest text;
+            text.sql = rows_sql;
+            r = engine.Run(text);
+            Check(r.ok && r.table->num_rows() == 10, "the filtered rows SQL runs: " + r.error);
+            QueryRequest kq = KpiQuery(kpi, "Spotify", spec.filters);
+            text.sql = InlineParams(kq.sql, kq.params);
+            r = engine.Run(text);
+            Check(r.ok && D(r, "value") == 10, "a KPI's SQL as text runs the same: " + r.error);
+        }
+
         // The summary strip.
         r = engine.Run(StripQuery("Spotify", spec.filters, profile, "track_popularity", true));
         Check(r.ok && D(r, "rows_now") == 10 && D(r, "rows_all") == 30 && D(r, "missing_now") == 0 && std::fabs(D(r, "target_now") - 47.0) < 1e-9 &&
@@ -194,6 +211,6 @@ int main() {
     }
     fs::remove_all(root, ec);
     std::cout << "dashboard runtime: automatic layout, widget / sample / table / KPI / summary SQL through the engine with the "
-                 "cross-filter rule, binding checks with rename candidates and type changes. OK\n";
+                 "cross-filter rule, binding checks with rename candidates and type changes, SQL as text with values written in. OK\n";
     return 0;
 }

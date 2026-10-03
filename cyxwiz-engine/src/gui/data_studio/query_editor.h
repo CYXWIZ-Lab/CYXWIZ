@@ -33,6 +33,9 @@ public:
     // The dataset picked in the Data Studio header: the examples name it.
     void SetActiveDataset(const std::string& dataset_name);
 
+    // Puts this SQL in the editor (it replaces what was there).
+    void SetQuery(const std::string& sql);
+
     // Runs the query in the editor (Ctrl+Enter, Run).
     bool ExecuteQuery();
     void CancelQuery();

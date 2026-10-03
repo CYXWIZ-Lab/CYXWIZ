@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace cyxwiz::dashboard {
 
@@ -102,6 +103,34 @@ void DashboardWindow::SetData(const std::string& dataset_name, const std::string
         views_.clear();
         view_versions_.clear();
     }
+}
+
+std::string DashboardWindow::ShownName() const {
+    const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
+    return entry ? entry->Shown() : dataset_;
+}
+
+void DashboardWindow::FinishExport() {
+    if (!capture_ || !capture_->ready) return;
+    const std::vector<unsigned char> png = std::move(capture_->png);
+    capture_.reset();
+    const plot::ViewHooks& h = plot::Hooks();
+    if (png.empty()) {
+        note_ = "Could not read the dashboard image.";
+    } else if (h.save_path) {
+        std::string name = "dashboard";
+        if (!title_.empty()) name += "_" + title_;
+        for (char& c : name)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
+        if (auto path = h.save_path("Save dashboard as PNG", "png", name + ".png")) {
+            std::ofstream(*path, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+            note_ = "Saved " + *path;
+        } else {
+            note_.clear();
+        }
+    }
+    note_until_ = ImGui::GetTime() + 4.0;
+    spdlog::info("Dashboard '{}': {} ({} bytes of PNG)", id_, note_, png.size());
 }
 
 void DashboardWindow::ClearData(const std::string& message) {
@@ -200,6 +229,7 @@ void DashboardWindow::AddWidget(const std::string& kind_id) {
 
 void DashboardWindow::Render() {
     if (editor_) editor_->Render();
+    FinishExport();
     if (!visible) return;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(1360, 860), ImGuiCond_FirstUseEver);
@@ -249,6 +279,19 @@ void DashboardWindow::Render() {
     ImGui::Spacing();
     DrawGrid(ImGui::GetContentRegionAvail().x);
     ImGui::EndChild();
+    centre_min_ = ImGui::GetItemRectMin();
+    centre_max_ = ImGui::GetItemRectMax();
+    // Export PNG: read the centre (strip and widgets as shown) after the click's frame.
+    if (capture_frame_ > 0 && ImGui::GetFrameCount() >= capture_frame_) {
+        capture_frame_ = 0;
+        auto sink = capture_ = std::make_shared<Capture>();
+        spdlog::info("Dashboard '{}': reading the image ({:.0f} x {:.0f})", id_, centre_max_.x - centre_min_.x, centre_max_.y - centre_min_.y);
+        if (plot::Hooks().capture_png)
+            plot::Hooks().capture_png(centre_min_, centre_max_, [sink](std::vector<unsigned char> png) {
+                sink->png = std::move(png);
+                sink->ready = true;
+            });
+    }
     if (settings_w > 0) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
@@ -290,7 +333,23 @@ void DashboardWindow::DrawToolbar() {
     if (ui::SecondaryButton(ICON_FA_ROTATE " Re-query")) session_.RefreshAll();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs every widget's query again (the data itself is read again with Refresh above).");
     ImGui::SameLine();
-    ImGui::TextColored(t.text_faint, session_.Busy() ? ICON_FA_SPINNER " updating" : "");
+    const plot::ViewHooks& h = plot::Hooks();
+    if (ui::SecondaryButton(ICON_FA_IMAGE " Export PNG", h.capture_png && h.save_path && profile_ && !capture_, "Nothing to export yet")) {
+        capture_frame_ = ImGui::GetFrameCount() + 1;  // after this frame's hover state is gone
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Saves the summary and widgets as shown (scrolled-away widgets are not in the image).");
+    ImGui::SameLine();
+    if (ui::SecondaryButton(ICON_FA_TABLE " Open in Data Studio", static_cast<bool>(on_open_query), "Data Studio is not available")) {
+        on_open_query(dataset_, FilteredRowsSql(ShownName(), spec_.filters));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens the Query tab on these rows: the dataset with the current filters as SQL.");
+    ImGui::SameLine();
+    if (!note_.empty() && ImGui::GetTime() < note_until_) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "%s", note_.c_str());
+    } else {
+        ImGui::TextColored(t.text_faint, session_.Busy() ? ICON_FA_SPINNER " updating" : "");
+    }
 }
 
 void DashboardWindow::DrawFilters() {
@@ -682,6 +741,25 @@ void DashboardWindow::DrawSettings(float width) {
             if (ImGui::InputInt("##rows", &w->rows, 0, 0)) w->rows = std::clamp(w->rows, 1, 10000);
             break;
         }
+    }
+    // The query behind the widget, as text to read or run in Data Studio.
+    ImGui::Spacing();
+    const bool show_sql = sql_for_ == w->id;
+    if (ui::LinkButton(show_sql ? "Hide SQL" : "View SQL")) sql_for_ = show_sql ? std::string() : w->id;
+    if (sql_for_ == w->id && profile_) {
+        const QueryRequest q = session_.RequestFor(*w, *profile_, spec_.filters, ShownName());
+        const std::string sql = InlineParams(q.sql, q.params);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_window);
+        ImGui::BeginChild("##sql", ImVec2(-1, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleColor();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(sql.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+        if (ui::SecondaryButton("Open in Query tab", static_cast<bool>(on_open_query), "Data Studio is not available", ui::ButtonSize::Small))
+            on_open_query(dataset_, sql);
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Copy", true, nullptr, ui::ButtonSize::Small)) ImGui::SetClipboardText(sql.c_str());
     }
     // Size and place.
     ImGui::Spacing();

@@ -15,6 +15,16 @@ DataStudioPanel::DataStudioPanel()
     spdlog::info("[Data Studio] Panel initialized (simplified - pipeline moved to Node Editor)");
 }
 
+void DataStudioPanel::ShowQuery(const std::string& dataset_name, const std::string& sql) {
+    SetActiveDataset(dataset_name);
+    visible_ = true;
+    show_query_ = true;
+    if (query_editor_) {
+        query_editor_->SetQuery(sql);
+        query_editor_->ExecuteQuery();
+    }
+}
+
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     spdlog::info("[Data Studio] Set active dataset: {}", dataset_name);

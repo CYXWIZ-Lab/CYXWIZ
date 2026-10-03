@@ -43,6 +43,11 @@ void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
     }
 }
 
+void QueryEditor::SetQuery(const std::string& sql) {
+    std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", sql.c_str());
+    last_error_ = sql.size() >= sizeof(query_buffer_) ? "The query is too long for the editor; it was cut." : std::string();
+}
+
 std::string QueryEditor::ExampleTable() const {
     if (!current_dataset_.empty()) return current_dataset_;
     const auto names = SessionQueryService::Instance().QueryableNames();

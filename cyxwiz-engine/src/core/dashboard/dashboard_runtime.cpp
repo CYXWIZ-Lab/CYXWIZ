@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace cyxwiz::dashboard {
@@ -77,6 +78,51 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
                     " needs numbers here. A Bar (counts per value) fits it.";
     }
     return b;
+}
+
+std::string InlineParams(const std::string& sql, const std::vector<QueryParam>& params) {
+    const auto literal = [](const QueryParam& p) -> std::string {
+        char buf[64];
+        switch (p.type) {
+            case QueryParam::Type::Null: return "NULL";
+            case QueryParam::Type::Bool: return p.b ? "TRUE" : "FALSE";
+            case QueryParam::Type::Int: return std::to_string(p.i);
+            case QueryParam::Type::Double:
+                if (!std::isfinite(p.d)) return "NULL";
+                std::snprintf(buf, sizeof(buf), "%.17g", p.d);
+                return buf;
+            case QueryParam::Type::Text: {
+                std::string q = "'";
+                for (char c : p.s) q += c == '\'' ? std::string("''") : std::string(1, c);
+                return q + "'";
+            }
+        }
+        return "NULL";
+    };
+    // Replace each ? outside quoted identifiers and strings, in order.
+    std::string out;
+    size_t next = 0;
+    char quote = 0;
+    for (char c : sql) {
+        if (quote) {
+            if (c == quote) quote = 0;
+            out += c;
+        } else if (c == '"' || c == '\'') {
+            quote = c;
+            out += c;
+        } else if (c == '?' && next < params.size()) {
+            out += literal(params[next++]);
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+std::string FilteredRowsSql(const std::string& table, const FilterState& filters) {
+    std::vector<QueryParam> params;
+    const std::string where = filters.WhereFor(std::string(), params);
+    return InlineParams("SELECT * FROM " + Quote(table) + Where(where), params);
 }
 
 QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap) {
