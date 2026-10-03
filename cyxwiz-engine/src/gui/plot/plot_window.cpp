@@ -27,12 +27,14 @@ namespace cyxwiz::plot {
 namespace {
 
 bool NumericX(Kind k) {
-    return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap;
+    return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap && k != Kind::Confusion && k != Kind::Roc &&
+           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance;
 }
 
 std::string DefaultTitle(const PlotSpec& s) {
     const std::string kind = Info(s.kind).label;
     if (s.kind == Kind::Histogram && !s.x_column.empty()) return "Histogram of " + s.x_column;
+    if (Info(s.kind).group == Group::ModelResults) return kind;
     if (!s.y_columns.empty() && !s.x_column.empty()) return s.y_columns.front() + " by " + s.x_column;
     if (!s.y_columns.empty()) return kind + " of " + s.y_columns.front();
     if (!s.x_column.empty()) return kind + " of " + s.x_column;
@@ -523,7 +525,7 @@ void PlotWindow::DrawSettings() {
     // Y: several (one series each) or one.
     if ((k.required | k.optional) & kEncY) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
-        const bool numeric_only = spec_.kind != Kind::Heatmap;
+        const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion;
         if (k.multi_y) {
             changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
             if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin &&
@@ -728,6 +730,81 @@ void PlotWindow::DrawSettings() {
             changed = true;
         }
     }
+    // P2b group 4 options (board 11).
+    if (spec_.kind == Kind::Confusion) {
+        ImGui::TextColored(t.text_dim, "Colour and share by");
+        static const char* const kShow[] = {"Counts", "Share of actual (each row adds to 100%)",
+                                            "Share of predicted (each column adds to 100%)", "Share of all rows"};
+        int show = static_cast<int>(spec_.confusion_show);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##confusion_show", &show, kShow, 4)) {
+            spec_.confusion_show = static_cast<PlotSpec::ConfusionShow>(show);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Roc || spec_.kind == Kind::PrCurve || spec_.kind == Kind::Calibration) {
+        if (positive_for_ != spec_.positive_class) {
+            std::snprintf(positive_buf_, sizeof(positive_buf_), "%s", spec_.positive_class.c_str());
+            positive_for_ = spec_.positive_class;
+        }
+        ImGui::TextColored(t.text_dim, "Positive class");
+        const Prepared& d = view_.Data();
+        const std::string hint = view_.HasData() && !d.positive_label.empty() && spec_.positive_class.empty()
+                                     ? "auto: " + d.positive_label : std::string("auto");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputTextWithHint("##positive", hint.c_str(), positive_buf_, sizeof(positive_buf_))) {
+            spec_.positive_class = positive_for_ = positive_buf_;
+            changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The actual label the score is for. Auto picks 1, true, yes or positive, else the last label.");
+    }
+    if (spec_.kind == Kind::Calibration) {
+        ImGui::TextColored(t.text_dim, "Bins");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##calibration_bins", &spec_.calibration_bins, 0, 0)) {
+            spec_.calibration_bins = std::clamp(spec_.calibration_bins, 2, 100);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::LearningCurve || spec_.kind == Kind::Importance) {
+        // A spread (standard deviation) column per curve: a band or bars.
+        const size_t curves = spec_.kind == Kind::Importance ? 1 : spec_.y_columns.size();
+        if (spec_.spread_columns.size() > curves) {
+            spec_.spread_columns.resize(curves);
+            changed = true;
+        }
+        for (size_t i = 0; i < curves; ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const std::string of = i < spec_.y_columns.size() ? spec_.y_columns[i] : std::string("the values");
+            ImGui::TextColored(t.text_dim, "Spread of %s (\xC2\xB1)", of.c_str());
+            std::string spread = i < spec_.spread_columns.size() ? spec_.spread_columns[i] : std::string();
+            if (picker_.Pick("##spread", spread, columns_, true, "(none)", w)) {
+                if (spec_.spread_columns.size() <= i) spec_.spread_columns.resize(i + 1);
+                spec_.spread_columns[i] = spread;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+    }
+    if (spec_.kind == Kind::LearningCurve) {
+        ImGui::TextColored(t.text_dim, "Best point of the last curve");
+        static const char* const kBest[] = {"Auto", "Highest", "Lowest"};
+        int best = static_cast<int>(spec_.best);
+        if (ui::SegmentedControl("##best", kBest, 3, &best)) {
+            spec_.best = static_cast<PlotSpec::Best>(best);
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto: lowest for a loss or an error, else highest");
+    }
+    if (spec_.kind == Kind::Importance) {
+        ImGui::TextColored(t.text_dim, "Show the top");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##top_n", &spec_.top_n, 0, 0)) {
+            spec_.top_n = std::clamp(spec_.top_n, 1, 500);
+            changed = true;
+        }
+    }
     if (spec_.kind == Kind::Histogram) {
         changed |= ImGui::Checkbox("Show median", &spec_.show_median);
         changed |= ImGui::Checkbox("Show mean", &spec_.show_mean);
@@ -751,8 +828,25 @@ void PlotWindow::DrawSettings() {
         changed = true;
     }
 
+    // Model results: their figures.
+    if (view_.HasData() && view_.Data().problem.empty() && !view_.Data().metrics.empty()) {
+        const Prepared& d = view_.Data();
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "RESULTS");
+        if (ImGui::BeginTable("##results", 2, ImGuiTableFlags_SizingStretchSame)) {
+            const auto row = [&](const std::string& name, const std::string& value) {
+                ImGui::TableNextColumn();
+                ImGui::TextColored(t.text_dim, "%s", name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value.c_str());
+            };
+            if (!d.positive_label.empty()) row("positive class", d.positive_label);
+            for (const auto& [name, v] : d.metrics) row(name, MetricText(name, v));
+            ImGui::EndTable();
+        }
+    }
     // Values of the plotted column.
-    if (view_.HasData() && view_.Data().problem.empty() && view_.Data().stats.count > 0) {
+    if (view_.HasData() && view_.Data().problem.empty() && view_.Data().stats.count > 0 && view_.Data().metrics.empty()) {
         const ColumnStats& st = view_.Data().stats;
         ImGui::Spacing();
         ImGui::TextColored(t.text_dim, "VALUES");
@@ -784,6 +878,7 @@ void PlotWindow::DrawSettings() {
                           spec_.kind == Kind::Polar || spec_.kind == Kind::Quiver || spec_.kind == Kind::Stream ||
                           spec_.kind == Kind::Image || spec_.kind == Kind::PairPlot || spec_.kind == Kind::Parallel ||
                           spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
+                          Info(spec_.kind).group == Group::ModelResults ||
                           (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&
                             spec_.kind != Kind::Histogram2D && !new_kind && view_.HasData() && view_.Data().problem.empty();

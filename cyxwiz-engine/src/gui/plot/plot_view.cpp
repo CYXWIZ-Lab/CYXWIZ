@@ -55,8 +55,29 @@ bool IsLineLike(Kind k) {
 // Grid kinds lay out their own axes and draw a colour bar.
 bool IsGridKind(Kind k) {
     return k == Kind::Heatmap || k == Kind::Histogram2D || k == Kind::Matrix || k == Kind::Hexbin || k == Kind::Contour ||
-           k == Kind::FilledContour || k == Kind::Quiver || k == Kind::Stream;
+           k == Kind::FilledContour || k == Kind::Quiver || k == Kind::Stream || k == Kind::Confusion;
 }
+
+// Curves on 0..1 both ways (model results).
+bool IsUnitKind(Kind k) {
+    return k == Kind::Roc || k == Kind::PrCurve || k == Kind::Calibration;
+}
+
+}  // namespace
+
+// A model figure as text: shares in percent, counts with separators, small
+// figures to three places ("AUC 0.871", "RMSE 20.76").
+std::string MetricText(const std::string& name, double v) {
+    if (!std::isfinite(v)) return "n/a";
+    char buf[48];
+    if (name == "accuracy" || name == "positive share") std::snprintf(buf, sizeof(buf), "%.1f%%", v * 100.0);
+    else if (name == "rows") return Thousands(static_cast<long long>(std::llround(v)));
+    else if (name.rfind("at ", 0) == 0 || std::fabs(v) >= 10.0) std::snprintf(buf, sizeof(buf), "%.4g", v);
+    else std::snprintf(buf, sizeof(buf), "%.3f", v);
+    return buf;
+}
+
+namespace {
 
 constexpr double kTurn = 6.283185307179586;
 
@@ -88,6 +109,7 @@ std::string YLabel(const Prepared& p) {
     if (!p.spec.y_label.empty()) return p.spec.y_label;
     if (p.spec.kind == Kind::Histogram) return p.spec.density ? "density" : "count";
     if (p.spec.kind == Kind::Kde) return "density";
+    if (p.spec.kind == Kind::Importance) return "";  // the features name the rows
     if (p.spec.kind == Kind::Bar && p.spec.bar_layout == PlotSpec::BarLayout::Percent && p.series.size() > 1) return "percent";
     if ((p.spec.kind == Kind::Bar || p.spec.kind == Kind::Pie) && p.spec.y_columns.empty()) return "rows";
     if (p.spec.y_columns.size() == 1) return p.spec.y_columns.front();
@@ -311,7 +333,8 @@ void PlotView::DrawToolbar(const Options& o) {
         ImGui::SameLine();
     }
     const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && data_.spec.kind != Kind::Image &&
-                         data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind);
+                         data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind) &&
+                         !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals;
     if (o.tool_log) {
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
@@ -561,7 +584,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
     if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Polar && kind != Kind::Box && kind != Kind::Violin &&
-        kind != Kind::Parallel && !IsGridKind(kind))
+        kind != Kind::Parallel && !IsGridKind(kind) && !IsUnitKind(kind))
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
@@ -586,11 +609,22 @@ void PlotView::DrawPlot(ImVec2 size) {
         ImPlot::SetupAxesLimits(-hx, hx, -hy, hy, ImPlotCond_Always);
     } else {
         ImPlotAxisFlags xf = ImPlotAxisFlags_None, yf = ImPlotAxisFlags_None;
-        if (kind == Kind::Heatmap || kind == Kind::Matrix) xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
+        if (kind == Kind::Heatmap || kind == Kind::Matrix || kind == Kind::Confusion)
+            xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
+        if (kind == Kind::Importance) yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
         ImPlot::SetupAxes(xl.empty() ? nullptr : xl.c_str(), yl.empty() ? nullptr : yl.c_str(), xf, yf);
         if (log_y_ && !IsGridKind(kind)) ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        if (kind == Kind::Calibration) {
+            // Rows per bin as bars along the bottom fifth (right axis).
+            double most = 1;
+            for (double c : p.grid_counts) most = std::max(most, c);
+            ImPlot::SetupAxis(ImAxis_Y2, "rows", ImPlotAxisFlags_AuxDefault | ImPlotAxisFlags_NoGridLines);
+            ImPlot::SetupAxisLimits(ImAxis_Y2, 0, most * 5.0, ImPlotCond_Always);
+        }
     }
-    ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+    // Curves that rise to the top right keep their legend out of the way.
+    ImPlot::SetupLegend(kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance ? ImPlotLocation_SouthEast
+                                                                                                  : ImPlotLocation_NorthEast);
     if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
     if (y_range_.on) ImPlot::SetupAxisLimits(ImAxis_Y1, y_range_.lo, y_range_.hi, y_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
     // Log Y over counts: fit to the positive counts (the bars' base of 0
@@ -649,8 +683,22 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::SetupAxesLimits(-0.6, static_cast<double>(p.boxes.size()) - 0.4, lo - pad, hi + pad, cond);
             break;
         }
+        case Kind::Roc:
+        case Kind::PrCurve:
+        case Kind::Calibration: ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.04, cond); break;
+        case Kind::Importance: {
+            // Features down the side, the largest on top.
+            const size_t count = p.categories.size();
+            for (size_t i = 0; i < count && count <= 60; ++i) {
+                ynames.push_back(p.categories[i].c_str());
+                ypos.push_back(static_cast<double>(count - 1 - i));
+            }
+            if (!ypos.empty()) ImPlot::SetupAxisTicks(ImAxis_Y1, ypos.data(), static_cast<int>(ypos.size()), ynames.data());
+            break;
+        }
         case Kind::Heatmap:
-        case Kind::Matrix: {
+        case Kind::Matrix:
+        case Kind::Confusion: {
             // Column names longer than their cell are shortened ("artist_po..");
             // the rows and the hover keep the full names.
             float row_w = 0.0f;
@@ -1042,6 +1090,150 @@ void PlotView::DrawPlot(ImVec2 size) {
         }
     }
 
+    // P2b group 4: model results.
+    switch (kind) {
+        case Kind::Confusion: {
+            // Cells coloured by the share (or count); each shows the count and the share.
+            ImPlot::PushColormap(SequentialColormap());
+            ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, p.grid_lo, p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0,
+                                nullptr, ImPlotPoint(0, 0), ImPlotPoint(p.grid_cols, p.grid_rows));
+            ImPlot::PopColormap();
+            if (p.grid_rows > 20) break;
+            const bool share = p.spec.confusion_show != PlotSpec::ConfusionShow::Counts;
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            ImPlot::PushPlotClipRect();
+            const float line = ImGui::GetTextLineHeight();
+            for (int r = 0; r < p.grid_rows; ++r)
+                for (int c = 0; c < p.grid_cols; ++c) {
+                    const size_t k = static_cast<size_t>(r * p.grid_cols + c);
+                    const ImVec2 at = ImPlot::PlotToPixels(c + 0.5, p.grid_rows - r - 0.5);
+                    const double tv = p.grid_hi > p.grid_lo ? (p.grid[k] - p.grid_lo) / (p.grid_hi - p.grid_lo) : 0.0;
+                    const ImVec4 ink_colour = tv > 0.55 ? t.plot_bg : t.text_bright;
+                    const ImU32 ink = ui::ToU32(ink_colour);
+                    const std::string count = Thousands(static_cast<long long>(std::llround(p.grid_counts[k])));
+                    const ImVec2 cs = ImGui::CalcTextSize(count.c_str());
+                    dl->AddText(ImVec2(at.x - cs.x * 0.5f, at.y - (share ? line : line * 0.5f)), ink, count.c_str());
+                    if (share) {
+                        char buf[24];
+                        std::snprintf(buf, sizeof(buf), "%.1f%%", p.grid[k] * 100.0);
+                        const ImVec2 ss = ImGui::CalcTextSize(buf);
+                        dl->AddText(ImVec2(at.x - ss.x * 0.5f, at.y), ui::ToU32(ui::WithAlpha(ink_colour, 0.75f)), buf);
+                    }
+                }
+            ImPlot::PopPlotClipRect();
+            break;
+        }
+        case Kind::Roc:
+        case Kind::PrCurve:
+            if (!p.series.empty()) {
+                const auto& sr = p.series[0];
+                if (kind == Kind::PrCurve && std::isfinite(p.baseline)) {
+                    const std::string bl = "positive share " + MetricText("positive share", p.baseline);
+                    ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.8f), 1.2f);
+                    ImPlot::PlotInfLines(bl.c_str(), &p.baseline, 1, ImPlotInfLinesFlags_Horizontal);
+                }
+                ImPlot::SetNextFillStyle(ColourOf(0), 0.12f);
+                ImPlot::PlotShaded(("##fill" + sr.label).c_str(), sr.x.data(), sr.y.data(), n(sr.x), 0.0);
+                ImPlot::SetNextLineStyle(ColourOf(0), 2.0f);
+                if (kind == Kind::PrCurve) {
+                    // Precision holds until recall reaches the next point.
+                    std::vector<double> sx{0.0}, sy{sr.y.empty() ? 1.0 : sr.y.front()};
+                    sx.insert(sx.end(), sr.x.begin(), sr.x.end());
+                    sy.insert(sy.end(), sr.y.begin(), sr.y.end());
+                    ImPlot::PlotStairs(sr.label.c_str(), sx.data(), sy.data(), n(sx), ImPlotStairsFlags_PreStep);
+                } else {
+                    ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                }
+            }
+            break;
+        case Kind::Calibration:
+            if (!p.series.empty()) {
+                const auto& sr = p.series[0];
+                // Rows per bin (all bins, on the right axis).
+                if (p.edges.size() == p.grid_counts.size() + 1 && !p.grid_counts.empty()) {
+                    std::vector<double> mid;
+                    for (size_t b = 0; b < p.grid_counts.size(); ++b) mid.push_back((p.edges[b] + p.edges[b + 1]) * 0.5);
+                    ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
+                    ImPlot::SetNextFillStyle(t.text_dim, 0.35f);
+                    ImPlot::PlotBars("rows", mid.data(), p.grid_counts.data(), n(mid), (p.edges[1] - p.edges[0]) * 0.8);
+                    ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
+                }
+                ImPlot::SetNextLineStyle(ColourOf(0), 2.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.5f, ColourOf(0), 0.0f);
+                ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+            }
+            break;
+        case Kind::Residuals:
+            if (!p.series.empty()) {
+                const auto& sr = p.series[0];
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(0), 0.6f), 0.0f);
+                ImPlot::PlotScatter(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                const double zero = 0.0;
+                ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.9f), 1.4f);
+                ImPlot::PlotInfLines("##zero", &zero, 1, ImPlotInfLinesFlags_Horizontal);
+            }
+            break;
+        case Kind::LearningCurve:
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& sr = p.series[i];
+                const ImVec4 c = ColourOf(i);
+                if (sr.low.size() == sr.x.size() && !sr.x.empty()) {
+                    ImPlot::SetNextFillStyle(c, 0.18f);
+                    ImPlot::PlotShaded(("##band" + sr.label).c_str(), sr.x.data(), sr.low.data(), sr.high.data(), n(sr.x));
+                }
+                ImPlot::SetNextLineStyle(c, 2.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.5f, c, 0.0f);
+                ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                if (static_cast<int>(i) == p.best_series && p.best_index < sr.x.size()) {
+                    ImDrawList* dl = ImPlot::GetPlotDrawList();
+                    ImPlot::PushPlotClipRect();
+                    dl->AddCircle(ImPlot::PlotToPixels(sr.x[p.best_index], sr.y[p.best_index]), 7.0f, ui::ToU32(t.text_bright), 16, 1.8f);
+                    ImPlot::PopPlotClipRect();
+                }
+            }
+            break;
+        case Kind::Importance:
+            if (!p.series.empty()) {
+                const auto& sr = p.series[0];
+                std::vector<double> pos;
+                for (size_t i = 0; i < sr.y.size(); ++i) pos.push_back(static_cast<double>(sr.y.size() - 1 - i));
+                ImPlot::SetNextFillStyle(ColourOf(0), 0.9f);
+                ImPlot::PlotBars(sr.label.c_str(), sr.y.data(), pos.data(), n(pos), 0.67, ImPlotBarsFlags_Horizontal);
+                if (sr.low.size() == sr.y.size()) {
+                    ImPlot::SetNextErrorBarStyle(t.text_bright, 1.2f, 5.0f);
+                    ImPlot::PlotErrorBars(("##spread" + sr.label).c_str(), sr.y.data(), pos.data(), sr.low.data(), sr.high.data(), n(pos),
+                                          ImPlotErrorBarsFlags_Horizontal);
+                }
+            }
+            break;
+        default: break;
+    }
+
+    // Model results: their figures in the top left corner.
+    if (!p.metrics.empty() && kind != Kind::Confusion) {
+        std::vector<std::string> lines;
+        if (!p.positive_label.empty()) lines.push_back("positive: " + p.positive_label);
+        for (const auto& [name, v] : p.metrics) lines.push_back(name + "  " + MetricText(name, v));
+        const ImVec2 corner = ImPlot::GetPlotPos();
+        float wide = 0;
+        for (const auto& l : lines) wide = std::max(wide, ImGui::CalcTextSize(l.c_str()).x);
+        const float line = ImGui::GetTextLineHeightWithSpacing();
+        ImDrawList* dl = ImPlot::GetPlotDrawList();
+        const ImVec2 a(corner.x + 10.0f, corner.y + 10.0f);
+        dl->AddRectFilled(a, ImVec2(a.x + wide + 16.0f, a.y + line * static_cast<float>(lines.size()) + 8.0f),
+                          ui::ToU32(ui::WithAlpha(t.plot_bg, 0.88f)), 6.0f);
+        for (size_t i = 0; i < lines.size(); ++i)
+            dl->AddText(ImVec2(a.x + 8.0f, a.y + 4.0f + line * static_cast<float>(i)),
+                        ui::ToU32(i == 0 && !p.positive_label.empty() ? t.text_dim : t.text_bright), lines[i].c_str());
+    }
+
+    // A y = x reference line (ROC chance, perfect calibration).
+    if (p.spec.show_diagonal && IsUnitKind(kind)) {
+        const double xs[2] = {0.0, 1.0}, ys[2] = {0.0, 1.0};
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.8f), 1.2f);
+        ImPlot::PlotLine(kind == Kind::Roc ? "chance" : "perfectly calibrated", xs, ys, 2);
+    }
+
     // A y = x reference line (ROC chance) across the data's extent.
     if (p.spec.show_diagonal && (kind == Kind::Line || kind == Kind::Scatter)) {
         double lo = 0, hi = 0;
@@ -1348,6 +1540,97 @@ void PlotView::DrawHover() {
             } else {
                 TooltipRow(GridColourOf(p, p.hex_v[best]), "mean of " + p.spec.value_column, Value(p.hex_v[best]));
             }
+            break;
+        }
+        case Kind::Confusion: {
+            const int c = static_cast<int>(std::floor(m.x));
+            const int r = p.grid_rows - 1 - static_cast<int>(std::floor(m.y));
+            if (c < 0 || r < 0 || c >= p.grid_cols || r >= p.grid_rows) break;
+            const size_t k = static_cast<size_t>(r * p.grid_cols + c);
+            const std::string& actual = p.row_names[static_cast<size_t>(r)];
+            const std::string& predicted = p.col_names[static_cast<size_t>(c)];
+            begin("Actual " + actual + " \xC2\xB7 Predicted " + predicted);
+            const ImVec4 colour = GridColourOf(p, p.grid[k]);
+            TooltipRow(colour, "rows", Thousands(static_cast<long long>(std::llround(p.grid_counts[k]))));
+            char buf[64];
+            switch (p.spec.confusion_show) {
+                case PlotSpec::ConfusionShow::ByActual: std::snprintf(buf, sizeof(buf), "%.1f%% of actual ", p.grid[k] * 100.0); break;
+                case PlotSpec::ConfusionShow::ByPredicted: std::snprintf(buf, sizeof(buf), "%.1f%% of predicted ", p.grid[k] * 100.0); break;
+                case PlotSpec::ConfusionShow::All: std::snprintf(buf, sizeof(buf), "%.1f%% of all rows", p.grid[k] * 100.0); break;
+                case PlotSpec::ConfusionShow::Counts: buf[0] = '\0'; break;
+            }
+            if (buf[0]) {
+                std::string text = buf;
+                if (p.spec.confusion_show == PlotSpec::ConfusionShow::ByActual) text += actual;
+                if (p.spec.confusion_show == PlotSpec::ConfusionShow::ByPredicted) text += predicted;
+                TooltipRow(colour, "share", text);
+            }
+            TooltipRow(colour, "prediction", r == c ? "right" : "wrong");
+            break;
+        }
+        case Kind::Roc:
+        case Kind::PrCurve:
+        case Kind::Calibration:
+        case Kind::Residuals: {
+            // The nearest point within 14 px.
+            if (p.series.empty()) break;
+            const auto& sr = p.series[0];
+            const ImVec2 mouse = ImGui::GetMousePos();
+            float best = 196.0f;
+            size_t bk = 0;
+            bool found = false;
+            for (size_t k = 0; k < std::min(sr.x.size(), sr.y.size()); ++k) {
+                const ImVec2 q = ImPlot::PlotToPixels(sr.x[k], sr.y[k]);
+                const float d = (q.x - mouse.x) * (q.x - mouse.x) + (q.y - mouse.y) * (q.y - mouse.y);
+                if (d < best) {
+                    best = d;
+                    bk = k;
+                    found = true;
+                }
+            }
+            if (!found) break;
+            const ImVec4 c = ColourOf(0);
+            if (kind == Kind::Roc || kind == Kind::PrCurve) {
+                const double th = bk < sr.c.size() ? sr.c[bk] : NAN;
+                begin(std::isinf(th) ? std::string("threshold above every score") : "threshold " + Value(th));
+                TooltipRow(c, kind == Kind::Roc ? "false positive rate" : "recall", Value(sr.x[bk]));
+                TooltipRow(c, kind == Kind::Roc ? "true positive rate" : "precision", Value(sr.y[bk]));
+            } else if (kind == Kind::Calibration) {
+                begin("mean predicted " + Value(sr.x[bk]));
+                TooltipRow(c, "share positive", Value(sr.y[bk]));
+                TooltipRow(c, "rows", bk < sr.low.size() ? Thousands(static_cast<long long>(sr.low[bk])) : std::string());
+            } else {
+                begin("predicted " + Value(sr.x[bk]));
+                TooltipRow(c, "actual", Value(sr.x[bk] + sr.y[bk]));
+                TooltipRow(c, "residual", Value(sr.y[bk]));
+            }
+            break;
+        }
+        case Kind::LearningCurve: {
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& sr = p.series[i];
+                if (sr.x.empty()) continue;
+                const size_t k = sr.x_sorted ? NearestSorted(sr.x, m.x) : NearestScan(sr.x, m.x);
+                begin(XLabel(p) + " " + Value(sr.x[k]));
+                std::string v = Value(sr.y[k]);
+                if (k < sr.high.size()) v += " \xC2\xB1 " + Value(sr.high[k] - sr.y[k]);
+                if (static_cast<int>(i) == p.best_series && k == p.best_index) v += "  (best)";
+                TooltipRow(ColourOf(i), sr.label, v);
+            }
+            break;
+        }
+        case Kind::Importance: {
+            if (p.series.empty()) break;
+            const auto& sr = p.series[0];
+            const int at = static_cast<int>(std::lround(m.y));
+            const int i = static_cast<int>(sr.y.size()) - 1 - at;
+            if (at < 0 || i < 0 || i >= static_cast<int>(sr.y.size()) || std::fabs(m.y - at) > 0.45) break;
+            const size_t k = static_cast<size_t>(i);
+            begin(p.categories[k]);
+            std::string v = Value(sr.y[k]);
+            if (k < sr.low.size() && sr.low[k] > 0) v += " \xC2\xB1 " + Value(sr.low[k]);
+            TooltipRow(ColourOf(0), sr.label, v);
+            TooltipRow(ColourOf(0), "rank", std::to_string(k + 1) + " of " + std::to_string(sr.y.size()));
             break;
         }
         case Kind::Contour:

@@ -124,6 +124,44 @@ or press **Plot** under the column's statistics. The Plot window opens:
   40 x 40 grid), coloured by speed, with an arrowhead on each line.
   **Density** spaces the lines. Hover gives the speed and direction at the
   mouse.
+- **Model results**: plots of a trained model's results, read from plain
+  columns of any table (a predictions file, an evaluation node's output, a
+  training history). Each shows its figures in the plot corner and under
+  **RESULTS** in the Data panel.
+  - **Confusion matrix**: **Actual** and **Predicted** label columns (text
+    or numbers). Each cell shows the count and its share; **Colour and share
+    by**: counts, share of actual (each row adds to 100%, the default),
+    share of predicted, or share of all rows. Accuracy and rows in RESULTS.
+    Hover: "Actual tested_positive · Predicted tested_negative", the rows,
+    the share, right or wrong.
+  - **ROC curve**: **Actual** and the **Score** of the positive class
+    (a probability or any score; higher means positive). AUC in the corner,
+    the chance line. **Positive class**: auto picks 1, true, yes or a label
+    with "positive", else the last label; type another to change it.
+    Hover gives the threshold and both rates.
+  - **Precision-recall curve**: the same columns; precision by recall as a
+    step, the average precision (AP, as scikit-learn) and the positive
+    share as a dashed baseline.
+  - **Calibration**: **Actual** and a **Probability** (0 to 1). The share
+    of positives in each of the **Bins** by the mean predicted probability,
+    the perfectly calibrated diagonal, rows per bin as bars along the
+    bottom (right axis); Brier score and ECE.
+  - **Residuals**: number **Actual** and **Predicted**; actual minus
+    predicted by predicted, a line at 0; RMSE, MAE and R² (large tables are
+    sampled like a scatter; the figures and exports use every row).
+  - **Learning curve**: **X** (training rows or epoch) and one or more
+    curves (train, validation); a **Spread** column per curve draws a band
+    (± that value). The last curve's best point is ringed: **Auto** takes
+    the lowest for a name with loss or error, else the highest.
+  - **Feature importance**: a **Feature** column and its **Importance**,
+    as horizontal bars, largest on top; **Show the top** N (20), an
+    optional **Spread** for error bars. Hover gives the value and the rank.
+
+  Example (diabetes classifier): Confusion matrix of actual by predicted
+  shows 134, 16 / 36, 45 (accuracy 77.5%); ROC of actual by probability
+  gives AUC 0.871; PR gives AP 0.767; Calibration gives Brier 0.143. A
+  Spotify popularity regression gives RMSE 20.76 and R² 0.265 over 2,575
+  rows.
 - **Line and scatter**: **Show the y = x line** draws a reference line
   (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the

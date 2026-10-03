@@ -97,6 +97,9 @@ private:
     bool busy_ = false;
     bool dirty_ = false;
     char title_buf_[256] = {};
+    // Positive class field (ROC, PR, calibration), kept in step with spec_.
+    char positive_buf_[128] = {};
+    std::string positive_for_ = "\x01";
 };
 
 }  // namespace cyxwiz::plot

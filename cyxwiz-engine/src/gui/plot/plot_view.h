@@ -31,6 +31,9 @@ struct ViewHooks {
 void SetViewHooks(ViewHooks hooks);
 const ViewHooks& Hooks();
 
+// A model figure as text ("AUC 0.871", accuracy "77.5%", rows "2,575").
+std::string MetricText(const std::string& name, double value);
+
 class PlotView {
 public:
     explicit PlotView(std::string id);
