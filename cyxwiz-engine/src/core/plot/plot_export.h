@@ -4,6 +4,7 @@
 // as CSV and the plot as SVG. Reduced or sampled series export all values.
 
 #include "plot_model.h"
+#include "plot_scales.h"
 
 #include <string>
 
@@ -26,6 +27,9 @@ struct SvgStyle {
     std::string diverging_low = "#4a8fd9";
     std::string diverging_mid = "#262626";
     std::string diverging_high = "#e0704f";
+    // A scale picked in the plot (ToSvg sets these from the spec).
+    const ScaleInfo* scale = nullptr;
+    bool scale_reverse = false;
 };
 
 // The visible axis ranges (from the view; log_y draws the y axis in log10).

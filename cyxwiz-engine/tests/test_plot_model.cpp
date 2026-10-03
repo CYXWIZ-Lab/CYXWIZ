@@ -1,6 +1,7 @@
 // Plot model (TOFIX134 P1 step 1.2): kind registry, spec JSON round trip,
 // missing-encoding messages, data label wording, column statistics.
 #include "../src/core/plot/plot_model.h"
+#include "../src/core/plot/plot_scales.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -57,6 +58,27 @@ int main() {
         sc.z_column = "c";
         Check(SpecFromJson(SpecToJson(sc), tb) && tb.z_column == "c" && !std::isfinite(tb.view_elevation), "z kept; no view saved");
         Check(std::string(GroupLabel(Info(Kind::Line3D).group)) == "3D", "3D group");
+    }
+    {
+        // Colour picker (P4.4): scale, reverse, range and series colours round trip; unknown scale refused.
+        PlotSpec c;
+        c.kind = Kind::Heatmap;
+        c.colour_scale = "viridis";
+        c.colour_reverse = true;
+        c.scale_lo = 0;
+        c.scale_hi = 50;
+        c.series_colours = {"", "#5ec8b8"};
+        PlotSpec cb;
+        Check(SpecFromJson(SpecToJson(c), cb) && cb.colour_scale == "viridis" && cb.colour_reverse && cb.scale_lo == 0 && cb.scale_hi == 50 &&
+                  cb.series_colours == std::vector<std::string>({"", "#5ec8b8"}), "colour picker round trip");
+        Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"scale\":\"rainbow\"}", cb) , "unknown scale refused");
+        PlotSpec plain;
+        Check(SpecToJson(plain).find("scale") == std::string::npos && !std::isfinite(plain.scale_lo), "theme scale by default, nothing saved");
+        // The scale table: 7 scales, Viridis starts at matplotlib's #440154, Cool-warm is two-sided.
+        Check(Scales().size() == 7 && FindScale("viridis") && !FindScale("") && FindScale("coolwarm")->two_sided, "scales");
+        const auto lo = SampleScale(*FindScale("viridis"), 0.0), hi_rev = SampleScale(*FindScale("viridis"), 1.0, true);
+        Check(std::lround(lo[0] * 255) == 68 && std::lround(lo[1] * 255) == 1 && std::lround(lo[2] * 255) == 84 && lo == hi_rev,
+              "viridis low end and reverse");
     }
     Check(!FindKind("sunburst"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
@@ -175,7 +197,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 38 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 38 kinds, colour scales, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

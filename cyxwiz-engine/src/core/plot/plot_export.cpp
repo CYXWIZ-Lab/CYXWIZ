@@ -390,9 +390,14 @@ std::string Mix(const std::string& lo, const std::string& hi, double t) {
 
 // A grid cell's colour on its range (two-sided around 0 when asked); a
 // missing cell in the background.
+std::string Picked(const SvgStyle& st, double t) {
+    const auto c = SampleScale(*st.scale, t, st.scale_reverse);
+    return HexColour(c[0], c[1], c[2]);
+}
 std::string RangeColour(double v, double lo, double hi, bool diverging, const SvgStyle& st) {
     if (!std::isfinite(v)) return st.background;
     const double t = hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0;
+    if (st.scale) return Picked(st, t);
     if (!diverging) return Mix(st.scale_low, st.scale_high, t);
     return t < 0.5 ? Mix(st.diverging_low, st.diverging_mid, t * 2.0) : Mix(st.diverging_mid, st.diverging_high, (t - 0.5) * 2.0);
 }
@@ -403,13 +408,20 @@ std::string ScaleColour(const Prepared& p, const SvgStyle& st, double v) {
     if (!std::isfinite(v)) return st.text_dim;
     const double span = p.colour_max - p.colour_min;
     const double t = span > 0 ? std::clamp((v - p.colour_min) / span, 0.0, 1.0) : 0.0;
+    if (st.scale) return Picked(st, t);
     if (!p.colour_diverging) return Mix(st.scale_low, st.scale_high, t);
     return t < 0.5 ? Mix(st.diverging_low, st.diverging_mid, t * 2.0) : Mix(st.diverging_mid, st.diverging_high, (t - 0.5) * 2.0);
 }
 
 }  // namespace
 
-std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st) {
+std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& style) {
+    // The plot's own colours (colour picker) over the theme's.
+    SvgStyle st = style;
+    st.scale = FindScale(p.spec.colour_scale);
+    st.scale_reverse = p.spec.colour_reverse;
+    for (size_t i = 0; i < p.spec.series_colours.size() && i < 6; ++i)
+        if (p.spec.series_colours[i].size() == 7 && p.spec.series_colours[i][0] == '#') st.series[i] = p.spec.series_colours[i];
     std::ostringstream o;
     o << std::fixed << std::setprecision(1);
     if (Info(p.spec.kind).group == Group::ThreeD) {

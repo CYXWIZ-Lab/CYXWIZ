@@ -66,6 +66,7 @@ private:
     void Poll();
     void DrawKinds();
     void DrawSettings();
+    bool DrawColours(float width);
     // ROWS section (TOFIX134 P2 board 6); true when the selection changed.
     bool DrawRows(float width);
     // Column names and types of the table, then their summaries (range,

@@ -73,7 +73,7 @@ ImVec4 RegionColourOf(const Prepared& p, double v) {
         hi = std::log10(hi);
     }
     const float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
-    return ImPlot::SampleColormap(t, SequentialColormap());
+    return ImPlot::SampleColormap(t, ScaleColormap(p.spec, false));
 }
 
 // Dark or light text on a fill, whichever reads.
@@ -185,7 +185,7 @@ ImVec4 GridColourOf(const Prepared& p, double v) {
     float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
     // Arrows and flow lines start a quarter up the scale, so the slow ones show on the plot.
     if (p.spec.kind == Kind::Quiver || p.spec.kind == Kind::Stream) t = 0.25f + 0.75f * t;
-    return ImPlot::SampleColormap(t, p.grid_diverging ? DivergingColormap() : SequentialColormap());
+    return ImPlot::SampleColormap(t, ScaleColormap(p.spec, p.grid_diverging));
 }
 
 // Colour of a value on the plot's colour scale (a missing value: faint).
@@ -193,7 +193,7 @@ ImVec4 ScaleColourOf(const Prepared& p, double v) {
     if (!std::isfinite(v)) return ui::CurrentTokens().text_faint;
     const double span = p.colour_max - p.colour_min;
     const float t = static_cast<float>(span > 0 ? std::clamp((v - p.colour_min) / span, 0.0, 1.0) : 0.0);
-    return ImPlot::SampleColormap(t, p.colour_diverging ? DivergingColormap() : SequentialColormap());
+    return ImPlot::SampleColormap(t, ScaleColormap(p.spec, p.colour_diverging));
 }
 
 // Nearest index of `x` in an ascending array.
@@ -239,6 +239,13 @@ void PlotView::SetData(Prepared data) {
 }
 
 ImVec4 PlotView::ColourOf(size_t i) const {
+    // A colour picked for this series (P4.4) comes first.
+    if (i < data_.spec.series_colours.size()) {
+        const std::string& h = data_.spec.series_colours[i];
+        unsigned r = 0, g = 0, b = 0;
+        if (h.size() == 7 && h[0] == '#' && std::sscanf(h.c_str() + 1, "%02x%02x%02x", &r, &g, &b) == 3)
+            return ImVec4(static_cast<float>(r) / 255.0f, static_cast<float>(g) / 255.0f, static_cast<float>(b) / 255.0f, 1.0f);
+    }
     if (i < data_.series.size() && data_.series[i].colour >= 0) return SeriesColour(static_cast<size_t>(data_.series[i].colour));
     return SeriesColour(colour_offset_ + i);
 }
@@ -511,7 +518,7 @@ void PlotView::DrawImages(ImVec2 size) {
                 } else {
                     if (!std::isfinite(pic.pix[k])) continue;
                     const float v = p.spec.image_invert ? 1.0f - pic.pix[k] : pic.pix[k];
-                    c = p.spec.image_grey ? ImVec4(v, v, v, 1.0f) : ImPlot::SampleColormap(v, SequentialColormap());
+                    c = p.spec.image_grey ? ImVec4(v, v, v, 1.0f) : ImPlot::SampleColormap(v, ScaleColormap(data_.spec, false));
                 }
                 const ImVec2 a(ox + x * px, oy + y * px), b(ox + (x + 1) * px, oy + (y + 1) * px);
                 dl->AddRectFilled(a, b, ui::ToU32(c));
@@ -1030,7 +1037,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Matrix:
         case Kind::Histogram2D: {
             const bool named = kind != Kind::Histogram2D;
-            ImPlot::PushColormap(p.grid_diverging ? DivergingColormap() : SequentialColormap());
+            ImPlot::PushColormap(ScaleColormap(p.spec, p.grid_diverging));
             // Numbers in the cells when they fit (about 40 px a cell).
             const bool numbers = named && p.grid.size() <= 400 && plot_size.x / static_cast<float>(std::max(1, p.grid_cols)) >= 40.0f;
             const char* format = kind == Kind::Matrix && p.spec.matrix_values != PlotSpec::MatrixValues::Values ? "%.2f" : "%g";
@@ -1205,7 +1212,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Contour:
         case Kind::FilledContour: {
             if (kind == Kind::FilledContour && p.band_rows > 0) {
-                ImPlot::PushColormap(SequentialColormap());
+                ImPlot::PushColormap(ScaleColormap(data_.spec, false));
                 ImPlot::PlotHeatmap("##bands", p.band_grid.data(), p.band_rows, p.band_cols, p.grid_lo, p.grid_hi, nullptr,
                                     ImPlotPoint(p.x_min, p.y_min), ImPlotPoint(p.x_max, p.y_max));
                 ImPlot::PopColormap();
@@ -1229,7 +1236,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     switch (kind) {
         case Kind::Confusion: {
             // Cells coloured by the share (or count); each shows the count and the share.
-            ImPlot::PushColormap(SequentialColormap());
+            ImPlot::PushColormap(ScaleColormap(data_.spec, false));
             ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, p.grid_lo, p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0,
                                 nullptr, ImPlotPoint(0, 0), ImPlotPoint(p.grid_cols, p.grid_rows));
             ImPlot::PopColormap();
@@ -1366,7 +1373,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                         const double cv = k < sr.c.size() ? sr.c[k] : NAN;
                         const double span_c = p.colour_max - p.colour_min;
                         const float tc = static_cast<float>(span_c > 0 && std::isfinite(cv) ? std::clamp((cv - p.colour_min) / span_c, 0.0, 1.0) : 0.0);
-                        fill = std::isfinite(cv) ? ImPlot::SampleColormap(0.25f + 0.75f * tc, p.colour_diverging ? DivergingColormap() : SequentialColormap())
+                        fill = std::isfinite(cv) ? ImPlot::SampleColormap(0.25f + 0.75f * tc, ScaleColormap(p.spec, p.colour_diverging))
                                                  : t.text_faint;
                     }
                     dl->AddCircleFilled(ImPlot::PlotToPixels(sr.x[k], sr.y[k]), r, ui::ToU32(ui::WithAlpha(fill, 0.72f)), 12);
@@ -1436,7 +1443,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         // The colour bar of a scatter coloured by a number column.
         ImGui::SameLine();
         ImPlot::ColormapScale(p.colour_label.c_str(), p.colour_min, p.colour_max, ImVec2(bar_w, plot_size.y), "%g", 0,
-                              p.colour_diverging ? DivergingColormap() : SequentialColormap());
+                              ScaleColormap(p.spec, p.colour_diverging));
     } else if (scale_bar) {
         double lo = p.grid_lo, hi = p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0;
         const bool log = kind == Kind::Hexbin && p.spec.log_colour;
@@ -1452,7 +1459,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         ImGui::SameLine();
         const char* scale_label = log ? "log(1 + count)##scale" : log10 ? "log10##scale" : kind == Kind::Quiver ? "length##scale" : kind == Kind::Stream ? "speed##scale" : "##scale";
         ImPlot::ColormapScale(scale_label, lo, hi, ImVec2(60, plot_size.y), "%g", 0,
-                              p.grid_diverging ? DivergingColormap() : SequentialColormap());
+                              ScaleColormap(p.spec, p.grid_diverging));
     }
 }
 

@@ -4,21 +4,25 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "plot_style.h"
 #include "../../core/plot/plot_arrow_source.h"
 #include "../../core/plot/plot_image.h"
 #include "../../core/plot/plot_presets.h"
+#include "../../core/plot/plot_scales.h"
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
 #include "../../data/data_table.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
+#include <implot.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <numeric>
 
@@ -518,6 +522,146 @@ bool PlotWindow::DrawRows(float w) {
     return changed;
 }
 
+namespace {
+
+// A gradient of a colormap (the scale picker's preview).
+void Gradient(ImPlotColormap map, ImVec2 size) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    constexpr int kSteps = 16;
+    for (int i = 0; i < kSteps; ++i) {
+        const ImU32 a = ImGui::ColorConvertFloat4ToU32(ImPlot::SampleColormap(static_cast<float>(i) / kSteps, map));
+        const ImU32 b = ImGui::ColorConvertFloat4ToU32(ImPlot::SampleColormap(static_cast<float>(i + 1) / kSteps, map));
+        const float x0 = at.x + size.x * i / kSteps, x1 = at.x + size.x * (i + 1) / kSteps;
+        dl->AddRectFilledMultiColor(ImVec2(x0, at.y), ImVec2(x1, at.y + size.y), a, b, b, a);
+    }
+    ImGui::Dummy(size);
+}
+
+std::string Hex(const ImVec4& c) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", static_cast<int>(std::lround(c.x * 255)), static_cast<int>(std::lround(c.y * 255)),
+                  static_cast<int>(std::lround(c.z * 255)));
+    return buf;
+}
+
+}  // namespace
+
+// Colour picker (P4.4, board 16): the scale (Theme or a named one), Reverse,
+// its range, and a colour per series. Saved in the spec.
+bool PlotWindow::DrawColours(float w) {
+    if (!view_.HasData() || !view_.Data().problem.empty()) return false;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const Prepared& d = view_.Data();
+    const bool scaled = d.colour_scale || !d.grid.empty() || !d.hex_v.empty() || !d.region_value.empty() || !d.qx.empty() ||
+                        !d.stream_lines.empty() || (d.spec.kind == Kind::Image && !d.spec.image_grey);
+    std::vector<std::string> names;
+    if (!d.colour_scale) {
+        if (d.spec.kind == Kind::Pie) names = d.categories;
+        else
+            for (const auto& s : d.series) names.push_back(s.label);
+    }
+    if (!scaled && names.empty()) return false;
+    bool changed = false;
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "COLOUR");
+    if (scaled) {
+        const bool two_sided = d.colour_scale ? d.colour_diverging : d.grid_diverging;
+        const float bar_w = std::min(110.0f, w * 0.4f);
+        const ImVec2 bar(bar_w, ImGui::GetTextLineHeight() * 0.8f);
+        const ScaleInfo* picked = FindScale(spec_.colour_scale);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::BeginCombo("##scale", picked ? picked->label : "Theme", ImGuiComboFlags_HeightLarge)) {
+            const auto row = [&](const char* id, const char* label) {
+                PlotSpec probe = spec_;
+                probe.colour_scale = id;
+                const bool on = spec_.colour_scale == id;
+                ImGui::PushID(id[0] ? id : "theme");
+                const ImVec2 at = ImGui::GetCursorPos();
+                if (ImGui::Selectable("##pick", on, 0, ImVec2(0, ImGui::GetTextLineHeight() + 2))) {
+                    spec_.colour_scale = id;
+                    changed = true;
+                }
+                ImGui::SetCursorPos(ImVec2(at.x + 4, at.y + ImGui::GetTextLineHeight() * 0.15f + 1));
+                Gradient(ScaleColormap(probe, std::string(id) == "coolwarm" || (!id[0] && two_sided)), bar);
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(at.y + 1);
+                ImGui::TextUnformatted(label);
+                ImGui::PopID();
+            };
+            row("", "Theme");
+            for (const auto& s : Scales()) {
+                if (s.two_sided) ImGui::TextColored(t.text_faint, "Two-sided (around 0)");
+                row(s.id, s.label);
+            }
+            ImGui::EndCombo();
+        }
+        Gradient(ScaleColormap(spec_, picked ? picked->two_sided : two_sided), ImVec2(w, bar.y));
+        changed |= ImGui::Checkbox("Reverse", &spec_.colour_reverse);
+        ImGui::SameLine();
+        bool automatic = !(std::isfinite(spec_.scale_lo) && std::isfinite(spec_.scale_hi));
+        if (ImGui::Checkbox("Range: data", &automatic)) {
+            if (automatic) {
+                spec_.scale_lo = spec_.scale_hi = NAN;
+            } else {
+                spec_.scale_lo = d.colour_scale ? d.colour_min : d.grid_lo;
+                spec_.scale_hi = d.colour_scale ? d.colour_max : d.grid_hi;
+            }
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scale spans the drawn values; untick to set its ends.");
+        if (!automatic) {
+            ImGui::SetNextItemWidth(w * 0.5f - ImGui::GetStyle().ItemSpacing.x * 0.5f);
+            bool edit = ImGui::InputDouble("##scale_lo", &spec_.scale_lo, 0, 0, "%g");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            edit |= ImGui::InputDouble("##scale_hi", &spec_.scale_hi, 0, 0, "%g");
+            if (edit && spec_.scale_hi > spec_.scale_lo) changed = true;
+        }
+    }
+    if (!names.empty()) {
+        // A swatch per series (pie: per slice), at most 12; a click opens the picker.
+        const size_t n = std::min<size_t>(names.size(), 12);
+        for (size_t i = 0; i < n; ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec4 now = view_.DrawnColour(i);
+            if (ImGui::ColorButton("##swatch", now, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder)) ImGui::OpenPopup("##series_colour");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(names[i].c_str());
+            if (ImGui::BeginPopup("##series_colour")) {
+                ImGui::TextColored(t.text_dim, "Theme colours");
+                for (int k = 0; k < ui::Tokens::kSeriesCount; ++k) {
+                    ImGui::PushID(k);
+                    if (k > 0) ImGui::SameLine();
+                    if (ImGui::ColorButton("##theme", t.series[k], ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, ImVec2(22, 22))) {
+                        if (spec_.series_colours.size() <= i) spec_.series_colours.resize(i + 1);
+                        spec_.series_colours[i] = Hex(t.series[k]);
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TextColored(t.text_dim, "Custom");
+                ImVec4 c = now;
+                if (ImGui::ColorPicker3("##custom", &c.x, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview | ImGuiColorEditFlags_DisplayHex)) {
+                    if (spec_.series_colours.size() <= i) spec_.series_colours.resize(i + 1);
+                    spec_.series_colours[i] = Hex(c);
+                    changed = true;
+                }
+                if (ui::LinkButton("Theme colour")) {
+                    if (i < spec_.series_colours.size()) spec_.series_colours[i].clear();
+                    while (!spec_.series_colours.empty() && spec_.series_colours.back().empty()) spec_.series_colours.pop_back();
+                    changed = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        if (names.size() > n) ImGui::TextColored(t.text_faint, "+%zu more in the theme colours", names.size() - n);
+    }
+    return changed;
+}
+
 void PlotWindow::DrawSettings() {
     const ui::Tokens& t = ui::CurrentTokens();
     const KindInfo& k = Info(spec_.kind);
@@ -951,6 +1095,8 @@ void PlotWindow::DrawSettings() {
             changed = true;
         }
     }
+
+    changed |= DrawColours(w);
 
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "LABELS");

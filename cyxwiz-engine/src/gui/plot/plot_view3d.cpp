@@ -45,14 +45,14 @@ ImU32 Shade(ImVec4 c, float k, float alpha = 1.0f) {
 ImVec4 SurfaceColour(const Prepared& p, double v) {
     const double span = p.grid_hi - p.grid_lo;
     const float t = static_cast<float>(span > 0 ? std::clamp((v - p.grid_lo) / span, 0.0, 1.0) : 0.0);
-    return ImPlot::SampleColormap(t, p.grid_diverging ? DivergingColormap() : SequentialColormap());
+    return ImPlot::SampleColormap(t, ScaleColormap(p.spec, p.grid_diverging));
 }
 
 ImVec4 PointColour(const Prepared& p, double v) {
     if (!std::isfinite(v)) return ui::CurrentTokens().text_faint;
     const double span = p.colour_max - p.colour_min;
     const float t = static_cast<float>(span > 0 ? std::clamp((v - p.colour_min) / span, 0.0, 1.0) : 0.0);
-    return ImPlot::SampleColormap(t, p.colour_diverging ? DivergingColormap() : SequentialColormap());
+    return ImPlot::SampleColormap(t, ScaleColormap(p.spec, p.colour_diverging));
 }
 
 // Depth as the 3D list sorts it (larger: nearer the viewer), from NDC.
@@ -423,10 +423,10 @@ void PlotView::Draw3D(ImVec2 size) {
         ImGui::SameLine();
         if (surface)
             ImPlot::ColormapScale((zl + "##scale3d").c_str(), p.grid_lo, p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0, ImVec2(bar_w, plot_size.y),
-                                  "%g", 0, p.grid_diverging ? DivergingColormap() : SequentialColormap());
+                                  "%g", 0, ScaleColormap(p.spec, p.grid_diverging));
         else
             ImPlot::ColormapScale(p.colour_label.c_str(), p.colour_min, p.colour_max, ImVec2(bar_w, plot_size.y), "%g", 0,
-                                  p.colour_diverging ? DivergingColormap() : SequentialColormap());
+                                  ScaleColormap(p.spec, p.colour_diverging));
     }
 }
 

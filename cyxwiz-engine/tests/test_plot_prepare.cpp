@@ -906,6 +906,19 @@ int main() {
         Check(p.problem.empty() && std::all_of(p.grid.begin(), p.grid.end(), [](double cell) { return std::isnan(cell); }), "every cell under the minimum: all open");
     }
 
+    // Colour picker range (P4.4): the picked range replaces the data's.
+    {
+        Source range_src;
+        range_src.columns.push_back(Numbers("V1", {1, 2}));
+        range_src.columns.push_back(Numbers("V2", {3, 4}));
+        PlotSpec range_spec = Spec(Kind::Surface, "", {"V1", "V2"});
+        range_spec.surface_from = PlotSpec::SurfaceFrom::Grid;
+        range_spec.scale_lo = 0;
+        range_spec.scale_hi = 10;
+        p = Prepare(range_spec, range_src);
+        Check(p.problem.empty() && p.grid_lo == 0 && p.grid_hi == 10 && p.z_min == 1 && p.z_max == 4, "picked range on the colour, not the Z axis");
+    }
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());

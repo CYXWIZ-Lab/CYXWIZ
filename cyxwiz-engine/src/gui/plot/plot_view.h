@@ -107,6 +107,8 @@ public:
     // 3D: turns the view (degrees; NaN elevation: the default view). The view
     // the user turns to is reported once they let go (to save in the plot).
     void SetView(double elevation, double azimuth);
+    // The colour series i is drawn with (a picked colour, else the theme's).
+    ImVec4 DrawnColour(size_t i) const { return ColourOf(i); }
     std::function<void(double elevation, double azimuth)> on_view_changed;
 
 private:

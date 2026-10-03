@@ -322,6 +322,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_dashboard_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dashboard/dashboard_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
     )
     target_link_libraries(test_dashboard_model PRIVATE nlohmann_json::nlohmann_json)
@@ -425,6 +426,7 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_plot_model
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
     )
     target_link_libraries(test_plot_model PRIVATE nlohmann_json::nlohmann_json)
     # Plot data preparation for every P1 kind (TOFIX134 P1).
@@ -436,6 +438,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_prepare PRIVATE nlohmann_json::nlohmann_json)
@@ -448,6 +451,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
@@ -460,6 +464,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"

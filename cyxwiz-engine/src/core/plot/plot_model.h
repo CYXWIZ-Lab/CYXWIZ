@@ -203,6 +203,13 @@ struct PlotSpec {
     int min_cell_rows = 5;
     // The 3D view (degrees; NaN: the default view), saved with the plot.
     double view_elevation = NAN, view_azimuth = NAN;
+    // P4.4 colour picker (board 16): the scale ("" = the theme's; else a
+    // plot_scales.h id), reversed or not, its range (NaN: the data's), and a
+    // colour per series ("#rrggbb"; "" = the theme's series colour).
+    std::string colour_scale;
+    bool colour_reverse = false;
+    double scale_lo = NAN, scale_hi = NAN;
+    std::vector<std::string> series_colours;
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive

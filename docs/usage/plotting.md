@@ -198,6 +198,48 @@ or press **Plot** under the column's statistics. The Plot window opens:
   GDP per person, and as Map: regions of gdp_per_person (log); the USGS
   earthquake feed (`earthquakes_month.csv`) as Map: points sized by
   magnitude and coloured by depth.
+- **3D**:
+  - **Scatter 3D**: **X**, **Y** and **Z** number columns, **Colour by**
+    (a number column with many values makes a scale with a colour bar; text
+    makes groups) and an optional **Size** column. Above 100,000 points it
+    draws a reproducible sample (the label says so; exports use all rows).
+  - **Line 3D**: X, Y and Z in row order (a path, a trajectory, a gradient
+    descent), one line per Colour-by group.
+  - **Surface**, from either:
+    - **Grid columns**: a table of numbers, such as `volcano.csv` (87 rows
+      by 61 columns). Its columns are X, its rows Y (row 1 at the front),
+      and each cell is a height.
+    - **X, Y, Z columns**: one point per row. Rows on a regular grid keep
+      their own cells. Scattered rows go on a grid (**Grid cells across**)
+      with the mean Z per cell, and **Leave cells with fewer rows open** (5)
+      leaves thin cells open. The panel says how many are open.
+
+    **Draw**: **Fill**, **Lines** (wireframe) or **Both**. **Shade** lights
+    the fill from the upper left so slopes show. **Contours on the floor**
+    draws the level lines under the surface.
+  - Drag the plot to turn it and use the wheel to zoom. **Turn** (the
+    default turned view), **Top**, **Front** and **Side** are in the
+    toolbar, and **Fit** frames the data. The view you leave is saved with
+    the plot (and in the Plot node). Hover shows the nearest point's or
+    grid point's X, Y and Z.
+  - Export: PNG of the view or CSV of the points or cells; SVG is 2D only.
+
+  Example: `p4_3d.cyxgraph` (test project), with the Maunga Whau volcano
+  grid as a shaded surface (94 to 195 m) and Spotify as a Scatter 3D of
+  artist_popularity, duration and album tracks, coloured by
+  track_popularity.
+- **Colour** (every plot):
+  - **The scale** (when the plot colours by values: heatmaps, contours,
+    surfaces, maps, scatter colour scales): **Theme** (the default),
+    **Viridis**, **Plasma**, **Magma**, **Cividis**, **Turbo**, **Greys**,
+    or **Cool-warm** for values around 0. The menu shows each gradient.
+  - **Reverse** runs the scale the other way. Untick **Range: data** to set
+    the scale's ends yourself.
+  - **Series colours**: a swatch per series (pie: per slice). Click it for
+    the theme's colours, or **Custom** for any colour; **Theme colour** goes
+    back to the default.
+  - The choices are saved with the plot, and SVG export uses them too. New
+    plots start from the theme.
 - **Line and scatter**: **Show the y = x line** draws a reference line
   (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the

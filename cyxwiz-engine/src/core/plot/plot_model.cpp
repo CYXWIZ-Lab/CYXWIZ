@@ -1,5 +1,7 @@
 #include "plot_model.h"
 
+#include "plot_scales.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -188,6 +190,10 @@ std::string SpecToJson(const PlotSpec& s) {
     j["floor_contours"] = s.floor_contours;
     j["min_cell_rows"] = s.min_cell_rows;
     if (std::isfinite(s.view_elevation) && std::isfinite(s.view_azimuth)) j["view"] = {s.view_elevation, s.view_azimuth};
+    if (!s.colour_scale.empty()) j["scale"] = s.colour_scale;
+    if (s.colour_reverse) j["scale_reverse"] = true;
+    if (std::isfinite(s.scale_lo) && std::isfinite(s.scale_hi)) j["scale_range"] = {s.scale_lo, s.scale_hi};
+    if (!s.series_colours.empty()) j["series_colours"] = s.series_colours;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -326,6 +332,14 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
         out.view_elevation = j["view"][0].get<double>();
         out.view_azimuth = j["view"][1].get<double>();
     }
+    out.colour_scale = j.value("scale", std::string());
+    if (!out.colour_scale.empty() && !FindScale(out.colour_scale)) return fail("unknown colour scale '" + out.colour_scale + "'");
+    out.colour_reverse = j.value("scale_reverse", false);
+    if (j.contains("scale_range") && j["scale_range"].is_array() && j["scale_range"].size() == 2) {
+        out.scale_lo = j["scale_range"][0].get<double>();
+        out.scale_hi = j["scale_range"][1].get<double>();
+    }
+    if (j.contains("series_colours") && j["series_colours"].is_array()) out.series_colours = j["series_colours"].get<std::vector<std::string>>();
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());

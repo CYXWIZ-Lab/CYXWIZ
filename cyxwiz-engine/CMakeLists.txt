@@ -424,6 +424,7 @@ set(ENGINE_SOURCES
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
@@ -1240,6 +1241,7 @@ pybind11_add_module(cyxwiz_plotting
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
@@ -1402,6 +1404,7 @@ add_executable(test_plot_arrow_source
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/series_decimation.cpp
 )
 target_include_directories(test_plot_arrow_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -1545,6 +1548,7 @@ add_executable(test_dashboard_runtime
     src/core/session_query_engine.cpp
     src/core/duckdb_connector.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/world_map.cpp
@@ -3752,6 +3756,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
@@ -3861,6 +3866,7 @@ add_executable(test_text_gui_training_launch
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
@@ -5090,6 +5096,7 @@ add_executable(test_training_manager_session
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
@@ -5750,6 +5757,7 @@ add_executable(test_engine_node_parity
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
+    src/core/plot/plot_scales.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp

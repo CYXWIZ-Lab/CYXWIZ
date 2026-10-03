@@ -2603,6 +2603,19 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         spec.kind != Kind::Confusion && spec.kind != Kind::Residuals && spec.kind != Kind::Sankey && spec.kind != Kind::Treemap &&
         spec.kind != Kind::MapPoints && spec.kind != Kind::Surface && !ys.empty() && ys.front()->numeric)
         p.stats = Summarize(ys.front()->numbers);
+    // The colour picker's range (board 16) replaces the data's on every scale.
+    if (std::isfinite(spec.scale_lo) && std::isfinite(spec.scale_hi) && spec.scale_hi > spec.scale_lo) {
+        if (p.colour_scale) {
+            p.colour_min = spec.scale_lo;
+            p.colour_max = spec.scale_hi;
+            p.colour_diverging = false;
+        }
+        if (!p.grid.empty() || !p.hex_v.empty() || !p.region_value.empty() || !p.qx.empty() || !p.stream_lines.empty()) {
+            p.grid_lo = spec.scale_lo;
+            p.grid_hi = spec.scale_hi;
+            p.grid_diverging = false;
+        }
+    }
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
     // The rows chosen; a kind that said what it drew (quiver: every Nth arrow) keeps that.
