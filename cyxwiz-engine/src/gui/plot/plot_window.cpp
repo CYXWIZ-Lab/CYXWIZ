@@ -43,7 +43,14 @@ std::string DefaultTitle(const PlotSpec& s) {
 
 }  // namespace
 
-PlotWindow::PlotWindow(std::string id) : id_(std::move(id)), view_(id_ + "_view") {}
+PlotWindow::PlotWindow(std::string id) : id_(std::move(id)), view_(id_ + "_view") {
+    // 3D: the view the user turned to is saved with the plot (no new data needed).
+    view_.on_view_changed = [this](double elevation, double azimuth) {
+        spec_.view_elevation = elevation;
+        spec_.view_azimuth = azimuth;
+        if (on_spec_changed) on_spec_changed(spec_);
+    };
+}
 
 PlotWindow::~PlotWindow() {
     stop_->store(true);
@@ -526,14 +533,40 @@ void PlotWindow::DrawSettings() {
 
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "DATA");
+    // Surface: from X, Y, Z columns or from grid columns (board 16).
+    const bool surface = spec_.kind == Kind::Surface;
+    const bool grid_surface = surface && spec_.surface_from == PlotSpec::SurfaceFrom::Grid;
+    if (surface) {
+        ImGui::TextColored(t.text_dim, "Surface from");
+        static const char* const kFrom[] = {"X, Y, Z columns", "Grid columns"};
+        int from = static_cast<int>(spec_.surface_from);
+        if (ui::SegmentedControl("##surface_from", kFrom, 2, &from)) {
+            spec_.surface_from = static_cast<PlotSpec::SurfaceFrom>(from);
+            changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("X, Y, Z columns: one point per row (a grid, or scattered rows put on a grid).\n"
+                              "Grid columns: a table of numbers; its columns are X, its rows Y.");
+    }
+    if (grid_surface) {
+        ImGui::TextColored(t.text_dim, "Grid columns (two or more; the rows are the grid's rows)");
+        changed |= picker_.PickMany("##grid_columns", spec_.y_columns, columns_, true, w);
+    }
     // X / categories / values.
-    if ((k.required | k.optional) & kEncX) {
+    if (((k.required | k.optional) & kEncX) && !grid_surface) {
         ImGui::TextColored(t.text_dim, "%s", k.x_hint);
         changed |= picker_.Pick("##x", spec_.x_column, columns_, NumericX(spec_.kind),
                                 (k.required & kEncX) ? nullptr : "(row number)", w);
     }
-    // Y: several (one series each) or one.
-    if ((k.required | k.optional) & kEncY) {
+    // Y: several (one series each) or one; an X, Y, Z surface takes one.
+    if (((k.required | k.optional) & kEncY) && surface && !grid_surface) {
+        ImGui::TextColored(t.text_dim, "Y");
+        std::string y = spec_.y_columns.empty() ? std::string() : spec_.y_columns.front();
+        if (picker_.Pick("##y_surface", y, columns_, true, nullptr, w)) {
+            spec_.y_columns.assign(1, y);
+            changed = true;
+        }
+    } else if (((k.required | k.optional) & kEncY) && !surface) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
         const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion && spec_.kind != Kind::Sankey &&
                                   spec_.kind != Kind::Treemap;
@@ -555,6 +588,11 @@ void PlotWindow::DrawSettings() {
             }
         }
     }
+    // 3D: the Z column.
+    if (((k.required | k.optional) & kEncZ) && !grid_surface) {
+        ImGui::TextColored(t.text_dim, "Z");
+        changed |= picker_.Pick("##z", spec_.z_column, columns_, true, nullptr, w);
+    }
     if (k.optional & kEncColor) {
         const bool treemap = spec_.kind == Kind::Treemap;
         ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)"
@@ -563,7 +601,7 @@ void PlotWindow::DrawSettings() {
         changed |= picker_.Pick("##colour", spec_.color_column, columns_, treemap, treemap ? "(top group)" : "(none)", w);
         // A number column on a scatter: groups or a colour scale.
         const int c = ColumnIndex(spec_.color_column);
-        if (spec_.kind == Kind::Scatter && c >= 0 && numeric_[static_cast<size_t>(c)]) {
+        if ((spec_.kind == Kind::Scatter || spec_.kind == Kind::Scatter3D) && c >= 0 && numeric_[static_cast<size_t>(c)]) {
             static const char* const kModes[] = {"Groups", "Scale"};
             int mode = view_.HasData() && view_.Data().colour_scale ? 1 : 0;
             if (ui::SegmentedControl("##colour_mode", kModes, 2, &mode)) {
@@ -574,7 +612,8 @@ void PlotWindow::DrawSettings() {
     }
     if (k.optional & kEncValue) {
         ImGui::TextColored(t.text_dim, "%s", k.value_hint);
-        changed |= picker_.Pick("##value", spec_.value_column, columns_, true, spec_.kind == Kind::MapPoints ? "(one size)" : "(count rows)", w);
+        changed |= picker_.Pick("##value", spec_.value_column, columns_, true,
+                                spec_.kind == Kind::MapPoints || spec_.kind == Kind::Scatter3D ? "(one size)" : "(count rows)", w);
     }
     if (spec_.x_column != x_before) spec_.x_label.clear();
     if (spec_.y_columns != y_before) spec_.y_label.clear();
@@ -853,6 +892,46 @@ void PlotWindow::DrawSettings() {
             ImGui::TextColored(t.text_faint, "Use a country name or its ISO code (FRA or FR). The CSV export lists every name.");
             ImGui::PopTextWrapPos();
         }
+    }
+    // P4 group 1 (board 16): how a surface is drawn, and how scattered rows go on a grid.
+    if (surface) {
+        ImGui::TextColored(t.text_dim, "Draw");
+        static const char* const kDraw[] = {"Fill", "Lines", "Both"};
+        int draw = static_cast<int>(spec_.surface_draw);
+        if (ui::SegmentedControl("##surface_draw", kDraw, 3, &draw)) {
+            spec_.surface_draw = static_cast<PlotSpec::SurfaceDraw>(draw);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Shade", &spec_.shade);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Light from the upper left, so slopes show");
+        ImGui::SameLine();
+        changed |= ImGui::Checkbox("Contours on the floor", &spec_.floor_contours);
+        if (!grid_surface) {
+            ImGui::TextColored(t.text_dim, "Grid cells across (scattered rows)");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##surface_bins", &spec_.bins, 0, 0)) {
+                spec_.bins = std::clamp(spec_.bins, 4, 200);
+                changed = true;
+            }
+            ImGui::TextColored(t.text_dim, "Leave cells with fewer rows open");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##min_cell_rows", &spec_.min_cell_rows, 0, 0)) {
+                spec_.min_cell_rows = std::clamp(spec_.min_cell_rows, 1, 100000);
+                changed = true;
+            }
+            const Prepared& d = view_.Data();
+            if (view_.HasData() && !d.metrics.empty() && d.metrics[0].first == "open cells" && d.metrics[0].second > 0) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_faint, "%s of %d cells open (fewer than %d rows); a regular grid of points keeps its own cells.",
+                                   Thousands(static_cast<long long>(d.metrics[0].second)).c_str(), d.grid_rows * d.grid_cols, spec_.min_cell_rows);
+                ImGui::PopTextWrapPos();
+            }
+        }
+    }
+    if (Info(spec_.kind).group == Group::ThreeD) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Drag the plot to turn it, wheel to zoom; Turn / Top / Front / Side above. The view is saved with the plot.");
+        ImGui::PopTextWrapPos();
     }
     if (spec_.kind == Kind::MapPoints) {
         ImGui::PushTextWrapPos(0.0f);

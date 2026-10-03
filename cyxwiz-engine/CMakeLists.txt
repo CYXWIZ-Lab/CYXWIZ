@@ -66,6 +66,20 @@ set(CYXWIZ_HAS_OPENCV ON)
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
+# ImPlot3D 0.2 for 3D plots (TOFIX134 P4; vendored, see external/implot3d/SOURCE.md),
+# compiled as upstream ships it, without our warning level. Every target that
+# compiles the plot view links it.
+add_library(cyxwiz-implot3d STATIC
+    external/implot3d/implot3d.cpp
+    external/implot3d/implot3d_items.cpp
+    external/implot3d/implot3d_meshes.cpp
+)
+target_include_directories(cyxwiz-implot3d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/implot3d)
+target_link_libraries(cyxwiz-implot3d PUBLIC imgui::imgui)
+if(MSVC)
+    target_compile_options(cyxwiz-implot3d PRIVATE /W0)
+endif()
+
 # Plugin SDK static library (shared between engine and plugins)
 add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/plugin_context.cpp
@@ -418,6 +432,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_export.cpp
     src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/plot/plot_window.cpp
     src/gui/plot/column_picker.cpp
     src/core/plot/node_result_plan.cpp
@@ -593,10 +608,6 @@ set(ENGINE_SOURCES
     external/ImGuiColorTextEdit/TextEditor.cpp
     # ImNodes (visual node editor)
     external/imnodes/imnodes.cpp
-    # ImPlot3D 0.2 (3D plots, TOFIX134 P4; vendored, see external/implot3d/SOURCE.md)
-    external/implot3d/implot3d.cpp
-    external/implot3d/implot3d_items.cpp
-    external/implot3d/implot3d_meshes.cpp
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
@@ -978,7 +989,8 @@ add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
-target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-runtime-bootstrap)
+target_link_libraries(cyxwiz-engine PRIVATE
+    cyxwiz-implot3d cyxwiz-runtime-bootstrap)
 target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )
@@ -992,11 +1004,7 @@ target_include_directories(cyxwiz-engine BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/implot3d
 )
-# Vendored ImPlot3D: compiled as upstream ships it, without our warning level.
-set_source_files_properties(external/implot3d/implot3d.cpp external/implot3d/implot3d_items.cpp external/implot3d/implot3d_meshes.cpp
-    PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/W0>")
 
 include(CyxWizInstallerTargets)
 
@@ -1239,6 +1247,7 @@ pybind11_add_module(cyxwiz_plotting
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -1248,6 +1257,7 @@ pybind11_add_module(cyxwiz_plotting
 
 # Link the plotting module against necessary libraries
 target_link_libraries(cyxwiz_plotting PRIVATE
+    cyxwiz-implot3d
     imgui::imgui
     implot::implot
     glad::glad
@@ -3749,6 +3759,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -3815,6 +3826,7 @@ target_include_directories(test_graph_training_sequence_preflight PRIVATE
 )
 
 target_link_libraries(test_graph_training_sequence_preflight PRIVATE
+    cyxwiz-implot3d
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
@@ -3856,6 +3868,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -3898,6 +3911,7 @@ target_include_directories(test_text_gui_training_launch PRIVATE
 )
 
 target_link_libraries(test_text_gui_training_launch PRIVATE
+    cyxwiz-implot3d
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
@@ -5083,6 +5097,7 @@ add_executable(test_training_manager_session
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -5093,6 +5108,7 @@ target_compile_definitions(test_training_manager_session PRIVATE
     CYXWIZ_PLOTTING_MODULE
 )
 target_link_libraries(test_training_manager_session PRIVATE
+    cyxwiz-implot3d
     imgui::imgui
     implot::implot
 )
@@ -5741,6 +5757,7 @@ add_executable(test_engine_node_parity
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/gui/plot/plot_view3d.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
@@ -5797,6 +5814,7 @@ target_include_directories(test_engine_node_parity PRIVATE
     ${Stb_INCLUDE_DIR}
 )
 target_link_libraries(test_engine_node_parity PRIVATE
+    cyxwiz-implot3d
     cyxwiz-training-core
     imgui::imgui
     implot::implot

@@ -104,9 +104,15 @@ public:
     void DrawOwnWindow(const Options& options);
     bool own_window = false;
 
+    // 3D: turns the view (degrees; NaN elevation: the default view). The view
+    // the user turns to is reported once they let go (to save in the plot).
+    void SetView(double elevation, double azimuth);
+    std::function<void(double elevation, double azimuth)> on_view_changed;
+
 private:
     void DrawToolbar(const Options& options);
     void DrawPlot(ImVec2 size);
+    void Draw3D(ImVec2 size);         // Scatter 3D, Line 3D, Surface (plot_view3d.cpp)
     void DrawImages(ImVec2 size);     // Image: a grid of pictures (ImGui, not ImPlot)
     void DrawPairPlot(ImVec2 size);   // Pair plot: an ImPlot subplot grid
     void DrawSankey();                // Sankey, Treemap: drawn in pixels inside the plot
@@ -150,6 +156,16 @@ private:
     int hot_rect_ = -1;
     std::vector<std::string> tree_zoom_;         // treemap: the group zoomed into (empty: all)
     int hot_country_ = -1;                       // map regions: under the mouse
+    // 3D: a view preset to apply, the view last reported, and this frame's
+    // drawn points (screen position and values) for hover.
+    double view_el_ = NAN, view_az_ = NAN;
+    bool view_apply_ = false;
+    double saved_el_ = NAN, saved_az_ = NAN;
+    struct Hover3D {
+        ImVec2 pos;
+        double x, y, z, c;
+    };
+    std::vector<Hover3D> hover3d_;
 };
 
 }  // namespace cyxwiz::plot

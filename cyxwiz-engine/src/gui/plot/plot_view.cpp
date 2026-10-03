@@ -282,7 +282,8 @@ void PlotView::ExportMenu(const Options& o) {
         pending_->action = Pending::Action::Save;
         capture_frame_ = ImGui::GetFrameCount() + 1;  // after this menu is gone
     }
-    if (ImGui::MenuItem("Save image as SVG...", nullptr, false, can_save)) {
+    const bool flat = Info(data_.spec.kind).group != Group::ThreeD;  // SVG is 2D
+    if (ImGui::MenuItem("Save image as SVG...", nullptr, false, can_save && flat)) {
         if (auto path = h.save_path("Save plot as SVG", "svg", o.export_name + ".svg")) {
             const ui::Tokens& t = ui::CurrentTokens();
             SvgStyle st;
@@ -362,14 +363,28 @@ void PlotView::DrawToolbar(const Options& o) {
     // Right-aligned actions.
     const char* own = ICON_FA_WINDOW_RESTORE;
     const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float w = (o.tool_fit ? ui::ButtonWidth("Fit", ui::ButtonSize::Small) + gap : 0.0f) +
-                    (o.tool_log ? ui::ButtonWidth("Log Y", ui::ButtonSize::Small) + gap : 0.0f) +
+    const bool three_d = has_data_ && Info(data_.spec.kind).group == Group::ThreeD;
+    const char* views[] = {"Turn", "Top", "Front", "Side"};
+    float views_w = 0.0f;
+    if (three_d)
+        for (const char* v : views) views_w += ui::ButtonWidth(v, ui::ButtonSize::Small) + gap;
+    const float w = views_w + (o.tool_fit ? ui::ButtonWidth("Fit", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_log && !three_d ? ui::ButtonWidth("Log Y", ui::ButtonSize::Small) + gap : 0.0f) +
                     (o.tool_legend ? ui::ButtonWidth("Legend", ui::ButtonSize::Small) + gap : 0.0f) +
                     ui::ButtonWidth("Export", ui::ButtonSize::Small) +
                     (o.own_window_button ? ui::ButtonWidth(own, ui::ButtonSize::Small) + gap : 0.0f);
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w;
     if (right > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(right);
     const bool usable = has_data_ && data_.problem.empty();
+    if (three_d) {
+        // Turn: the default turned view; Top, Front and Side look along an axis.
+        const double el[] = {NAN, 90.0, 0.0, 0.0}, az[] = {NAN, 0.0, 0.0, 90.0};
+        for (int i = 0; i < 4; ++i) {
+            if (ui::GhostButton((std::string(views[i]) + "##view" + id_).c_str(), usable)) SetView(el[i], az[i]);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == 0 ? "The default turned view (drag the plot to turn it, wheel to zoom)" : "Look along an axis");
+            ImGui::SameLine();
+        }
+    }
     if (o.tool_fit) {
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
         ImGui::SameLine();
@@ -377,8 +392,8 @@ void PlotView::DrawToolbar(const Options& o) {
     const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && data_.spec.kind != Kind::Image &&
                          data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind) &&
                          !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals &&
-                         !IsPixelKind(data_.spec.kind) && data_.spec.kind != Kind::MapPoints;
-    if (o.tool_log) {
+                         !IsPixelKind(data_.spec.kind) && data_.spec.kind != Kind::MapPoints && !three_d;
+    if (o.tool_log && !three_d) {  // 3D: no log axis
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
             fit_ = true;
@@ -610,6 +625,10 @@ void PlotView::DrawPlot(ImVec2 size) {
     }
     if (kind == Kind::PairPlot) {
         DrawPairPlot(size);
+        return;
+    }
+    if (Info(kind).group == Group::ThreeD) {
+        Draw3D(size);
         return;
     }
     const ui::Tokens& t = ui::CurrentTokens();
