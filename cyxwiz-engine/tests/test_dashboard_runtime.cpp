@@ -186,6 +186,30 @@ int main() {
             Check(r.ok && D(r, "value") == 10, "a KPI's SQL as text runs the same: " + r.error);
         }
 
+        // A query widget: its SQL reads the rows under the other widgets' filters.
+        {
+            WidgetSpec qw;
+            qw.id = "q";
+            qw.type = WidgetType::Plot;
+            qw.plot.kind = plot::Kind::Bar;
+            qw.plot.x_column = "album_type";
+            qw.plot.y_columns = {"tracks"};
+            qw.query = "SELECT album_type, count(*) AS tracks FROM Spotify GROUP BY album_type ORDER BY album_type;";
+            qw.query_table = "Spotify";
+            Check(qw.Fields().empty() && CheckBinding(qw, contract, {}).state == Binding::State::Ok, "a query widget's columns are its own");
+            QueryRequest qq = WidgetQuery(qw, "Spotify", spec.filters);
+            r = engine.Run(qq);
+            Check(r.ok && r.table->num_rows() == 1 && D(r, "tracks") == 10, "query widget under the filter (10 singles): " + r.error + " / " + qq.sql);
+            r = engine.Run(WidgetQuery(qw, "Spotify", FilterState{}));
+            Check(r.ok && r.table->num_rows() == 3, "query widget without filters: 3 album types: " + r.error);
+            qw.query = "with t as (select * from Spotify) select album_type, count(*) as tracks from t group by 1";
+            r = engine.Run(WidgetQuery(qw, "Spotify", spec.filters));
+            Check(r.ok && r.table->num_rows() == 1, "a query with its own WITH: " + r.error);
+            qw.query = "DROP TABLE Spotify";
+            r = engine.Run(WidgetQuery(qw, "Spotify", FilterState{}));
+            Check(!r.ok, "a query widget cannot write");
+        }
+
         // The summary strip.
         r = engine.Run(StripQuery("Spotify", spec.filters, profile, "track_popularity", true));
         Check(r.ok && D(r, "rows_now") == 10 && D(r, "rows_all") == 30 && D(r, "missing_now") == 0 && std::fabs(D(r, "target_now") - 47.0) < 1e-9 &&
@@ -211,6 +235,6 @@ int main() {
     }
     fs::remove_all(root, ec);
     std::cout << "dashboard runtime: automatic layout, widget / sample / table / KPI / summary SQL through the engine with the "
-                 "cross-filter rule, binding checks with rename candidates and type changes, SQL as text with values written in. OK\n";
+                 "cross-filter rule, binding checks with rename candidates and type changes, SQL as text with values written in, query widgets over the filtered rows. OK\n";
     return 0;
 }

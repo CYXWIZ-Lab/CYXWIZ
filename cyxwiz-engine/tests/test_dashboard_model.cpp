@@ -83,6 +83,24 @@ int main() {
     Check(!DashboardFromJson("{\"version\":1,\"widgets\":[{\"type\":\"gauge\"}]}", untouched, &problem) &&
               problem.find("gauge") != std::string::npos, "unknown widget type refused");
 
+    // A query widget and the automatic-layout flag survive the round trip.
+    {
+        DashboardSpec q;
+        WidgetSpec w;
+        w.id = q.NewId();
+        w.query = "SELECT album_type, count(*) AS n FROM \"Spotify\" GROUP BY 1";
+        w.query_table = "Spotify";
+        w.plot.kind = plot::Kind::Bar;
+        q.widgets.push_back(w);
+        DashboardSpec qb;
+        Check(DashboardFromJson(DashboardToJson(q), qb) && qb.widgets[0].IsQuery() && qb.widgets[0].query == w.query &&
+                  qb.widgets[0].query_table == "Spotify" && !qb.automatic_done, "query widget kept; layout still to build");
+        q.automatic_done = true;
+        Check(DashboardFromJson(DashboardToJson(q), qb) && qb.automatic_done, "layout built kept");
+        Check(DashboardFromJson("{\"version\":1,\"widgets\":[{\"type\":\"kpi\"}]}", qb) && qb.automatic_done &&
+                  DashboardFromJson("{\"version\":1}", qb) && !qb.automatic_done, "without the flag: built when it has widgets");
+    }
+
     // The shared filter: a widget is drawn with the other widgets' filters.
     std::vector<QueryParam> params;
     const std::string for_table = d.filters.WhereFor(table.id, params);
@@ -132,6 +150,6 @@ int main() {
     Check(MeasureFromId("missing_pct") == Measure::MissingPct && std::string(MeasureLabel(Measure::Count)) == "Rows", "measures");
 
     std::cout << "dashboard model: JSON round trip and refusals, shared filter with bound values and the own-widget rule, "
-                 "replace / clear selections, quoted fields, renames, regenerate, widget kinds over every plot kind. OK\n";
+                 "replace / clear selections, quoted fields, renames, regenerate, widget kinds over every plot kind, query widgets and the layout flag. OK\n";
     return 0;
 }

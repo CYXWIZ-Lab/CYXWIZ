@@ -93,6 +93,7 @@ std::vector<std::string> WidgetSpec::Fields() const {
             for (const auto& c : columns) add(c);
             break;
         case WidgetType::Plot:
+            if (IsQuery()) break;  // the query's own columns
             add(plot.x_column);
             for (const auto& y : plot.y_columns) add(y);
             add(plot.color_column);
@@ -214,6 +215,7 @@ std::string DashboardToJson(const DashboardSpec& spec) {
     j["title"] = spec.title;
     j["next_id"] = spec.next_id;
     j["known_types"] = spec.known_types;
+    j["automatic_done"] = spec.automatic_done;
     j["widgets"] = json::array();
     for (const auto& w : spec.widgets) {
         json o;
@@ -222,6 +224,10 @@ std::string DashboardToJson(const DashboardSpec& spec) {
         o["title"] = w.title;
         o["at"] = {w.at.x, w.at.y, w.at.w, w.at.h};
         o["automatic"] = w.automatic;
+        if (w.IsQuery()) {
+            o["query"] = w.query;
+            o["query_table"] = w.query_table;
+        }
         if (!w.bucket.empty()) o["bucket"] = w.bucket;
         switch (w.type) {
             case WidgetType::Plot: o["plot"] = json::parse(plot::SpecToJson(w.plot)); break;
@@ -285,6 +291,8 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             if (o.contains("at") && o["at"].is_array() && o["at"].size() == 4)
                 w.at = {o["at"][0].get<int>(), o["at"][1].get<int>(), std::max(1, o["at"][2].get<int>()), std::max(1, o["at"][3].get<int>())};
             w.automatic = o.value("automatic", false);
+            w.query = o.value("query", std::string());
+            w.query_table = o.value("query_table", std::string());
             w.bucket = o.value("bucket", std::string());
             if (w.type == WidgetType::Plot) {
                 std::string why;
@@ -318,6 +326,8 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             p.bucket = f.value("bucket", std::string());
             if (!p.field.empty()) out.filters.predicates.push_back(std::move(p));
         }
+    // Saved before the flag existed: a dashboard with widgets had its layout.
+    out.automatic_done = j.value("automatic_done", !out.widgets.empty());
     spec = std::move(out);
     return true;
 }

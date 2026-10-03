@@ -47,6 +47,12 @@ struct WidgetSpec {
     plot::PlotSpec plot;
     // A date X field counted per year ("year"; empty: as it is).
     std::string bucket;
+    // A query widget (Add to Dashboard from Data Studio's Query tab): its plot
+    // reads this SQL, where `query_table` stands for the dashboard's rows under
+    // the other widgets' filters. Its columns are the query's, not the data's.
+    std::string query;
+    std::string query_table;
+    bool IsQuery() const { return !query.empty(); }
     // KPI widgets: a measure of a field (Count needs no field).
     Measure measure = Measure::Count;
     std::string field;
@@ -93,6 +99,9 @@ struct DashboardSpec {
     // Column -> type when every widget last bound (a renamed column is then
     // offered as the rebind for a field that is gone).
     std::map<std::string, std::string> known_types;
+    // The automatic layout was built (a dashboard made with a widget from
+    // Data Studio still gets it on its first profile).
+    bool automatic_done = false;
     int next_id = 1;
     std::string NewId() { return "w" + std::to_string(next_id++); }
     WidgetSpec* Find(const std::string& id);

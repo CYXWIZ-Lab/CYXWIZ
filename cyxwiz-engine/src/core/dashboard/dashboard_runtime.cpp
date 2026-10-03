@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 
 namespace cyxwiz::dashboard {
@@ -43,6 +44,7 @@ std::string MeasureSql(Measure m, const std::string& col) {
 
 Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const std::map<std::string, std::string>& known_types) {
     Binding b;
+    if (w.IsQuery()) return b;  // its columns come from the query (an error there says so)
     for (const auto& field : w.Fields()) {
         if (contract.Find(field)) continue;
         b.state = Binding::State::FieldMissing;
@@ -129,6 +131,31 @@ QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const Fi
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard widget";
+    if (w.IsQuery()) {
+        // The query's table name stands for the rows under the other widgets' filters.
+        const std::string rows = Quote(w.query_table.empty() ? table : w.query_table) + " AS (SELECT * FROM " + Quote(table) +
+                                 Where(filters.WhereFor(w.id, r.params)) + ")";
+        std::string body = w.query;
+        while (!body.empty() && (body.back() == ';' || std::isspace(static_cast<unsigned char>(body.back())))) body.pop_back();
+        // A keyword at `at` (any case), followed by a space; the position after it, or npos.
+        const auto word_at = [&](size_t at, const std::string& word) -> size_t {
+            at = body.find_first_not_of(" \t\r\n", at);
+            if (at == std::string::npos || at + word.size() >= body.size()) return std::string::npos;
+            for (size_t i = 0; i < word.size(); ++i)
+                if (std::toupper(static_cast<unsigned char>(body[at + i])) != word[i]) return std::string::npos;
+            return std::isspace(static_cast<unsigned char>(body[at + word.size()])) ? at + word.size() : std::string::npos;
+        };
+        if (const size_t after_with = word_at(0, "WITH"); after_with != std::string::npos) {
+            // Its own WITH: ours goes first in the same list.
+            const size_t after_recursive = word_at(after_with, "RECURSIVE");
+            if (after_recursive != std::string::npos) r.sql = "WITH RECURSIVE " + rows + ", " + body.substr(after_recursive);
+            else r.sql = "WITH " + rows + ", " + body.substr(after_with);
+        } else {
+            r.sql = "WITH " + rows + " " + body;
+        }
+        if (row_cap > 0) r.sql = "SELECT * FROM (" + r.sql + ") AS cyxwiz_rows USING SAMPLE reservoir(" + std::to_string(row_cap) + " ROWS) REPEATABLE (42)";
+        return r;
+    }
     std::vector<std::string> cols;
     if (w.type == WidgetType::Plot) cols = plot::ColumnsNeeded(w.plot);
     else cols = w.columns;
