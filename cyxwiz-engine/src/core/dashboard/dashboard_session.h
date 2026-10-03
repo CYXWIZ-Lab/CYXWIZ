@@ -29,6 +29,7 @@ struct WidgetResult {
     std::string message;                              // Failed / Unbound: in words
     Binding binding;                                  // Unbound: what to rebind
     std::shared_ptr<const plot::Prepared> prepared;   // plot widgets
+    std::shared_ptr<const plot::Prepared> all_rows;   // the same over all rows when filters apply (bars, histograms)
     std::shared_ptr<arrow::Table> table;              // table widgets
     double value = NAN, all = NAN;                    // KPI widgets (filtered, all rows)
     bool sampled = false;                             // drawn from a sample of the rows
@@ -67,7 +68,7 @@ private:
         uint64_t task = 0;
         std::string fingerprint;
     };
-    void Start(const WidgetSpec& w, const DatasetContract& contract, const std::string& fingerprint, const FilterState& filters);
+    void Start(const WidgetSpec& w, const DatasetProfile& profile, const std::string& fingerprint, const FilterState& filters);
     void StartStrip(const DashboardSpec& spec, const DatasetContract& contract, const DatasetProfile& profile, const std::string& fp);
     void Remember(const WidgetResult& r);
 

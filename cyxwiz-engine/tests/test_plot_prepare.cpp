@@ -730,6 +730,21 @@ int main() {
               p.label.state == DataLabel::State::Truncated, "importance: top 3, largest first");
     }
 
+    // A fixed histogram range (dashboards align filtered bins with all rows).
+    {
+        Source hr;
+        hr.columns.push_back(Numbers("v", {1, 2, 3, 4, 5, 6, 7, 8, 9, 30}));
+        PlotSpec fixed_spec = Spec(Kind::Histogram, "v");
+        fixed_spec.bins = 4;
+        fixed_spec.range_lo = 0;
+        fixed_spec.range_hi = 20;
+        p = Prepare(fixed_spec, hr);
+        Check(p.edges.size() == 5 && p.edges.front() == 0 && p.edges.back() == 20 && p.series[0].y == std::vector<double>({4, 5, 0, 0}),
+              "fixed range: edges 0..20, 30 not counted");
+        PlotSpec back;
+        Check(SpecFromJson(SpecToJson(fixed_spec), back) && back.range_lo == 0 && back.range_hi == 20, "range round trip");
+    }
+
     // ---- Flows, hierarchies and maps (P2b group 5) ----
     {
         // Sankey: 6 rows over two steps; flows add up and the layout stacks.

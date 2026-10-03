@@ -275,6 +275,11 @@ void PrepareHistogram(Prepared& p, const SourceColumn* xcol, const Groups& group
         p.problem = xcol->name + " has no numeric values.";
         return;
     }
+    const bool fixed = std::isfinite(p.spec.range_lo) && std::isfinite(p.spec.range_hi) && p.spec.range_hi > p.spec.range_lo;
+    if (fixed) {
+        lo = p.spec.range_lo;
+        hi = p.spec.range_hi;
+    }
     if (hi <= lo) {
         lo -= 0.5;
         hi += 0.5;
@@ -290,6 +295,7 @@ void PrepareHistogram(Prepared& p, const SourceColumn* xcol, const Groups& group
         for (size_t r = 0; r < xcol->numbers.size(); ++r) {
             const double v = xcol->numbers[r];
             if (groups.of_row[r] != static_cast<int>(g) || !std::isfinite(v)) continue;
+            if (fixed && (v < lo || v > hi)) continue;  // outside the fixed range
             int b = static_cast<int>((v - lo) / width);
             b = std::clamp(b, 0, bins - 1);  // the maximum lands in the last bin
             s.y[static_cast<size_t>(b)] += 1.0;

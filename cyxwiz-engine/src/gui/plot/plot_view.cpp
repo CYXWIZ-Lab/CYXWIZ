@@ -857,8 +857,31 @@ void PlotView::DrawPlot(ImVec2 size) {
             break;
         case Kind::Histogram: {
             const double width = p.edges.size() > 1 ? p.edges[1] - p.edges[0] : 1.0;
+            // All rows in grey behind the filtered bins (same edges).
+            if (background_ && background_->spec.kind == Kind::Histogram && background_->edges == p.edges && background_->series.size() == 1) {
+                const auto& bg = background_->series[0];
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.text_dim, 0.35f));
+                ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));
+                ImPlot::PlotBars("all rows", bg.x.data(), bg.y.data(), n(bg.x), width * 0.94);
+            }
+            const bool ranged = std::isfinite(highlight_lo_) && std::isfinite(highlight_hi_) && p.series.size() == 1;
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
+                if (ranged) {
+                    // The selected bins in full colour, the rest dimmed.
+                    std::vector<double> in_x, in_y;
+                    for (size_t k = 0; k < s.x.size(); ++k)
+                        if (s.x[k] >= highlight_lo_ && s.x[k] <= highlight_hi_) {
+                            in_x.push_back(s.x[k]);
+                            in_y.push_back(s.y[k]);
+                        }
+                    ImPlot::SetNextFillStyle(ColourOf(i), 0.3f);
+                    ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));  // no outline on the dimmed bars
+                    ImPlot::PlotBars(("##dim" + s.label).c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
+                    ImPlot::SetNextFillStyle(ColourOf(i), 0.95f);
+                    ImPlot::PlotBars(s.label.c_str(), in_x.data(), in_y.data(), n(in_x), width * 0.94);
+                    continue;
+                }
                 ImPlot::SetNextFillStyle(ColourOf((i)), p.series.size() > 1 ? 0.6f : 0.9f);
                 ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
             }
@@ -888,8 +911,38 @@ void PlotView::DrawPlot(ImVec2 size) {
                                       p.spec.bar_layout == PlotSpec::BarLayout::Grouped ? 0 : ImPlotBarGroupsFlags_Stacked);
                 ImPlot::PopColormap();
             } else if (!p.series.empty()) {
-                ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
-                ImPlot::PlotBars(p.series[0].label.c_str(), p.series[0].x.data(), p.series[0].y.data(), n(p.series[0].x), 0.67);
+                const auto& s = p.series[0];
+                // All rows in grey behind, matched by category name.
+                if (background_ && background_->spec.kind == Kind::Bar && background_->series.size() == 1) {
+                    std::vector<double> bx, by;
+                    for (size_t k = 0; k < p.categories.size() && k < s.x.size(); ++k)
+                        for (size_t j = 0; j < background_->categories.size() && j < background_->series[0].y.size(); ++j)
+                            if (background_->categories[j] == p.categories[k]) {
+                                bx.push_back(s.x[k]);
+                                by.push_back(background_->series[0].y[j]);
+                                break;
+                            }
+                    ImPlot::SetNextFillStyle(ui::WithAlpha(t.text_dim, 0.35f));
+                    ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));
+                    ImPlot::PlotBars("all rows", bx.data(), by.data(), n(bx), 0.67);
+                }
+                if (!highlight_.empty()) {
+                    // The selected categories in full colour, the rest dimmed.
+                    std::vector<double> in_x, in_y;
+                    for (size_t k = 0; k < p.categories.size() && k < s.x.size(); ++k)
+                        if (std::find(highlight_.begin(), highlight_.end(), p.categories[k]) != highlight_.end()) {
+                            in_x.push_back(s.x[k]);
+                            in_y.push_back(s.y[k]);
+                        }
+                    ImPlot::SetNextFillStyle(ColourOf(0), 0.3f);
+                    ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));  // no outline on the dimmed bars
+                    ImPlot::PlotBars(("##dim" + s.label).c_str(), s.x.data(), s.y.data(), n(s.x), 0.67);
+                    ImPlot::SetNextFillStyle(ColourOf(0), 0.95f);
+                    ImPlot::PlotBars(s.label.c_str(), in_x.data(), in_y.data(), n(in_x), 0.67);
+                } else {
+                    ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
+                    ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), 0.67);
+                }
             }
             break;
         case Kind::ErrorBars:

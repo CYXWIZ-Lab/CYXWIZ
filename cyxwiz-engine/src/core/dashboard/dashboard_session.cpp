@@ -131,7 +131,7 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
         }
         if (!settled && r.prepared) continue;  // keep the old picture until the clicks settle
         if (run != running_.end()) AsyncTaskManager::Instance().Cancel(run->second.task);
-        Start(w, contract, fp, spec.filters);
+        Start(w, profile, fp, spec.filters);
     }
     // Results of widgets that were removed.
     for (auto it = results_.begin(); it != results_.end();) {
@@ -155,9 +155,21 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
     }
 }
 
-void DashboardSession::Start(const WidgetSpec& w, const DatasetContract& contract, const std::string& fingerprint, const FilterState& filters) {
-    (void)contract;
+void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile, const std::string& fingerprint, const FilterState& filters) {
+    WidgetSpec w = in;
+    // Histogram bins over the column's whole range, so filtered and all rows line up.
+    if (w.type == WidgetType::Plot && w.plot.kind == plot::Kind::Histogram && !std::isfinite(w.plot.range_lo))
+        if (const ProfiledColumn* c = profile.Find(w.plot.x_column))
+            if (c->numeric && c->max > c->min) {
+                w.plot.range_lo = c->min;
+                w.plot.range_hi = c->max;
+            }
     QueryRequest request = w.type == WidgetType::Kpi ? KpiQuery(w, dataset_, filters) : WidgetQuery(w, dataset_, filters, w.type == WidgetType::Plot ? kRowCap : 0);
+    // The same over all rows (grey behind), when filters apply to this bar or histogram.
+    std::vector<QueryParam> unused;
+    const bool with_all = w.type == WidgetType::Plot && (w.plot.kind == plot::Kind::Bar || w.plot.kind == plot::Kind::Histogram) &&
+                          !filters.WhereFor(w.id, unused).empty();
+    const QueryRequest all_request = with_all ? WidgetQuery(w, dataset_, FilterState{}, kRowCap) : QueryRequest{};
     // The row count decides whether the plot is drawn from a sample.
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
     const bool sampled = w.type == WidgetType::Plot && entry && entry->rows > kRowCap;
@@ -167,11 +179,11 @@ void DashboardSession::Start(const WidgetSpec& w, const DatasetContract& contrac
     WidgetResult& r = results_[w.id];
     if (r.state != WidgetResult::State::Ready) r.state = WidgetResult::State::Running;
     const std::string id = w.id;
-    const WidgetSpec widget = w;
+    const WidgetSpec widget = w;  // with the aligned range
     std::weak_ptr<int> alive = alive_;
     const uint64_t task = AsyncTaskManager::Instance().RunAsync(
         "Dashboard: " + (w.title.empty() ? KindOf(w).label : w.title),
-        [request, widget, result](LambdaTask& t) {
+        [request, all_request, with_all, widget, result](LambdaTask& t) {
             QueryResult q = SessionQueryService::Instance().RunNow(request);
             if (!q.ok) {
                 result->state = q.cancelled ? WidgetResult::State::Waiting : WidgetResult::State::Failed;
@@ -188,6 +200,12 @@ void DashboardSession::Start(const WidgetSpec& w, const DatasetContract& contrac
                 // Prepared off the UI thread, exactly as the Plot window does.
                 const plot::Source src = plot::SourceFromArrow(*q.table, plot::ColumnsNeeded(widget.plot));
                 result->prepared = std::make_shared<const plot::Prepared>(plot::Prepare(widget.plot, src));
+                if (with_all) {
+                    QueryResult a = SessionQueryService::Instance().RunNow(all_request);
+                    if (a.ok)
+                        result->all_rows = std::make_shared<const plot::Prepared>(
+                            plot::Prepare(widget.plot, plot::SourceFromArrow(*a.table, plot::ColumnsNeeded(widget.plot))));
+                }
             }
             result->state = WidgetResult::State::Ready;
         },

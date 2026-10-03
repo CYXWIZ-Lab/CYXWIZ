@@ -163,6 +163,7 @@ std::string SpecToJson(const PlotSpec& s) {
     j["image_invert"] = s.image_invert;
     j["gallery_max"] = s.gallery_max;
     j["pair_histogram"] = s.pair_histogram;
+    if (std::isfinite(s.range_lo) && std::isfinite(s.range_hi)) j["range"] = {s.range_lo, s.range_hi};
     j["confusion_show"] = s.confusion_show == PlotSpec::ConfusionShow::Counts       ? "counts"
                           : s.confusion_show == PlotSpec::ConfusionShow::ByPredicted ? "by_predicted"
                           : s.confusion_show == PlotSpec::ConfusionShow::All         ? "all"
@@ -268,6 +269,11 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     out.image_invert = j.value("image_invert", false);
     out.gallery_max = std::clamp(j.value("gallery_max", 40), 1, 400);
     out.pair_histogram = j.value("pair_histogram", false);
+    if (j.contains("range") && j["range"].is_array() && j["range"].size() == 2 && j["range"][0].is_number() && j["range"][1].is_number() &&
+        j["range"][1].get<double>() > j["range"][0].get<double>()) {
+        out.range_lo = j["range"][0].get<double>();
+        out.range_hi = j["range"][1].get<double>();
+    }
     const std::string show = j.value("confusion_show", std::string("by_actual"));
     if (show == "by_actual") out.confusion_show = PlotSpec::ConfusionShow::ByActual;
     else if (show == "counts") out.confusion_show = PlotSpec::ConfusionShow::Counts;

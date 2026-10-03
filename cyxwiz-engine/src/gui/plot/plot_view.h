@@ -75,6 +75,15 @@ public:
         std::string value;   // Category
         double lo = 0, hi = 0;  // Range
     };
+    // A dashboard's context: the same plot over all rows drawn in grey
+    // behind this one (when filters apply), and the values or range this
+    // widget selected (drawn in full colour, the rest dimmed).
+    void SetBackground(std::shared_ptr<const Prepared> all_rows) { background_ = std::move(all_rows); }
+    void SetHighlight(std::vector<std::string> categories, double lo = NAN, double hi = NAN) {
+        highlight_ = std::move(categories);
+        highlight_lo_ = lo;
+        highlight_hi_ = hi;
+    }
     std::optional<Click> TakeClick() {
         auto c = click_;
         click_.reset();
@@ -132,6 +141,9 @@ private:
     Options::Range x_range_, y_range_;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
     std::optional<Click> click_;
+    std::shared_ptr<const Prepared> background_;
+    std::vector<std::string> highlight_;
+    double highlight_lo_ = NAN, highlight_hi_ = NAN;
     void DetectClick();
     int hot_node_ = -1, hot_link_ = -1;          // sankey: under the mouse
     std::vector<TreeRect> tree_rects_;           // treemap: last frame's layout (pixels)

@@ -499,6 +499,19 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                     view->SetData(*r.prepared);
                     view_versions_[w.id] = r.version;
                 }
+                view->SetBackground(r.all_rows);
+                // What this widget selected: its bars or bins in full colour.
+                std::vector<std::string> picked;
+                double lo = NAN, hi = NAN;
+                for (const auto& q : spec_.filters.predicates) {
+                    if (q.source_widget != w.id || q.field != w.plot.x_column) continue;
+                    if (q.op == FilterPredicate::Op::In) picked = q.values;
+                    else if (q.op == FilterPredicate::Op::Range) {
+                        lo = q.lo;
+                        hi = q.hi;
+                    }
+                }
+                view->SetHighlight(picked, lo, hi);
                 plot::PlotView::Options o;
                 o.toolbar = false;
                 o.own_window_button = false;

@@ -160,6 +160,9 @@ struct PlotSpec {
     bool image_invert = false;
     int gallery_max = 40;                        // gallery: pictures at most
     bool pair_histogram = false;                 // pair plot diagonal: histogram instead of KDE
+    // Histogram: a fixed x range (NaN: the data's min..max). Values outside
+    // are not counted. A dashboard uses it so filtered bins match all rows.
+    double range_lo = NAN, range_hi = NAN;
     // P2b group 4 (approved board 11). Model results read x_column as the
     // actual (or x / feature) and y_columns as the predicted / score /
     // probability / curves / importance.
