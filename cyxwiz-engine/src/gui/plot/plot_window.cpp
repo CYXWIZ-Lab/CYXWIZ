@@ -1074,7 +1074,7 @@ void PlotWindow::DrawSettings() {
     }
     if (Info(spec_.kind).group == Group::ThreeD) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_faint, "Drag the plot to turn it, wheel to zoom; Turn / Top / Front / Side above. The view is saved with the plot.");
+        ImGui::TextColored(t.text_faint, "Drag to turn the plot, right-drag to move it, wheel to zoom; Turn / Top / Front / Side above. The view is saved with the plot.");
         ImGui::PopTextWrapPos();
     }
     if (spec_.kind == Kind::MapPoints) {

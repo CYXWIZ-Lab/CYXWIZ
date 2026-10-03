@@ -1867,7 +1867,7 @@ void HandleInput(ImPlot3DPlot& plot) {
 #endif
 
     // State
-    const ImVec2 rot_drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+    const ImVec2 rot_drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);  // CyxWiz: turn with the left button
     const bool rotating = ImLengthSqr(rot_drag) > MOUSE_CURSOR_DRAG_THRESHOLD;
 
     // Check if any axis/plane is hovered
@@ -1891,7 +1891,7 @@ void HandleInput(ImPlot3DPlot& plot) {
     }
 
     // If the user is no longer pressing the translation/zoom buttons, set axes as not held
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {  // CyxWiz: pan with the right button
         for (int i = 0; i < 3; i++)
             plot.Axes[i].Held = false;
     }
@@ -1945,7 +1945,7 @@ void HandleInput(ImPlot3DPlot& plot) {
         }
 
     // Handle translation with right mouse button
-    if (plot.Held && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (plot.Held && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {  // CyxWiz: pan with the right button
         ImVec2 delta(IO.MouseDelta.x, IO.MouseDelta.y);
 
         if (plot.Axes[0].Hovered && plot.Axes[1].Hovered && plot.Axes[2].Hovered) {
@@ -2075,7 +2075,7 @@ void HandleInput(ImPlot3DPlot& plot) {
     }
 
     // Handle rotation with left mouse dragging
-    if (plot.Held && ImGui::IsMouseDown(ImGuiMouseButton_Right) && !plot.IsRotationLocked()) {
+    if (plot.Held && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !plot.IsRotationLocked()) {  // CyxWiz: turn with the left button
         ImVec2 delta(IO.MouseDelta.x, IO.MouseDelta.y);
 
         // Map delta to rotation angles (in radians)

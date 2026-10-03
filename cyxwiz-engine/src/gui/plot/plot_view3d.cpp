@@ -296,6 +296,7 @@ void PlotView::Draw3D(ImVec2 size) {
                     for (size_t i = 0; i + 3 < s.size(); i += 4) {
                         const ImPlot3DPoint a(static_cast<float>(s[i]), static_cast<float>(s[i + 1]), zf);
                         const ImPlot3DPoint b(static_cast<float>(s[i + 2]), static_cast<float>(s[i + 3]), zf);
+                        if (!inside(a.x, a.y, zf) || !inside(b.x, b.y, zf)) continue;  // panned or zoomed out of the box
                         AddSegment(dl, ImPlot3D::PlotToPixels(a), ImPlot3D::PlotToPixels(b), 0.6f, col, uv,
                                    Depth(plot, (ImPlot3D::PlotToNDC(a) + ImPlot3D::PlotToNDC(b)) * 0.5f));
                     }

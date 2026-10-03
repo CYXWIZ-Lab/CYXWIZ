@@ -388,7 +388,7 @@ void PlotView::DrawToolbar(const Options& o) {
         const double el[] = {NAN, 90.0, 0.0, 0.0}, az[] = {NAN, 0.0, 0.0, 90.0};
         for (int i = 0; i < 4; ++i) {
             if (ui::GhostButton((std::string(views[i]) + "##view" + id_).c_str(), usable)) SetView(el[i], az[i]);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == 0 ? "The default turned view (drag the plot to turn it, wheel to zoom)" : "Look along an axis");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == 0 ? "The default turned view (drag to turn, right-drag to move, wheel to zoom)" : "Look along an axis");
             ImGui::SameLine();
         }
     }
