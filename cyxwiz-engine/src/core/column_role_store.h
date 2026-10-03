@@ -42,11 +42,18 @@ public:
     std::map<std::string, ColumnRole> RolesFor(const std::string& source_key) const;
 
     const std::string& File() const { return file_; }
+    bool Broken() const { return broken_; }
 
 private:
     std::string file_;
     std::map<std::string, DatasetUserSettings> datasets_;
     bool broken_ = false;
 };
+
+// The open project's store (UI thread): loaded on first use and again when
+// another project opens; empty (and not saved) without a project.
+ColumnRoleStore& ProjectColumnRoles();
+// The settings key of a dataset: the file it came from, else its name.
+std::string RoleSourceKey(const std::string& source_path, const std::string& dataset_name);
 
 }  // namespace cyxwiz

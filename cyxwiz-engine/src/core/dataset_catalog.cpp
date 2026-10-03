@@ -79,6 +79,10 @@ std::vector<DatasetEntry> DatasetCatalog::List() const {
         e.generation = it == generation_.end() ? 0 : it->second;
         auto l = labels_.find(e.name);
         if (l != labels_.end()) e.label = l->second;
+        auto tg = targets_.find(e.name);
+        if (tg != targets_.end()) e.target_column = tg->second;
+        auto src = sources_.find(e.name);
+        if (e.source_path.empty() && src != sources_.end()) e.source_path = src->second;
     }
     return out;
 }
@@ -86,6 +90,16 @@ std::vector<DatasetEntry> DatasetCatalog::List() const {
 void DatasetCatalog::SetLabels(std::map<std::string, std::string> labels) {
     std::lock_guard<std::mutex> lock(mutex_);
     labels_ = std::move(labels);
+}
+
+void DatasetCatalog::SetTargets(std::map<std::string, std::string> targets) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    targets_ = std::move(targets);
+}
+
+void DatasetCatalog::SetSources(std::map<std::string, std::string> sources) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sources_ = std::move(sources);
 }
 
 std::string DatasetCatalog::NameFor(const std::string& label_or_name) const {

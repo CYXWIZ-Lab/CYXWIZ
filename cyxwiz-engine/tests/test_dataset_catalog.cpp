@@ -122,6 +122,11 @@ int main() {
               catalog.Resolve("Cats")->Shown() == "Cats", "labels and shown names");
     Check(catalog.NameFor("World countries") == "World" && catalog.NameFor("Cats") == "Cats" && catalog.NameFor("nothing").empty(),
           "a label or a name leads to the dataset");
+    catalog.SetTargets({{"World", "gdp_per_person"}});
+    Check(catalog.Resolve("World")->target_column == "gdp_per_person" && catalog.Resolve("Cats")->target_column.empty(), "graph targets");
+    catalog.SetSources({{"World", "D:/other/world.csv"}, {"tfidf__materialized", "D:/data/reviews.csv"}});
+    Check(catalog.Resolve("World")->source_path == "D:/data/world.csv", "the registry's source path wins");
+    Check(catalog.Resolve("tfidf__materialized")->source_path == "D:/data/reviews.csv", "the graph's file fills a missing source");
 
     // A listener that unsubscribes another during delivery; owner expiry.
     int calls_a = 0, calls_b = 0;

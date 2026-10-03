@@ -146,6 +146,8 @@ set(ENGINE_SOURCES
     src/core/arrow_data_table.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
+    src/core/dataset_profiler.cpp
+    src/core/project_column_roles.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -615,8 +617,7 @@ set(ENGINE_SOURCES
     # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
-    src/gui/data_studio/analyzer.cpp
-    src/gui/data_studio/analyzer_render.cpp
+    src/gui/data_studio/profile_view.cpp
     src/gui/data_studio/visualizer.cpp
     src/gui/data_studio/visualizer_render.cpp
     src/gui/data_studio/data_studio_panel.cpp
@@ -911,7 +912,7 @@ set(ENGINE_HEADERS
     # Data Studio (Phase 1 Week 1)
     # src/gui/data_studio/pipeline_canvas.h  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.h
-    src/gui/data_studio/analyzer.h
+    src/gui/data_studio/profile_view.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
@@ -1495,6 +1496,22 @@ if(WIN32)
 endif()
 set_target_properties(test_session_query_engine PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME session_query_engine_contract COMMAND test_session_query_engine)
+
+# ===== Test: Dataset profiler (TOFIX134 P3.5) =====
+add_executable(test_dataset_profiler
+    tests/test_dataset_profiler.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+)
+target_include_directories(test_dataset_profiler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_dataset_profiler PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_dataset_profiler PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_dataset_profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
 
 # ===== Test: Sparse Feature Dataset Contract =====
 add_executable(test_sparse_feature_dataset

@@ -124,8 +124,8 @@ void DataStudioPanel::RenderTabBar() {
             if (query_editor_) query_editor_->Render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Analyze")) {
-            if (analyzer_) analyzer_->Render();
+        if (ImGui::BeginTabItem("Profile")) {
+            if (profile_) profile_->Render();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Visualize")) {
@@ -144,9 +144,8 @@ void DataStudioPanel::RenderStatusBar() {
     ImGui::TextColored(t.text_faint, "\xC2\xB7");
     ImGui::SameLine();
     if (query_editor_ && query_editor_->IsRunning()) ImGui::TextColored(t.info, "Query running");
-    else if (analyzer_ && analyzer_->IsAnalysisRunning())
-        ImGui::TextColored(t.info, "Analyzing... %.0f%%", analyzer_->GetAnalysisProgress() * 100.0f);
-    else ImGui::TextColored(t.text_dim, "Analysis: Ready");
+    else if (profile_ && profile_->IsRunning()) ImGui::TextColored(t.info, "Profiling");
+    else ImGui::TextColored(t.text_dim, "Ready");
 }
 
 }  // namespace cyxwiz

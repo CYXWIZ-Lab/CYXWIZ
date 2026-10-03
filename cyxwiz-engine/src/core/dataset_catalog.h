@@ -65,6 +65,8 @@ struct DatasetEntry {
     // when no graph names it. Queries may name a table by either.
     std::string label;
     const std::string& Shown() const { return label.empty() ? name : label; }
+    // The graph's target for it: the Data Input's label column (empty: none).
+    std::string target_column;
     uint64_t generation = 0;    // bumped by Pump() on each change; 0 = not seen yet
     bool Has(DatasetBacking b) const { return (backings & b) != 0; }
 };
@@ -108,6 +110,10 @@ public:
     // UI thread: dataset name -> label from the graph (Data Input node names).
     // Replaces the previous labels; List() and Resolve() then carry them.
     void SetLabels(std::map<std::string, std::string> labels);
+    // UI thread: dataset name -> the Data Input's label column (the contract's target).
+    void SetTargets(std::map<std::string, std::string> targets);
+    // UI thread: dataset name -> the file its Data Input reads (when the registry does not know it).
+    void SetSources(std::map<std::string, std::string> sources);
     // The dataset a label (or a name) stands for; empty when none.
     std::string NameFor(const std::string& label_or_name) const;
 
@@ -119,6 +125,8 @@ private:
     std::map<std::string, std::pair<uint64_t, DatasetEntry>> seen_;  // name -> (identity, entry)
     std::map<std::string, uint64_t> generation_;
     std::map<std::string, std::string> labels_;
+    std::map<std::string, std::string> targets_;
+    std::map<std::string, std::string> sources_;
     uint64_t next_generation_ = 0;
     std::chrono::steady_clock::time_point last_pump_{};
     struct Subscriber {

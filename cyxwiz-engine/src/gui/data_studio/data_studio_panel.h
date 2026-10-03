@@ -1,7 +1,7 @@
 #pragma once
 
 #include "query_editor.h"
-#include "analyzer.h"
+#include "profile_view.h"
 #include "visualizer.h"
 #include <imgui.h>
 #include <functional>
@@ -22,7 +22,7 @@ namespace cyxwiz {
  * Architecture:
  *   DataStudioPanel (Container)
  *     ├─ QueryEditor (SQL query interface)
- *     ├─ Analyzer (Statistical analysis)
+ *     ├─ ProfileView (profile and column roles)
  *     └─ Visualizer (Interactive plots)
  *
  * Tab Structure:
@@ -91,7 +91,7 @@ public:
 private:
     // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
     std::unique_ptr<QueryEditor> query_editor_;
-    std::unique_ptr<Analyzer> analyzer_;
+    std::unique_ptr<ProfileView> profile_;
     std::unique_ptr<Visualizer> visualizer_;
 
     // State

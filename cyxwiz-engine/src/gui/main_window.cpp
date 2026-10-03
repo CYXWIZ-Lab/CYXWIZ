@@ -3178,14 +3178,22 @@ void MainWindow::Render() {
     static double labels_at = -1.0;
     if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
         labels_at = ImGui::GetTime();
-        std::map<std::string, std::string> labels;
+        std::map<std::string, std::string> labels, targets, sources;
         for (const auto& n : node_editor_->GetNodes()) {
-            if (n.type != gui::NodeType::DataInput || n.name.empty()) continue;
+            if (n.type != gui::NodeType::DataInput) continue;
+            std::vector<std::string> names{"ds_datainput_" + std::to_string(n.id)};  // read for a plot or a run (PipelineExecutor)
             auto it = n.parameters.find("dataset_name");
-            if (it != n.parameters.end() && !it->second.empty()) labels.emplace(it->second, n.name);
-            // Read for a plot or a run (PipelineExecutor names it by the node id).
-            labels.emplace("ds_datainput_" + std::to_string(n.id), n.name);
+            if (it != n.parameters.end() && !it->second.empty()) names.push_back(it->second);
+            auto label = n.parameters.find("label_column");
+            auto file = n.parameters.find("file_path");
+            for (const auto& dataset : names) {
+                if (!n.name.empty()) labels.emplace(dataset, n.name);
+                if (label != n.parameters.end() && !label->second.empty()) targets.emplace(dataset, label->second);
+                if (file != n.parameters.end() && !file->second.empty()) sources.emplace(dataset, file->second);
+            }
         }
+        cyxwiz::DatasetCatalog::Instance().SetTargets(std::move(targets));
+        cyxwiz::DatasetCatalog::Instance().SetSources(std::move(sources));
         static size_t labels_seen = 0;
         if (labels.size() != labels_seen) {
             labels_seen = labels.size();
