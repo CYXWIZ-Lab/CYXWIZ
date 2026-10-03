@@ -1570,7 +1570,8 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
-    p.label.selection = selection.text;
+    // The rows chosen; a kind that said what it drew (quiver: every Nth arrow) keeps that.
+    if (!selection.text.empty()) p.label.selection = selection.text;
     if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty())
         p.problem = "No values to draw.";
     return p;

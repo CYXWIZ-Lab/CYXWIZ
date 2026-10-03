@@ -568,6 +568,53 @@ void PlotWindow::DrawSettings() {
     }
     if (spec_.kind == Kind::Hexbin && spec_.value_column.empty())
         changed |= ImGui::Checkbox("Colour by the log of the count", &spec_.log_colour);
+    // P2b group 2 options (board 9).
+    if (spec_.kind == Kind::Polar) {
+        ImGui::TextColored(t.text_dim, "Angle in");
+        static const char* const kUnits[] = {"Auto (categories for text, degrees for numbers)", "Degrees", "Radians",
+                                             "Categories (share the turn)"};
+        int unit = static_cast<int>(spec_.angle_unit);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##angle_unit", &unit, kUnits, 4)) {
+            spec_.angle_unit = static_cast<PlotSpec::AngleUnit>(unit);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Points instead of lines", &spec_.polar_points);
+    }
+    if (k.required & kEncVector) {
+        ImGui::TextColored(t.text_dim, "Arrows from");
+        static const char* const kFrom[] = {"u, v", "Direction + length"};
+        int from = static_cast<int>(spec_.vector_from);
+        if (ui::SegmentedControl("##vector_from", kFrom, 2, &from)) {
+            spec_.vector_from = static_cast<PlotSpec::VectorFrom>(from);
+            changed = true;
+        }
+        const bool uv = spec_.vector_from == PlotSpec::VectorFrom::UV;
+        ImGui::TextColored(t.text_dim, "%s", uv ? "Arrow X (u)" : "Direction (degrees clockwise from north)");
+        changed |= picker_.Pick("##u", spec_.u_column, columns_, true, nullptr, w);
+        ImGui::TextColored(t.text_dim, "%s", uv ? "Arrow Y (v)" : "Length");
+        changed |= picker_.Pick("##v", spec_.v_column, columns_, true, nullptr, w);
+        if (!uv) {
+            changed |= ImGui::Checkbox("Wind: the direction is where it comes from", &spec_.wind_from);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Weather data gives where the wind comes from; the arrows then point the other way");
+        }
+        if (spec_.kind == Kind::Quiver) {
+            ImGui::TextColored(t.text_dim, "Show every Nth arrow (0: as many as fit)");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##arrow_every", &spec_.arrow_every, 0, 0)) {
+                spec_.arrow_every = std::clamp(spec_.arrow_every, 0, 1000);
+                changed = true;
+            }
+        } else {
+            ImGui::TextColored(t.text_dim, "Density");
+            float density = static_cast<float>(spec_.stream_density);
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::SliderFloat("##stream_density", &density, 0.2f, 5.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+                spec_.stream_density = density;
+                changed = true;
+            }
+        }
+    }
     if (spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour) {
         ImGui::TextColored(t.text_dim, "Levels");
         ImGui::SetNextItemWidth(w);
@@ -629,6 +676,7 @@ void PlotWindow::DrawSettings() {
     ImGui::Spacing();
     // The script is built on click (a histogram reads the whole column).
     const bool new_kind = spec_.kind == Kind::Kde || spec_.kind == Kind::Matrix || spec_.kind == Kind::Hexbin ||
+                          spec_.kind == Kind::Polar || spec_.kind == Kind::Quiver || spec_.kind == Kind::Stream ||
                           spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
                           (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&

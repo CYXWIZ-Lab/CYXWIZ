@@ -39,7 +39,8 @@ or press **Plot** under the column's statistics. The Plot window opens:
 
 - **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
   stem, pie), Distribution (box, violin, KDE, error bars), Grid and density
-  (heatmap, matrix, 2D histogram, hexbin, contour, filled contour). Pick
+  (heatmap, matrix, 2D histogram, hexbin, contour, filled contour), Vector
+  fields (quiver, stream); Basic also has polar. Pick
   one; the columns that still fit are kept.
 - **Rows** (top of the right panel): **All**, **First** N rows, a **Range**
   of rows (numbered from 1, as in the Table Viewer) or **Filter**:
@@ -82,6 +83,26 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **Bar** with **Colour by**: one bar per group, **Grouped**, **Stacked** or
   **100%** (each category's shares). Hover lists every group.
 - **Pie**: **Donut** shows the total in the middle.
+- **Polar** (Basic): an **Angle** column and a **Radius** column, one line
+  (or, with **Points instead of lines**, one set of points) per **Colour
+  by** group. **Angle in**: Auto (text columns are categories, number
+  columns degrees), Degrees, Radians, or Categories, which share the turn
+  (in numeric order when they are numbers) and close each line. 0 is at
+  the top, angles go clockwise. Example: months as the angle, passengers as
+  the radius, colour by year draws one turn per year.
+- **Quiver** (Vector fields): an arrow per row from **X**, **Y**. **Arrows
+  from**: **u, v** (the arrow's x and y parts), or **Direction + length**
+  (degrees clockwise from north and a length); tick **Wind** when the
+  direction says where the wind comes from (weather data), so the arrows
+  point where it blows. Arrows are coloured by length (colour bar) and
+  scaled to fit their spacing. A dense grid shows **every Nth arrow** (0:
+  about 600 at most); the label says so, and hover and exports use every
+  row. Hover: the length, the direction it points to and u, v.
+- **Stream**: the same columns as Quiver; lines that follow the field
+  (rows of a grid are used as they are, other tables are averaged onto a
+  40 x 40 grid), coloured by speed, with an arrowhead on each line.
+  **Density** spaces the lines. Hover gives the speed and direction at the
+  mouse.
 - **Line and scatter**: **Show the y = x line** draws a reference line
   (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the

@@ -55,7 +55,26 @@ bool IsLineLike(Kind k) {
 // Grid kinds lay out their own axes and draw a colour bar.
 bool IsGridKind(Kind k) {
     return k == Kind::Heatmap || k == Kind::Histogram2D || k == Kind::Matrix || k == Kind::Hexbin || k == Kind::Contour ||
-           k == Kind::FilledContour;
+           k == Kind::FilledContour || k == Kind::Quiver || k == Kind::Stream;
+}
+
+constexpr double kTurn = 6.283185307179586;
+
+// A compass direction (degrees clockwise from north) of an arrow.
+double CompassOf(double u, double v) {
+    double d = std::atan2(u, v) * 360.0 / kTurn;
+    return d < 0 ? d + 360.0 : d;
+}
+
+// Polar angle text: the category, or degrees.
+std::string PolarAngleText(const Prepared& p, double a) {
+    if (!p.polar_names.empty()) {
+        const size_t k = static_cast<size_t>(std::llround(a / kTurn * static_cast<double>(p.polar_names.size())));
+        return k < p.polar_names.size() ? p.polar_names[k] : std::string();
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.4g\xC2\xB0", a * 360.0 / kTurn);
+    return buf;
 }
 
 std::string XLabel(const Prepared& p) {
@@ -100,7 +119,9 @@ ImVec4 GridColourOf(const Prepared& p, double v) {
         lo = std::log1p(std::max(0.0, lo));
         hi = std::log1p(std::max(0.0, hi));
     }
-    const float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
+    float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
+    // Arrows and flow lines start a quarter up the scale, so the slow ones show on the plot.
+    if (p.spec.kind == Kind::Quiver || p.spec.kind == Kind::Stream) t = 0.25f + 0.75f * t;
     return ImPlot::SampleColormap(t, p.grid_diverging ? DivergingColormap() : SequentialColormap());
 }
 
@@ -289,7 +310,7 @@ void PlotView::DrawToolbar(const Options& o) {
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
         ImGui::SameLine();
     }
-    const bool can_log = usable && data_.spec.kind != Kind::Pie && !IsGridKind(data_.spec.kind);
+    const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && !IsGridKind(data_.spec.kind);
     if (o.tool_log) {
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
@@ -388,7 +409,8 @@ void PlotView::DrawPlot(ImVec2 size) {
 
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
-    if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Box && kind != Kind::Violin && !IsGridKind(kind))
+    if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Polar && kind != Kind::Box && kind != Kind::Violin &&
+        !IsGridKind(kind))
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
@@ -398,6 +420,14 @@ void PlotView::DrawPlot(ImVec2 size) {
     if (kind == Kind::Pie) {
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
+    } else if (kind == Kind::Polar) {
+        // Its own rings and spokes; the radius 1 is the largest value. The
+        // limits follow the plot's shape so -1.25..1.25 fits both ways
+        // (the names sit at 1.12).
+        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
+        const double aspect = plot_size.y > 0 ? static_cast<double>(plot_size.x) / plot_size.y : 1.0;
+        const double hx = aspect >= 1.0 ? 1.25 * aspect : 1.25, hy = aspect >= 1.0 ? 1.25 : 1.25 / aspect;
+        ImPlot::SetupAxesLimits(-hx, hx, -hy, hy, ImPlotCond_Always);
     } else {
         ImPlotAxisFlags xf = ImPlotAxisFlags_None, yf = ImPlotAxisFlags_None;
         if (kind == Kind::Heatmap || kind == Kind::Matrix) xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
@@ -493,6 +523,13 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Hexbin:
         case Kind::Contour:
         case Kind::FilledContour: ImPlot::SetupAxesLimits(p.x_min, p.x_max, p.y_min, p.y_max, cond); break;
+        case Kind::Quiver:
+        case Kind::Stream: {
+            // A margin so the arrows at the edge show.
+            const double mx = (p.x_max - p.x_min) * 0.04, my = (p.y_max - p.y_min) * 0.04;
+            ImPlot::SetupAxesLimits(p.x_min - mx, p.x_max + mx, p.y_min - my, p.y_max + my, cond);
+            break;
+        }
         default: break;
     }
     fit_ = false;
@@ -664,6 +701,99 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::PopColormap();
             break;
         }
+        case Kind::Polar: {
+            // Rings at round radii, spokes, then each series (0 at the top, clockwise).
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            const double rmax = p.polar_rmax > 0 ? p.polar_rmax : 1.0;
+            const auto at = [&](double a, double r) { return ImPlot::PlotToPixels(r / rmax * std::sin(a), r / rmax * std::cos(a)); };
+            const ImVec2 c0 = ImPlot::PlotToPixels(0.0, 0.0);
+            const float unit = ImPlot::PlotToPixels(1.0, 0.0).x - c0.x;
+            ImPlot::PushPlotClipRect();
+            const double step = [&] {
+                const double raw = rmax / 3.0, mag = std::pow(10.0, std::floor(std::log10(raw)));
+                const double nrm = raw / mag;
+                return (nrm < 1.5 ? 1.0 : nrm < 3.0 ? 2.0 : nrm < 7.0 ? 5.0 : 10.0) * mag;
+            }();
+            const size_t spokes = !p.polar_names.empty() ? std::min<size_t>(p.polar_names.size(), 36) : 12;
+            // Ring values sit between the first two spokes (clear of the names).
+            const double label_angle = 0.5 / static_cast<double>(spokes) * kTurn;
+            for (double r = step; r <= rmax * 1.0001; r += step) {
+                dl->AddCircle(c0, static_cast<float>(r / rmax) * unit, ui::ToU32(t.plot_grid), 96, 1.0f);
+                const std::string lbl = Value(r);
+                const ImVec2 q = at(label_angle, r);
+                dl->AddText(ImVec2(q.x + 2.0f, q.y - ImGui::GetTextLineHeight()), ui::ToU32(t.text_dim), lbl.c_str());
+            }
+            for (size_t k = 0; k < spokes; ++k) {
+                const double a = static_cast<double>(k) / static_cast<double>(spokes) * kTurn;
+                dl->AddLine(c0, at(a, rmax), ui::ToU32(t.plot_grid), 1.0f);
+                const std::string name = !p.polar_names.empty() ? p.polar_names[k] : Value(static_cast<double>(k) * 30.0);
+                const ImVec2 q = at(a, rmax * 1.12), ts = ImGui::CalcTextSize(name.c_str());
+                dl->AddText(ImVec2(q.x - ts.x * 0.5f, q.y - ts.y * 0.5f), ui::ToU32(t.text_dim), name.c_str());
+            }
+            ImPlot::PopPlotClipRect();
+            for (size_t i = 0; i < p.series.size(); ++i) {
+                const auto& s = p.series[i];
+                std::vector<double> xs, ys;
+                for (size_t k = 0; k < s.x.size(); ++k) {
+                    xs.push_back(s.y[k] / rmax * std::sin(s.x[k]));
+                    ys.push_back(s.y[k] / rmax * std::cos(s.x[k]));
+                }
+                if (p.polar_closed && !p.spec.polar_points && !xs.empty()) {
+                    xs.push_back(xs.front());
+                    ys.push_back(ys.front());
+                }
+                const ImVec4 c = ColourOf(i);
+                if (p.spec.polar_points) {
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.8f, ui::WithAlpha(c, 0.85f), 0.0f);
+                    ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), xs.data(), ys.data(), n(xs));
+                } else {
+                    ImPlot::SetNextLineStyle(c, 1.8f);
+                    ImPlot::PlotLine(LegendLabel(p, i, s.label).c_str(), xs.data(), ys.data(), n(xs));
+                }
+            }
+            break;
+        }
+        case Kind::Quiver: {
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            ImPlot::PushPlotClipRect();
+            for (size_t i : p.q_drawn) {
+                const ImVec2 a = ImPlot::PlotToPixels(p.qx[i], p.qy[i]);
+                const ImVec2 b = ImPlot::PlotToPixels(p.qx[i] + p.qu[i] * p.q_scale, p.qy[i] + p.qv[i] * p.q_scale);
+                const float dx = b.x - a.x, dy = b.y - a.y, len = std::sqrt(dx * dx + dy * dy);
+                if (len < 0.5f) continue;
+                const float ux = dx / len, uy = dy / len, hs = std::min(6.0f, len * 0.45f);
+                const ImU32 c = ui::ToU32(GridColourOf(p, std::hypot(p.qu[i], p.qv[i])));
+                dl->AddLine(a, b, c, 1.4f);
+                dl->AddTriangleFilled(b, ImVec2(b.x - ux * hs - uy * hs * 0.6f, b.y - uy * hs + ux * hs * 0.6f),
+                                      ImVec2(b.x - ux * hs + uy * hs * 0.6f, b.y - uy * hs - ux * hs * 0.6f), c);
+            }
+            ImPlot::PopPlotClipRect();
+            break;
+        }
+        case Kind::Stream: {
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            ImPlot::PushPlotClipRect();
+            std::vector<ImVec2> pts;
+            for (size_t l = 0; l < p.stream_lines.size(); ++l) {
+                const auto& ln = p.stream_lines[l];
+                pts.clear();
+                for (size_t k = 0; k + 1 < ln.size(); k += 2) pts.push_back(ImPlot::PlotToPixels(ln[k], ln[k + 1]));
+                if (pts.size() < 2) continue;
+                const ImU32 c = ui::ToU32(GridColourOf(p, l < p.stream_speed.size() ? p.stream_speed[l] : 0.0));
+                dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), c, ImDrawFlags_None, 1.3f);
+                // An arrowhead at the middle, pointing along the line.
+                const size_t m = pts.size() / 2;
+                const ImVec2 a = pts[m - 1], b = pts[m];
+                const float dx = b.x - a.x, dy = b.y - a.y, len = std::sqrt(dx * dx + dy * dy);
+                if (len > 0.01f) {
+                    const float ux = dx / len, uy = dy / len, hs = 5.0f;
+                    dl->AddTriangleFilled(b, ImVec2(b.x - ux * hs - uy * hs * 0.6f, b.y - uy * hs + ux * hs * 0.6f),
+                                          ImVec2(b.x - ux * hs + uy * hs * 0.6f, b.y - uy * hs - ux * hs * 0.6f), c);
+                }
+            }
+            ImPlot::PopPlotClipRect();
+            break;
+        }
         case Kind::Hexbin: {
             ImDrawList* dl = ImPlot::GetPlotDrawList();
             ImPlot::PushPlotClipRect();
@@ -739,7 +869,8 @@ void PlotView::DrawPlot(ImVec2 size) {
             hi = std::log1p(std::max(0.0, hi));
         }
         ImGui::SameLine();
-        ImPlot::ColormapScale(log ? "log(1 + count)##scale" : "##scale", lo, hi, ImVec2(60, plot_size.y), "%g", 0,
+        const char* scale_label = log ? "log(1 + count)##scale" : kind == Kind::Quiver ? "length##scale" : kind == Kind::Stream ? "speed##scale" : "##scale";
+        ImPlot::ColormapScale(scale_label, lo, hi, ImVec2(60, plot_size.y), "%g", 0,
                               p.grid_diverging ? DivergingColormap() : SequentialColormap());
     }
 }
@@ -906,6 +1037,70 @@ void PlotView::DrawHover() {
             begin(XLabel(p) + " " + Value(p.x_min + dx * c) + " to " + Value(p.x_min + dx * (c + 1)));
             TooltipRow(ColourOf((0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
                        Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) + " rows");
+            break;
+        }
+        case Kind::Polar: {
+            // The nearest point (12 px).
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const double rmax = p.polar_rmax > 0 ? p.polar_rmax : 1.0;
+            float best = 144.0f;
+            size_t bs = 0, bk = 0;
+            bool found = false;
+            for (size_t i = 0; i < p.series.size(); ++i)
+                for (size_t k = 0; k < p.series[i].x.size(); ++k) {
+                    const double a = p.series[i].x[k], r = p.series[i].y[k] / rmax;
+                    const ImVec2 q = ImPlot::PlotToPixels(r * std::sin(a), r * std::cos(a));
+                    const float d = (q.x - mouse.x) * (q.x - mouse.x) + (q.y - mouse.y) * (q.y - mouse.y);
+                    if (d < best) {
+                        best = d;
+                        bs = i;
+                        bk = k;
+                        found = true;
+                    }
+                }
+            if (!found) break;
+            begin(PolarAngleText(p, p.series[bs].x[bk]));
+            TooltipRow(ColourOf(bs), p.series[bs].label, Value(p.series[bs].y[bk]));
+            break;
+        }
+        case Kind::Quiver: {
+            // The nearest arrow's start (all rows, 12 px).
+            const ImVec2 mouse = ImGui::GetMousePos();
+            float best = 144.0f;
+            size_t bi = 0;
+            bool found = false;
+            for (size_t i = 0; i < p.qx.size(); ++i) {
+                const ImVec2 q = ImPlot::PlotToPixels(p.qx[i], p.qy[i]);
+                const float d = (q.x - mouse.x) * (q.x - mouse.x) + (q.y - mouse.y) * (q.y - mouse.y);
+                if (d < best) {
+                    best = d;
+                    bi = i;
+                    found = true;
+                }
+            }
+            if (!found) break;
+            const double len = std::hypot(p.qu[bi], p.qv[bi]);
+            begin(XLabel(p) + " " + Value(p.qx[bi]) + " \xC2\xB7 " + YLabel(p) + " " + Value(p.qy[bi]));
+            TooltipRow(GridColourOf(p, len), "length", Value(len));
+            TooltipRow(GridColourOf(p, len), "towards", Value(CompassOf(p.qu[bi], p.qv[bi])) + "\xC2\xB0 from north");
+            TooltipRow(GridColourOf(p, len), "u, v", Value(p.qu[bi]) + ", " + Value(p.qv[bi]));
+            break;
+        }
+        case Kind::Stream: {
+            // The field at the mouse (bilinear between the grid points).
+            if (m.x < p.x_min || m.x > p.x_max || m.y < p.y_min || m.y > p.y_max || p.grid_cols < 2 || p.grid_rows < 2) break;
+            const double gx = (m.x - p.x_min) / (p.x_max - p.x_min) * (p.grid_cols - 1);
+            const double gy = (p.y_max - m.y) / (p.y_max - p.y_min) * (p.grid_rows - 1);  // row 0 at the top
+            const int c0 = std::min(static_cast<int>(gx), p.grid_cols - 2), r0 = std::min(static_cast<int>(gy), p.grid_rows - 2);
+            const double fx = gx - c0, fy = gy - r0;
+            const auto lerp2 = [&](const std::vector<double>& F) {
+                const auto at = [&](int r, int c) { return F[static_cast<size_t>(r * p.grid_cols + c)]; };
+                return (1 - fy) * ((1 - fx) * at(r0, c0) + fx * at(r0, c0 + 1)) + fy * ((1 - fx) * at(r0 + 1, c0) + fx * at(r0 + 1, c0 + 1));
+            };
+            const double u = lerp2(p.field_u), v = lerp2(p.field_v), sp = std::hypot(u, v);
+            begin(XLabel(p) + " " + Value(m.x) + " \xC2\xB7 " + YLabel(p) + " " + Value(m.y));
+            TooltipRow(GridColourOf(p, sp), "speed", Value(sp));
+            TooltipRow(GridColourOf(p, sp), "towards", Value(CompassOf(u, v)) + "\xC2\xB0 from north");
             break;
         }
         case Kind::Hexbin: {
