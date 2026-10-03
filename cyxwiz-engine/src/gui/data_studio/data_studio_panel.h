@@ -83,6 +83,11 @@ public:
         open_node_editor_callback_ = std::move(cb);
     }
 
+    // Query results open in the Table Viewer through this (MainWindow).
+    void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
+        if (query_editor_) query_editor_->on_open_table = std::move(cb);
+    }
+
 private:
     // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
     std::unique_ptr<QueryEditor> query_editor_;

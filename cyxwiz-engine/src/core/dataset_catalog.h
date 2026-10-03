@@ -61,6 +61,10 @@ struct DatasetEntry {
     size_t rows = 0, columns = 0, classes = 0;
     std::string source_path;
     bool materialized = false;  // a pipeline result ("..__materialized")
+    // What people call it: the Data Input node's name ("Spotify"); empty
+    // when no graph names it. Queries may name a table by either.
+    std::string label;
+    const std::string& Shown() const { return label.empty() ? name : label; }
     uint64_t generation = 0;    // bumped by Pump() on each change; 0 = not seen yet
     bool Has(DatasetBacking b) const { return (backings & b) != 0; }
 };
@@ -101,6 +105,12 @@ public:
     int Subscribe(std::weak_ptr<const void> owner, Listener listener);
     void Unsubscribe(int id);
 
+    // UI thread: dataset name -> label from the graph (Data Input node names).
+    // Replaces the previous labels; List() and Resolve() then carry them.
+    void SetLabels(std::map<std::string, std::string> labels);
+    // The dataset a label (or a name) stands for; empty when none.
+    std::string NameFor(const std::string& label_or_name) const;
+
 private:
     std::vector<DatasetEntry> Merge(const std::vector<DatasetCatalogItem>& items) const;
 
@@ -108,6 +118,7 @@ private:
     mutable std::mutex mutex_;  // guards the members below; never held while calling out
     std::map<std::string, std::pair<uint64_t, DatasetEntry>> seen_;  // name -> (identity, entry)
     std::map<std::string, uint64_t> generation_;
+    std::map<std::string, std::string> labels_;
     uint64_t next_generation_ = 0;
     std::chrono::steady_clock::time_point last_pump_{};
     struct Subscriber {

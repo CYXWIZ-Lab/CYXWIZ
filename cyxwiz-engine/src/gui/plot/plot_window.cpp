@@ -308,6 +308,16 @@ void PlotWindow::Render() {
             ImGui::SameLine();
             ImGui::TextColored(t.text_dim, "preparing...");
         }
+    } else if (arrow_table_) {
+        // An Arrow table handed over directly (a Data Studio query result).
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
+        ImGui::Bullet();
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextUnformatted(source_name_.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%s rows \xC3\x97 %d columns", Thousands(static_cast<long long>(arrow_table_->num_rows())).c_str(),
+                           arrow_table_->num_columns());
     } else {
         ImGui::TextDisabled("%s", empty_message_.c_str());
     }

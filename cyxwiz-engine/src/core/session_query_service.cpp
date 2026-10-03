@@ -67,7 +67,7 @@ SessionQueryService::SessionQueryService() {
 std::vector<std::string> SessionQueryService::QueryableNames() const {
     std::vector<std::string> out;
     for (const auto& e : DatasetCatalog::Instance().List())
-        if (Queryable(e)) out.push_back(e.name);
+        if (Queryable(e)) out.push_back(e.Shown());
     return out;
 }
 
@@ -75,30 +75,40 @@ bool SessionQueryService::AttachInputs(const QueryRequest& request, std::string*
     const std::string sql = Lower(request.sql);
     const auto entries = DatasetCatalog::Instance().List();
     std::vector<std::string> catalog_names;
-    for (const auto& e : entries) catalog_names.push_back(e.name);
+    for (const auto& e : entries) {
+        catalog_names.push_back(e.name);
+        if (!e.label.empty()) catalog_names.push_back(e.label);
+    }
     // Copies of datasets that are gone are dropped.
     for (const auto& name : engine_->Attached())
         if (std::find(catalog_names.begin(), catalog_names.end(), name) == catalog_names.end()) engine_->Detach(name);
     auto& registry = DataRegistry::Instance();
     for (const auto& e : entries) {
-        const bool listed = std::find(request.inputs.begin(), request.inputs.end(), e.name) != request.inputs.end();
-        if (!listed && !Mentions(sql, e.name)) continue;
-        if (!Queryable(e)) {
-            if (listed && error) *error = "'" + e.name + "' is " + StorageText(e.storage) + ": only tables can be queried for now.";
-            if (listed) return false;
-            continue;
+        // A table is named by its dataset name or by its label (the Data Input node's name).
+        std::vector<std::string> as;
+        for (const std::string* n : {&e.name, &e.label}) {
+            if (n->empty()) continue;
+            const bool listed = std::find(request.inputs.begin(), request.inputs.end(), *n) != request.inputs.end();
+            if (listed || Mentions(sql, *n)) as.push_back(*n);
+            if (listed && !Queryable(e)) {
+                if (error) *error = "'" + *n + "' is " + StorageText(e.storage) + ": only tables can be queried for now.";
+                return false;
+            }
         }
-        if (e.storage == DatasetStorageKind::InMemoryArrow) {
-            auto ds = registry.GetArrowDataset(e.name);
-            auto table = ds ? ds->GetArrowTable() : nullptr;
-            if (!table) continue;  // removed meanwhile
-            // The table object's address is its version: a re-load is a new table.
-            if (!engine_->AttachArrow(e.name, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(table.get())), table, error)) return false;
-        } else {
-            auto ds = registry.GetParquetBackedDataset(e.name);
-            if (!ds) continue;
-            const uint64_t version = std::hash<std::string>{}(ds->GetFilePath()) ^ static_cast<uint64_t>(ds->GetNumRows());
-            if (!engine_->AttachParquet(e.name, version, ds->GetFilePath(), static_cast<size_t>(ds->GetNumRows()), error)) return false;
+        if (as.empty() || !Queryable(e)) continue;
+        for (const auto& view : as) {
+            if (e.storage == DatasetStorageKind::InMemoryArrow) {
+                auto ds = registry.GetArrowDataset(e.name);
+                auto table = ds ? ds->GetArrowTable() : nullptr;
+                if (!table) break;  // removed meanwhile
+                // The table object's address is its version: a re-load is a new table.
+                if (!engine_->AttachArrow(view, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(table.get())), table, error)) return false;
+            } else {
+                auto ds = registry.GetParquetBackedDataset(e.name);
+                if (!ds) break;
+                const uint64_t version = std::hash<std::string>{}(ds->GetFilePath()) ^ static_cast<uint64_t>(ds->GetNumRows());
+                if (!engine_->AttachParquet(view, version, ds->GetFilePath(), static_cast<size_t>(ds->GetNumRows()), error)) return false;
+            }
         }
     }
     return true;

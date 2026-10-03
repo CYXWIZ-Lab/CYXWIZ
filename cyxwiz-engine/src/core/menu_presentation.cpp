@@ -122,6 +122,7 @@ const char* ContextName(Context context) {
         case Context::ScriptNotebook: return "Script Editor, notebook";
         case Context::Variables: return "Variable Explorer";
         case Context::TableViewer: return "Table Viewer";
+        case Context::DataStudio: return "Data Studio";
     }
     return "Everywhere";
 }
@@ -148,6 +149,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         const Context notebook = Context::ScriptNotebook;
         const Context variables = Context::Variables;
         const Context viewer = Context::TableViewer;
+        const Context studio = Context::DataStudio;
 
         // Everywhere: handled by the main window.
         add(any, "file.new_project", "New Project...", "Ctrl+Shift+N", "File");
@@ -281,6 +283,9 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(viewer, "table.add_selection", "Add a cell to the selection", "Ctrl+Click", "", true);
         add(viewer, "table.extend_selection", "Extend the selection", "Shift+Click", "", true);
         add(viewer, "table.slice_step", "Step the first index of an array slice", "Up, Down", "", true);
+
+        // Data Studio: the Query tab handles these while its editor has focus.
+        add(studio, "datastudio.run_query", "Run the query", "Ctrl+Enter", "", true);
         // While a code cell is being edited, the language keys work as in a script.
         add(notebook, "script.completion", "Completion in the cell (with the list open: details)", "Ctrl+Space", "", true);
         add(notebook, "editor.signature_help", "Show the signature of the call in the cell", "Ctrl+Shift+Space", "", true);

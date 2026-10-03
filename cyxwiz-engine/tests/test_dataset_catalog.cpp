@@ -116,6 +116,13 @@ int main() {
     Check(catalog.Pump(std::chrono::milliseconds(60000)) == 0, "within the interval: not looked at");
     Check(catalog.Pump(std::chrono::milliseconds(0)) == 1, "then delivered");
 
+    // Labels from the graph: shown names, and a label leads to its dataset.
+    catalog.SetLabels({{"World", "World countries"}});
+    Check(catalog.Resolve("World")->label == "World countries" && catalog.Resolve("World")->Shown() == "World countries" &&
+              catalog.Resolve("Cats")->Shown() == "Cats", "labels and shown names");
+    Check(catalog.NameFor("World countries") == "World" && catalog.NameFor("Cats") == "Cats" && catalog.NameFor("nothing").empty(),
+          "a label or a name leads to the dataset");
+
     // A listener that unsubscribes another during delivery; owner expiry.
     int calls_a = 0, calls_b = 0;
     int id_b = 0;

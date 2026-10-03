@@ -77,8 +77,25 @@ std::vector<DatasetEntry> DatasetCatalog::List() const {
     for (auto& e : out) {
         auto it = generation_.find(e.name);
         e.generation = it == generation_.end() ? 0 : it->second;
+        auto l = labels_.find(e.name);
+        if (l != labels_.end()) e.label = l->second;
     }
     return out;
+}
+
+void DatasetCatalog::SetLabels(std::map<std::string, std::string> labels) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    labels_ = std::move(labels);
+}
+
+std::string DatasetCatalog::NameFor(const std::string& label_or_name) const {
+    if (label_or_name.empty()) return {};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [name, label] : labels_)
+            if (label == label_or_name) return name;
+    }
+    return Resolve(label_or_name) ? label_or_name : std::string();
 }
 
 std::optional<DatasetEntry> DatasetCatalog::Resolve(const std::string& name) const {

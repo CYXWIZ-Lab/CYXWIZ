@@ -149,6 +149,7 @@
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../core/async_task_manager.h"
+#include "../core/dataset_catalog.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
@@ -808,6 +809,13 @@ MainWindow::MainWindow()
         if (node_editor_) {
             node_editor_->Show();
             spdlog::info("Opened Node Editor panel from Data Studio");
+        }
+    });
+    // Query results open in the Table Viewer (TOFIX134 P3.3).
+    data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
+        if (table_viewer_ && table) {
+            table_viewer_->SetTable(table);
+            table_viewer_->Show();
         }
     });
 
@@ -3165,6 +3173,26 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    // Dataset labels for the catalog: each Data Input node's name for its
+    // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1.
+    static double labels_at = -1.0;
+    if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
+        labels_at = ImGui::GetTime();
+        std::map<std::string, std::string> labels;
+        for (const auto& n : node_editor_->GetNodes()) {
+            if (n.type != gui::NodeType::DataInput || n.name.empty()) continue;
+            auto it = n.parameters.find("dataset_name");
+            if (it != n.parameters.end() && !it->second.empty()) labels.emplace(it->second, n.name);
+            // Read for a plot or a run (PipelineExecutor names it by the node id).
+            labels.emplace("ds_datainput_" + std::to_string(n.id), n.name);
+        }
+        static size_t labels_seen = 0;
+        if (labels.size() != labels_seen) {
+            labels_seen = labels.size();
+            spdlog::info("Dataset catalog: {} dataset label(s) from the graph", labels_seen);
+        }
+        cyxwiz::DatasetCatalog::Instance().SetLabels(std::move(labels));
+    }
     UpdateLiveCompile();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();

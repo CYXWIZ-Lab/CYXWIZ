@@ -1,268 +1,147 @@
 #include "query_editor.h"
-#include "../../core/duckdb_connector.h"
-#include "../../core/data_registry.h"
+
+#include "../../core/arrow_data_table.h"
 #include "../../core/arrow_dataset.h"
+#include "../../core/data_registry.h"
+#include "../../core/dataset_catalog.h"
+#include "../../core/parquet_backed_dataset.h"
+#include "../../core/session_query_service.h"
+#include "../plot/plot_window.h"
+
 #include <spdlog/spdlog.h>
+
 #include <cstring>
-#include "../../core/node_metadata_registry.h"
-#include <chrono>
 
 namespace cyxwiz {
 
-QueryEditor::QueryEditor()
-    : query_running_(false)
-    , duckdb_(std::make_unique<DuckDBConnector>())
-{
-    std::memset(query_buffer_, 0, sizeof(query_buffer_));
-    std::strcpy(query_buffer_, "SELECT * FROM dataset LIMIT 100");
+namespace {
 
-    spdlog::info("[Data Studio] QueryEditor initialized with DuckDB");
+bool IsNumber(const std::shared_ptr<arrow::DataType>& t) {
+    return arrow::is_integer(t->id()) || arrow::is_floating(t->id());
 }
 
-QueryEditor::~QueryEditor() = default;
+constexpr const char* kPlaceholder = "SELECT * FROM \"your dataset\" LIMIT 100";
 
-bool QueryEditor::SaveResultAsDataset(const std::string& dataset_name) {
-    if (current_query_.empty()) {
-        last_error_ = "No query to save";
-        spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-        return false;
-    }
+}  // namespace
 
-    spdlog::info("[Data Studio] QueryEditor: Saving query result as dataset '{}'", dataset_name);
+QueryEditor::QueryEditor() {
+    std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", kPlaceholder);
+}
 
-    try {
-        // Re-execute the query to get the full result (not limited to 1000 rows)
-        auto result_table = duckdb_->Query(current_query_);
-
-        if (!result_table) {
-            last_error_ = "Failed to re-execute query: " + duckdb_->GetLastError();
-            spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-            return false;
-        }
-
-        // Register the result as a new Arrow dataset
-        auto& registry = DataRegistry::Instance();
-        registry.RegisterArrowTable(result_table, dataset_name);
-
-        spdlog::info("[Data Studio] QueryEditor: Saved query result as dataset '{}' ({} rows)",
-                     dataset_name, result_table->num_rows());
-
-        return true;
-
-    } catch (const std::exception& e) {
-        last_error_ = std::string("Failed to save dataset: ") + e.what();
-        spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-        return false;
-    }
+QueryEditor::~QueryEditor() {
+    if (task_id_) SessionQueryService::Instance().Cancel(task_id_);
 }
 
 void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
-    registered_dataset_.clear();
-    current_dataset_ = dataset_name;
-    spdlog::info("[Data Studio] QueryEditor: Setting active dataset: {}", dataset_name);
-
-    if (dataset_name.empty()) {
-        return;
-    }
-
-    try {
-        // Get Arrow dataset from DataRegistry
-        auto& registry = DataRegistry::Instance();
-        auto arrow_dataset = registry.GetArrowDataset(dataset_name);
-
-        if (!arrow_dataset) {
-            spdlog::warn("[Data Studio] QueryEditor: dataset not found in registry");
-            last_error_ = "Dataset not found: " + dataset_name;
-            return;
-        }
-
-        auto arrow_table = arrow_dataset->GetArrowTable();
-        if (!arrow_table) {
-            spdlog::warn("[Data Studio] QueryEditor: dataset has no Arrow table");
-            last_error_ = "Dataset has no Arrow table";
-            return;
-        }
-
-        // Unregister previous dataset if exists
-        if (duckdb_->HasTable("dataset")) {
-            duckdb_->UnregisterTable("dataset");
-        }
-
-        // Register Arrow table with DuckDB as "dataset"
-        if (!duckdb_->RegisterTable("dataset", arrow_table)) {
-            last_error_ = "Failed to register table: " + duckdb_->GetLastError();
-            spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-            return;
-        }
-
-        registered_dataset_ = dataset_name;
-
-        // Get table schema for display
-        auto schema = duckdb_->GetTableSchema("dataset");
-        int64_t row_count = duckdb_->GetRowCount("dataset");
-
-        spdlog::info("[Data Studio] QueryEditor: Registered table '{}' ({} rows, {} columns)",
-                     dataset_name, row_count, schema.size());
-
-        last_error_ = "";
-
-    } catch (const std::exception& e) {
-        last_error_ = std::string("Failed to register dataset: ") + e.what();
-        spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
+    // Queries name the table as people call it (the Data Input node's name).
+    const auto entry = DatasetCatalog::Instance().Resolve(dataset_name);
+    current_dataset_ = entry ? entry->Shown() : dataset_name;
+    // A fresh editor names the picked dataset.
+    if (std::strcmp(query_buffer_, kPlaceholder) == 0 && !dataset_name.empty()) {
+        const std::string q = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(current_dataset_) + " LIMIT 100";
+        std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", q.c_str());
     }
 }
 
-DataStudioCapability QueryEditor::GetQueryCapability() const {
-    DataStudioCapabilityRequest request;
-    request.node_type = gui::NodeType::SQLQuery;
-    request.parameters = {{"query", query_buffer_}};
-    auto& registry = DataRegistry::Instance();
-    if (!current_dataset_.empty()) {
-        auto storage = PipelineStorageBackend::Unknown;
-        if (registry.GetArrowDataset(current_dataset_))
-            storage = PipelineStorageBackend::ArrowTable;
-        else if (registry.GetParquetBackedDataset(current_dataset_))
-            storage = PipelineStorageBackend::ParquetBacked;
-        request.input_storage.push_back(storage);
-    }
-    auto capability = ResolveDataStudioCapability(request,
-        NodeMetadataRegistry::Instance().GetMetadata(request.node_type));
-    if (capability.state == DataStudioActionState::ExploreOnly &&
-        registered_dataset_ != current_dataset_) {
-        capability.state = DataStudioActionState::Unavailable;
-        capability.reason = "The selected dataset has not been registered successfully for SQL queries";
-    }
-    return capability;
+std::string QueryEditor::ExampleTable() const {
+    if (!current_dataset_.empty()) return current_dataset_;
+    const auto names = SessionQueryService::Instance().QueryableNames();
+    return names.empty() ? std::string("your dataset") : names.front();
 }
 
 bool QueryEditor::ExecuteQuery() {
-    const auto capability = GetQueryCapability();
-    if (capability.state != DataStudioActionState::ExploreOnly || query_running_) {
-        last_error_ = query_running_ ? "A query is already running" : capability.reason;
+    if (task_id_) return false;
+    const std::string sql = query_buffer_;
+    if (sql.find_first_not_of(" \t\r\n") == std::string::npos) {
+        last_error_ = "Write a query first.";
         return false;
     }
-    current_query_ = std::string(query_buffer_);
-    if (current_query_.empty()) {
-        last_error_ = "Query is empty";
-        return false;
-    }
-
-    if (current_dataset_.empty()) {
-        last_error_ = "No dataset selected. Please select a dataset first.";
-        return false;
-    }
-
-    spdlog::info("[Data Studio] QueryEditor: Executing query: {}", current_query_);
-
-    // Clear previous results
-    last_result_.column_names.clear();
-    last_result_.rows.clear();
-    last_result_.total_rows = 0;
-    last_error_ = "";
-
-    query_running_ = true;
-    auto start = std::chrono::high_resolution_clock::now();
-
-    try {
-        // Execute SQL query via DuckDB
-        auto result_table = duckdb_->Query(current_query_);
-
-        if (!result_table) {
-            last_error_ = "Query failed: " + duckdb_->GetLastError();
-            spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-            query_running_ = false;
-            return false;
+    last_error_.clear();
+    save_note_.clear();
+    running_sql_ = sql;
+    started_at_ = ImGui::GetTime();
+    QueryRequest request;
+    request.sql = sql;
+    request.row_limit = kDisplayRows;
+    request.label = "Data Studio query";
+    std::weak_ptr<int> alive = alive_;
+    task_id_ = SessionQueryService::Instance().Submit(std::move(request), [this, alive, sql](const QueryResult& r) {
+        if (alive.expired()) return;
+        task_id_ = 0;
+        if (!r.ok) {
+            last_error_ = r.error;
+            return;
         }
-
-        // Extract column names
-        auto schema = result_table->schema();
-        for (int i = 0; i < schema->num_fields(); i++) {
-            last_result_.column_names.push_back(schema->field(i)->name());
-        }
-
-        // Extract rows (limit to 1000 for display)
-        const int64_t max_display_rows = 1000;
-        int64_t num_rows = std::min(result_table->num_rows(), max_display_rows);
-
-        for (int64_t row_idx = 0; row_idx < num_rows; row_idx++) {
-            std::vector<std::string> row_data;
-
-            for (int col_idx = 0; col_idx < result_table->num_columns(); col_idx++) {
-                auto column = result_table->column(col_idx);
-
-                // Find the chunk containing this row
-                int64_t chunk_offset = 0;
-                std::shared_ptr<arrow::Array> chunk;
-                for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
-                    chunk = column->chunk(chunk_idx);
-                    if (row_idx < chunk_offset + chunk->length()) {
-                        break;
-                    }
-                    chunk_offset += chunk->length();
-                }
-
-                int64_t row_in_chunk = row_idx - chunk_offset;
-
-                // Convert value to string
-                std::string value_str;
-                if (chunk->IsNull(row_in_chunk)) {
-                    value_str = "NULL";
-                } else {
-                    auto type_id = chunk->type_id();
-
-                    if (type_id == arrow::Type::DOUBLE) {
-                        auto typed_array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                        value_str = std::to_string(typed_array->Value(row_in_chunk));
-                    } else if (type_id == arrow::Type::FLOAT) {
-                        auto typed_array = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                        value_str = std::to_string(typed_array->Value(row_in_chunk));
-                    } else if (type_id == arrow::Type::INT64) {
-                        auto typed_array = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                        value_str = std::to_string(typed_array->Value(row_in_chunk));
-                    } else if (type_id == arrow::Type::INT32) {
-                        auto typed_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                        value_str = std::to_string(typed_array->Value(row_in_chunk));
-                    } else if (type_id == arrow::Type::STRING) {
-                        auto typed_array = std::static_pointer_cast<arrow::StringArray>(chunk);
-                        value_str = typed_array->GetString(row_in_chunk);
-                    } else if (type_id == arrow::Type::BOOL) {
-                        auto typed_array = std::static_pointer_cast<arrow::BooleanArray>(chunk);
-                        value_str = typed_array->Value(row_in_chunk) ? "true" : "false";
-                    } else {
-                        // Fallback for other types
-                        value_str = chunk->ToString();
-                    }
-                }
-
-                row_data.push_back(value_str);
-            }
-
-            last_result_.rows.push_back(row_data);
-        }
-
-        last_result_.total_rows = result_table->num_rows();
-
-        auto end = std::chrono::high_resolution_clock::now();
-        last_result_.execution_time_ms = std::chrono::duration<double, std::milli>(end - start).count();
-
-        spdlog::info("[Data Studio] QueryEditor: Query executed successfully - {} rows, {:.2f} ms",
-                     last_result_.total_rows, last_result_.execution_time_ms);
-
-        // Add to history
-        query_history_.push_back(current_query_);
-        if (query_history_.size() > static_cast<size_t>(max_history_size_)) {
-            query_history_.erase(query_history_.begin());
-        }
-
-        query_running_ = false;
-        return true;
-
-    } catch (const std::exception& e) {
-        last_error_ = std::string("Query execution failed: ") + e.what();
-        spdlog::error("[Data Studio] QueryEditor: {}", last_error_);
-        query_running_ = false;
-        return false;
-    }
+        last_result_ = r;
+        result_sql_ = sql;
+        query_history_.push_back(sql);
+        if (query_history_.size() > kMaxHistory) query_history_.erase(query_history_.begin());
+        spdlog::info("[Data Studio] Query: {} rows{} in {:.0f} ms", r.table ? r.table->num_rows() : 0,
+                     r.truncated ? " (display limit)" : "", r.elapsed_ms);
+    }, alive_);
+    return task_id_ != 0;
 }
 
-} // namespace cyxwiz
+void QueryEditor::CancelQuery() {
+    if (task_id_) SessionQueryService::Instance().Cancel(task_id_);
+}
+
+bool QueryEditor::SaveResultAsDataset(const std::string& dataset_name) {
+    if (result_sql_.empty() || dataset_name.empty()) return false;
+    QueryRequest request;
+    request.sql = result_sql_;
+    request.label = "Save query result as " + dataset_name;
+    std::weak_ptr<int> alive = alive_;
+    save_note_ = "Saving...";
+    SessionQueryService::Instance().Submit(std::move(request), [this, alive, dataset_name](const QueryResult& r) {
+        if (alive.expired()) return;
+        if (!r.ok || !r.table) {
+            save_note_ = "Not saved: " + r.error;
+            return;
+        }
+        DataRegistry::Instance().RegisterArrowTable(r.table, dataset_name);
+        save_note_ = "Saved as '" + dataset_name + "' (" + std::to_string(r.table->num_rows()) +
+                     " rows): pick it in Dataset or name it in a query.";
+    }, alive_);
+    return true;
+}
+
+void QueryEditor::OpenPlot() {
+    if (!last_result_.table) return;
+    if (!plot_window_) plot_window_ = std::make_unique<plot::PlotWindow>("data_studio_query_plot");
+    // A first plot that fits the result: a category and a number as bars,
+    // two numbers as a scatter, else a histogram of the first number.
+    const auto schema = last_result_.table->schema();
+    int text_col = -1, num_a = -1, num_b = -1;
+    for (int i = 0; i < schema->num_fields(); ++i) {
+        const auto& t = schema->field(i)->type();
+        if (IsNumber(t)) {
+            if (num_a < 0) num_a = i;
+            else if (num_b < 0) num_b = i;
+        } else if (text_col < 0) {
+            text_col = i;
+        }
+    }
+    plot::PlotSpec spec;
+    if (text_col >= 0 && num_a >= 0) {
+        spec.kind = plot::Kind::Bar;
+        spec.x_column = schema->field(text_col)->name();
+        spec.y_columns = {schema->field(num_a)->name()};
+    } else if (num_a >= 0 && num_b >= 0) {
+        spec.kind = plot::Kind::Scatter;
+        spec.x_column = schema->field(num_a)->name();
+        spec.y_columns = {schema->field(num_b)->name()};
+    } else if (num_a >= 0) {
+        spec.kind = plot::Kind::Histogram;
+        spec.x_column = schema->field(num_a)->name();
+    }
+    plot_window_->SetSpec(spec);
+    plot_window_->SetArrowTable("Query result", last_result_.table);
+    plot_window_->visible = true;
+}
+
+void QueryEditor::RenderWindows() {
+    if (plot_window_) plot_window_->Render();
+}
+
+}  // namespace cyxwiz

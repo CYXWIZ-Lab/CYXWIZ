@@ -1,92 +1,72 @@
 #pragma once
 
+// Data Studio Query tab (TOFIX134 P3.3, approved board 14): SQL over the
+// datasets by their real names, run by the session query service in the
+// background (Task View, Cancel), results as an Arrow table shown here and
+// opened in the Table Viewer or the Plot window, or saved as a dataset.
+
+#include "../../core/session_query_engine.h"
+
 #include <imgui.h>
-#include "../../core/data_studio_capabilities.h"
+
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
 namespace cyxwiz {
 
-// Forward declaration
-class DuckDBConnector;
+class DataTable;
+namespace plot {
+class PlotWindow;
+}
 
-/**
- * QueryEditor - SQL query interface for Data Studio
- *
- * Phase 1, Week 1: Core Infrastructure
- *
- * This component provides SQL query editing and execution using DuckDB.
- * It wraps the existing DataExplorerPanel functionality in a Data Studio tab.
- *
- * Features:
- * - SQL editor with syntax highlighting (TODO: add later)
- * - Query execution button
- * - Results table display
- * - Query history
- * - Example queries dropdown
- *
- * Architecture:
- *   QueryEditor -> DuckDBConnector -> Arrow Result -> Display Table
- */
 class QueryEditor {
 public:
     QueryEditor();
     ~QueryEditor();
 
-    /**
-     * Render the query editor UI
-     * Called from DataStudioPanel's Query tab
-     */
     void Render();
+    // The Plot window this tab opens (call every frame).
+    void RenderWindows();
 
-    /**
-     * Set the active dataset for queries
-     * Registers it with DuckDB as a table
-     */
+    // The dataset picked in the Data Studio header: the examples name it.
     void SetActiveDataset(const std::string& dataset_name);
 
-    /**
-     * Execute the current query
-     */
+    // Runs the query in the editor (Ctrl+Enter, Run).
     bool ExecuteQuery();
-    DataStudioCapability GetQueryCapability() const;
+    void CancelQuery();
+    bool IsRunning() const { return task_id_ != 0; }
 
-    /**
-     * Save the current query result as a new dataset
-     */
+    // Runs the query again without the display limit and registers the
+    // result as a dataset (it then appears in the picker).
     bool SaveResultAsDataset(const std::string& dataset_name);
 
+    std::function<void(std::shared_ptr<DataTable>)> on_open_table;  // Table Viewer (MainWindow)
+
 private:
-    // Query state
-    char query_buffer_[4096];
-    std::string current_query_;
-    std::string last_error_;
-    bool query_running_;
+    void RenderEditor();
+    void RenderResult();
+    void RenderExamples();
+    void OpenPlot();
+    std::string ExampleTable() const;
+
+    char query_buffer_[8192] = {};
     std::string current_dataset_;
-    std::string registered_dataset_;
-
-    // DuckDB connector for SQL execution
-    std::unique_ptr<DuckDBConnector> duckdb_;
-
-    // Results
-    struct QueryResult {
-        std::vector<std::string> column_names;
-        std::vector<std::vector<std::string>> rows;
-        size_t total_rows = 0;
-        double execution_time_ms = 0.0;
-    };
+    std::string last_error_;
+    std::string running_sql_;
+    uint64_t task_id_ = 0;
+    double started_at_ = 0;
     QueryResult last_result_;
-
-    // UI helpers
-    void RenderQueryEditor();
-    void RenderResultsTable();
-    void RenderQueryHistory();
-    void RenderExampleQueries();
-
-    // Query history
+    std::string result_sql_;
     std::vector<std::string> query_history_;
-    int max_history_size_ = 50;
+    char save_name_[256] = "query_result";
+    std::string save_note_;
+    std::unique_ptr<plot::PlotWindow> plot_window_;
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // results come back only while this tab exists
+
+    static constexpr size_t kDisplayRows = 100000;
+    static constexpr size_t kMaxHistory = 50;
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz
