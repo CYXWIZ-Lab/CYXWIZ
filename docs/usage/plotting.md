@@ -217,7 +217,8 @@ or press **Plot** under the column's statistics. The Plot window opens:
     **Draw**: **Fill**, **Lines** (wireframe) or **Both**. **Shade** lights
     the fill from the upper left so slopes show. **Contours on the floor**
     draws the level lines under the surface.
-  - Drag the plot to turn it and use the wheel to zoom. **Turn** (the
+  - Drag the plot to turn it, right-drag to move it, and use the wheel to
+    zoom; double-click to fit. **Turn** (the
     default turned view), **Top**, **Front** and **Side** are in the
     toolbar, and **Fit** frames the data. The view you leave is saved with
     the plot (and in the Plot node). Hover shows the nearest point's or
