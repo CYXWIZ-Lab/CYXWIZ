@@ -1,6 +1,7 @@
 #include "dashboard_session.h"
 
 #include "../async_task_manager.h"
+#include "../column_role_store.h"
 #include "../dataset_catalog.h"
 #include "../plot/plot_arrow_source.h"
 #include "../plot/plot_prepare.h"
@@ -164,7 +165,16 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
                 w.plot.range_lo = c->min;
                 w.plot.range_hi = c->max;
             }
-    QueryRequest request = w.type == WidgetType::Kpi ? KpiQuery(w, dataset_, filters) : WidgetQuery(w, dataset_, filters, w.type == WidgetType::Plot ? kRowCap : 0);
+    QueryRequest request;
+    if (w.type == WidgetType::Kpi) request = KpiQuery(w, dataset_, filters);
+    else if (w.type == WidgetType::Missing) {
+        std::vector<std::string> cols;
+        for (const auto& c : profile.columns) cols.push_back(c.facts.name);
+        std::map<std::string, std::vector<std::string>> texts;
+        if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_))
+            if (const auto* s = ProjectColumnRoles().Find(RoleSourceKey(entry->source_path, entry->Shown()))) texts = s->missing_text;
+        request = MissingQuery(w, dataset_, filters, cols, texts);
+    } else request = WidgetQuery(w, dataset_, filters, w.type == WidgetType::Plot ? kRowCap : 0);
     // The same over all rows (grey behind), when filters apply to this bar or histogram.
     std::vector<QueryParam> unused;
     const bool with_all = w.type == WidgetType::Plot && (w.plot.kind == plot::Kind::Bar || w.plot.kind == plot::Kind::Histogram) &&
@@ -194,7 +204,7 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
             if (widget.type == WidgetType::Kpi) {
                 result->value = Number(q.table, "value");
                 result->all = Number(q.table, "all_rows");
-            } else if (widget.type == WidgetType::Table) {
+            } else if (widget.type == WidgetType::Table || widget.type == WidgetType::Missing) {
                 result->table = q.table;
             } else {
                 // Prepared off the UI thread, exactly as the Plot window does.
@@ -231,7 +241,10 @@ void DashboardSession::StartStrip(const DashboardSpec& spec, const DatasetContra
     bool numeric = false;
     if (target)
         if (const ColumnContract* c = contract.Find(*target)) numeric = c->type == "int" || c->type == "float";
-    QueryRequest request = StripQuery(dataset_, spec.filters, profile, target.value_or(""), numeric);
+    std::map<std::string, std::vector<std::string>> texts;
+    if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_))
+        if (const auto* s = ProjectColumnRoles().Find(RoleSourceKey(entry->source_path, entry->Shown()))) texts = s->missing_text;
+    QueryRequest request = StripQuery(dataset_, spec.filters, profile, target.value_or(""), numeric, texts);
     auto result = std::make_shared<StripResult>();
     result->fingerprint = fp;
     std::weak_ptr<int> alive = alive_;

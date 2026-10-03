@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace cyxwiz::dashboard {
 
@@ -64,7 +65,8 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
         return c && need == FieldNeed::Number && !NumberType(c->type);
     };
     std::vector<std::string> fields;
-    if (!w.plot.x_column.empty() && needs_number(w.plot.x_column, kind.x_need)) fields.push_back(w.plot.x_column);
+    // A year-bucketed date X is a number (its year).
+    if (!w.plot.x_column.empty() && w.bucket != "year" && needs_number(w.plot.x_column, kind.x_need)) fields.push_back(w.plot.x_column);
     for (const auto& y : w.plot.y_columns)
         if (needs_number(y, kind.y_need)) fields.push_back(y);
     if (!fields.empty()) {
@@ -85,13 +87,43 @@ QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const Fi
     if (w.type == WidgetType::Plot) cols = plot::ColumnsNeeded(w.plot);
     else cols = w.columns;
     std::string select;
-    for (const auto& c : cols) select += (select.empty() ? "" : ", ") + Quote(c);
+    for (const auto& c : cols) {
+        // A bucketed date X: its year as a number, under the column's own name.
+        const bool year = w.type == WidgetType::Plot && w.bucket == "year" && c == w.plot.x_column;
+        select += (select.empty() ? "" : ", ") +
+                  (year ? "CAST(year(TRY_CAST(" + Quote(c) + " AS DATE)) AS DOUBLE) AS " + Quote(c) : Quote(c));
+    }
     if (select.empty()) select = "*";
     const std::string cond = filters.WhereFor(w.id, r.params);
     r.sql = "SELECT " + select + " FROM " + Quote(table) + Where(cond);
     if (w.type == WidgetType::Table) r.sql += " LIMIT " + std::to_string(std::max(1, w.rows));
     // The sample is taken from the filtered rows (DuckDB samples a FROM before its WHERE).
     else if (row_cap > 0) r.sql = "SELECT * FROM (" + r.sql + ") AS cyxwiz_rows USING SAMPLE reservoir(" + std::to_string(row_cap) + " ROWS) REPEATABLE (42)";
+    return r;
+}
+
+QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::vector<std::string>& columns,
+                          const std::map<std::string, std::vector<std::string>>& missing_text) {
+    QueryRequest r;
+    r.inputs = {table};
+    r.label = "Dashboard missing values";
+    std::string sql = "SELECT count(*) AS rows";
+    for (size_t i = 0; i < columns.size(); ++i) {
+        const std::string col = Quote(columns[i]);
+        std::string cond = col + " IS NULL";
+        auto mt = missing_text.find(columns[i]);
+        if (mt != missing_text.end() && !mt->second.empty()) {
+            std::string in;
+            for (const auto& text : mt->second) {
+                in += in.empty() ? "?" : ", ?";
+                r.params.push_back(QueryParam::Of(text));
+            }
+            cond += " OR CAST(" + col + " AS VARCHAR) IN (" + in + ")";
+        }
+        sql += ", count_if(" + cond + ") AS m" + std::to_string(i);
+    }
+    const std::string where = filters.WhereFor(w.id, r.params);  // after the IN values: params in text order
+    r.sql = sql + " FROM " + Quote(table) + Where(where);
     return r;
 }
 
@@ -106,7 +138,7 @@ QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const Filte
 }
 
 QueryRequest StripQuery(const std::string& table, const FilterState& filters, const DatasetProfile& profile, const std::string& target,
-                        bool target_numeric) {
+                        bool target_numeric, const std::map<std::string, std::vector<std::string>>& missing_text) {
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard summary";
@@ -119,9 +151,24 @@ QueryRequest StripQuery(const std::string& table, const FilterState& filters, co
     const std::string t = Quote(table);
     std::string sql = "SELECT (SELECT count(*) FROM " + t + with_cond() + ") AS rows_now, (SELECT count(*) FROM " + t + ") AS rows_all";
     if (!profile.columns.empty() && profile.columns.size() <= kDetailColumns) {
+        // Missing cells: nulls plus the texts marked as missing (as the profile counts them).
         std::string missing;
-        for (const auto& c : profile.columns) missing += (missing.empty() ? "" : " + ") + std::string("count_if(") + Quote(c.facts.name) + " IS NULL)";
-        sql += ", (SELECT " + missing + " FROM " + t + with_cond() + ") AS missing_now";
+        for (const auto& c : profile.columns) {
+            const std::string col = Quote(c.facts.name);
+            std::string missing_cond = col + " IS NULL";
+            auto mt = missing_text.find(c.facts.name);
+            if (mt != missing_text.end() && !mt->second.empty()) {
+                std::string in;
+                for (const auto& text : mt->second) {
+                    in += in.empty() ? "?" : ", ?";
+                    r.params.push_back(QueryParam::Of(text));
+                }
+                missing_cond += " OR CAST(" + col + " AS VARCHAR) IN (" + in + ")";
+            }
+            missing += (missing.empty() ? "" : " + ") + std::string("count_if(") + missing_cond + ")";
+        }
+        sql += ", (SELECT " + missing + " FROM " + t;
+        sql += with_cond() + ") AS missing_now";
     }
     if (!target.empty()) {
         const std::string tc = Quote(target);
@@ -188,12 +235,37 @@ std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const Da
             ++numbers;
         }
     }
+    // Dates: rows per year.
+    for (const auto& c : contract.columns) {
+        if (c.role != ColumnRole::DateTime) continue;
+        const ProfiledColumn* p = profile_of(c.name);
+        if (!p) continue;
+        const auto year_of = [](const std::string& s) { return s.size() >= 4 ? std::atoi(s.substr(0, 4).c_str()) : 0; };
+        const int span = year_of(p->max_text) - year_of(p->min_text);
+        if (span < 1) continue;
+        WidgetSpec w;
+        w.type = WidgetType::Plot;
+        w.plot.kind = plot::Kind::Histogram;
+        w.plot.x_column = c.name;
+        w.plot.bins = std::clamp(span + 1, 2, 120);
+        w.bucket = "year";
+        w.title = c.name + " \xC2\xB7 rows per year";
+        place(w);
+        break;
+    }
     if (number_columns.size() >= 3) {
         WidgetSpec w;
         w.type = WidgetType::Plot;
         w.plot.kind = plot::Kind::Matrix;
         w.plot.y_columns.assign(number_columns.begin(), number_columns.begin() + std::min<size_t>(8, number_columns.size()));
         w.title = "Correlation";
+        place(w);
+    }
+    // Missing values, when there are any.
+    if (profile.MissingCells() > 0) {
+        WidgetSpec w;
+        w.type = WidgetType::Missing;
+        w.title = "Missing values";
         place(w);
     }
     // The target by its strongest feature.

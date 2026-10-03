@@ -127,6 +127,48 @@ int main() {
         r = engine.Run(KpiQuery(kpi, "Spotify", spec.filters));
         Check(r.ok && D(r, "value") == 10 && D(r, "all_rows") == 30, "rows filtered and all");
 
+        // Missing values per column (nulls and texts marked as missing), under the filters.
+        WidgetSpec miss;
+        miss.id = "m";
+        miss.type = WidgetType::Missing;
+        r = engine.Run(MissingQuery(miss, "Spotify", FilterState{}, {"duration", "album_type"}, {{"album_type", {"compilation"}}}));
+        Check(r.ok && D(r, "rows") == 30 && D(r, "m0") == 1 && D(r, "m1") == 10, "missing: 1 null duration, 10 'compilation' as missing: " + r.error);
+        r = engine.Run(MissingQuery(miss, "Spotify", spec.filters, {"duration"}, {}));
+        Check(r.ok && D(r, "rows") == 10, "missing under the filters");
+
+        // A date X counted per year, and its range filter on the year.
+        {
+            DatasetContract dated;
+            dated.columns.push_back({"release", "date", ColumnRole::DateTime, RoleSource::Inferred, "dates", std::nullopt});
+            WidgetSpec y2;
+            y2.type = WidgetType::Plot;
+            y2.plot.kind = plot::Kind::Histogram;
+            y2.plot.x_column = "release";
+            Check(CheckBinding(y2, dated, {}).state == Binding::State::RoleMismatch, "a histogram of a raw date needs numbers");
+            y2.bucket = "year";
+            Check(CheckBinding(y2, dated, {}).state == Binding::State::Ok, "a year-bucketed date is a number");
+        }
+        WidgetSpec years;
+        years.id = "y";
+        years.type = WidgetType::Plot;
+        years.plot.kind = plot::Kind::Histogram;
+        years.plot.x_column = "release";
+        years.bucket = "year";
+        QueryRequest yq = WidgetQuery(years, "T", FilterState{});
+        Check(yq.sql == "SELECT CAST(year(TRY_CAST(\"release\" AS DATE)) AS DOUBLE) AS \"release\" FROM \"T\"", "year bucket: " + yq.sql);
+        FilterState by_year;
+        FilterPredicate yr;
+        yr.field = "release";
+        yr.op = FilterPredicate::Op::Range;
+        yr.lo = 1990;
+        yr.hi = 1991;
+        yr.bucket = "year";
+        yr.source_widget = "y";
+        by_year.Set(yr);
+        std::vector<QueryParam> yp;
+        Check(by_year.WhereFor("other", yp) == "year(TRY_CAST(\"release\" AS DATE)) BETWEEN ? AND ?" && by_year.Text() == "release year 1990 to 1991",
+              "year filter: " + by_year.Text());
+
         // The summary strip.
         r = engine.Run(StripQuery("Spotify", spec.filters, profile, "track_popularity", true));
         Check(r.ok && D(r, "rows_now") == 10 && D(r, "rows_all") == 30 && D(r, "missing_now") == 0 && std::fabs(D(r, "target_now") - 47.0) < 1e-9 &&

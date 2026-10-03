@@ -121,7 +121,7 @@ int main() {
               d.filters.predicates[0].source_widget == hist.id, "automatic widgets and their filters removed");
 
     // Widget kinds: KPI, Table and every plot kind.
-    Check(WidgetKinds().size() == 2 + plot::Kinds().size(), "every plot kind is a widget kind");
+    Check(WidgetKinds().size() == 3 + plot::Kinds().size(), "every plot kind is a widget kind (plus KPI, Table, Missing values)");
     const WidgetKind* h = FindWidgetKind("plot.histogram");
     Check(h && h->type == WidgetType::Plot && h->plot_kind == plot::Kind::Histogram && h->x_need == FieldNeed::Number, "histogram kind");
     Check(FindWidgetKind("plot.bar")->x_need == FieldNeed::Category && FindWidgetKind("plot.map_regions") &&

@@ -62,6 +62,7 @@ std::string WidgetTitle(const WidgetSpec& w) {
     switch (w.type) {
         case WidgetType::Kpi: return std::string(MeasureLabel(w.measure)) + (w.field.empty() ? "" : " of " + w.field);
         case WidgetType::Table: return "Table";
+        case WidgetType::Missing: return "Missing values";
         case WidgetType::Plot: {
             const std::string col = !w.plot.x_column.empty() ? w.plot.x_column : !w.plot.y_columns.empty() ? w.plot.y_columns.front() : "";
             return col.empty() ? KindOf(w).label : col;
@@ -492,6 +493,32 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                     }
                     ImGui::EndTable();
                 }
+            } else if (w.type == WidgetType::Missing && r.table) {
+                // Columns with missing values: a bar of their share each.
+                const double rows = r.table->num_rows() ? std::max(1.0, [&] {
+                    auto s = r.table->GetColumnByName("rows")->GetScalar(0);
+                    return s.ok() ? std::stod((*s)->ToString()) : 1.0;
+                }()) : 1.0;
+                int shown = 0;
+                const float bar_w = ImGui::GetContentRegionAvail().x * 0.45f;
+                for (size_t i = 0; i < profile_->columns.size(); ++i) {
+                    auto col = r.table->GetColumnByName("m" + std::to_string(i));
+                    if (!col) continue;
+                    auto s = col->GetScalar(0);
+                    const double m = s.ok() ? std::stod((*s)->ToString()) : 0.0;
+                    if (m <= 0) continue;
+                    ++shown;
+                    ImGui::TextColored(t.text_dim, "%s", profile_->columns[i].facts.name.c_str());
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.42f);
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    const float h = ImGui::GetTextLineHeight();
+                    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x, at.y + h * 0.25f), ImVec2(at.x + std::max(2.0f, bar_w * static_cast<float>(m / rows)), at.y + h * 0.75f),
+                                                              ui::ToU32(t.warning), 2.0f);
+                    ImGui::Dummy(ImVec2(bar_w, h));
+                    ImGui::SameLine();
+                    ImGui::Text("%.1f%%", 100.0 * m / rows);
+                }
+                if (shown == 0) ImGui::TextColored(t.text_dim, "No missing values in these rows.");
             } else if (w.type == WidgetType::Plot && r.prepared) {
                 auto& view = views_[w.id];
                 if (!view) view = std::make_unique<plot::PlotView>(id_ + "_" + w.id);
@@ -521,6 +548,7 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                     FilterPredicate p;
                     p.field = click->field;
                     p.source_widget = w.id;
+                    p.bucket = w.bucket;  // a date widget's bins are years
                     if (click->what == plot::PlotView::Click::What::Category) p.values = {click->value};
                     else {
                         p.op = FilterPredicate::Op::Range;
@@ -635,6 +663,11 @@ void DashboardWindow::DrawSettings(float width) {
             }
             break;
         }
+        case WidgetType::Missing:
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "The share of missing values per column under the filters; texts marked as missing in Data Studio count.");
+            ImGui::PopTextWrapPos();
+            break;
         case WidgetType::Table: {
             ImGui::TextColored(t.text_dim, "Columns");
             for (const auto& c : contract_.columns) {

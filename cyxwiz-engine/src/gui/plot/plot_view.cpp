@@ -1012,7 +1012,8 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Histogram2D: {
             const bool named = kind != Kind::Histogram2D;
             ImPlot::PushColormap(p.grid_diverging ? DivergingColormap() : SequentialColormap());
-            const bool numbers = named && p.grid.size() <= 400;
+            // Numbers in the cells when they fit (about 40 px a cell).
+            const bool numbers = named && p.grid.size() <= 400 && plot_size.x / static_cast<float>(std::max(1, p.grid_cols)) >= 40.0f;
             const char* format = kind == Kind::Matrix && p.spec.matrix_values != PlotSpec::MatrixValues::Values ? "%.2f" : "%g";
             const ImPlotPoint lo = named ? ImPlotPoint(0, 0) : ImPlotPoint(p.x_min, p.y_min);
             const ImPlotPoint hi = named ? ImPlotPoint(p.grid_cols, p.grid_rows) : ImPlotPoint(p.x_max, p.y_max);

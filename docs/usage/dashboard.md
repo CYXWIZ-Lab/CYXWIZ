@@ -31,7 +31,10 @@ as Data Studio's Profile tab) and builds:
   bars for a category;
 - a **bar chart per category column** with up to 30 values;
 - a **histogram per number column**;
+- **rows per year** for a date column (click a year to filter on it);
 - a **correlation matrix** of the number columns;
+- **missing values**: the share per column under the filters (texts marked
+  as missing in Data Studio count), when there are any;
 - the **target by its most correlated column** (a scatter, or a box per
   class for a category target).
 
@@ -56,6 +59,10 @@ the node.
 Example (Spotify): click *single* in album_type: 2,219 of 8,582 rows, the
 target mean 46.36 (all rows 52.36).
 
+Filtered bar charts and histograms show all rows in grey behind the
+filtered bars (on the same bins), and the widget you clicked keeps your
+selection in full colour with the rest dimmed.
+
 ## Fields and roles
 
 The left column lists the fields with their roles (ID, Target, Numeric,
@@ -66,7 +73,7 @@ inferred ones.
 
 ## Widgets
 
-- **Add widget**: KPI, Table, or any plot type (grouped as in the Plot
+- **Add widget**: KPI, Table, Missing values, or any plot type (grouped as in the Plot
   window). A new widget starts with fitting columns.
 - Click a widget's title to edit it on the right: title, plot type, the
   columns (X, Y, Colour by), or a KPI's measure (rows, sum, mean, median,

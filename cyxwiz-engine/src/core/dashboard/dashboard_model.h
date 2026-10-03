@@ -25,7 +25,7 @@
 
 namespace cyxwiz::dashboard {
 
-enum class WidgetType { Kpi, Table, Plot };
+enum class WidgetType { Kpi, Table, Plot, Missing };
 
 // KPI measures (the fixed set of addendum A.9).
 enum class Measure { Count, Sum, Mean, Median, Min, Max, Distinct, MissingPct };
@@ -45,6 +45,8 @@ struct WidgetSpec {
     bool automatic = false;              // made by the automatic layout (Regenerate replaces these only)
     // Plot widgets.
     plot::PlotSpec plot;
+    // A date X field counted per year ("year"; empty: as it is).
+    std::string bucket;
     // KPI widgets: a measure of a field (Count needs no field).
     Measure measure = Measure::Count;
     std::string field;
@@ -65,6 +67,7 @@ struct FilterPredicate {
     std::vector<std::string> values;     // In: the values (as text)
     double lo = 0, hi = 0;               // Range: lo <= field <= hi
     std::string source_widget;           // the widget that set it (its own query ignores it)
+    std::string bucket;                  // "year": the field's year (a date widget's range)
     std::string Text() const;            // "album_type = single", "age 20 to 40"
 };
 

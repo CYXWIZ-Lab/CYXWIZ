@@ -29,6 +29,7 @@ const char* TypeId(WidgetType t) {
         case WidgetType::Kpi: return "kpi";
         case WidgetType::Table: return "table";
         case WidgetType::Plot: return "plot";
+        case WidgetType::Missing: return "missing";
     }
     return "plot";
 }
@@ -87,6 +88,7 @@ std::vector<std::string> WidgetSpec::Fields() const {
     };
     switch (type) {
         case WidgetType::Kpi: add(field); break;
+        case WidgetType::Missing: break;
         case WidgetType::Table:
             for (const auto& c : columns) add(c);
             break;
@@ -130,7 +132,7 @@ std::string FilterPredicate::Text() const {
             for (size_t i = 0; i < values.size(); ++i) v += (i ? ", " : "") + values[i];
             return field + (values.size() == 1 ? " = " : " in ") + v;
         }
-        case Op::Range: return field + " " + Short(lo) + " to " + Short(hi);
+        case Op::Range: return field + (bucket.empty() ? "" : " " + bucket) + " " + Short(lo) + " to " + Short(hi);
         case Op::IsNull: return field + " is missing";
         case Op::NotNull: return field + " is not missing";
     }
@@ -168,7 +170,7 @@ std::string FilterState::WhereFor(const std::string& widget_id, std::vector<Quer
                 break;
             }
             case FilterPredicate::Op::Range:
-                cond = col + " BETWEEN ? AND ?";
+                cond = (p.bucket == "year" ? "year(TRY_CAST(" + col + " AS DATE))" : col) + " BETWEEN ? AND ?";
                 params.push_back(QueryParam::Of(p.lo));
                 params.push_back(QueryParam::Of(p.hi));
                 break;
@@ -220,6 +222,7 @@ std::string DashboardToJson(const DashboardSpec& spec) {
         o["title"] = w.title;
         o["at"] = {w.at.x, w.at.y, w.at.w, w.at.h};
         o["automatic"] = w.automatic;
+        if (!w.bucket.empty()) o["bucket"] = w.bucket;
         switch (w.type) {
             case WidgetType::Plot: o["plot"] = json::parse(plot::SpecToJson(w.plot)); break;
             case WidgetType::Kpi:
@@ -230,6 +233,7 @@ std::string DashboardToJson(const DashboardSpec& spec) {
                 o["columns"] = w.columns;
                 o["rows"] = w.rows;
                 break;
+            case WidgetType::Missing: break;
         }
         j["widgets"].push_back(o);
     }
@@ -242,6 +246,7 @@ std::string DashboardToJson(const DashboardSpec& spec) {
         f["lo"] = p.lo;
         f["hi"] = p.hi;
         f["widget"] = p.source_widget;
+        if (!p.bucket.empty()) f["bucket"] = p.bucket;
         j["filters"].push_back(f);
     }
     return j.dump();
@@ -274,11 +279,13 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             if (type == "kpi") w.type = WidgetType::Kpi;
             else if (type == "table") w.type = WidgetType::Table;
             else if (type == "plot") w.type = WidgetType::Plot;
+            else if (type == "missing") w.type = WidgetType::Missing;
             else return fail("unknown widget type '" + type + "'");
             w.title = o.value("title", std::string());
             if (o.contains("at") && o["at"].is_array() && o["at"].size() == 4)
                 w.at = {o["at"][0].get<int>(), o["at"][1].get<int>(), std::max(1, o["at"][2].get<int>()), std::max(1, o["at"][3].get<int>())};
             w.automatic = o.value("automatic", false);
+            w.bucket = o.value("bucket", std::string());
             if (w.type == WidgetType::Plot) {
                 std::string why;
                 if (!o.contains("plot") || !plot::SpecFromJson(o["plot"].dump(), w.plot, &why)) return fail("widget " + w.id + ": " + why);
@@ -287,7 +294,7 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
                 if (!m) return fail("widget " + w.id + ": unknown measure");
                 w.measure = *m;
                 w.field = o.value("field", std::string());
-            } else {
+            } else if (w.type == WidgetType::Table) {
                 if (o.contains("columns") && o["columns"].is_array()) w.columns = o["columns"].get<std::vector<std::string>>();
                 w.rows = std::clamp(o.value("rows", 20), 1, 10000);
             }
@@ -308,6 +315,7 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             p.lo = f.value("lo", 0.0);
             p.hi = f.value("hi", 0.0);
             p.source_widget = f.value("widget", std::string());
+            p.bucket = f.value("bucket", std::string());
             if (!p.field.empty()) out.filters.predicates.push_back(std::move(p));
         }
     spec = std::move(out);
@@ -319,6 +327,7 @@ const std::vector<WidgetKind>& WidgetKinds() {
         std::vector<WidgetKind> k;
         k.push_back({"kpi", "KPI", "Summary", WidgetType::Kpi, plot::Kind::Line, FieldNeed::Any, FieldNeed::Any});
         k.push_back({"table", "Table", "Summary", WidgetType::Table, plot::Kind::Line, FieldNeed::Any, FieldNeed::Any});
+        k.push_back({"missing", "Missing values", "Summary", WidgetType::Missing, plot::Kind::Line, FieldNeed::Any, FieldNeed::Any});
         for (const auto& info : plot::Kinds()) {
             WidgetKind w;
             w.id = std::string("plot.") + info.id;
@@ -352,9 +361,10 @@ const WidgetKind* FindWidgetKind(const std::string& id) {
 const WidgetKind& KindOf(const WidgetSpec& w) {
     if (w.type == WidgetType::Kpi) return WidgetKinds()[0];
     if (w.type == WidgetType::Table) return WidgetKinds()[1];
+    if (w.type == WidgetType::Missing) return WidgetKinds()[2];
     for (const auto& k : WidgetKinds())
         if (k.type == WidgetType::Plot && k.plot_kind == w.plot.kind) return k;
-    return WidgetKinds()[2];
+    return WidgetKinds()[3];
 }
 
 bool RoleFits(ColumnRole role, FieldNeed need) {

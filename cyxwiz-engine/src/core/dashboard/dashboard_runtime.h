@@ -34,12 +34,16 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
 // The SQL for a plot or table widget: its columns, the filters of the other
 // widgets; `row_cap` 0: all rows (else a reproducible sample of that many).
 QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0);
+// Missing values per column (nulls plus the texts marked as missing), under
+// the other widgets' filters: a row with "rows" and one count per column.
+QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::vector<std::string>& columns,
+                          const std::map<std::string, std::vector<std::string>>& missing_text);
 // A KPI: value (filtered) and all (unfiltered) in one row.
 QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters);
 // The dashboard's own KPI strip: rows (filtered and all), missing cells
 // (filtered), and the target's mean or most frequent value (filtered and all).
 QueryRequest StripQuery(const std::string& table, const FilterState& filters, const DatasetProfile& profile, const std::string& target,
-                        bool target_numeric);
+                        bool target_numeric, const std::map<std::string, std::vector<std::string>>& missing_text = {});
 
 // The automatic widgets (marked automatic), laid out three across.
 std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const DatasetContract& contract, DashboardSpec& spec);
