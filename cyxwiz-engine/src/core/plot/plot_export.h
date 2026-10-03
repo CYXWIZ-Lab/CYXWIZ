@@ -36,6 +36,10 @@ struct AxisRange {
 
 std::string ToSvg(const Prepared& data, const AxisRange& range, const SvgStyle& style);
 
+// How an image plot lays its pictures out: columns of the grid (one row: 1;
+// means: one line up to 12; a gallery: about square).
+int PictureColumns(const Prepared& data);
+
 // "#rrggbb" for an ImVec4-like colour (0..1 floats).
 std::string HexColour(float r, float g, float b);
 

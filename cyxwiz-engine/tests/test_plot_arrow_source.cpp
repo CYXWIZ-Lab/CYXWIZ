@@ -71,6 +71,13 @@ int main() {
     s.x_column = "class";
     const Prepared p = Prepare(s, src);
     Check(p.categories.size() == 3 && p.series[0].y == std::vector<double>({1, 1, 1}), "bar of class");
-    std::cout << "plot arrow source: types, nulls, strings, chunks, row limit. OK\n";
+
+    // Only some rows, across chunks and in the order asked (image plots read
+    // just the rows they show).
+    const Source some = SourceFromArrowRows(*table, {"pixel", "class", "loss"}, {2, 0});
+    Check(some.Find("pixel")->numbers == std::vector<double>({128, 0}), "rows across chunks, in the order asked");
+    Check(some.Find("class")->text == std::vector<std::string>({"3", "7"}) && std::isnan(SourceFromArrowRows(*table, {"loss"}, {1}).Find("loss")->numbers[0]),
+          "text rows; a null row is NaN");
+    std::cout << "plot arrow source: types, nulls, strings, chunks, row limit, chosen rows. OK\n";
     return 0;
 }

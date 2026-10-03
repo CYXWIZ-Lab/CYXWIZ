@@ -35,9 +35,13 @@ enum class Kind {
     Polar,
     Quiver,
     Stream,
+    // P2b group 3 (approved board 10).
+    Image,
+    PairPlot,
+    Parallel,
 };
 
-enum class Group { Basic, Distribution, GridDensity, VectorFields };
+enum class Group { Basic, Distribution, GridDensity, VectorFields, Images };
 
 // Which columns a kind uses. X and Y are column names; Color splits the
 // rows into one series per value of a column.
@@ -126,6 +130,21 @@ struct PlotSpec {
     enum class AngleUnit { Auto, Degrees, Radians, Categories };
     AngleUnit angle_unit = AngleUnit::Auto;      // polar: Auto = categories for text, degrees for numbers
     bool polar_points = false;                   // polar: points instead of lines
+    // P2b group 3 (approved board 10). Image: the Y columns are the pixels
+    // (any table: square when the count is a square, else image_width
+    // wide; 3 channels when asked or when count / 3 is a square).
+    enum class ImageMode { OneRow, Gallery, MeanPerClass };
+    ImageMode image_mode = ImageMode::Gallery;
+    int image_row = 1;                           // one row: 1-based, among the chosen rows
+    int image_width = 0;                         // 0: square
+    int image_channels = 0;                      // 0: auto (1, or 3 when count / 3 is a square)
+    bool image_planar = false;                   // 3 channels as three planes (R..., G..., B...) like CIFAR
+    enum class ImageRange { Auto, Byte, Unit };
+    ImageRange image_range = ImageRange::Auto;   // the values' min..max, 0..255 or 0..1
+    bool image_grey = false;                     // grey instead of the theme scale (1 channel)
+    bool image_invert = false;
+    int gallery_max = 40;                        // gallery: pictures at most
+    bool pair_histogram = false;                 // pair plot diagonal: histogram instead of KDE
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -241,6 +260,30 @@ struct Prepared {
     std::vector<std::vector<double>> stream_lines;
     std::vector<double> stream_speed;
     std::vector<double> field_u, field_v;
+    // Image: each picture's values scaled to 0..1 (img_w x img_h x
+    // img_channels, row by row, channels last), its label, its row in the
+    // chosen rows (1-based; 0 for a mean) and how many rows it averages.
+    struct Picture {
+        std::vector<float> pix;
+        std::string label;
+        size_t row = 0;
+        size_t count = 1;
+    };
+    std::vector<Picture> pictures;
+    int img_w = 0, img_h = 0, img_channels = 1;
+    double img_lo = 0, img_hi = 1;
+    size_t img_rows = 0;                         // the chosen rows (one row: Previous / Next stop here)
+    // Pair plot and parallel coordinates: the columns, each column's range,
+    // the sampled rows' values per column and group, and the group names.
+    std::vector<std::string> multi_cols;
+    std::vector<double> multi_lo, multi_hi;
+    std::vector<std::vector<double>> multi_values;  // per column, per sampled row
+    std::vector<int> multi_group;                   // per sampled row
+    std::vector<std::string> multi_groups;
+    // Pair plot diagonal: per column, per group, the density (KDE or
+    // histogram) over pair_steps points across the column's range.
+    std::vector<std::vector<std::vector<double>>> pair_diag;
+    int pair_steps = 0;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

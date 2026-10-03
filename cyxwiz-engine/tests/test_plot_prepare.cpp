@@ -2,6 +2,7 @@
 // columns, with reduction, sampling, colour groups and honest labels.
 #include "../src/core/plot/plot_prepare.h"
 #include "../src/core/plot/plot_presets.h"
+#include "../src/core/plot/plot_image.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -525,6 +526,112 @@ int main() {
               back_g2.stream_density == 1.5 && back_g2.angle_unit == PlotSpec::AngleUnit::Categories && back_g2.polar_points,
           "group 2 options saved");
 
+    // ---- P2b group 3 (board 10): any table, not only MNIST ----
+    PlotSpec lay;
+    auto l = ImageLayoutFor(lay, 784);
+    Check(l.problem.empty() && l.width == 28 && l.height == 28 && l.channels == 1, "784 columns: 28 x 28 grey");
+    l = ImageLayoutFor(lay, 3072);
+    Check(l.width == 32 && l.height == 32 && l.channels == 3, "3,072 columns: 32 x 32 RGB (CIFAR)");
+    l = ImageLayoutFor(lay, 10);
+    Check(l.width == 4 && l.height == 3 && l.channels == 1, "10 columns: 4 wide, rows to fit");
+    lay.image_width = 5;
+    l = ImageLayoutFor(lay, 10);
+    Check(l.width == 5 && l.height == 2, "a chosen width");
+    lay.image_width = 0;
+    lay.image_channels = 3;
+    Check(!ImageLayoutFor(lay, 10).problem.empty(), "10 columns do not split into 3 channels");
+
+    // 2 x 2 grey pictures: rows a = (0, 1, 2, 3), b = (4, 5, 6, 7) and class x, y, x.
+    Source im;
+    im.columns.push_back(Numbers("p1", {0, 4, 8}));
+    im.columns.push_back(Numbers("p2", {1, 5, 9}));
+    im.columns.push_back(Numbers("p3", {2, 6, 10}));
+    im.columns.push_back(Numbers("p4", {3, 7, 11}));
+    im.columns.push_back(Text("class", {"x", "y", "x"}));
+    PlotSpec ims = Spec(Kind::Image, "", {"p1", "p2", "p3", "p4"}, "class");
+    p = Prepare(ims, im);
+    Check(p.problem.empty() && p.img_w == 2 && p.img_h == 2 && p.pictures.size() == 3 && p.pictures[1].label == "y" &&
+              p.pictures[2].row == 3 && p.img_lo == 0 && p.img_hi == 11,
+          "gallery: three pictures, labels and rows, range 0..11");
+    Check(std::fabs(p.pictures[2].pix[3] - 1.0f) < 1e-6 && p.pictures[0].pix[0] == 0.0f, "values scaled to 0..1");
+    ims.image_mode = PlotSpec::ImageMode::OneRow;
+    ims.image_row = 2;
+    p = Prepare(ims, im);
+    Check(p.pictures.size() == 1 && p.pictures[0].row == 2 && p.img_rows == 3, "one row: row 2 of 3");
+    ims.image_mode = PlotSpec::ImageMode::MeanPerClass;
+    ims.image_range = PlotSpec::ImageRange::Byte;
+    p = Prepare(ims, im);
+    Check(p.pictures.size() == 2 && p.pictures[0].label == "x" && p.pictures[0].count == 2 &&
+              std::fabs(p.pictures[0].pix[0] - 4.0f / 255.0f) < 1e-6 && p.img_hi == 255,
+          "mean per class: x averages rows 1 and 3 (4 at the first pixel), on 0..255");
+    ims.color_column.clear();
+    Check(Prepare(ims, im).problem == "Choose a label column for the mean per class.", "mean per class needs a label");
+    // Planar RGB 2 x 2 (12 columns R R R R G G G G B B B B): pixel 0 is (r0, g0, b0).
+    Source rgb;
+    std::vector<std::string> rgb_cols;
+    for (int k = 0; k < 12; ++k) {
+        rgb_cols.push_back("c" + std::to_string(k));
+        rgb.columns.push_back(Numbers(rgb_cols.back(), {static_cast<double>(k)}));
+    }
+    PlotSpec rs2 = Spec(Kind::Image, "", rgb_cols);
+    rs2.image_channels = 3;
+    rs2.image_planar = true;
+    p = Prepare(rs2, rgb);
+    Check(p.img_channels == 3 && p.img_w == 2 && std::fabs(p.pictures[0].pix[1] * 11.0f - 4.0f) < 1e-5 &&
+              std::fabs(p.pictures[0].pix[2] * 11.0f - 8.0f) < 1e-5,
+          "planar RGB: pixel 0 takes c0, c4, c8");
+    rs2.image_planar = false;
+    p = Prepare(rs2, rgb);
+    Check(std::fabs(p.pictures[0].pix[1] * 11.0f - 1.0f) < 1e-5, "interleaved RGB: pixel 0 takes c0, c1, c2");
+
+    // Pair plot: diagonals integrate to 1, scatters keep every row here.
+    Source pp;
+    std::vector<double> pa, pb, pc;
+    std::vector<std::string> pg;
+    for (int i = 0; i < 300; ++i) {
+        pa.push_back(std::sin(i * 0.1));
+        pb.push_back(std::cos(i * 0.07) * 2);
+        pc.push_back(i % 17);
+        pg.push_back(i % 3 ? "a" : "b");
+    }
+    pp.columns.push_back(Numbers("a", pa));
+    pp.columns.push_back(Numbers("b", pb));
+    pp.columns.push_back(Numbers("c", pc));
+    pp.columns.push_back(Text("g", pg));
+    p = Prepare(Spec(Kind::PairPlot, "", {"a", "b", "c"}, "g"), pp);
+    Check(p.problem.empty() && p.multi_cols.size() == 3 && p.multi_values[0].size() == 300 && p.multi_groups.size() == 2 &&
+              p.pair_diag.size() == 3 && p.pair_diag[0].size() == 2 && p.multi_lo[2] == 0 && p.multi_hi[2] == 16,
+          "pair plot: 3 columns, 2 groups, ranges");
+    {
+        const auto& d0 = p.pair_diag[0][0];
+        double diag_area = 0;
+        const double w = (p.multi_hi[0] - p.multi_lo[0]) / (p.pair_steps - 1);
+        for (size_t k = 0; k + 1 < d0.size(); ++k) diag_area += (d0[k] + d0[k + 1]) / 2 * w;
+        // A KDE spreads past the column's range (a sine piles up at its ends),
+        // so less than 1 falls inside; a histogram keeps all of it.
+        Check(diag_area > 0.7 && diag_area < 1.02, "a KDE diagonal: most of it in the range (" + std::to_string(diag_area) + ")");
+        PlotSpec hist_pair = Spec(Kind::PairPlot, "", {"a", "b", "c"}, "g");
+        hist_pair.pair_histogram = true;
+        const Prepared hp2 = Prepare(hist_pair, pp);
+        const double bw2 = (hp2.multi_hi[0] - hp2.multi_lo[0]) / hp2.pair_steps;
+        double hist_area = 0;
+        for (double hv : hp2.pair_diag[0][0]) hist_area += hv * bw2;
+        Check(std::fabs(hist_area - 1.0) < 1e-9, "a histogram diagonal holds every row (density sums to 1)");
+    }
+    Check(Prepare(Spec(Kind::PairPlot, "", {"a"}), pp).problem == "Choose 2 to 6 number columns (1 chosen).", "one column is not a pair plot");
+    // Parallel coordinates: sampled to 1,000 lines.
+    Source par_src;
+    std::vector<double> ra, rb;
+    for (int i = 0; i < 5000; ++i) {
+        ra.push_back(i);
+        rb.push_back(-i);
+    }
+    par_src.columns.push_back(Numbers("a", ra));
+    par_src.columns.push_back(Numbers("b", rb));
+    p = Prepare(Spec(Kind::Parallel, "", {"a", "b"}), par_src);
+    Check(p.multi_group.size() == 1000 && p.label.state == DataLabel::State::Sampled && p.multi_hi[0] == 4999 && p.multi_lo[1] == -4999,
+          "parallel: 1,000 of 5,000 lines on each column's range");
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -534,7 +641,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 21 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream. OK\n";
+    std::cout << "plot prepare: 24 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars, polar, quiver, stream, image, pair plot, parallel. OK\n";
     return 0;
 }

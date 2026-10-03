@@ -2,6 +2,7 @@
 
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace cyxwiz::plot {
@@ -84,6 +85,38 @@ void AppendTextChunk(const arrow::Array& chunk, size_t take, std::vector<std::st
     }
 }
 
+// One value of a chunk (NaN / "" when null).
+double NumberAt(const arrow::Array& a, int64_t i) {
+    if (a.IsNull(i)) return NAN;
+    switch (a.type_id()) {
+        case arrow::Type::INT8: return static_cast<const arrow::Int8Array&>(a).Value(i);
+        case arrow::Type::INT16: return static_cast<const arrow::Int16Array&>(a).Value(i);
+        case arrow::Type::INT32: return static_cast<const arrow::Int32Array&>(a).Value(i);
+        case arrow::Type::INT64: return static_cast<double>(static_cast<const arrow::Int64Array&>(a).Value(i));
+        case arrow::Type::UINT8: return static_cast<const arrow::UInt8Array&>(a).Value(i);
+        case arrow::Type::UINT16: return static_cast<const arrow::UInt16Array&>(a).Value(i);
+        case arrow::Type::UINT32: return static_cast<const arrow::UInt32Array&>(a).Value(i);
+        case arrow::Type::UINT64: return static_cast<double>(static_cast<const arrow::UInt64Array&>(a).Value(i));
+        case arrow::Type::FLOAT: return static_cast<const arrow::FloatArray&>(a).Value(i);
+        case arrow::Type::DOUBLE: return static_cast<const arrow::DoubleArray&>(a).Value(i);
+        case arrow::Type::BOOL: return static_cast<const arrow::BooleanArray&>(a).Value(i) ? 1.0 : 0.0;
+        default: {
+            auto sc = a.GetScalar(i);
+            if (!sc.ok() || !(*sc)->is_valid) return NAN;
+            auto d = (*sc)->CastTo(arrow::float64());
+            return d.ok() ? std::static_pointer_cast<arrow::DoubleScalar>(*d)->value : NAN;
+        }
+    }
+}
+
+std::string TextAt(const arrow::Array& a, int64_t i) {
+    if (a.IsNull(i)) return std::string();
+    if (a.type_id() == arrow::Type::STRING) return static_cast<const arrow::StringArray&>(a).GetString(i);
+    if (a.type_id() == arrow::Type::LARGE_STRING) return static_cast<const arrow::LargeStringArray&>(a).GetString(i);
+    auto sc = a.GetScalar(i);
+    return sc.ok() && (*sc)->is_valid ? (*sc)->ToString() : std::string();
+}
+
 }  // namespace
 
 std::vector<ArrowColumnInfo> ArrowColumns(const arrow::Table& table) {
@@ -117,6 +150,44 @@ Source SourceFromArrow(const arrow::Table& table, const std::vector<std::string>
             if (col.size() >= take) break;
             if (col.numeric) AppendNumberChunk(*chunk, take, col.numbers);
             else AppendTextChunk(*chunk, take, col.text);
+        }
+        src.columns.push_back(std::move(col));
+    }
+    return src;
+}
+
+Source SourceFromArrowRows(const arrow::Table& table, const std::vector<std::string>& columns, const std::vector<size_t>& rows) {
+    Source src;
+    for (const auto& name : columns) {
+        if (name.empty()) continue;
+        bool seen = false;
+        for (const auto& c : src.columns) seen = seen || c.name == name;
+        if (seen) continue;
+        const int index = table.schema()->GetFieldIndex(name);
+        if (index < 0) continue;
+        const auto& column = table.column(index);
+        // Where each chunk starts, to find a row's chunk.
+        std::vector<int64_t> starts;
+        int64_t at = 0;
+        for (const auto& chunk : column->chunks()) {
+            starts.push_back(at);
+            at += chunk->length();
+        }
+        SourceColumn col;
+        col.name = name;
+        col.numeric = IsNumeric(*column->type());
+        for (size_t r : rows) {
+            const auto it = std::upper_bound(starts.begin(), starts.end(), static_cast<int64_t>(r));
+            const size_t k = static_cast<size_t>(it - starts.begin()) - 1;
+            const int64_t i = static_cast<int64_t>(r) - starts[k];
+            const auto& chunk = *column->chunk(static_cast<int>(k));
+            if (i < 0 || i >= chunk.length()) {
+                if (col.numeric) col.numbers.push_back(NAN);
+                else col.text.emplace_back();
+                continue;
+            }
+            if (col.numeric) col.numbers.push_back(NumberAt(chunk, i));
+            else col.text.push_back(TextAt(chunk, i));
         }
         src.columns.push_back(std::move(col));
     }

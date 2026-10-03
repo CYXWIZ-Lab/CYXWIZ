@@ -21,11 +21,13 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Box, "box", "Box", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Violin, "violin", "Violin", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Kde, "kde", "KDE", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
+        {Kind::Parallel, "parallel", "Parallel coordinates", Group::Distribution, kEncY, kEncColor, true, "", "Columns (two or more numbers)"},
         {Kind::ErrorBars, "error_bars", "Error bars", Group::Distribution, kEncX | kEncY, 0, false, "Groups", "Values (mean and spread)"},
         {Kind::Heatmap, "heatmap", "Heatmap", Group::GridDensity, kEncX | kEncY, kEncValue, false, "Columns (categories)", "Rows (categories)",
          "Cell values (optional: count rows)"},
         {Kind::Matrix, "matrix", "Matrix", Group::GridDensity, kEncY, 0, true, "", "Columns (two or more numbers)"},
         {Kind::Histogram2D, "histogram_2d", "2D histogram", Group::GridDensity, kEncX | kEncY, 0, false, "X values", "Y values"},
+        {Kind::PairPlot, "pair_plot", "Pair plot", Group::GridDensity, kEncY, kEncColor, true, "", "Columns (2 to 6 numbers)"},
         {Kind::Hexbin, "hexbin", "Hexbin", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values", "Y values",
          "Colour (optional: count rows)"},
         {Kind::Contour, "contour", "Contour", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values", "Y values",
@@ -34,6 +36,7 @@ const std::vector<KindInfo>& Kinds() {
          "Y values", "Z (optional: density of rows)"},
         {Kind::Quiver, "quiver", "Quiver", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
         {Kind::Stream, "stream", "Stream", Group::VectorFields, kEncX | kEncY | kEncVector, 0, false, "X values", "Y values"},
+        {Kind::Image, "image", "Image", Group::Images, kEncY, kEncColor, true, "", "Pixel columns"},
     };
     return kinds;
 }
@@ -56,6 +59,7 @@ const char* GroupLabel(Group group) {
         case Group::Distribution: return "Distribution";
         case Group::GridDensity: return "Grid and density";
         case Group::VectorFields: return "Vector fields";
+        case Group::Images: return "Images";
     }
     return "";
 }
@@ -125,6 +129,18 @@ std::string SpecToJson(const PlotSpec& s) {
                       : s.angle_unit == PlotSpec::AngleUnit::Categories ? "categories"
                                                                         : "auto";
     j["polar_points"] = s.polar_points;
+    j["image_mode"] = s.image_mode == PlotSpec::ImageMode::OneRow      ? "one_row"
+                      : s.image_mode == PlotSpec::ImageMode::MeanPerClass ? "mean_per_class"
+                                                                          : "gallery";
+    j["image_row"] = s.image_row;
+    j["image_width"] = s.image_width;
+    j["image_channels"] = s.image_channels;
+    j["image_planar"] = s.image_planar;
+    j["image_range"] = s.image_range == PlotSpec::ImageRange::Byte ? "0-255" : s.image_range == PlotSpec::ImageRange::Unit ? "0-1" : "auto";
+    j["image_grey"] = s.image_grey;
+    j["image_invert"] = s.image_invert;
+    j["gallery_max"] = s.gallery_max;
+    j["pair_histogram"] = s.pair_histogram;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -199,6 +215,26 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     else if (unit == "categories") out.angle_unit = PlotSpec::AngleUnit::Categories;
     else return fail("unknown angle unit '" + unit + "'");
     out.polar_points = j.value("polar_points", false);
+    const std::string image_mode_id = j.value("image_mode", std::string("gallery"));
+    if (image_mode_id == "gallery") out.image_mode = PlotSpec::ImageMode::Gallery;
+    else if (image_mode_id == "one_row") out.image_mode = PlotSpec::ImageMode::OneRow;
+    else if (image_mode_id == "mean_per_class") out.image_mode = PlotSpec::ImageMode::MeanPerClass;
+    else return fail("unknown image image_mode_id '" + image_mode_id + "'");
+    out.image_row = std::max(1, j.value("image_row", 1));
+    out.image_width = std::clamp(j.value("image_width", 0), 0, 4096);
+    out.image_channels = j.value("image_channels", 0);
+    if (out.image_channels != 0 && out.image_channels != 1 && out.image_channels != 3)
+        return fail("image channels must be 1 or 3 (or 0 for auto)");
+    out.image_planar = j.value("image_planar", false);
+    const std::string range = j.value("image_range", std::string("auto"));
+    if (range == "auto") out.image_range = PlotSpec::ImageRange::Auto;
+    else if (range == "0-255") out.image_range = PlotSpec::ImageRange::Byte;
+    else if (range == "0-1") out.image_range = PlotSpec::ImageRange::Unit;
+    else return fail("unknown image range '" + range + "'");
+    out.image_grey = j.value("image_grey", false);
+    out.image_invert = j.value("image_invert", false);
+    out.gallery_max = std::clamp(j.value("gallery_max", 40), 1, 400);
+    out.pair_histogram = j.value("pair_histogram", false);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());

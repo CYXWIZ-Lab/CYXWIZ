@@ -51,6 +51,13 @@ std::string HexColour(float r, float g, float b) {
     return buf;
 }
 
+int PictureColumns(const Prepared& p) {
+    const size_t n = p.pictures.size();
+    if (n <= 1) return 1;
+    if (p.spec.image_mode == PlotSpec::ImageMode::MeanPerClass && n <= 12) return static_cast<int>(n);
+    return static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n) * 1.6)));
+}
+
 std::string ToCsv(const Prepared& p) {
     std::ostringstream out;
     switch (p.spec.kind) {
@@ -138,6 +145,33 @@ std::string ToCsv(const Prepared& p) {
                     }
                     out << CsvCell(s.label) << ',' << a << ',' << Num(s.y[i]) << '\n';
                 }
+            break;
+        }
+        case Kind::Image: {
+            // One line per pixel value, in the table's units.
+            out << "picture,label,row,x,y,channel,value\n";
+            for (size_t i = 0; i < p.pictures.size(); ++i) {
+                const auto& pic = p.pictures[i];
+                for (size_t k = 0; k < pic.pix.size(); ++k) {
+                    const size_t pixel = k / static_cast<size_t>(p.img_channels), channel = k % static_cast<size_t>(p.img_channels);
+                    const double v = std::isfinite(pic.pix[k]) ? p.img_lo + pic.pix[k] * (p.img_hi - p.img_lo) : NAN;
+                    out << i + 1 << ',' << CsvCell(pic.label) << ',' << pic.row << ',' << pixel % static_cast<size_t>(p.img_w) << ','
+                        << pixel / static_cast<size_t>(p.img_w) << ',' << channel << ',' << Num(v) << '\n';
+                }
+            }
+            break;
+        }
+        case Kind::PairPlot:
+        case Kind::Parallel: {
+            out << "group";
+            for (const auto& c : p.multi_cols) out << ',' << CsvCell(c);
+            out << '\n';
+            for (size_t r = 0; r < p.multi_group.size(); ++r) {
+                const int g = p.multi_group[r];
+                out << CsvCell(g >= 0 && static_cast<size_t>(g) < p.multi_groups.size() ? p.multi_groups[static_cast<size_t>(g)] : "");
+                for (const auto& col : p.multi_values) out << ',' << Num(col[r]);
+                out << '\n';
+            }
             break;
         }
         case Kind::Quiver:
@@ -244,7 +278,8 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     std::ostringstream o;
     o << std::fixed << std::setprecision(1);
     const bool title = !p.spec.title.empty();
-    const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar;
+    const bool pie = p.spec.kind == Kind::Pie || p.spec.kind == Kind::Polar || p.spec.kind == Kind::Image ||
+                     p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel;
     Frame f{64, title ? 40.0 : 16.0, st.width - 64.0 - 18.0, st.height - (title ? 40.0 : 16.0) - 46.0, range};
     if (!(f.r.x1 > f.r.x0)) f.r.x1 = f.r.x0 + 1;
     if (!(f.r.y1 > f.r.y0)) f.r.y1 = f.r.y0 + 1;
@@ -454,6 +489,87 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
             }
             break;
         }
+        case Kind::Image: {
+            const int cols = PictureColumns(p);
+            const int rows = static_cast<int>((p.pictures.size() + static_cast<size_t>(cols) - 1) / static_cast<size_t>(cols));
+            const double cell = std::min(f.width / cols, f.height / std::max(1, rows) - 14.0);
+            const double px = cell * 0.94 / std::max(p.img_w, p.img_h);
+            for (size_t i = 0; i < p.pictures.size(); ++i) {
+                const auto& pic = p.pictures[i];
+                const double ox = f.left + static_cast<double>(static_cast<int>(i) % cols) * cell;
+                const double oy = f.top + static_cast<double>(static_cast<int>(i) / cols) * (cell + 14.0);
+                for (int y = 0; y < p.img_h; ++y)
+                    for (int x = 0; x < p.img_w; ++x) {
+                        const size_t k = (static_cast<size_t>(y) * static_cast<size_t>(p.img_w) + static_cast<size_t>(x)) * static_cast<size_t>(p.img_channels);
+                        if (k >= pic.pix.size() || !std::isfinite(pic.pix[k])) continue;
+                        std::string fill;
+                        if (p.img_channels == 3) {
+                            const auto ch = [&](size_t c) {
+                                const float v = std::isfinite(pic.pix[k + c]) ? pic.pix[k + c] : 0.0f;
+                                return p.spec.image_invert ? 1.0f - v : v;
+                            };
+                            fill = HexColour(ch(0), ch(1), ch(2));
+                        } else {
+                            const double v = p.spec.image_invert ? 1.0 - pic.pix[k] : pic.pix[k];
+                            fill = p.spec.image_grey ? HexColour(static_cast<float>(v), static_cast<float>(v), static_cast<float>(v))
+                                                     : Mix(st.background, st.scale_high, v);
+                        }
+                        o << "<rect x=\"" << ox + x * px << "\" y=\"" << oy + y * px << "\" width=\"" << px + 0.05 << "\" height=\"" << px + 0.05
+                          << "\" fill=\"" << fill << "\"/>";
+                    }
+                std::string caption = pic.label;
+                if (pic.row > 0) caption = "row " + std::to_string(pic.row) + (caption.empty() ? "" : " \xC2\xB7 " + caption);
+                else caption += " (" + Num(static_cast<double>(pic.count)) + ")";
+                o << "\n<text x=\"" << ox << "\" y=\"" << oy + cell + 6 << "\" fill=\"" << st.text_dim << "\" font-size=\"10\">" << Xml(caption) << "</text>\n";
+            }
+            break;
+        }
+        case Kind::PairPlot: {
+            const size_t n = p.multi_cols.size();
+            const double cell = std::min(f.width, f.height) / static_cast<double>(std::max<size_t>(1, n));
+            for (size_t i = 0; i < n; ++i)
+                for (size_t j = 0; j < n; ++j) {
+                    const double ox = f.left + static_cast<double>(j) * cell, oy = f.top + static_cast<double>(i) * cell, in = cell - 6;
+                    o << "<rect x=\"" << ox << "\" y=\"" << oy << "\" width=\"" << in << "\" height=\"" << in << "\" fill=\"none\" stroke=\"" << st.grid << "\"/>\n";
+                    const auto sx = [&](double v) { return ox + (v - p.multi_lo[j]) / (p.multi_hi[j] - p.multi_lo[j]) * in; };
+                    if (i == j) {
+                        double peak = 0;
+                        for (const auto& g : p.pair_diag[i]) for (double v : g) peak = std::max(peak, v);
+                        for (size_t g = 0; g < p.pair_diag[i].size(); ++g) {
+                            o << "<polyline fill=\"none\" stroke=\"" << colour(g) << "\" points=\"";
+                            for (int k = 0; k < p.pair_steps; ++k) {
+                                const double at = p.multi_lo[j] + (p.multi_hi[j] - p.multi_lo[j]) * k / std::max(1, p.pair_steps - 1);
+                                o << sx(at) << ',' << oy + in - (peak > 0 ? p.pair_diag[i][g][static_cast<size_t>(k)] / peak : 0) * (in - 4) << ' ';
+                            }
+                            o << "\"/>\n";
+                        }
+                        o << "<text x=\"" << ox + 3 << "\" y=\"" << oy + 12 << "\" fill=\"" << st.text_dim << "\" font-size=\"10\">" << Xml(p.multi_cols[i]) << "</text>\n";
+                    } else {
+                        for (size_t r = 0; r < p.multi_group.size(); ++r) {
+                            const double vy = oy + in - (p.multi_values[i][r] - p.multi_lo[i]) / (p.multi_hi[i] - p.multi_lo[i]) * in;
+                            o << "<circle cx=\"" << sx(p.multi_values[j][r]) << "\" cy=\"" << vy << "\" r=\"1.2\" fill=\"" << colour(static_cast<size_t>(std::max(0, p.multi_group[r]))) << "\" fill-opacity=\"0.7\"/>";
+                        }
+                        o << "\n";
+                    }
+                }
+            break;
+        }
+        case Kind::Parallel: {
+            const size_t n = p.multi_cols.size();
+            const auto ax = [&](size_t c) { return f.left + 20 + (f.width - 40) * static_cast<double>(c) / static_cast<double>(std::max<size_t>(1, n - 1)); };
+            const auto ay = [&](size_t c, double v) { return f.top + 14 + (f.height - 34) * (1.0 - (v - p.multi_lo[c]) / (p.multi_hi[c] - p.multi_lo[c])); };
+            for (size_t r = 0; r < p.multi_group.size(); ++r) {
+                o << "<polyline fill=\"none\" stroke=\"" << colour(static_cast<size_t>(std::max(0, p.multi_group[r]))) << "\" stroke-opacity=\"0.45\" stroke-width=\"0.8\" points=\"";
+                for (size_t c = 0; c < n; ++c) o << ax(c) << ',' << ay(c, p.multi_values[c][r]) << ' ';
+                o << "\"/>\n";
+            }
+            for (size_t c = 0; c < n; ++c) {
+                o << "<line x1=\"" << ax(c) << "\" y1=\"" << f.top + 14 << "\" x2=\"" << ax(c) << "\" y2=\"" << f.top + f.height - 20 << "\" stroke=\"" << st.text_dim << "\"/>"
+                  << "<text x=\"" << ax(c) << "\" y=\"" << f.top + 8 << "\" fill=\"" << st.text_dim << "\" font-size=\"10\" text-anchor=\"middle\">" << Num(p.multi_hi[c]) << "</text>"
+                  << "<text x=\"" << ax(c) << "\" y=\"" << f.top + f.height - 6 << "\" fill=\"" << st.text << "\" text-anchor=\"middle\">" << Xml(p.multi_cols[c]) << "</text>\n";
+            }
+            break;
+        }
         case Kind::Quiver:
             for (size_t i : p.q_drawn) {
                 const double x0 = f.X(p.qx[i]), y0 = f.Y(p.qy[i]);
@@ -531,6 +647,12 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     o << "</g>\n";
 
     // Legend: the series names, top right.
+    if (p.spec.legend && (p.spec.kind == Kind::PairPlot || p.spec.kind == Kind::Parallel) && p.multi_groups.size() > 1) {
+        double y = f.top + 16;
+        for (size_t i = 0; i < p.multi_groups.size() && i < 12; ++i, y += 18)
+            o << "<rect x=\"" << st.width - 150 << "\" y=\"" << y - 9 << "\" width=\"10\" height=\"10\" fill=\"" << colour(i) << "\"/>"
+              << "<text x=\"" << st.width - 134 << "\" y=\"" << y << "\" fill=\"" << st.text << "\">" << Xml(p.multi_groups[i]) << "</text>\n";
+    }
     if (p.spec.legend && !pie && p.series.size() > 1) {
         double y = f.top + 16;
         for (size_t i = 0; i < p.series.size() && i < 12; ++i, y += 18) {

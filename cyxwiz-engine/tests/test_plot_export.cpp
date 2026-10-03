@@ -122,7 +122,7 @@ int main() {
         if (k.required & kEncX) s.x_column = categories ? "pred" : "v";
         if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
         if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
-        if (k.kind == Kind::Matrix) s.y_columns = {"v", "w"};
+        if (k.kind == Kind::Matrix || k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) s.y_columns = {"v", "w"};
         // Vector fields read a grid of arrows: a 6 x 6 rotation.
         Source field;
         if (k.required & kEncVector) {
@@ -176,6 +176,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 21 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 24 kinds, colour scale. OK\n";
     return 0;
 }

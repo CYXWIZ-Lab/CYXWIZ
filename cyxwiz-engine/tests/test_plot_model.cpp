@@ -27,7 +27,7 @@ int main() {
         Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
         Check(k.required != 0, std::string("kind needs at least one column: ") + k.id);
     }
-    Check(Kinds().size() == 21, "21 kinds (P1 13 + P2b groups 1 and 2)");
+    Check(Kinds().size() == 24, "24 kinds (P1 13 + P2b groups 1 to 3)");
     Check(!FindKind("sankey"), "unknown kind not found");
     Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
           "histogram is a basic kind");
@@ -129,7 +129,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 21 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+    std::cout << "plot model: 24 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
                  "stats. OK\n";
     return 0;
 }

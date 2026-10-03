@@ -1,5 +1,6 @@
 #include "plot_prepare.h"
 
+#include "plot_image.h"
 #include "../series_decimation.h"
 
 #include <algorithm>
@@ -1324,6 +1325,106 @@ void PrepareStream(Prepared& p, const SourceColumn* xcol, const SourceColumn* yc
     p.label = {DataLabel::State::Exact, rows.size(), rows.size()};
 }
 
+// ---- P2b group 3 (approved board 10) ----
+
+constexpr size_t kMaxPairPoints = 2000;
+constexpr size_t kMaxParallelLines = 1000;
+
+// The rows with numbers in every column, an even sample of at most `cap`
+// (the same each time), with each column's range over all those rows.
+void SampleRows(Prepared& p, const std::vector<const SourceColumn*>& ys, const Groups& groups, size_t cap) {
+    std::vector<size_t> rows;
+    size_t n = 0;
+    for (const auto* y : ys) n = std::max(n, y->numbers.size());
+    for (size_t r = 0; r < n; ++r) {
+        bool ok = groups.of_row[r] >= 0;
+        for (const auto* y : ys) ok = ok && r < y->numbers.size() && std::isfinite(y->numbers[r]);
+        if (ok) rows.push_back(r);
+    }
+    for (const auto* y : ys) {
+        p.multi_cols.push_back(y->name);
+        double lo = 0, hi = 0;
+        bool first = true;
+        for (size_t r : rows) {
+            lo = first ? y->numbers[r] : std::min(lo, y->numbers[r]);
+            hi = first ? y->numbers[r] : std::max(hi, y->numbers[r]);
+            first = false;
+        }
+        if (hi <= lo) hi = lo + 1;
+        p.multi_lo.push_back(lo);
+        p.multi_hi.push_back(hi);
+    }
+    const size_t total = rows.size();
+    if (rows.size() > cap) {
+        std::mt19937_64 rng(0x5eed);
+        std::shuffle(rows.begin(), rows.end(), rng);
+        rows.resize(cap);
+        std::sort(rows.begin(), rows.end());
+    }
+    p.multi_values.assign(ys.size(), {});
+    for (size_t r : rows) {
+        for (size_t c = 0; c < ys.size(); ++c) p.multi_values[c].push_back(ys[c]->numbers[r]);
+        p.multi_group.push_back(groups.of_row[r]);
+    }
+    p.multi_groups = groups.names;
+    p.label = rows.size() < total ? DataLabel{DataLabel::State::Sampled, rows.size(), total}
+                                  : DataLabel{DataLabel::State::Exact, total, total};
+}
+
+void PreparePairPlot(Prepared& p, const std::vector<const SourceColumn*>& ys, const Groups& groups) {
+    if (ys.size() < 2 || ys.size() > 6) {
+        p.problem = "Choose 2 to 6 number columns (" + std::to_string(ys.size()) + " chosen).";
+        return;
+    }
+    SampleRows(p, ys, groups, kMaxPairPoints);
+    // Diagonal: each column alone, per group, over all rows (KDE or histogram).
+    p.pair_steps = p.spec.pair_histogram ? 20 : 64;
+    p.pair_diag.assign(ys.size(), std::vector<std::vector<double>>(groups.names.size()));
+    for (size_t c = 0; c < ys.size(); ++c) {
+        const double lo = p.multi_lo[c], hi = p.multi_hi[c];
+        for (size_t g = 0; g < groups.names.size(); ++g) {
+            std::vector<double> v;
+            for (size_t r = 0; r < ys[c]->numbers.size(); ++r)
+                if (r < groups.of_row.size() && groups.of_row[r] == static_cast<int>(g) && std::isfinite(ys[c]->numbers[r]))
+                    v.push_back(ys[c]->numbers[r]);
+            auto& out = p.pair_diag[c][g];
+            out.assign(static_cast<size_t>(p.pair_steps), 0.0);
+            if (v.empty()) continue;
+            if (p.spec.pair_histogram) {
+                const double w = (hi - lo) / p.pair_steps;
+                for (double x : v) out[static_cast<size_t>(std::clamp(static_cast<int>((x - lo) / w), 0, p.pair_steps - 1))] += 1.0;
+                for (double& y : out) y /= static_cast<double>(v.size()) * w;  // density
+            } else {
+                const ColumnStats st = Summarize(v);
+                double sd = 0;
+                for (double x : v) sd += (x - st.mean) * (x - st.mean);
+                sd = std::sqrt(sd / std::max<size_t>(1, v.size() - 1));
+                const double iqr = (st.q3 - st.q1) / 1.34;
+                double bw = 0.9 * (iqr > 0 ? std::min(sd, iqr) : (sd > 0 ? sd : 1.0)) * std::pow(static_cast<double>(v.size()), -0.2);
+                if (!(bw > 0)) bw = (hi - lo) / 20;
+                const double norm = 1.0 / (static_cast<double>(v.size()) * bw * std::sqrt(2.0 * 3.141592653589793));
+                for (int k = 0; k < p.pair_steps; ++k) {
+                    const double at = lo + (hi - lo) * k / (p.pair_steps - 1);
+                    double sum = 0;
+                    for (double x : v) {
+                        const double u = (at - x) / bw;
+                        if (std::fabs(u) < 8.0) sum += std::exp(-0.5 * u * u);
+                    }
+                    out[static_cast<size_t>(k)] = sum * norm;
+                }
+            }
+        }
+    }
+}
+
+void PrepareParallel(Prepared& p, const std::vector<const SourceColumn*>& ys, const Groups& groups) {
+    if (ys.size() < 2) {
+        p.problem = "Choose two or more number columns.";
+        return;
+    }
+    SampleRows(p, ys, groups, kMaxParallelLines);
+}
+
 }  // namespace
 
 std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
@@ -1471,6 +1572,27 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     }
     const Source& src = selection.all ? all_rows : selection.source;
     p.rows_selected = src.Rows();
+    if (spec.kind == Kind::Image) {
+        std::vector<size_t> chosen(src.Rows());
+        std::iota(chosen.begin(), chosen.end(), 0);
+        Prepared image = PrepareImage(spec, chosen, [&](const std::vector<size_t>& rows) {
+            Source part;
+            for (const auto& c : src.columns) {
+                SourceColumn sc;
+                sc.name = c.name;
+                sc.numeric = c.numeric;
+                for (size_t r : rows) {
+                    if (c.numeric) sc.numbers.push_back(r < c.numbers.size() ? c.numbers[r] : NAN);
+                    else sc.text.push_back(r < c.text.size() ? c.text[r] : std::string());
+                }
+                part.columns.push_back(std::move(sc));
+            }
+            return part;
+        });
+        image.rows_total = p.rows_total;
+        if (!selection.text.empty()) image.label.selection = selection.text;
+        return image;
+    }
 
     const auto column = [&](const std::string& name, bool must_be_numeric) -> const SourceColumn* {
         const SourceColumn* c = src.Find(name);
@@ -1552,6 +1674,9 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         case Kind::Polar: PreparePolar(p, xcol, ys.front(), groups); break;
         case Kind::Quiver: PrepareQuiver(p, xcol, ys.front(), ucol, vcol); break;
         case Kind::Stream: PrepareStream(p, xcol, ys.front(), ucol, vcol); break;
+        case Kind::PairPlot: PreparePairPlot(p, ys, groups); break;
+        case Kind::Parallel: PrepareParallel(p, ys, groups); break;
+        case Kind::Image: break;  // prepared above
         case Kind::Box:
         case Kind::Violin: PrepareBoxes(p, ys, groups); break;
         case Kind::ErrorBars: PrepareErrorBars(p, xcol, ys.front()); break;
@@ -1566,13 +1691,15 @@ Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
         if (p.grid_hi <= 0.0) p.grid_hi = 1.0;
     }
     if (spec.kind != Kind::Histogram && spec.kind != Kind::Box && spec.kind != Kind::Violin && spec.kind != Kind::Kde &&
-        spec.kind != Kind::Matrix && spec.kind != Kind::Polar && !ys.empty())
+        spec.kind != Kind::Matrix && spec.kind != Kind::Polar && spec.kind != Kind::PairPlot && spec.kind != Kind::Parallel &&
+        !ys.empty())
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
     // The rows chosen; a kind that said what it drew (quiver: every Nth arrow) keeps that.
     if (!selection.text.empty()) p.label.selection = selection.text;
-    if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty())
+    if (p.problem.empty() && p.series.empty() && p.grid.empty() && p.hex_x.empty() && p.qx.empty() && p.stream_lines.empty() &&
+        p.multi_group.empty())
         p.problem = "No values to draw.";
     return p;
 }
