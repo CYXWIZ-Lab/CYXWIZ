@@ -1,7 +1,12 @@
 #include "plot_output_panel.h"
 #include "output_renderer.h"
 #include "../icons.h"
+#include "../plot/plot_window.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/file_dialogs.h"
+#include <arrow/api.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <stb_image.h>
@@ -42,15 +47,22 @@ void PlotOutputPanel::AddPlot(const scripting::CapturedPlot& plot) {
     entry.texture_id = CreateTextureFromPNG(plot.png_data, entry.width, entry.height);
 
     if (entry.texture_id != 0) {
-        plots_.push_back(std::move(entry));
-
-        // Auto-select new plot
-        selected_plot_index_ = static_cast<int>(plots_.size()) - 1;
-
         spdlog::info("Added plot to PlotOutputPanel: {}x{}", entry.width, entry.height);
+        plots_.push_back(std::move(entry));
+        Select(static_cast<int>(plots_.size()) - 1);  // the new figure
     } else {
         spdlog::error("Failed to create texture for plot");
     }
+}
+
+void PlotOutputPanel::ShowImage(const std::vector<unsigned char>& png_data, const std::string& title) {
+    scripting::CapturedPlot plot;
+    plot.png_data = png_data;
+    plot.label = title;
+    AddPlot(plot);
+    if (filter_ == 2) filter_ = 0;  // the image must be in the list
+    visible_ = true;
+    focus_next_ = true;
 }
 
 void PlotOutputPanel::ClearPlots() {
@@ -63,12 +75,86 @@ void PlotOutputPanel::ClearPlots() {
     selected_plot_index_ = -1;
 }
 
+std::vector<int> PlotOutputPanel::Shown() const {
+    std::vector<int> shown;
+    for (int i = 0; i < static_cast<int>(plots_.size()); ++i)
+        if (filter_ == 0 || (filter_ == 1) == !plots_[static_cast<size_t>(i)].python) shown.push_back(i);
+    return shown;
+}
+
+void PlotOutputPanel::Select(int index) {
+    if (index != selected_plot_index_) ResetZoom();  // zoom and pan are per figure
+    selected_plot_index_ = index;
+}
+
+void PlotOutputPanel::RemoveEntry(int index) {
+    if (index < 0 || index >= static_cast<int>(plots_.size())) return;
+    if (plots_[static_cast<size_t>(index)].texture_id != 0) glDeleteTextures(1, &plots_[static_cast<size_t>(index)].texture_id);
+    plots_.erase(plots_.begin() + index);
+    if (selected_plot_index_ >= static_cast<int>(plots_.size())) selected_plot_index_ = static_cast<int>(plots_.size()) - 1;
+}
+
+void PlotOutputPanel::AddPythonPlot(scripting::PythonPlot plot) {
+    const auto& request = plot.request;
+    const std::string title = request.title.empty() ? std::string("Python plot") : request.title;
+    const size_t rows = plot.table ? static_cast<size_t>(plot.table->num_rows()) : 0;
+    auto found = std::find_if(plots_.begin(), plots_.end(), [&](const PlotEntry& e) { return e.python && e.label == title; });
+    if (found == plots_.end()) {
+        PlotEntry entry;
+        entry.python = true;
+        entry.label = title;
+        entry.source_text = std::make_shared<std::string>();
+        entry.window = std::make_unique<plot::PlotWindow>("python_plot_" + std::to_string(next_window_id_));
+        // Cascade: each new window a step down and right of the last.
+        const ImVec2 origin = ImGui::GetMainViewport()->WorkPos;
+        const float step = 32.0f * static_cast<float>((next_window_id_ - 1) % 8);
+        entry.window->first_position = ImVec2(origin.x + 120.0f + step, origin.y + 80.0f + step);
+        ++next_window_id_;
+        // The window's source line: where the data came from, and how to update it.
+        entry.window->draw_header = [text = entry.source_text]() {
+            const ui::Tokens& t = ui::CurrentTokens();
+            ImGui::PushStyleColor(ImGuiCol_Text, t.success);
+            ImGui::Bullet();
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(text->c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_faint, "\xC2\xB7 run the script again to update it");
+        };
+        plots_.push_back(std::move(entry));
+        found = plots_.end() - 1;
+    }
+    found->kind_label = plot::Info(request.spec.kind).label;
+    *found->source_text = plot::PythonPlotSourceText(request, rows);
+    // The spec first: with its columns chosen, the table keeps them.
+    found->window->SetSpec(request.spec);
+    found->window->SetArrowTable(title, plot.table, 0, rows);
+    found->window->Focus();
+    Select(static_cast<int>(found - plots_.begin()));
+    if (filter_ == 1) filter_ = 0;
+}
+
+void PlotOutputPanel::ClosePythonPlot(const std::string& title) {
+    for (int i = 0; i < static_cast<int>(plots_.size()); ++i)
+        if (plots_[static_cast<size_t>(i)].python && plots_[static_cast<size_t>(i)].label == title) {
+            RemoveEntry(i);
+            return;
+        }
+}
+
 void PlotOutputPanel::Render() {
     // Before the visibility check: a figure published while the window is
-    // closed still arrives (it used to be lost).
+    // closed still arrives (it used to be lost), and Python plots keep their
+    // own windows.
     PollForNewPlots();
+    for (auto& entry : plots_)
+        if (entry.window) entry.window->Render();
     if (!visible_) return;
 
+    if (focus_next_) {
+        ImGui::SetNextWindowFocus();
+        focus_next_ = false;
+    }
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     if (!ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar)) {
         focused_ = false;
@@ -76,12 +162,13 @@ void PlotOutputPanel::Render() {
         return;
     }
     focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Menu bar
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Show Thumbnails", nullptr, &show_thumbnails_);
-            ImGui::MenuItem("Auto-scroll", nullptr, &auto_scroll_);
+            ImGui::MenuItem("Show the list", nullptr, &show_thumbnails_);
+            ImGui::MenuItem("Show each new plot", nullptr, &auto_scroll_);
             ImGui::Separator();
             if (ImGui::MenuItem("Clear All", nullptr, false, !plots_.empty())) {
                 ClearPlots();
@@ -93,28 +180,29 @@ void PlotOutputPanel::Render() {
 
     RenderToolbar();
 
-    if (plots_.empty()) {
+    const std::vector<int> shown = Shown();
+    if (plots_.empty() || shown.empty()) {
         // Empty state
         ImVec2 avail = ImGui::GetContentRegionAvail();
         float text_height = ImGui::GetTextLineHeightWithSpacing() * 3;
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (avail.y - text_height) / 2);
-
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        ImGui::TextWrapped("No plots to display.\n\nRun a script with matplotlib to see plots here.\nPlots will appear automatically when scripts complete.");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("%s", plots_.empty() ? "No plots yet.\n\nplt.show() figures and plots made with the cyxwiz module (import cyxwiz) "
+                                                  "from scripts, notebooks and the Console appear here."
+                                                : "Nothing of this kind: choose All.");
         ImGui::PopStyleColor();
     } else {
-        // Layout: thumbnails on left (if enabled), main view on right
-        if (show_thumbnails_ && plots_.size() > 1) {
-            // Left panel: thumbnails
-            ImGui::BeginChild("##thumbnails", ImVec2(thumbnail_size_ + 20, 0), ImGuiChildFlags_Border);
+        if (std::find(shown.begin(), shown.end(), selected_plot_index_) == shown.end()) Select(shown.back());
+        // Layout: the list on the left (if enabled), the selected one on the right
+        bool any_python = false;
+        for (const auto& e : plots_) any_python = any_python || e.python;
+        if (show_thumbnails_ && (shown.size() > 1 || any_python)) {
+            ImGui::BeginChild("##thumbnails", ImVec2(230, 0));
             RenderThumbnails();
             ImGui::EndChild();
-
             ImGui::SameLine();
         }
-
-        // Right panel: selected plot
-        ImGui::BeginChild("##main_plot", ImVec2(0, 0), ImGuiChildFlags_Border);
+        ImGui::BeginChild("##main_plot", ImVec2(0, 0));
         RenderSelectedPlot();
         ImGui::EndChild();
     }
@@ -123,138 +211,75 @@ void PlotOutputPanel::Render() {
 }
 
 void PlotOutputPanel::RenderToolbar() {
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    const ui::Tokens& t = ui::CurrentTokens();
+    const std::vector<int> shown = Shown();
+    const auto at = std::find(shown.begin(), shown.end(), selected_plot_index_);
+    const int position = at == shown.end() ? -1 : static_cast<int>(at - shown.begin());
+    const bool has = position >= 0;
+    const bool figure = has && !plots_[static_cast<size_t>(selected_plot_index_)].python;
+    const char* not_image = "A Python plot: zoom, copy and export are in its Plot window";
 
-    // Plot navigation
-    if (!plots_.empty()) {
-        ImGui::BeginDisabled(selected_plot_index_ <= 0);
-        if (ImGui::Button(ICON_FA_CHEVRON_LEFT "##prev")) {
-            selected_plot_index_--;
-            ResetZoom();  // Reset zoom/pan when switching plots
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Previous plot");
+    if (ui::GhostButton(ICON_FA_CHEVRON_LEFT "##prev", position > 0)) Select(shown[static_cast<size_t>(position - 1)]);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Previous");
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "%d / %zu", position + 1, shown.size());
+    ImGui::SameLine();
+    if (ui::GhostButton(ICON_FA_CHEVRON_RIGHT "##next", has && position + 1 < static_cast<int>(shown.size())))
+        Select(shown[static_cast<size_t>(position + 1)]);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Next");
 
-        ImGui::SameLine();
+    ImGui::SameLine(0, t.space_lg);
+    if (ui::GhostButton(ICON_FA_MINUS "##zoom_out", figure && zoom_level_ > min_zoom_, figure ? nullptr : not_image)) ZoomOut();
+    if (figure && ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "%.0f%%", zoom_level_ * 100.0f);
+    ImGui::SameLine();
+    if (ui::GhostButton(ICON_FA_PLUS "##zoom_in", figure && zoom_level_ < max_zoom_, figure ? nullptr : not_image)) ZoomIn();
+    if (figure && ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
+    ImGui::SameLine();
+    if (ui::GhostButton("Fit##fit", figure, figure ? nullptr : not_image)) FitToWindow();
+    ImGui::SameLine();
+    if (ui::GhostButton("100%##actual", figure, figure ? nullptr : not_image)) ActualSize();
 
-        // Current plot indicator
-        ImGui::Text("%d / %zu", selected_plot_index_ + 1, plots_.size());
+    ImGui::SameLine(0, t.space_lg);
+    if (ui::GhostButton(ICON_FA_COPY "##copy", figure, figure ? nullptr : not_image)) CopyToClipboard(selected_plot_index_);
+    if (figure && ImGui::IsItemHovered()) ImGui::SetTooltip("Copy to clipboard");
+    ImGui::SameLine();
+    if (ui::GhostButton(ICON_FA_FLOPPY_DISK "##save", figure, figure ? nullptr : not_image)) SaveToFile(selected_plot_index_);
+    if (figure && ImGui::IsItemHovered()) ImGui::SetTooltip("Save as PNG");
 
-        ImGui::SameLine();
+    ImGui::SameLine(0, t.space_lg);
+    if (ui::GhostButton(ICON_FA_XMARK "##close", has)) RemoveEntry(selected_plot_index_);
+    if (has && ImGui::IsItemHovered()) ImGui::SetTooltip("Close this one");
+    ImGui::SameLine();
+    if (ui::GhostButton(ICON_FA_TRASH "##clear_all", !plots_.empty())) ClearPlots();
+    if (!plots_.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("Clear all");
 
-        ImGui::BeginDisabled(selected_plot_index_ >= static_cast<int>(plots_.size()) - 1);
-        if (ImGui::Button(ICON_FA_CHEVRON_RIGHT "##next")) {
-            selected_plot_index_++;
-            ResetZoom();  // Reset zoom/pan when switching plots
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Next plot");
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-
-        // Zoom controls
-        ImGui::BeginDisabled(zoom_level_ <= min_zoom_);
-        if (ImGui::Button(ICON_FA_MINUS "##zoom_out")) {
-            ZoomOut();
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
-
-        ImGui::SameLine();
-
-        // Zoom level display
-        ImGui::Text("%.0f%%", zoom_level_ * 100.0f);
-
-        ImGui::SameLine();
-
-        ImGui::BeginDisabled(zoom_level_ >= max_zoom_);
-        if (ImGui::Button(ICON_FA_PLUS "##zoom_in")) {
-            ZoomIn();
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Fit##fit")) {
-            FitToWindow();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit to window");
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("100%##actual")) {
-            ActualSize();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Actual size (100%%)");
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-
-        // Copy button
-        if (ImGui::Button(ICON_FA_COPY "##copy")) {
-            CopyToClipboard(selected_plot_index_);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy to clipboard");
-
-        ImGui::SameLine();
-
-        // Save button
-        if (ImGui::Button(ICON_FA_FLOPPY_DISK "##save")) {
-            SaveToFile(selected_plot_index_);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save as PNG");
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-
-        // Clear current
-        if (ImGui::Button(ICON_FA_XMARK "##close")) {
-            if (selected_plot_index_ >= 0 && selected_plot_index_ < static_cast<int>(plots_.size())) {
-                if (plots_[selected_plot_index_].texture_id != 0) {
-                    glDeleteTextures(1, &plots_[selected_plot_index_].texture_id);
-                }
-                plots_.erase(plots_.begin() + selected_plot_index_);
-                if (selected_plot_index_ >= static_cast<int>(plots_.size())) {
-                    selected_plot_index_ = static_cast<int>(plots_.size()) - 1;
-                }
-            }
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close this plot");
-
-        ImGui::SameLine();
-
-        // Clear all
-        if (ImGui::Button(ICON_FA_TRASH "##clear_all")) {
-            ClearPlots();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear all plots");
-    }
-
-    ImGui::PopStyleColor();
-    ImGui::Separator();
+    static const char* const kFilter[] = {"All", "Figures", "Python plots"};
+    float filter_w = 0;
+    for (const char* f : kFilter) filter_w += ImGui::CalcTextSize(f).x + 2 * t.button_padding_small.x + 2;
+    if (ui::SameLineRight(filter_w)) ui::SegmentedControl("##plot_filter", kFilter, 3, &filter_);
+    ImGui::Dummy(ImVec2(0, t.space_xs));
 }
 
 void PlotOutputPanel::RenderSelectedPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (selected_plot_index_ < 0 || selected_plot_index_ >= static_cast<int>(plots_.size())) {
-        ImGui::TextDisabled("No plot selected");
+        ImGui::TextColored(t.text_dim, "Nothing selected");
         return;
     }
 
     auto& plot = plots_[selected_plot_index_];
-
-    // Show label if present
-    if (!plot.label.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.8f, 1.0f, 1.0f), "%s", plot.label.c_str());
-        ImGui::Separator();
+    if (plot.python) {
+        RenderPythonCard(plot);
+        return;
     }
 
+    // Show label if present
+    if (!plot.label.empty()) ImGui::TextColored(t.accent_text, "%s", plot.label.c_str());
+
     if (plot.texture_id == 0) {
-        ImGui::TextDisabled("Failed to load plot");
+        ImGui::TextColored(t.text_dim, "The image could not be shown.");
         return;
     }
 
@@ -309,104 +334,93 @@ void PlotOutputPanel::RenderSelectedPlot() {
         snprintf(zoom_text, sizeof(zoom_text), "%.0f%%", zoom_level_ * 100.0f);
         ImVec2 text_size = ImGui::CalcTextSize(zoom_text);
         ImVec2 text_pos(image_max.x - text_size.x - 8, image_max.y - text_size.y - 8);
-
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        // Background
-        draw_list->AddRectFilled(
-            ImVec2(text_pos.x - 4, text_pos.y - 2),
-            ImVec2(text_pos.x + text_size.x + 4, text_pos.y + text_size.y + 2),
-            IM_COL32(0, 0, 0, 150), 4.0f);
-        // Text
-        draw_list->AddText(text_pos, IM_COL32(255, 255, 255, 200), zoom_text);
+        draw_list->AddRectFilled(ImVec2(text_pos.x - 4, text_pos.y - 2), ImVec2(text_pos.x + text_size.x + 4, text_pos.y + text_size.y + 2),
+                                 ui::ToU32(ui::WithAlpha(t.bg_panel, 0.85f)), 4.0f);
+        draw_list->AddText(text_pos, ui::ToU32(t.text), zoom_text);
     }
 }
 
+void PlotOutputPanel::RenderPythonCard(PlotEntry& entry) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::Dummy(ImVec2(0, t.space_lg));
+    ImGui::Indent(t.space_lg);
+    ImGui::TextColored(t.text_bright, "%s", entry.label.c_str());
+    ImGui::TextColored(t.text_dim, "Python plot \xC2\xB7 %s", entry.kind_label.c_str());
+    if (entry.source_text) ImGui::TextColored(t.text_dim, "%s", entry.source_text->c_str());
+    ImGui::Dummy(ImVec2(0, t.space_sm));
+    if (ui::PrimaryButton(entry.window && entry.window->visible ? "Show window" : "Open window")) entry.window->Focus();
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Close plot")) {
+        RemoveEntry(selected_plot_index_);
+        ImGui::Unindent(t.space_lg);
+        return;
+    }
+    ImGui::Dummy(ImVec2(0, t.space_sm));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint,
+                       "A live plot: its Plot window changes the type, columns and colours, and exports it. Calling the same "
+                       "function with the same title again updates it.");
+    ImGui::PopTextWrapPos();
+    ImGui::Unindent(t.space_lg);
+}
+
 void PlotOutputPanel::RenderThumbnails() {
-    for (int i = 0; i < static_cast<int>(plots_.size()); i++) {
-        auto& plot = plots_[i];
-
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float h = 40.0f, thumb_w = 54.0f, thumb_h = 34.0f;
+    for (int i : Shown()) {
+        auto& plot = plots_[static_cast<size_t>(i)];
         ImGui::PushID(i);
-
-        // Highlight selected thumbnail
-        bool is_selected = (i == selected_plot_index_);
-        if (is_selected) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.4f, 0.6f, 1.0f));
+        const bool is_selected = i == selected_plot_index_;
+        if (ImGui::Selectable("##row", is_selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, h))) Select(i);
+        const ImVec2 lo = ImGui::GetItemRectMin();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 t0(lo.x + 4, lo.y + (h - thumb_h) * 0.5f), t1(t0.x + thumb_w, t0.y + thumb_h);
+        if (plot.python) {
+            // A live plot: a tile in the accent tone with the chart icon.
+            dl->AddRectFilled(t0, t1, ui::ToU32(ui::Mix(t.bg_panel, t.accent, 0.35f)), 4.0f);
+            const ImVec2 icon = ImGui::CalcTextSize(ICON_FA_CHART_LINE);
+            dl->AddText(ImVec2((t0.x + t1.x - icon.x) * 0.5f, (t0.y + t1.y - icon.y) * 0.5f), ui::ToU32(t.accent_text), ICON_FA_CHART_LINE);
+        } else if (plot.texture_id != 0) {
+            // The figure, fitted into the tile.
+            const float s = std::min(thumb_w / std::max(1, plot.width), thumb_h / std::max(1, plot.height));
+            const float w = plot.width * s, hh = plot.height * s;
+            const ImVec2 a(t0.x + (thumb_w - w) * 0.5f, t0.y + (thumb_h - hh) * 0.5f);
+            dl->AddImage((ImTextureID)(uintptr_t)plot.texture_id, a, ImVec2(a.x + w, a.y + hh));
         }
-
-        // Render thumbnail
-        if (plot.texture_id != 0) {
-            // Calculate thumbnail size maintaining aspect ratio
-            float aspect_ratio = static_cast<float>(plot.width) / static_cast<float>(plot.height);
-            float thumb_w = thumbnail_size_;
-            float thumb_h = thumbnail_size_ / aspect_ratio;
-            if (thumb_h > thumbnail_size_) {
-                thumb_h = thumbnail_size_;
-                thumb_w = thumbnail_size_ * aspect_ratio;
-            }
-
-            if (ImGui::ImageButton("##thumb",
-                                   (ImTextureID)(uintptr_t)plot.texture_id,
-                                   ImVec2(thumb_w, thumb_h))) {
-                if (selected_plot_index_ != i) {
-                    selected_plot_index_ = i;
-                    ResetZoom();  // Reset zoom/pan when switching plots
-                }
-            }
-        } else {
-            if (ImGui::Button("?##thumb", ImVec2(thumbnail_size_, thumbnail_size_))) {
-                if (selected_plot_index_ != i) {
-                    selected_plot_index_ = i;
-                    ResetZoom();  // Reset zoom/pan when switching plots
-                }
-            }
-        }
-
-        if (is_selected) {
-            ImGui::PopStyleColor();
-        }
-
-        // Tooltip with plot info
+        const float text_x = t1.x + 8;
+        const float line = ImGui::GetTextLineHeight();
+        const std::string sub = plot.python ? "Python plot \xC2\xB7 " + plot.kind_label + " \xC2\xB7 live" : "figure";
+        dl->PushClipRect(ImVec2(text_x, lo.y), ImVec2(ImGui::GetItemRectMax().x - 4, lo.y + h), true);
+        dl->AddText(ImVec2(text_x, lo.y + h * 0.5f - line), ui::ToU32(t.text), plot.label.c_str());
+        dl->AddText(ImVec2(text_x, lo.y + h * 0.5f), ui::ToU32(t.text_dim), sub.c_str());
+        dl->PopClipRect();
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::Text("%s", plot.label.c_str());
-            ImGui::Text("%dx%d", plot.width, plot.height);
+            ImGui::TextUnformatted(plot.label.c_str());
+            if (plot.python && plot.source_text) ImGui::TextColored(t.text_dim, "%s", plot.source_text->c_str());
+            else ImGui::TextColored(t.text_dim, "%d x %d", plot.width, plot.height);
             ImGui::EndTooltip();
         }
-
-        // Context menu for thumbnail
         if (ImGui::BeginPopupContextItem("##thumb_context")) {
             RenderPlotContextMenu(i);
             ImGui::EndPopup();
         }
-
         ImGui::PopID();
     }
 }
 
 void PlotOutputPanel::RenderPlotContextMenu(int plot_index) {
     if (plot_index < 0 || plot_index >= static_cast<int>(plots_.size())) return;
-
-    auto& plot = plots_[plot_index];
-
-    if (ImGui::MenuItem(ICON_FA_COPY " Copy to Clipboard")) {
-        CopyToClipboard(plot_index);
+    auto& plot = plots_[static_cast<size_t>(plot_index)];
+    if (plot.python) {
+        if (ImGui::MenuItem(ICON_FA_CHART_LINE " Show window")) plot.window->Focus();
+    } else {
+        if (ImGui::MenuItem(ICON_FA_COPY " Copy to Clipboard")) CopyToClipboard(plot_index);
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save as PNG...")) SaveToFile(plot_index);
     }
-
-    if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save as PNG...")) {
-        SaveToFile(plot_index);
-    }
-
     ImGui::Separator();
-
-    if (ImGui::MenuItem(ICON_FA_XMARK " Close")) {
-        if (plot.texture_id != 0) {
-            glDeleteTextures(1, &plot.texture_id);
-        }
-        plots_.erase(plots_.begin() + plot_index);
-        if (selected_plot_index_ >= static_cast<int>(plots_.size())) {
-            selected_plot_index_ = static_cast<int>(plots_.size()) - 1;
-        }
-    }
+    if (ImGui::MenuItem(ICON_FA_XMARK " Close")) RemoveEntry(plot_index);
 }
 
 bool PlotOutputPanel::CopyToClipboard(int plot_index) {
@@ -447,15 +461,15 @@ void PlotOutputPanel::PollForNewPlots() {
     if (!scripting_engine_) return;
 
     const auto plots = scripting_engine_->TakePublishedPlots();
-    if (plots.empty()) return;
-    spdlog::info("PlotOutputPanel: Received {} plots from script execution", plots.size());
-    for (const auto& plot : plots) {
-        AddPlot(plot);
+    auto python = scripting_engine_->TakePythonPlots();
+    if (plots.empty() && python.empty()) return;
+    for (const auto& plot : plots) AddPlot(plot);
+    for (auto& p : python) {
+        if (!p.close.empty()) ClosePythonPlot(p.close);
+        else AddPythonPlot(std::move(p));
     }
-    // Auto-scroll: show the window with the new figure
-    if (auto_scroll_ && !plots_.empty()) {
-        visible_ = true;
-    }
+    // Show the window with the new figure or plot
+    if (auto_scroll_ && !plots_.empty()) visible_ = true;
 }
 
 GLuint PlotOutputPanel::CreateTextureFromPNG(const std::vector<unsigned char>& png_data, int& out_width, int& out_height) {

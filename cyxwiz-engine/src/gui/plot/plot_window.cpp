@@ -314,6 +314,11 @@ void PlotWindow::Render() {
     view_.DrawOwnWindow(vo);
     if (!visible) return;
     ImGui::SetNextWindowSize(ImVec2(1200, 720), ImGuiCond_FirstUseEver);
+    if (first_position.x >= 0.0f) ImGui::SetNextWindowPos(first_position, ImGuiCond_FirstUseEver);
+    if (focus_next_) {
+        ImGui::SetNextWindowFocus();
+        focus_next_ = false;
+    }
     // Room for the type list, the plot and the settings: the window id follows
     // the node id, so a small size saved for another graph's node would carry over.
     ImGui::SetNextWindowSizeConstraints(ImVec2(960, 560), ImVec2(FLT_MAX, FLT_MAX));

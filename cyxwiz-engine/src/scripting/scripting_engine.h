@@ -203,6 +203,8 @@ public:
     // Figures of finished script runs (not notebook cells, which show their
     // own), for the Plot Output window; each figure is returned once.
     std::vector<CapturedPlot> TakePublishedPlots() { return published_plots_.Take(); }
+    // Plots asked for with the cyxwiz module, and windows it closed (TOFIX134 P5).
+    std::vector<PythonPlot> TakePythonPlots() { return python_plots_.Take(); }
     // Values scripts reported with pycyxwiz.rl_update_metric, for the RL
     // Training Dashboard; each value is returned once.
     std::vector<RLMetricSample> TakeRLMetrics() { return rl_metrics_.Take(); }
@@ -291,6 +293,7 @@ private:
     std::mutex plot_mutex_;
     std::vector<CapturedPlot> plot_queue_;
     PlotInbox published_plots_;
+    PythonPlotInbox python_plots_;
     cyxwiz::ThreadInbox<RLMetricSample> rl_metrics_;
 
     // Result storage

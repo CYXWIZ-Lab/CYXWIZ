@@ -60,7 +60,6 @@ void ScriptEditorPanel::Render() {
         if (tab) tab->cell_manager.Pump();
     }
     CheckFilesOnDisk();
-    RenderPlotWindows();
     PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
     UpdateDebugState();     // the debugger's snapshot and paused line (P6)
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) && tabs_[active_tab_index_])

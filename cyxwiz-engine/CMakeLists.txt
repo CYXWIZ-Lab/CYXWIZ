@@ -430,6 +430,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -1154,6 +1155,7 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_capture.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_mpl_backend.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
         "${_cyxwiz_tools_dir}"
     COMMAND ${CMAKE_COMMAND} -E touch "${_cyxwiz_tools_dir}/.unpacked"
@@ -1163,6 +1165,7 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_capture.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_mpl_backend.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
     COMMENT "Unpacking the Script Editor's language tools (jedi, parso, pyflakes)"
     VERBATIM
@@ -1184,6 +1187,10 @@ if(Python3_EXECUTABLE)
     # plt.show() capture through the bundled matplotlib backend (TOFIX134 P5.2).
     add_test(NAME python_tools_capture
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_capture.py"
+                "${_cyxwiz_tools_dir}")
+    # The matplotlib-like cyxwiz plot API (TOFIX134 P5).
+    add_test(NAME python_tools_plot
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_plot.py"
                 "${_cyxwiz_tools_dir}")
 endif()
 
@@ -1288,6 +1295,7 @@ add_executable(test_plot_arrow_source
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_model.cpp
@@ -3632,6 +3640,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -3745,6 +3754,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -4978,6 +4988,7 @@ add_executable(test_training_manager_session
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -5642,6 +5653,7 @@ add_executable(test_engine_node_parity
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
     src/core/plot/plot_tree_model.cpp
+    src/core/plot/python_plot_request.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp

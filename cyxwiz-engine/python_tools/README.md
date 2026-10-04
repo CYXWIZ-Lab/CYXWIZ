@@ -1,7 +1,7 @@
 # python_tools
 
-Python code the Engine runs for its Script Editor's language intelligence
-and its Variable Explorer
+Python code the Engine runs for its Script Editor's language intelligence,
+its Variable Explorer, its debugger and its plots
 (TOFIX133 P3, decision D2): completion, hover, signature help, go to
 definition (Jedi) and problems (pyflakes). The owner chose (2026-10-02) to
 ship these with the Engine, so they work offline in every project without
@@ -20,8 +20,18 @@ touching the project's environment.
   breakpoints with conditions and hit counts, step over/into/out, pause,
   stop on uncaught errors, the paused frames' values, Watch and the Console
   in a paused frame. It pauses on the run's own thread with the GIL free.
+- `cyxwiz_capture.py` + `cyxwiz_mpl_backend.py` (TOFIX134 P5.2): installed
+  once when Python starts; matplotlib's backend becomes the bundled one, so
+  plt.show() figures reach the Engine from scripts, notebooks and the
+  Console. A finder imports the bundled modules by name without putting this
+  folder on `sys.path` (a user's module of the same name still wins).
+- `cyxwiz.py` (TOFIX134 P5): the matplotlib-like plot API (`import cyxwiz`;
+  scatter, hist, bar, ... one function per plot kind), opening Engine Plot
+  windows through the sinks `cyxwiz_capture` holds. Standard library only;
+  uses numpy when the data is numpy / pandas.
 - `tests/test_cyxwiz_intel.py`, `tests/test_cyxwiz_vars.py`,
-  `tests/test_cyxwiz_debug.py`: run by ctest against the unpacked folder.
+  `tests/test_cyxwiz_debug.py`, `tests/test_cyxwiz_capture.py`,
+  `tests/test_cyxwiz_plot.py`: run by ctest against the unpacked folder.
 
 | Package | Version | Licence | SHA-256 of the wheel |
 | --- | --- | --- | --- |

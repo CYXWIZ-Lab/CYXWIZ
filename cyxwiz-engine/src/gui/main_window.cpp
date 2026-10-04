@@ -2475,6 +2475,10 @@ MainWindow::MainWindow()
 
     // Set up Go to Line callback
     if (script_editor_) script_editor_->SetGoToLineRequest([this]() { if (toolbar_) toolbar_->OpenGoToLineDialog(); });
+    if (script_editor_)
+        script_editor_->SetOpenImageCallback([this](const std::vector<unsigned char>& png, const std::string& title) {
+            if (plot_output_panel_) plot_output_panel_->ShowImage(png, title);
+        });
     if (variable_explorer_) {
         // Variable Explorer (TOFIX133 P5): the session or an open notebook;
         // View data opens the value in the Table Viewer.

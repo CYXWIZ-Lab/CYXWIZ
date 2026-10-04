@@ -23,6 +23,8 @@ plt.show()
   window. Plot Output opens by itself if it was closed; it keeps every
   figure of the session (arrows or thumbnails to move between them).
 - **Notebook cell:** the figure shows under the cell, in the notebook.
+  **Open in window** under it shows the image in Plot Output (zoom, pan,
+  save).
 - **Console (Python REPL):** the figure goes to Plot Output as well, also
   before any script has run.
 
@@ -30,9 +32,63 @@ The Engine sets matplotlib's backend for you (`module://cyxwiz_mpl_backend`,
 drawn with Agg); `matplotlib.use(...)` with another backend opens that
 backend's own windows instead.
 
-Plot Output toolbar: previous / next figure, zoom (or mouse wheel, drag to
-pan), Fit, 100%, copy to the clipboard, save as PNG, close the figure,
-clear all. Right-click a figure for Copy, Save as PNG and Close.
+Plot Output toolbar: previous / next, zoom (or mouse wheel, drag to pan),
+Fit, 100%, copy to the clipboard, save as PNG, close, clear all, and **All /
+Figures / Python plots** to choose what the list shows. Right-click a figure
+for Copy, Save as PNG and Close.
+
+## Plots from Python (`import cyxwiz`)
+
+The `cyxwiz` module opens real Engine Plot windows from a script, a
+notebook cell or the Console, with one function per plot kind, like pyplot.
+It comes with the Engine; nothing to install.
+
+```python
+import cyxwiz as cx
+import pandas as pd
+
+df = pd.read_csv("spotify_data clean.csv")
+cx.scatter("artist_popularity", "track_popularity", data=df,
+           color="album_type", title="Popularity")
+cx.hist(df.track_duration_min, bins=40)   # arrays and Series work too
+cx.bar("album_type", data=df)             # counts per category
+```
+
+- Each call opens a **Plot window**, the same window as a Plot node's: change
+  the type, columns, rows, colours and labels there, and Export. Its source
+  line says where the data came from ("from Python · df · 8,582 rows ·
+  line 7").
+- **The same title again updates that window** instead of opening another,
+  so running a script twice does not pile up windows. Without `title=`, the
+  title is the function and its columns (`bar: album_type`).
+- The plots are listed in **Plot Output** with the matplotlib figures
+  ("Python plot · Scatter · live"). Select one for **Show window** / **Open
+  window** and **Close plot**.
+- Columns: names with `data=` (a pandas or Polars DataFrame, or a dict), or
+  arrays, lists and Series (a Series keeps its name).
+- Options: `title`, `xlabel`, `ylabel`, `color` (a column), `bins`,
+  `logx`, `logy`, `legend`, `density`, `smooth`, `rows` (the first N rows),
+  and any Plot window setting by its saved name (`bar_layout="stacked"`,
+  `scale="viridis"`, `graph_layout="layered"`, ...).
+- Each call returns a handle: `p.update(...)` plots again into the same
+  window (new data, other options), `p.close()` or `cx.close(title)` closes it.
+- A mistake is raised in Python with the Plot window's words, for example
+  `ValueError: column 'nope' is not in the data (columns: a, b)` or
+  `scatter needs y values`.
+
+| Group | Functions |
+| --- | --- |
+| Basic | `plot` / `line`, `scatter`, `bar`, `hist`, `area`, `step`, `stem`, `pie`, `polar`, `errorbar` |
+| Distribution | `box` / `boxplot`, `violin` / `violinplot`, `kde`, `parallel`, `pairplot` |
+| Grid and density | `heatmap(x, y, value)`, `matshow(*columns)`, `hist2d`, `hexbin`, `contour`, `contourf` |
+| Vector fields, images | `quiver(x, y, u, v)`, `streamplot(x, y, u, v)`, `imshow(array)` |
+| Model results | `confusion_matrix(actual, predicted)`, `roc_curve(actual, score)`, `pr_curve`, `calibration`, `residuals`, `learning_curve(x, *ys)`, `importance(feature, value)` |
+| Flows, maps | `sankey(*steps, value=)`, `treemap(*levels, value=)`, `map_points(lon, lat)`, `map_regions(country, value)` |
+| 3D | `scatter3d(x, y, z)`, `plot3d(x, y, z)`, `plot_surface(Z)` (a 2D array) or `plot_surface(x, y, z)`, `plot_trisurf(x, y, z)` |
+| Graphs | `network(source, target, weight=)`, `tree(node, parent, value=)` |
+
+Example: `p5_api.py` in the test project opens the three plots above and a
+matplotlib histogram; Plot Output lists all four.
 
 ## The Plot window (Table Viewer)
 
@@ -422,8 +478,6 @@ Metric names the window shows: `episode_reward`, `episode_length`,
 
 ## Not available yet
 
-- Opening Engine Plot windows from Python (a matplotlib-like `cyxwiz`
-  API) is being built (TOFIX134 P5); use matplotlib as above until then.
 - The plot entries in the canvas node search (Line Plot, Box Plot, Quiver
   Plot, ...) are placeholders; they are replaced by one Plot node whose
   window picks the plot type (TOFIX134 P2).

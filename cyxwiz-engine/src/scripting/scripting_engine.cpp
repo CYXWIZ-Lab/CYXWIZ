@@ -1,5 +1,4 @@
 #include "scripting_engine.h"
-#include "../gui/panels/training_plot_panel.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../data/data_table.h"
@@ -7,6 +6,8 @@
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <arrow/api.h>
+#include <cmath>
 #include <fstream>
 #include <optional>
 #include <filesystem>
@@ -1257,24 +1258,84 @@ cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
 }
 }  // namespace
 
+namespace {
+// The columns the cyxwiz module sends ([(name, 'num' | 'text', values)]) as
+// an Arrow table: numbers from a buffer of doubles (NaN as missing), text as
+// strings. Needs the GIL.
+std::shared_ptr<arrow::Table> PythonColumnsTable(const py::list& columns, std::string* error) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    for (const auto& item : columns) {
+        const py::tuple column = py::reinterpret_borrow<py::tuple>(item);
+        const std::string name = column[0].cast<std::string>();
+        const std::string kind = column[1].cast<std::string>();
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status status;
+        if (kind == "num") {
+            const py::buffer_info buffer = py::buffer(column[2]).request();
+            if (buffer.itemsize != sizeof(double) || buffer.ndim != 1) {
+                *error = "column '" + name + "' is not a column of numbers";
+                return nullptr;
+            }
+            const double* values = static_cast<const double*>(buffer.ptr);
+            arrow::DoubleBuilder builder;
+            status = builder.Reserve(buffer.shape[0]);
+            for (py::ssize_t i = 0; status.ok() && i < buffer.shape[0]; ++i)
+                status = std::isnan(values[i]) ? builder.AppendNull() : builder.Append(values[i]);
+            if (status.ok()) status = builder.Finish(&array);
+        } else {
+            arrow::StringBuilder builder;
+            for (const auto& v : py::reinterpret_borrow<py::list>(column[2])) {
+                status = builder.Append(v.cast<std::string>());
+                if (!status.ok()) break;
+            }
+            if (status.ok()) status = builder.Finish(&array);
+        }
+        if (!status.ok()) {
+            *error = "column '" + name + "': " + status.ToString();
+            return nullptr;
+        }
+        fields.push_back(arrow::field(name, array->type()));
+        arrays.push_back(std::move(array));
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays);
+}
+}  // namespace
+
 // plt.show() anywhere (script, notebook cell, Console) sends the open figures
 // here through the bundled matplotlib backend (python_tools/cyxwiz_capture.py,
 // TOFIX134 P5.2): queued for the running script (its result, or the cell's
-// outputs), straight to Plot Output otherwise.
+// outputs), straight to Plot Output otherwise. cyxwiz module plots (P5) are
+// checked here on the script thread, so a mistake is raised in Python, and
+// go to Plot Output.
 void ScriptingEngine::InstallFigureCapture() {
     try {
         py::gil_scoped_acquire acquire;
-        BundledTool("cyxwiz_capture").attr("install")(py::cpp_function(
-            [this](py::bytes png_data, int width, int height, const std::string& label) {
-                CapturedPlot plot;
-                const std::string data = png_data;
-                plot.png_data.assign(data.begin(), data.end());
-                plot.width = width;
-                plot.height = height;
-                plot.label = label;
-                if (script_running_) QueuePlot(plot);
-                else published_plots_.Publish({plot});
-            }));
+        auto figure_sink = py::cpp_function([this](py::bytes png_data, int width, int height, const std::string& label) {
+            CapturedPlot plot;
+            const std::string data = png_data;
+            plot.png_data.assign(data.begin(), data.end());
+            plot.width = width;
+            plot.height = height;
+            plot.label = label;
+            if (script_running_) QueuePlot(plot);
+            else published_plots_.Publish({plot});
+        });
+        auto plot_sink = py::cpp_function([this](const std::string& request_json, const py::list& columns) -> std::string {
+            PythonPlot plot;
+            std::string error;
+            if (!cyxwiz::plot::ParsePythonPlotRequest(request_json, plot.request, &error)) return error;
+            plot.table = PythonColumnsTable(columns, &error);
+            if (!plot.table) return error;
+            python_plots_.Publish({std::move(plot)});
+            return std::string();
+        });
+        auto close_sink = py::cpp_function([this](const std::string& title) {
+            PythonPlot plot;
+            plot.close = title;
+            python_plots_.Publish({std::move(plot)});
+        });
+        BundledTool("cyxwiz_capture").attr("install")(figure_sink, plot_sink, close_sink);
     } catch (const std::exception& e) {
         spdlog::warn("Figures from matplotlib will not reach the Engine: {}", e.what());
     }

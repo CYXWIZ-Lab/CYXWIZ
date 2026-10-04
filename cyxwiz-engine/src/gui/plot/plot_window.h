@@ -57,6 +57,14 @@ public:
 
     void Render();
     bool visible = false;
+    // Where the window first opens (screen pixels; unset: ImGui's default),
+    // so several windows opened together do not cover each other.
+    ImVec2 first_position = ImVec2(-1.0f, -1.0f);
+    // Shown and brought to the front on the next frame.
+    void Focus() {
+        visible = true;
+        focus_next_ = true;
+    }
 
     // Optional: "Open in Visualizer" with the X column's index.
     std::function<void(int column)> on_open_visualizer;
@@ -78,6 +86,7 @@ private:
     int ColumnIndex(const std::string& name) const;
 
     std::string id_;
+    bool focus_next_ = false;
     std::string source_name_;
     std::shared_ptr<DataTable> table_;
     std::shared_ptr<arrow::Table> arrow_table_;

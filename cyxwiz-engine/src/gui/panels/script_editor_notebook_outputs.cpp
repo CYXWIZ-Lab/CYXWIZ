@@ -406,53 +406,11 @@ void ScriptEditorPanel::RenderPlotOutput(Cell& cell, CellOutput& out, float widt
     if (!beside) ImGui::SameLine();
     if (ui::GhostButton("Save as...")) OutputRenderer::SaveImageToFile(out.image_data, title);
     if (!beside) ImGui::SameLine();
-    if (ui::GhostButton("Open in window")) {
-        PlotWindow w;
-        w.id = next_plot_window_++;
-        w.title = title;
-        w.png = out.image_data;
-        plot_windows_.push_back(std::move(w));
-    }
+    if (ui::GhostButton("Open in window", static_cast<bool>(open_image_callback_))) open_image_callback_(out.image_data, title);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Show it in Plot Output (zoom, pan, save)");
     if (!beside) ImGui::SameLine();
     if (ui::GhostButton("Hide output")) cell.output_collapsed = true;
     if (beside) ImGui::EndGroup();
-}
-
-void ScriptEditorPanel::RenderPlotWindows() {
-    for (auto& w : plot_windows_) {
-        if (w.texture == 0 && !w.png.empty()) {
-            int channels = 0;
-            unsigned char* pixels = stbi_load_from_memory(w.png.data(), static_cast<int>(w.png.size()), &w.width, &w.height, &channels, 4);
-            if (pixels) {
-                w.texture = OutputRenderer::CreateTextureFromRGBA(pixels, w.width, w.height);
-                stbi_image_free(pixels);
-            }
-        }
-        const std::string name = w.title + "###notebook_plot" + std::to_string(w.id);
-        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(w.width) + 24.0f, static_cast<float>(w.height) + 64.0f), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(name.c_str(), &w.open, ImGuiWindowFlags_NoCollapse)) {
-            if (w.texture != 0) {
-                // Fit the window, keeping the aspect ratio.
-                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                const float s = std::max(0.05f, std::min(avail.x / std::max(1, w.width), (avail.y - ImGui::GetFrameHeightWithSpacing()) / std::max(1, w.height)));
-                ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(w.texture)), ImVec2(w.width * s, w.height * s));
-                if (ui::GhostButton("Copy")) OutputRenderer::CopyImageToClipboard(w.png);
-                ImGui::SameLine();
-                if (ui::GhostButton("Save as...")) OutputRenderer::SaveImageToFile(w.png, w.title);
-            } else {
-                ImGui::TextDisabled("The image could not be shown.");
-            }
-        }
-        ImGui::End();
-    }
-    for (auto it = plot_windows_.begin(); it != plot_windows_.end();) {
-        if (!it->open) {
-            if (it->texture != 0) OutputRenderer::DeleteTexture(it->texture);
-            it = plot_windows_.erase(it);
-        } else {
-            ++it;
-        }
-    }
 }
 
 void ScriptEditorPanel::OpenTraceFrame(const nbview::FrameLink& link) {
