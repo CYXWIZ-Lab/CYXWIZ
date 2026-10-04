@@ -44,7 +44,7 @@ using ReleaseCallback = std::function<void(bool success, int64_t payment_release
  * Usage:
  *   ReservationClient client;
  *   client.Connect("localhost:50051");
- *   auto info = client.ReserveNode(node_id, wallet, duration_minutes, job_config);
+ *   auto info = client.ReserveNode(node_id, duration_minutes, job_config);
  *   if (info.has_value()) {
  *       // Connect to node via P2P
  *       client.StartHeartbeat(info->reservation_id);
@@ -72,14 +72,12 @@ public:
     // Returns nullopt on failure, reservation info on success
     std::optional<ReservationInfo> ReserveNode(
         const std::string& node_id,
-        const std::string& user_wallet,
         int32_t duration_minutes,
         const cyxwiz::protocol::JobConfig& job_config);
 
     // Async version with callback
     void ReserveNodeAsync(
         const std::string& node_id,
-        const std::string& user_wallet,
         int32_t duration_minutes,
         const cyxwiz::protocol::JobConfig& job_config,
         ReservationCallback callback);
@@ -114,15 +112,14 @@ public:
         const std::string& reservation_id,
         cyxwiz::protocol::ReservationInfo& out_info);
 
-    // Check for active reservations (for reconnection after Engine restart)
+    // The signed-in user's active reservations (for reconnecting after an
+    // Engine restart); the central server takes the user from the token.
     bool GetActiveReservations(
-        const std::string& user_wallet,
         std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations);
 
     // Get new P2P token for reconnecting to an active reservation
     bool GetReconnectionToken(
         const std::string& reservation_id,
-        const std::string& user_wallet,
         std::string& out_p2p_token,
         int64_t& out_token_expires,
         std::string& out_node_endpoint,

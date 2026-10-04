@@ -107,7 +107,6 @@ void ReservationClient::AddAuthMetadata(grpc::ClientContext& context) {
 
 std::optional<ReservationInfo> ReservationClient::ReserveNode(
     const std::string& node_id,
-    const std::string& user_wallet,
     int32_t duration_minutes,
     const cyxwiz::protocol::JobConfig& job_config) {
 
@@ -124,7 +123,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
 
     cyxwiz::protocol::ReserveNodeRequest request;
     request.set_node_id(node_id);
-    request.set_user_wallet(user_wallet);
     request.set_duration_minutes(duration_minutes);
     *request.mutable_job_config() = job_config;
 
@@ -169,7 +167,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
 
 void ReservationClient::ReserveNodeAsync(
     const std::string& node_id,
-    const std::string& user_wallet,
     int32_t duration_minutes,
     const cyxwiz::protocol::JobConfig& job_config,
     ReservationCallback callback) {
@@ -181,13 +178,13 @@ void ReservationClient::ReserveNodeAsync(
         async_reserve_thread_.join();
     }
 
-    async_reserve_thread_ = std::thread([this, node_id, user_wallet, duration_minutes, job_config, callback]() {
+    async_reserve_thread_ = std::thread([this, node_id, duration_minutes, job_config, callback]() {
         if (shutdown_requested_.load()) {
             callback(false, ReservationInfo{}, "Shutdown requested");
             return;
         }
 
-        auto result = ReserveNode(node_id, user_wallet, duration_minutes, job_config);
+        auto result = ReserveNode(node_id, duration_minutes, job_config);
 
         if (shutdown_requested_.load()) return;
 
@@ -390,7 +387,6 @@ bool ReservationClient::GetReservation(
 }
 
 bool ReservationClient::GetActiveReservations(
-    const std::string& user_wallet,
     std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations) {
 
     if (!connected_ || !stub_) {
@@ -398,14 +394,13 @@ bool ReservationClient::GetActiveReservations(
         return false;
     }
 
-    spdlog::info("Checking for active reservations for wallet: {}", user_wallet);
+    spdlog::info("Checking for the signed-in user's active reservations");
 
     grpc::ClientContext context;
     AddAuthMetadata(context);
     context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
 
     cyxwiz::protocol::GetActiveReservationsRequest request;
-    request.set_user_wallet(user_wallet);
 
     cyxwiz::protocol::GetActiveReservationsResponse response;
     grpc::Status status = stub_->GetActiveReservations(&context, request, &response);
@@ -435,7 +430,6 @@ bool ReservationClient::GetActiveReservations(
 
 bool ReservationClient::GetReconnectionToken(
     const std::string& reservation_id,
-    const std::string& user_wallet,
     std::string& out_p2p_token,
     int64_t& out_token_expires,
     std::string& out_node_endpoint,
@@ -454,7 +448,6 @@ bool ReservationClient::GetReconnectionToken(
 
     cyxwiz::protocol::GetReconnectionTokenRequest request;
     request.set_reservation_id(reservation_id);
-    request.set_user_wallet(user_wallet);
 
     cyxwiz::protocol::GetReconnectionTokenResponse response;
     grpc::Status status = stub_->GetReconnectionToken(&context, request, &response);

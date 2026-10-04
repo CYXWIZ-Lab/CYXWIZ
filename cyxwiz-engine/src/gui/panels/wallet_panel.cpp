@@ -1,6 +1,5 @@
 #include "wallet_panel.h"
 #include "../icons.h"
-#include "../../auth/auth_client.h"
 #include <imgui.h>
 #include <ctime>
 #include <iomanip>
@@ -26,7 +25,6 @@ WalletPanel::WalletPanel()
     , external_wallet_step_(0)
     , external_wallet_nonce_("")
     , external_wallet_address_("")
-    , auth_synced_(false)
 {
     memset(wallet_address_buffer_, 0, sizeof(wallet_address_buffer_));
     memset(external_wallet_buffer_, 0, sizeof(external_wallet_buffer_));
@@ -34,28 +32,8 @@ WalletPanel::WalletPanel()
 
 WalletPanel::~WalletPanel() = default;
 
-void WalletPanel::SyncWithAuthClient() {
-    auto& auth = cyxwiz::auth::AuthClient::Instance();
-    if (auth.IsAuthenticated() && !auth_synced_) {
-        std::string cyxwallet = auth.GetUserInfo().wallet_address;
-        if (!cyxwallet.empty()) {
-            wallet_address_ = cyxwallet;
-            status_ = WalletConnectionStatus::Connected;
-            sol_balance_ = 5.0;
-            cyxwiz_balance_ = 1000.0;
-            token_mint_ = "CYXWiZ1111111111111111111111111111111111111";
-            RefreshTransactions();
-            auth_synced_ = true;
-        }
-    } else if (!auth.IsAuthenticated()) {
-        auth_synced_ = false;
-    }
-}
-
 void WalletPanel::Render() {
     if (!visible_) return;
-
-    SyncWithAuthClient();
 
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     if (!ImGui::Begin(name_.c_str(), &visible_)) {
@@ -400,7 +378,6 @@ void WalletPanel::DisconnectWallet() {
     token_mint_ = "";
     transactions_.clear();
     error_message_ = "";
-    auth_synced_ = false;
 }
 
 void WalletPanel::RefreshBalance() {

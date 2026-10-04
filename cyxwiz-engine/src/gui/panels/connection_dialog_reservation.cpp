@@ -133,7 +133,7 @@ void ConnectionDialog::RenderReservationPanel() {
     in.duration_minutes = reservation_duration_minutes_;
     in.reserving = reserving_;
     auto& auth = auth::AuthClient::Instance();
-    in.has_account = auth.IsAuthenticated() && !auth.GetUserInfo().wallet_address.empty();
+    in.has_account = auth.IsAuthenticated();
     const ReserveQuote quote = BuildReserveQuote(in);
 
     ImGui::PushID("reserve");

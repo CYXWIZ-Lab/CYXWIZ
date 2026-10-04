@@ -1,6 +1,5 @@
 #include "connection_dialog.h"
 #include "../ui_buttons.h"
-#include "wallet_panel.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "network/grpc_client.h"
@@ -502,15 +501,8 @@ void ConnectionDialog::StartReservation() {
         return;
     }
 
-    // Get wallet address from AuthClient user profile
-    std::string wallet_address;
-    auto& auth = cyxwiz::auth::AuthClient::Instance();
-    if (auth.IsAuthenticated()) {
-        wallet_address = auth.GetUserInfo().wallet_address;
-    }
-
-    if (wallet_address.empty()) {
-        reservation_error_ = "No wallet address in profile. Please set wallet in your account settings.";
+    if (!cyxwiz::auth::AuthClient::Instance().IsAuthenticated()) {
+        reservation_error_ = "Sign in to reserve a node.";
         return;
     }
 
@@ -520,8 +512,7 @@ void ConnectionDialog::StartReservation() {
     reserving_ = true;
     reservation_error_.clear();
 
-    spdlog::info("Reserving node {} for {} minutes with wallet {}...",
-        node.node_id, reservation_duration_minutes_, wallet_address);
+    spdlog::info("Reserving node {} for {} minutes...", node.node_id, reservation_duration_minutes_);
 
     // Build job config from node editor
     cyxwiz::protocol::JobConfig job_config;
@@ -536,7 +527,6 @@ void ConnectionDialog::StartReservation() {
     // Make async reservation request
     reservation_client_->ReserveNodeAsync(
         node.node_id,
-        wallet_address,
         reservation_duration_minutes_,
         job_config,
         [this](bool success, const network::ReservationInfo& info, const std::string& error) {
@@ -1172,22 +1162,13 @@ void ConnectionDialog::CheckForActiveReservations() {
         return;
     }
 
-    // Get wallet address from AuthClient user profile
-    std::string wallet_address;
-    auto& auth = cyxwiz::auth::AuthClient::Instance();
-    if (auth.IsAuthenticated()) {
-        wallet_address = auth.GetUserInfo().wallet_address;
-    }
-
-    if (wallet_address.empty()) {
-        spdlog::debug("Cannot check active reservations: no wallet address");
+    if (!cyxwiz::auth::AuthClient::Instance().IsAuthenticated()) {
+        spdlog::debug("Cannot check active reservations: not signed in");
         return;
     }
 
-    spdlog::info("Checking for active reservations for wallet: {}", wallet_address);
-
     std::vector<cyxwiz::protocol::ActiveReservationInfo> active_reservations;
-    if (reservation_client_->GetActiveReservations(wallet_address, active_reservations)) {
+    if (reservation_client_->GetActiveReservations(active_reservations)) {
         // The node list names the nodes; fetch it before listing them.
         RefreshNodeList();
         found_reservations_.clear();
@@ -1215,15 +1196,8 @@ void ConnectionDialog::ReconnectToReservation(const std::string& reservation_id)
         return;
     }
 
-    // Get wallet address from AuthClient user profile
-    std::string wallet_address;
-    auto& auth = cyxwiz::auth::AuthClient::Instance();
-    if (auth.IsAuthenticated()) {
-        wallet_address = auth.GetUserInfo().wallet_address;
-    }
-
-    if (wallet_address.empty()) {
-        reservation_error_ = "No wallet address in profile";
+    if (!cyxwiz::auth::AuthClient::Instance().IsAuthenticated()) {
+        reservation_error_ = "Sign in to reconnect to a reservation.";
         return;
     }
 
@@ -1236,7 +1210,7 @@ void ConnectionDialog::ReconnectToReservation(const std::string& reservation_id)
     int64_t time_remaining;
 
     if (!reservation_client_->GetReconnectionToken(
-            reservation_id, wallet_address,
+            reservation_id,
             p2p_token, token_expires, node_endpoint, time_remaining)) {
         reservation_error_ = "Failed to get reconnection token: " + reservation_client_->GetLastError();
         spdlog::error("{}", reservation_error_);

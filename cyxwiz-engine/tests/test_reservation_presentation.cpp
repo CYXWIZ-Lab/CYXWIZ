@@ -69,8 +69,9 @@ int main() {
     Check(!offline_quote.enabled && offline_quote.disabled_reason == "This node is offline.", "offline has a reason");
     auto no_account = reserve;
     no_account.has_account = false;
-    Check(!BuildReserveQuote(no_account).enabled && !BuildReserveQuote(no_account).disabled_reason.empty(),
-          "no account has a reason");
+    Check(!BuildReserveQuote(no_account).enabled &&
+              BuildReserveQuote(no_account).disabled_reason == "Sign in to reserve a node.",
+          "not signed in has a reason");
     auto busy = reserve;
     busy.reserving = true;
     Check(BuildReserveQuote(busy).button == "Reserving..." && !BuildReserveQuote(busy).enabled, "reserving is shown");

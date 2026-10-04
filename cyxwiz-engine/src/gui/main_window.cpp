@@ -2995,15 +2995,6 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         spdlog::info("P2PTrainingPanel wired to ConnectionDialog");
     }
 
-    // Wire up WalletPanel to ConnectionDialog for wallet address
-    if (connection_dialog_ && wallet_panel_) {
-        connection_dialog_->SetWalletPanel(wallet_panel_.get());
-        spdlog::info("WalletPanel wired to ConnectionDialog (ptr={:p})", (void*)wallet_panel_.get());
-    } else {
-        spdlog::warn("Failed to wire WalletPanel: connection_dialog_={}, wallet_panel_={}",
-            (bool)connection_dialog_, (bool)wallet_panel_);
-    }
-
     // Set JobManager for JobStatusPanel
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);

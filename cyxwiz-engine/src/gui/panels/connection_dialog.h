@@ -24,7 +24,6 @@ namespace network {
 
 namespace gui {
     class NodeEditor;
-    class WalletPanel;
 }
 
 namespace cyxwiz {
@@ -48,9 +47,6 @@ public:
 
     // Set node editor for accessing model graph
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
-
-    // Set wallet panel for accessing wallet address
-    void SetWalletPanel(gui::WalletPanel* panel) { wallet_panel_ = panel; }
 
     // Set P2P training panel for monitoring
     // Also wires the panel's Resume / Start over actions (TOFIX118 P4 GUI).
@@ -187,7 +183,6 @@ private:
 
     std::function<void(bool)> connection_callback_;
     gui::NodeEditor* node_editor_ = nullptr;
-    gui::WalletPanel* wallet_panel_ = nullptr;
     P2PTrainingPanel* p2p_training_panel_ = nullptr;
 };
 

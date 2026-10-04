@@ -6,6 +6,8 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
+#include <thread>
 
 namespace cyxwiz::auth {
 
@@ -22,7 +24,6 @@ struct UserInfo {
     std::string email;
     std::string username;
     std::string name;
-    std::string wallet_address;
     std::string role;  // "user", "pro", "admin"
 };
 
@@ -31,21 +32,6 @@ struct AuthResult {
     bool success = false;
     std::string error;
     UserInfo user_info;
-};
-
-// Wallet nonce result
-struct WalletNonceResult {
-    bool success = false;
-    std::string nonce;
-    std::string message;  // Full message to sign
-    std::string error;
-};
-
-// Wallet verification result
-struct WalletVerifyResult {
-    bool success = false;
-    std::string wallet_address;
-    std::string error;
 };
 
 // Authentication client - singleton for handling CyxWiz API auth
@@ -64,15 +50,6 @@ public:
     // Login methods
     std::future<AuthResult> LoginWithEmail(const std::string& email, const std::string& password);
 
-    // Wallet connection
-    std::future<WalletNonceResult> GetWalletNonce(const std::string& wallet_address);
-    std::future<WalletVerifyResult> VerifyWalletSignature(const std::string& wallet_address,
-                                                          const std::string& signature,
-                                                          const std::string& nonce);
-    std::future<WalletVerifyResult> LinkWallet(const std::string& wallet_address,
-                                               const std::string& signature,
-                                               const std::string& nonce);
-
     // Logout
     void Logout();
 
@@ -82,7 +59,9 @@ public:
     UserInfo GetUserInfo() const;
     AuthState GetState() const;
 
-    // Token refresh
+    // Token refresh: a fresh token from /api/auth/refresh. A background
+    // thread calls it when less than kJwtRefreshBeforeSeconds remain, so the
+    // central server (which refuses expired tokens) keeps accepting us.
     bool RefreshJwtToken();
 
     // Persistence
@@ -105,7 +84,7 @@ private:
 
     // HTTP request helpers
     AuthResult DoLogin(const std::string& endpoint, const std::string& json_body);
-    bool FetchUserProfile();
+    void RefreshLoop();
 
     // Token storage path
     std::string GetTokenStoragePath() const;
@@ -117,6 +96,11 @@ private:
     std::string jwt_token_;
     UserInfo user_info_;
     AuthStateCallback on_state_changed_;
+
+    std::thread refresher_;
+    std::mutex refresher_mutex_;
+    std::condition_variable refresher_cv_;
+    bool stop_refresher_ = false;
 };
 
 // Helper to get auth state as string

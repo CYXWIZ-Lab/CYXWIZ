@@ -1,4 +1,5 @@
 #include "grpc_client.h"
+#include "../auth/auth_client.h"
 #include "../core/engine_config.h"
 #include <spdlog/spdlog.h>
 
@@ -8,9 +9,12 @@ GRPCClient::GRPCClient() : connected_(false) {
 }
 
 void GRPCClient::AddAuthMetadata(grpc::ClientContext& context) {
-    if (!auth_token_.empty()) {
-        // Add Bearer token to authorization header
-        context.AddMetadata("authorization", "Bearer " + auth_token_);
+    // The current sign-in token (it is refreshed in the background), else the
+    // one set at sign-in.
+    auto& auth = cyxwiz::auth::AuthClient::Instance();
+    const std::string token = auth.IsAuthenticated() ? auth.GetJwtToken() : auth_token_;
+    if (!token.empty()) {
+        context.AddMetadata("authorization", "Bearer " + token);
         spdlog::debug("Added auth token to gRPC request");
     }
 }

@@ -33,7 +33,7 @@ struct ReservationNodeFacts {
 struct ReserveQuoteInputs {
     ReservationNodeFacts node;
     int duration_minutes = 60;
-    bool has_account = false;        // signed in with what the Central Server needs
+    bool has_account = false;        // signed in (the account is the identity)
     bool reserving = false;
 };
 

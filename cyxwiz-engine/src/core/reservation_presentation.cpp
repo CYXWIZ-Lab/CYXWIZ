@@ -103,7 +103,7 @@ ReserveQuote BuildReserveQuote(const ReserveQuoteInputs& in) {
     } else if (!in.node.online) {
         quote.disabled_reason = "This node is offline.";
     } else if (!in.has_account) {
-        quote.disabled_reason = "Sign in with an account that has a linked wallet to reserve.";
+        quote.disabled_reason = "Sign in to reserve a node.";
     }
     quote.enabled = quote.disabled_reason.empty();
 
