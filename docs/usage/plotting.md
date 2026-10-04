@@ -23,8 +23,12 @@ plt.show()
   window. Plot Output opens by itself if it was closed; it keeps every
   figure of the session (arrows or thumbnails to move between them).
 - **Notebook cell:** the figure shows under the cell, in the notebook.
-- **Console (Python REPL):** after a script has run in the session, the
-  figure goes to Plot Output as well.
+- **Console (Python REPL):** the figure goes to Plot Output as well, also
+  before any script has run.
+
+The Engine sets matplotlib's backend for you (`module://cyxwiz_mpl_backend`,
+drawn with Agg); `matplotlib.use(...)` with another backend opens that
+backend's own windows instead.
 
 Plot Output toolbar: previous / next figure, zoom (or mouse wheel, drag to
 pan), Fit, 100%, copy to the clipboard, save as PNG, close the figure,

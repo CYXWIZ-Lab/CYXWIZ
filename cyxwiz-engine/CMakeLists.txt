@@ -1152,6 +1152,8 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_vars.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_capture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_mpl_backend.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
         "${_cyxwiz_tools_dir}"
     COMMAND ${CMAKE_COMMAND} -E touch "${_cyxwiz_tools_dir}/.unpacked"
@@ -1159,6 +1161,8 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_vars.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_debug.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_capture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_mpl_backend.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
     COMMENT "Unpacking the Script Editor's language tools (jedi, parso, pyflakes)"
     VERBATIM
@@ -1176,6 +1180,10 @@ if(Python3_EXECUTABLE)
                 "${_cyxwiz_tools_dir}")
     add_test(NAME python_tools_vars
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_vars.py"
+                "${_cyxwiz_tools_dir}")
+    # plt.show() capture through the bundled matplotlib backend (TOFIX134 P5.2).
+    add_test(NAME python_tools_capture
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_capture.py"
                 "${_cyxwiz_tools_dir}")
 endif()
 

@@ -163,6 +163,7 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
         std::lock_guard<std::mutex> lock(init_error_mutex_);
         last_init_error_.clear();
     }
+    InstallFigureCapture();
     return true;
 }
 
@@ -1256,6 +1257,29 @@ cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
 }
 }  // namespace
 
+// plt.show() anywhere (script, notebook cell, Console) sends the open figures
+// here through the bundled matplotlib backend (python_tools/cyxwiz_capture.py,
+// TOFIX134 P5.2): queued for the running script (its result, or the cell's
+// outputs), straight to Plot Output otherwise.
+void ScriptingEngine::InstallFigureCapture() {
+    try {
+        py::gil_scoped_acquire acquire;
+        BundledTool("cyxwiz_capture").attr("install")(py::cpp_function(
+            [this](py::bytes png_data, int width, int height, const std::string& label) {
+                CapturedPlot plot;
+                const std::string data = png_data;
+                plot.png_data.assign(data.begin(), data.end());
+                plot.width = width;
+                plot.height = height;
+                plot.label = label;
+                if (script_running_) QueuePlot(plot);
+                else published_plots_.Publish({plot});
+            }));
+    } catch (const std::exception& e) {
+        spdlog::warn("Figures from matplotlib will not reach the Engine: {}", e.what());
+    }
+}
+
 ScriptingEngine::DebugSnapshot ScriptingEngine::GetDebugSnapshot() const {
     std::lock_guard<std::mutex> lock(debug_mutex_);
     return debug_snapshot_;
@@ -1628,22 +1652,6 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
             if (callbacks.on_stderr) callbacks.on_stderr(text);
         };
 
-        // Create plot capture callback wrapper
-        auto plot_capture_func = [this](py::bytes png_data, int width, int height, const std::string& label) {
-            CapturedPlot plot;
-            std::string data_str = png_data;  // Convert py::bytes to std::string
-            plot.png_data = std::vector<unsigned char>(data_str.begin(), data_str.end());
-            plot.width = width;
-            plot.height = height;
-            plot.label = label;
-            // The capture stays installed after the run: a Console plt.show()
-            // goes straight to Plot Output instead of a run queue the next
-            // script clears (TOFIX134 P0 item 6).
-            if (script_running_) QueuePlot(plot);
-            else published_plots_.Publish({plot});
-            spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
-        };
-
         // Register cancellation through a C++ callback instead of ctypes.
         // Some project virtual environments lack _ctypes, and importing ctypes there
         // caused script runs to fail before user code executed.
@@ -1760,87 +1768,12 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
         out['traceback'] = ''.join(traceback.format_list(frames)) + ''.join(traceback.format_exception_only(type(e), e))
     return out
 
-# Matplotlib capture setup
-_cyxwiz_plot_capture_callback = None
-_cyxwiz_captured_plots = []
-
-def _cyxwiz_setup_matplotlib_capture(capture_callback):
-    """Setup matplotlib to capture plots instead of showing windows"""
-    global _cyxwiz_plot_capture_callback
-    _cyxwiz_plot_capture_callback = capture_callback
-
-    try:
-        import matplotlib
-        # Use non-interactive backend
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
-        # Store original show function
-        _original_show = plt.show
-
-        def _cyxwiz_show(*args, **kwargs):
-            """Capture all figures and send to C++"""
-            global _cyxwiz_plot_capture_callback, _cyxwiz_captured_plots
-            import io
-
-            # Get all figure numbers
-            fig_nums = plt.get_fignums()
-
-            for fig_num in fig_nums:
-                fig = plt.figure(fig_num)
-
-                # Get figure size in pixels
-                dpi = fig.dpi
-                width = int(fig.get_figwidth() * dpi)
-                height = int(fig.get_figheight() * dpi)
-
-                # Get title if available
-                title = ""
-                if fig._suptitle:
-                    title = fig._suptitle.get_text()
-                elif len(fig.axes) > 0 and fig.axes[0].get_title():
-                    title = fig.axes[0].get_title()
-
-                # Render to PNG bytes
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-                buf.seek(0)
-                png_data = buf.read()
-                buf.close()
-
-                # Send to C++ callback
-                if _cyxwiz_plot_capture_callback is not None:
-                    _cyxwiz_plot_capture_callback(png_data, width, height, title)
-                else:
-                    # Store locally if no callback
-                    _cyxwiz_captured_plots.append({
-                        'data': png_data,
-                        'width': width,
-                        'height': height,
-                        'label': title
-                    })
-
-            # Close all figures after capturing
-            plt.close('all')
-
-        # Replace plt.show with our capture function
-        plt.show = _cyxwiz_show
-
-    except ImportError:
-        # matplotlib not installed, silently skip
-        pass
-
-
 )";
         py::exec(setup_code);
         py::globals()["_cyxwiz_is_cancelled"] = py::cpp_function([this]() {
             return shared_cancel_flag_.load() != 0;
         });
 
-
-        // Setup matplotlib capture with our callback
-        py::object setup_matplotlib = py::eval("_cyxwiz_setup_matplotlib_capture");
-        setup_matplotlib(py::cpp_function(plot_capture_func));
 
         // Create output object
         py::object output_class = py::eval("_CyxWizOutput");

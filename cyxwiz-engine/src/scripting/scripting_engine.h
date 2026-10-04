@@ -311,6 +311,8 @@ private:
 
     // Queue plot for async retrieval
     void QueuePlot(const CapturedPlot& plot);
+    // Once per interpreter: plt.show() figures reach the Engine (cyxwiz_capture).
+    void InstallFigureCapture();
 
     // Shared cancellation flag - accessible from Python without GIL
     static std::atomic<int> shared_cancel_flag_;
