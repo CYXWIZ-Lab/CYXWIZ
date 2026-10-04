@@ -3546,6 +3546,22 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             }
             continue;
         }
+        // Tree trainers: their Model output (TOFIX134 P4.7) is the saved
+        // tree model, so one is always written.
+        if (node.type == "DecisionTreeClassifier" ||
+            node.type == "RandomForestClassifier" ||
+            node.type == "GradientBoostingClassifier") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "tree_model" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "tree") + ".cyxtree.json");
+                node.parameters["model_path"] = path.string();
+            }
+            continue;
+        }
         if (node.type != "FillMissing" &&
             node.type != "StandardScaler") {
             continue;
@@ -5773,7 +5789,10 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     ctx.output_dataset = output_dataset_name;
 
     if (type == gui::NodeType::LinearRegressionNode ||
-        type == gui::NodeType::PolynomialRegressionNode) {
+        type == gui::NodeType::PolynomialRegressionNode ||
+        type == gui::NodeType::DecisionTreeClassifier ||
+        type == gui::NodeType::RandomForestClassifier ||
+        type == gui::NodeType::GradientBoostingClassifier) {
         const auto model_path = operator_parameters.find("model_path");
         if (model_path == operator_parameters.end() ||
             model_path->second.empty() ||
@@ -7030,6 +7049,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     }
 
     last_node_results_ = ctx.node_results;
+    last_model_artifacts_ = ctx.model_artifacts;
 
     // Transfer deployment status from context to executor state
     if (ctx.deployment_ready) {

@@ -84,6 +84,9 @@ private:
     std::string empty_message_ = "No table. Open a table in the Table Viewer and choose Plot on a column.";
     std::vector<std::string> headers_;
     std::vector<bool> numeric_;
+    // A trained tree model's table (TOFIX134 P4.7): each tree's name, for
+    // the "Tree N of M" picker (empty for other tables).
+    std::vector<std::string> model_tree_names_;
     std::vector<ColumnSummary> columns_;
     std::future<std::vector<ColumnSummary>> columns_job_;
     ColumnPicker picker_;

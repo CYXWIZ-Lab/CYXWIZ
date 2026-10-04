@@ -5,13 +5,19 @@
 #include "../../core/data_registry.h"
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
+#include "../../core/plot/plot_tree_model.h"
 #include "../../core/project_manager.h"
+
+#include <arrow/api.h>
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <cmath>
 #include <ctime>
+#include <fstream>
+#include <sstream>
 
 namespace cyxwiz::plot {
 
@@ -31,6 +37,45 @@ std::string ClockNow() {
 }
 
 bool Loaded(const std::string& name) { return DataRegistry::Instance().IsArrowDataset(name); }
+
+// A fitted tree model's file as a table of its nodes (TOFIX134 P4.7): the
+// Plot opens it as a Tree. Empty with `error` set when it cannot be read.
+std::shared_ptr<arrow::Table> TreeModelTable(const std::string& path, std::string* error) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        *error = "The model file " + path + " cannot be opened.";
+        return nullptr;
+    }
+    std::stringstream text;
+    text << in.rdbuf();
+    const TreeModelRows rows = ReadTreeModel(text.str());
+    if (!rows.error.empty()) {
+        *error = rows.error;
+        return nullptr;
+    }
+    arrow::Int64Builder tree, trees;
+    arrow::StringBuilder tree_name, node, parent, rule, cls;
+    arrow::DoubleBuilder samples, value;
+    bool ok = true;
+    for (size_t i = 0; i < rows.node.size(); ++i) {
+        ok = ok && tree.Append(rows.tree[i]).ok() && tree_name.Append(rows.tree_name[i]).ok() && node.Append(rows.node[i]).ok() &&
+             parent.Append(rows.parent[i]).ok() && rule.Append(rows.rule[i]).ok() &&
+             (std::isnan(rows.samples[i]) ? samples.AppendNull() : samples.Append(rows.samples[i])).ok() && cls.Append(rows.cls[i]).ok() &&
+             (std::isnan(rows.value[i]) ? value.AppendNull() : value.Append(rows.value[i])).ok() && trees.Append(rows.trees).ok();
+    }
+    std::vector<std::shared_ptr<arrow::Array>> arrays(9);
+    ok = ok && tree.Finish(&arrays[0]).ok() && tree_name.Finish(&arrays[1]).ok() && node.Finish(&arrays[2]).ok() &&
+         parent.Finish(&arrays[3]).ok() && rule.Finish(&arrays[4]).ok() && samples.Finish(&arrays[5]).ok() && cls.Finish(&arrays[6]).ok() &&
+         value.Finish(&arrays[7]).ok() && trees.Finish(&arrays[8]).ok();
+    if (!ok) {
+        *error = "The model's nodes could not be made into a table.";
+        return nullptr;
+    }
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    const auto& names = TreeModelColumns();
+    for (size_t c = 0; c < names.size(); ++c) fields.push_back(arrow::field(names[c], arrays[c]->type()));
+    return arrow::Table::Make(arrow::schema(fields), arrays);
+}
 
 }  // namespace
 
@@ -129,6 +174,24 @@ void PlotNodeLane::Finish(Entry& e) {
             s.error = task->GetErrorMessage().empty() ? std::string("The run failed.") : task->GetErrorMessage();
         } else if (state == TaskState::Cancelled) {
             s.state = s.table ? Status::State::OutOfDate : Status::State::Idle;
+        } else if (e.plan.model) {
+            // A trainer's Model pin: its fitted model, as the nodes of its trees.
+            const auto& models = e.executor->ModelArtifacts();
+            auto it = models.find(e.plan.feeder_id);
+            std::string error = e.plan.feeder_name + " gave no model to plot.";
+            auto table = it != models.end() ? TreeModelTable(it->second, &error) : nullptr;
+            const std::string name = "ds_plot_model_" + std::to_string(e.plan.feeder_id);
+            if (table && DataRegistry::Instance().RegisterArrowTable(table, name)) {
+                s.table = table;
+                s.dataset_name = name;
+                s.read_at = ClockNow();
+                ++s.data_version;
+                s.state = Status::State::Ready;
+                e.result_fingerprint = e.run_fingerprint;
+            } else {
+                s.state = Status::State::Failed;
+                s.error = error;
+            }
         } else {
             const auto& results = e.executor->NodeResults();
             auto it = results.find(e.plan.feeder_id);

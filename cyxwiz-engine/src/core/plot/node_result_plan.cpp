@@ -74,6 +74,12 @@ NodeResultPlan PlanNodeResult(int plot_node_id, const std::vector<gui::MLNode>& 
         return plan;
     }
     plan.feeder_name = feeder->name;
+    for (const auto& l : links)
+        if (l.to_node == plot_node_id && l.from_node == feeder->id) {
+            plan.feeder_pin = PinIndex(feeder->outputs, l.from_pin);
+            break;
+        }
+    plan.model = plan.feeder_pin >= 0 && feeder->outputs[static_cast<size_t>(plan.feeder_pin)].type == gui::PinType::Parameters;
 
     // Everything above the plot, nearest first (breadth-first upstream).
     std::vector<int> order;
@@ -107,6 +113,7 @@ NodeResultPlan PlanNodeResult(int plot_node_id, const std::vector<gui::MLNode>& 
                                 std::to_string(l.from_pin) + ":" + std::to_string(l.to_pin));
     std::sort(link_keys.begin(), link_keys.end());
     for (const auto& lk : link_keys) key += lk + "\n";
+    key += "out " + std::to_string(plan.feeder_pin) + "\n";  // the trainer's table or its model
     plan.fingerprint = Hex(std::hash<std::string>{}(key));
 
     // A loaded Data Input is read as it is (no run).

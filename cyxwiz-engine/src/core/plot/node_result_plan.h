@@ -23,6 +23,10 @@ struct NodeResultPlan {
     State state = State::NotConnected;
     int feeder_id = -1;          // the node wired into the plot
     std::string feeder_name;
+    int feeder_pin = -1;         // which of its outputs (index)
+    // The output is a fitted model (a trainer's Model pin, TOFIX134 P4.7):
+    // the run's model file is read as rows (plot_tree_model), not a table.
+    bool model = false;
     std::string dataset_name;    // Loaded
     std::string pipeline_json;   // Run: PipelineExecutor JSON of the closure
     int run_node_count = 0;      // Run: nodes it runs

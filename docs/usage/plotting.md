@@ -258,13 +258,31 @@ or press **Plot** under the column's statistics. The Plot window opens:
       in "..."; hover shows it in full.
     - Click a box to fold its branch ("+N" shows how many are hidden);
       click again to unfold. Folds stay when you turn the tree.
+    - **A trained model**: link the **Model** pin of a **Decision Tree**,
+      **Random Forest** or **Gradient Boosting** node (the second pin on its
+      right) to a Plot node. Opening the plot trains the model in the
+      background and draws its splits: each box is a rule such as
+      `0: album_total_tracks <= 1.5`, or a leaf with its class, sized by
+      the training rows that reach it and coloured by class (Gradient
+      Boosting: each leaf's value). The trainer saves the model in the
+      project's `artifacts/tree_model/` unless **Save model path** names a
+      file.
+    - A forest or a boosted model opens on its first tree. **Tree in the
+      model** steps through them (`<` and `>`, or type a number); it sets
+      the `tree = N` row filter, so **Rows** shows it, and it is saved with
+      the plot. Gradient Boosting has one tree per class each round
+      ("Round 2 · single").
+    - When a box is too narrow, its label drops the number before the
+      colon (`single` instead of `leaf 1.3: single`); hover shows it all.
   - Export: PNG, SVG, or CSV (Network: the nodes with their group and
     links, then the links; Tree: the rows; Mesh: the triangle corners).
 
   Example: `p4_graphs.cyxgraph` (test project): `les_miserables.csv`
   (77 characters, 254 links, 6 groups found) as a Network,
   `spotify_tree.csv` (a depth-3 tree for track_popularity >= 60) as a Tree,
-  and `volcano_points.csv` as a Mesh.
+  and `volcano_points.csv` as a Mesh. `p4_tree_model.cyxgraph`: a Decision
+  Tree and a 5-tree Random Forest (depth 3) on the Spotify data predicting
+  `album_type`, each Model pin linked to a Plot (13 nodes; album / single).
 - **Colour** (every plot):
   - **The scale** (when the plot colours by values: heatmaps, contours,
     surfaces, maps, scatter colour scales): **Theme** (the default),

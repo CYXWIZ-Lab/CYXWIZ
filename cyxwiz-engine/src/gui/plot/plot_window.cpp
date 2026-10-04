@@ -90,6 +90,22 @@ void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<a
         }
     }
     ReadColumns();
+    // A trained tree model's table: the names of its trees (forest, boosting).
+    model_tree_names_.clear();
+    const auto has = [&](const char* name) { return std::find(headers_.begin(), headers_.end(), name) != headers_.end(); };
+    if (arrow_table_ && has("tree") && has("tree_name") && has("trees") && has("rule")) {
+        const Source src = SourceFromArrow(*arrow_table_, {"tree", "tree_name"});
+        if (src.columns.size() == 2 && src.columns[0].numeric && !src.columns[1].numeric) {
+            const auto& number = src.columns[0].numbers;
+            const auto& name = src.columns[1].text;
+            for (size_t i = 0; i < number.size() && i < name.size(); ++i) {
+                if (!std::isfinite(number[i]) || number[i] < 1 || number[i] > 100000) continue;
+                const size_t k = static_cast<size_t>(number[i]) - 1;
+                if (k >= model_tree_names_.size()) model_tree_names_.resize(k + 1);
+                if (model_tree_names_[k].empty()) model_tree_names_[k] = name[i];
+            }
+        }
+    }
     // First plot of an evaluation table (Confusion Matrix, ROC, PR): its
     // preset (board 5).
     if (spec_.x_column.empty() && spec_.y_columns.empty() && arrow_table_) {
@@ -1090,6 +1106,44 @@ void PlotWindow::DrawSettings() {
         if (ui::SegmentedControl("##tree_dir", kDir, 2, &dir)) {
             spec_.tree_left_right = dir == 1;
             changed = true;
+        }
+        // A forest or boosted model: which tree (a "tree = N" row filter, so
+        // Rows shows it and it is saved like any filter).
+        if (model_tree_names_.size() > 1) {
+            const int total = static_cast<int>(model_tree_names_.size());
+            RowCondition* pick = nullptr;
+            if (spec_.rows == RowMode::Filter)
+                for (auto& c : spec_.conditions)
+                    if (c.column == "tree" && c.op == "=") pick = &c;
+            int current = 0;  // 0: every tree
+            if (pick) {
+                try {
+                    current = std::clamp(std::stoi(pick->value), 1, total);
+                } catch (...) {
+                    current = 1;
+                }
+            }
+            const auto choose = [&](int k) {
+                if (!pick) {
+                    spec_.rows = RowMode::Filter;
+                    spec_.conditions.push_back({"tree", "=", "1"});
+                    pick = &spec_.conditions.back();
+                }
+                pick->value = std::to_string(k);
+                changed = true;
+            };
+            ImGui::TextColored(t.text_dim, "Tree in the model");
+            if (ui::GhostButton("<##model_tree", current > 1)) choose(current - 1);
+            ImGui::SameLine();
+            int shown = current;
+            ImGui::SetNextItemWidth(64);
+            if (ImGui::InputInt("##model_tree_n", &shown, 0, 0) && shown != current) choose(std::clamp(shown, 1, total));
+            ImGui::SameLine();
+            if (ui::GhostButton(">##model_tree", current < total)) choose(std::max(1, current + 1));
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_faint, "of %d", total);
+            if (current >= 1) ImGui::TextColored(t.text_faint, "%s", model_tree_names_[static_cast<size_t>(current - 1)].c_str());
+            else ImGui::TextColored(t.text_faint, "Every tree (pick one to read it)");
         }
         const Prepared& d = view_.Data();
         if (view_.HasData() && d.metrics.size() >= 3 && d.metrics[0].first == "nodes") {

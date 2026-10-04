@@ -28,8 +28,13 @@ std::string Num(double v) {
     return buf;
 }
 
-// The text cut to fit `width` pixels, ending in "..." when cut.
-std::string Shorten(const std::string& text, float width) {
+// The text cut to fit `width` pixels, ending in "..." when cut. A name such
+// as "leaf 1.3: single" or "2: tempo <= 0.5" that does not fit first drops
+// its id ("single"): what the node says matters more than its number.
+std::string Shorten(const std::string& full, float width) {
+    if (ImGui::CalcTextSize(full.c_str()).x <= width) return full;
+    const size_t colon = full.find(": ");
+    const std::string text = colon != std::string::npos && colon + 2 < full.size() ? full.substr(colon + 2) : full;
     if (ImGui::CalcTextSize(text.c_str()).x <= width) return text;
     size_t lo = 0, hi = text.size();
     while (lo < hi) {
@@ -139,7 +144,7 @@ void PlotView::DrawGraph(ImVec2 size) {
             return plot > 4.0f * half_px ? std::clamp(half_px / (plot - 2.0 * half_px), 0.04, 0.4) : 0.4;
         };
         const double half_h = ImGui::GetTextLineHeight() + 8.0;
-        margin_x = margin(80.0, plot_px.x);
+        margin_x = margin(p.spec.tree_left_right ? 114.0 : 80.0, plot_px.x);  // left-right: half the widest box beside a level
         margin_y = margin(half_h, plot_px.y);
     }
     ImPlot::SetupAxesLimits(-margin_x, 1.0 + margin_x, -margin_y, 1.0 + margin_y, fit_ ? ImPlotCond_Always : ImPlotCond_Once);
@@ -161,7 +166,8 @@ void PlotView::DrawGraph(ImVec2 size) {
     // A tree box is at most as wide as the room to its neighbours on the same
     // level (top-down) or the room between levels (left-right), so boxes never
     // cover each other; a name that does not fit ends in "...".
-    std::vector<float> room(n, 150.0f);
+    constexpr float kMaxBox = 220.0f;  // a split such as "0: album_total_tracks <= 1.5" fits
+    std::vector<float> room(n, kMaxBox);
     if (tree) {
         std::vector<std::pair<ImVec2, size_t>> at;
         for (size_t i = 0; i < n; ++i)
@@ -170,7 +176,7 @@ void PlotView::DrawGraph(ImVec2 size) {
             std::vector<float> xs;
             for (const auto& a : at) xs.push_back(a.first.x);
             std::sort(xs.begin(), xs.end());
-            float gap = 150.0f;
+            float gap = kMaxBox;
             for (size_t k = 1; k < xs.size(); ++k)
                 if (xs[k] - xs[k - 1] > 2.0f) gap = std::min(gap, xs[k] - xs[k - 1] - 24.0f);
             std::fill(room.begin(), room.end(), std::max(24.0f, gap));
@@ -180,7 +186,7 @@ void PlotView::DrawGraph(ImVec2 size) {
                 return std::lround(a.first.y) != std::lround(b.first.y) ? a.first.y < b.first.y : a.first.x < b.first.x;
             });
             for (size_t k = 0; k < at.size(); ++k) {
-                float w = 150.0f;
+                float w = kMaxBox;
                 if (k > 0 && std::lround(at[k - 1].first.y) == std::lround(at[k].first.y)) w = std::min(w, at[k].first.x - at[k - 1].first.x - 6.0f);
                 if (k + 1 < at.size() && std::lround(at[k + 1].first.y) == std::lround(at[k].first.y))
                     w = std::min(w, at[k + 1].first.x - at[k].first.x - 6.0f);

@@ -429,6 +429,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -1248,6 +1249,7 @@ pybind11_add_module(cyxwiz_plotting
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -1406,6 +1408,7 @@ add_executable(test_plot_arrow_source
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_model.cpp
@@ -3767,6 +3770,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -3879,6 +3883,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -5111,6 +5116,7 @@ add_executable(test_training_manager_session
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
@@ -5774,6 +5780,7 @@ add_executable(test_engine_node_parity
     src/core/plot/plot_graph.cpp
     src/core/plot/plot_image.cpp
     src/core/plot/plot_presets.cpp
+    src/core/plot/plot_tree_model.cpp
     src/core/plot/plot_layout.cpp
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp

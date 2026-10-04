@@ -163,6 +163,8 @@ public:
     // Node id -> DataRegistry dataset of the last successful run (the Plot
     // node's result lane reads the table of the node wired into it).
     const std::map<int, std::string>& NodeResults() const { return last_node_results_; }
+    // Node ID -> fitted model file of the last run (nodes with a Model output).
+    const std::map<int, std::string>& ModelArtifacts() const { return last_model_artifacts_; }
 
 private:
     struct InputLink {
@@ -188,6 +190,7 @@ private:
     };
 
     std::map<int, std::string> last_node_results_;
+    std::map<int, std::string> last_model_artifacts_;
 
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
