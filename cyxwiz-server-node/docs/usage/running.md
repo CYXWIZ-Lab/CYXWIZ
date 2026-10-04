@@ -105,6 +105,26 @@ Ports the daemon opens (from the config file):
 4. The node reports each job's result and the end of the reservation to the
    central server.
 
+## 5b. Sign-in
+
+The GUI signs in with your CyxWiz account and hands the token to the daemon
+when you click Apply. Tokens last 24 hours; the daemon renews its own copy
+through the web API (`auth_api_url` in the daemon config, default
+`http://127.0.0.1:3002/api`) when less than 2 hours remain, so a node can run
+for days. If renewal fails after the token has expired, sign in again in the
+GUI. There is no wallet sign-in.
+
+Live check against a running central server and web API:
+
+```powershell
+$env:CYXWIZ_TEST_API = 'http://127.0.0.1:3002/api'
+$env:CYXWIZ_TEST_EMAIL = '<account email>'
+$env:CYXWIZ_TEST_PASSWORD = '<account password>'
+$env:CYXWIZ_TEST_CENTRAL_SERVER = 'localhost:50051'
+$env:CYXWIZ_TEST_CENTRAL_JWT_SECRET = '<central server jwt.secret>'
+.	est_job_execution_service.exe "[e2e_signin]"
+```
+
 ## 6. Troubleshooting
 
 | Symptom | Cause and fix |
