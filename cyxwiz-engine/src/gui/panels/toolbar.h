@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../panel.h"
-#include "plot_window.h"
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
 #include "../../core/backend_pack_manager_model.h"
@@ -56,7 +55,6 @@ public:
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
     void SetSaveLayoutCallback(std::function<void()> callback) { save_layout_callback_ = callback; }
     void SetSaveProjectSettingsCallback(std::function<void()> callback) { save_project_settings_callback_ = callback; }
-    void SetTogglePlotTestControlCallback(std::function<void()> callback) { toggle_plot_test_control_callback_ = callback; }
     void SetConnectToServerCallback(std::function<void()> callback) { connect_to_server_callback_ = callback; }
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
@@ -411,7 +409,6 @@ private:
     std::function<void()> reset_layout_callback_;
     std::function<void()> save_layout_callback_;
     std::function<void()> save_project_settings_callback_;
-    std::function<void()> toggle_plot_test_control_callback_;
     std::function<void()> connect_to_server_callback_;
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;

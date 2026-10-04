@@ -255,7 +255,6 @@ bool ScriptingEngine::ResetSession(std::string* error_out) {
         return false;
     }
     matlab_aliases_initialized_ = false;
-    training_dashboard_registered_ = false;
     return true;
 }
 
@@ -989,9 +988,6 @@ ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
         return result;
     }
 
-    // Lazily register training dashboard on first script execution
-    EnsureTrainingDashboardRegistered();
-
     // If sandbox is enabled, use it
     if (sandbox_enabled_ && sandbox_) {
         auto sandbox_result = sandbox_->Execute(script);
@@ -1034,33 +1030,6 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
     }
 
     return result;
-}
-
-void ScriptingEngine::RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel) {
-    // Defer Python module import - importing cyxwiz_plotting at startup can segfault
-    // when stdin is not a terminal. The panel pointer is stored and registration
-    // happens lazily on first script execution that needs it.
-    training_plot_panel_ = panel;
-    spdlog::info("Training Dashboard panel stored for deferred registration");
-}
-
-void ScriptingEngine::EnsureTrainingDashboardRegistered() {
-    if (!training_plot_panel_ || training_dashboard_registered_) return;
-
-    try {
-        py::gil_scoped_acquire acquire;
-        py::module_ plotting_module = py::module_::import("cyxwiz_plotting");
-        py::object set_func = plotting_module.attr("set_training_plot_panel");
-        set_func(py::cast(training_plot_panel_, py::return_value_policy::reference));
-        training_dashboard_registered_ = true;
-        spdlog::info("Training Dashboard registered with Python successfully");
-    } catch (const py::error_already_set& e) {
-        spdlog::warn("Failed to register Training Dashboard with Python: {}", e.what());
-    } catch (const std::exception& e) {
-        spdlog::warn("Exception while registering Training Dashboard: {}", e.what());
-    } catch (...) {
-        spdlog::warn("Unknown error registering Training Dashboard with Python");
-    }
 }
 
 // ========== Async Execution Implementation ==========

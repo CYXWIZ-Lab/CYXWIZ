@@ -208,7 +208,7 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
-          pycyxwiz cyxwiz_plotting
+          pycyxwiz
 
       - name: Download pinned redistribution inputs
         shell: pwsh
@@ -454,7 +454,7 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
-          pycyxwiz cyxwiz_plotting
+          pycyxwiz
 
       - name: Normalize ArrayFire redistribution input
         run: |

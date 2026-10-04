@@ -8,6 +8,6 @@ plot window works is described in `docs/usage/plotting.md`.
 | `matplotlib_figures.py` | Line, scatter and histogram figures; `plt.show()` puts them in the Plot Output window |
 | `rl_metrics.py` | Episode reward/length and policy metrics reported with `pycyxwiz.rl_update_metric`; they appear in the RL Training Dashboard |
 
-The older examples for the `cyxwiz_plotting` module were removed: that
-module cannot open Engine windows (`show_plot` raises an error), and it is
-being replaced by an embedded plot API (TOFIX134, decision D3).
+The `cyxwiz_plotting` module and its examples were removed (TOFIX134,
+decision D3): it could not open Engine windows. A matplotlib-like API that
+opens Engine Plot windows replaces it (TOFIX134 P5).

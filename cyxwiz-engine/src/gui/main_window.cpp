@@ -43,7 +43,6 @@
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
 #include "panels/training_plot_panel.h"
-#include "panels/plot_test_control.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
@@ -62,7 +61,6 @@
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
-#include "panels/python_plot_window_registry.h"
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
@@ -617,7 +615,6 @@ MainWindow::MainWindow()
             }
         });
 
-    plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
@@ -864,7 +861,6 @@ MainWindow::MainWindow()
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
     // Registration is deferred - actual Python import happens on first script execution
     if (scripting_engine_) {
-        scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
     }
 
     // Connect Viewport to TrainingPlotPanel for real-time metrics display
@@ -1191,11 +1187,6 @@ MainWindow::MainWindow()
             });
     });
 
-    toolbar_->SetTogglePlotTestControlCallback([this]() {
-        if (plot_test_control_) {
-            plot_test_control_->Toggle();
-        }
-    });
 
     toolbar_->SetImportDatasetCallback([this]() {
         if (data_explorer_panel_) {
@@ -2757,10 +2748,6 @@ MainWindow::~MainWindow() {
     // probe results even when no training ran).
     cyxwiz::SavePlacementObservationCache();
 
-    // IMPORTANT: Destroy panels that use PlotManager/Python BEFORE scripting_engine_
-    // PlotWindow destructor calls PlotManager::DeletePlot() which may use Python
-    spdlog::info("~MainWindow: plot_test_control_ (before scripting_engine)");
-    plot_test_control_.reset();
     spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
     training_plot_panel_.reset();
 
@@ -2945,7 +2932,7 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: data_explorer_panel_");
     data_explorer_panel_.reset();
     // script_editor_ and console_ already reset with the scripting-engine panels.
-    // plot_test_control_, training_plot_panel_ already reset at the beginning
+    // training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
@@ -3248,7 +3235,6 @@ void MainWindow::Render() {
     // Render new panels
     TimedRender("asset browser", asset_browser_);
     TimedRender("training plot", training_plot_panel_);  // Now "Training Dashboard"
-    TimedRender("plot test control", plot_test_control_);
     TimedRender("script editor", script_editor_);
     TimedRender("table viewer", table_viewer_);
     TimedRender("data explorer", data_explorer_panel_);
@@ -3273,13 +3259,6 @@ void MainWindow::Render() {
     TimedRender("import dialog", import_dialog_);
     TimedRender("deployment dialog", deployment_dialog_);
     TimedRender("studio debugger", studio_debugger_panel_);
-
-    // Render Python-created plot windows (cyxwiz_plotting)
-    for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
-        if (plot_window) {
-            plot_window->Render();
-        }
-    }
 
     // Render Model Analysis panels (Phase 2)
     TimedRender("model summary", model_summary_panel_);
@@ -3725,7 +3704,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
 
     // Main panels - hide by default
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
-    if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (script_editor_) script_editor_->SetVisible(false);
     if (table_viewer_) table_viewer_->SetVisible(false);
     if (job_status_panel_) job_status_panel_->SetVisible(false);

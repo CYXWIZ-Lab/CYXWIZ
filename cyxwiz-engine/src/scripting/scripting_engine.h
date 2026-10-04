@@ -257,17 +257,11 @@ public:
     // Last message from a failed Python start, empty when none.
     std::string GetLastInitError() const;
 
-    // Register Training Dashboard with Python module (deferred - stores panel pointer)
-    void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
-    // Actually register with Python (called lazily when scripts run)
-    void EnsureTrainingDashboardRegistered();
 
 private:
     mutable std::mutex init_error_mutex_;
     std::string last_init_error_;
     std::string cached_python_version_;
-    cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
-    bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends
     std::unique_ptr<VariablesService> variables_;  // the same

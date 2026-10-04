@@ -217,7 +217,7 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
-          pycyxwiz cyxwiz_plotting
+          pycyxwiz
           -- -k 0
 
       - name: Normalize ArrayFire redistribution input

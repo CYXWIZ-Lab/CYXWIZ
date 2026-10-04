@@ -441,10 +441,6 @@ set(ENGINE_SOURCES
     src/gui/plot/column_picker.cpp
     src/core/plot/node_result_plan.cpp
     src/core/plot/plot_arrow_source.cpp
-    src/gui/panels/training_plot_panel_global.cpp
-    src/gui/panels/plot_window.cpp
-    src/gui/panels/python_plot_window_registry.cpp
-    src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_output_panel.cpp
     src/gui/panels/python_repl_session.cpp
     src/gui/panels/script_editor.cpp
@@ -648,17 +644,10 @@ set(ENGINE_SOURCES
     # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.cpp
     src/gui/data_studio/node_registry_builtin.cpp
-    # Plotting system
-    src/plotting/plot_dataset.cpp
-    src/plotting/plot_manager.cpp
-    src/plotting/test_data_generator.cpp
-    src/plotting/plot_3d_generator.cpp
-    src/plotting/backends/implot_backend.cpp
 )
 
 if(CYXWIZ_HAS_PYTHON)
     list(APPEND ENGINE_SOURCES
-        src/plotting/backends/matplotlib_backend.cpp
         src/scripting/scripting_engine.cpp
         src/scripting/language_service.cpp
         src/scripting/variables_service.cpp
@@ -666,7 +655,6 @@ if(CYXWIZ_HAS_PYTHON)
     )
 else()
     list(APPEND ENGINE_SOURCES
-        src/plotting/backends/matplotlib_backend_stub.cpp
         src/scripting/scripting_engine_stub.cpp
         src/scripting/language_service.cpp
         src/scripting/variables_service.cpp
@@ -794,9 +782,6 @@ set(ENGINE_HEADERS
     src/gui/panels/asset_browser.h
     src/gui/panels/training_dashboard.h
     src/gui/panels/training_plot_panel.h
-    src/gui/panels/plot_window.h
-    src/gui/panels/python_plot_window_registry.h
-    src/gui/panels/plot_test_control.h
     src/gui/panels/plot_output_panel.h
     src/gui/panels/python_repl_session.h
     src/gui/panels/script_editor.h
@@ -940,15 +925,6 @@ set(ENGINE_HEADERS
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.h
-    # Plotting system
-    src/plotting/plot_dataset.h
-    src/plotting/plot_manager.h
-    src/plotting/test_data_generator.h
-    src/plotting/plot_3d.h
-    src/plotting/plot_3d_generator.h
-    src/plotting/backends/plot_backend.h
-    src/plotting/backends/implot_backend.h
-    src/plotting/backends/matplotlib_backend.h
     # Transform/Augmentation system
     src/transforms/transform.h
     src/transforms/geometric.h
@@ -1225,98 +1201,9 @@ endif()
 # Python 3.12 or 3.13. Each project creates its own virtual environment in
 # <project>/python/.
 
-# ===== Python Bindings Module =====
+# ===== Python examples =====
 
 if(CYXWIZ_HAS_PYTHON)
-# Create Python module for plotting bindings
-pybind11_add_module(cyxwiz_plotting
-    python/plot_bindings.cpp
-    src/plotting/plot_manager.cpp
-    src/plotting/plot_dataset.cpp
-    src/plotting/plot_3d_generator.cpp
-    src/plotting/test_data_generator.cpp
-    src/plotting/backends/implot_backend.cpp
-    src/plotting/backends/matplotlib_backend.cpp
-    src/plotting/stb_image_impl.cpp
-    src/gui/panels/plot_window.cpp
-    src/gui/panels/plot_test_control.cpp
-    src/gui/panels/training_plot_panel.cpp
-    src/core/series_decimation.cpp
-    src/gui/plot/plot_style.cpp
-    src/core/plot/plot_model.cpp
-    src/core/plot/plot_scales.cpp
-    src/core/plot/plot_prepare.cpp
-    src/core/plot/plot_graph.cpp
-    src/core/plot/plot_image.cpp
-    src/core/plot/plot_presets.cpp
-    src/core/plot/plot_tree_model.cpp
-    src/core/plot/plot_layout.cpp
-    src/core/plot/world_map.cpp
-    src/core/plot/plot_export.cpp
-    src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_view3d.cpp
-    src/gui/plot/plot_view_graph.cpp
-    src/gui/ui_buttons.cpp
-    src/gui/ui_tokens.cpp
-    src/core/appearance_options.cpp
-    src/gui/panels/training_plot_panel_global.cpp
-    src/gui/panels/python_plot_window_registry.cpp
-)
-
-# Link the plotting module against necessary libraries
-target_link_libraries(cyxwiz_plotting PRIVATE
-    cyxwiz-implot3d
-    imgui::imgui
-    implot::implot
-    glad::glad
-    glfw
-    fmt::fmt
-    spdlog::spdlog
-    cyxwiz-backend
-)
-
-target_compile_definitions(cyxwiz_plotting PRIVATE CYXWIZ_PLOTTING_MODULE)
-
-# Include directories for the Python module
-target_include_directories(cyxwiz_plotting PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-# Set output directory for Python module
-set_target_properties(cyxwiz_plotting PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python"
-)
-
-# Platform-specific module settings
-if(WIN32)
-    # Windows: .pyd extension
-    set_target_properties(cyxwiz_plotting PROPERTIES
-        SUFFIX ".pyd"
-    )
-elseif(APPLE)
-    # macOS: .so extension
-    set_target_properties(cyxwiz_plotting PROPERTIES
-        SUFFIX ".so"
-    )
-else()
-    # Linux: .so extension (default)
-endif()
-
-# Install Python module
-install(TARGETS cyxwiz_plotting
-    LIBRARY DESTINATION lib/python/cyxwiz
-    RUNTIME DESTINATION lib/python/cyxwiz
-)
-
-# Copy cyxwiz_plotting Python module to engine directory after build
-add_custom_command(TARGET cyxwiz_plotting POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:cyxwiz_plotting>
-    $<TARGET_FILE_DIR:cyxwiz-engine>/cyxwiz_plotting$<TARGET_FILE_SUFFIX:cyxwiz_plotting>
-    COMMENT "Copying cyxwiz_plotting Python module..."
-)
-
 # Install Python examples
 install(DIRECTORY python/examples/
     DESTINATION share/cyxwiz/python/examples
@@ -1384,22 +1271,6 @@ set_target_properties(test_sandbox_timeout PROPERTIES
 )
 endif()
 
-# ===== Test: Matplotlib backend safety (TOFIX134 P0 item 2) =====
-if(CYXWIZ_HAS_PYTHON)
-add_executable(test_matplotlib_backend
-    tests/test_matplotlib_backend.cpp
-    src/plotting/backends/matplotlib_backend.cpp
-)
-target_include_directories(test_matplotlib_backend PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_matplotlib_backend PRIVATE pybind11::embed spdlog::spdlog fmt::fmt)
-if(WIN32)
-    target_compile_definitions(test_matplotlib_backend PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
-endif()
-set_target_properties(test_matplotlib_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-# Skips (passes) without matplotlib; set CYXWIZ_TEST_SITE_PACKAGES to run it fully.
-add_test(NAME matplotlib_backend_safety COMMAND test_matplotlib_backend)
-endif()
-
 # ===== Test: plot source from an Arrow table (TOFIX134 P2) =====
 add_executable(test_plot_arrow_source
     tests/test_plot_arrow_source.cpp
@@ -1422,24 +1293,6 @@ if(WIN32)
 endif()
 set_target_properties(test_plot_arrow_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME plot_arrow_source_contract COMMAND test_plot_arrow_source)
-
-# ===== Test: PlotManager type, config, unknown id (TOFIX134 P0 item 5) =====
-if(CYXWIZ_HAS_PYTHON)
-add_executable(test_plot_manager
-    tests/test_plot_manager.cpp
-    src/plotting/plot_manager.cpp
-    src/plotting/plot_dataset.cpp
-    src/plotting/backends/implot_backend.cpp
-    src/plotting/backends/matplotlib_backend.cpp
-)
-target_include_directories(test_plot_manager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_plot_manager PRIVATE imgui::imgui implot::implot pybind11::embed spdlog::spdlog fmt::fmt)
-if(WIN32)
-    target_compile_definitions(test_plot_manager PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
-endif()
-set_target_properties(test_plot_manager PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME plot_manager_contract COMMAND test_plot_manager)
-endif()
 
 # ===== Test: OpenCV Integration =====
 add_executable(test_opencv_integration
@@ -2965,7 +2818,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
-    src/plotting/stb_image_impl.cpp
+    tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
 
@@ -3060,7 +2913,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
-    src/plotting/stb_image_impl.cpp
+    tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
 
@@ -3156,7 +3009,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/core/csv_records.cpp
-    src/plotting/stb_image_impl.cpp
+    tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
 
@@ -3855,7 +3708,7 @@ target_link_libraries(test_graph_training_sequence_preflight PRIVATE
 )
 
 target_compile_definitions(test_graph_training_sequence_preflight PRIVATE
-    CYXWIZ_PLOTTING_MODULE
+    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 )
 
 if(WIN32)
@@ -3944,7 +3797,7 @@ target_link_libraries(test_text_gui_training_launch PRIVATE
 )
 
 target_compile_definitions(test_text_gui_training_launch PRIVATE
-    CYXWIZ_PLOTTING_MODULE
+    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 )
 
 if(WIN32)
@@ -5130,7 +4983,7 @@ add_executable(test_training_manager_session
 configure_training_executor_harness(test_training_manager_session)
 target_compile_definitions(test_training_manager_session PRIVATE
     CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-    CYXWIZ_PLOTTING_MODULE
+    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 )
 target_link_libraries(test_training_manager_session PRIVATE
     cyxwiz-implot3d
@@ -5849,7 +5702,7 @@ target_link_libraries(test_engine_node_parity PRIVATE
     implot::implot
 )
 target_compile_definitions(test_engine_node_parity PRIVATE
-    CYXWIZ_PLOTTING_MODULE
+    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )

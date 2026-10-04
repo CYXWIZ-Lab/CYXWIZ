@@ -7,7 +7,6 @@
 #include <set>
 #include "../panel.h"
 #include "../../network/p2p_client.h"
-#include "../../plotting/plot_manager.h"
 #include <imgui.h>
 #include <memory>
 #include <vector>

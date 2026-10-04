@@ -418,8 +418,8 @@ Metric names the window shows: `episode_reward`, `episode_length`,
 
 ## Not available yet
 
-- The `cyxwiz_plotting` Python module cannot open Engine windows;
-  `show_plot` raises an error saying so. Use matplotlib as above.
+- Opening Engine Plot windows from Python (a matplotlib-like `cyxwiz`
+  API) is being built (TOFIX134 P5); use matplotlib as above until then.
 - The plot entries in the canvas node search (Line Plot, Box Plot, Quiver
   Plot, ...) are placeholders; they are replaced by one Plot node whose
   window picks the plot type (TOFIX134 P2).

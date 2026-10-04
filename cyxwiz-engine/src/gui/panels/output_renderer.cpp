@@ -7,7 +7,7 @@
 #include <cstring>
 #include <fstream>
 
-// stb_image for PNG loading (implementation in plotting/stb_image_impl.cpp)
+// stb_image for PNG loading (the implementation is compiled in application.cpp)
 #include <stb_image.h>
 
 #ifdef _WIN32

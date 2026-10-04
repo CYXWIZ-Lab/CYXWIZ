@@ -1,7 +1,9 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
-#ifndef CYXWIZ_PLOTTING_MODULE
+// Test builds that draw the dashboard without the training system define
+// CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 #include "../../core/async_task_manager.h"
 #include "../../core/crash_run_recorder.h"
 #include "../../core/training_manager.h"
@@ -440,7 +442,7 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();
@@ -2233,7 +2235,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
     if (tasks.empty()) {
         return;
@@ -2682,7 +2684,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 }
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     // LatestTrace copies the whole trace (events, timings) and may read the
     // saved one from disk; it ran every frame with data_mutex_ held
     // (TOFIX134 P0 item 8). UI thread only.
@@ -3186,7 +3188,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     const DashColors c = CurrentDashColors();
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
     const bool training_paused = tm.IsPaused();
@@ -3275,7 +3277,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     const float right_edge = ImGui::GetWindowContentRegionMax().x;
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
                                row_top));
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     if (training_active) {
         if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
             if (training_paused) {
@@ -3524,7 +3526,7 @@ void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
 
 void TrainingPlotPanel::RecordPanelEvent(const std::string& action,
                                          const std::string& detail) const {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     CrashRunRecorder::Instance().MarkPanelEvent(action, detail);
 #else
     (void)action;

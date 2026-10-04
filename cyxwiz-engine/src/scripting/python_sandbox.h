@@ -83,8 +83,7 @@ public:
             "pyarrow.json",
 
             // CyxWiz modules
-            "pycyxwiz",
-            "cyxwiz_plotting"
+            "pycyxwiz"
         };
 
         // Blocked builtins (dangerous functions)

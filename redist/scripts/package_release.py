@@ -485,7 +485,7 @@ def copy_build_payload(
             continue
         copy_file(library, stage / library.name)
 
-    for pattern in ("*.pyd", "pycyxwiz*.so", "cyxwiz_plotting*.so", "*.dylib"):
+    for pattern in ("*.pyd", "pycyxwiz*.so", "*.dylib"):
         for binding in sorted(paths.build.glob(pattern)):
             if binding.is_file():
                 copy_file(binding, stage / binding.name)

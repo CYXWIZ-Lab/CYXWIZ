@@ -149,12 +149,6 @@ std::string ScriptingEngine::GetLastInitError() const {
     return "Python scripting is disabled in this Engine build.";
 }
 
-void ScriptingEngine::RegisterTrainingDashboard(
-    cyxwiz::TrainingPlotPanel* panel) {
-    training_plot_panel_ = panel;
-}
-
-void ScriptingEngine::EnsureTrainingDashboardRegistered() {}
 bool ScriptingEngine::IsSafeForNewCommand() const { return true; }
 
 }  // namespace scripting
