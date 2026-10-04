@@ -15,6 +15,7 @@
 
 #include <arrow/api.h>
 #include <imgui.h>
+#include <imgui_internal.h>  // GetActiveID
 #include <implot.h>
 
 #include <algorithm>
@@ -487,6 +488,10 @@ bool PlotWindow::DrawRows(float w) {
                 }
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(std::max(30.0f, w - col_w - op_w - remove_w - gap * 3));
+                // A value changed elsewhere (the Tree picker, a spec from the node)
+                // shows here unless the field is being typed in.
+                if (c.value != condition_values_[i].data() && ImGui::GetActiveID() != ImGui::GetID("##value"))
+                    std::snprintf(condition_values_[i].data(), condition_values_[i].size(), "%s", c.value.c_str());
                 if (ImGui::InputTextWithHint("##value", "value", condition_values_[i].data(), condition_values_[i].size())) {
                     c.value = condition_values_[i].data();
                     changed = true;
