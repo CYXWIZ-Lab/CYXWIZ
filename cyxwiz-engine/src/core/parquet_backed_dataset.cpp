@@ -416,6 +416,8 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         read_options.block_size = 64 * 1024 * 1024;
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
+        // Quoted values may span lines (free text, reviews): read them as one value.
+        parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(

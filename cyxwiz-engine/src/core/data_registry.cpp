@@ -1248,6 +1248,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         }
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
+        // Quoted values may span lines (free text, reviews): read them as one value.
+        parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(
