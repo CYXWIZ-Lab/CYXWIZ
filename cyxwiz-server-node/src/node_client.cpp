@@ -1,8 +1,11 @@
+#include "auth/token_refresh.h"
+#include "core/jwt_expiry.h"
 #include "node_client.h"
 #include "core/backend_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <chrono>
+#include <ctime>
 #include <thread>
 
 #ifdef _WIN32
@@ -372,10 +375,11 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
 }
 
 void NodeClient::AddAuthMetadata(grpc::ClientContext& context) {
-    if (!auth_token_.empty()) {
+    const std::string token = CurrentToken();
+    if (!token.empty()) {
         // Add Bearer token to authorization header
-        context.AddMetadata("authorization", "Bearer " + auth_token_);
-        spdlog::debug("Added auth token to gRPC request (token length: {})", auth_token_.length());
+        context.AddMetadata("authorization", "Bearer " + token);
+        spdlog::debug("Added auth token to gRPC request (token length: {})", token.length());
     } else {
         spdlog::warn("AddAuthMetadata called but auth_token_ is empty!");
     }
@@ -394,7 +398,7 @@ bool NodeClient::Register() {
     // Create registration request
     protocol::RegisterNodeRequest request;
     *request.mutable_info() = node_info;
-    request.set_authentication_token(auth_token_);  // JWT from user login
+    request.set_authentication_token(CurrentToken());  // JWT from user login
     request.set_public_key("");            // TODO: Implement crypto
 
     // Send registration request
@@ -503,7 +507,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
     // Create registration request
     protocol::RegisterNodeRequest request;
     *request.mutable_info() = node_info;
-    request.set_authentication_token(auth_token_);  // JWT from user login
+    request.set_authentication_token(CurrentToken());  // JWT from user login
     request.set_public_key("");            // TODO: Implement crypto
 
     // Send registration request
@@ -638,6 +642,29 @@ void NodeClient::SetActiveJobs(const std::vector<std::string>& job_ids) {
     active_jobs_ = job_ids;
 }
 
+bool NodeClient::RefreshAuthTokenIfDue() {
+    const std::string token = CurrentToken();
+    if (token.empty()) return false;
+    const long long now = static_cast<long long>(std::time(nullptr));
+    const long long left = cyxwiz::JwtExpiry(token) - now;
+    if (left >= cyxwiz::kJwtRefreshBeforeSeconds) return true;
+
+    auto& backend = core::BackendManager::Instance();
+    const std::string api = backend.IsInitialized() ? backend.GetConfig().auth_api_url
+                                                    : std::string("http://127.0.0.1:3002/api");
+    if (const auto fresh = auth::RefreshTokenWithApi(api, token)) {
+        SetAuthToken(*fresh);
+        spdlog::info("Sign-in token refreshed ({} min were left)", left / 60);
+        return true;
+    }
+    if (left <= 0) {
+        spdlog::error("Sign-in token expired and could not be refreshed: sign in again in the Server Node app");
+        if (auth_failed_callback_) auth_failed_callback_("Sign-in expired");
+        return false;
+    }
+    return true;  // still valid; try again on the next heartbeat
+}
+
 void NodeClient::HeartbeatLoop() {
     spdlog::debug("Heartbeat loop started");
 
@@ -645,6 +672,7 @@ void NodeClient::HeartbeatLoop() {
     int consecutive_failures = 0;
 
     while (!should_stop_heartbeat_) {
+        RefreshAuthTokenIfDue();
         bool heartbeat_success = SendHeartbeat();
 
         if (!heartbeat_success) {

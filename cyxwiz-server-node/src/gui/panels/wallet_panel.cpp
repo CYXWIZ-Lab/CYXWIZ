@@ -21,13 +21,9 @@ void WalletPanel::Render() {
     auto* state = GetState();
     auto& auth = auth::AuthManager::Instance();
 
-    // Get wallet address - prefer auth user's wallet, fallback to state
+    // The payout address from the node's settings (accounts have no wallet).
     std::string current_address;
-    if (auth.IsAuthenticated()) {
-        auto user_info = auth.GetUserInfo();
-        current_address = user_info.wallet_address;
-    }
-    if (current_address.empty() && state) {
+    if (state) {
         current_address = state->GetWalletAddress();
     }
 

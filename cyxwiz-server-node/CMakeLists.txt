@@ -61,6 +61,7 @@ set(SHARED_CORE_SOURCES
     src/core/metrics_storage.cpp
     src/core/device_pool.cpp
     src/api/api_key_manager.cpp
+    src/auth/token_refresh.cpp
 )
 
 # ========== IPC Sources ==========
@@ -415,6 +416,7 @@ if(CYXWIZ_BUILD_TESTS)
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        httplib::httplib
     )
 
     target_compile_definitions(test_job_execution_service PRIVATE

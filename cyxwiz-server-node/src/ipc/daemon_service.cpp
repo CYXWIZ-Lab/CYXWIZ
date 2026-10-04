@@ -857,8 +857,7 @@ grpc::Status DaemonServiceImpl::RetryConnection(
         return grpc::Status::OK;
     }
 
-    // TODO: Set JWT token on NodeClient for authentication
-    // node_client_->SetAuthToken(request->jwt_token());
+    node_client_->SetAuthToken(request->jwt_token());
 
     // Attempt registration
     spdlog::info("Retrying connection to Central Server...");

@@ -27,7 +27,6 @@ struct UserInfo {
     std::string email;
     std::string username;
     std::string name;
-    std::string wallet_address;
     std::string role;  // "user", "pro", "admin"
 };
 
@@ -98,10 +97,6 @@ public:
 
     // Login methods
     std::future<AuthResult> LoginWithEmail(const std::string& email, const std::string& password);
-    std::future<AuthResult> LoginWithWallet(const std::string& wallet_address, const std::string& signature);
-
-    // Request nonce for wallet login
-    std::future<std::string> RequestWalletNonce(const std::string& wallet_address);
 
     // Logout
     void Logout();
@@ -113,9 +108,9 @@ public:
     UserInfo GetUserInfo() const;
     AuthState GetState() const;
 
-    // Token refresh
+    // A fresh sign-in token from /api/auth/refresh (the daemon refreshes its
+    // own copy; this keeps the GUI's session current).
     bool RefreshJwtToken();
-    bool RefreshNodeToken();
 
     // Node registration via REST API
     std::future<NodeRegistrationResult> RegisterNodeWithApi(

@@ -15,6 +15,8 @@
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
+#include "core/jwt_expiry.h"
+#include <httplib.h>
 #include "core/job_admission.h"
 #include "../src/node_data_dir.h"
 #include "../src/node_doctor.h"
@@ -1349,7 +1351,7 @@ TEST_CASE("Central server ranks a registered node by measured throughput", "[.][
     auto reservations = cyxwiz::protocol::JobReservationService::NewStub(channel);
     cyxwiz::protocol::ReserveNodeRequest reserve;
     reserve.set_node_id(node_id);
-    reserve.set_user_wallet("central-live-test-wallet");
+    // The reserving user is the signed-in account (the token's subject).
     reserve.set_duration_minutes(10);
     cyxwiz::protocol::ReserveNodeResponse reserved;
     {
@@ -1379,6 +1381,165 @@ TEST_CASE("Central server ranks a registered node by measured throughput", "[.][
     client.Disconnect();
     cyxwiz::ClearRouteQualificationSnapshot();
     fs::remove_all(root, ec);
+}
+
+// TOFIX136 E2: one sign-in across the ecosystem. Needs the local stack
+// (deploy/local in the website repo) and a website account:
+//   CYXWIZ_TEST_API=http://127.0.0.1:3002/api  CYXWIZ_TEST_EMAIL  CYXWIZ_TEST_PASSWORD
+//   CYXWIZ_TEST_CENTRAL_SERVER=localhost:50051  CYXWIZ_TEST_CENTRAL_JWT_SECRET (mints
+//   the "other account" and the expired token)
+TEST_CASE("A website account signs in, registers a node and owns its reservation", "[.][e2e_signin]") {
+    const char* api = std::getenv("CYXWIZ_TEST_API");
+    const char* email = std::getenv("CYXWIZ_TEST_EMAIL");
+    const char* password = std::getenv("CYXWIZ_TEST_PASSWORD");
+    const char* address = std::getenv("CYXWIZ_TEST_CENTRAL_SERVER");
+    const char* secret = std::getenv("CYXWIZ_TEST_CENTRAL_JWT_SECRET");
+    if (!api || !email || !password || !address || !secret) {
+        SKIP("set CYXWIZ_TEST_API, _EMAIL, _PASSWORD, _CENTRAL_SERVER, _CENTRAL_JWT_SECRET");
+    }
+
+    // 1. Sign in through the web API, as the Engine and the node GUI do.
+    std::string server = api;
+    std::string base_path;
+    if (const auto scheme = server.find("://"); scheme != std::string::npos) {
+        const auto slash = server.find('/', scheme + 3);
+        if (slash != std::string::npos) {
+            base_path = server.substr(slash);
+            server = server.substr(0, slash);
+        }
+    }
+    httplib::Client http(server);
+    const nlohmann::json body = {{"email", email}, {"password", password}};
+    auto login = http.Post(base_path + "/auth/login", body.dump(), "application/json");
+    REQUIRE(login);
+    REQUIRE(login->status == 200);
+    const auto signed_in = nlohmann::json::parse(login->body);
+    const std::string token = signed_in["token"].get<std::string>();
+    const std::string user_id = signed_in["user"]["id"].get<std::string>();
+    CHECK_FALSE(signed_in["user"].contains("cyxWallet"));
+    auto me = http.Get(base_path + "/users/me", {{"Authorization", "Bearer " + token}});
+    REQUIRE(me);
+    CHECK(me->status == 200);
+    CHECK(nlohmann::json::parse(me->body)["id"] == user_id);
+    CHECK(cyxwiz::JwtExpiry(token) > 0);
+
+    // 2. A node registers under that account; without a token it is refused.
+    cyxwiz::servernode::NodeClient anonymous(address, "e2e-signin-anonymous-node");
+    CHECK_FALSE(anonymous.Register());
+    cyxwiz::servernode::NodeClient node(address, "e2e-signin-node");
+    node.SetAuthToken(token);
+    REQUIRE(node.Register());
+    const std::string node_id = node.GetNodeId();
+    REQUIRE_FALSE(node_id.empty());
+
+    using jwt_traits = jwt::traits::nlohmann_json;
+    const auto now = std::chrono::system_clock::now();
+    const std::string other = jwt::create<jwt_traits>()
+                                  .set_subject("e2e-other-account")
+                                  .set_issued_at(now)
+                                  .set_expires_at(now + std::chrono::hours(1))
+                                  .sign(jwt::algorithm::hs256{secret});
+    const std::string expired = jwt::create<jwt_traits>()
+                                    .set_subject(user_id)
+                                    .set_issued_at(now - std::chrono::hours(2))
+                                    .set_expires_at(now - std::chrono::hours(1))
+                                    .sign(jwt::algorithm::hs256{secret});
+    auto channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+    auto reservations = cyxwiz::protocol::JobReservationService::NewStub(channel);
+    const auto as = [](grpc::ClientContext& context, const std::string& bearer) {
+        context.AddMetadata("authorization", "Bearer " + bearer);
+    };
+
+    // 3. An expired token is refused; the signed-in account reserves.
+    cyxwiz::protocol::ReserveNodeRequest reserve;
+    reserve.set_node_id(node_id);
+    reserve.set_duration_minutes(10);
+    {
+        cyxwiz::protocol::ReserveNodeResponse refused;
+        grpc::ClientContext context;
+        as(context, expired);
+        CHECK(reservations->ReserveNode(&context, reserve, &refused).error_code() ==
+              grpc::StatusCode::UNAUTHENTICATED);
+    }
+    cyxwiz::protocol::ReserveNodeResponse reserved;
+    {
+        grpc::ClientContext context;
+        as(context, token);
+        const auto status = reservations->ReserveNode(&context, reserve, &reserved);
+        INFO(status.error_message() << " / " << reserved.error().message());
+        REQUIRE(status.ok());
+    }
+    const std::string reservation_id = reserved.reservation_id();
+    REQUIRE_FALSE(reservation_id.empty());
+
+    // 4. It is the account's own: listed for it, not for another account.
+    const auto active_for = [&](const std::string& bearer) {
+        cyxwiz::protocol::GetActiveReservationsRequest request;
+        cyxwiz::protocol::GetActiveReservationsResponse response;
+        grpc::ClientContext context;
+        as(context, bearer);
+        REQUIRE(reservations->GetActiveReservations(&context, request, &response).ok());
+        for (const auto& r : response.reservations()) {
+            if (r.reservation_id() == reservation_id) return true;
+        }
+        return false;
+    };
+    CHECK(active_for(token));
+    CHECK_FALSE(active_for(other));
+
+    // 5. Another account cannot extend it, reconnect to it or end it.
+    {
+        cyxwiz::protocol::ExtendReservationRequest request;
+        request.set_reservation_id(reservation_id);
+        request.set_additional_minutes(5);
+        cyxwiz::protocol::ExtendReservationResponse response;
+        grpc::ClientContext context;
+        as(context, other);
+        CHECK(reservations->ExtendReservation(&context, request, &response).error_code() ==
+              grpc::StatusCode::PERMISSION_DENIED);
+    }
+    {
+        cyxwiz::protocol::GetReconnectionTokenRequest request;
+        request.set_reservation_id(reservation_id);
+        cyxwiz::protocol::GetReconnectionTokenResponse response;
+        grpc::ClientContext context;
+        as(context, other);
+        const auto status = reservations->GetReconnectionToken(&context, request, &response);
+        CHECK((!status.ok() || response.p2p_auth_token().empty()));
+    }
+    {
+        cyxwiz::protocol::ReleaseReservationRequest request;
+        request.set_reservation_id(reservation_id);
+        cyxwiz::protocol::ReleaseReservationResponse response;
+        grpc::ClientContext context;
+        as(context, other);
+        CHECK(reservations->ReleaseReservation(&context, request, &response).error_code() ==
+              grpc::StatusCode::PERMISSION_DENIED);
+    }
+
+    // 6. The owner extends it (a fresh P2P token naming the new end) and ends it.
+    {
+        cyxwiz::protocol::ExtendReservationRequest request;
+        request.set_reservation_id(reservation_id);
+        request.set_additional_minutes(5);
+        cyxwiz::protocol::ExtendReservationResponse response;
+        grpc::ClientContext context;
+        as(context, token);
+        REQUIRE(reservations->ExtendReservation(&context, request, &response).ok());
+        CHECK(response.status() == cyxwiz::protocol::STATUS_SUCCESS);
+        CHECK_FALSE(response.p2p_auth_token().empty());
+    }
+    {
+        cyxwiz::protocol::ReleaseReservationRequest request;
+        request.set_reservation_id(reservation_id);
+        cyxwiz::protocol::ReleaseReservationResponse response;
+        grpc::ClientContext context;
+        as(context, token);
+        REQUIRE(reservations->ReleaseReservation(&context, request, &response).ok());
+        CHECK(response.status() == cyxwiz::protocol::STATUS_SUCCESS);
+    }
+    CHECK_FALSE(active_for(token));
+    node.Disconnect();
 }
 
 TEST_CASE("Admission refuses jobs the node cannot run", "[admission]") {

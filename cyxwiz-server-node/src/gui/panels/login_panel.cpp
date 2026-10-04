@@ -684,19 +684,8 @@ void LoginPanel::RenderRegisterSection() {
 }
 
 void LoginPanel::RenderAlternativeOptions() {
-    float content_width = kCardWidth - kCardPadding * 2;
-    float button_width = (content_width - kSpacingMedium) / 2.0f;
-
-    // Wallet login button
-    if (StyledButton(ICON_FA_WALLET " Wallet", ImVec2(button_width, 36),
-                     kSecondaryColor, kSecondaryHover, ImVec4(0.45f, 0.25f, 0.65f, 1.0f))) {
-        error_message_ = "Wallet login coming soon";
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Connect with Solana wallet");
-    }
-
-    ImGui::SameLine(0, kSpacingMedium);
+    // Sign-in is with the CyxWiz account only (TOFIX136: wallets removed).
+    float button_width = kCardWidth - kCardPadding * 2;
 
     // Offline mode button - use amber/orange color to stand out
     ImVec4 offline_color = ImVec4(0.85f, 0.55f, 0.15f, 1.0f);  // Amber/orange
@@ -723,14 +712,6 @@ void LoginPanel::RenderLoggedInState() {
     ImGui::Text("%s Logged in as:", ICON_FA_USER);
     ImGui::SameLine();
     ImGui::TextColored(kSuccessColor, "%s", GetUserDisplayName().c_str());
-
-    if (!user.wallet_address.empty()) {
-        ImGui::Text("%s Wallet:", ICON_FA_WALLET);
-        ImGui::SameLine();
-        std::string short_addr = user.wallet_address.substr(0, 6) + "..." +
-                                 user.wallet_address.substr(user.wallet_address.length() - 4);
-        ImGui::TextColored(kTextMuted, "%s", short_addr.c_str());
-    }
 
     ImGui::Spacing();
 
