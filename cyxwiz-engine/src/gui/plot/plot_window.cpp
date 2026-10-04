@@ -314,6 +314,9 @@ void PlotWindow::Render() {
     view_.DrawOwnWindow(vo);
     if (!visible) return;
     ImGui::SetNextWindowSize(ImVec2(1200, 720), ImGuiCond_FirstUseEver);
+    // Room for the type list, the plot and the settings: the window id follows
+    // the node id, so a small size saved for another graph's node would carry over.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(960, 560), ImVec2(FLT_MAX, FLT_MAX));
     const std::string title = "Plot" + (source_name_.empty() ? std::string() : " \xC2\xB7 " + source_name_) + "###" + id_;
     if (!ImGui::Begin(title.c_str(), &visible)) {
         ImGui::End();
