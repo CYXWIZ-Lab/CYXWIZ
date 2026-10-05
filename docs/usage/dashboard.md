@@ -67,6 +67,13 @@ whole word: "sleep" does not keep "sleeping"); click a length bin to keep
 texts of that many words; the other widgets and the KPIs follow. A widget's
 settings choose what it shows, the text column and the class column.
 
+The words are split once per text column, in the background ("Dashboard:
+words of <column>" in Task View; the text cards wait for it), and saved in
+the project's `cache/dashboard_words` folder. Every card and filter reads
+them, and a reopened dashboard loads them instead of splitting again; a
+changed source file (new size or time) splits again. Deleting the folder is
+safe.
+
 Example: `p3_text.cyxgraph` (test project): the mental-health statements
 (53,043 texts, 7 classes) show a median of 62 words and a vocabulary of
 60,171 words; clicking "feel" keeps 15,335 texts.
@@ -89,6 +96,10 @@ way training does, in the background; Task View shows it):
 
 The figures are exact (read from the matrix, not sampled). A Plot node
 cannot draw sparse features and says to connect a Dashboard.
+
+The matrix comes from the same cache training uses (the project's
+materialization cache): built the first time, then loaded, so a reopened
+dashboard and a training run on the same graph share it.
 
 Example: TF-IDF (2,000 features) on the statements: 1,839,166 non-zero
 values, density 1.73%, 15.1 MB.
