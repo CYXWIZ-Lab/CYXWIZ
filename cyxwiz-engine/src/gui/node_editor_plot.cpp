@@ -375,8 +375,11 @@ void NodeEditor::RenderDashboardWindows() {
         if (has_data) {
             window->SetData(st.dataset_name, node->name + " \xC2\xB7 " + st.feeder_name);
         } else {
+            // The header banner already gives the reason when not available or
+            // failed (it was shown twice); the body then only names the state.
             const auto [line1, line2] = StatusLines(st, cyxwiz::plot::PlotSpec{});
-            window->ClearData(line1 + ". " + line2);
+            const bool banner = st.state == State::Unavailable || st.state == State::Failed;
+            window->ClearData(banner ? line1 + "." : line1 + ". " + line2);
         }
         window->Render();
         ++it;
