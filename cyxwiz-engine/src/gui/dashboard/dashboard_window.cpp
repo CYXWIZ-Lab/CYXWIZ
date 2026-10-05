@@ -5,6 +5,8 @@
 #include "../../core/column_role_store.h"
 #include "../../core/data_registry.h"
 #include "../../core/dashboard/sparse_summary.h"
+#include "../../core/dashboard/text_words.h"
+#include "../../core/project_manager.h"
 #include "../../core/dataset_catalog.h"
 #include "../../core/session_query_service.h"
 #include "../icons.h"
@@ -125,6 +127,8 @@ void DashboardWindow::SetData(const std::string& dataset_name, const std::string
         sparse_views_.clear();
         sparse_dirty_ = true;
         sparse_error_.clear();
+        words_started_.clear();
+        words_generation_ = ~0ull;
     }
 }
 
@@ -158,6 +162,45 @@ void DashboardWindow::FinishExport() {
 
 void DashboardWindow::ClearData(const std::string& message) {
     message_ = message;
+}
+
+void DashboardWindow::EnsureWords() {
+    const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
+    if (!entry) return;
+    if (entry->generation != words_generation_) {  // new data: its words again
+        words_generation_ = entry->generation;
+        words_started_.clear();
+    }
+    for (const auto& field : DashboardSession::TextFields(spec_)) {
+        if (!words_started_.insert(field).second) continue;
+        session_.SetWordsTable(field, std::string());  // its widgets wait for the words
+        const std::string key = WordsCacheKey(entry->source_path, dataset_, entry->generation, field);
+        const std::string root = ProjectManager::Instance().GetProjectRoot();
+        const std::filesystem::path dir = root.empty() ? std::filesystem::temp_directory_path() / "cyxwiz" / "dashboard_words"
+                                                       : std::filesystem::path(root) / "cache" / "dashboard_words";
+        auto result = std::make_shared<WordsTable>();
+        const std::string table = dataset_;
+        std::weak_ptr<int> alive = alive_;
+        AsyncTaskManager::Instance().RunAsync(
+            "Dashboard: words of " + field,
+            [table, field, key, dir, result](LambdaTask&) {
+                *result = EnsureWordsTable(table, field, key, dir, [](const QueryRequest& r) { return SessionQueryService::Instance().RunNow(r); });
+            },
+            nullptr,
+            [this, alive, result, field](bool, const std::string&) {
+                if (alive.expired()) return;
+                if (!result->error.empty()) {
+                    spdlog::warn("Dashboard: the words of '{}' were not saved ({}); each text widget splits them", field, result->error);
+                    session_.ForgetWords(field);
+                    return;
+                }
+                SessionQueryService::Instance().SetSideTable(result->name, result->path, result->rows);
+                session_.SetWordsTable(field, result->name);
+                spdlog::info("Dashboard: words of '{}' {} ({} rows, {})", field, result->loaded ? "loaded" : "split and saved", result->rows,
+                             result->path);
+            },
+            alive_);
+    }
 }
 
 void DashboardWindow::EnsureProfile() {
@@ -293,6 +336,7 @@ void DashboardWindow::Render() {
             roles_at_ = ImGui::GetTime();
             RebuildContract();
         }
+        EnsureWords();
         session_.Poll(spec_, contract_, *profile_);
         SaveIfChanged();  // known types learned while binding
     }

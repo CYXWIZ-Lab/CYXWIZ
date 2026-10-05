@@ -64,6 +64,7 @@ void DashboardSession::SetDataset(const std::string& catalog_name) {
     results_.clear();
     cache_.clear();
     strip_ = {};
+    words_tables_.clear();
     dataset_ = catalog_name;
     generation_ = 0;
 }
@@ -114,7 +115,9 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
             }
             continue;
         }
-        const std::string fp = Fingerprint(dataset_, generation_, epoch_, w, spec.filters);
+        // Its text column's words are being split once: wait for them (not split here too).
+        if (WordsPending(w)) continue;
+        const std::string fp = Fingerprint(dataset_ + "|" + WordsFor(w), generation_, epoch_, w, spec.filters);
         if (r.fingerprint == fp && r.state != WidgetResult::State::Unbound) continue;
         auto run = running_.find(w.id);
         if (run != running_.end() && run->second.fingerprint == fp) continue;
@@ -156,9 +159,38 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
     }
 }
 
+std::string DashboardSession::WordsFor(const WidgetSpec& w) const {
+    const bool text_kpi = w.type == WidgetType::Kpi &&
+                          (w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts);
+    const std::string field = w.IsText() ? w.text_field : text_kpi ? w.field : std::string();
+    auto it = field.empty() ? words_tables_.end() : words_tables_.find(field);
+    return it == words_tables_.end() ? std::string() : it->second;
+}
+
+void DashboardSession::SetWordsTable(const std::string& text_field, const std::string& table_name) { words_tables_[text_field] = table_name; }
+
+bool DashboardSession::WordsPending(const WidgetSpec& w) const {
+    const bool text_kpi = w.type == WidgetType::Kpi &&
+                          (w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts);
+    const std::string field = w.IsText() ? w.text_field : text_kpi ? w.field : std::string();
+    auto it = field.empty() ? words_tables_.end() : words_tables_.find(field);
+    return it != words_tables_.end() && it->second.empty();
+}
+
+std::vector<std::string> DashboardSession::TextFields(const DashboardSpec& spec) {
+    std::vector<std::string> out;
+    for (const auto& w : spec.widgets) {
+        const bool text_kpi = w.type == WidgetType::Kpi &&
+                              (w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts);
+        const std::string f = w.IsText() ? w.text_field : text_kpi ? w.field : std::string();
+        if (!f.empty() && std::find(out.begin(), out.end(), f) == out.end()) out.push_back(f);
+    }
+    return out;
+}
+
 QueryRequest DashboardSession::RequestFor(const WidgetSpec& w, const DatasetProfile& profile, const FilterState& filters,
                                          const std::string& table) const {
-    if (w.type == WidgetType::Kpi) return KpiQuery(w, table, filters);
+    if (w.type == WidgetType::Kpi) return KpiQuery(w, table, filters, WordsFor(w));
     if (w.type == WidgetType::Missing) {
         std::vector<std::string> cols;
         for (const auto& c : profile.columns) cols.push_back(c.facts.name);
@@ -168,7 +200,7 @@ QueryRequest DashboardSession::RequestFor(const WidgetSpec& w, const DatasetProf
         return MissingQuery(w, table, filters, cols, texts);
     }
     // Plots read a reproducible sample only when the table is bigger than the cap.
-    return WidgetQuery(w, table, filters, w.type == WidgetType::Plot && profile.rows > kRowCap ? kRowCap : 0);
+    return WidgetQuery(w, table, filters, w.type == WidgetType::Plot && profile.rows > kRowCap ? kRowCap : 0, WordsFor(w));
 }
 
 void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile, const std::string& fingerprint, const FilterState& filters) {
@@ -185,7 +217,8 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
     std::vector<QueryParam> unused;
     const bool with_all = w.type == WidgetType::Plot && (w.plot.kind == plot::Kind::Bar || w.plot.kind == plot::Kind::Histogram) &&
                           !filters.WhereFor(w.id, unused).empty();
-    const QueryRequest all_request = with_all ? WidgetQuery(w, dataset_, FilterState{}, profile.rows > kRowCap ? kRowCap : 0) : QueryRequest{};
+    const QueryRequest all_request =
+        with_all ? WidgetQuery(w, dataset_, FilterState{}, profile.rows > kRowCap ? kRowCap : 0, WordsFor(w)) : QueryRequest{};
     // The row count decides whether the plot is drawn from a sample.
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
     const bool sampled = w.type == WidgetType::Plot && entry && entry->rows > kRowCap;

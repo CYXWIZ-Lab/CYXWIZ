@@ -166,6 +166,7 @@ set(ENGINE_SOURCES
     src/core/dashboard/stop_words.cpp
     src/core/dashboard/sparse_summary.cpp
     src/core/dashboard/dashboard_runtime.cpp
+    src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
@@ -1422,6 +1423,7 @@ add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
 add_executable(test_dashboard_runtime
     tests/test_dashboard_runtime.cpp
     src/core/dashboard/dashboard_runtime.cpp
+    src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
     src/core/dashboard/sparse_summary.cpp

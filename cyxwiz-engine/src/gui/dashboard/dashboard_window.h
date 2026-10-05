@@ -81,6 +81,10 @@ private:
     void FinishExport();
     // Sparse features (TOFIX134 P3, board 19; dashboard_sparse.cpp): no SQL
     // profile; a summary of the matrix, a label filter, fixed cards.
+    // Text columns' words, split once and saved (core/dashboard/text_words.h).
+    void EnsureWords();
+    std::set<std::string> words_started_;
+    uint64_t words_generation_ = ~0ull;
     void StartSparseSummary();
     void DrawSparse();
     bool sparse_ = false;

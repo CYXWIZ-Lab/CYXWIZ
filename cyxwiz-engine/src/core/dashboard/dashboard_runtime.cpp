@@ -144,20 +144,24 @@ std::string FilteredRowsSql(const std::string& table, const FilterState& filters
     return InlineParams("SELECT * FROM " + Quote(table) + Where(where), params);
 }
 
-QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap) {
+QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap,
+                             const std::string& words_table) {
     QueryRequest r;
-    r.inputs = {table};
     r.label = "Dashboard text widget";
-    const std::string col = Quote(w.text_field), tokens = TokensSql(col);
+    // The words split once when saved (every row with its words), else split here.
+    const bool saved = !words_table.empty();
+    const TokenColumns tc{w.text_field, "cyxwiz_words", "cyxwiz_word_count"};
+    r.inputs = {saved ? words_table : table};
+    const std::string col = Quote(w.text_field), tokens = saved ? SavedTokensSql("cyxwiz_words") : TokensSql(col);
     // The rows under the other widgets' filters (a reproducible sample beyond row_cap).
-    std::string rows = "SELECT * FROM " + Quote(table) + Where(filters.WhereFor(w.id, r.params));
+    std::string rows = "SELECT * FROM " + Quote(saved ? words_table : table) + Where(filters.WhereFor(w.id, r.params, saved ? &tc : nullptr));
     if (row_cap > 0) rows = "SELECT * FROM (" + rows + ") AS cyxwiz_rows USING SAMPLE reservoir(" + std::to_string(row_cap) + " ROWS) REPEATABLE (42)";
     const std::string with = "WITH cyxwiz_text AS (" + rows + ")";
     switch (w.text_view) {
         case TextView::None:
         case TextView::Length:
             // The longest 1% of texts in the last bin, so a few very long ones do not squash the rest.
-            r.sql = with + ", l AS (SELECT len(" + tokens + ") AS n FROM cyxwiz_text)" +
+            r.sql = with + ", l AS (SELECT " + (saved ? std::string("cyxwiz_word_count") : "len(" + tokens + ")") + " AS n FROM cyxwiz_text)" +
                     " SELECT CAST(least(n, (SELECT ceil(quantile_cont(n, 0.99)) FROM l)) AS DOUBLE) AS words FROM l";
             break;
         case TextView::Words:
@@ -186,8 +190,9 @@ QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, cons
     return r;
 }
 
-QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap) {
-    if (w.IsText()) return TextWidgetQuery(w, table, filters, row_cap);
+QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap,
+                         const std::string& words_table) {
+    if (w.IsText()) return TextWidgetQuery(w, table, filters, row_cap, words_table);
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard widget";
@@ -260,18 +265,23 @@ QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const F
     return r;
 }
 
-QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters) {
+QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::string& words_table) {
     QueryRequest r;
-    r.inputs = {table};
     r.label = "Dashboard KPI";
+    // A text measure reads the words split once when they are saved.
+    const bool text_measure = w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts;
+    const bool saved = text_measure && !words_table.empty();
+    const std::string from_table = saved ? words_table : table;
+    r.inputs = {from_table};
+    const TokenColumns tc{w.field, "cyxwiz_words", "cyxwiz_word_count"};
     const std::string col = w.field.empty() ? std::string("NULL") : Quote(w.field);
-    const std::string m = MeasureSql(w.measure, col);
-    const std::string cond = filters.WhereFor(w.id, r.params);
+    const std::string m = saved && w.measure == Measure::MedianWords ? std::string("CAST(median(cyxwiz_word_count) AS DOUBLE)") : MeasureSql(w.measure, col);
+    const std::string cond = filters.WhereFor(w.id, r.params, saved ? &tc : nullptr);
     // The vocabulary counts the distinct words of the rows.
     const auto from = [&](const std::string& where) {
         if (w.measure == Measure::Vocabulary)
-            return "(SELECT unnest(" + TokensSql(col) + ") AS word FROM " + Quote(table) + where + ")";
-        return Quote(table) + where;
+            return "(SELECT unnest(" + (saved ? SavedTokensSql("cyxwiz_words") : TokensSql(col)) + ") AS word FROM " + Quote(from_table) + where + ")";
+        return Quote(from_table) + where;
     };
     r.sql = "SELECT (SELECT " + m + " FROM " + from(Where(cond)) + ") AS value, (SELECT " + m + " FROM " + from(std::string()) + ") AS all_rows";
     return r;

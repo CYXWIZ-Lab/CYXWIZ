@@ -34,17 +34,21 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
 
 // The SQL for a plot or table widget: its columns, the filters of the other
 // widgets; `row_cap` 0: all rows (else a reproducible sample of that many).
-QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0);
+QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0,
+                         const std::string& words_table = {});
 // A text widget's query (TOFIX134 P3 text): lengths, top words or phrases
 // (common words left out unless kept), or each top word's share of each
 // class's texts, over the rows under the other widgets' filters.
-QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0);
+// `words_table`: the text column's words split once (text_words.h; empty:
+// split here).
+QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0,
+                             const std::string& words_table = {});
 // Missing values per column (nulls plus the texts marked as missing), under
 // the other widgets' filters: a row with "rows" and one count per column.
 QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::vector<std::string>& columns,
                           const std::map<std::string, std::vector<std::string>>& missing_text);
 // A KPI: value (filtered) and all (unfiltered) in one row.
-QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters);
+QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::string& words_table = {});
 // The dashboard's own KPI strip: rows (filtered and all), missing cells
 // (filtered), and the target's mean or most frequent value (filtered and all).
 QueryRequest StripQuery(const std::string& table, const FilterState& filters, const DatasetProfile& profile, const std::string& target,

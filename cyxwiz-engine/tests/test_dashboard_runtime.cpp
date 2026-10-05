@@ -2,6 +2,7 @@
 // widget / KPI / summary SQL run through the real engine, the automatic layout.
 
 #include "../src/core/dashboard/dashboard_runtime.h"
+#include "../src/core/dashboard/text_words.h"
 
 #include <arrow/api.h>
 
@@ -368,6 +369,38 @@ int main() {
             Check(bw && bw->text_view == TextView::Words && bw->text_field == "statement" && bw->plot.bar_horizontal &&
                       back.filters.predicates.size() == 1 && back.filters.predicates[0].op == FilterPredicate::Op::Contains,
                   "text widgets and the word filter round trip");
+
+            // The words split once and saved (owner 2026-10-05): split, then loaded; the
+            // text widgets, KPIs and word filters read them and agree with splitting here.
+            const fs::path words_dir = root / "words";
+            const std::string key = WordsCacheKey("", "Notes", 1, "statement");
+            WordsTable wt = EnsureWordsTable("Notes", "statement", key, words_dir, run);
+            Check(wt.error.empty() && !wt.loaded && wt.rows == 11 && fs::exists(wt.path), "words split and saved: " + wt.error);
+            wt = EnsureWordsTable("Notes", "statement", key, words_dir, run);
+            Check(wt.error.empty() && wt.loaded && wt.rows == 11, "words loaded the second time");
+            Check(WordsCacheKey("", "Notes", 2, "statement") != key, "new data, new key");
+            Check(engine.AttachParquet(wt.name, 1, wt.path, wt.rows, &error), "attach the words: " + error);
+            tr = engine.Run(TextWidgetQuery(*phrases, "Notes", FilterState{}, 0, wt.name));
+            Check(tr.ok && word_at(tr, 0) == "feel tired" && D(tr, "count") == 4, "phrases from the saved words: " + tr.error);
+            tr = engine.Run(TextWidgetQuery(*length, "Notes", FilterState{}, 0, wt.name));
+            Check(tr.ok && tr.table->num_rows() == 11, "lengths from the saved words: " + tr.error);
+            k = tw[1];
+            QueryResult direct = engine.Run(KpiQuery(k, "Notes", FilterState{}));
+            tr = engine.Run(KpiQuery(k, "Notes", FilterState{}, wt.name));
+            Check(tr.ok && direct.ok && D(tr, "value") == D(direct, "value"), "vocabulary from the saved words: " + tr.error);
+            k = tw[0];
+            direct = engine.Run(KpiQuery(k, "Notes", FilterState{}));
+            tr = engine.Run(KpiQuery(k, "Notes", FilterState{}, wt.name));
+            Check(tr.ok && D(tr, "value") == D(direct, "value"), "median words from the saved words: " + tr.error);
+            FilterState sleep;
+            FilterPredicate sp;
+            sp.field = "statement";
+            sp.op = FilterPredicate::Op::Contains;
+            sp.values = {"sleep"};
+            sp.source_widget = "elsewhere";
+            sleep.Set(sp);
+            tr = engine.Run(TextWidgetQuery(*length, "Notes", sleep, 0, wt.name));
+            Check(tr.ok && tr.table->num_rows() == 3, "a word filter over the saved words: " + tr.error);
         }
     }
     fs::remove_all(root, ec);

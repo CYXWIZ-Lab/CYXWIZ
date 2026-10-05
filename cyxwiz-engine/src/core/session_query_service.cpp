@@ -79,6 +79,12 @@ bool SessionQueryService::AttachInputs(const QueryRequest& request, std::string*
         catalog_names.push_back(e.name);
         if (!e.label.empty()) catalog_names.push_back(e.label);
     }
+    std::map<std::string, SideTable> side;
+    {
+        std::lock_guard<std::mutex> lock(side_mutex_);
+        side = side_tables_;
+    }
+    for (const auto& [name, t] : side) catalog_names.push_back(name);  // kept attached
     // Copies of datasets that are gone are dropped.
     for (const auto& name : engine_->Attached())
         if (std::find(catalog_names.begin(), catalog_names.end(), name) == catalog_names.end()) engine_->Detach(name);
@@ -111,7 +117,19 @@ bool SessionQueryService::AttachInputs(const QueryRequest& request, std::string*
             }
         }
     }
+    // Side tables the request names or lists.
+    for (const auto& [name, t] : side) {
+        const bool listed = std::find(request.inputs.begin(), request.inputs.end(), name) != request.inputs.end();
+        if (!listed && !Mentions(sql, Lower(name))) continue;
+        const uint64_t version = std::hash<std::string>{}(t.path) ^ static_cast<uint64_t>(t.rows);
+        if (!engine_->AttachParquet(name, version, t.path, t.rows, error)) return false;
+    }
     return true;
+}
+
+void SessionQueryService::SetSideTable(const std::string& name, const std::string& parquet_path, size_t rows) {
+    std::lock_guard<std::mutex> lock(side_mutex_);
+    side_tables_[name] = SideTable{parquet_path, rows};
 }
 
 QueryResult SessionQueryService::RunNow(const QueryRequest& request) {

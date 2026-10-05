@@ -64,6 +64,13 @@ public:
     QueryRequest RequestFor(const WidgetSpec& w, const DatasetProfile& profile, const FilterState& filters, const std::string& table) const;
 
     static constexpr size_t kRowCap = 1000000;  // plot widgets sample beyond this many rows
+    // A text column's words, split once (text_words.h): its text widgets and
+    // KPIs read this side table (their results are made again when it comes).
+    // An empty name: being split (its widgets wait); a failure clears it with ForgetWords.
+    void SetWordsTable(const std::string& text_field, const std::string& table_name);
+    void ForgetWords(const std::string& text_field) { words_tables_.erase(text_field); }
+    // The text columns the widgets read (words wanted for them).
+    static std::vector<std::string> TextFields(const DashboardSpec& spec);
 
 private:
     struct Running {
@@ -75,6 +82,9 @@ private:
     void Remember(const WidgetResult& r);
 
     std::string dataset_;
+    std::map<std::string, std::string> words_tables_;  // text column -> its words table
+    std::string WordsFor(const WidgetSpec& w) const;
+    bool WordsPending(const WidgetSpec& w) const;
     uint64_t generation_ = 0;
     uint64_t epoch_ = 0;                              // RefreshAll bumps it
     std::map<std::string, WidgetResult> results_;

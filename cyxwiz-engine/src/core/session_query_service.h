@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -40,10 +41,20 @@ public:
     // Runs on the calling thread (workers that already are off the UI thread).
     QueryResult RunNow(const QueryRequest& request);
 
+    // A Parquet table only the Engine's own queries name (a dashboard's text
+    // words): attached when a query names it, never listed as a dataset.
+    void SetSideTable(const std::string& name, const std::string& parquet_path, size_t rows);
+
 private:
     SessionQueryService();
     // Attaches the catalog tables the request names (or lists); false + error.
     bool AttachInputs(const QueryRequest& request, std::string* error);
+    struct SideTable {
+        std::string path;
+        size_t rows = 0;
+    };
+    std::mutex side_mutex_;
+    std::map<std::string, SideTable> side_tables_;
 
     std::unique_ptr<SessionQueryEngine> engine_;
     std::mutex run_mutex_;  // one query at a time

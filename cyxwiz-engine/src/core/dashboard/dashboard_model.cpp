@@ -122,6 +122,10 @@ std::string TokensSql(const std::string& quoted_column) {
     return "regexp_extract_all(lower(CAST(" + quoted_column + " AS VARCHAR)), '[a-z0-9'']+')";
 }
 
+std::string SavedTokensSql(const std::string& quoted_words_column) {
+    return "list_filter(string_split(coalesce(" + quoted_words_column + ", ''), ' '), lambda w: w <> '')";
+}
+
 std::vector<std::string> WidgetSpec::Fields() const {
     std::vector<std::string> out;
     const auto add = [&](const std::string& f) {
@@ -203,7 +207,7 @@ void FilterState::ClearWidget(const std::string& widget_id) {
                      predicates.end());
 }
 
-std::string FilterState::WhereFor(const std::string& widget_id, std::vector<QueryParam>& params) const {
+std::string FilterState::WhereFor(const std::string& widget_id, std::vector<QueryParam>& params, const TokenColumns* tokens) const {
     std::string where;
     for (const auto& p : predicates) {
         if (!widget_id.empty() && p.source_widget == widget_id) continue;  // a widget is not filtered by its own selection
@@ -222,13 +226,15 @@ std::string FilterState::WhereFor(const std::string& widget_id, std::vector<Quer
             case FilterPredicate::Op::Contains: {
                 // A whole word or phrase of the text, as the Dashboard splits words.
                 if (p.values.empty()) continue;
-                cond = "(' ' || array_to_string(" + TokensSql(col) + ", ' ') || ' ') LIKE ?";
+                const bool saved = tokens && tokens->field == p.field;
+                cond = saved ? "(' ' || coalesce(" + Quote(tokens->words) + ", '') || ' ') LIKE ?"
+                             : "(' ' || array_to_string(" + TokensSql(col) + ", ' ') || ' ') LIKE ?";
                 params.push_back(QueryParam::Of("% " + p.values.front() + " %"));
                 break;
             }
             case FilterPredicate::Op::Range:
                 cond = (p.bucket == "year"    ? "year(TRY_CAST(" + col + " AS DATE))"
-                        : p.bucket == "words" ? "len(" + TokensSql(col) + ")"
+                        : p.bucket == "words" ? (tokens && tokens->field == p.field ? Quote(tokens->count) : "len(" + TokensSql(col) + ")")
                                               : col) +
                        " BETWEEN ? AND ?";
                 params.push_back(QueryParam::Of(p.lo));

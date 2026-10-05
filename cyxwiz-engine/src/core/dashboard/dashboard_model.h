@@ -46,6 +46,8 @@ std::optional<TextView> TextViewFromId(const std::string& id);
 // A text column's words as a DuckDB list: lower case, runs of letters, digits
 // and apostrophes (the Dashboard's one tokenizer). `quoted_column` is quoted.
 std::string TokensSql(const std::string& quoted_column);
+// The saved words (TokenColumns.words, space-joined) as the same list.
+std::string SavedTokensSql(const std::string& quoted_words_column);
 
 struct Placement {
     int x = 0, y = 0, w = 4, h = 3;      // grid cells (12 columns)
@@ -99,6 +101,14 @@ struct FilterPredicate {
     std::string Text() const;            // "album_type = single", "age 20 to 40"
 };
 
+// A text column whose words were split once (text_words.h): filters on it
+// read the saved words instead of splitting the text again.
+struct TokenColumns {
+    std::string field;   // the text column
+    std::string words;   // its words joined by spaces
+    std::string count;   // its word count
+};
+
 struct FilterState {
     std::vector<FilterPredicate> predicates;
     bool Empty() const { return predicates.empty(); }
@@ -108,7 +118,7 @@ struct FilterState {
     void Clear() { predicates.clear(); }
     // The SQL condition for a widget (the other widgets' filters), with the
     // values as bound parameters; empty when nothing applies. Identifiers quoted.
-    std::string WhereFor(const std::string& widget_id, std::vector<QueryParam>& params) const;
+    std::string WhereFor(const std::string& widget_id, std::vector<QueryParam>& params, const TokenColumns* tokens = nullptr) const;
     std::string Text() const;            // all conditions in words, " and "-joined
 };
 
