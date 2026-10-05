@@ -321,6 +321,7 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_dashboard_model
         "${_cyxwiz_installer_engine_dir}/tests/test_dashboard_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dashboard/dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/stop_words.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"

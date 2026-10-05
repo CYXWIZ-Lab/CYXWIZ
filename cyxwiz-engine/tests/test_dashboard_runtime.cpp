@@ -232,9 +232,146 @@ int main() {
         text_hist.plot.x_column = "album_type";
         b = CheckBinding(text_hist, contract, known);
         Check(b.state == Binding::State::RoleMismatch && b.field == "album_type", "a histogram on text says so: " + b.message);
+
+        // A text column (TOFIX134 P3 text): an unnamed index, statements, a class.
+        {
+            const std::vector<std::pair<std::string, std::string>> notes = {
+                {"I feel tired and I cannot sleep at night", "Anxiety"},
+                {"Cannot sleep again, the night is long", "Anxiety"},
+                {"I feel tired of the noise and the people", "Depression"},
+                {"Today was a good day with friends and sun", "Normal"},
+                {"Sleep came early, a good night for once", "Normal"},
+                {"", "Normal"},
+                {"I feel tired, so tired, and the night will not end", "Depression"},
+                {"We walked by the river and talked about the week ahead", "Normal"},
+                {"The exam is tomorrow and I cannot stop worrying about it at night", "Anxiety"},
+                {"Feel tired and empty most mornings", "Depression"},
+            };
+            arrow::Int64Builder idx;
+            arrow::StringBuilder statement, status;
+            for (size_t i = 0; i < notes.size(); ++i) {
+                (void)idx.Append(static_cast<int64_t>(i));
+                (void)statement.Append(notes[i].first);
+                (void)status.Append(notes[i].second);
+            }
+            (void)statement.AppendNull();  // a missing text
+            (void)status.Append("Normal");
+            (void)idx.Append(static_cast<int64_t>(notes.size()));
+            std::shared_ptr<arrow::Array> a, s, l;
+            (void)idx.Finish(&a);
+            (void)statement.Finish(&s);
+            (void)status.Finish(&l);
+            auto notes_table = arrow::Table::Make(
+                arrow::schema({arrow::field("C0", arrow::int64()), arrow::field("statement", arrow::utf8()), arrow::field("status", arrow::utf8())}),
+                {a, s, l});
+            Check(engine.AttachArrow("Notes", 1, notes_table, &error), "attach notes: " + error);
+            DatasetProfile tp = ProfileTable("Notes", run);
+            Check(tp.ok(), "notes profile: " + tp.error);
+            DatasetContract tc = BuildContract("n", tp.Facts(), {{"status", ColumnRole::Target}}, {});
+            Check(tc.Find("C0") && tc.Find("C0")->role == ColumnRole::Id, "an unnamed index column is an ID");
+            Check(tc.Find("statement") && tc.Find("statement")->role == ColumnRole::Text, "the statements are text");
+
+            DashboardSpec ts;
+            auto tw = AutomaticWidgets(tp, tc, ts);
+            Check(tw.size() >= 3 && tw[0].type == WidgetType::Kpi && tw[0].measure == Measure::MedianWords && tw[1].measure == Measure::Vocabulary &&
+                      tw[2].measure == Measure::EmptyTexts && tw[0].at.w == 4 && tw[2].at.x == 8 && tw[0].at.y == 0,
+                  "the text KPIs first, a row of their own");
+            const WidgetSpec* words = nullptr;
+            const WidgetSpec* phrases = nullptr;
+            const WidgetSpec* by_class = nullptr;
+            const WidgetSpec* length = nullptr;
+            const WidgetSpec* samples = nullptr;
+            bool c0_card = false;
+            for (const auto& w : tw) {
+                if (w.text_view == TextView::Words) words = &w;
+                if (w.text_view == TextView::Phrases) phrases = &w;
+                if (w.text_view == TextView::WordsByClass) by_class = &w;
+                if (w.text_view == TextView::Length) length = &w;
+                if (w.type == WidgetType::Table) samples = &w;
+                c0_card = c0_card || w.plot.x_column == "C0";
+            }
+            Check(words && phrases && by_class && length && samples && !c0_card, "length, words, phrases, words by class, samples; no index card");
+            Check(words->plot.kind == plot::Kind::Bar && words->plot.bar_horizontal && words->plot.x_column == "word", "top words: horizontal bars");
+            Check(by_class->label_field == "status" && by_class->plot.kind == plot::Kind::Heatmap, "words by the class column");
+            Check(samples->columns == std::vector<std::string>({"status", "statement"}), "samples: the class, then the text");
+            Check(length->at.y >= 1 && words->Fields() == std::vector<std::string>({"statement"}), "cards under the KPIs; a text widget names its text column");
+
+            // Top words: common words left out, then kept.
+            QueryResult tr = engine.Run(WidgetQuery(*words, "Notes", FilterState{}));
+            Check(tr.ok && tr.table->num_rows() > 0, "top words: " + tr.error);
+            auto word_at = [&](const QueryResult& q, int64_t row) {
+                auto sc = q.table->column(0)->GetScalar(row);
+                return (*sc)->ToString();
+            };
+            Check(word_at(tr, 0) == "night" || word_at(tr, 0) == "tired", "the top word is night or tired: " + word_at(tr, 0));
+            bool has_the = false;
+            for (int64_t i = 0; i < tr.table->num_rows(); ++i) has_the = has_the || word_at(tr, i) == "the";
+            Check(!has_the, "stop words left out");
+            WidgetSpec keep = *words;
+            keep.keep_stop_words = true;
+            tr = engine.Run(WidgetQuery(keep, "Notes", FilterState{}));
+            has_the = false;
+            for (int64_t i = 0; tr.ok && i < tr.table->num_rows(); ++i) has_the = has_the || word_at(tr, i) == "the";
+            Check(tr.ok && has_the && (word_at(tr, 0) == "and" || word_at(tr, 0) == "the"), "kept: common words count (and, the: 7 each): " + tr.error);
+
+            // Phrases and words by class.
+            tr = engine.Run(WidgetQuery(*phrases, "Notes", FilterState{}));
+            Check(tr.ok && word_at(tr, 0) == "feel tired" && D(tr, "count") == 4, "top phrase 'feel tired' x4: " + tr.error);
+            tr = engine.Run(WidgetQuery(*by_class, "Notes", FilterState{}));
+            Check(tr.ok && tr.table->num_columns() == 3 && tr.table->num_rows() > 0, "words by class: " + tr.error);
+
+            // KPIs: median words, vocabulary, empty or missing texts.
+            WidgetSpec k = tw[2];
+            tr = engine.Run(KpiQuery(k, "Notes", FilterState{}));
+            Check(tr.ok && D(tr, "value") == 2, "empty or missing texts: 2: " + tr.error);
+            k = tw[0];
+            tr = engine.Run(KpiQuery(k, "Notes", FilterState{}));
+            Check(tr.ok && D(tr, "value") >= 8 && D(tr, "value") <= 10, "median words: " + tr.error);
+            k = tw[1];
+            tr = engine.Run(KpiQuery(k, "Notes", FilterState{}));
+            Check(tr.ok && D(tr, "value") > 40 && D(tr, "value") < 80, "vocabulary: " + tr.error);
+
+            // A word clicked: the texts that have it (whole words), and a length range.
+            FilterState wf;
+            FilterPredicate has;
+            has.field = "statement";
+            has.op = FilterPredicate::Op::Contains;
+            has.values = {"sleep"};
+            has.source_widget = words->id;
+            wf.Set(has);
+            Check(wf.Text() == "statement has 'sleep'", "the filter in words: " + wf.Text());
+            tr = engine.Run(StripQuery("Notes", wf, tp, "", false));
+            Check(tr.ok && D(tr, "rows_now") == 3, "texts with the word 'sleep': " + tr.error);
+            has.values = {"feel tired"};
+            wf.Set(has);
+            tr = engine.Run(StripQuery("Notes", wf, tp, "", false));
+            Check(tr.ok && D(tr, "rows_now") == 4, "texts with the phrase 'feel tired': " + tr.error);
+            FilterPredicate longer;
+            longer.field = "statement";
+            longer.op = FilterPredicate::Op::Range;
+            longer.bucket = "words";
+            longer.lo = 10;
+            longer.hi = 100;
+            longer.source_widget = length->id;
+            FilterState lf;
+            lf.Set(longer);
+            tr = engine.Run(StripQuery("Notes", lf, tp, "", false));
+            Check(tr.ok && D(tr, "rows_now") == 3, "texts of 10 words or more: " + tr.error);
+
+            // Saved and read back.
+            ts.widgets = tw;
+            ts.filters = wf;
+            DashboardSpec back;
+            std::string why;
+            Check(DashboardFromJson(DashboardToJson(ts), back, &why), "text dashboard JSON: " + why);
+            const WidgetSpec* bw = back.Find(words->id);
+            Check(bw && bw->text_view == TextView::Words && bw->text_field == "statement" && bw->plot.bar_horizontal &&
+                      back.filters.predicates.size() == 1 && back.filters.predicates[0].op == FilterPredicate::Op::Contains,
+                  "text widgets and the word filter round trip");
+        }
     }
     fs::remove_all(root, ec);
     std::cout << "dashboard runtime: automatic layout, widget / sample / table / KPI / summary SQL through the engine with the "
-                 "cross-filter rule, binding checks with rename candidates and type changes, SQL as text with values written in, query widgets over the filtered rows. OK\n";
+                 "cross-filter rule, binding checks with rename candidates and type changes, SQL as text with values written in, query widgets over the filtered rows, text widgets (words, phrases, by class, lengths, KPIs, word filters). OK\n";
     return 0;
 }

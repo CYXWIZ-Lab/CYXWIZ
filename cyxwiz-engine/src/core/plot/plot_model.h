@@ -138,7 +138,10 @@ struct PlotSpec {
     // P2b group 1 (approved board 8).
     enum class BarLayout { Grouped, Stacked, Percent };
     BarLayout bar_layout = BarLayout::Grouped;  // bar with Colour by
-    bool donut = false;                          // pie: a hole with the total
+    bool donut = false;
+    // Bar with one series: bars along X, categories down the Y axis (long
+    // names such as words and phrases read across; TOFIX134 P3 text).
+    bool bar_horizontal = false;                          // pie: a hole with the total
     double kde_bandwidth = 1.0;                  // KDE: factor on Silverman's bandwidth
     enum class MatrixValues { Pearson, Spearman, Values };
     MatrixValues matrix_values = MatrixValues::Pearson;

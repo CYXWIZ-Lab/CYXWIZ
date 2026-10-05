@@ -27,11 +27,25 @@ namespace cyxwiz::dashboard {
 
 enum class WidgetType { Kpi, Table, Plot, Missing };
 
-// KPI measures (the fixed set of addendum A.9).
-enum class Measure { Count, Sum, Mean, Median, Min, Max, Distinct, MissingPct };
+// KPI measures (the fixed set of addendum A.9; the last three are of a text
+// column, TOFIX134 P3 text).
+enum class Measure { Count, Sum, Mean, Median, Min, Max, Distinct, MissingPct, MedianWords, Vocabulary, EmptyTexts };
 const char* MeasureId(Measure m);       // "count", ...
 const char* MeasureLabel(Measure m);    // "Rows", "Sum", "Mean", ...
 std::optional<Measure> MeasureFromId(const std::string& id);
+
+// What a text widget shows of a text column (TOFIX134 P3, board 19). Its
+// data is a query the runtime writes (words, phrases, lengths), so its plot
+// names the query's columns: Length "words"; Words "word", "count"; Phrases
+// "phrase", "count"; WordsByClass "class", "word", "share".
+enum class TextView { None, Length, Words, Phrases, WordsByClass };
+const char* TextViewId(TextView v);    // "length", "words", "phrases", "words_by_class"
+const char* TextViewLabel(TextView v); // "Text length", "Top words", ...
+std::optional<TextView> TextViewFromId(const std::string& id);
+
+// A text column's words as a DuckDB list: lower case, runs of letters, digits
+// and apostrophes (the Dashboard's one tokenizer). `quoted_column` is quoted.
+std::string TokensSql(const std::string& quoted_column);
 
 struct Placement {
     int x = 0, y = 0, w = 4, h = 3;      // grid cells (12 columns)
@@ -53,6 +67,13 @@ struct WidgetSpec {
     std::string query;
     std::string query_table;
     bool IsQuery() const { return !query.empty(); }
+    // A text widget: the text column, the class column (WordsByClass), and
+    // whether common words count (off: they are left out).
+    TextView text_view = TextView::None;
+    std::string text_field;
+    std::string label_field;
+    bool keep_stop_words = false;
+    bool IsText() const { return text_view != TextView::None; }
     // KPI widgets: a measure of a field (Count needs no field).
     Measure measure = Measure::Count;
     std::string field;
@@ -67,13 +88,14 @@ struct WidgetSpec {
 
 // One condition of the shared filter.
 struct FilterPredicate {
-    enum class Op { In, Range, IsNull, NotNull };
+    // Contains: the text field has values[0] as a whole word or phrase.
+    enum class Op { In, Range, IsNull, NotNull, Contains };
     std::string field;
     Op op = Op::In;
     std::vector<std::string> values;     // In: the values (as text)
     double lo = 0, hi = 0;               // Range: lo <= field <= hi
     std::string source_widget;           // the widget that set it (its own query ignores it)
-    std::string bucket;                  // "year": the field's year (a date widget's range)
+    std::string bucket;                  // "year": the field's year (a date widget's range); "words": its word count
     std::string Text() const;            // "album_type = single", "age 20 to 40"
 };
 

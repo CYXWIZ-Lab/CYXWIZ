@@ -684,6 +684,8 @@ void PlotView::DrawPlot(ImVec2 size) {
     if (!ImPlot::BeginPlot(plot_id.c_str(), plot_size, flags)) return;
 
     const std::string xl = XLabel(p), yl = YLabel(p);
+    // Horizontal bars: categories down the Y axis (first at the top), values along X.
+    const bool horiz = kind == Kind::Bar && p.spec.bar_horizontal && p.series.size() == 1;
     if (kind == Kind::Pie || IsPixelKind(kind)) {
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
@@ -705,8 +707,9 @@ void PlotView::DrawPlot(ImVec2 size) {
         if (kind == Kind::Heatmap || kind == Kind::Matrix || kind == Kind::Confusion)
             xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
         if (kind == Kind::Importance) yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
-        ImPlot::SetupAxes(xl.empty() ? nullptr : xl.c_str(), yl.empty() ? nullptr : yl.c_str(), xf, yf);
-        if (log_y_ && !IsGridKind(kind)) ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        if (horiz) ImPlot::SetupAxes(yl.empty() ? nullptr : yl.c_str(), xl.empty() ? nullptr : xl.c_str(), xf, yf | ImPlotAxisFlags_Invert);
+        else ImPlot::SetupAxes(xl.empty() ? nullptr : xl.c_str(), yl.empty() ? nullptr : yl.c_str(), xf, yf);
+        if (log_y_ && !IsGridKind(kind)) ImPlot::SetupAxisScale(horiz ? ImAxis_X1 : ImAxis_Y1, ImPlotScale_Log10);
         if (kind == Kind::Calibration) {
             // Rows per bin as bars along the bottom fifth (right axis).
             double most = 1;
@@ -730,7 +733,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                     lo = lo == 0 ? v : std::min(lo, v);
                     hi = std::max(hi, v);
                 }
-        if (hi > 0) ImPlot::SetupAxisLimits(ImAxis_Y1, lo * 0.5, hi * 2.0, ImPlotCond_Always);
+        if (hi > 0) ImPlot::SetupAxisLimits(horiz ? ImAxis_X1 : ImAxis_Y1, lo * 0.5, hi * 2.0, ImPlotCond_Always);
     }
 
     // Category ticks (bar, error bars, box, violin, heatmap).
@@ -740,8 +743,17 @@ void PlotView::DrawPlot(ImVec2 size) {
         names.clear();
         positions.clear();
         if (labels.empty() || labels.size() > 40) return;
+        // Names that would run into each other: a name is drawn when it clears
+        // the last one drawn (the hover card has them all).
+        const bool along_x = axis == ImAxis_X1;
+        const float room = std::max(1.0f, (along_x ? plot_size.x - 70.0f : plot_size.y - 50.0f) / static_cast<float>(labels.size()));
+        float last_end = -1e9f;
         for (size_t i = 0; i < labels.size(); ++i) {
-            names.push_back(labels[i].c_str());
+            const float centre = room * (static_cast<float>(i) + 0.5f);
+            const float half = (along_x ? ImGui::CalcTextSize(labels[i].c_str()).x + 8.0f : ImGui::GetTextLineHeight()) * 0.5f;
+            const bool fits = centre - half >= last_end;
+            if (fits) last_end = centre + half;
+            names.push_back(fits ? labels[i].c_str() : "");
             positions.push_back(static_cast<double>(i) + offset);
         }
         ImPlot::SetupAxisTicks(axis, positions.data(), static_cast<int>(positions.size()), names.data());
@@ -753,7 +765,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     std::vector<std::string> short_names;
 
     switch (kind) {
-        case Kind::Bar:
+        case Kind::Bar: set_ticks(horiz ? ImAxis_Y1 : ImAxis_X1, p.categories, 0.0); break;
         case Kind::ErrorBars: set_ticks(ImAxis_X1, p.categories, 0.0); break;
         case Kind::Parallel: set_ticks(ImAxis_X1, p.multi_cols, 0.0); break;
         case Kind::Box:
@@ -960,6 +972,11 @@ void PlotView::DrawPlot(ImVec2 size) {
                 ImPlot::PopColormap();
             } else if (!p.series.empty()) {
                 const auto& s = p.series[0];
+                // One set of bars: positions and heights, turned for horizontal bars.
+                const auto bars = [&](const char* label, const std::vector<double>& at, const std::vector<double>& v, double w) {
+                    if (horiz) ImPlot::PlotBars(label, v.data(), at.data(), n(at), w, ImPlotBarsFlags_Horizontal);
+                    else ImPlot::PlotBars(label, at.data(), v.data(), n(at), w);
+                };
                 // All rows in grey behind, matched by category name.
                 if (background_ && background_->spec.kind == Kind::Bar && background_->series.size() == 1) {
                     std::vector<double> bx, by;
@@ -972,7 +989,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                             }
                     ImPlot::SetNextFillStyle(ui::WithAlpha(t.text_dim, 0.35f));
                     ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));
-                    ImPlot::PlotBars("all rows", bx.data(), by.data(), n(bx), 0.67);
+                    bars("all rows", bx, by, 0.67);
                 }
                 if (!highlight_.empty()) {
                     // The selected categories in full colour, the rest dimmed.
@@ -984,12 +1001,12 @@ void PlotView::DrawPlot(ImVec2 size) {
                         }
                     ImPlot::SetNextFillStyle(ColourOf(0), 0.3f);
                     ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));  // no outline on the dimmed bars
-                    ImPlot::PlotBars(("##dim" + s.label).c_str(), s.x.data(), s.y.data(), n(s.x), 0.67);
+                    bars(("##dim" + s.label).c_str(), s.x, s.y, 0.67);
                     ImPlot::SetNextFillStyle(ColourOf(0), 0.95f);
-                    ImPlot::PlotBars(s.label.c_str(), in_x.data(), in_y.data(), n(in_x), 0.67);
+                    bars(s.label.c_str(), in_x, in_y, 0.67);
                 } else {
                     ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
-                    ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), 0.67);
+                    bars(s.label.c_str(), s.x, s.y, 0.67);
                 }
             }
             break;
@@ -1675,8 +1692,9 @@ void PlotView::DetectClick() {
     if (c.field.empty()) return;
     switch (p.spec.kind) {
         case Kind::Bar: {
-            const int i = static_cast<int>(std::lround(m.x));
-            if (i < 0 || i >= static_cast<int>(p.categories.size()) || std::fabs(m.x - i) > 0.45) return;
+            const double at = p.spec.bar_horizontal && p.series.size() == 1 ? m.y : m.x;
+            const int i = static_cast<int>(std::lround(at));
+            if (i < 0 || i >= static_cast<int>(p.categories.size()) || std::fabs(at - i) > 0.45) return;
             if (p.categories[static_cast<size_t>(i)] == "other") return;  // not one value
             c.value = p.categories[static_cast<size_t>(i)];
             break;
@@ -1799,7 +1817,7 @@ void PlotView::DrawHover() {
         }
         case Kind::Bar:
         case Kind::ErrorBars: {
-            const int i = category(p.categories, m.x);
+            const int i = category(p.categories, kind == Kind::Bar && p.spec.bar_horizontal && p.series.size() == 1 ? m.y : m.x);
             if (i < 0 || p.series.empty()) break;
             begin(p.categories[static_cast<size_t>(i)]);
             if (p.series.size() > 1) {  // Colour by: every group in this category

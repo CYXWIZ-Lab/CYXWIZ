@@ -1,5 +1,7 @@
 #include "dashboard_model.h"
 
+#include "stop_words.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -40,6 +42,7 @@ const char* OpId(FilterPredicate::Op op) {
         case FilterPredicate::Op::Range: return "range";
         case FilterPredicate::Op::IsNull: return "is_null";
         case FilterPredicate::Op::NotNull: return "not_null";
+        case FilterPredicate::Op::Contains: return "contains";
     }
     return "in";
 }
@@ -56,6 +59,9 @@ const char* MeasureId(Measure m) {
         case Measure::Max: return "max";
         case Measure::Distinct: return "distinct";
         case Measure::MissingPct: return "missing_pct";
+        case Measure::MedianWords: return "median_words";
+        case Measure::Vocabulary: return "vocabulary";
+        case Measure::EmptyTexts: return "empty_texts";
     }
     return "count";
 }
@@ -70,15 +76,50 @@ const char* MeasureLabel(Measure m) {
         case Measure::Max: return "Max";
         case Measure::Distinct: return "Distinct";
         case Measure::MissingPct: return "Missing";
+        case Measure::MedianWords: return "Words per text (median)";
+        case Measure::Vocabulary: return "Vocabulary (words)";
+        case Measure::EmptyTexts: return "Empty or missing texts";
     }
     return "Rows";
 }
 
 std::optional<Measure> MeasureFromId(const std::string& id) {
     for (Measure m : {Measure::Count, Measure::Sum, Measure::Mean, Measure::Median, Measure::Min, Measure::Max, Measure::Distinct,
-                      Measure::MissingPct})
+                      Measure::MissingPct, Measure::MedianWords, Measure::Vocabulary, Measure::EmptyTexts})
         if (id == MeasureId(m)) return m;
     return std::nullopt;
+}
+
+const char* TextViewId(TextView v) {
+    switch (v) {
+        case TextView::None: return "";
+        case TextView::Length: return "length";
+        case TextView::Words: return "words";
+        case TextView::Phrases: return "phrases";
+        case TextView::WordsByClass: return "words_by_class";
+    }
+    return "";
+}
+
+const char* TextViewLabel(TextView v) {
+    switch (v) {
+        case TextView::None: return "";
+        case TextView::Length: return "Text length";
+        case TextView::Words: return "Top words";
+        case TextView::Phrases: return "Top 2-word phrases";
+        case TextView::WordsByClass: return "Words by class";
+    }
+    return "";
+}
+
+std::optional<TextView> TextViewFromId(const std::string& id) {
+    for (TextView v : {TextView::Length, TextView::Words, TextView::Phrases, TextView::WordsByClass})
+        if (id == TextViewId(v)) return v;
+    return std::nullopt;
+}
+
+std::string TokensSql(const std::string& quoted_column) {
+    return "regexp_extract_all(lower(CAST(" + quoted_column + " AS VARCHAR)), '[a-z0-9'']+')";
 }
 
 std::vector<std::string> WidgetSpec::Fields() const {
@@ -94,6 +135,11 @@ std::vector<std::string> WidgetSpec::Fields() const {
             break;
         case WidgetType::Plot:
             if (IsQuery()) break;  // the query's own columns
+            if (IsText()) {        // its plot names the runtime query's columns
+                add(text_field);
+                add(label_field);
+                break;
+            }
             add(plot.x_column);
             for (const auto& y : plot.y_columns) add(y);
             add(plot.color_column);
@@ -115,6 +161,8 @@ bool WidgetSpec::RenameField(const std::string& from, const std::string& to) {
         }
     };
     swap(field);
+    swap(text_field);
+    swap(label_field);
     for (auto& c : columns) swap(c);
     swap(plot.x_column);
     for (auto& y : plot.y_columns) swap(y);
@@ -134,6 +182,7 @@ std::string FilterPredicate::Text() const {
             return field + (values.size() == 1 ? " = " : " in ") + v;
         }
         case Op::Range: return field + (bucket.empty() ? "" : " " + bucket) + " " + Short(lo) + " to " + Short(hi);
+        case Op::Contains: return field + " has '" + (values.empty() ? std::string() : values.front()) + "'";
         case Op::IsNull: return field + " is missing";
         case Op::NotNull: return field + " is not missing";
     }
@@ -170,8 +219,18 @@ std::string FilterState::WhereFor(const std::string& widget_id, std::vector<Quer
                 cond = "CAST(" + col + " AS VARCHAR) IN (" + in + ")";
                 break;
             }
+            case FilterPredicate::Op::Contains: {
+                // A whole word or phrase of the text, as the Dashboard splits words.
+                if (p.values.empty()) continue;
+                cond = "(' ' || array_to_string(" + TokensSql(col) + ", ' ') || ' ') LIKE ?";
+                params.push_back(QueryParam::Of("% " + p.values.front() + " %"));
+                break;
+            }
             case FilterPredicate::Op::Range:
-                cond = (p.bucket == "year" ? "year(TRY_CAST(" + col + " AS DATE))" : col) + " BETWEEN ? AND ?";
+                cond = (p.bucket == "year"    ? "year(TRY_CAST(" + col + " AS DATE))"
+                        : p.bucket == "words" ? "len(" + TokensSql(col) + ")"
+                                              : col) +
+                       " BETWEEN ? AND ?";
                 params.push_back(QueryParam::Of(p.lo));
                 params.push_back(QueryParam::Of(p.hi));
                 break;
@@ -251,6 +310,14 @@ std::string DashboardToJson(const DashboardSpec& spec) {
             o["query_table"] = w.query_table;
         }
         if (!w.bucket.empty()) o["bucket"] = w.bucket;
+        if (w.IsText()) {
+            json text;
+            text["view"] = TextViewId(w.text_view);
+            text["field"] = w.text_field;
+            if (!w.label_field.empty()) text["label"] = w.label_field;
+            if (w.keep_stop_words) text["keep_stop_words"] = true;
+            o["text"] = text;
+        }
         switch (w.type) {
             case WidgetType::Plot: o["plot"] = json::parse(plot::SpecToJson(w.plot)); break;
             case WidgetType::Kpi:
@@ -316,6 +383,15 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             w.query = o.value("query", std::string());
             w.query_table = o.value("query_table", std::string());
             w.bucket = o.value("bucket", std::string());
+            if (o.contains("text") && o["text"].is_object()) {
+                const auto& tv = o["text"];
+                auto view = TextViewFromId(tv.value("view", std::string()));
+                if (!view) return fail("widget " + w.id + ": unknown text view '" + tv.value("view", std::string()) + "'");
+                w.text_view = *view;
+                w.text_field = tv.value("field", std::string());
+                w.label_field = tv.value("label", std::string());
+                w.keep_stop_words = tv.value("keep_stop_words", false);
+            }
             if (w.type == WidgetType::Plot) {
                 std::string why;
                 if (!o.contains("plot") || !plot::SpecFromJson(o["plot"].dump(), w.plot, &why)) return fail("widget " + w.id + ": " + why);
@@ -340,6 +416,7 @@ bool DashboardFromJson(const std::string& text, DashboardSpec& spec, std::string
             else if (op == "range") p.op = FilterPredicate::Op::Range;
             else if (op == "is_null") p.op = FilterPredicate::Op::IsNull;
             else if (op == "not_null") p.op = FilterPredicate::Op::NotNull;
+            else if (op == "contains") p.op = FilterPredicate::Op::Contains;
             else return fail("unknown filter '" + op + "'");
             if (f.contains("values") && f["values"].is_array()) p.values = f["values"].get<std::vector<std::string>>();
             p.lo = f.value("lo", 0.0);

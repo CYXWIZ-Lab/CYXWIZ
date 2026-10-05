@@ -1,6 +1,7 @@
 #include "dashboard_runtime.h"
 
 #include "../plot/plot_prepare.h"
+#include "stop_words.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +27,18 @@ std::string Where(const std::string& cond) {
     return cond.empty() ? std::string() : " WHERE " + cond;
 }
 
+// " AND word NOT IN ('a', ...)" for `word` (empty when common words are kept).
+std::string StopWordFilter(const std::string& word, bool keep) {
+    if (keep) return std::string();
+    std::string in;
+    for (const auto& w : EnglishStopWords()) {
+        in += in.empty() ? "'" : ", '";
+        for (char c : w) in += c == '\'' ? std::string("''") : std::string(1, c);
+        in += "'";
+    }
+    return " AND " + word + " NOT IN (" + in + ")";
+}
+
 std::string MeasureSql(Measure m, const std::string& col) {
     switch (m) {
         case Measure::Count: return "CAST(count(*) AS DOUBLE)";
@@ -36,6 +49,9 @@ std::string MeasureSql(Measure m, const std::string& col) {
         case Measure::Max: return "CAST(max(" + col + ") AS DOUBLE)";
         case Measure::Distinct: return "CAST(count(DISTINCT " + col + ") AS DOUBLE)";
         case Measure::MissingPct: return "100.0 * count_if(" + col + " IS NULL) / greatest(count(*), 1)";
+        case Measure::MedianWords: return "CAST(median(len(" + TokensSql(col) + ")) AS DOUBLE)";
+        case Measure::EmptyTexts: return "CAST(count_if(" + col + " IS NULL OR trim(CAST(" + col + " AS VARCHAR)) = '') AS DOUBLE)";
+        case Measure::Vocabulary: return "CAST(count(DISTINCT word) AS DOUBLE)";  // over the words (KpiQuery)
     }
     return "CAST(count(*) AS DOUBLE)";
 }
@@ -45,6 +61,7 @@ std::string MeasureSql(Measure m, const std::string& col) {
 Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const std::map<std::string, std::string>& known_types) {
     Binding b;
     if (w.IsQuery()) return b;  // its columns come from the query (an error there says so)
+    const bool text = w.IsText();
     for (const auto& field : w.Fields()) {
         if (contract.Find(field)) continue;
         b.state = Binding::State::FieldMissing;
@@ -60,7 +77,7 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
                     (b.rename_candidate.empty() ? std::string(": rebind or remove the widget.") : ": rebind to '" + b.rename_candidate + "'?");
         return b;
     }
-    if (w.type != WidgetType::Plot) return b;
+    if (w.type != WidgetType::Plot || text) return b;  // a text widget's plot reads its query's columns
     // A number slot whose column is no longer a number (a type change upstream).
     const WidgetKind& kind = KindOf(w);
     const auto needs_number = [&](const std::string& field, FieldNeed need) {
@@ -127,7 +144,50 @@ std::string FilteredRowsSql(const std::string& table, const FilterState& filters
     return InlineParams("SELECT * FROM " + Quote(table) + Where(where), params);
 }
 
+QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap) {
+    QueryRequest r;
+    r.inputs = {table};
+    r.label = "Dashboard text widget";
+    const std::string col = Quote(w.text_field), tokens = TokensSql(col);
+    // The rows under the other widgets' filters (a reproducible sample beyond row_cap).
+    std::string rows = "SELECT * FROM " + Quote(table) + Where(filters.WhereFor(w.id, r.params));
+    if (row_cap > 0) rows = "SELECT * FROM (" + rows + ") AS cyxwiz_rows USING SAMPLE reservoir(" + std::to_string(row_cap) + " ROWS) REPEATABLE (42)";
+    const std::string with = "WITH cyxwiz_text AS (" + rows + ")";
+    switch (w.text_view) {
+        case TextView::None:
+        case TextView::Length:
+            // The longest 1% of texts in the last bin, so a few very long ones do not squash the rest.
+            r.sql = with + ", l AS (SELECT len(" + tokens + ") AS n FROM cyxwiz_text)" +
+                    " SELECT CAST(least(n, (SELECT ceil(quantile_cont(n, 0.99)) FROM l)) AS DOUBLE) AS words FROM l";
+            break;
+        case TextView::Words:
+            r.sql = with + ", w AS (SELECT unnest(" + tokens + ") AS word FROM cyxwiz_text) SELECT word, CAST(count(*) AS DOUBLE) AS count FROM w" +
+                    " WHERE length(word) > 1" + StopWordFilter("word", w.keep_stop_words) + " GROUP BY word ORDER BY count DESC, word LIMIT 15";
+            break;
+        case TextView::Phrases:
+            r.sql = with + ", t AS (SELECT " + tokens + " AS t FROM cyxwiz_text)" +
+                    ", p AS (SELECT unnest(list_transform(range(1, len(t)), lambda i: [t[i], t[i + 1]])) AS pair FROM t)" +
+                    " SELECT pair[1] || ' ' || pair[2] AS phrase, CAST(count(*) AS DOUBLE) AS count FROM p" +
+                    " WHERE length(pair[1]) > 1 AND length(pair[2]) > 1" + StopWordFilter("pair[1]", w.keep_stop_words) +
+                    StopWordFilter("pair[2]", w.keep_stop_words) + " GROUP BY phrase ORDER BY count DESC, phrase LIMIT 12";
+            break;
+        case TextView::WordsByClass: {
+            // Each top word's share of each class's texts (a text counts once per word).
+            const std::string cls = w.label_field.empty() ? std::string("'all'") : "CAST(" + Quote(w.label_field) + " AS VARCHAR)";
+            r.sql = with + ", r AS (SELECT " + cls + " AS cls, list_distinct(" + tokens + ") AS t FROM cyxwiz_text)" +
+                    ", top AS (SELECT word, row_number() OVER (ORDER BY count(*) DESC, word) AS rank FROM (SELECT unnest(t) AS word FROM r)" +
+                    " WHERE length(word) > 1" + StopWordFilter("word", w.keep_stop_words) + " GROUP BY word ORDER BY count(*) DESC, word LIMIT 10)" +
+                    ", n AS (SELECT cls, count(*) AS n FROM r GROUP BY cls)" + ", x AS (SELECT cls, unnest(t) AS word FROM r)" +
+                    " SELECT x.cls AS class, x.word AS word, CAST(count(*) AS DOUBLE) / any_value(n.n) AS share" +
+                    " FROM x JOIN top USING (word) JOIN n USING (cls) GROUP BY x.cls, x.word ORDER BY any_value(top.rank), x.cls";
+            break;
+        }
+    }
+    return r;
+}
+
 QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap) {
+    if (w.IsText()) return TextWidgetQuery(w, table, filters, row_cap);
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard widget";
@@ -204,9 +264,16 @@ QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const Filte
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard KPI";
-    const std::string m = MeasureSql(w.measure, w.field.empty() ? std::string("NULL") : Quote(w.field));
+    const std::string col = w.field.empty() ? std::string("NULL") : Quote(w.field);
+    const std::string m = MeasureSql(w.measure, col);
     const std::string cond = filters.WhereFor(w.id, r.params);
-    r.sql = "SELECT (SELECT " + m + " FROM " + Quote(table) + Where(cond) + ") AS value, (SELECT " + m + " FROM " + Quote(table) + ") AS all_rows";
+    // The vocabulary counts the distinct words of the rows.
+    const auto from = [&](const std::string& where) {
+        if (w.measure == Measure::Vocabulary)
+            return "(SELECT unnest(" + TokensSql(col) + ") AS word FROM " + Quote(table) + where + ")";
+        return Quote(table) + where;
+    };
+    r.sql = "SELECT (SELECT " + m + " FROM " + from(Where(cond)) + ") AS value, (SELECT " + m + " FROM " + from(std::string()) + ") AS all_rows";
     return r;
 }
 
@@ -254,10 +321,10 @@ QueryRequest StripQuery(const std::string& table, const FilterState& filters, co
 
 std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const DatasetContract& contract, DashboardSpec& spec) {
     std::vector<WidgetSpec> out;
-    int slot = 0;
+    int slot = 0, top = 0;  // `top`: grid rows above the cards (the text KPIs)
     const auto place = [&](WidgetSpec& w) {
         w.plot.legend = !w.plot.color_column.empty();  // one series needs no legend
-        w.at = {(slot % 3) * 4, (slot / 3) * 3, 4, 3};
+        w.at = {(slot % 3) * 4, top + (slot / 3) * 3, 4, 3};
         ++slot;
         w.automatic = true;
         w.id = spec.NewId();
@@ -269,12 +336,85 @@ std::vector<WidgetSpec> AutomaticWidgets(const DatasetProfile& profile, const Da
     if (target) {
         const ColumnContract* tc = contract.Find(*target);
         target_numeric = tc && NumberType(tc->type);
+    }
+    // A text column (TOFIX134 P3 text, board 19): its KPIs in a row on top.
+    std::string text_column;
+    for (const auto& c : contract.columns)
+        if (c.role == ColumnRole::Text && !(target && c.name == *target)) {
+            text_column = c.name;
+            break;
+        }
+    if (!text_column.empty()) {
+        int x = 0;
+        for (Measure m : {Measure::MedianWords, Measure::Vocabulary, Measure::EmptyTexts}) {
+            WidgetSpec k;
+            k.type = WidgetType::Kpi;
+            k.measure = m;
+            k.field = text_column;
+            k.title = MeasureLabel(m);
+            k.at = {x, 0, 4, 1};  // a row of their own, wide enough for their names
+            x += 4;
+            k.automatic = true;
+            k.id = spec.NewId();
+            out.push_back(k);
+        }
+        top = 1;
+    }
+    if (target) {
         WidgetSpec w;
         w.type = WidgetType::Plot;
         w.plot.kind = target_numeric ? plot::Kind::Histogram : plot::Kind::Bar;
         w.plot.x_column = *target;
         w.title = *target + " (target)";
         place(w);
+    }
+    if (!text_column.empty()) {
+        const auto text_widget = [&](TextView view) {
+            WidgetSpec w;
+            w.type = WidgetType::Plot;
+            w.text_view = view;
+            w.text_field = text_column;
+            w.title = std::string(TextViewLabel(view)) + (view == TextView::Length ? " (words)" : std::string());
+            switch (view) {
+                case TextView::None:
+                case TextView::Length:
+                    w.plot.kind = plot::Kind::Histogram;
+                    w.plot.x_column = "words";
+                    w.plot.x_label = "words per text (the longest 1% in the last bin)";
+                    break;
+                case TextView::Words:
+                case TextView::Phrases:
+                    w.plot.kind = plot::Kind::Bar;
+                    w.plot.x_column = view == TextView::Words ? "word" : "phrase";
+                    w.plot.y_columns = {"count"};
+                    w.plot.bar_horizontal = true;
+                    break;
+                case TextView::WordsByClass:
+                    w.label_field = target && !target_numeric ? *target : std::string();
+                    w.plot.kind = plot::Kind::Heatmap;
+                    w.plot.x_column = "class";
+                    w.plot.y_columns = {"word"};
+                    w.plot.value_column = "share";
+                    break;
+            }
+            place(w);
+        };
+        text_widget(TextView::Length);
+        text_widget(TextView::Words);
+        text_widget(TextView::Phrases);
+        // By class when there is a class column with a readable number of values.
+        if (target && !target_numeric) {
+            const ProfiledColumn* tp = profile_of(*target);
+            if (tp && tp->facts.distinct >= 2 && tp->facts.distinct <= 20) text_widget(TextView::WordsByClass);
+        }
+        WidgetSpec samples;
+        samples.type = WidgetType::Table;
+        // The short class first, so it shows beside the long text.
+        if (target) samples.columns.push_back(*target);
+        samples.columns.push_back(text_column);
+        samples.rows = 50;
+        samples.title = "Sample texts";
+        place(samples);
     }
     // Categories with a readable number of values, then numbers.
     int categories = 0, numbers = 0;

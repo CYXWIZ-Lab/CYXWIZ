@@ -158,8 +158,25 @@ ColumnRole InferRole(const ColumnFacts& f, std::string* reason) {
         say("dates");
         return ColumnRole::DateTime;
     }
+    // Long text that differs per row is text (reviews, statements), not an ID:
+    // IDs are short (a UUID is 36 characters).
+    if (text && f.avg_length >= 40.0) {
+        say("long text");
+        return ColumnRole::Text;
+    }
     if (text && unique) {
         say("unique per row");
+        return ColumnRole::Id;
+    }
+    // A row number saved with the data (a CSV's unnamed first column read as
+    // "C0", "column0" or "Unnamed: 0", or one named index): an ID, not a measure.
+    const auto numbered = [&](const std::string& prefix) {
+        return lname.size() > prefix.size() && lname.compare(0, prefix.size(), prefix) == 0 &&
+               lname.find_first_not_of("0123456789", prefix.size()) == std::string::npos;
+    };
+    const bool index_name = lname.empty() || lname == "index" || lname == "#" || numbered("c") || numbered("column") || numbered("unnamed: ");
+    if (index_name && unique && f.type == ColumnFacts::Type::Integer) {
+        say("row number");
         return ColumnRole::Id;
     }
     if (id_name && (text || f.type == ColumnFacts::Type::Integer)) {

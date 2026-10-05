@@ -819,6 +819,10 @@ void PlotWindow::DrawSettings() {
             changed = true;
         }
     }
+    if (spec_.kind == Kind::Bar && spec_.color_column.empty()) {
+        changed |= ImGui::Checkbox("Horizontal bars", &spec_.bar_horizontal);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Categories down the side, so long names read across.");
+    }
     if (spec_.kind == Kind::Pie) changed |= ImGui::Checkbox("Donut (the total in the middle)", &spec_.donut);
     if (spec_.kind == Kind::Kde) {
         ImGui::TextColored(t.text_dim, "Bandwidth (times Silverman's)");

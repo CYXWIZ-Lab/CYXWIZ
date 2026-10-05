@@ -210,6 +210,7 @@ std::string SpecToJson(const PlotSpec& s) {
                       : s.bar_layout == PlotSpec::BarLayout::Percent ? "percent"
                                                                      : "grouped";
     j["donut"] = s.donut;
+    if (s.bar_horizontal) j["horizontal"] = true;
     j["kde_bandwidth"] = s.kde_bandwidth;
     j["matrix"] = s.matrix_values == PlotSpec::MatrixValues::Spearman ? "spearman"
                   : s.matrix_values == PlotSpec::MatrixValues::Values ? "values"
@@ -321,6 +322,7 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     else if (layout == "percent") out.bar_layout = PlotSpec::BarLayout::Percent;
     else return fail("unknown bar layout '" + layout + "'");
     out.donut = j.value("donut", false);
+    out.bar_horizontal = j.value("horizontal", false);
     out.kde_bandwidth = std::clamp(j.value("kde_bandwidth", 1.0), 0.05, 20.0);
     const std::string matrix = j.value("matrix", std::string("pearson"));
     if (matrix == "pearson") out.matrix_values = PlotSpec::MatrixValues::Pearson;

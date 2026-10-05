@@ -9,7 +9,8 @@
 //     one query).
 //   - AutomaticWidgets: the automatic layout from a profile and its contract
 //     (the target, a card per category and number column, correlations,
-//     the target by its strongest feature).
+//     the target by its strongest feature; for a text column its KPIs, length,
+//     top words and phrases, words by class and sample texts).
 
 #include "../dataset_profiler.h"
 #include "dashboard_model.h"
@@ -34,6 +35,10 @@ Binding CheckBinding(const WidgetSpec& w, const DatasetContract& contract, const
 // The SQL for a plot or table widget: its columns, the filters of the other
 // widgets; `row_cap` 0: all rows (else a reproducible sample of that many).
 QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0);
+// A text widget's query (TOFIX134 P3 text): lengths, top words or phrases
+// (common words left out unless kept), or each top word's share of each
+// class's texts, over the rows under the other widgets' filters.
+QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, size_t row_cap = 0);
 // Missing values per column (nulls plus the texts marked as missing), under
 // the other widgets' filters: a row with "rows" and one count per column.
 QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::vector<std::string>& columns,

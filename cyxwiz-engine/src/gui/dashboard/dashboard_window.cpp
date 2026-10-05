@@ -66,6 +66,7 @@ std::string WidgetTitle(const WidgetSpec& w) {
         case WidgetType::Table: return "Table";
         case WidgetType::Missing: return "Missing values";
         case WidgetType::Plot: {
+            if (w.IsText()) return std::string(TextViewLabel(w.text_view)) + " \xC2\xB7 " + w.text_field;
             const std::string col = !w.plot.x_column.empty() ? w.plot.x_column : !w.plot.y_columns.empty() ? w.plot.y_columns.front() : "";
             return col.empty() ? KindOf(w).label : col;
         }
@@ -623,8 +624,10 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                 std::vector<std::string> picked;
                 double lo = NAN, hi = NAN;
                 for (const auto& q : spec_.filters.predicates) {
-                    if (q.source_widget != w.id || q.field != w.plot.x_column) continue;
-                    if (q.op == FilterPredicate::Op::In) picked = q.values;
+                    // A text widget filters the text (or class) column, not its query's.
+                    const bool own = q.source_widget == w.id && (w.IsText() || q.field == w.plot.x_column);
+                    if (!own) continue;
+                    if (q.op == FilterPredicate::Op::In || q.op == FilterPredicate::Op::Contains) picked = q.values;
                     else if (q.op == FilterPredicate::Op::Range) {
                         lo = q.lo;
                         hi = q.hi;
@@ -638,8 +641,8 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                 // A click on a bar, slice or bin filters the other widgets (again: clears).
                 auto click = view->TakeClick();
                 if (mode_ == Mode::Visualize || w.IsQuery()) click.reset();  // no shared filter here / the query's own columns
+                FilterPredicate p;
                 if (click) {
-                    FilterPredicate p;
                     p.field = click->field;
                     p.source_widget = w.id;
                     p.bucket = w.bucket;  // a date widget's bins are years
@@ -649,6 +652,22 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                         p.lo = click->lo;
                         p.hi = click->hi;
                     }
+                    // A text widget: a word or phrase keeps the texts that have it, a
+                    // length bin their word count, a class its rows.
+                    if (w.IsText()) {
+                        if (w.text_view == TextView::WordsByClass) {
+                            p.field = w.label_field;
+                        } else if (w.text_view == TextView::Length) {
+                            p.field = w.text_field;
+                            p.bucket = "words";
+                        } else {
+                            p.field = w.text_field;
+                            p.op = FilterPredicate::Op::Contains;
+                        }
+                    }
+                    if (p.field.empty()) click.reset();  // a class view with no class column
+                }
+                if (click) {
                     bool same = false;
                     for (const auto& q : spec_.filters.predicates)
                         same = same || (q.source_widget == w.id && q.field == p.field && q.Text() == p.Text());
@@ -717,6 +736,52 @@ void DashboardWindow::DrawSettings(float width) {
                     if (ImGui::Selectable(k.label.c_str(), k.plot_kind == w->plot.kind)) w->plot.kind = k.plot_kind;
                 }
                 ImGui::EndCombo();
+            }
+            if (w->IsText()) {
+                // A text widget: what it shows of which text column.
+                ImGui::TextColored(t.text_dim, "Shows");
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##text_view", TextViewLabel(w->text_view))) {
+                    for (TextView v : {TextView::Length, TextView::Words, TextView::Phrases, TextView::WordsByClass})
+                        if (ImGui::Selectable(TextViewLabel(v), v == w->text_view) && v != w->text_view) {
+                            w->text_view = v;
+                            // Its plot follows the query's columns.
+                            w->plot = plot::PlotSpec{};
+                            if (v == TextView::Length) {
+                                w->plot.kind = plot::Kind::Histogram;
+                                w->plot.x_column = "words";
+                                w->plot.x_label = "words per text (the longest 1% in the last bin)";
+                            } else if (v == TextView::WordsByClass) {
+                                w->plot.kind = plot::Kind::Heatmap;
+                                w->plot.x_column = "class";
+                                w->plot.y_columns = {"word"};
+                                w->plot.value_column = "share";
+                            } else {
+                                w->plot.kind = plot::Kind::Bar;
+                                w->plot.x_column = v == TextView::Words ? "word" : "phrase";
+                                w->plot.y_columns = {"count"};
+                                w->plot.bar_horizontal = true;
+                            }
+                            w->title.clear();
+                        }
+                    ImGui::EndCombo();
+                }
+                ImGui::TextColored(t.text_dim, "Text column");
+                std::string text_field = w->text_field;
+                if (column_combo("##text_field", text_field, FieldNeed::Any, false)) w->text_field = text_field;
+                if (w->text_view == TextView::WordsByClass) {
+                    ImGui::TextColored(t.text_dim, "Class column");
+                    std::string label = w->label_field;
+                    if (column_combo("##label_field", label, FieldNeed::Category, true)) w->label_field = label;
+                }
+                if (w->text_view != TextView::Length) {
+                    ImGui::Checkbox("Keep common words (the, and, ...)", &w->keep_stop_words);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: English stop words are left out of the top words and phrases.");
+                }
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_faint, "Words: lower case, letters and digits. Click a word or phrase to keep the texts that have it.");
+                ImGui::PopTextWrapPos();
+                break;
             }
             if (w->IsQuery()) {
                 // A query widget: its columns are the query's; the query is edited in Data Studio.
