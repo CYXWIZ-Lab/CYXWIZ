@@ -6,6 +6,7 @@
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
 #include "../../core/pipeline_materializer.h"
+#include "../graph_training_launcher.h"
 #include "../../core/plot/plot_tree_model.h"
 #include "../../core/project_manager.h"
 
@@ -178,7 +179,10 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
     auto task = std::make_shared<LambdaTask>(
         name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result,
                artifacts = pm.GetArtifactsPath(), exports = pm.GetExportsPath(), ingestion = pm.GetIngestionCachePath(),
-               project = pm.GetProjectRoot()](LambdaTask& t) mutable {
+               project = pm.GetProjectRoot(),
+               // Training's prepared-data cache: the matrix is built once and read after
+               // (by the Dashboard and by training) until the data or the vectorizer changes.
+               cache = ::gui::GraphMaterializationCacheConfig(pm.GetProjectRoot())](LambdaTask& t) mutable {
             // 1. The Data Input's table (as loaded, or read now).
             std::string source = plan.dataset_name;
             if (source.empty()) {
@@ -201,7 +205,7 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
             PipelineOperatorExecutionContext context;
             context.cancellation_requested = [&t]() { return t.ShouldStop(); };
             const MaterializeResult m = PipelineMaterializer::Materialize(
-                closure, closure_links, DataRegistry::Instance(), source,
+                closure, closure_links, DataRegistry::Instance(), source, cache,
                 [&t](const PipelineOperatorProgress& event) {
                     t.ReportProgress(0.1f + 0.9f * std::clamp(event.progress, 0.0f, 1.0f), event.message.empty() ? event.stage : event.message);
                 },
@@ -210,6 +214,7 @@ void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLN
             if (!m.success) throw std::runtime_error(m.error_message.empty() ? std::string("The features could not be made.") : m.error_message);
             if (m.effective_kind != PipelineMaterializerSourceKind::SparseFeatureDataset)
                 throw std::runtime_error(plan.feeder_name + " gave no sparse features.");
+            spdlog::info("Sparse features for the dashboard: {} ({})", m.effective_dataset_name, m.cache_message.empty() ? "built" : m.cache_message);
             *result = m.effective_dataset_name;
             t.MarkCompleted("Sparse features ready");
         });
