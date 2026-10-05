@@ -41,6 +41,58 @@ as Data Studio's Profile tab) and builds:
 **Regenerate** rebuilds these automatic widgets from the current data and
 roles; widgets you added stay.
 
+A column that only numbers the rows (a CSV's unnamed first column, read as
+`C0`, `column0` or `Unnamed: 0`, or one named `index`) is an ID and gets no
+widget.
+
+## Text columns
+
+A column with the Text role (long texts, or values that are mostly
+different per row, such as reviews or statements) gets its own widgets:
+
+- three KPIs in a row on top: **Words per text (median)**, **Vocabulary
+  (words)** and **Empty or missing texts**;
+- **Text length (words)**: a histogram, with the longest 1% of texts in the
+  last bin so a few very long ones do not squash the rest;
+- **Top words** and **Top 2-word phrases**: horizontal bars, common English
+  words (the, and, ...) left out; **Keep common words** in the widget's
+  settings counts them too;
+- **Words by class**: each top word's share of each class's texts (a
+  heatmap), when there is a class column with up to 20 values;
+- **Sample texts**: the class, then the text.
+
+Words are the text in lower case, split into letters, digits and
+apostrophes. Click a word or phrase to keep the texts that have it (as a
+whole word: "sleep" does not keep "sleeping"); click a length bin to keep
+texts of that many words; the other widgets and the KPIs follow. A widget's
+settings choose what it shows, the text column and the class column.
+
+Example: `p3_text.cyxgraph` (test project): the mental-health statements
+(53,043 texts, 7 classes) show a median of 62 words and a vocabulary of
+60,171 words; clicking "feel" keeps 15,335 texts.
+
+## Sparse features
+
+A Dashboard below a **Count Vectorizer** or **TF-IDF** node with **Output
+format: sparse** shows the sparse matrix itself (it runs the vectorizer the
+way training does, in the background; Task View shows it):
+
+- KPIs: rows, features, non-zero values, density, memory, labels;
+- **Labels**: rows per class (click a bar to keep that class's rows in every
+  card; click it again for all rows);
+- **Top features**: the largest total weights;
+- **Features per row** and **Feature spread** (how many rows use each
+  feature, log scale);
+- **Top features by class**: the mean weight per row of each class;
+- **Rows**: each row's label, how many features it uses and its strongest
+  ones.
+
+The figures are exact (read from the matrix, not sampled). A Plot node
+cannot draw sparse features and says to connect a Dashboard.
+
+Example: TF-IDF (2,000 features) on the statements: 1,839,166 non-zero
+values, density 1.73%, 15.1 MB.
+
 ## Summary strip
 
 Rows (filtered, *of* all rows), columns, missing cells, duplicate rows and
