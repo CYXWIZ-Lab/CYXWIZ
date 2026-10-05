@@ -1077,9 +1077,23 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Histogram2D: {
             const bool named = kind != Kind::Histogram2D;
             ImPlot::PushColormap(ScaleColormap(p.spec, p.grid_diverging));
-            // Numbers in the cells when they fit (about 40 px a cell).
-            const bool numbers = named && p.grid.size() <= 400 && plot_size.x / static_cast<float>(std::max(1, p.grid_cols)) >= 40.0f;
-            const char* format = kind == Kind::Matrix && p.spec.matrix_values != PlotSpec::MatrixValues::Values ? "%.2f" : "%g";
+            // Numbers in the cells when the widest fits its cell: whole numbers as
+            // they are, small values with two decimals, others three digits.
+            bool whole = true;
+            double widest = 0;
+            for (double v : p.grid)
+                if (std::isfinite(v)) {
+                    whole = whole && v == std::floor(v) && std::fabs(v) < 1e7;
+                    widest = std::max(widest, std::fabs(v));
+                }
+            const char* format = kind == Kind::Matrix && p.spec.matrix_values != PlotSpec::MatrixValues::Values ? "%.2f"
+                                 : whole                                                                    ? "%.0f"
+                                 : widest < 10                                                              ? "%.2f"
+                                                                                                            : "%.3g";
+            char sample[32];
+            std::snprintf(sample, sizeof(sample), format, -widest);
+            const float cell_px = plot_size.x / static_cast<float>(std::max(1, p.grid_cols));
+            const bool numbers = named && p.grid.size() <= 400 && cell_px >= ImGui::CalcTextSize(sample).x + 8.0f;
             const ImPlotPoint lo = named ? ImPlotPoint(0, 0) : ImPlotPoint(p.x_min, p.y_min);
             const ImPlotPoint hi = named ? ImPlotPoint(p.grid_cols, p.grid_rows) : ImPlotPoint(p.x_max, p.y_max);
             ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, p.grid_lo,
