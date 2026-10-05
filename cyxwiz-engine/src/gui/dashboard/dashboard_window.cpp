@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/column_role_store.h"
 #include "../../core/data_registry.h"
+#include "../../core/dashboard/sparse_summary.h"
 #include "../../core/dataset_catalog.h"
 #include "../../core/session_query_service.h"
 #include "../icons.h"
@@ -118,6 +119,12 @@ void DashboardWindow::SetData(const std::string& dataset_name, const std::string
         profiled_generation_ = ~0ull;
         views_.clear();
         view_versions_.clear();
+        // Sparse features: their own summary (no SQL).
+        sparse_ = DataRegistry::Instance().IsSparseFeatureDataset(dataset_);
+        sparse_summary_.reset();
+        sparse_views_.clear();
+        sparse_dirty_ = true;
+        sparse_error_.clear();
     }
 }
 
@@ -271,6 +278,11 @@ void DashboardWindow::Render() {
     if (dataset_.empty() || !message_.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(t.text_dim, "%s", message_.empty() ? "No data yet." : message_.c_str());
+        ImGui::End();
+        return;
+    }
+    if (sparse_) {
+        DrawSparse();
         ImGui::End();
         return;
     }

@@ -164,6 +164,7 @@ set(ENGINE_SOURCES
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
+    src/core/dashboard/sparse_summary.cpp
     src/core/dashboard/dashboard_runtime.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
@@ -639,6 +640,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
     src/gui/dashboard/dashboard_window.cpp
+    src/gui/dashboard/dashboard_sparse.cpp
     src/gui/dashboard/dashboard_links.cpp
     src/gui/data_studio/visualizer.cpp
     src/gui/data_studio/data_studio_panel.cpp
@@ -1422,6 +1424,7 @@ add_executable(test_dashboard_runtime
     src/core/dashboard/dashboard_runtime.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
+    src/core/dashboard/sparse_summary.cpp
     src/core/dataset_profiler.cpp
     src/core/dataset_contract.cpp
     src/core/session_query_engine.cpp

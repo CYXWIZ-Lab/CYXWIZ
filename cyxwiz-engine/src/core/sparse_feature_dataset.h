@@ -37,6 +37,8 @@ public:
         std::vector<std::string> feature_names;
         std::shared_ptr<arrow::ChunkedArray> labels;
         std::string label_name;
+        // The label codes' names (code i is class_names[i]; empty: unknown).
+        std::vector<std::string> class_names;
     };
 
     static arrow::Result<std::shared_ptr<SparseFeatureDataset>> Create(
@@ -64,6 +66,7 @@ public:
         return labels_;
     }
     const std::string& GetLabelName() const noexcept { return label_name_; }
+    const std::vector<std::string>& GetClassNames() const noexcept { return class_names_; }
 
     // Logical owned bytes. Container capacity and allocator bookkeeping are
     // intentionally excluded so this remains deterministic for diagnostics.
@@ -97,6 +100,7 @@ private:
     std::vector<std::string> feature_names_;
     std::shared_ptr<const arrow::ChunkedArray> labels_;
     std::string label_name_;
+    std::vector<std::string> class_names_;
     double density_ = 0.0;
     uint64_t feature_storage_bytes_ = 0;
     uint64_t label_storage_bytes_ = 0;

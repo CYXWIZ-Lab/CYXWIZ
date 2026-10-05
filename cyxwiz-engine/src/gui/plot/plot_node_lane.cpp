@@ -5,6 +5,7 @@
 #include "../../core/data_registry.h"
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/pipeline_executor.h"
+#include "../../core/pipeline_materializer.h"
 #include "../../core/plot/plot_tree_model.h"
 #include "../../core/project_manager.h"
 
@@ -115,7 +116,7 @@ void PlotNodeLane::Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& n
             if (!s.table || e.result_fingerprint != e.plan.fingerprint) ReadLoaded(e);
             break;
         case NodeResultPlan::State::Run:
-            if (!s.table) {
+            if (!s.table && !s.sparse) {
                 if (s.state != Status::State::Failed) s.state = Status::State::Idle;
             } else {
                 s.state = e.result_fingerprint == e.plan.fingerprint ? Status::State::Ready : Status::State::OutOfDate;
@@ -159,6 +160,70 @@ void PlotNodeLane::Start(int plot_id, Entry& e, const std::shared_ptr<const void
     spdlog::info("Plot node {}: running {} node(s) above it (task {})", plot_id, e.plan.run_node_count, e.task_id);
 }
 
+void PlotNodeLane::StartSparse(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                               const std::shared_ptr<const void>& owner) {
+    (void)owner;
+    // The closure as the materializer reads it (the graph's own node and link types).
+    std::vector<gui::MLNode> closure;
+    for (const auto& n : nodes)
+        if (std::find(e.plan.closure_ids.begin(), e.plan.closure_ids.end(), n.id) != e.plan.closure_ids.end()) closure.push_back(n);
+    std::vector<gui::NodeLink> closure_links;
+    for (const auto& l : links)
+        if (std::find(e.plan.closure_ids.begin(), e.plan.closure_ids.end(), l.from_node) != e.plan.closure_ids.end() &&
+            std::find(e.plan.closure_ids.begin(), e.plan.closure_ids.end(), l.to_node) != e.plan.closure_ids.end())
+            closure_links.push_back(l);
+    auto& pm = ProjectManager::Instance();
+    auto result = std::make_shared<std::string>();
+    const std::string name = "Sparse features: " + (e.plan.feeder_name.empty() ? std::string("node") : e.plan.feeder_name);
+    auto task = std::make_shared<LambdaTask>(
+        name, [plan = e.plan, closure = std::move(closure), closure_links = std::move(closure_links), result,
+               artifacts = pm.GetArtifactsPath(), exports = pm.GetExportsPath(), ingestion = pm.GetIngestionCachePath(),
+               project = pm.GetProjectRoot()](LambdaTask& t) mutable {
+            // 1. The Data Input's table (as loaded, or read now).
+            std::string source = plan.dataset_name;
+            if (source.empty()) {
+                PipelineExecutor executor;
+                executor.SetArtifactRoot(artifacts);
+                executor.SetExportRoot(exports);
+                executor.SetIngestionCacheRoot(ingestion);
+                executor.SetProjectRoot(project);
+                t.ReportProgress(0.05f, "Reading the data");
+                if (!executor.ExecutePipeline(plan.input_pipeline_json))
+                    throw std::runtime_error(executor.GetLastError().empty() ? std::string("The Data Input could not be read.") : executor.GetLastError());
+                auto it = executor.NodeResults().find(plan.source_input_id);
+                if (it == executor.NodeResults().end()) throw std::runtime_error("The Data Input gave no table.");
+                source = it->second;
+            }
+            if (t.ShouldStop()) return;
+            // 2. The vectorizer through the materializer, as training runs it.
+            for (auto& n : closure)
+                if (n.id == plan.source_input_id) n.parameters["dataset_name"] = source;
+            PipelineOperatorExecutionContext context;
+            context.cancellation_requested = [&t]() { return t.ShouldStop(); };
+            const MaterializeResult m = PipelineMaterializer::Materialize(
+                closure, closure_links, DataRegistry::Instance(), source,
+                [&t](const PipelineOperatorProgress& event) {
+                    t.ReportProgress(0.1f + 0.9f * std::clamp(event.progress, 0.0f, 1.0f), event.message.empty() ? event.stage : event.message);
+                },
+                std::move(context));
+            if (t.ShouldStop()) return;
+            if (!m.success) throw std::runtime_error(m.error_message.empty() ? std::string("The features could not be made.") : m.error_message);
+            if (m.effective_kind != PipelineMaterializerSourceKind::SparseFeatureDataset)
+                throw std::runtime_error(plan.feeder_name + " gave no sparse features.");
+            *result = m.effective_dataset_name;
+            t.MarkCompleted("Sparse features ready");
+        });
+    e.task_id = AsyncTaskManager::Instance().Submit(task);
+    e.executor.reset();
+    e.sparse_result = result;
+    e.run_fingerprint = e.plan.fingerprint;
+    e.status.state = Status::State::Running;
+    e.status.progress = 0.0f;
+    e.status.progress_text = "Starting";
+    e.status.error.clear();
+    spdlog::info("Plot node {}: making sparse features with {} (task {})", plot_id, e.plan.feeder_name, e.task_id);
+}
+
 void PlotNodeLane::Finish(Entry& e) {
     auto task = AsyncTaskManager::Instance().GetTask(e.task_id);
     Status& s = e.status;
@@ -173,7 +238,21 @@ void PlotNodeLane::Finish(Entry& e) {
             s.state = Status::State::Failed;
             s.error = task->GetErrorMessage().empty() ? std::string("The run failed.") : task->GetErrorMessage();
         } else if (state == TaskState::Cancelled) {
-            s.state = s.table ? Status::State::OutOfDate : Status::State::Idle;
+            s.state = s.table || s.sparse ? Status::State::OutOfDate : Status::State::Idle;
+        } else if (e.plan.sparse) {
+            // Sparse features: no table; a Dashboard reads the matrix by name.
+            if (e.sparse_result && !e.sparse_result->empty()) {
+                s.table.reset();
+                s.sparse = true;
+                s.dataset_name = *e.sparse_result;
+                s.read_at = ClockNow();
+                ++s.data_version;
+                s.state = Status::State::Ready;
+                e.result_fingerprint = e.run_fingerprint;
+            } else {
+                s.state = Status::State::Failed;
+                s.error = e.plan.feeder_name + " gave no sparse features.";
+            }
         } else if (e.plan.model) {
             // A trainer's Model pin: its fitted model, as the nodes of its trees.
             const auto& models = e.executor->ModelArtifacts();
@@ -213,6 +292,7 @@ void PlotNodeLane::Finish(Entry& e) {
     }
     e.task_id = 0;
     e.executor.reset();
+    e.sparse_result.reset();
 }
 
 void PlotNodeLane::Poll(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
@@ -243,7 +323,10 @@ void PlotNodeLane::Refresh(int plot_id, const std::vector<gui::MLNode>& nodes, c
     if (e.task_id != 0) return;  // running already
     Plan(plot_id, e, nodes, links);
     if (e.plan.state == NodeResultPlan::State::Loaded) ReadLoaded(e);
-    else if (e.plan.state == NodeResultPlan::State::Run) Start(plot_id, e, owner);
+    else if (e.plan.state == NodeResultPlan::State::Run) {
+        if (e.plan.sparse) StartSparse(plot_id, e, nodes, links, owner);
+        else Start(plot_id, e, owner);
+    }
 }
 
 }  // namespace cyxwiz::plot

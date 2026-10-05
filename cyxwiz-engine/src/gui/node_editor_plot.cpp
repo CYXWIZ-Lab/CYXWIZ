@@ -370,7 +370,7 @@ void NodeEditor::RenderDashboardWindows() {
                 window->SetSpecJson(spec_it->second);
         }
         const Lane::Status& st = plot_lane_->StatusOf(id);
-        const bool has_data = st.table && !st.dataset_name.empty() &&
+        const bool has_data = (st.table || st.sparse) && !st.dataset_name.empty() &&
                               (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);
         if (has_data) {
             window->SetData(st.dataset_name, node->name + " \xC2\xB7 " + st.feeder_name);
@@ -417,6 +417,10 @@ void NodeEditor::RenderPlotNodes() {
         if (has_data && shown != st.data_version) {
             window->SetArrowTable(node->name + " \xC2\xB7 " + st.feeder_name, st.table);
             shown = st.data_version;
+        } else if (!has_data && st.sparse) {
+            // Sparse features (a vectorizer's sparse output): a Dashboard shows them.
+            window->ClearData(node->name, "Sparse features: a Plot reads tables. Connect a Dashboard to see rows, density and top features.");
+            shown = 0;
         } else if (!has_data) {
             // The header banner already gives the reason when not available
             // or failed; the plot area then only names the state.

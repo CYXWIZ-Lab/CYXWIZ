@@ -19,6 +19,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,8 @@ class PlotWindow;
 }
 
 namespace cyxwiz::dashboard {
+
+struct SparseSummary;
 
 class DashboardWindow {
 public:
@@ -76,6 +79,17 @@ private:
     // The table as people call it (queries shown or opened elsewhere name it so).
     std::string ShownName() const;
     void FinishExport();
+    // Sparse features (TOFIX134 P3, board 19; dashboard_sparse.cpp): no SQL
+    // profile; a summary of the matrix, a label filter, fixed cards.
+    void StartSparseSummary();
+    void DrawSparse();
+    bool sparse_ = false;
+    std::shared_ptr<SparseSummary> sparse_summary_;
+    std::set<std::string> sparse_keep_;
+    uint64_t sparse_task_ = 0;
+    bool sparse_dirty_ = true;
+    std::string sparse_error_;
+    std::map<std::string, std::unique_ptr<plot::PlotView>> sparse_views_;
 
     std::string id_;
     Mode mode_ = Mode::Dashboard;

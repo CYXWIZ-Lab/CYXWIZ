@@ -76,6 +76,7 @@ std::shared_ptr<cyxwiz::SparseFeatureDataset> MakeDataset(
     contents.feature_names = {"alpha", "beta", "delta", "gamma"};
     contents.labels = MakeChunkedLabels();
     contents.label_name = "target";
+    contents.class_names = {"negative", "positive \"quoted\""};  // the codes' names (TOFIX134 P3)
     auto result = cyxwiz::SparseFeatureDataset::Create(std::move(contents));
     Check(result.ok(), result.status().ToString());
     return result.ValueOrDie();
@@ -97,6 +98,8 @@ void CheckEquivalent(const cyxwiz::SparseFeatureDataset& actual,
           "cache feature names mismatch");
     Check(actual.GetLabelName() == expected.GetLabelName(),
           "cache label name mismatch");
+    Check(actual.GetClassNames() == expected.GetClassNames(),
+          "cache class names mismatch");
     Check(actual.GetLabels() && expected.GetLabels() &&
               actual.GetLabels()->Equals(*expected.GetLabels()),
           "cache labels mismatch");
@@ -154,7 +157,8 @@ void TestOptionalFieldsAndMalformedInput() {
     auto loaded = cyxwiz::SparseFeatureDatasetCache::Load(cache_path.string());
     Check(loaded.ok(), loaded.status().ToString());
     Check(!loaded.ValueOrDie()->GetLabels() &&
-              loaded.ValueOrDie()->GetFeatureNames().empty(),
+              loaded.ValueOrDie()->GetFeatureNames().empty() &&
+              loaded.ValueOrDie()->GetClassNames().empty(),
           "absent optional fields should remain absent");
 
     {

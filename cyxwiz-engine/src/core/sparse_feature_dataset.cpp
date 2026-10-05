@@ -226,6 +226,7 @@ SparseFeatureDataset::SparseFeatureDataset(
       feature_names_(std::move(contents.feature_names)),
       labels_(std::move(contents.labels)),
       label_name_(std::move(contents.label_name)),
+      class_names_(std::move(contents.class_names)),
       density_(density),
       feature_storage_bytes_(feature_storage_bytes),
       label_storage_bytes_(label_storage_bytes),

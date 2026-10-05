@@ -27,6 +27,14 @@ struct NodeResultPlan {
     // The output is a fitted model (a trainer's Model pin, TOFIX134 P4.7):
     // the run's model file is read as rows (plot_tree_model), not a table.
     bool model = false;
+    // The feeder is a Count / TF-IDF Vectorizer with sparse output (TOFIX134
+    // P3, board 19): the Data Studio run cannot make it, so the lane loads the
+    // Data Input above (`input_pipeline_json`, or `dataset_name` when loaded)
+    // and runs `closure_ids` through the materializer, as training does.
+    bool sparse = false;
+    int source_input_id = -1;
+    std::string input_pipeline_json;
+    std::vector<int> closure_ids;
     std::string dataset_name;    // Loaded
     std::string pipeline_json;   // Run: PipelineExecutor JSON of the closure
     int run_node_count = 0;      // Run: nodes it runs

@@ -50,6 +50,7 @@ public:
         std::string progress_text;
         std::shared_ptr<arrow::Table> table;
         std::string dataset_name;      // the registry name of `table` (a loaded Data Input or the run's result)
+        bool sparse = false;           // dataset_name is sparse features (no `table`; a Dashboard reads them)
         std::string read_at;           // "16:42" when the table was read
         uint64_t data_version = 0;     // bumps when `table` changes
     };
@@ -73,11 +74,15 @@ private:
         std::string run_fingerprint;     // of the running run
         uint64_t task_id = 0;
         std::shared_ptr<PipelineExecutor> executor;
+        std::shared_ptr<std::string> sparse_result;  // the sparse dataset's name, when its task finishes
     };
     void Plan(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links);
     void ReadLoaded(Entry& e);
     void Finish(Entry& e);
     void Start(int plot_id, Entry& e, const std::shared_ptr<const void>& owner);
+    // A sparse vectorizer: load its Data Input, then the materializer (TOFIX134 P3).
+    void StartSparse(int plot_id, Entry& e, const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                     const std::shared_ptr<const void>& owner);
 
     std::map<int, Entry> entries_;
     double last_plan_time_ = -1.0;
