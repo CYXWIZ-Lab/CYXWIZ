@@ -5,7 +5,8 @@ if(TARGET OpenXLSX::OpenXLSX)
 endif()
 function(cyxwiz_target_data_convert target_name)
     target_sources(${target_name} PRIVATE
-        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../cyxwiz-engine/src/core/excel_table_adapter.cpp")
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../cyxwiz-engine/src/core/excel_table_adapter.cpp"
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../cyxwiz-engine/src/core/hdf5_table_adapter.cpp")
     if(TARGET OpenXLSX::OpenXLSX)
         target_sources(${target_name} PRIVATE
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../cyxwiz-engine/src/core/xlsx_archive_guard.cpp")

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hdf5_table_adapter.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -51,6 +53,11 @@ struct DataConvertOptions {
     std::shared_ptr<arrow::Table> input_table;
     std::string excel_sheet; // XLSX input only; empty selects the first worksheet.
     std::string excel_start_column = "A"; // XLSX input only, inclusive Excel column label.
+    // Empty data path keeps DataConvert's conventional-name discovery. The
+    // shared adapter itself always requires an explicit absolute dataset path.
+    // Conversion retains float64 output; direct adapter reads can preserve types.
+    Hdf5TableSelection hdf5_selection{"", ""};
+    uint64_t hdf5_max_materialized_bytes = 256ULL * 1024 * 1024;
 };
 
 struct DataConvertResult {

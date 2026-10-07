@@ -801,96 +801,33 @@ std::shared_ptr<ArrowDataset> LoadNumpy(const DataConvertOptions& options,
 
 std::shared_ptr<ArrowDataset> LoadHdf5(const DataConvertOptions& options,
                                        std::string& error) {
+    Hdf5TableReadOptions read_options;
+    read_options.selection = options.hdf5_selection;
+    read_options.numeric_policy = Hdf5NumericPolicy::Float64;
+    read_options.max_materialized_bytes = options.hdf5_max_materialized_bytes;
 #ifdef CYXWIZ_HAS_HDF5
     try {
-        HighFive::File file(options.input_path, HighFive::File::ReadOnly);
-        std::string dataset_name = "data";
-        if (!file.exist(dataset_name)) {
-            const std::vector<std::string> common_names = {
-                "features", "X", "x", "inputs", "values"
-            };
-            bool found = false;
-            for (const auto& candidate : common_names) {
+        if (read_options.selection.data_path.empty()) {
+            const HighFive::File file(options.input_path, HighFive::File::ReadOnly);
+            for (const auto* candidate : {"/data", "/features", "/X", "/x", "/inputs", "/values"}) {
                 if (file.exist(candidate)) {
-                    dataset_name = candidate;
-                    found = true;
+                    read_options.selection.data_path = candidate;
                     break;
                 }
             }
-            if (!found) {
+            if (read_options.selection.data_path.empty()) {
                 error = "HDF5 input has no supported table dataset. Expected '/data' or one of: features, X, x, inputs, values.";
                 return nullptr;
             }
         }
-
-        auto dataset = file.getDataSet(dataset_name);
-        const auto dims = dataset.getDimensions();
-        if (dims.empty() || dims.size() > 2) {
-            error = "HDF5 DataConvert input supports only 1D or 2D numeric datasets.";
-            return nullptr;
-        }
-        const size_t rows = dims[0];
-        const size_t columns = dims.size() == 1 ? 1 : dims[1];
-
-        std::vector<std::shared_ptr<arrow::Field>> fields;
-        std::vector<std::shared_ptr<arrow::Array>> arrays;
-        fields.reserve(columns);
-        arrays.reserve(columns);
-
-        if (dims.size() == 1) {
-            std::vector<double> values;
-            dataset.read(values);
-            arrow::DoubleBuilder builder;
-            for (double value : values) {
-                auto status = builder.Append(value);
-                if (!status.ok()) {
-                    error = "HDF5 value append failed: " + status.ToString();
-                    return nullptr;
-                }
-            }
-            std::shared_ptr<arrow::Array> array;
-            auto status = builder.Finish(&array);
-            if (!status.ok()) {
-                error = "HDF5 column build failed: " + status.ToString();
-                return nullptr;
-            }
-            fields.push_back(arrow::field("value", arrow::float64()));
-            arrays.push_back(array);
-        } else {
-            std::vector<std::vector<double>> values;
-            dataset.read(values);
-            for (size_t column = 0; column < columns; ++column) {
-                arrow::DoubleBuilder builder;
-                for (size_t row = 0; row < rows; ++row) {
-                    auto status = builder.Append(values[row][column]);
-                    if (!status.ok()) {
-                        error = "HDF5 value append failed: " + status.ToString();
-                        return nullptr;
-                    }
-                }
-                std::shared_ptr<arrow::Array> array;
-                auto status = builder.Finish(&array);
-                if (!status.ok()) {
-                    error = "HDF5 column build failed: " + status.ToString();
-                    return nullptr;
-                }
-                fields.push_back(arrow::field("col_" + std::to_string(column),
-                                              arrow::float64()));
-                arrays.push_back(array);
-            }
-        }
-
-        auto table = arrow::Table::Make(arrow::schema(fields), arrays);
-        return std::make_shared<ArrowDataset>(table, "data_convert_input");
     } catch (const std::exception& e) {
         error = "HDF5 input read failed: " + std::string(e.what());
         return nullptr;
     }
-#else
-    (void)options;
-    error = "HDF5 support is not compiled into this build.";
-    return nullptr;
 #endif
+    auto result = ReadHdf5Table(options.input_path, read_options);
+    error = result.error;
+    return result.table ? std::make_shared<ArrowDataset>(result.table, "data_convert_input") : nullptr;
 }
 
 std::shared_ptr<ArrowDataset> LoadInputDataset(
@@ -1572,6 +1509,11 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options,
         out << "|xlsx-bounded-values-v3|" << options.excel_sheet.size() << ":" << options.excel_sheet
             << "|" << options.excel_start_column.size() << ":" << options.excel_start_column;
     }
+    if (input_format == DataConvertFormat::Hdf5) {
+        out << "|hdf5-table-v1-float64|" << options.hdf5_selection.data_path.size() << ":" << options.hdf5_selection.data_path
+            << "|" << options.hdf5_selection.label_path.size() << ":" << options.hdf5_selection.label_path
+            << "|" << options.hdf5_max_materialized_bytes;
+    }
     return out.str();
 }
 
@@ -1618,6 +1560,12 @@ bool WriteManifest(const DataConvertOptions& options,
         {"created_at", NowIsoLikeUtc()}
     };
 
+    if (input_format == DataConvertFormat::Hdf5) {
+        manifest["hdf5_data_path"] = options.hdf5_selection.data_path;
+        manifest["hdf5_label_path"] = options.hdf5_selection.label_path;
+        manifest["hdf5_numeric_policy"] = "float64";
+        manifest["hdf5_max_materialized_bytes"] = options.hdf5_max_materialized_bytes;
+    }
     std::error_code ec;
     if (!options.input_table && !options.input_path.empty() && std::filesystem::exists(input_path, ec)) {
         manifest["input_size"] =
@@ -1971,6 +1919,7 @@ DataConvertResult DataConvertService::Convert(const DataConvertOptions& options)
             DataConvertOptions reload;
             reload.input_path = options.output_path;
             reload.auto_detect_delimiter = true;
+            reload.hdf5_max_materialized_bytes = options.hdf5_max_materialized_bytes;
             auto written = LoadInputDataset(reload, output_format, error);
             if (!written || !written->GetArrowTable()) {
                 return FailConvert(errors::File::ReadFailed,

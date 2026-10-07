@@ -4513,6 +4513,23 @@ endforeach()
 
 target_sources(test_excel_table_adapter PRIVATE tests/test_xlsx_archive_guard.cpp)
 
+# The same adapter contract is exercised with and without the optional reader.
+foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_table_adapter_unavailable)
+    add_executable(${hdf5_test}
+        tests/test_hdf5_table_adapter.cpp
+        src/core/hdf5_table_adapter.cpp)
+    target_include_directories(${hdf5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(${hdf5_test} PRIVATE Arrow::arrow_shared)
+    if(WIN32)
+        target_compile_definitions(${hdf5_test} PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+    set_target_properties(${hdf5_test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endforeach()
+if(HighFive_FOUND)
+    target_link_libraries(test_hdf5_table_adapter PRIVATE HighFive)
+    target_compile_definitions(test_hdf5_table_adapter PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+
 add_executable(test_data_convert_task
     tests/test_data_convert_task.cpp
     src/core/data_convert_task.cpp
