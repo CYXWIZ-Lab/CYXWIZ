@@ -70,6 +70,9 @@ constexpr size_t kExactColumns = 64;      // beyond this many columns: approxima
 constexpr size_t kDetailColumns = 200;    // histograms, top values: the first this many columns
 constexpr size_t kCorrelationColumns = 30;
 
+// Its queries ask to be saved (QueryRequest::cache): through the session
+// query service, a table profiled before (by Data Studio or a dashboard, in
+// this session or an earlier one) is profiled from the saved answers.
 DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, const ProfileOptions& options = {});
 
 }  // namespace cyxwiz

@@ -221,6 +221,7 @@ void DashboardWindow::EnsureProfile() {
             opts.progress = [&task](float f, const std::string& what) { task.ReportProgress(f, what); };
             *result = ProfileTable(table, [](const QueryRequest& r) { return SessionQueryService::Instance().RunNow(r); }, opts);
             if (!result->ok()) task.MarkFailed(result->error);
+            else spdlog::info("Dashboard: profiled '{}' in {:.0f} ms ({} columns)", table, result->elapsed_ms, result->columns.size());
         },
         nullptr,
         [this, alive, result](bool, const std::string&) {

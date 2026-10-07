@@ -99,6 +99,8 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
         r.sql = sql;
         r.params = std::move(params);
         r.inputs = {table};
+        r.label = "Profile";
+        r.cache = true;  // the same data profiled again (Data Studio, a dashboard, next session) reads the saved answers
         QueryResult res = run(r);
         if (!res.ok && p.error.empty()) p.error = res.cancelled ? "Cancelled." : res.error;
         return res;
