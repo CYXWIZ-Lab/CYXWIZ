@@ -114,9 +114,10 @@ std::vector<ExtendOption> BuildExtendOptions(double price_usd_per_hour);
 // until it runs out (owner rule 2026-10-07); they come back from the
 // reconnect prompt.
 struct LeaveSummary {
-    std::string title;               // "Leave dell-pc?"
+    std::string title;               // "Leave dell-pc? The clock keeps running"
+    std::string ends;                // "Your reservation ends at 15:39 (51 min left) whether ..."
     std::string body;                // what happens to training; how to come back
-    std::string ends;                // "The reservation ends at 15:39 (51 min left)"
+    std::string button;              // "Leave, keep the clock running"
 };
 
 LeaveSummary BuildLeaveSummary(const ActiveReservationInputs& in);
@@ -162,7 +163,7 @@ struct ActiveReservationListing {
 struct ReconnectRow {
     std::string reservation_id;
     std::string node;                // name, else the node id
-    std::string time_left;
+    std::string time_left;           // "ends at 15:39 (51 min left)"
     std::string note;                // "connected from another Engine" etc.
 };
 

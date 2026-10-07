@@ -151,12 +151,17 @@ int main() {
           "extend options with their cost");
     Check(BuildExtendOptions(0.0)[0].cost == "-", "no price, no cost");
     const auto leave = BuildLeaveSummary(active);
-    Check(leave.title == "Leave dell-pc?", leave.title);
+    Check(leave.title == "Leave dell-pc? The clock keeps running", leave.title);
+    Check(leave.ends.rfind("Your reservation ends at ", 0) == 0 &&
+              leave.ends.find("(1 h 13 min left) whether you are connected or not. Leaving does not pause it.") !=
+                  std::string::npos,
+          "the end time comes first and says the clock runs: " + leave.ends);
     Check(leave.body.rfind("Training is running (epoch 6 of 10). Leaving stops it with a checkpoint;", 0) == 0,
           "leave body: " + leave.body);
-    Check(leave.body.find("stays yours") != std::string::npos, "the reserved time stays the user's");
-    Check(leave.ends.find("(1 h 13 min left)") != std::string::npos, "leave says when it ends: " + leave.ends);
-    Check(BuildLeaveSummary(reconnected).title == "Leave the node?", "unknown node after a reconnect");
+    Check(leave.body.find("Reconnect") != std::string::npos, "says how to come back");
+    Check(leave.button == "Leave, keep the clock running", leave.button);
+    Check(BuildLeaveSummary(reconnected).title == "Leave the node? The clock keeps running",
+          "unknown node after a reconnect");
 
     std::cout << "stale heartbeat\n";
     auto stale = active;
@@ -196,7 +201,9 @@ int main() {
     ActiveReservationListing gone{"r3", "aaaa0000-0000", "old-pc", start - 5, false, 0};
     const auto rows = BuildReconnectRows({dell, mac, gone}, start);
     Check(rows.size() == 2 && rows[0].reservation_id == "r2", "longest time left first; the ended one is left out");
-    Check(rows[0].node == "Node 5c01bbbb" && rows[0].time_left == "1:51:30 left", "unknown node by id");
+    Check(rows[0].node == "Node 5c01bbbb" && rows[0].time_left.rfind("ends at ", 0) == 0 &&
+              rows[0].time_left.find("(1 h 52 min left)") != std::string::npos,
+          "unknown node by id; row says when it ends: " + rows[0].time_left);
     Check(rows[0].note == "open in another Engine · 1 job done", rows[0].note);
     Check(rows[1].node == "dell-pc" && rows[1].note.empty(), "known node by name");
 

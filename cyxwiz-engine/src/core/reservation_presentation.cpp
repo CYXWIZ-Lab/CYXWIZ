@@ -208,7 +208,14 @@ std::vector<ExtendOption> BuildExtendOptions(double price_usd_per_hour) {
 LeaveSummary BuildLeaveSummary(const ActiveReservationInputs& in) {
     LeaveSummary summary;
     const std::string name = in.node_known && !in.node.name.empty() ? in.node.name : "the node";
-    summary.title = "Leave " + name + "?";
+    summary.title = "Leave " + name + "? The clock keeps running";
+    const long long left =
+        in.server_seconds_left >= 0
+            ? std::max(0LL, in.server_seconds_left - std::max(0LL, in.now - in.server_checked_at))
+            : std::max(0LL, in.end_time - in.now);
+    summary.ends = "Your reservation ends at " + FormatClockTime(in.now + left) + " (" +
+                   FormatReservationLength(static_cast<int>(MinutesRoundedUp(left))) +
+                   " left) whether you are connected or not. Leaving does not pause it.";
     if (in.training_running) {
         summary.body = "Training is running";
         if (in.epoch > 0 && in.total_epochs > 0) {
@@ -217,14 +224,9 @@ LeaveSummary BuildLeaveSummary(const ActiveReservationInputs& in) {
         summary.body += ". Leaving stops it with a checkpoint; the node keeps it. ";
     }
     summary.body +=
-        "The reserved time stays yours: come back from this screen to use it. Nothing is returned for time "
-        "left when it runs out.";
-    const long long left =
-        in.server_seconds_left >= 0
-            ? std::max(0LL, in.server_seconds_left - std::max(0LL, in.now - in.server_checked_at))
-            : std::max(0LL, in.end_time - in.now);
-    summary.ends = "The reservation ends at " + FormatClockTime(in.now + left) + " (" +
-                   FormatReservationLength(static_cast<int>(MinutesRoundedUp(left))) + " left)";
+        "Come back from this screen (Reconnect) to use the time left. Nothing is returned for time left "
+        "when it ends.";
+    summary.button = "Leave, keep the clock running";
     return summary;
 }
 
@@ -260,7 +262,8 @@ std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListin
         ReconnectRow row;
         row.reservation_id = listing.reservation_id;
         row.node = listing.node_name.empty() ? "Node " + listing.node_id.substr(0, 8) : listing.node_name;
-        row.time_left = FormatCountdown(listing.ends_at - now) + " left";
+        row.time_left = "ends at " + FormatClockTime(listing.ends_at) + " (" +
+                        FormatReservationLength(static_cast<int>(MinutesRoundedUp(listing.ends_at - now))) + " left)";
         if (listing.engine_connected) row.note = "open in another Engine";
         if (listing.jobs_completed > 0) {
             if (!row.note.empty()) row.note += " · ";

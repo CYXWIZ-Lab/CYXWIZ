@@ -272,6 +272,9 @@ void ConnectionDialog::RenderActiveReservationPanel() {
         }
         ImGui::SameLine();
         if (ui::SecondaryButton("Leave node", !ended)) show_leave_confirm_ = true;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("The clock keeps running; come back from this screen before it ends.");
+        }
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize("Hide details").x);
         if (ui::LinkButton(reservation_details_open_ ? "Hide details" : "Details##active")) {
@@ -340,14 +343,14 @@ void ConnectionDialog::RenderLeaveNodePopup() {
         const LeaveSummary summary = BuildLeaveSummary(CurrentReservationInputs());
         ImGui::TextUnformatted(summary.title.c_str());
         ImGui::PushTextWrapPos(500.0f);
+        ImGui::TextUnformatted(summary.ends.c_str());
+        ImGui::Spacing();
         ImGui::TextColored(Muted(), "%s", summary.body.c_str());
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        ImGui::TextUnformatted(summary.ends.c_str());
-        ImGui::Spacing();
         if (ui::SecondaryButton("Stay", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
-        if (ui::PrimaryButton("Leave node", true, nullptr, ui::ButtonSize::Regular)) {
+        if (ui::PrimaryButton(summary.button.c_str(), true, nullptr, ui::ButtonSize::Regular)) {
             ImGui::CloseCurrentPopup();
             LeaveNode();
         }
@@ -410,14 +413,14 @@ void ConnectionDialog::RenderReconnectPrompt() {
         found_reservations_.clear();  // all ran out
         return;
     }
-    ImGui::SeparatorText(rows.size() == 1 ? ICON_FA_LINK " You have an active reservation"
-                                          : ICON_FA_LINK " You have active reservations");
+    ImGui::SeparatorText(rows.size() == 1 ? ICON_FA_LINK " Your reservation is running"
+                                          : ICON_FA_LINK " Your reservations are running");
     ImGui::PushID("reconnect");
     if (BeginCard("##card")) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(Muted(),
-                           "The reserved time is yours until it runs out. Reconnect to use it; there is nothing "
-                           "to come back to after that.");
+                           "The clock does not pause. Reconnect to use the time left; nothing remains after it "
+                           "ends.");
         ImGui::PopTextWrapPos();
         std::string reconnect_id;
         if (ImGui::BeginTable("##rows", 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
