@@ -74,6 +74,11 @@ public:
     // Thread-safe request to stop the query running on this connection.
     void Interrupt();
 
+    // Another connection to the same database (its tables and views), for
+    // running queries side by side; one query at a time on each connection.
+    // Null when this connector is not ready.
+    std::unique_ptr<DuckDBConnector> NewConnection();
+
     /**
      * Destructor - closes connection
      */
@@ -283,11 +288,14 @@ public:
     std::vector<ColumnStats> ComputeStats(const std::string& table_name);
 
 private:
-    std::unique_ptr<duckdb::DuckDB> db_;
+    std::shared_ptr<duckdb::DuckDB> db_;  // shared with the connections NewConnection makes
     std::unique_ptr<duckdb::Connection> conn_;
     std::map<std::string, std::shared_ptr<arrow::Table>> registered_tables_;
     std::string last_error_;
     bool profiling_enabled_ = false;
+
+    struct SharedTag {};
+    DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db);
 
     // Helper: Convert DuckDB result to Arrow table
     std::shared_ptr<arrow::Table> ResultToArrow(duckdb::unique_ptr<duckdb::QueryResult> result);

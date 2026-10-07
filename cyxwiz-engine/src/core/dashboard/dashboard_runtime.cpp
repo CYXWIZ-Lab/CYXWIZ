@@ -148,6 +148,7 @@ QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, cons
                              const std::string& words_table) {
     QueryRequest r;
     r.label = "Dashboard text widget";
+    r.cache = true;
     // The words split once when saved (every row with its words), else split here.
     const bool saved = !words_table.empty();
     const TokenColumns tc{w.text_field, "cyxwiz_words", "cyxwiz_word_count"};
@@ -196,6 +197,7 @@ QueryRequest WidgetQuery(const WidgetSpec& w, const std::string& table, const Fi
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard widget";
+    r.cache = true;
     if (w.IsQuery()) {
         // The query's table name stands for the rows under the other widgets' filters.
         const std::string rows = Quote(w.query_table.empty() ? table : w.query_table) + " AS (SELECT * FROM " + Quote(table) +
@@ -245,6 +247,7 @@ QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const F
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard missing values";
+    r.cache = true;
     std::string sql = "SELECT count(*) AS rows";
     for (size_t i = 0; i < columns.size(); ++i) {
         const std::string col = Quote(columns[i]);
@@ -268,6 +271,7 @@ QueryRequest MissingQuery(const WidgetSpec& w, const std::string& table, const F
 QueryRequest KpiQuery(const WidgetSpec& w, const std::string& table, const FilterState& filters, const std::string& words_table) {
     QueryRequest r;
     r.label = "Dashboard KPI";
+    r.cache = true;
     // A text measure reads the words split once when they are saved.
     const bool text_measure = w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts;
     const bool saved = text_measure && !words_table.empty();
@@ -292,6 +296,7 @@ QueryRequest StripQuery(const std::string& table, const FilterState& filters, co
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard summary";
+    r.cache = true;
     std::vector<QueryParam> cond_params;
     const std::string cond = filters.WhereFor("", cond_params);
     const auto with_cond = [&] {

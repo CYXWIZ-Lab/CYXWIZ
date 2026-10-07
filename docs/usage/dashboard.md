@@ -189,6 +189,21 @@ shows 5,856 / 2,219 / 507 tracks, and only *single* (2,219) when
 album_type = single is filtered. Its settings show the query and **Edit in
 Query tab**; its bars do not set filters (its columns are the query's).
 
+## Loading and saved results
+
+A card's query runs once per data and filter. Its result is saved in the
+project (`cache/query_results`, Parquet, kept under 512 MB, least recently
+used first), so reopening the dashboard on the same data shows every card
+at once, and a filter you have used before comes back without a query. The
+Task View marks such a result "(saved)". A result changes when the data does:
+the key holds the query, its values and the content of every table it reads
+(the file for a disk-backed dataset), so an edited file or a new load runs
+again. Deleting the folder is safe.
+
+Queries run a few at a time (three), cheap cards first: the summary strip
+and numbers, then tables, then plots, then the text cards that read every
+word. Changing a filter stops the queries it supersedes.
+
 ## When the data changes
 
 - New values or rows: every widget updates; the layout stays.

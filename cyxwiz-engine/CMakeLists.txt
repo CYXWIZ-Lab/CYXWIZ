@@ -157,6 +157,7 @@ set(ENGINE_SOURCES
     src/core/duckdb_connector.cpp
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
+    src/core/query_result_cache.cpp
     src/core/arrow_data_table.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
@@ -1402,6 +1403,19 @@ if(WIN32)
 endif()
 set_target_properties(test_session_query_engine PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME session_query_engine_contract COMMAND test_session_query_engine)
+
+# ===== Test: Saved query results (TOFIX134 Dashboard loading) =====
+add_executable(test_query_result_cache
+    tests/test_query_result_cache.cpp
+    src/core/query_result_cache.cpp
+)
+target_include_directories(test_query_result_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_query_result_cache PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_query_result_cache PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_query_result_cache PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME query_result_cache_contract COMMAND test_query_result_cache)
 
 # ===== Test: Dataset profiler (TOFIX134 P3.5) =====
 add_executable(test_dataset_profiler

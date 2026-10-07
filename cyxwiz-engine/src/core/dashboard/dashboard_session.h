@@ -61,6 +61,8 @@ public:
     const StripResult& Strip() const { return strip_; }
     bool Busy() const { return !running_.empty(); }
     // The query a widget runs (View SQL names the table as people call it: `table`).
+    // How much a card's query reads: 0 numbers, 1 tables, 2 plots, 3 text cards (every word).
+    static int QueryCost(const WidgetSpec& w);
     QueryRequest RequestFor(const WidgetSpec& w, const DatasetProfile& profile, const FilterState& filters, const std::string& table) const;
 
     static constexpr size_t kRowCap = 1000000;  // plot widgets sample beyond this many rows

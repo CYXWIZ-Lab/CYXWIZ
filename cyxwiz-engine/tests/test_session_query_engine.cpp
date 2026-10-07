@@ -137,6 +137,44 @@ int main() {
         r = engine.Run(q);
         Check(r.ok && r.table->num_rows() == 1, "runs again after a cancel: " + r.error);
 
+        // Queries side by side: a long one does not hold up short ones, and
+        // its token stops only it.
+        {
+            QueryToken long_token;
+            QueryRequest slow;
+            slow.sql = "SELECT count(*) FROM range(100000000000) a";
+            QueryResult slow_r;
+            std::thread runner([&] { slow_r = engine.Run(slow, &long_token); });
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            const auto t0 = std::chrono::steady_clock::now();
+            std::vector<std::thread> quick;
+            std::vector<QueryResult> quick_r(4);
+            for (size_t i = 0; i < quick_r.size(); ++i)
+                quick.emplace_back([&, i] {
+                    QueryRequest qq;
+                    qq.sql = "SELECT count(*) AS n FROM \"Spotify tracks\"";
+                    quick_r[i] = engine.Run(qq);
+                });
+            for (auto& th : quick) th.join();
+            const double quick_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            bool all_ok = true;
+            for (const auto& x : quick_r) all_ok = all_ok && x.ok && x.table->num_rows() == 1;
+            Check(all_ok, "short queries run while a long one runs");
+            Check(quick_ms < 5000, "short queries do not wait for the long one (" + std::to_string(quick_ms) + " ms)");
+            engine.Interrupt(long_token);
+            runner.join();
+            Check(!slow_r.ok && slow_r.cancelled, "its token stops the long query: " + slow_r.error);
+            // A token stopped before its query starts: the query never runs.
+            QueryToken early;
+            engine.Interrupt(early);
+            const auto t1 = std::chrono::steady_clock::now();
+            QueryResult e = engine.Run(slow, &early);
+            const double early_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+            Check(!e.ok && e.cancelled && early_ms < 1000, "a stopped token's query does not start");
+            q.sql = "SELECT 42 AS answer";
+            Check(engine.Run(q).ok, "runs after the side-by-side queries");
+        }
+
         engine.Detach("Spotify tracks");
         q.sql = "SELECT * FROM \"Spotify tracks\"";
         Check(!engine.Run(q).ok, "detached");
@@ -144,6 +182,6 @@ int main() {
     }
     fs::remove_all(root, ec);
     std::cout << "session query engine: read-only, restricted files and settings, bound parameters, Arrow and Parquet "
-                 "attachment, versions, joins, row limit, cancellation. OK\n";
+                 "attachment, versions, joins, row limit, cancellation, queries side by side with per-query stop. OK\n";
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "../core/legacy_dataset_batchers.h"
+#include "../core/session_query_service.h"
 #include "../core/training_export_metadata.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
@@ -6340,6 +6341,8 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     spdlog::info("Project opened: {}", project_root);
 
     if (console_) console_->SetProjectRoot(project_root);
+    // Saved query results (dashboards) live in the project.
+    cyxwiz::SessionQueryService::Instance().SetProjectRoot(project_root);
 
     // Load project settings and layout
     LoadProjectSettings();
@@ -6360,6 +6363,7 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
+    cyxwiz::SessionQueryService::Instance().SetProjectRoot("");
 
     // A pipeline run writes into the closed project's artifact/export paths;
     // it stops with the project (TOFIX101 section 7).

@@ -75,6 +75,8 @@ SessionQueryEngine::SessionQueryEngine(std::string attach_dir) : dir_(Slashes(st
 }
 
 SessionQueryEngine::~SessionQueryEngine() {
+    free_.clear();
+    extra_.clear();
     db_.reset();
     std::error_code ec;
     for (const auto& [name, a] : attached_)
@@ -82,7 +84,7 @@ SessionQueryEngine::~SessionQueryEngine() {
 }
 
 bool SessionQueryEngine::Ready() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return db_ && db_->IsReady();
 }
 
@@ -90,6 +92,8 @@ bool SessionQueryEngine::Open(std::string* error) {
     DuckDBConnectorPolicy policy;
     policy.allow_external_access = false;
     policy.allowed_directories = allowed_;
+    free_.clear();
+    extra_.clear();
     db_ = std::make_unique<DuckDBConnector>(policy);
     if (!db_->IsReady()) {
         if (error) *error = "the query engine could not start: " + db_->GetLastError();
@@ -97,6 +101,12 @@ bool SessionQueryEngine::Open(std::string* error) {
     }
     for (const auto& [name, a] : attached_)
         if (!CreateView(name, a.path, error)) return false;
+    free_.push_back(db_.get());
+    for (size_t i = 1; i < kConnections; ++i)
+        if (auto c = db_->NewConnection()) {
+            free_.push_back(c.get());
+            extra_.push_back(std::move(c));
+        }
     return true;
 }
 
@@ -109,13 +119,13 @@ bool SessionQueryEngine::CreateView(const std::string& name, const std::string& 
 }
 
 bool SessionQueryEngine::IsAttached(const std::string& name, uint64_t version) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = attached_.find(name);
     return it != attached_.end() && it->second.version == version;
 }
 
 std::vector<std::string> SessionQueryEngine::Attached() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     std::vector<std::string> out;
     for (const auto& [name, a] : attached_) out.push_back(name);
     return out;
@@ -127,7 +137,13 @@ bool SessionQueryEngine::AttachArrow(const std::string& name, uint64_t version, 
         if (error) *error = "'" + name + "' has no table";
         return false;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
+    {
+        // Already attached (the usual case): no need to wait for running queries.
+        std::shared_lock<std::shared_mutex> shared(mutex_);
+        auto it = attached_.find(name);
+        if (it != attached_.end() && it->second.version == version) return true;
+    }
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!db_ || !db_->IsReady()) {
         if (error) *error = "the query engine is not running";
         return false;
@@ -156,7 +172,12 @@ bool SessionQueryEngine::AttachArrow(const std::string& name, uint64_t version, 
 
 bool SessionQueryEngine::AttachParquet(const std::string& name, uint64_t version, const std::string& path, size_t rows,
                                        std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    {
+        std::shared_lock<std::shared_mutex> shared(mutex_);
+        auto it = attached_.find(name);
+        if (it != attached_.end() && it->second.version == version) return true;
+    }
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = attached_.find(name);
     if (it != attached_.end() && it->second.version == version) return true;
     const std::string folder = FolderOf(path);
@@ -174,7 +195,7 @@ bool SessionQueryEngine::AttachParquet(const std::string& name, uint64_t version
 }
 
 void SessionQueryEngine::Detach(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = attached_.find(name);
     if (it == attached_.end()) return;
     if (db_) db_->Execute("DROP VIEW IF EXISTS " + QuoteIdentifier(name));
@@ -184,9 +205,13 @@ void SessionQueryEngine::Detach(const std::string& name) {
 }
 
 std::vector<std::string> SessionQueryEngine::NamesIn(const std::string& sql) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    return NamesInLocked(sql);
+}
+
+std::vector<std::string> SessionQueryEngine::NamesInLocked(const std::string& sql) const {
     std::vector<std::string> out;
     const std::string text = Lower(sql);
-    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [name, a] : attached_) {
         const std::string n = Lower(name);
         for (size_t at = text.find(n); at != std::string::npos; at = text.find(n, at + 1)) {
@@ -203,29 +228,86 @@ std::vector<std::string> SessionQueryEngine::NamesIn(const std::string& sql) con
 }
 
 void SessionQueryEngine::Interrupt() {
-    {
-        std::lock_guard<std::mutex> lock(interrupt_mutex_);
-        interrupted_ = true;
+    std::lock_guard<std::mutex> pl(pool_mutex_);
+    for (QueryToken* t : running_) {
+        std::lock_guard<std::mutex> tl(t->mutex);
+        t->stop = true;
+        // Thread-safe; the connection lives while its query runs (reopening waits for queries).
+        if (t->conn) t->conn->Interrupt();
     }
-    // The connection's Interrupt is thread-safe; db_ is not replaced while a query runs (both under mutex_).
-    if (db_) db_->Interrupt();
+    pool_cv_.notify_all();
 }
 
-QueryResult SessionQueryEngine::Run(const QueryRequest& request) {
-    QueryResult r;
-    const auto start = std::chrono::steady_clock::now();
-    r.inputs = NamesIn(request.sql);
-    std::lock_guard<std::mutex> lock(mutex_);
+void SessionQueryEngine::Interrupt(QueryToken& token) {
+    std::lock_guard<std::mutex> pl(pool_mutex_);
     {
-        std::lock_guard<std::mutex> il(interrupt_mutex_);
-        interrupted_ = false;
+        std::lock_guard<std::mutex> tl(token.mutex);
+        token.stop = true;
+        if (token.conn) token.conn->Interrupt();
     }
+    pool_cv_.notify_all();
+}
+
+DuckDBConnector* SessionQueryEngine::Acquire(QueryToken& token) {
+    std::unique_lock<std::mutex> pl(pool_mutex_);
+    running_.insert(&token);
+    const auto stopped = [&token] {
+        std::lock_guard<std::mutex> tl(token.mutex);
+        return token.stop;
+    };
+    pool_cv_.wait(pl, [&] { return stopped() || !free_.empty(); });
+    if (stopped()) {
+        running_.erase(&token);
+        return nullptr;
+    }
+    DuckDBConnector* conn = free_.back();
+    free_.pop_back();
+    std::lock_guard<std::mutex> tl(token.mutex);
+    token.conn = conn;
+    return conn;
+}
+
+void SessionQueryEngine::Release(DuckDBConnector* conn, QueryToken& token) {
+    {
+        std::lock_guard<std::mutex> pl(pool_mutex_);
+        {
+            std::lock_guard<std::mutex> tl(token.mutex);
+            token.conn = nullptr;
+        }
+        free_.push_back(conn);
+        running_.erase(&token);
+    }
+    pool_cv_.notify_all();
+}
+
+QueryResult SessionQueryEngine::Run(const QueryRequest& request, QueryToken* token) {
+    QueryResult r;
+    QueryToken local;
+    QueryToken& tk = token ? *token : local;
+    const auto start = std::chrono::steady_clock::now();
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    r.inputs = NamesInLocked(request.sql);
     if (!db_ || !db_->IsReady()) {
         r.error = "the query engine is not running";
         return r;
     }
-    for (const auto& name : r.inputs) r.rows_in_inputs += attached_[name].rows;
-    const std::string rejection = db_->ReadOnlySelectRejection(request.sql);
+    for (const auto& name : r.inputs) {
+        auto it = attached_.find(name);
+        if (it != attached_.end()) r.rows_in_inputs += it->second.rows;
+    }
+    DuckDBConnector* conn = Acquire(tk);
+    if (!conn) {
+        r.cancelled = true;
+        r.error = "Cancelled.";
+        return r;
+    }
+    struct Releaser {
+        SessionQueryEngine* engine;
+        DuckDBConnector* conn;
+        QueryToken& tk;
+        ~Releaser() { engine->Release(conn, tk); }
+    } releaser{this, conn, tk};
+    const std::string rejection = conn->ReadOnlySelectRejection(request.sql);
     if (!rejection.empty()) {
         // The connector words it for the SQL step; say it for a query.
         r.error = rejection.find("exactly one statement") != std::string::npos ? "Run one statement at a time."
@@ -238,17 +320,25 @@ QueryResult SessionQueryEngine::Run(const QueryRequest& request) {
     if (request.row_limit > 0) sql = "SELECT * FROM (" + sql + ") AS cyxwiz_q LIMIT " + std::to_string(request.row_limit + 1);
     std::vector<duckdb::Value> params;
     for (const auto& p : request.params) params.push_back(ToDuck(p));
-    r.table = db_->QueryWithParams(sql, std::move(params));
+    {
+        std::lock_guard<std::mutex> tl(tk.mutex);
+        if (tk.stop) {
+            r.cancelled = true;
+            r.error = "Cancelled.";
+            return r;
+        }
+    }
+    r.table = conn->QueryWithParams(sql, std::move(params));
     r.elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     bool interrupted;
     {
-        std::lock_guard<std::mutex> il(interrupt_mutex_);
-        interrupted = interrupted_;
+        std::lock_guard<std::mutex> tl(tk.mutex);
+        interrupted = tk.stop;
     }
     if (!r.table) {
-        r.cancelled = interrupted || db_->GetLastError().find("INTERRUPT") != std::string::npos ||
-                      db_->GetLastError().find("nterrupt") != std::string::npos;
-        r.error = r.cancelled ? "Cancelled." : db_->GetLastError();
+        const std::string last = conn->GetLastError();
+        r.cancelled = interrupted || last.find("INTERRUPT") != std::string::npos || last.find("nterrupt") != std::string::npos;
+        r.error = r.cancelled ? "Cancelled." : last;
         return r;
     }
     if (request.row_limit > 0 && static_cast<size_t>(r.table->num_rows()) > request.row_limit) {

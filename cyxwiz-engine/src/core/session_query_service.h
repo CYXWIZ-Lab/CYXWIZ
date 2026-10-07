@@ -6,11 +6,18 @@
 // names them ("Spotify", "MNIST"); the ones a query names are attached
 // before it runs. Every query runs off the UI thread as a task (Task View
 // shows it, Cancel stops it) and its result comes back on the UI thread as
-// an Arrow table. One query runs at a time.
+// an Arrow table. A few queries run side by side (SessionQueryEngine's
+// connections); each has its own stop.
+//
+// A request that asks for it (QueryRequest::cache) has its result saved in
+// the open project (cache/query_results, see query_result_cache.h) and read
+// back when the same query meets the same data again, also in a later
+// session. The same key asked for twice at once runs once.
 //
 // Graph execution keeps its own SqlTransform (the SQL step); this service
 // is for looking at data, not for the pipeline.
 
+#include "query_result_cache.h"
 #include "session_query_engine.h"
 
 #include <cstdint>
@@ -39,7 +46,15 @@ public:
     std::vector<std::string> QueryableNames() const;
 
     // Runs on the calling thread (workers that already are off the UI thread).
-    QueryResult RunNow(const QueryRequest& request);
+    // `token` (optional) lets Interrupt stop this query alone.
+    QueryResult RunNow(const QueryRequest& request, QueryToken* token = nullptr);
+    // Thread-safe: stops the query run with `token` (or keeps it from starting).
+    void Interrupt(QueryToken& token);
+
+    // The open project's root (saved results live under it); empty: none open,
+    // results are not saved.
+    void SetProjectRoot(const std::string& root);
+    QueryResultCache& Cache() { return cache_; }
 
     // A Parquet table only the Engine's own queries name (a dashboard's text
     // words): attached when a query names it, never listed as a dataset.
@@ -48,7 +63,13 @@ public:
 private:
     SessionQueryService();
     // Attaches the catalog tables the request names (or lists); false + error.
-    bool AttachInputs(const QueryRequest& request, std::string* error);
+    // `identities` (optional) gets one identity per table (the cache key);
+    // with `attach` false only those are collected (a saved result needs no
+    // table: attaching copies an in-memory table once per session).
+    bool AttachInputs(const QueryRequest& request, std::string* error, std::vector<std::string>* identities = nullptr,
+                      bool attach = true);
+    // The identity of an in-memory table's content (computed once per table).
+    std::string ArrowIdentity(const std::shared_ptr<arrow::Table>& table);
     struct SideTable {
         std::string path;
         size_t rows = 0;
@@ -57,9 +78,13 @@ private:
     std::map<std::string, SideTable> side_tables_;
 
     std::unique_ptr<SessionQueryEngine> engine_;
-    std::mutex run_mutex_;  // one query at a time
-    std::mutex tasks_mutex_;
-    uint64_t running_task_ = 0;
+    QueryResultCache cache_;
+    struct ArrowIdentityEntry {
+        std::weak_ptr<arrow::Table> table;  // the address may be reused by a new table
+        std::string identity;
+    };
+    std::mutex identity_mutex_;
+    std::map<const arrow::Table*, ArrowIdentityEntry> arrow_identities_;
 };
 
 }  // namespace cyxwiz

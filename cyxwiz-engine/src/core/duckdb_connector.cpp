@@ -294,6 +294,21 @@ void DuckDBConnector::Interrupt() {
     if (conn_) conn_->Interrupt();
 }
 
+DuckDBConnector::DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db) : db_(std::move(db)) {
+    try {
+        conn_ = std::make_unique<duckdb::Connection>(*db_);
+    } catch (const std::exception& e) {
+        last_error_ = e.what();
+        conn_.reset();
+    }
+}
+
+std::unique_ptr<DuckDBConnector> DuckDBConnector::NewConnection() {
+    if (!db_ || !conn_) return nullptr;
+    std::unique_ptr<DuckDBConnector> c(new DuckDBConnector(SharedTag{}, db_));
+    return c->IsReady() ? std::move(c) : nullptr;
+}
+
 DuckDBConnector::~DuckDBConnector() {
     // Close connection and database
     conn_.reset();

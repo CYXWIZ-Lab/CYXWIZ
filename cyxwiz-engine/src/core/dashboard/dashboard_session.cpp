@@ -96,6 +96,11 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
     }
     const bool settled = now - filter_changed_ >= std::chrono::milliseconds(150);
     bool all_bound = true;
+    struct ToStart {
+        const WidgetSpec* widget;
+        std::string fingerprint;
+    };
+    std::vector<ToStart> to_start;
     for (const auto& w : spec.widgets) {
         WidgetResult& r = results_[w.id];
         const Binding b = CheckBinding(w, contract, spec.known_types);
@@ -135,7 +140,7 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
         }
         if (!settled && r.prepared) continue;  // keep the old picture until the clicks settle
         if (run != running_.end()) AsyncTaskManager::Instance().Cancel(run->second.task);
-        Start(w, profile, fp, spec.filters);
+        to_start.push_back({&w, fp});
     }
     // Results of widgets that were removed.
     for (auto it = results_.begin(); it != results_.end();) {
@@ -157,6 +162,11 @@ void DashboardSession::Poll(DashboardSpec& spec, const DatasetContract& contract
         if (srun != running_.end()) AsyncTaskManager::Instance().Cancel(srun->second.task);
         StartStrip(spec, contract, profile, strip_fp);
     }
+    // Cheap cards first (the queries run a few at a time): numbers and
+    // tables, then plots, then the text cards that read every word.
+    std::stable_sort(to_start.begin(), to_start.end(),
+                     [](const ToStart& a, const ToStart& b) { return QueryCost(*a.widget) < QueryCost(*b.widget); });
+    for (const auto& s : to_start) Start(*s.widget, profile, s.fingerprint, spec.filters);
 }
 
 std::string DashboardSession::WordsFor(const WidgetSpec& w) const {
@@ -186,6 +196,13 @@ std::vector<std::string> DashboardSession::TextFields(const DashboardSpec& spec)
         if (!f.empty() && std::find(out.begin(), out.end(), f) == out.end()) out.push_back(f);
     }
     return out;
+}
+
+int DashboardSession::QueryCost(const WidgetSpec& w) {
+    if (w.IsText()) return 3;
+    if (w.type == WidgetType::Kpi)
+        return w.measure == Measure::MedianWords || w.measure == Measure::Vocabulary || w.measure == Measure::EmptyTexts ? 2 : 0;
+    return w.type == WidgetType::Plot ? 2 : 1;
 }
 
 QueryRequest DashboardSession::RequestFor(const WidgetSpec& w, const DatasetProfile& profile, const FilterState& filters,
@@ -233,7 +250,10 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
     const uint64_t task = AsyncTaskManager::Instance().RunAsync(
         "Dashboard: " + (w.title.empty() ? KindOf(w).label : w.title),
         [request, all_request, with_all, widget, result](LambdaTask& t) {
-            QueryResult q = SessionQueryService::Instance().RunNow(request);
+            // Cancel (a new filter, the window closing) stops the query itself.
+            auto token = std::make_shared<QueryToken>();
+            t.SetCancellationCallback([token] { SessionQueryService::Instance().Interrupt(*token); });
+            QueryResult q = SessionQueryService::Instance().RunNow(request, token.get());
             if (!q.ok) {
                 result->state = q.cancelled ? WidgetResult::State::Waiting : WidgetResult::State::Failed;
                 result->message = q.error;
@@ -250,7 +270,7 @@ void DashboardSession::Start(const WidgetSpec& in, const DatasetProfile& profile
                 const plot::Source src = plot::SourceFromArrow(*q.table, plot::ColumnsNeeded(widget.plot));
                 result->prepared = std::make_shared<const plot::Prepared>(plot::Prepare(widget.plot, src));
                 if (with_all) {
-                    QueryResult a = SessionQueryService::Instance().RunNow(all_request);
+                    QueryResult a = SessionQueryService::Instance().RunNow(all_request, token.get());
                     if (a.ok)
                         result->all_rows = std::make_shared<const plot::Prepared>(
                             plot::Prepare(widget.plot, plot::SourceFromArrow(*a.table, plot::ColumnsNeeded(widget.plot))));
@@ -289,8 +309,10 @@ void DashboardSession::StartStrip(const DashboardSpec& spec, const DatasetContra
     std::weak_ptr<int> alive = alive_;
     const uint64_t task = AsyncTaskManager::Instance().RunAsync(
         "Dashboard summary",
-        [request, result, numeric](LambdaTask&) {
-            QueryResult q = SessionQueryService::Instance().RunNow(request);
+        [request, result, numeric](LambdaTask& t) {
+            auto token = std::make_shared<QueryToken>();
+            t.SetCancellationCallback([token] { SessionQueryService::Instance().Interrupt(*token); });
+            QueryResult q = SessionQueryService::Instance().RunNow(request, token.get());
             if (!q.ok) return;
             result->rows_now = Number(q.table, "rows_now");
             result->rows_all = Number(q.table, "rows_all");
