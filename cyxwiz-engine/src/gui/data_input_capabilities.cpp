@@ -1,4 +1,5 @@
 #include "data_input_capabilities.h"
+#include "../core/data_input_formats.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -10,12 +11,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using FileCategory = cyxwiz::loaders::FileCategory;
-
-std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
 
 std::string Trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
@@ -155,45 +150,19 @@ const char* PreviewUnavailableMessage(SourceType source_type, cyxwiz::loaders::F
 }
 
 const char* FileTypeParam(int detected_type) {
-    static constexpr const char* kTypes[] = {
-        "auto", "csv", "tsv", "json", "parquet", "excel",
-        "hdf5", "feather", "arrow", "txt", "arff", "zip_text",
-    };
-    constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
-    if (detected_type >= 0 && detected_type < kTypeCount) {
-        return kTypes[detected_type];
-    }
-    return "auto";
+    const auto* format = cyxwiz::data_input::FindFormat(detected_type);
+    return format ? format->name : "auto";
 }
 
 const char* FileTypeName(int detected_type) {
-    static constexpr const char* kNames[] = {
-        "Auto", "CSV", "TSV", "JSON", "Parquet", "Excel",
-        "HDF5", "Feather", "Arrow", "TXT", "ARFF", "ZIP text document",
-    };
-    constexpr int kNameCount = static_cast<int>(sizeof(kNames) / sizeof(kNames[0]));
-    if (detected_type >= 0 && detected_type < kNameCount) {
-        return kNames[detected_type];
-    }
-    return "Unknown";
+    const auto* format = cyxwiz::data_input::FindFormat(detected_type);
+    return format ? format->label : "Unknown";
 }
 
 int FileTypeFromParam(const std::string& value, int fallback) {
-    const std::string normalized = ToLower(Trim(value));
-    static constexpr const char* kTypes[] = {
-        "auto", "csv", "tsv", "json", "parquet", "excel",
-        "hdf5", "feather", "arrow", "txt", "arff", "zip_text",
-    };
-    constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
-    for (int i = 0; i < kTypeCount; ++i) {
-        if (normalized == kTypes[i]) {
-            return i;
-        }
-    }
-    if (normalized == "ipc") {
-        return 8;
-    }
-    return fallback;
+    if (Trim(value).empty()) return fallback;
+    const auto* format = cyxwiz::data_input::FindFormat(value);
+    return format ? format->id : fallback;
 }
 
 int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {
@@ -212,19 +181,8 @@ int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {
         }
     }
 
-    const std::string ext = LowerExtension(path);
-    if (ext == "zip") return 11;
-    if (ext == "csv") return 1;
-    if (ext == "tsv" || ext == "tab") return 2;
-    if (ext == "json" || ext == "jsonl") return 3;
-    if (ext == "parquet" || ext == "pq") return 4;
-    if (ext == "xlsx" || ext == "xls") return 5;
-    if (ext == "h5" || ext == "hdf5" || ext == "hdf") return 6;
-    if (ext == "feather" || ext == "fea") return 7;
-    if (ext == "arrow" || ext == "ipc") return 8;
-    if (ext == "txt") return 9;
-    if (ext == "arff") return 10;
-    return 0;
+    const auto* format = cyxwiz::data_input::DetectFormat(path);
+    return format ? format->id : 0;
 }
 
 FileCategory DetectFileCategoryForPath(const std::string& path, FileCategory current_category) {

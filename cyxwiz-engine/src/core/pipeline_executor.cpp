@@ -9,6 +9,7 @@
 #include "arrow_dataset.h"
 #include "data_convert_service.h"
 #include "data_input_parameters.h"
+#include "data_input_formats.h"
 #include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "preprocessing_state.h"
@@ -2691,6 +2692,15 @@ bool HasSupportedParameterValues(
                 parameters, file_type, error)) {
             return false;
         }
+        if (source_type == "file") {
+            const auto path = parameters.find("file_path");
+            file_type = data_input::ResolveFormat(
+                file_type, path == parameters.end() ? "" : path->second);
+            if (!data_input::IsExecutable(file_type)) {
+                error = data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable);
+                return false;
+            }
+        }
         if (source_type == "file" &&
             (file_type == "csv" || file_type == "tsv")) {
             const auto delimiter_it = parameters.find("delimiter");
@@ -4185,12 +4195,20 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             if (node.type == "ParquetInput" && file_type == "auto") {
                 file_type = "parquet";
             }
+            const bool auto_detected = file_type == "auto";
+            file_type = data_input::ResolveFormat(file_type, file_path);
+            if (!data_input::IsExecutable(file_type)) {
+                ReportError(data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable));
+                return false;
+            }
 
             // Load based on file type
             if (file_type == "csv" || file_type == "tsv") {
+                // Preserve the generic Auto reader's header default for saved graphs.
+                const auto header = node.parameters.find("has_header");
                 bool has_header =
-                    OptionalBooleanParameterIsTrue(node.parameters,
-                                                   "has_header");
+                    (auto_detected && (header == node.parameters.end() || header->second.empty())) ||
+                    OptionalBooleanParameterIsTrue(node.parameters, "has_header");
                 std::string delimiter = (file_type == "tsv") ? "\t" : ",";
                 auto delim_it = node.parameters.find("delimiter");
                 if (delim_it != node.parameters.end() && !delim_it->second.empty()) {

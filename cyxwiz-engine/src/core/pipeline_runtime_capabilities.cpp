@@ -1,4 +1,5 @@
 #include "pipeline_runtime_capabilities.h"
+#include "data_input_formats.h"
 #include "data_convert_formats.h"
 
 #include <algorithm>
@@ -893,8 +894,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
         {"DataInput", "source_type", "file", {"file", "folder"}},
         {"DataInput", "dataset_role", "train", {"train", "dev", "validation", "test", "inference", "unspecified"}},
-        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"}},
-        {"DataInput", "file_type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"}},
+        {"DataInput", "type", "auto", data_input::AllowedNames()},
+        {"DataInput", "file_type", "auto", data_input::AllowedNames()},
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
         {"DataConvert", "input_format", "auto", data_convert::AllowedNames(data_convert::Direction::Input, data_convert::kBuildFeatures)},

@@ -1,6 +1,7 @@
 #include "data_input_preview.h"
 #include "data_input_capabilities.h"
 #include "../core/data_input_parameters.h"
+#include "../core/data_input_formats.h"
 #include "loaders/text_csv_preflight.h"
 #include <algorithm>
 #include <fstream>
@@ -11,7 +12,8 @@ namespace gui::data_input {
 bool IsDelimitedPreviewSource(const std::string& path, int detected_type) {
     const int effective_type = detected_type == 0
         ? DetectFileTypeForPath(path, nullptr) : detected_type;
-    return effective_type == 1 || effective_type == 2;
+    const auto* format = cyxwiz::data_input::FindFormat(effective_type);
+    return format && format->preview == cyxwiz::data_input::SourcePreview::Delimited;
 }
 
 bool MatchesAppliedTabularPreview(
@@ -28,6 +30,8 @@ bool MatchesAppliedTabularPreview(
     const int current_type = source.detected_type == 0
         ? DetectFileTypeForPath(source.path, nullptr) : source.detected_type;
     if (applied_type <= 0 || applied_type != current_type) return false;
+    const auto* capability = cyxwiz::data_input::FindFormat(applied_type);
+    if (!capability || !capability->executable) return false;
 
     const auto matches = [&parameters](const char* key, const std::string& value) {
         const auto it = parameters.find(key);
@@ -55,6 +59,14 @@ PreviewTable LoadDelimitedPreview(
     }
 
     if (!IsDelimitedPreviewSource(path, detected_type)) {
+        const auto* format = detected_type == 0
+            ? cyxwiz::data_input::DetectFormat(path)
+            : cyxwiz::data_input::FindFormat(detected_type);
+        if (format && !format->executable) {
+            table.error = cyxwiz::data_input::UnsupportedReason(
+                format->name, cyxwiz::data_input::kHdf5BuildAvailable);
+            return table;
+        }
         table.error = "Apply this source first, then refresh Preview to browse the loaded dataset. "
                       "Only CSV/TSV supports a pre-load source sample.";
         return table;

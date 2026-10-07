@@ -174,39 +174,7 @@ std::shared_ptr<arrow::Table> LoadSequenceSourceTable(
 
 bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
                                          std::string& err) const {
-    if (ctx.source_path.empty()) {
-        err = "Tabular load needs a file path";
-        return false;
-    }
-    if (ctx.dataset_name.empty()) {
-        err = "Dataset name is empty";
-        return false;
-    }
-    const std::string file_type =
-        NormalizeTabularFileType(ctx.detected_file_type);
-    if (file_type == "zip_text" && ctx.archive_member.empty()) {
-        err = "ZIP text requires an exact member path inside the archive";
-        return false;
-    }
-    if (file_type == "zip_text" && ctx.force_disk_backed) {
-        err = "ZIP text uses a bounded in-memory document table; disable Force disk-backed";
-        return false;
-    }
-    if (IsUnsupportedTabularFileType(file_type)) {
-        err = UnsupportedTabularFileTypeMessage(file_type);
-        return false;
-    }
-    if ((file_type == "csv" || file_type == "tsv") &&
-        (ctx.delimiter == '\0' || ctx.decimal_point == '\0')) {
-        err = "CSV delimiter and decimal separator must each be one character";
-        return false;
-    }
-    if ((file_type == "csv" || file_type == "tsv") &&
-        ctx.delimiter == ctx.decimal_point) {
-        err = "CSV delimiter and decimal separator must be different";
-        return false;
-    }
-    return true;
+    return ValidateTabularApplyContext(ctx, err);
 }
 
 uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,

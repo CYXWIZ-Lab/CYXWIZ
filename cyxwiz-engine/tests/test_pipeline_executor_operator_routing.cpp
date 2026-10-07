@@ -24,6 +24,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <limits>
 #include <set>
 #include <string>
@@ -1667,7 +1668,61 @@ void CheckPreparationRecipe() {
     std::cout << "Preparation Recipe lowering passed\n";
 }
 
+void CheckDataInputFormats() {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const auto pipeline = [](const std::map<std::string, std::string>& parameters) {
+        return json{{"nodes", json::array({{
+            {"id", 9904}, {"type", "DataInput"}, {"name", "FormatTest"},
+            {"parameters", parameters}}})}, {"links", json::array()}};
+    };
+    const auto csv_path = fs::temp_directory_path() /
+        ("cyxwiz_data_input_formats_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".csv");
+    {
+        std::ofstream csv(csv_path);
+        csv << "x,label\n1,a\n2,b\n3,c\n";
+    }
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    for (bool default_header : {true, false}) {
+        std::map<std::string, std::string> parameters{
+            {"source_type", "file"}, {"file_path", csv_path.string()}, {"file_type", "auto"}};
+        if (!default_header) parameters["has_header"] = "false";
+        cyxwiz::PipelineExecutor executor;
+        const bool executed = executor.ExecutePipeline(pipeline(parameters).dump());
+        Check(executed, "Auto CSV should execute: " + executor.GetLastError());
+        auto dataset = registry.GetArrowDataset("ds_datainput_9904");
+        Check(dataset != nullptr, "Auto CSV must register its table");
+        Check(dataset->GetNumRows() == (default_header ? 3 : 4),
+              "Auto CSV must preserve its header default and honor explicit false");
+        Check(dataset->GetSchema()->field(0)->name() == (default_header ? "x" : "f0"),
+              "Auto CSV must preserve column names when no header setting is saved");
+        registry.UnregisterTabularDataset("ds_datainput_9904");
+    }
+    fs::remove(csv_path);
+    for (const auto* key : {"type", "file_type"}) {
+        for (const auto* format : {"auto", "hdf5"}) {
+            for (const auto* extension : {"h5", "HDF5", "hdf"}) {
+                cyxwiz::PipelineExecutor executor;
+                Check(!executor.ExecutePipeline(pipeline({
+                    {"source_type", "file"}, {key, format},
+                    {"file_path", std::string("not-opened.") + extension}}).dump()),
+                    "Explicit and Auto HDF5 must fail preflight");
+                const auto error = executor.GetLastError();
+                Check(error.find("not supported") != std::string::npos &&
+                          (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
+                      "HDF5 must fail with a format reason before file I/O: " + error);
+            }
+        }
+    }
+    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 rejections)\n";
+}
+
 int main(int argc, char** argv) {
+    if (argc == 1 || (argc == 2 && std::string(argv[1]) == "--data-input-formats")) {
+        CheckDataInputFormats();
+        if (argc == 2) return 0;
+    }
     if (argc == 6 && std::string(argv[1]) == "--html-selection") {
         std::ifstream file(argv[3], std::ios::binary);
         Check(file.good(), "Cannot open member selection file");

@@ -140,14 +140,26 @@ void TestPreviewSourceContract() {
     for (const auto& [extension, type] :
          std::vector<std::pair<std::string, int>>{
              {"parquet", 4}, {"feather", 7}, {"arrow", 8}, {"ipc", 8},
-             {"xlsx", 5}, {"json", 3}, {"hdf5", 6}, {"unknown", 0}}) {
+             {"xlsx", 5}, {"json", 3}, {"hdf5", 6}, {"h5", 6}, {"HDF", 6}, {"unknown", 0}}) {
         for (int selected_type : {0, type}) {
             const auto rejected = gui::data_input::LoadDelimitedPreview(
                 "not-opened." + extension, true, ',', selected_type);
-            Check(rejected.error.find("Apply this source first") != std::string::npos &&
+            const auto* expected_reason = (type == 3 || type == 5 || type == 6)
+                ? "loading is not supported" : "Apply this source first";
+            Check(rejected.error.find(expected_reason) != std::string::npos &&
                       rejected.columns.empty() && rejected.rows.empty(),
                   extension + ": explicit/auto non-delimited preview must reject before file I/O");
         }
+    }
+    for (const auto* format : {"auto", "hdf5", "h5"}) {
+        const TabularPreviewSource source{"not-opened.h5", 0, true, ",", '.', "", 0, 0};
+        const std::map<std::string, std::string> applied{
+            {"file_path", source.path}, {"file_type", format},
+            {"has_header", "true"}, {"delimiter", ","},
+            {"decimal_point", "."}, {"missing_value_tokens", ""},
+            {"skip_rows", "0"}, {"max_rows", "0"}};
+        Check(!MatchesAppliedTabularPreview(applied, source),
+              "Matching saved HDF5 settings must not advertise registered preview support");
     }
 }
 

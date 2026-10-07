@@ -10,6 +10,7 @@
 #include "../core/data_preview_service.h"
 #include "../core/data_registry.h"
 #include "../core/file_dialogs.h"
+#include "../core/data_input_formats.h"
 
 #include <cstring>
 #include <string>
@@ -345,9 +346,14 @@ void DataInputDialog::BrowseFile() {
 
     switch (file_category_) {
         case FileCategory::Tabular:
-            filters = {{"Supported Table and Document Data", "csv,tsv,parquet,feather,fea,arrow,ipc,zip"},
-                       {"CSV", "csv"}, {"TSV", "tsv"}, {"Parquet", "parquet"},
-                       {"Feather", "feather,fea"}, {"Arrow / IPC", "arrow,ipc"}, {"All Files", "*"}};
+        case FileCategory::TimeSeries:
+            filters = {{"Supported Table and Document Data", cyxwiz::data_input::ExtensionFilter()}};
+            for (const auto& format : cyxwiz::data_input::kSourceFormats) {
+                if (!format.executable) continue;
+                const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
+                if (!extensions.empty()) filters.emplace_back(format.label, extensions);
+            }
+            filters.emplace_back("All Files", "*");
             break;
         case FileCategory::Image:
             filters = {{"Image Files", "jpg,jpeg,png,bmp,gif,tiff,webp"}, {"All Files", "*"}};
@@ -361,11 +367,6 @@ void DataInputDialog::BrowseFile() {
         case FileCategory::Text:
             filters = {{"Text Data", "csv,tsv,json,jsonl,txt"}, {"CSV", "csv"},
                        {"TSV", "tsv"}, {"JSON", "json,jsonl"}, {"Plain Text", "txt"}, {"All Files", "*"}};
-            break;
-        case FileCategory::TimeSeries:
-            filters = {{"Time Series Data", "csv,tsv,parquet,feather,fea,arrow,ipc"},
-                       {"CSV", "csv"}, {"TSV", "tsv"}, {"Parquet", "parquet"},
-                       {"Feather", "feather,fea"}, {"Arrow / IPC", "arrow,ipc"}, {"All Files", "*"}};
             break;
     }
 

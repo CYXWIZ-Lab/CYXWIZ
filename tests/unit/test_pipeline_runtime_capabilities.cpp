@@ -1,7 +1,28 @@
 #include <catch2/catch_test_macros.hpp>
 #include <string>
+#include <set>
 
 #include "../../cyxwiz-engine/src/core/pipeline_runtime_capabilities.h"
+#include "../../cyxwiz-engine/src/core/data_input_formats.h"
+
+TEST_CASE("Data Input runtime formats follow the production source catalog",
+          "[pipeline][capabilities][data_input]") {
+    const std::set<std::string> expected{
+        "auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"};
+    int checked = 0;
+    for (const auto& capability : cyxwiz::ResolvePipelineAllowedParameterValues("DataInput")) {
+        if (std::string(capability.parameter_name) != "type" &&
+            std::string(capability.parameter_name) != "file_type") continue;
+        const std::set<std::string> actual(capability.allowed_values.begin(), capability.allowed_values.end());
+        CHECK(actual == expected);
+        for (const char* name : capability.allowed_values)
+            CHECK(cyxwiz::data_input::IsExecutable(name));
+        ++checked;
+    }
+    CHECK(checked == 2);
+    CHECK_FALSE(cyxwiz::data_input::IsExecutable("hdf5"));
+    CHECK_FALSE(cyxwiz::data_input::IsExecutable("h5"));
+}
 
 TEST_CASE("Upsample mode-specific backend evidence does not promote Studio training support",
           "[pipeline][capabilities][upsample]") {
