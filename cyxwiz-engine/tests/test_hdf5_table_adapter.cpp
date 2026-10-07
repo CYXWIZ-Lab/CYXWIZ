@@ -112,6 +112,13 @@ int main() try {
         file.createDataSet<int32_t>("/empty", HighFive::DataSpace(std::vector<size_t>{0}));
         file.createDataSet<int32_t>("/empty_columns", HighFive::DataSpace(std::vector<size_t>{3, 0}));
         file.createDataSet<int32_t>("/too_wide", HighFive::DataSpace(std::vector<size_t>{1, 4097}));
+        file.createDataSet<uint64_t>("/large_sparse", HighFive::DataSpace(std::vector<size_t>{10000000, 100}));
+        HighFive::DataSetCreateProps chunked;
+        chunked.add(HighFive::Chunking(std::vector<hsize_t>{1024, 1024}));
+        file.createDataSet<int32_t>("/large_chunk", HighFive::DataSpace(std::vector<size_t>{1024, 1024}), chunked);
+        HighFive::DataSetCreateProps small_chunked;
+        small_chunked.add(HighFive::Chunking(std::vector<hsize_t>{2, 2}));
+        file.createDataSet<int32_t>("/small_chunk", HighFive::DataSpace::From(matrix), small_chunked).write(matrix);
         WriteVector<int32_t>(file, "/slabs", std::vector<int32_t>(131073, 42));
         Check(H5Lcreate_hard(file.getId(), "/nested/data", file.getId(), "/hard_data",
                             H5P_DEFAULT, H5P_DEFAULT) >= 0, "create hard link");
@@ -242,10 +249,129 @@ int main() try {
     options.cancel_requested = [] { return false; };
     auto slabs = CheckTable(cyxwiz::ReadHdf5Table(path, options), 131073, 1);
     Check(Cell<arrow::Int32Scalar>(slabs, 0, 131072) == 42, "final partial slab is retained");
+
+    options = {};
+    options.selection = {"/nested/data", "/nested/labels"};
+    auto probe = cyxwiz::ProbeHdf5Table(path, options);
+    Check(probe.status == Hdf5TableStatus::Ok && !probe.table && probe.error.empty(),
+          "metadata probe succeeds without materializing a table");
+    Check(probe.data.shape == std::vector<uint64_t>({3, 2}) && probe.labels &&
+              probe.labels->source_type == "uint8", "probe preserves shape/type and labels");
+    cyxwiz::Hdf5TablePreviewRequest page;
+    page.row_offset = 1;
+    page.row_limit = 1;
+    page.column_offset = 1;
+    page.column_limit = 1;
+    auto sample_result = cyxwiz::PreviewHdf5Table(path, options, page);
+    auto sample = CheckTable(sample_result, 1, 2);
+    Check(sample->field(0)->name() == "col_1" && sample->field(1)->name() == "label",
+          "column paging preserves source column names and appends labels");
+    Check(Cell<arrow::Int32Scalar>(sample, 0, 0) == -4 && Cell<arrow::UInt8Scalar>(sample, 1, 0) == 1,
+          "row/column hyperslab and labels remain aligned");
+    Check(sample_result.data.shape == std::vector<uint64_t>({3, 2}) &&
+              sample_result.row_offset == 1 && sample_result.column_offset == 1,
+          "page metadata retains the full source shape and requested offsets");
+    Check(sample_result.estimated_materialized_bytes < probe.estimated_materialized_bytes,
+          "page estimate covers only requested values");
+    options.max_materialized_bytes = sample_result.estimated_materialized_bytes;
+    CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 2);
+    --options.max_materialized_bytes;
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::ResourceLimit,
+                 "preview byte budget boundary");
+    options.max_materialized_bytes = 4096;
+    page.row_offset = 2;
+    page.row_limit = 200;
+    CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 2);
+    page.row_offset = 3;
+    CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 0, 2);
+    page.row_offset = 4;
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::InvalidSelection,
+                 "preview beyond EOF");
+    page.row_offset = std::numeric_limits<uint64_t>::max();
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::InvalidSelection,
+                 "preview offset overflow");
+    page = {};
+    page.column_offset = 2;
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::InvalidSelection,
+                 "preview column out of range");
+    for (const auto& invalid : {cyxwiz::Hdf5TablePreviewRequest{0, 0, 0, 1},
+                               {0, 201, 0, 1}, {0, 1, 0, 0}, {0, 1, 0, 65}}) {
+        CheckFailure(cyxwiz::PreviewHdf5Table(path, options, invalid),
+                     Hdf5TableStatus::InvalidSelection, "invalid preview window limits");
+    }
+    options = {};
+    options.selection = {"/nested/large", "/nested/labels"};
+    page = {2, 1, 0, 1};
+    sample = CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 2);
+    Check(Cell<arrow::UInt64Scalar>(sample, 0, 0) == std::numeric_limits<uint64_t>::max(),
+          "preview preserves uint64 precision");
+    options.numeric_policy = cyxwiz::Hdf5NumericPolicy::Float64;
+    sample = CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 2);
+    Check(sample->field(0)->type()->id() == arrow::Type::DOUBLE,
+          "preview honors explicit float64 policy");
+    options = {};
+    options.selection.data_path = "/large_sparse";
+    probe = cyxwiz::ProbeHdf5Table(path, options);
+    Check(probe.status == Hdf5TableStatus::ResourceLimit && !probe.table &&
+              probe.data.shape == std::vector<uint64_t>({10000000, 100}),
+          "large source probe rejects full loading without reading values");
+    options.max_materialized_bytes = 4096;
+    page = {9999999, 1, 99, 1};
+    sample = CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 1);
+    Check(Cell<arrow::UInt64Scalar>(sample, 0, 0) == 0,
+          "tiny preview of a multi-gigabyte sparse source reads only selected values");
+    options.selection.data_path = "/large_chunk";
+    page = {0, 1, 0, 1};
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::ResourceLimit,
+                 "small page cannot bypass the decoded chunk budget");
+    options.selection.data_path = "/small_chunk";
+    auto chunked_result = cyxwiz::PreviewHdf5Table(path, options, page);
+    sample = CheckTable(chunked_result, 1, 1);
+    Check(Cell<arrow::Int32Scalar>(sample, 0, 0) == 1, "bounded chunked preview value");
+    options.selection.data_path = "/nested/data";
+    auto contiguous_result = cyxwiz::PreviewHdf5Table(path, options, page);
+    Check(chunked_result.estimated_materialized_bytes == contiguous_result.estimated_materialized_bytes + 16,
+          "preview estimate reserves one decoded chunk");
+    options.selection.data_path = "/small_chunk";
+    options.max_materialized_bytes = chunked_result.estimated_materialized_bytes - 1;
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::ResourceLimit,
+                 "decoded chunk participates in exact budget boundary");
+    options.max_materialized_bytes = chunked_result.estimated_materialized_bytes;
+    CheckTable(cyxwiz::PreviewHdf5Table(path, options, page), 1, 1);
+    options.max_materialized_bytes = 4096;
+    options.cancel_requested = [] { return true; };
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::Cancelled,
+                 "preview cancellation before open");
+    options.selection.data_path = "/nested/data";
+    page = {};
+    polls = 0;
+    options.cancel_requested = [&] { return ++polls >= 5; };
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::Cancelled,
+                 "preview cancellation between columns discards partial values");
+    options.cancel_requested = {};
+    options.selection.data_path = "/rank3";
+    probe = cyxwiz::ProbeHdf5Table(path, options);
+    Check(probe.status == Hdf5TableStatus::UnsupportedRank &&
+              probe.data.shape == std::vector<uint64_t>({1, 2, 3}) && probe.data.source_type == "int32",
+          "unsupported rank retains inspectable metadata");
+    options.selection.data_path = "/strings";
+    probe = cyxwiz::ProbeHdf5Table(path, options);
+    Check(probe.status == Hdf5TableStatus::UnsupportedType && probe.data.source_type == "string",
+          "unsupported dtype retains inspectable metadata");
+    options.selection.data_path = std::string("/nested/data\0suffix", 19);
+    CheckFailure(cyxwiz::PreviewHdf5Table(path, options, page), Hdf5TableStatus::InvalidSelection,
+                 "embedded null cannot alias another dataset");
+    options.selection.data_path = "/nested/data";
+    CheckFailure(cyxwiz::ProbeHdf5Table(path + std::string("\0suffix", 7), options),
+                 Hdf5TableStatus::InvalidFile, "embedded null in filename");
 #else
     Check(!cyxwiz::Hdf5TableSupportAvailable(), "disabled HDF5 support is reported");
     CheckFailure(cyxwiz::ReadHdf5Table("unavailable.h5", options),
                  Hdf5TableStatus::DependencyUnavailable, "disabled adapter");
+    CheckFailure(cyxwiz::ProbeHdf5Table("unavailable.h5", options),
+                 Hdf5TableStatus::DependencyUnavailable, "disabled probe");
+    CheckFailure(cyxwiz::PreviewHdf5Table("unavailable.h5", options, {}),
+                 Hdf5TableStatus::DependencyUnavailable, "disabled preview");
 #endif
     std::cout << "HDF5 adapter: " << checks << " checks passed\n";
     return 0;

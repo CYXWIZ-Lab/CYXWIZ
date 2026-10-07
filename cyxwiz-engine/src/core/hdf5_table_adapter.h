@@ -39,6 +39,13 @@ struct Hdf5TableDatasetInfo {
     std::string source_type;
 };
 
+struct Hdf5TablePreviewRequest {
+    uint64_t row_offset = 0;
+    uint64_t row_limit = 20;
+    uint64_t column_offset = 0;
+    uint64_t column_limit = 32;
+};
+
 struct Hdf5TableReadResult {
     Hdf5TableStatus status = Hdf5TableStatus::ReadFailed;
     std::string error;
@@ -46,6 +53,8 @@ struct Hdf5TableReadResult {
     Hdf5TableDatasetInfo data;
     std::optional<Hdf5TableDatasetInfo> labels;
     uint64_t estimated_materialized_bytes = 0;
+    uint64_t row_offset = 0;
+    uint64_t column_offset = 0;
 };
 
 bool Hdf5TableSupportAvailable();
@@ -57,5 +66,20 @@ bool Hdf5TableSupportAvailable();
 // At most 4096 output columns and 65536 values per scratch slab.
 Hdf5TableReadResult ReadHdf5Table(
     const std::string& path, const Hdf5TableReadOptions& options);
+
+// Metadata only: table remains null, including on success. Applies the same
+// full-load validation and memory policy as ReadHdf5Table without reading values.
+Hdf5TableReadResult ProbeHdf5Table(
+    const std::string& path, const Hdf5TableReadOptions& options);
+
+// Reads only the requested hyperslabs (1-200 rows, 1-64 data columns).
+// Aligned labels append after the selected data columns. Descriptors retain
+// full source shapes; the byte estimate covers this page plus one decoded
+// chunk per selected dataset, when chunked. Offset == row
+// count returns an empty table with schema; offsets beyond the source reject.
+// HDF5 internal caches and filter-specific workspace are outside this estimate.
+Hdf5TableReadResult PreviewHdf5Table(
+    const std::string& path, const Hdf5TableReadOptions& options,
+    const Hdf5TablePreviewRequest& request);
 
 } // namespace cyxwiz

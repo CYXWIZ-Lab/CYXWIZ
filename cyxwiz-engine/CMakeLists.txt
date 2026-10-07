@@ -250,6 +250,7 @@ set(ENGINE_SOURCES
     src/utils/image_quality_analyzer.cpp
     src/utils/image_deduplicator.cpp
     src/utils/hdf5_browser.cpp
+    src/utils/hdf5_browser_page.cpp
     # Dataset utilities (Phase 2)
     src/utils/segmentation_utils.cpp
     src/utils/shape_utils.cpp
@@ -4514,10 +4515,14 @@ endforeach()
 target_sources(test_excel_table_adapter PRIVATE tests/test_xlsx_archive_guard.cpp)
 
 # The same adapter contract is exercised with and without the optional reader.
-foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_table_adapter_unavailable)
-    add_executable(${hdf5_test}
-        tests/test_hdf5_table_adapter.cpp
-        src/core/hdf5_table_adapter.cpp)
+foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_table_adapter_unavailable
+                          test_hdf5_browser_page test_hdf5_browser_page_unavailable)
+    add_executable(${hdf5_test} src/core/hdf5_table_adapter.cpp)
+    if(hdf5_test MATCHES "^test_hdf5_browser_page")
+        target_sources(${hdf5_test} PRIVATE tests/test_hdf5_browser_page.cpp src/utils/hdf5_browser_page.cpp)
+    else()
+        target_sources(${hdf5_test} PRIVATE tests/test_hdf5_table_adapter.cpp)
+    endif()
     target_include_directories(${hdf5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(${hdf5_test} PRIVATE Arrow::arrow_shared)
     if(WIN32)
@@ -4526,8 +4531,10 @@ foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_table_adapter_unava
     set_target_properties(${hdf5_test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endforeach()
 if(HighFive_FOUND)
-    target_link_libraries(test_hdf5_table_adapter PRIVATE HighFive)
-    target_compile_definitions(test_hdf5_table_adapter PRIVATE CYXWIZ_HAS_HDF5)
+    foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_browser_page)
+        target_link_libraries(${hdf5_test} PRIVATE HighFive)
+        target_compile_definitions(${hdf5_test} PRIVATE CYXWIZ_HAS_HDF5)
+    endforeach()
 endif()
 
 add_executable(test_data_convert_task
