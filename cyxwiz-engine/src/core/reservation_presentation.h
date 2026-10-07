@@ -91,8 +91,8 @@ struct ActiveReservationCard {
     std::string started;             // "Started 13:05"
     std::string ends;                // "Ends 15:05"
     std::string source;              // where time left comes from
-    std::string spent;               // "$0.20 (47 min)"
-    std::string held;
+    bool stale = false;              // the central server stopped answering
+    std::string price;               // "$0.50 (2 h 00 min)": the reserved time
     bool warn = false;
     std::string warning;             // ending soon: what happens at the end
     ReservationDetails details;
@@ -110,35 +110,37 @@ std::vector<ExtendOption> BuildExtendOptions(double price_usd_per_hour);
 
 // ---- End and after ---------------------------------------------------------
 
-struct EndSummary {
-    std::string title;               // "End the reservation on dell-pc?"
-    std::string body;
-    std::string time_used;           // "47 min" / "not known"
-    std::string pay;                 // "$0.20" / "-"
-    std::string returned;
+// Leaving does not end the reservation: the reserved time stays the user's
+// until it runs out (owner rule 2026-10-07); they come back from the
+// reconnect prompt.
+struct LeaveSummary {
+    std::string title;               // "Leave dell-pc?"
+    std::string body;                // what happens to training; how to come back
+    std::string ends;                // "The reservation ends at 15:39 (51 min left)"
 };
 
-EndSummary BuildEndSummary(const ActiveReservationInputs& in, double price_usd_per_hour);
+LeaveSummary BuildLeaveSummary(const ActiveReservationInputs& in);
 
-enum class ReservationEndReason { EndedByYou, TimeRanOut, EndFailed };
+// TimeRanOut: the reserved time is over. Lost: the central server no longer
+// knows the reservation (it was restarted, or ended it on its side).
+enum class ReservationEndReason { TimeRanOut, Lost };
 
 struct ReservationEndFacts {
     std::string node_name;
     long long ended_at = 0;          // Unix seconds
-    ReservationEndReason reason = ReservationEndReason::EndedByYou;
+    ReservationEndReason reason = ReservationEndReason::TimeRanOut;
     long long seconds_used = -1;     // -1: not known
     int jobs_started = 0;
-    std::string error;               // EndFailed: the Central Server's words
+    std::string error;               // Lost: the Central Server's words
     std::string reservation_id;
 };
 
 struct ReservationReceipt {
     std::string title;               // "The reservation on dell-pc ended at 15:05"
-    std::string why;                 // "time ran out", "you ended it"
-    bool failed = false;
+    std::string why;                 // "time ran out", "the central server no longer knows it"
+    bool failed = false;             // Lost: the note is a warning
     std::string time_used;
     std::string paid;
-    std::string returned;
     std::string jobs;
     std::string note;
     ReservationDetails details;
@@ -152,7 +154,7 @@ struct ActiveReservationListing {
     std::string reservation_id;
     std::string node_id;
     std::string node_name;           // empty: not in the node list
-    long long seconds_left = 0;
+    long long ends_at = 0;           // Unix seconds
     bool engine_connected = false;
     int jobs_completed = 0;
 };
@@ -164,8 +166,8 @@ struct ReconnectRow {
     std::string note;                // "connected from another Engine" etc.
 };
 
-// Longest time left first.
-std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListing> listings);
+// Longest time left first; reservations that ended by now are left out.
+std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListing> listings, long long now);
 
 // ---- Shared words ----------------------------------------------------------
 

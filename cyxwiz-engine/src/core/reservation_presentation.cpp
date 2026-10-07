@@ -95,8 +95,8 @@ ReserveQuote BuildReserveQuote(const ReserveQuoteInputs& in) {
     }
     quote.balance_after = "Not tracked yet: balances start with credits";
     quote.pay_rule =
-        "You pay for the time you use, rounded up to the minute; the rest of the hold returns when the "
-        "reservation ends.";
+        "You pay for the reserved time; it is yours until it runs out, whether you use it or not. Leaving early "
+        "returns nothing.";
     quote.button = in.reserving ? "Reserving..." : "Reserve for " + quote.duration;
     if (in.reserving) {
         quote.disabled_reason = "Waiting for the central server.";
@@ -108,7 +108,7 @@ ReserveQuote BuildReserveQuote(const ReserveQuoteInputs& in) {
     quote.enabled = quote.disabled_reason.empty();
 
     quote.details.emplace_back("Region", in.node.region.empty() ? "-" : in.node.region);
-    quote.details.emplace_back("Billing", "per hour, charged by the minute used");
+    quote.details.emplace_back("Billing", "per hour, for the time reserved");
     if (in.node.vram_bytes > 0) quote.details.emplace_back("Device memory", Gigabytes(in.node.vram_bytes));
     return quote;
 }
@@ -125,7 +125,11 @@ ActiveReservationCard BuildActiveReservationCard(const ActiveReservationInputs& 
     if (in.server_seconds_left >= 0) {
         card.seconds_left = std::max(0LL, in.server_seconds_left - std::max(0LL, in.now - in.server_checked_at));
         const long long ago = std::max(0LL, in.now - in.server_checked_at);
-        card.source = "From the central server, checked " + std::to_string(ago) + " s ago";
+        // The heartbeat runs every 30 s; after two missed ones say so.
+        card.stale = ago > 75;
+        card.source = card.stale ? "The central server has not answered for " + std::to_string(ago) +
+                                       " s; counting down from its last reply"
+                                 : "From the central server, checked " + std::to_string(ago) + " s ago";
     } else {
         card.seconds_left = std::max(0LL, in.end_time - in.now);
         card.source = "From this computer's clock (waiting for the central server)";
@@ -146,16 +150,13 @@ ActiveReservationCard BuildActiveReservationCard(const ActiveReservationInputs& 
         card.started = "Started " + FormatClockTime(in.start_time);
         card.fill = std::clamp(static_cast<double>(in.now - in.start_time) / static_cast<double>(end - in.start_time),
                                0.0, 1.0);
-        const long long used = MinutesRoundedUp(in.now - in.start_time);
-        card.spent = in.node.price_usd_per_hour > 0.0
-                         ? FormatDollars(in.node.price_usd_per_hour * used / 60.0) + " (" + Minutes(used) + ")"
-                         : Minutes(used) + " used";
-        card.held = in.node.price_usd_per_hour > 0.0
-                        ? FormatDollars(in.node.price_usd_per_hour * static_cast<double>(end - in.start_time) / 3600.0)
-                        : "-";
+        const long long reserved = end - in.start_time;
+        card.price = in.node.price_usd_per_hour > 0.0
+                         ? FormatDollars(in.node.price_usd_per_hour * static_cast<double>(reserved) / 3600.0) + " (" +
+                               FormatReservationLength(static_cast<int>(MinutesRoundedUp(reserved))) + ")"
+                         : FormatReservationLength(static_cast<int>(MinutesRoundedUp(reserved)));
     } else {
-        card.spent = "-";
-        card.held = "-";
+        card.price = "-";
     }
 
     if (card.urgency == ReservationUrgency::Soon || card.urgency == ReservationUrgency::Urgent) {
@@ -204,76 +205,62 @@ std::vector<ExtendOption> BuildExtendOptions(double price_usd_per_hour) {
     return options;
 }
 
-EndSummary BuildEndSummary(const ActiveReservationInputs& in, double price_usd_per_hour) {
-    EndSummary summary;
-    const std::string name = in.node_known && !in.node.name.empty() ? in.node.name : "this node";
-    summary.title = "End the reservation on " + name + "?";
+LeaveSummary BuildLeaveSummary(const ActiveReservationInputs& in) {
+    LeaveSummary summary;
+    const std::string name = in.node_known && !in.node.name.empty() ? in.node.name : "the node";
+    summary.title = "Leave " + name + "?";
     if (in.training_running) {
         summary.body = "Training is running";
         if (in.epoch > 0 && in.total_epochs > 0) {
             summary.body += " (epoch " + std::to_string(in.epoch) + " of " + std::to_string(in.total_epochs) + ")";
         }
-        summary.body +=
-            ". Ending stops it; the node keeps the job's checkpoints, so you can resume it in a new reservation.";
-    } else {
-        summary.body = "The node is released for others. You can reserve a node again at any time.";
+        summary.body += ". Leaving stops it with a checkpoint; the node keeps it. ";
     }
-    if (in.start_time > 0 && in.now >= in.start_time) {
-        const long long used = MinutesRoundedUp(in.now - in.start_time);
-        summary.time_used = Minutes(used);
-        if (price_usd_per_hour > 0.0) {
-            const double pay = price_usd_per_hour * used / 60.0;
-            const double hold =
-                price_usd_per_hour * static_cast<double>(std::max(0LL, in.end_time - in.start_time)) / 3600.0;
-            summary.pay = FormatDollars(pay);
-            summary.returned = FormatDollars(std::max(0.0, hold - pay));
-        } else {
-            summary.pay = "-";
-            summary.returned = "-";
-        }
-    } else {
-        summary.time_used = "not known (reconnected)";
-        summary.pay = "-";
-        summary.returned = "-";
-    }
+    summary.body +=
+        "The reserved time stays yours: come back from this screen to use it. Nothing is returned for time "
+        "left when it runs out.";
+    const long long left =
+        in.server_seconds_left >= 0
+            ? std::max(0LL, in.server_seconds_left - std::max(0LL, in.now - in.server_checked_at))
+            : std::max(0LL, in.end_time - in.now);
+    summary.ends = "The reservation ends at " + FormatClockTime(in.now + left) + " (" +
+                   FormatReservationLength(static_cast<int>(MinutesRoundedUp(left))) + " left)";
     return summary;
 }
 
 ReservationReceipt BuildReservationReceipt(const ReservationEndFacts& facts) {
     ReservationReceipt receipt;
     const std::string name = facts.node_name.empty() ? "the node" : facts.node_name;
-    if (facts.reason == ReservationEndReason::EndFailed) {
+    if (facts.reason == ReservationEndReason::Lost) {
         receipt.failed = true;
-        receipt.title = "Could not end the reservation on " + name;
-        receipt.why = "the central server refused";
+        receipt.title = "The reservation on " + name + " is over";
+        receipt.why = "the central server no longer knows it";
         receipt.note = (facts.error.empty() ? std::string("No reason given.") : facts.error) +
-                       " The node was disconnected; the central server ends the reservation when its time runs out.";
+                       " The central server was restarted or ended it on its side; the node keeps any checkpoints. "
+                       "Reserve again to continue.";
     } else {
         receipt.title = "The reservation on " + name + " ended at " + FormatClockTime(facts.ended_at);
-        receipt.why = facts.reason == ReservationEndReason::TimeRanOut ? "time ran out" : "you ended it";
-        if (facts.reason == ReservationEndReason::TimeRanOut) {
-            receipt.note =
-                "A job still training was stopped with a checkpoint; resume it from the P2P Training panel after "
-                "reserving a node again.";
-        }
+        receipt.why = "time ran out";
+        receipt.note =
+            "A job still training was stopped with a checkpoint; resume it from the P2P Training panel after "
+            "reserving a node again.";
     }
     receipt.time_used = facts.seconds_used >= 0 ? Minutes(MinutesRoundedUp(facts.seconds_used)) : "not known";
     receipt.paid = "Nothing charged: payments are not live yet";
-    receipt.returned = "-";
     receipt.jobs = std::to_string(facts.jobs_started) + (facts.jobs_started == 1 ? " job started" : " jobs started");
     if (!facts.reservation_id.empty()) receipt.details.emplace_back("Reservation", facts.reservation_id);
     return receipt;
 }
 
-std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListing> listings) {
-    std::sort(listings.begin(), listings.end(),
-              [](const auto& a, const auto& b) { return a.seconds_left > b.seconds_left; });
+std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListing> listings, long long now) {
+    std::sort(listings.begin(), listings.end(), [](const auto& a, const auto& b) { return a.ends_at > b.ends_at; });
     std::vector<ReconnectRow> rows;
     for (const auto& listing : listings) {
+        if (listing.ends_at <= now) continue;
         ReconnectRow row;
         row.reservation_id = listing.reservation_id;
         row.node = listing.node_name.empty() ? "Node " + listing.node_id.substr(0, 8) : listing.node_name;
-        row.time_left = FormatCountdown(listing.seconds_left) + " left";
+        row.time_left = FormatCountdown(listing.ends_at - now) + " left";
         if (listing.engine_connected) row.note = "open in another Engine";
         if (listing.jobs_completed > 0) {
             if (!row.note.empty()) row.note += " · ";

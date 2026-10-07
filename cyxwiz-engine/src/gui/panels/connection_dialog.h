@@ -4,6 +4,7 @@
 #include "../../core/remote_job_presentation.h"
 #include "../../core/reservation_presentation.h"
 #include <atomic>
+#include <mutex>
 #include <future>
 #include <string>
 #include <functional>
@@ -71,9 +72,9 @@ private:
     // The reservation card (connection_dialog_reservation.cpp, TOFIX118
     // gaps 5-6, mockup approved 2026-09-30).
     void RenderReservationPanel();        // reserve quote for the selected node
-    void RenderActiveReservationPanel();  // time left, Extend, End, details
+    void RenderActiveReservationPanel();  // time left, Extend, Leave, details
     void RenderTrainingOnNodePanel();     // fit card, start / stop, disconnect
-    void RenderEndReservationPopup();
+    void RenderLeaveNodePopup();
     void RenderStopTrainingPopup();
     void RenderReservationReceipt();      // after a reservation ended
     void RenderReconnectPrompt();         // active reservations found on connect
@@ -89,11 +90,13 @@ private:
 
     // Reservation actions
     void StartReservation();
-    void DoReleaseReservation();  // End the active reservation (after the confirm popup)
+    // Leave the node (after the confirm popup): the reservation keeps running
+    // and moves to the reconnect prompt; the reserved time stays the user's
+    // (owner rule 2026-10-07: no early end, nothing returned).
+    void LeaveNode();
     // The reservation is over: disconnect, stop the heartbeat, keep a receipt.
     void FinishReservation(ReservationEndReason reason, const std::string& error);
-    void DisconnectFromNode();    // P2P only; the reservation stays
-    void EndFoundReservation(const std::string& reservation_id);  // from the reconnect rows
+    void DisconnectFromNode();    // P2P only; the card stays
     // Add minutes to the active reservation and hand the node the new end
     // (TOFIX118 gap 5). False with reservation_error_ set when refused.
     bool ExtendActiveReservation(int additional_minutes);
@@ -143,7 +146,7 @@ private:
     static constexpr float node_refresh_interval_seconds_ = 10.0f;
 
     // Reservation state
-    bool show_release_confirm_ = false;   // opens the End reservation popup
+    bool show_leave_confirm_ = false;     // opens the Leave node popup
     bool show_stop_confirm_ = false;      // opens the Stop training popup
     bool quote_details_open_ = false;
     bool reservation_details_open_ = false;
@@ -160,6 +163,11 @@ private:
     std::atomic<long long> reservation_seconds_left_{-1};
     std::atomic<long long> reservation_heartbeat_at_{0};  // Unix seconds of that reply
     std::atomic<bool> reservation_should_extend_{false};
+    // The heartbeat found the reservation gone (heartbeat thread); the
+    // render thread turns it into the receipt.
+    std::atomic<bool> reservation_gone_{false};
+    std::mutex reservation_gone_mutex_;
+    std::string reservation_gone_message_;
     long long expired_at_ = 0;       // when the card first saw time run out
     int jobs_started_ = 0;           // in the active reservation
     bool has_receipt_ = false;       // show the receipt of the last reservation

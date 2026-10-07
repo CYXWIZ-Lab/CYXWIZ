@@ -49,13 +49,10 @@ void SetStreamJobId(grpc::ClientContext& context,
     context.AddMetadata("x-job-id", job_id);
 }
 
-bool SendReservationEnd(
-    grpc::ClientReaderWriter<TrainingCommand, TrainingUpdate>* stream) {
-    TrainingCommand end_cmd;
-    end_cmd.set_reservation_end(true);
-    const bool wrote = stream->Write(end_cmd);
-    stream->WritesDone();
-    return wrote;
+// The Engine's side of the stream closes; the node ends the reservation on
+// its own deadline (no end signal from the Engine since 2026-10-07).
+bool CloseStream(grpc::ClientReaderWriter<TrainingCommand, TrainingUpdate>* stream) {
+    return stream->WritesDone();
 }
 
 // Helper function to generate valid JWT tokens for testing
@@ -180,7 +177,7 @@ std::vector<TrainingUpdate> RunAsEngine(JobExecutionServiceTest& test, const std
                 return stream->Write(command);
             });
         }
-        if (!ended && (update.has_complete() || update.has_error())) ended = SendReservationEnd(stream.get());
+        if (!ended && (update.has_complete() || update.has_error())) ended = CloseStream(stream.get());
     }
     status = stream->Finish();
     return updates;
@@ -525,7 +522,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         TrainingCommand resume_cmd;
         resume_cmd.set_pause(false);
         bool resume_written = stream->Write(resume_cmd);
-        bool reservation_end_written = SendReservationEnd(stream.get());
+        bool stream_closed = CloseStream(stream.get());
 
         // Read some updates
         TrainingUpdate update;
@@ -538,7 +535,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
 
         REQUIRE(pause_written);
         REQUIRE(resume_written);
-        REQUIRE(reservation_end_written);
+        REQUIRE(stream_closed);
         REQUIRE(status.ok());
         REQUIRE(updates_received > 0);
     }
@@ -553,7 +550,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         TrainingCommand stop_cmd;
         stop_cmd.set_stop(true);
         bool stop_written = stream->Write(stop_cmd);
-        bool reservation_end_written = SendReservationEnd(stream.get());
+        bool stream_closed = CloseStream(stream.get());
 
         // Training should end
         TrainingUpdate update;
@@ -569,7 +566,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
 
         // Stream should close cleanly
         REQUIRE(stop_written);
-        REQUIRE(reservation_end_written);
+        REQUIRE(stream_closed);
         REQUIRE(status.ok());
         REQUIRE(stream_ended);
     }

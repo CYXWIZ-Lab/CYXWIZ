@@ -60,7 +60,7 @@ int main() {
     Check(quote.price == "$0.25 / hour (fee included)", "the listed price includes the fee: " + quote.price);
     Check(quote.hold == "$0.50", "two hours are held: " + quote.hold);
     Check(quote.button == "Reserve for 2 h 00 min" && quote.enabled, "button names the length");
-    Check(quote.pay_rule.find("rounded up to the minute") != std::string::npos, "pay rule is D3's");
+    Check(quote.pay_rule.find("reserved time") != std::string::npos, "pay rule: the reserved time is yours");
     Check(Detail(quote.details, "Region") == "local", "details keep the region");
 
     auto offline = reserve;
@@ -103,8 +103,8 @@ int main() {
           "time left from the end time before a heartbeat: " + local_card.time_left);
     Check(local_card.source.find("this computer") != std::string::npos, "says where the time comes from");
     Check(local_card.has_bar && local_card.fill > 0.39 && local_card.fill < 0.40, "bar: 47 of 120 minutes used");
-    Check(local_card.spent == "$0.20 (47 min)", "spent so far: " + local_card.spent);
-    Check(local_card.held == "$0.50", "held: " + local_card.held);
+    Check(local_card.price == "$0.50 (2 h 00 min)", "price of the reserved time: " + local_card.price);
+    Check(!local_card.stale, "a local clock is not stale");
     Check(local_card.title == "dell-pc" && local_card.connection == "Connected to node", "name, not the endpoint");
     Check(!local_card.warn, "no warning with over an hour left");
     Check(Detail(local_card.details, "Endpoint") == "192.168.1.222:50052" &&
@@ -141,20 +141,31 @@ int main() {
     reconnected.node_known = false;
     reconnected.start_time = 0;  // the reconnect token gives time left only
     const auto re_card = BuildActiveReservationCard(reconnected);
-    Check(!re_card.has_bar && re_card.spent == "-", "no invented start after a reconnect");
+    Check(!re_card.has_bar && re_card.price == "-", "no invented start after a reconnect");
     Check(re_card.subtitle == "192.168.1.222:50052", "unknown node shows its endpoint");
 
-    std::cout << "extend and end\n";
+    std::cout << "extend and leave\n";
     const auto options = BuildExtendOptions(0.25);
     Check(options.size() == 4 && options[1].label == "+30 min" && options[0].cost == "$0.06" &&
               options[3].minutes == 120 && options[3].cost == "$0.50",
           "extend options with their cost");
     Check(BuildExtendOptions(0.0)[0].cost == "-", "no price, no cost");
-    const auto end = BuildEndSummary(active, 0.25);
-    Check(end.title == "End the reservation on dell-pc?", end.title);
-    Check(end.body.rfind("Training is running (epoch 6 of 10). Ending stops it;", 0) == 0, "end body: " + end.body);
-    Check(end.time_used == "47 min" && end.pay == "$0.20" && end.returned == "$0.30", "pay for time used");
-    Check(BuildEndSummary(reconnected, 0.25).time_used == "not known (reconnected)", "reconnected end");
+    const auto leave = BuildLeaveSummary(active);
+    Check(leave.title == "Leave dell-pc?", leave.title);
+    Check(leave.body.rfind("Training is running (epoch 6 of 10). Leaving stops it with a checkpoint;", 0) == 0,
+          "leave body: " + leave.body);
+    Check(leave.body.find("stays yours") != std::string::npos, "the reserved time stays the user's");
+    Check(leave.ends.find("(1 h 13 min left)") != std::string::npos, "leave says when it ends: " + leave.ends);
+    Check(BuildLeaveSummary(reconnected).title == "Leave the node?", "unknown node after a reconnect");
+
+    std::cout << "stale heartbeat\n";
+    auto stale = active;
+    stale.server_seconds_left = 3000;
+    stale.server_checked_at = stale.now - 400;
+    const auto stale_card = BuildActiveReservationCard(stale);
+    Check(stale_card.stale && stale_card.source.find("has not answered for 400 s") != std::string::npos,
+          "says the central server stopped answering: " + stale_card.source);
+    Check(stale_card.time_left == "43:20", "still counts down from the last reply: " + stale_card.time_left);
 
     std::cout << "receipt\n";
     ReservationEndFacts ended;
@@ -170,18 +181,21 @@ int main() {
     Check(receipt.time_used == "2 h 00 min" && receipt.jobs == "2 jobs started", "receipt facts");
     Check(receipt.paid.find("not live") != std::string::npos, "no invented charge");
     Check(receipt.note.find("checkpoint") != std::string::npos, "points to the resume");
-    auto failed = ended;
-    failed.reason = ReservationEndReason::EndFailed;
-    failed.error = "Reservation not found";
-    const auto failed_receipt = BuildReservationReceipt(failed);
-    Check(failed_receipt.failed && failed_receipt.note.rfind("Reservation not found", 0) == 0,
-          "a failed end says why");
+    auto lost = ended;
+    lost.reason = ReservationEndReason::Lost;
+    lost.error = "Reservation not found";
+    const auto lost_receipt = BuildReservationReceipt(lost);
+    Check(lost_receipt.failed && lost_receipt.title == "The reservation on dell-pc is over" &&
+              lost_receipt.why == "the central server no longer knows it" &&
+              lost_receipt.note.rfind("Reservation not found", 0) == 0,
+          "a lost reservation says why");
 
     std::cout << "reconnect\n";
-    ActiveReservationListing dell{"r1", "8b27aaaa-03d1", "dell-pc", 2285, false, 0};
-    ActiveReservationListing mac{"r2", "5c01bbbb-7700", "", 6690, true, 1};
-    const auto rows = BuildReconnectRows({dell, mac});
-    Check(rows.size() == 2 && rows[0].reservation_id == "r2", "longest time left first");
+    ActiveReservationListing dell{"r1", "8b27aaaa-03d1", "dell-pc", start + 2285, false, 0};
+    ActiveReservationListing mac{"r2", "5c01bbbb-7700", "", start + 6690, true, 1};
+    ActiveReservationListing gone{"r3", "aaaa0000-0000", "old-pc", start - 5, false, 0};
+    const auto rows = BuildReconnectRows({dell, mac, gone}, start);
+    Check(rows.size() == 2 && rows[0].reservation_id == "r2", "longest time left first; the ended one is left out");
     Check(rows[0].node == "Node 5c01bbbb" && rows[0].time_left == "1:51:30 left", "unknown node by id");
     Check(rows[0].note == "open in another Engine · 1 job done", rows[0].note);
     Check(rows[1].node == "dell-pc" && rows[1].note.empty(), "known node by name");

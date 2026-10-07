@@ -300,59 +300,6 @@ bool ReservationClient::ExtendReservation(
     return true;
 }
 
-bool ReservationClient::ReleaseReservation(
-    const std::string& reservation_id,
-    const std::string& reason,
-    int64_t& time_used,
-    int64_t& payment_released,
-    int64_t& refund_amount) {
-
-    if (!connected_ || !stub_) {
-        last_error_ = "Not connected";
-        return false;
-    }
-
-    spdlog::info("Releasing reservation {} early...", reservation_id);
-
-    grpc::ClientContext context;
-    AddAuthMetadata(context);
-    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
-
-    cyxwiz::protocol::ReleaseReservationRequest request;
-    request.set_reservation_id(reservation_id);
-    request.set_reason(reason);
-
-    cyxwiz::protocol::ReleaseReservationResponse response;
-    grpc::Status status = stub_->ReleaseReservation(&context, request, &response);
-
-    if (!status.ok()) {
-        last_error_ = "gRPC error: " + status.error_message();
-        spdlog::error("ReleaseReservation failed: {}", last_error_);
-        return false;
-    }
-
-    if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
-        last_error_ = response.error().message();
-        spdlog::error("ReleaseReservation rejected: {}", last_error_);
-        return false;
-    }
-
-    time_used = response.time_used_seconds();
-    payment_released = response.payment_released();
-    refund_amount = response.refund_amount();
-
-    spdlog::info("Reservation released!");
-    spdlog::info("  Time used: {} seconds", time_used);
-    spdlog::info("  Payment to node: {} lamports", payment_released);
-    spdlog::info("  Refund: {} lamports", refund_amount);
-
-    // Clear current reservation
-    current_reservation_ = ReservationInfo{};
-    StopHeartbeat();
-
-    return true;
-}
-
 bool ReservationClient::GetReservation(
     const std::string& reservation_id,
     cyxwiz::protocol::ReservationInfo& out_info) {
@@ -573,12 +520,22 @@ bool ReservationClient::SendHeartbeat() {
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS) {
         spdlog::warn("Heartbeat rejected: {}", response.message());
+        // The central server answered but does not know the reservation
+        // (error 404): it is over for the Engine too.
+        if (heartbeat_callback_ && response.has_error() && response.error().code() == 404) {
+            HeartbeatReport report;
+            report.gone = true;
+            report.message = response.message().empty() ? response.error().message() : response.message();
+            heartbeat_callback_(report);
+        }
         return false;
     }
 
-    // Notify callback
     if (heartbeat_callback_) {
-        heartbeat_callback_(response.time_remaining_seconds(), response.should_extend());
+        HeartbeatReport report;
+        report.time_remaining = response.time_remaining_seconds();
+        report.should_extend = response.should_extend();
+        heartbeat_callback_(report);
     }
 
     // Log if time is running low

@@ -74,7 +74,7 @@ void ConnectionDialog::Render() {
             ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], "Not connected to the central server");
         }
 
-        RenderEndReservationPopup();
+        RenderLeaveNodePopup();
         RenderStopTrainingPopup();
     }
     ImGui::End();
@@ -562,120 +562,35 @@ void ConnectionDialog::StartReservation() {
     );
 }
 
-void ConnectionDialog::DoReleaseReservation() {
-    if (!has_active_reservation_) {
-        return;
-    }
+void ConnectionDialog::LeaveNode() {
+    if (!has_active_reservation_) return;
+    spdlog::info("[LEAVE] Leaving the node; reservation {} keeps running", active_reservation_.reservation_id);
 
-    if (!reservation_client_) {
-        reservation_error_ = "Reservation client not configured";
-        return;
-    }
+    // A running job is stopped with a checkpoint before the link closes.
+    if (p2p_client_ && p2p_client_->IsStreaming()) p2p_client_->StopTraining();
+    DisconnectFromNode();
+    if (reservation_client_) reservation_client_->StopHeartbeat();
 
-    spdlog::info("========================================");
-    spdlog::info("[RELEASE] Starting reservation release: {}", active_reservation_.reservation_id);
-    spdlog::info("========================================");
+    // The reservation goes to the reconnect prompt with its time left.
+    ActiveReservationListing listing;
+    listing.reservation_id = active_reservation_.reservation_id;
+    listing.node_id = reserved_node_.node_id;
+    listing.node_name = reserved_node_.name;
+    const long long now = static_cast<long long>(std::time(nullptr));
+    const long long server_left = reservation_seconds_left_.load();
+    listing.ends_at = server_left >= 0 ? reservation_heartbeat_at_.load() + server_left : active_reservation_.end_time;
+    found_reservations_.erase(std::remove_if(found_reservations_.begin(), found_reservations_.end(),
+                                             [&](const auto& r) { return r.reservation_id == listing.reservation_id; }),
+                              found_reservations_.end());
+    if (listing.ends_at > now) found_reservations_.push_back(listing);
 
-    // Log current state
-    bool is_downloading = p2p_training_panel_ && p2p_training_panel_->IsDownloading();
-    bool is_connected = p2p_client_ && p2p_client_->IsConnected();
-    bool is_streaming = p2p_client_ && p2p_client_->IsStreaming();
-    spdlog::info("[RELEASE] Current state: downloading={}, connected={}, streaming={}",
-                 is_downloading, is_connected, is_streaming);
-
-    // Step 1: Cancel any pending download first
-    // The download thread captures p2p_client_ and will crash if we disconnect while it's running
-    if (p2p_training_panel_) {
-        spdlog::info("[RELEASE] Step 1: Cancelling any pending model download...");
-        p2p_training_panel_->CancelDownloadAndWait();
-        spdlog::info("[RELEASE] Step 1: Download cancelled/completed");
-    }
-
-    // Step 2: Stop training panel monitoring BEFORE disconnecting P2P client
-    // This prevents crash from panel accessing p2p_client_ during disconnect
-    if (p2p_training_panel_) {
-        spdlog::info("[RELEASE] Step 2: Stopping P2P training panel monitoring...");
-        p2p_training_panel_->StopMonitoring();
-        spdlog::info("[RELEASE] Step 2: Monitoring stopped");
-    }
-
-    // Step 3: Send reservation end signal to Server Node BEFORE stopping the stream
-    // This notifies the Server Node to clean up its state
-    if (p2p_client_ && p2p_client_->IsConnected() && p2p_client_->IsStreaming()) {
-        spdlog::info("[RELEASE] Step 3: Sending reservation end signal to Server Node...");
-        bool sent = p2p_client_->SendReservationEnd();
-        spdlog::info("[RELEASE] Step 3: Reservation end signal sent: {}", sent ? "SUCCESS" : "FAILED");
-    } else {
-        spdlog::info("[RELEASE] Step 3: Skipped (not streaming)");
-    }
-
-    // Step 4: Stop training stream to prevent callbacks during disconnect
-    if (p2p_client_) {
-        spdlog::info("[RELEASE] Step 4: Stopping training stream...");
-        p2p_client_->StopTrainingStream();
-        spdlog::info("[RELEASE] Step 4: Training stream stopped");
-    }
-
-    int64_t time_used = 0;
-    int64_t payment_released = 0;
-    int64_t refund_amount = 0;  // No refund - like hotel reservation
-
-    // Step 5: Release reservation via Central Server
-    spdlog::info("[RELEASE] Step 5: Calling Central Server ReleaseReservation...");
-    bool success = reservation_client_->ReleaseReservation(
-        active_reservation_.reservation_id,
-        "User requested release",
-        time_used,
-        payment_released,
-        refund_amount
-    );
-
-    if (success) {
-        spdlog::info("[RELEASE] Step 5: Central Server release SUCCESS");
-        spdlog::info("[RELEASE]   Time used: {} seconds", time_used);
-        spdlog::info("[RELEASE]   Payment to node: {} lamports (full amount, no refund)", payment_released);
-
-        // Step 6: Notify Server Node and Disconnect P2P
-        if (p2p_client_ && p2p_client_->IsConnected()) {
-            spdlog::info("[RELEASE] Step 6a: Notifying Server Node of disconnect...");
-            p2p_client_->NotifyDisconnect("user_release");
-            spdlog::info("[RELEASE] Step 6b: Disconnecting P2P client...");
-            p2p_client_->Disconnect();
-            spdlog::info("[RELEASE] Step 6: P2P client disconnected");
-        } else {
-            spdlog::info("[RELEASE] Step 6: Skipped (not connected)");
-        }
-
-        // Step 7: Stop heartbeat
-        spdlog::info("[RELEASE] Step 7: Stopping heartbeat...");
-        reservation_client_->StopHeartbeat();
-        spdlog::info("[RELEASE] Step 7: Heartbeat stopped");
-
-        // Step 8: The receipt replaces the card.
-        spdlog::info("[RELEASE] Step 8: Clearing reservation state...");
-        FinishReservation(ReservationEndReason::EndedByYou, std::string());
-        spdlog::info("[RELEASE] ========================================");
-        spdlog::info("[RELEASE] Reservation release COMPLETE");
-        spdlog::info("[RELEASE] ========================================");
-    } else {
-        reservation_error_ = "Could not end the reservation: " + reservation_client_->GetLastError() +
-                             ". Try again, or let it run out.";
-        spdlog::error("[RELEASE] Step 5: Central Server release FAILED: {}", reservation_error_);
-        spdlog::error("[RELEASE] ========================================");
-        spdlog::error("[RELEASE] Reservation release FAILED - cleaning up anyway");
-        spdlog::error("[RELEASE] ========================================");
-
-        // Even if Central Server release fails, we should still disconnect P2P
-        // to avoid leaving orphaned connections
-        if (p2p_client_ && p2p_client_->IsConnected()) {
-            spdlog::info("[RELEASE] Cleanup: Notifying Server Node of disconnect...");
-            p2p_client_->NotifyDisconnect("release_failed");
-            spdlog::info("[RELEASE] Cleanup: Disconnecting P2P client...");
-            p2p_client_->Disconnect();
-        }
-        // The reservation is still running on the central server: keep the
-        // card and its heartbeat so the user can retry or reconnect.
-    }
+    has_active_reservation_ = false;
+    active_reservation_ = network::ReservationInfo{};
+    reserved_node_ = network::NodeDisplayInfo{};
+    expired_at_ = 0;
+    reservation_seconds_left_ = -1;
+    reservation_heartbeat_at_ = 0;
+    reservation_error_.clear();
 }
 
 void ConnectionDialog::FinishReservation(ReservationEndReason reason, const std::string& error) {
@@ -709,7 +624,8 @@ void ConnectionDialog::FinishReservation(ReservationEndReason reason, const std:
     expired_at_ = 0;
     reservation_seconds_left_ = -1;
     reservation_heartbeat_at_ = 0;
-    spdlog::info("Reservation ended ({})", reason == ReservationEndReason::TimeRanOut ? "time ran out" : "ended");
+    spdlog::info("Reservation ended ({})",
+                 reason == ReservationEndReason::TimeRanOut ? "time ran out" : "the central server no longer knows it");
 }
 
 void ConnectionDialog::DisconnectFromNode() {
@@ -727,31 +643,6 @@ void ConnectionDialog::DisconnectFromNode() {
         p2p_client_->StopTrainingStream();
         p2p_client_->Disconnect();
     }
-}
-
-void ConnectionDialog::EndFoundReservation(const std::string& reservation_id) {
-    if (!reservation_client_) return;
-    const auto it = std::find_if(found_reservations_.begin(), found_reservations_.end(),
-                                 [&](const auto& r) { return r.reservation_id == reservation_id; });
-    if (it == found_reservations_.end()) return;
-    int64_t time_used = 0;
-    int64_t payment_released = 0;
-    int64_t refund_amount = 0;
-    if (!reservation_client_->ReleaseReservation(reservation_id, "Ended from the reconnect prompt", time_used,
-                                                 payment_released, refund_amount)) {
-        reservation_error_ = "Could not end the reservation: " + reservation_client_->GetLastError();
-        return;
-    }
-    ReservationEndFacts facts;
-    facts.node_name = it->node_name.empty() ? "Node " + it->node_id.substr(0, 8) : it->node_name;
-    facts.ended_at = static_cast<long long>(std::time(nullptr));
-    facts.reason = ReservationEndReason::EndedByYou;
-    facts.seconds_used = time_used > 0 ? time_used : -1;
-    facts.reservation_id = reservation_id;
-    receipt_facts_ = facts;
-    has_receipt_ = true;
-    found_reservations_.erase(it);
-    reservation_error_.clear();
 }
 
 void ConnectionDialog::ConnectToReservedNode() {
@@ -936,10 +827,16 @@ void ConnectionDialog::StartP2PTraining() {
 void ConnectionDialog::SetReservationClient(std::shared_ptr<network::ReservationClient> client) {
     reservation_client_ = std::move(client);
     if (!reservation_client_) return;
-    reservation_client_->SetHeartbeatCallback([this](int64_t time_remaining, bool should_extend) {
-        reservation_seconds_left_ = time_remaining;
+    reservation_client_->SetHeartbeatCallback([this](const network::HeartbeatReport& report) {
+        if (report.gone) {
+            std::lock_guard<std::mutex> lock(reservation_gone_mutex_);
+            reservation_gone_message_ = report.message;
+            reservation_gone_ = true;
+            return;
+        }
+        reservation_seconds_left_ = report.time_remaining;
         reservation_heartbeat_at_ = static_cast<long long>(std::time(nullptr));
-        reservation_should_extend_ = should_extend;
+        reservation_should_extend_ = report.should_extend;
     });
 }
 
@@ -1176,7 +1073,7 @@ void ConnectionDialog::CheckForActiveReservations() {
             ActiveReservationListing listing;
             listing.reservation_id = active.reservation_id();
             listing.node_id = active.node_id();
-            listing.seconds_left = active.time_remaining_seconds();
+            listing.ends_at = static_cast<long long>(std::time(nullptr)) + active.time_remaining_seconds();
             listing.engine_connected = active.engine_connected();
             listing.jobs_completed = active.jobs_completed();
             for (const auto& node : discovered_nodes_) {
@@ -1243,6 +1140,7 @@ void ConnectionDialog::ReconnectToReservation(const std::string& reservation_id)
     expired_at_ = 0;
     reservation_seconds_left_ = -1;
     reservation_heartbeat_at_ = 0;
+    reservation_gone_ = false;
     reservation_error_.clear();
 
     spdlog::info("Reconnected to reservation successfully!");

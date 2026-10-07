@@ -187,6 +187,19 @@ void ConnectionDialog::RenderActiveReservationPanel() {
     const ActiveReservationInputs in = CurrentReservationInputs();
     const ActiveReservationCard card = BuildActiveReservationCard(in);
 
+    // The central server no longer knows the reservation (heartbeat 404):
+    // it is over, whatever this clock says.
+    if (reservation_gone_.load()) {
+        std::string words;
+        {
+            std::lock_guard<std::mutex> lock(reservation_gone_mutex_);
+            words = reservation_gone_message_;
+        }
+        reservation_gone_ = false;
+        FinishReservation(ReservationEndReason::Lost, words);
+        return;
+    }
+
     // The node ends the reservation itself and tells the Engine why (gap 6);
     // give its message a moment to arrive, then close up here.
     if (card.urgency == ReservationUrgency::Ended) {
@@ -225,14 +238,14 @@ void ConnectionDialog::RenderActiveReservationPanel() {
         } else {
             ImGui::TextColored(Muted(), "%s", card.ends.c_str());
         }
-        ImGui::TextColored(Muted(), "%s", card.source.c_str());
+        ImGui::TextColored(card.stale ? kFailed : Muted(), "%s", card.source.c_str());
         ImGui::EndGroup();
 
         if (card.urgency == ReservationUrgency::Ended) {
             ImGui::TextColored(kDanger, ICON_FA_CLOCK " The reservation has ended; closing the connection...");
         }
 
-        KeyValueTable("##money", {{"Spent so far", card.spent}, {"Held", card.held}}, 2);
+        KeyValueTable("##money", {{"Reserved time", card.price}}, 1);
 
         if (card.warn) {
             ImGui::TextColored(kFailed, ICON_FA_TRIANGLE_EXCLAMATION);
@@ -242,7 +255,7 @@ void ConnectionDialog::RenderActiveReservationPanel() {
             ImGui::PopTextWrapPos();
         }
 
-        // Extend (primary when time is short), End, Details.
+        // Extend (primary when time is short), Leave, Details.
         const bool ended = card.urgency == ReservationUrgency::Ended;
         const bool extend = card.warn ? ui::PrimaryButton("Extend " ICON_FA_CARET_DOWN, !ended)
                                       : ui::SecondaryButton("Extend " ICON_FA_CARET_DOWN, !ended);
@@ -254,11 +267,11 @@ void ConnectionDialog::RenderActiveReservationPanel() {
                 }
             }
             ImGui::Separator();
-            ImGui::TextColored(Muted(), "Held from your balance now; you pay only for time used.");
+            ImGui::TextColored(Muted(), "Added to the reservation; the time is yours until it runs out.");
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (ui::DangerButton("End reservation", !ended)) show_release_confirm_ = true;
+        if (ui::SecondaryButton("Leave node", !ended)) show_leave_confirm_ = true;
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize("Hide details").x);
         if (ui::LinkButton(reservation_details_open_ ? "Hide details" : "Details##active")) {
@@ -310,36 +323,33 @@ void ConnectionDialog::RenderTrainingOnNodePanel() {
             ImGui::SameLine();
             if (ui::SecondaryButton(ICON_FA_LINK_SLASH " Disconnect from node")) DisconnectFromNode();
             ImGui::SameLine();
-            ImGui::TextColored(Muted(), "Disconnecting keeps the reservation.");
+            ImGui::TextColored(Muted(), "Disconnecting keeps the reservation and this card.");
         }
     }
     ImGui::EndChild();
     ImGui::PopID();
 }
 
-void ConnectionDialog::RenderEndReservationPopup() {
-    if (show_release_confirm_) {
-        ImGui::OpenPopup("End reservation");
-        show_release_confirm_ = false;
+void ConnectionDialog::RenderLeaveNodePopup() {
+    if (show_leave_confirm_) {
+        ImGui::OpenPopup("Leave node");
+        show_leave_confirm_ = false;
     }
     ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("End reservation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        const EndSummary summary = BuildEndSummary(CurrentReservationInputs(), reserved_node_.price_usd_equivalent);
+    if (ImGui::BeginPopupModal("Leave node", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const LeaveSummary summary = BuildLeaveSummary(CurrentReservationInputs());
         ImGui::TextUnformatted(summary.title.c_str());
         ImGui::PushTextWrapPos(500.0f);
         ImGui::TextColored(Muted(), "%s", summary.body.c_str());
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        KeyValueTable("##end", {{"Time used", summary.time_used},
-                                {"You pay", summary.pay},
-                                {"Returned to your balance", summary.returned}},
-                      1);
+        ImGui::TextUnformatted(summary.ends.c_str());
         ImGui::Spacing();
-        if (ui::SecondaryButton("Keep it", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
+        if (ui::SecondaryButton("Stay", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
-        if (ui::DangerButton("End reservation", true, nullptr, ui::ButtonSize::Regular)) {
+        if (ui::PrimaryButton("Leave node", true, nullptr, ui::ButtonSize::Regular)) {
             ImGui::CloseCurrentPopup();
-            DoReleaseReservation();
+            LeaveNode();
         }
         ImGui::EndPopup();
     }
@@ -372,11 +382,8 @@ void ConnectionDialog::RenderReservationReceipt() {
     if (BeginCard("##card")) {
         ImGui::TextUnformatted(receipt.title.c_str());
         RightText(Muted(), receipt.why);
-        KeyValueTable("##facts", {{"Time used", receipt.time_used},
-                                  {"Paid", receipt.paid},
-                                  {"Returned to your balance", receipt.returned},
-                                  {"Jobs", receipt.jobs}},
-                      2);
+        KeyValueTable("##facts", {{"Time used", receipt.time_used}, {"Paid", receipt.paid}, {"Jobs", receipt.jobs}},
+                      3);
         if (!receipt.note.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(receipt.failed ? kFailed : Muted(), "%s", receipt.note.c_str());
@@ -398,21 +405,23 @@ void ConnectionDialog::RenderReservationReceipt() {
 
 void ConnectionDialog::RenderReconnectPrompt() {
     if (has_active_reservation_ || found_reservations_.empty()) return;
-    const auto rows = BuildReconnectRows(found_reservations_);
+    const auto rows = BuildReconnectRows(found_reservations_, static_cast<long long>(std::time(nullptr)));
+    if (rows.empty()) {
+        found_reservations_.clear();  // all ran out
+        return;
+    }
     ImGui::SeparatorText(rows.size() == 1 ? ICON_FA_LINK " You have an active reservation"
                                           : ICON_FA_LINK " You have active reservations");
     ImGui::PushID("reconnect");
     if (BeginCard("##card")) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(Muted(),
-                           "Found when you connected to the central server. Reconnect to keep training, or end it "
-                           "to stop paying for the remaining time.");
+                           "The reserved time is yours until it runs out. Reconnect to use it; there is nothing "
+                           "to come back to after that.");
         ImGui::PopTextWrapPos();
         std::string reconnect_id;
-        std::string end_id;
         if (ImGui::BeginTable("##rows", 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
-            const float actions = ui::ButtonWidth("Reconnect", ui::ButtonSize::Small) +
-                                  ui::ButtonWidth("End", ui::ButtonSize::Small) + 12.0f;
+            const float actions = ui::ButtonWidth("Reconnect", ui::ButtonSize::Small) + 12.0f;
             ImGui::TableSetupColumn("Node", ImGuiTableColumnFlags_WidthStretch, 1.4f);
             ImGui::TableSetupColumn("Time left", ImGuiTableColumnFlags_WidthStretch, 0.8f);
             ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthStretch, 1.2f);
@@ -428,15 +437,12 @@ void ConnectionDialog::RenderReconnectPrompt() {
                 ImGui::TextColored(Muted(), "%s", row.note.c_str());
                 ImGui::TableNextColumn();
                 if (ui::SecondaryButton("Reconnect")) reconnect_id = row.reservation_id;
-                ImGui::SameLine();
-                if (ui::DangerButton("End")) end_id = row.reservation_id;
                 ImGui::PopID();
             }
             ImGui::EndTable();
         }
-        // Outside the table: these change found_reservations_.
+        // Outside the table: this changes found_reservations_.
         if (!reconnect_id.empty()) ReconnectToReservation(reconnect_id);
-        if (!end_id.empty()) EndFoundReservation(end_id);
     }
     ImGui::EndChild();
     ImGui::PopID();
