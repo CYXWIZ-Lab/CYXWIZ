@@ -2,10 +2,7 @@
 
 #include "dashboard_model.h"
 
-#include <arrow/io/file.h>
-#include <parquet/arrow/writer.h>
 #include <parquet/file_reader.h>
-#include <parquet/properties.h>
 
 #include <cstdio>
 #include <functional>
@@ -35,16 +32,16 @@ QueryRequest WordsTableQuery(const std::string& table, const std::string& text_f
     QueryRequest r;
     r.inputs = {table};
     r.label = "Dashboard: words of " + text_field;
-    const std::string tokens = TokensSql(Quote(text_field));
-    r.sql = "SELECT *, array_to_string(" + tokens + ", ' ') AS cyxwiz_words, CAST(len(" + tokens + ") AS INTEGER) AS cyxwiz_word_count FROM " +
-            Quote(table);
+    // The split runs once per row (the v2 form ran it twice, for the string and the count).
+    r.sql = "SELECT * EXCLUDE (cyxwiz_t), cyxwiz_t AS cyxwiz_words, CAST(len(cyxwiz_t) AS INTEGER) AS cyxwiz_word_count FROM (SELECT *, coalesce(" +
+            TokensSql(Quote(text_field)) + ", CAST([] AS VARCHAR[])) AS cyxwiz_t FROM " + Quote(table) + ")";
     return r;
 }
 
 std::string WordsCacheKey(const std::string& source_path, const std::string& dataset, uint64_t generation, const std::string& text_field) {
-    // v2: the tokenizer (TokensSql) and the saved layout (words joined by spaces);
+    // v3: the tokenizer (TokensSql) and the saved layout (a list of words);
     // a change to either must change the key.
-    std::string key = "v2|" + text_field + "|";
+    std::string key = "v3|" + text_field + "|";
     std::error_code ec;
     if (!source_path.empty() && fs::is_regular_file(source_path, ec)) {
         const auto size = fs::file_size(source_path, ec);
@@ -74,27 +71,17 @@ WordsTable EnsureWordsTable(const std::string& table, const std::string& text_fi
             fs::remove(path, ec);  // a broken file is made again
         }
     }
-    const QueryResult r = run(WordsTableQuery(table, text_field));
-    if (!r.ok || !r.table) {
+    // DuckDB writes the file itself (the list column stays a list; a result
+    // table would carry it as text), to a temporary name first.
+    fs::create_directories(cache_dir, ec);
+    const fs::path tmp = path.string() + ".tmp.parquet";
+    QueryRequest q = WordsTableQuery(table, text_field);
+    q.export_path = tmp.string();
+    const QueryResult r = run(q);
+    if (!r.ok) {
+        fs::remove(tmp, ec);
         out.error = r.error.empty() ? std::string("the words could not be split") : r.error;
         return out;
-    }
-    fs::create_directories(cache_dir, ec);
-    const fs::path tmp = path.string() + ".tmp";
-    {
-        auto file = arrow::io::FileOutputStream::Open(tmp.string());
-        if (!file.ok()) {
-            out.error = "could not write " + tmp.string() + ": " + file.status().ToString();
-            return out;
-        }
-        auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::SNAPPY)->build();
-        const auto status = parquet::arrow::WriteTable(*r.table, arrow::default_memory_pool(), *file, 64 * 1024, props);
-        const auto closed = (*file)->Close();
-        if (!status.ok() || !closed.ok()) {
-            fs::remove(tmp, ec);
-            out.error = "could not write the words: " + (status.ok() ? closed : status).ToString();
-            return out;
-        }
     }
     fs::rename(tmp, path, ec);
     if (ec) {
@@ -102,7 +89,13 @@ WordsTable EnsureWordsTable(const std::string& table, const std::string& text_fi
         out.error = "could not save the words in " + path.string();
         return out;
     }
-    out.rows = static_cast<size_t>(r.table->num_rows());
+    try {
+        auto reader = parquet::ParquetFileReader::OpenFile(out.path, false);
+        out.rows = static_cast<size_t>(reader->metadata()->num_rows());
+    } catch (const std::exception& e) {
+        fs::remove(path, ec);
+        out.error = std::string("the saved words cannot be read: ") + e.what();
+    }
     return out;
 }
 

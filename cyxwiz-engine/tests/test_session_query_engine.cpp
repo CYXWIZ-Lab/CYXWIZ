@@ -124,6 +124,25 @@ int main() {
         Check(r.ok && r.inputs.size() == 2, "join a Parquet dataset with an attached table (reopened with its folder): " + r.error);
         Check(engine.IsAttached("Spotify tracks", 2), "views survive the reopen");
 
+        // A query exported to Parquet by DuckDB itself (export_path, the
+        // Dashboard's words table): a new folder, list columns kept, the inner
+        // SQL still read-only, the result is the row count.
+        const fs::path exported = root / "exported" / "words.parquet";
+        q.sql = "SELECT album_type, string_split(album_type, '_') AS parts FROM MNIST";
+        q.export_path = exported.string();
+        r = engine.Run(q);
+        Check(r.ok && fs::is_regular_file(exported) && r.table && r.table->num_rows() == 1, "exported to Parquet: " + r.error);
+        q.export_path.clear();
+        Check(engine.AttachParquet("Words", 1, exported.string(), 6, &error), "attach the export: " + error);
+        q.sql = "SELECT sum(len(parts)) AS n FROM Words";
+        r = engine.Run(q);
+        Check(r.ok && r.table->num_rows() == 1, "the exported list column reads back as a list: " + r.error);
+        q.sql = "DROP TABLE MNIST";
+        q.export_path = (root / "exported" / "no.parquet").string();
+        r = engine.Run(q);
+        Check(!r.ok && !fs::exists(root / "exported" / "no.parquet"), "an export runs only a SELECT: " + r.error);
+        q.export_path.clear();
+
         // Cancellation from another thread.
         q.sql = "SELECT count(*) FROM range(100000000000) a";
         std::thread stopper([&] {
@@ -181,7 +200,7 @@ int main() {
         Check(SessionQueryEngine::QuoteIdentifier("a\"b") == "\"a\"\"b\"", "identifier quoting");
     }
     fs::remove_all(root, ec);
-    std::cout << "session query engine: read-only, restricted files and settings, bound parameters, Arrow and Parquet "
-                 "attachment, versions, joins, row limit, cancellation, queries side by side with per-query stop. OK\n";
+    std::cout << "session query engine: read-only, restricted files and settings, bound parameters, Arrow and Parquet attachment, export to Parquet, "
+                 "versions, joins, row limit, cancellation, queries side by side with per-query stop. OK\n";
     return 0;
 }

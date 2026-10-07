@@ -2,11 +2,12 @@
 
 // A text column's words, split once (TOFIX134 P3 text, owner 2026-10-05:
 // "only once and next should load"). The table's rows with two more columns
-// (cyxwiz_words: the words joined by spaces - a word has none, and query
-// results carry text, not lists; cyxwiz_word_count) are saved as Parquet
-// in the project's cache, keyed by the source file (path, size, time) and the
-// column, so every text widget and KPI reads them instead of splitting the
-// text again, and a reopened dashboard loads them.
+// (cyxwiz_words: the words as a list, so a query unnests them without
+// splitting a string again - the joined-string form of v2 cost every card
+// 2-3x; cyxwiz_word_count) are saved as Parquet in the project's cache,
+// keyed by the source file (path, size, time) and the column, so every text
+// widget and KPI reads them instead of splitting the text again, and a
+// reopened dashboard loads them.
 
 #include "../dataset_profiler.h"
 

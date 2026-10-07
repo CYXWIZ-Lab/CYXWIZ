@@ -204,6 +204,11 @@ Queries run a few at a time (three), cheap cards first: the summary strip
 and numbers, then tables, then plots, then the text cards that read every
 word. Changing a filter stops the queries it supersedes.
 
+A text column's words are split once per data and saved next to the results
+(`cache/dashboard_words`, one list of words per text); every text card and
+the word filters read that list, so the first open of a text dataset pays
+one pass over the texts and the cards after it work on words, not strings.
+
 ## When the data changes
 
 - New values or rows: every widget updates; the layout stays.

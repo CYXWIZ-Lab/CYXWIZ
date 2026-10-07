@@ -170,10 +170,11 @@ QueryRequest TextWidgetQuery(const WidgetSpec& w, const std::string& table, cons
                     " WHERE length(word) > 1" + StopWordFilter("word", w.keep_stop_words) + " GROUP BY word ORDER BY count DESC, word LIMIT 15";
             break;
         case TextView::Phrases:
+            // Each word zipped with the next (the lambda over an index range cost twice as much).
             r.sql = with + ", t AS (SELECT " + tokens + " AS t FROM cyxwiz_text)" +
-                    ", p AS (SELECT unnest(list_transform(range(1, len(t)), lambda i: [t[i], t[i + 1]])) AS pair FROM t)" +
+                    ", p AS (SELECT unnest(list_zip(t, t[2:])) AS pair FROM t WHERE len(t) > 1)" +
                     " SELECT pair[1] || ' ' || pair[2] AS phrase, CAST(count(*) AS DOUBLE) AS count FROM p" +
-                    " WHERE length(pair[1]) > 1 AND length(pair[2]) > 1" + StopWordFilter("pair[1]", w.keep_stop_words) +
+                    " WHERE pair[2] IS NOT NULL AND length(pair[1]) > 1 AND length(pair[2]) > 1" + StopWordFilter("pair[1]", w.keep_stop_words) +
                     StopWordFilter("pair[2]", w.keep_stop_words) + " GROUP BY phrase ORDER BY count DESC, phrase LIMIT 12";
             break;
         case TextView::WordsByClass: {

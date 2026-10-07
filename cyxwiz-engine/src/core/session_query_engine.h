@@ -57,6 +57,10 @@ struct QueryRequest {
     size_t row_limit = 0;             // 0: all rows
     std::string label;                // shown in Task View ("Query: Spotify")
     bool cache = false;               // the result may be saved and read back (query_result_cache.h)
+    // Set: the rows go to this Parquet file instead of the result (DuckDB
+    // writes them itself, every column type kept); the result has one row
+    // with their count. The SQL stays a read-only SELECT.
+    std::string export_path;
 };
 
 struct QueryResult {
@@ -118,6 +122,8 @@ private:
     };
     bool Open(std::string* error);  // (re)opens DuckDB with the allowed folders and re-creates the views
     bool CreateView(const std::string& name, const std::string& path, std::string* error);
+    // Under the exclusive lock: `folder` becomes one DuckDB may read and write.
+    bool AllowFolderLocked(const std::string& folder, std::string* error);
     std::vector<std::string> NamesInLocked(const std::string& sql) const;
     // A free connection for `token` (waits); null when the token was stopped.
     DuckDBConnector* Acquire(QueryToken& token);

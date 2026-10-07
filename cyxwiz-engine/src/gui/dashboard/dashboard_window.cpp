@@ -22,8 +22,10 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
+#include <optional>
 
 namespace cyxwiz::dashboard {
 
@@ -165,8 +167,24 @@ void DashboardWindow::ClearData(const std::string& message) {
     message_ = message;
 }
 
+namespace {
+
+// The catalog's entry with its generation stamped: a dataset registered since
+// the catalog last looked still reads generation 0, and a profile started on
+// 0 was started again when the real generation came (the double profile).
+std::optional<DatasetEntry> ResolveStamped(const std::string& name) {
+    auto entry = DatasetCatalog::Instance().Resolve(name);
+    if (entry && entry->generation == 0) {
+        DatasetCatalog::Instance().Pump(std::chrono::milliseconds(0));
+        entry = DatasetCatalog::Instance().Resolve(name);
+    }
+    return entry;
+}
+
+}  // namespace
+
 void DashboardWindow::EnsureWords() {
-    const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
+    const auto entry = ResolveStamped(dataset_);
     if (!entry) return;
     if (entry->generation != words_generation_) {  // new data: its words again
         words_generation_ = entry->generation;
@@ -206,7 +224,7 @@ void DashboardWindow::EnsureWords() {
 
 void DashboardWindow::EnsureProfile() {
     if (dataset_.empty() || profile_task_) return;
-    const auto entry = DatasetCatalog::Instance().Resolve(dataset_);
+    const auto entry = ResolveStamped(dataset_);
     if (!entry || entry->generation == profiled_generation_) return;
     profiled_generation_ = entry->generation;
     ProfileOptions options;

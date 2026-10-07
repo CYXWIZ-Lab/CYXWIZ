@@ -123,7 +123,7 @@ std::string TokensSql(const std::string& quoted_column) {
 }
 
 std::string SavedTokensSql(const std::string& quoted_words_column) {
-    return "list_filter(string_split(coalesce(" + quoted_words_column + ", ''), ' '), lambda w: w <> '')";
+    return "coalesce(" + quoted_words_column + ", CAST([] AS VARCHAR[]))";
 }
 
 std::vector<std::string> WidgetSpec::Fields() const {
@@ -227,8 +227,7 @@ std::string FilterState::WhereFor(const std::string& widget_id, std::vector<Quer
                 // A whole word or phrase of the text, as the Dashboard splits words.
                 if (p.values.empty()) continue;
                 const bool saved = tokens && tokens->field == p.field;
-                cond = saved ? "(' ' || coalesce(" + Quote(tokens->words) + ", '') || ' ') LIKE ?"
-                             : "(' ' || array_to_string(" + TokensSql(col) + ", ' ') || ' ') LIKE ?";
+                cond = "(' ' || array_to_string(" + (saved ? SavedTokensSql(Quote(tokens->words)) : TokensSql(col)) + ", ' ') || ' ') LIKE ?";
                 params.push_back(QueryParam::Of("% " + p.values.front() + " %"));
                 break;
             }

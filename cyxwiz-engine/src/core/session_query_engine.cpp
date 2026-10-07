@@ -180,18 +180,20 @@ bool SessionQueryEngine::AttachParquet(const std::string& name, uint64_t version
     std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = attached_.find(name);
     if (it != attached_.end() && it->second.version == version) return true;
-    const std::string folder = FolderOf(path);
-    if (std::find(allowed_.begin(), allowed_.end(), folder) == allowed_.end()) {
-        // A new cache folder: DuckDB's allowed folders are fixed when it opens
-        // (the configuration is locked), so reopen with it.
-        allowed_.push_back(folder);
-        if (!Open(error)) return false;
-    }
+    if (!AllowFolderLocked(FolderOf(path), error)) return false;
     if (!CreateView(name, path, error)) return false;
     std::error_code ec;
     if (it != attached_.end() && it->second.owned_file) fs::remove(it->second.path, ec);
     attached_[name] = Attachment{version, Slashes(path), rows, false};
     return true;
+}
+
+bool SessionQueryEngine::AllowFolderLocked(const std::string& folder, std::string* error) {
+    if (std::find(allowed_.begin(), allowed_.end(), folder) != allowed_.end()) return true;
+    // A new cache folder: DuckDB's allowed folders are fixed when it opens
+    // (the configuration is locked), so reopen with it.
+    allowed_.push_back(folder);
+    return Open(error);
 }
 
 void SessionQueryEngine::Detach(const std::string& name) {
@@ -285,6 +287,16 @@ QueryResult SessionQueryEngine::Run(const QueryRequest& request, QueryToken* tok
     QueryToken local;
     QueryToken& tk = token ? *token : local;
     const auto start = std::chrono::steady_clock::now();
+    if (!request.export_path.empty()) {
+        // The file's folder must exist and be one DuckDB may write (a reopen when new).
+        std::error_code ec;
+        fs::create_directories(fs::path(request.export_path).parent_path(), ec);
+        std::unique_lock<std::shared_mutex> exclusive(mutex_);
+        if (!db_ || !db_->IsReady() || !AllowFolderLocked(FolderOf(request.export_path), &r.error)) {
+            if (r.error.empty()) r.error = "the query engine is not running";
+            return r;
+        }
+    }
     std::shared_lock<std::shared_mutex> lock(mutex_);
     r.inputs = NamesInLocked(request.sql);
     if (!db_ || !db_->IsReady()) {
@@ -317,7 +329,10 @@ QueryResult SessionQueryEngine::Run(const QueryRequest& request, QueryToken* tok
         return r;
     }
     std::string sql = Trimmed(request.sql);
-    if (request.row_limit > 0) sql = "SELECT * FROM (" + sql + ") AS cyxwiz_q LIMIT " + std::to_string(request.row_limit + 1);
+    if (!request.export_path.empty())
+        sql = "COPY (" + sql + ") TO " + SqlString(Slashes(request.export_path)) + " (FORMAT PARQUET, COMPRESSION SNAPPY)";
+    else if (request.row_limit > 0)
+        sql = "SELECT * FROM (" + sql + ") AS cyxwiz_q LIMIT " + std::to_string(request.row_limit + 1);
     std::vector<duckdb::Value> params;
     for (const auto& p : request.params) params.push_back(ToDuck(p));
     {

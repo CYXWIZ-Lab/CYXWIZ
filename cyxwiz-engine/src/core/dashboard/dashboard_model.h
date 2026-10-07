@@ -46,7 +46,7 @@ std::optional<TextView> TextViewFromId(const std::string& id);
 // A text column's words as a DuckDB list: lower case, runs of letters, digits
 // and apostrophes (the Dashboard's one tokenizer). `quoted_column` is quoted.
 std::string TokensSql(const std::string& quoted_column);
-// The saved words (TokenColumns.words, space-joined) as the same list.
+// The saved words (TokenColumns.words, a list column) as the same list.
 std::string SavedTokensSql(const std::string& quoted_words_column);
 
 struct Placement {
@@ -105,7 +105,7 @@ struct FilterPredicate {
 // read the saved words instead of splitting the text again.
 struct TokenColumns {
     std::string field;   // the text column
-    std::string words;   // its words joined by spaces
+    std::string words;   // its words (a list column)
     std::string count;   // its word count
 };
 
