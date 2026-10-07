@@ -1082,6 +1082,13 @@ bool AuthManager::SendHeartbeatToApi(bool is_online) {
             int status_code = res ? res->status : 0;
             std::string error_msg = res ? res->body : "Connection failed";
             spdlog::warn("Heartbeat failed: HTTP {} - {}", status_code, error_msg);
+            if (status_code == 401 || status_code == 404) {
+                // The web API does not know this machine (or its key): the
+                // saved registration is stale. Drop it so the GUI registers
+                // again instead of failing every heartbeat (TOFIX136 E3).
+                spdlog::warn("The web API no longer knows this machine; registering it again");
+                ClearNodeRegistration();
+            }
             return false;
         }
 
@@ -1089,6 +1096,16 @@ bool AuthManager::SendHeartbeatToApi(bool is_online) {
         spdlog::error("Heartbeat exception: {}", e.what());
         return false;
     }
+}
+
+void AuthManager::ClearNodeRegistration() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        node_registered_ = false;
+        node_api_key_.clear();
+        node_id_.clear();
+    }
+    SaveSession();
 }
 
 std::string AuthManager::GetNodeId() const {

@@ -120,6 +120,9 @@ public:
     std::string GetNodeId() const;
     std::string GetNodeApiKey() const;
     bool IsNodeRegistered() const;
+    // Forget the machine registration (the web API no longer knows it, e.g.
+    // after switching databases); the GUI registers again.
+    void ClearNodeRegistration();
 
     // Sync node ID from Central Server to Web API
     bool SyncNodeIdWithWebApi(const std::string& node_id);
