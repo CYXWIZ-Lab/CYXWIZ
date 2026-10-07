@@ -16,6 +16,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -314,7 +315,10 @@ void DashboardWindow::Render() {
         focus_ = false;
     }
     const std::string title = "Dashboard" + (title_.empty() ? std::string() : " \xC2\xB7 " + title_) + "###" + id_;
-    if (!ImGui::Begin(title.c_str(), &visible)) {
+    ::gui::NextWindowMayLeave(title.c_str());
+    const bool expanded = ImGui::Begin(title.c_str(), &visible);
+    ::gui::TabMenu(title.c_str(), &visible);
+    if (!expanded) {
         ImGui::End();
         return;
     }

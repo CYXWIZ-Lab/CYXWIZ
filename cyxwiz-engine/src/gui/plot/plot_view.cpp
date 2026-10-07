@@ -7,6 +7,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../separate_windows.h"
 
 #include <implot.h>
 
@@ -491,7 +492,10 @@ void PlotView::DrawOwnWindow(const Options& o) {
     if (!own_window) return;
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
     const std::string title = Title() + "###plotview_own_" + id_;
-    if (ImGui::Begin(title.c_str(), &own_window)) {
+    ::gui::NextWindowMayLeave(title.c_str());
+    const bool expanded = ImGui::Begin(title.c_str(), &own_window);
+    ::gui::TabMenu(title.c_str(), &own_window);
+    if (expanded) {
         drawing_own_window_ = true;
         Draw(ImVec2(0, 0), o);
         drawing_own_window_ = false;

@@ -23,8 +23,16 @@ namespace {
 
 struct Request {
     ImVec2 min, max;
+    ImGuiID viewport;  // the window the plot is drawn in
     std::function<void(std::vector<unsigned char>)> done;
 };
+
+void (*g_backend_render_window)(ImGuiViewport*, void*) = nullptr;
+
+void RenderWindowThenCapture(ImGuiViewport* viewport, void* render_arg) {
+    g_backend_render_window(viewport, render_arg);
+    CompletePlotCaptures(viewport);
+}
 
 std::vector<Request>& Queue() {
     static std::vector<Request> queue;
@@ -42,7 +50,7 @@ void AppendBytes(void* context, void* data, int size) {
 void InstallPlotViewHooks() {
     ViewHooks hooks;
     hooks.capture_png = [](ImVec2 min, ImVec2 max, std::function<void(std::vector<unsigned char>)> done) {
-        Queue().push_back({min, max, std::move(done)});
+        Queue().push_back({min, max, ImGui::GetWindowViewport()->ID, std::move(done)});
     };
     hooks.save_path = [](const char* title, const char* ext, const std::string& name) -> std::optional<std::string> {
         const std::string upper = std::string(ext) == "png" ? "PNG image" : std::string(ext) == "svg" ? "SVG image" : "CSV file";
@@ -52,19 +60,37 @@ void InstallPlotViewHooks() {
     SetViewHooks(std::move(hooks));
 }
 
-void CompletePlotCaptures() {
+void CapturePlotsInSeparateWindows() {
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    if (!pio.Renderer_RenderWindow || pio.Renderer_RenderWindow == RenderWindowThenCapture) return;
+    g_backend_render_window = pio.Renderer_RenderWindow;
+    pio.Renderer_RenderWindow = RenderWindowThenCapture;
+}
+
+void CompletePlotCaptures(ImGuiViewport* viewport) {
     auto& queue = Queue();
     if (queue.empty()) return;
     const ImGuiIO& io = ImGui::GetIO();
     const float sx = io.DisplayFramebufferScale.x, sy = io.DisplayFramebufferScale.y;
-    const int fb_h = static_cast<int>(io.DisplaySize.y * sy);
+    const int fb_h = static_cast<int>(viewport->Size.y * sy);
+    // This window's requests; one whose window is gone is read from the main window.
+    const bool main = viewport == ImGui::GetMainViewport();
     std::vector<Request> requests;
-    requests.swap(queue);
+    for (auto it = queue.begin(); it != queue.end();) {
+        const bool mine = it->viewport == viewport->ID || (main && !ImGui::FindViewportByID(it->viewport));
+        if (mine) {
+            requests.push_back(std::move(*it));
+            it = queue.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (auto& r : requests) {
-        const int x = std::max(0, static_cast<int>(r.min.x * sx));
+        // Plot rectangles are in screen coordinates; the framebuffer starts at the window's corner.
+        const int x = std::max(0, static_cast<int>((r.min.x - viewport->Pos.x) * sx));
         const int w = std::max(1, static_cast<int>((r.max.x - r.min.x) * sx));
         const int h = std::max(1, static_cast<int>((r.max.y - r.min.y) * sy));
-        const int y = std::max(0, fb_h - static_cast<int>(r.max.y * sy));  // GL rows start at the bottom
+        const int y = std::max(0, fb_h - static_cast<int>((r.max.y - viewport->Pos.y) * sy));  // GL rows start at the bottom
         std::vector<unsigned char> pixels(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());

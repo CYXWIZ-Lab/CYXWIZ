@@ -1,5 +1,6 @@
 #include "appearance_settings.h"
 #include "dock_style.h"
+#include "separate_windows.h"
 #include <algorithm>
 #include <cctype>
 #include <spdlog/spdlog.h>
@@ -372,6 +373,7 @@ bool DockStyle::RenderSidebarToggles() {
     ImVec4 window_bg = style.Colors[ImGuiCol_MenuBarBg];
     window_bg.w = 0.97f * alpha;
 
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(sidebar_pos);
     ImGui::SetNextWindowSize(ImVec2(sidebar_width, sidebar_height));
     ImGui::SetNextWindowContentSize(ImVec2(0.0f, content_height));

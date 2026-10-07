@@ -9,6 +9,7 @@
 #include "panels/python_repl_session.h"
 #include "panels/local_shell_session.h"
 #include "ui_buttons.h"
+#include "separate_windows.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -240,7 +241,10 @@ void Console::Render() {
   if (!show_window_)
     return;
 
-  if (ImGui::Begin("Console", &show_window_)) {
+  ::gui::NextWindowMayLeave("Console");
+  const bool expanded = ImGui::Begin("Console", &show_window_);
+  ::gui::TabMenu("Console", &show_window_);
+  if (expanded) {
     workbench_.RenderCommandBar();
     PruneLocalShellSessions();
     ImGui::Separator();

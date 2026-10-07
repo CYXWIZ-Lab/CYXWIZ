@@ -9,6 +9,7 @@
 #include "../../scripting/script_output_sink.h"
 #include "../../core/keyboard_shortcuts.h"
 #include "../../core/script_keys.h"
+#include "../separate_windows.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -124,7 +125,9 @@ void ScriptEditorPanel::Render() {
     }
 
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    ::gui::NextWindowMayLeave(GetName());
     const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    ::gui::TabMenu(GetName(), &visible_);
     if (expanded) {
         // Track focus state (including child windows like the code view)
         is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);

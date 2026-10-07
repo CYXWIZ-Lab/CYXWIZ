@@ -7,6 +7,7 @@
 #include "../core/node_metadata_registry.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
+#include "separate_windows.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <imnodes.h>
@@ -289,6 +290,7 @@ void NodeEditor::ShowNodeAddSearch() {
     ImVec2 search_pos(canvas_pos.x + canvas_size.x - search_width - margin, canvas_pos.y + toolbar_offset + margin);
 
     // Create a floating window for the search box that renders on top of ImNodes
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(search_pos);
     ImGui::SetNextWindowSize(ImVec2(search_width, search_height));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -436,6 +438,7 @@ void NodeEditor::ShowNodeAddSearch() {
         float dropdown_height = std::min(item_height * filtered_nodes_.size() + 8, 400.0f);
 
         // Create a separate floating window for dropdown results
+        ::gui::NextWindowFollowsCurrent();
         ImGui::SetNextWindowPos(dropdown_pos);
         ImGui::SetNextWindowSize(ImVec2(dropdown_width, dropdown_height));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));

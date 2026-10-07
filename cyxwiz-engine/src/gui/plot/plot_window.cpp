@@ -12,6 +12,7 @@
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
 #include "../../data/data_table.h"
+#include "../separate_windows.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
@@ -323,7 +324,10 @@ void PlotWindow::Render() {
     // the node id, so a small size saved for another graph's node would carry over.
     ImGui::SetNextWindowSizeConstraints(ImVec2(960, 560), ImVec2(FLT_MAX, FLT_MAX));
     const std::string title = "Plot" + (source_name_.empty() ? std::string() : " \xC2\xB7 " + source_name_) + "###" + id_;
-    if (!ImGui::Begin(title.c_str(), &visible)) {
+    ::gui::NextWindowMayLeave(title.c_str());
+    const bool expanded = ImGui::Begin(title.c_str(), &visible);
+    ::gui::TabMenu(title.c_str(), &visible);
+    if (!expanded) {
         ImGui::End();
         return;
     }

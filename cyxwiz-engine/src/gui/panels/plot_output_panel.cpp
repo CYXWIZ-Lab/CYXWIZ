@@ -6,6 +6,7 @@
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include "../../core/file_dialogs.h"
+#include "../separate_windows.h"
 #include <arrow/api.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -156,7 +157,10 @@ void PlotOutputPanel::Render() {
         focus_next_ = false;
     }
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
-    if (!ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar)) {
+    ::gui::NextWindowMayLeave(GetName());
+    const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    ::gui::TabMenu(GetName(), &visible_);
+    if (!expanded) {
         focused_ = false;
         ImGui::End();
         return;

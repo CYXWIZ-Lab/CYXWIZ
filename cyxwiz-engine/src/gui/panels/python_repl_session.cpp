@@ -5,6 +5,7 @@
 #include "../../scripting/scripting_engine.h"
 #include "../editor_fonts.h"
 #include "../variables_view.h"
+#include "../separate_windows.h"
 #include <nlohmann/json.hpp>
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -1093,6 +1094,7 @@ void PythonReplSession::RenderCompletionPopup() {
   if (!completion_open_ || completion_items_.empty())
     return;
   ImFont *mono = ReplMonoFont();
+  ::gui::NextWindowFollowsCurrent();
   ImGui::SetNextWindowPos(ImVec2(completion_anchor_x_ - 6.0f, completion_anchor_y_ - 2.0f),
                           ImGuiCond_Always, ImVec2(0.0f, 1.0f));
   const int visible = std::min<int>(8, static_cast<int>(completion_items_.size()));

@@ -9,6 +9,7 @@
 #include "gui/ui_buttons.h"
 #include "gui/ui_tokens.h"
 #include "gui/panel_memory.h"
+#include "gui/separate_windows.h"
 #include "gui/ui_widgets.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_dialog.h"
@@ -379,23 +380,32 @@ bool CyxWizApp::Initialize() {
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // TODO: ViewportsEnable causes crash on Windows - needs investigation
-    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // The big windows may become windows of their own (TOFIX129 A8).
+    gui::InstallSeparateWindows();
 
     // Engine-wide appearance (theme, code text size, sidebar) from the
     // Engine settings; the interface text size is used by LoadFonts.
     gui::ApplyStartupAppearance();
 
-    // When viewports are enabled we tweak WindowRounding/WindowBg
-    ImGuiStyle& style = ImGui::GetStyle();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
-
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+    gui::NameSeparateWindows();
+    cyxwiz::plot::CapturePlotsInSeparateWindows();
+    // A window of its own gets the main window's title bar and icon.
+    {
+        ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        static void (*backend_create_window)(ImGuiViewport*) = pio.Platform_CreateWindow;
+        pio.Platform_CreateWindow = [](ImGuiViewport* viewport) {
+            backend_create_window(viewport);
+            if (auto* window = static_cast<GLFWwindow*>(viewport->PlatformHandle)) {
+#ifdef _WIN32
+                enable_dark_title_bar(window);
+#endif
+                load_window_icon(window);
+            }
+        };
+    }
 
     // Match font rasterization to the physical framebuffer while preserving
     // logical font metrics and UI layout.
@@ -819,7 +829,7 @@ void CyxWizApp::Render() {
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data != nullptr) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
-        cyxwiz::plot::CompletePlotCaptures();  // plot images asked for this frame
+        cyxwiz::plot::CompletePlotCaptures(ImGui::GetMainViewport());  // plot images asked for this frame
     } else {
         spdlog::error("ImGui::GetDrawData() returned nullptr - skipping render");
     }

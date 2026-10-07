@@ -1,6 +1,7 @@
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
 #include "../core/training_export_metadata.h"
+#include "separate_windows.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -3172,6 +3173,7 @@ void MainWindow::ResetDockLayout() {
     }
     SetDefaultPanelVisibility(true);
     ForgetRememberedPanels();
+    ::gui::MoveAllWindowsBack();
     spdlog::info("Dock layout reset requested");
 }
 
@@ -3529,6 +3531,7 @@ void MainWindow::RenderDockSpace() {
             first_time_layout_ = false;
         }
 
+        ::gui::SetMainDockSpace(dockspace_id);
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
         // Draw Unreal-style active tab indicators on all dock nodes
@@ -6466,6 +6469,7 @@ void MainWindow::RenderStatusBar() {
     const float status_bar_height = StatusBarHeight();
 
     // Position status bar at the bottom of the screen
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height));
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, status_bar_height));
 

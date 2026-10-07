@@ -4,6 +4,7 @@
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 
@@ -45,7 +46,10 @@ void DataStudioPanel::Render() {
     // Opened from elsewhere (a dashboard): bring the panel forward, also when
     // it is a hidden dock tab (its Begin returns false until focused).
     if (show_profile_ || show_query_) ImGui::SetNextWindowFocus();
-    if (ImGui::Begin("Data Studio", &visible_)) {
+    ::gui::NextWindowMayLeave("Data Studio");
+    const bool expanded = ImGui::Begin("Data Studio", &visible_);
+    ::gui::TabMenu("Data Studio", &visible_);
+    if (expanded) {
         RenderToolbar();
         ImGui::Spacing();
         RenderTabBar();

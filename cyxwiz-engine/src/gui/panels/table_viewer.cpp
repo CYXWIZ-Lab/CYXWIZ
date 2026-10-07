@@ -3,6 +3,7 @@
 #include "../editor_fonts.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../separate_windows.h"
 #include <imgui_internal.h>
 #include "visualization_panel.h"
 #include "../icons.h"
@@ -62,7 +63,9 @@ void TableViewerPanel::Render() {
     // floating, the viewer is never narrower than its toolbar and a few columns.
     ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 300.0f), ImVec2(FLT_MAX, FLT_MAX));
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    ::gui::NextWindowMayLeave(GetName());
     const bool expanded = ImGui::Begin(GetName(), &visible_);
+    ::gui::TabMenu(GetName(), &visible_);
     if (expanded) {
         // Tab bar at top, the live-value line (Data Viewer), the toolbar.
         RenderTabBar();

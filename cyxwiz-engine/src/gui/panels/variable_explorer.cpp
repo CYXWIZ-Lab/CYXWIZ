@@ -2,6 +2,7 @@
 
 #include "../../scripting/scripting_engine.h"
 #include "../icons.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -31,7 +32,11 @@ void VariableExplorerPanel::Render() {
         }
     }
     // The ### id matches the dock layout and imgui.ini entry whatever the icon.
-    if (ImGui::Begin(ICON_FA_LIST_UL " Variable Explorer###VariableExplorer", &visible_)) {
+    static constexpr const char* kName = ICON_FA_LIST_UL " Variable Explorer###VariableExplorer";
+    ::gui::NextWindowMayLeave(kName);
+    const bool expanded = ImGui::Begin(kName, &visible_);
+    ::gui::TabMenu(kName, &visible_);
+    if (expanded) {
         focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         view_.Render(0.0f);
     }

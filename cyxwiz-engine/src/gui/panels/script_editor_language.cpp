@@ -13,6 +13,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -133,6 +134,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
                               IM_COL32(0, 0, 0, 14), 8.0f + s);
     }
 
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |

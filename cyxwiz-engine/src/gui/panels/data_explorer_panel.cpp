@@ -9,6 +9,7 @@
 #include "missing_value_panel.h"
 #include "data_profiler_panel.h"
 #include "visualization_panel.h"
+#include "../separate_windows.h"
 #include <cyxwiz/stats_utils.h>
 #include <imgui.h>
 #include <implot.h>
@@ -100,7 +101,10 @@ void DataExplorerPanel::Render() {
 
     ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin(name_.c_str(), &visible_, ImGuiWindowFlags_MenuBar)) {
+    ::gui::NextWindowMayLeave(name_.c_str());
+    const bool expanded = ImGui::Begin(name_.c_str(), &visible_, ImGuiWindowFlags_MenuBar);
+    ::gui::TabMenu(name_.c_str(), &visible_);
+    if (expanded) {
         focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
         // Menu bar

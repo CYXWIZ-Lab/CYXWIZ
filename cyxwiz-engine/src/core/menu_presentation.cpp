@@ -451,6 +451,22 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Action(f, "view.save_layout", "Save Layout", "Saves the current panel arrangement."),
                          Action(f, "view.reset_layout", "Reset to Default",
                                 "Puts every panel back in its default place.")}));
+        {
+            // The focused window out of the main window and back (TOFIX129 A8).
+            Opts out;
+            out.argument = in.focused_window;
+            if (in.focused_window.empty()) out.why = "No window has the focus.";
+            else if (!in.focused_window_may_leave) out.why = "This window stays in the main window.";
+            else if (in.focused_window_outside) out.why = "Already in a window of its own.";
+            Opts back;
+            back.argument = in.focused_window;
+            if (!in.focused_window_outside) back.why = "The window is in the main window.";
+            i.push_back(Sub("view.window", "Window", "The focused window out of the main window, or back.",
+                            {Action(f, "view.window_out", "Move to its own window",
+                                    "The focused window becomes a window of its own on the desktop, on any monitor.", out),
+                             Action(f, "view.window_back", "Dock back into the main window",
+                                    "The window returns to its place in the main window.", back)}));
+        }
         i.push_back(Sep());
         {
             std::vector<MenuItem> themes;

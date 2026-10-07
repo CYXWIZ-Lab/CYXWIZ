@@ -21,6 +21,7 @@
 #include "../core/graph_executor.h"
 #include "../core/simulation_runtime_capabilities.h"
 #include "../core/rl_training_executor.h"
+#include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
 #include "../core/preparation_recipe.h"
@@ -252,7 +253,10 @@ void NodeEditor::Render() {
     if (pending_focus_node_id_ >= 0) {
         ImGui::SetNextWindowFocus();
     }
-    if (ImGui::Begin("CyxWiz Studio", &show_window_)) {
+    ::gui::NextWindowMayLeave("CyxWiz Studio");
+    const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
+    ::gui::TabMenu("CyxWiz Studio", &show_window_);
+    if (expanded) {
         ShowToolbar();
         const auto replacement_block = GetGraphReplacementBlockReason();
         if (!replacement_block.empty()) {
@@ -1050,6 +1054,7 @@ void NodeEditor::RenderMinimap() {
     ImVec2 minimap_pos = getCornerPos(minimap_position_);
 
     // Set next window position and create a floating window for the minimap
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -2850,6 +2855,7 @@ void NodeEditor::ShowSearchBar() {
         window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
     );
 
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(bar_pos);
     ImGui::SetNextWindowSize(ImVec2(bar_width, bar_height));
     ImGui::SetNextWindowBgAlpha(0.95f);

@@ -415,6 +415,7 @@ set(ENGINE_SOURCES
     src/gui/ui_widgets.cpp
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp
+    src/gui/separate_windows.cpp
     src/gui/python_language.cpp
     src/gui/code_editor.cpp
     src/gui/ui_platform.cpp
@@ -4588,6 +4589,18 @@ target_link_libraries(test_data_convert_format_controls PRIVATE imgui::imgui)
 set_target_properties(test_data_convert_format_controls PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Shared bounded data preview service =====
+# ===== Test: Windows of their own (TOFIX129 A8) =====
+add_executable(test_separate_windows
+    tests/test_separate_windows.cpp
+    src/gui/separate_windows.cpp
+)
+target_link_libraries(test_separate_windows PRIVATE imgui::imgui spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_separate_windows PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_separate_windows PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME separate_windows_contract COMMAND test_separate_windows)
+
 add_executable(test_data_preview_controls
     tests/test_data_preview_controls.cpp
     src/gui/data_preview_table_renderer.cpp

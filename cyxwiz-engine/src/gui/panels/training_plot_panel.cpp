@@ -1,6 +1,7 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
+#include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
 // CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
@@ -581,7 +582,10 @@ void TrainingPlotPanel::Render() {
     // Larger default size for better visibility
     ImGui::SetNextWindowSize(ImVec2(1000, 800), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin(name_.c_str(), &visible_)) {
+    ::gui::NextWindowMayLeave(name_.c_str());
+    const bool expanded = ImGui::Begin(name_.c_str(), &visible_);
+    ::gui::TabMenu(name_.c_str(), &visible_);
+    if (!expanded) {
         ImGui::End();
         std::lock_guard<std::mutex> lock(data_mutex_);
         RenderChartWindows();
