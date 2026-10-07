@@ -204,6 +204,10 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
             startup_scripts_.push_back(script.string());
             spdlog::info("Startup script: {}", startup_scripts_.back());
+        } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
+            // A graph opens on the canvas (cyxwiz-engine project.cyxwiz graphs/train.cyxgraph).
+            startup_graph_path_ = script.string();
+            spdlog::info("Startup graph: {}", startup_graph_path_);
         }
     }
 }
@@ -231,9 +235,9 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
         // A starter is a copy to work on: Save asks for a name instead of
         // overwriting the example next to the Engine.
         if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
-        spdlog::info("Opened starter graph from start page: {}", startup_graph_path_);
+        spdlog::info("Opened startup graph: {}", startup_graph_path_);
     } else {
-        spdlog::error("Failed to open starter graph from start page: {}", startup_graph_path_);
+        spdlog::error("Failed to open startup graph: {}", startup_graph_path_);
     }
 }
 
