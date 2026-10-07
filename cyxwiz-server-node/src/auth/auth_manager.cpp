@@ -2,7 +2,8 @@
 #include "auth/token_refresh.h"
 #include "auth/auth_manager.h"
 
-#define CPPHTTPLIB_OPENSSL_SUPPORT
+// CPPHTTPLIB_OPENSSL_SUPPORT comes from CMake for the whole target, so every
+// file that includes httplib.h sees the same class layout.
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -458,14 +459,16 @@ std::string AuthManager::GetTokenStoragePath() const {
 bool AuthManager::LoadSavedSession() {
     try {
         std::string path = GetTokenStoragePath();
-        std::ifstream file(path);
-
-        if (!file.is_open()) {
-            return false;
-        }
-
         json j;
-        file >> j;
+        {
+            // Closed before ClearSavedSession below: Windows refuses to
+            // delete a file that is still open.
+            std::ifstream file(path);
+            if (!file.is_open()) {
+                return false;
+            }
+            file >> j;
+        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
