@@ -3154,6 +3154,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3268,6 +3269,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3312,6 +3314,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3355,6 +3358,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3953,6 +3957,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -4009,6 +4014,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -4065,6 +4071,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -4120,6 +4127,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -4176,6 +4184,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -5637,6 +5646,28 @@ add_custom_target(copy_test_branch_graph_training_fixture
 )
 add_dependencies(test_branch_graph_training copy_test_branch_graph_training_fixture)
 add_test(NAME branch_graph_pytorch_parity COMMAND test_branch_graph_training)
+
+# ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
+set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
+add_executable(test_scheduler_node_training
+    tests/test_scheduler_node_training.cpp
+)
+configure_training_executor_harness(test_scheduler_node_training)
+target_compile_definitions(test_scheduler_node_training PRIVATE
+    CYXWIZ_SCHEDULER_NODE_FIXTURE="${CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_scheduler_node_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_scheduler_node_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_scheduler_node_training>/computation_truth_fixtures/scheduler_node_pytorch.json"
+    SOURCES "${CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_scheduler_node_training copy_test_scheduler_node_training_fixture)
+add_test(NAME scheduler_node_pytorch_parity COMMAND test_scheduler_node_training)
 
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider

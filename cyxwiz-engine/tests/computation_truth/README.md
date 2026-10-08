@@ -403,8 +403,14 @@ fully completed epoch; ReduceLROnPlateau advances only after a completed epoch
 that produced a finite validation loss from at least one validation sample;
 OneCycleLR advances only after an actual optimizer update, including a forced
 final partial accumulation flush.
-Graph scheduler nodes remain blocked until GraphCompiler and the node-owning
-work bind saved generic property values into this boundary.
+The graph scheduler nodes (Step, Cosine, Exponential, Warmup, Reduce LR) bind
+into this boundary (TOFIX140 A3): GraphCompiler turns the node fed by the
+training optimizer into `TrainingConfiguration::scheduler`, and
+`scheduler_node_pytorch_parity` (test_scheduler_node_training.cpp, fixture from
+generate_scheduler_node_fixtures.py) trains a compiled graph per node and
+matches torch's learning rate after every epoch, replays Reduce LR's
+validation losses through the backend scheduler, and resumes a run from its
+checkpoint on torch's sequence.
 
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject

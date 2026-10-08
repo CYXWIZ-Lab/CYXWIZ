@@ -1444,79 +1444,85 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     // ===== LR Schedulers =====
     docs_[NodeType::StepLR] = {
-        "Step LR Scheduler",
-        "Decays learning rate by gamma every step_size epochs. "
-        "Simple and predictable schedule.",
-        "new_lr = lr * gamma^(epoch // step_size).",
+        "Step LR",
+        "Multiplies the learning rate by gamma every step_size epochs. Connect the optimizer's "
+        "State output to its Optimizer input.",
+        "lr = learning_rate * gamma^floor(epoch / step_size), set after each completed epoch "
+        "(torch.optim.lr_scheduler.StepLR).",
         {
-            {"step_size", "Epochs between LR decay"},
-            {"gamma", "Multiplicative factor (e.g., 0.1)"}
+            {"step_size", "Epochs between decays"},
+            {"gamma", "Factor applied at each decay (0.1 is common)"}
         },
         {
             "Common: decay by 0.1 every 30 epochs",
-            "Good for fixed training schedules"
+            "One scheduler per optimizer; not together with the optimizer's lr_schedule",
+            "Resuming a run continues the schedule from the checkpoint"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::CosineAnnealing] = {
-        "Cosine Annealing LR",
-        "Smoothly decreases LR following a cosine curve to eta_min. "
-        "Warm restarts version resets periodically.",
-        "LR follows cosine from initial to minimum over T_max epochs.",
+        "Cosine LR",
+        "Anneals the learning rate along a cosine from learning_rate down to eta_min over T_max epochs.",
+        "lr = eta_min + (learning_rate - eta_min) * (1 + cos(pi * epoch / T_max)) / 2, set after each "
+        "completed epoch (torch.optim.lr_scheduler.CosineAnnealingLR).",
         {
-            {"T_max", "Maximum number of iterations"},
-            {"eta_min", "Minimum learning rate"}
+            {"T_max", "Epochs from learning_rate down to eta_min (usually the epoch count)"},
+            {"eta_min", "Lowest learning rate"}
         },
         {
-            "Good for training to convergence",
-            "Often combined with warm restarts"
+            "Set T_max to the run's epochs to end at eta_min",
+            "Past T_max the cosine rises again, as in PyTorch"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::ReduceOnPlateau] = {
-        "Reduce LR on Plateau",
-        "Reduces LR when a metric stops improving. Adaptive schedule based on validation loss.",
-        "Monitors a metric and reduces LR after 'patience' epochs of no improvement.",
+        "Reduce LR",
+        "Cuts the learning rate by factor when the validation loss has not improved for patience "
+        "validated epochs. Needs validation data (Data Split val_ratio above 0, or a Dev dataset).",
+        "After each epoch that ran validation: if the loss is not below best - threshold for more than "
+        "patience epochs, lr = max(lr * factor, min_lr) (torch ReduceLROnPlateau, mode='min', "
+        "threshold_mode='abs', cooldown=0).",
         {
-            {"mode", "min or max (track loss or accuracy)"},
-            {"factor", "Factor to reduce LR by"},
-            {"patience", "Epochs to wait before reducing"}
+            {"factor", "Factor applied when the loss plateaus"},
+            {"patience", "Validated epochs without improvement before a cut"},
+            {"threshold", "Smallest loss decrease that counts as improvement (absolute)"},
+            {"min_lr", "Learning rate floor"}
         },
         {
-            "Requires passing validation loss each epoch",
-            "Good when optimal schedule is unknown"
+            "With validation_freq above 1 it steps only on validated epochs",
+            "Good when the right schedule is unknown"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::ExponentialLR] = {
-        "Exponential LR Scheduler",
-        "Decays LR by gamma every epoch. Continuous decay.",
-        "new_lr = lr * gamma^epoch.",
+        "Exponential LR",
+        "Multiplies the learning rate by gamma after every epoch.",
+        "lr = learning_rate * gamma^epoch, set after each completed epoch "
+        "(torch.optim.lr_scheduler.ExponentialLR).",
         {
-            {"gamma", "Decay rate per epoch (e.g., 0.95)"}
+            {"gamma", "Factor applied after each epoch (e.g. 0.95)"}
         },
         {
-            "Smooth continuous decay",
-            "May decay too fast - use gamma close to 1"
+            "Decays fast: keep gamma close to 1"
         },
         "LR Schedulers"
     };
 
     docs_[NodeType::WarmupScheduler] = {
-        "Warmup Scheduler",
-        "Linearly increases LR during initial epochs before main schedule. "
-        "Helps with training stability for large batches.",
-        "LR starts at 0 and increases to target over warmup epochs.",
+        "Warmup LR",
+        "Ramps the learning rate up linearly from start_factor * learning_rate to learning_rate over "
+        "warmup_epochs, then holds it.",
+        "lr = learning_rate * (start_factor + (1 - start_factor) * min(epoch / warmup_epochs, 1)), set "
+        "after each completed epoch (torch LinearLR, end_factor=1.0, total_iters=warmup_epochs).",
         {
-            {"warmup_epochs", "Number of warmup epochs"},
-            {"initial_lr", "Target learning rate after warmup"}
+            {"warmup_epochs", "Epochs to reach learning_rate"},
+            {"start_factor", "First epoch's rate as a fraction of learning_rate (above 0, at most 1)"}
         },
         {
-            "Essential for Transformer training",
-            "5-10% of total epochs is typical warmup"
+            "Per-update warmup with a decay after it: use the optimizer's lr_schedule instead"
         },
         "LR Schedulers"
     };

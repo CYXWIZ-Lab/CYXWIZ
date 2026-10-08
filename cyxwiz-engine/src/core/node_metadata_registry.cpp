@@ -3289,55 +3289,57 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
+    // Learning-rate schedulers (TOFIX140 A3): fed by the optimizer's State
+    // output; GraphCompiler turns the one on the training optimizer into
+    // TrainingConfiguration::scheduler and TrainingExecutor steps it after
+    // each epoch (Reduce LR: after each validated epoch) and checkpoints it.
+    const PortDefinition scheduler_input{"Optimizer", PinType::Optimizer, true,
+                                        "The training optimizer's State output; this scheduler sets its learning rate"};
     RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,
-        {"step", "scheduler"}, 0, false,
-        "Blocked legacy step learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"step_size", "int", "10", "Legacy epoch interval retained for saved graphs", {}, "", "Step size", "Compatibility"},
-         {"gamma", "float", "0.1", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"step", "scheduler", "learning rate", "decay"}, 0, false,
+        "Multiplies the learning rate by gamma every step_size epochs",
+        "torch.optim.lr_scheduler.StepLR: lr = learning_rate x gamma^floor(epoch / step_size), stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"step_size", "int", "10", "Epochs between decays", {}, "1-1000000", "Step size", "Schedule"},
+         {"gamma", "float", "0.1", "Factor applied at each decay", {}, "0.0-1000000.0", "Gamma", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SINE,
-        {"cosine", "scheduler"}, 0, false,
-        "Blocked legacy cosine-annealing scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"T_max", "int", "100", "Legacy annealing period retained for saved graphs", {}, "", "T max", "Compatibility"},
-         {"eta_min", "float", "0.0", "Legacy minimum learning rate retained for saved graphs", {}, "", "Minimum learning rate", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"cosine", "annealing", "scheduler", "learning rate"}, 0, false,
+        "Anneals the learning rate along a cosine to eta_min over T_max epochs",
+        "torch.optim.lr_scheduler.CosineAnnealingLR: lr = eta_min + (learning_rate - eta_min) x (1 + cos(pi x epoch / T_max)) / 2, stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"T_max", "int", "100", "Epochs from learning_rate down to eta_min (usually the run's epoch count)", {}, "1-1000000", "T max", "Schedule"},
+         {"eta_min", "float", "0.0", "Lowest learning rate", {}, "0.0-1000000.0", "Minimum learning rate", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ReduceOnPlateau, NodeCategory::Training, "Reduce LR", ICON_FA_GRADUATION_CAP,
-        {"plateau", "scheduler"}, 0, false,
-        "Blocked legacy reduce-on-plateau scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"mode", "enum", "min", "Legacy monitored-metric direction retained for saved graphs", {"min", "max"}, "", "Mode", "Compatibility"},
-         {"factor", "float", "0.1", "Legacy multiplicative reduction retained for saved graphs", {}, "", "Factor", "Compatibility"},
-         {"patience", "int", "10", "Legacy plateau patience retained for saved graphs", {}, "", "Patience", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"plateau", "reduce", "scheduler", "learning rate"}, 0, false,
+        "Cuts the learning rate when the validation loss stops improving",
+        "torch.optim.lr_scheduler.ReduceLROnPlateau(mode='min', threshold_mode='abs', cooldown=0) on the validation loss, stepped after each epoch that ran validation. Needs validation data.", "",
+        {scheduler_input}, {},
+        {{"factor", "float", "0.1", "Factor applied when the loss plateaus", {}, "0.0-0.999999", "Factor", "Schedule"},
+         {"patience", "int", "10", "Validated epochs without improvement before a cut", {}, "0-1000000", "Patience", "Schedule"},
+         {"threshold", "float", "0.0001", "Smallest decrease of the validation loss that counts as improvement (absolute)", {}, "0.0-1000000.0", "Threshold", "Schedule"},
+         {"min_lr", "float", "0.0", "Learning rate floor", {}, "0.0-1000000.0", "Minimum learning rate", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExponentialLR, NodeCategory::Training, "Exponential LR", ICON_FA_GRADUATION_CAP,
-        {"exponential", "scheduler"}, 0, false,
-        "Blocked legacy exponential learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"gamma", "float", "0.95", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"exponential", "scheduler", "learning rate", "decay"}, 0, false,
+        "Multiplies the learning rate by gamma after every epoch",
+        "torch.optim.lr_scheduler.ExponentialLR: lr = learning_rate x gamma^epoch, stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"gamma", "float", "0.95", "Factor applied after each epoch", {}, "0.0-1000000.0", "Gamma", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::WarmupScheduler, NodeCategory::Training, "Warmup LR", ICON_FA_GRADUATION_CAP,
-        {"warmup", "scheduler"}, 0, false,
-        "Blocked legacy warmup learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. Backend warmup primitives exist, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint one for this node.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"warmup_steps", "int", "1000", "Legacy warmup duration retained for saved graphs", {}, "", "Warmup steps", "Compatibility"},
-         {"warmup_ratio", "float", "0.1", "Legacy starting-rate ratio retained for saved graphs", {}, "", "Warmup ratio", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"warmup", "linear", "scheduler", "learning rate"}, 0, false,
+        "Ramps the learning rate up linearly over the first epochs",
+        "torch.optim.lr_scheduler.LinearLR(start_factor, end_factor=1.0, total_iters=warmup_epochs): lr = learning_rate x (start_factor + (1 - start_factor) x min(epoch / warmup_epochs, 1)), stepped after each completed epoch. For per-update warmup with decay, use the optimizer's lr_schedule instead.", "",
+        {scheduler_input}, {},
+        {{"warmup_epochs", "int", "5", "Epochs to reach learning_rate", {}, "1-1000000", "Warmup epochs", "Schedule"},
+         {"start_factor", "float", "0.1", "First epoch's learning rate as a fraction of learning_rate (above 0, at most 1)", {}, "0.000001-1.0", "Start factor", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::L1Regularization, NodeCategory::Regularization, "L1 Regularization", ICON_FA_GRADUATION_CAP,
         {"l1", "regularization"}, 0, false,

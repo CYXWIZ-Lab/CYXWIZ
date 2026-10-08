@@ -828,8 +828,12 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     scheduler_controller_.reset();
     ConfigureWeightDecayExclusions();
     graph_schedule_pending_ = false;
+    // A scheduler configured on the executor wins over the graph's scheduler
+    // node (config_.scheduler, TOFIX140 A3).
+    const std::optional<TrainingSchedulerSpec> scheduler_specification =
+        scheduler_specification_.has_value() ? scheduler_specification_ : config_.scheduler;
     if (config_.lr_schedule != "none") {
-        if (scheduler_specification_.has_value()) {
+        if (scheduler_specification.has_value()) {
             spdlog::warn("TrainingExecutor: an explicitly configured scheduler overrides the "
                          "optimizer node lr_schedule={}", config_.lr_schedule);
         } else {
@@ -837,10 +841,10 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
             UpdateMetrics([this](TrainingMetrics& m) { m.learning_rate = config_.learning_rate; });
         }
     }
-    if (scheduler_specification_.has_value()) {
+    if (scheduler_specification.has_value()) {
         scheduler_controller_ =
             std::make_unique<TrainingSchedulerController>(
-                *scheduler_specification_);
+                *scheduler_specification);
         std::string scheduler_error;
         if (!scheduler_controller_->Attach(
                 *optimizer_, scheduler_resume_state_, scheduler_error)) {
@@ -1351,11 +1355,24 @@ void TrainingExecutor::Train(
             fail_run("resume_failed: the checkpoint belongs to a different graph");
             return;
         }
-        if (scheduler_controller_ && restored.scheduler) {
-            fail_run("resume_failed: resuming a configured (non-graph) scheduler is not supported yet");
-            return;
+        if (scheduler_controller_) {
+            // Attached at build (a scheduler node or one set on the executor):
+            // continue from the checkpoint's scheduler state.
+            std::string scheduler_error;
+            if (!restored.scheduler) {
+                fail_run("resume_failed: the checkpoint has no scheduler state, but this run has a scheduler");
+                return;
+            }
+            if (!scheduler_controller_->Restore(*restored.scheduler, scheduler_error)) {
+                fail_run("resume_failed: the scheduler state does not match this run's scheduler: " +
+                         scheduler_error);
+                return;
+            }
+            const double resumed_lr = scheduler_controller_->GetScheduler()->GetLR();
+            UpdateMetrics([resumed_lr](TrainingMetrics& m) { m.learning_rate = resumed_lr; });
+        } else {
+            graph_schedule_resume_ = restored.scheduler;
         }
-        graph_schedule_resume_ = restored.scheduler;
         start_epoch = restored.completed_epoch + 1;
         if (restored.in_epoch) {
             if (mode_ != DatasetMode::SequenceExternal) {

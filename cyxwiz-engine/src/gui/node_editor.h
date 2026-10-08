@@ -719,6 +719,7 @@ private:
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
     // PyTorch export of the optimizer node's training recipe (tofix112).
     const MLNode* FindExportOptimizerNode() const;
+    const MLNode* FindExportSchedulerNode() const;
     std::string PyTorchOptimizerSetup() const;
     std::string PyTorchStepLines() const;
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);

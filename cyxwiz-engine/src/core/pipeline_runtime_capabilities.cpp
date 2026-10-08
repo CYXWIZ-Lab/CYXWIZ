@@ -1113,21 +1113,7 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities() {
-    constexpr const char* scheduler_ownership_gap =
-        "the backend scheduler is numerically available, but GraphCompiler/"
-        "TrainingExecutor do not construct it or own its update cadence, run "
-        "state, or checkpoint restoration";
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::StepLR, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::CosineAnnealing, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ReduceOnPlateau, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ExponentialLR, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::WarmupScheduler, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::L1Regularization,
          "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss",
          PipelineBackendPrimitiveEvidence::Missing},
@@ -1394,6 +1380,16 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into train, validation, and held-out test partition policy"},
         {gui::NodeType::Output, PipelineTrainingSupportRole::TrainingControl,
          "compiled as a terminal training-graph marker without adding a module"},
+        {gui::NodeType::StepLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::CosineAnnealing, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::ReduceOnPlateau, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped on the validation loss after each validated epoch"},
+        {gui::NodeType::ExponentialLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::WarmupScheduler, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
     };
     return capabilities;
 }

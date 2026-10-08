@@ -2491,6 +2491,142 @@ bool ParseFloatParam(const std::map<std::string, std::string>& params,
     }
 }
 
+bool IsSchedulerNode(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::StepLR:
+        case gui::NodeType::CosineAnnealing:
+        case gui::NodeType::ReduceOnPlateau:
+        case gui::NodeType::ExponentialLR:
+        case gui::NodeType::WarmupScheduler:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Scheduler nodes (TOFIX140 A3): the one node fed by the training optimizer
+// becomes config.scheduler, which TrainingExecutor attaches, steps on its
+// cadence and checkpoints. Parameters follow torch.optim.lr_scheduler; the
+// ranges are TrainingSchedulerSpec's own (ValidateTrainingSchedulerSpec).
+void ExtractSchedulerConfiguration(const std::vector<gui::MLNode>& nodes,
+                                   const std::vector<gui::NodeLink>& links,
+                                   const gui::MLNode* optimizer_node,
+                                   TrainingConfiguration& config) {
+    std::vector<const gui::MLNode*> attached;
+    for (const auto& node : nodes) {
+        if (!IsSchedulerNode(node.type)) continue;
+        const bool fed_by_optimizer =
+            optimizer_node && std::any_of(links.begin(), links.end(), [&](const gui::NodeLink& link) {
+                return link.to_node == node.id && link.from_node == optimizer_node->id;
+            });
+        if (!fed_by_optimizer) {
+            AddIssue(config, IssueLevel::Error,
+                     "Scheduler '" + node.name + "' is not connected to the training optimizer: link the "
+                     "optimizer's output to its Optimizer input",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        attached.push_back(&node);
+    }
+    if (attached.empty()) return;
+    const gui::MLNode& node = *attached.front();
+    if (attached.size() > 1) {
+        for (size_t i = 1; i < attached.size(); ++i) {
+            AddIssue(config, IssueLevel::Error,
+                     "The optimizer already has the scheduler '" + node.name + "'; one scheduler per optimizer: "
+                     "remove '" + attached[i]->name + "'",
+                     attached[i]->id, attached[i]->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+    if (config.lr_schedule != "none") {
+        AddIssue(config, IssueLevel::Error,
+                 "The optimizer's lr_schedule (" + config.lr_schedule + ") and the scheduler '" + node.name +
+                 "' both set the learning rate: set lr_schedule to none or remove the scheduler",
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        return;
+    }
+
+    bool ok = true;
+    const auto number = [&](const char* key, const char* fallback) {
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? fallback : it->second;
+        try {
+            size_t used = 0;
+            const double value = std::stod(text, &used);
+            if (used == text.size() && std::isfinite(value)) return value;
+        } catch (const std::exception&) {
+        }
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid scheduler parameter '" + std::string(key) + "': '" + text + "' is not a number",
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        ok = false;
+        return 0.0;
+    };
+    const auto whole = [&](const char* key, const char* fallback) {
+        const double value = number(key, fallback);
+        if (value != std::floor(value) || std::abs(value) > std::numeric_limits<int>::max()) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid scheduler parameter '" + std::string(key) + "': must be a whole number",
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            ok = false;
+            return 0;
+        }
+        return static_cast<int>(value);
+    };
+
+    TrainingSchedulerSpec spec;
+    switch (node.type) {
+        case gui::NodeType::StepLR:
+            spec = StepLRSchedulerSpec{whole("step_size", "10"), number("gamma", "0.1")};
+            break;
+        case gui::NodeType::CosineAnnealing:
+            spec = CosineAnnealingLRSchedulerSpec{whole("T_max", "100"), number("eta_min", "0")};
+            break;
+        case gui::NodeType::ExponentialLR:
+            spec = ExponentialLRSchedulerSpec{number("gamma", "0.95")};
+            break;
+        case gui::NodeType::ReduceOnPlateau: {
+            ReduceLROnPlateauSchedulerSpec plateau;
+            plateau.mode = "min";  // it watches the validation loss
+            plateau.factor = number("factor", "0.1");
+            plateau.patience = whole("patience", "10");
+            plateau.threshold = number("threshold", "0.0001");
+            plateau.min_lr = number("min_lr", "0");
+            spec = plateau;
+            if (config.val_ratio <= 0.0f && !config.dataset_roles.dev.IsSupplied()) {
+                AddIssue(config, IssueLevel::Error,
+                         "Reduce LR steps on the validation loss, and this graph has no validation data: set "
+                         "Data Split val_ratio above 0 or supply a Dev dataset",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                ok = false;
+            }
+            break;
+        }
+        default: {  // WarmupScheduler: torch LinearLR(start_factor, 1.0, total_iters=warmup_epochs)
+            const double start_factor = number("start_factor", "0.1");
+            if (ok && (start_factor <= 0.0 || start_factor > 1.0)) {
+                AddIssue(config, IssueLevel::Error,
+                         "Invalid scheduler parameter 'start_factor': must be above 0 and at most 1",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                ok = false;
+            }
+            spec = LinearWarmupLRSchedulerSpec{whole("warmup_epochs", "5"), config.learning_rate,
+                                               start_factor * config.learning_rate};
+            break;
+        }
+    }
+    if (!ok) return;
+    std::string error;
+    if (!ValidateTrainingSchedulerSpec(spec, error)) {
+        AddIssue(config, IssueLevel::Error, "Scheduler '" + node.name + "': " + error, node.id, node.name,
+                 errors::Compiler::InvalidParameter);
+        return;
+    }
+    config.scheduler = spec;
+    config.scheduler_node_id = node.id;
+}
+
 void ExtractOptimizerConfiguration(const gui::MLNode& node,
                                    TrainingConfiguration& config) {
     config.optimizer_type = node.type;
@@ -5354,6 +5490,7 @@ TrainingConfiguration GraphCompiler::Compile(
     if (optimizer_node) {
         ExtractOptimizerConfiguration(*optimizer_node, config);
     }
+    ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||

@@ -1168,6 +1168,27 @@ const MLNode* NodeEditor::FindExportOptimizerNode() const {
     return nullptr;
 }
 
+// The scheduler node fed by the export optimizer's State output (TOFIX140
+// A3), or nullptr. The compiler trains the same one.
+const MLNode* NodeEditor::FindExportSchedulerNode() const {
+    const MLNode* optimizer = FindExportOptimizerNode();
+    if (!optimizer) return nullptr;
+    for (const auto& link : links_) {
+        if (link.from_node != optimizer->id) continue;
+        for (const auto& node : nodes_) {
+            if (node.id != link.to_node) continue;
+            switch (node.type) {
+                case NodeType::StepLR: case NodeType::CosineAnnealing: case NodeType::ReduceOnPlateau:
+                case NodeType::ExponentialLR: case NodeType::WarmupScheduler:
+                    return &node;
+                default:
+                    break;
+            }
+        }
+    }
+    return nullptr;
+}
+
 std::string NodeEditor::PyTorchOptimizerSetup() const {
     const MLNode* node = FindExportOptimizerNode();
     if (!node) {
@@ -1237,6 +1258,36 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
                 : "        return min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * p))\n";
         }
         code += "    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_factor)\n";
+    } else if (const MLNode* scheduler = FindExportSchedulerNode()) {
+        const auto param = [scheduler](const char* key, const char* fallback) {
+            return GetParamOrDefault(*scheduler, key, fallback);
+        };
+        code += "    # Scheduler node: stepped once per epoch\n";
+        switch (scheduler->type) {
+            case NodeType::StepLR:
+                code += "    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=" + param("step_size", "10") +
+                        ", gamma=" + param("gamma", "0.1") + ")\n";
+                break;
+            case NodeType::CosineAnnealing:
+                code += "    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=" + param("T_max", "100") +
+                        ", eta_min=" + param("eta_min", "0.0") + ")\n";
+                break;
+            case NodeType::ReduceOnPlateau:
+                code += "    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=" +
+                        param("factor", "0.1") + ", patience=" + param("patience", "10") + ", threshold=" +
+                        param("threshold", "0.0001") + ", threshold_mode='abs', min_lr=" + param("min_lr", "0.0") +
+                        ")\n";
+                break;
+            case NodeType::ExponentialLR:
+                code += "    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=" + param("gamma", "0.95") +
+                        ")\n";
+                break;
+            default:
+                code += "    scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=" +
+                        param("start_factor", "0.1") + ", end_factor=1.0, total_iters=" +
+                        param("warmup_epochs", "5") + ")\n";
+                break;
+        }
     }
     return code + "\n";
 }
@@ -1253,6 +1304,10 @@ std::string NodeEditor::PyTorchStepLines() const {
     code += "    #         optimizer.step()\n";
     if (node && GetParamOrDefault(*node, "lr_schedule", "none") != "none") {
         code += "    #         scheduler.step()\n";
+    } else if (const MLNode* scheduler = FindExportSchedulerNode()) {
+        code += scheduler->type == NodeType::ReduceOnPlateau
+            ? "    #     scheduler.step(val_loss)  # after validating the epoch\n"
+            : "    #     scheduler.step()  # after each epoch\n";
     }
     return code;
 }

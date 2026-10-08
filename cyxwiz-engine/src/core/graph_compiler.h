@@ -5,6 +5,7 @@
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
 #include "training_parameter_contract.h"
+#include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
@@ -549,6 +550,10 @@ struct TrainingConfiguration {
     float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
     float grad_clip_norm = 0.0f;        // 0 = off
     std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
+    // attaches it unless a scheduler is configured on the executor directly.
+    std::optional<TrainingSchedulerSpec> scheduler;
+    int scheduler_node_id = -1;
 
     // Validation
     bool is_valid = false;

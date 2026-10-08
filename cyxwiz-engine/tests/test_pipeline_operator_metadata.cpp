@@ -2758,7 +2758,8 @@ void CheckBlockedClassifierFamilyContract(
           "Logistic preview should not advertise uncreated parameters or outputs");
 }
 
-void CheckBlockedSchedulerFamilyContract(
+// TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.
+void CheckSchedulerFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
         gui::NodeType::StepLR,
@@ -2770,34 +2771,22 @@ void CheckBlockedSchedulerFamilyContract(
 
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr && meta->IsTemplate() &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unintegrated scheduler should remain blocked: " +
-                  TypeId(type));
+        Check(meta != nullptr &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "scheduler should be implemented and addable: " + TypeId(type));
         Check(meta->inputs.size() == 1 &&
                   HasInputType(meta, "Optimizer", gui::PinType::Optimizer) &&
-                  meta->outputs.size() == 1 &&
-                  HasOutputType(meta, "Scheduled", gui::PinType::Optimizer),
-              "blocked scheduler should preserve its saved-graph pin contract: " +
+                  meta->outputs.empty(),
+              "scheduler takes the optimizer's State and has no output: " +
                   TypeId(type));
-        Check(meta->brief_description.find("Blocked") != std::string::npos &&
-                  meta->help_text.find("do not construct, step, restore, or checkpoint") !=
-                      std::string::npos,
-              "blocked scheduler help should state its missing lifecycle owner: " +
-                  TypeId(type));
+        Check(meta->help_text.find("torch.optim.lr_scheduler") != std::string::npos,
+              "scheduler help should name its PyTorch counterpart: " + TypeId(type));
 
         const auto support =
             cyxwiz::ResolvePipelineTrainingBackendSupport(type);
-        Check(support.mode ==
-                  cyxwiz::PipelineTrainingBackendSupportMode::
-                      UnsupportedTrainingControl &&
-                  !support.compile_supported && !support.training_supported,
-              "blocked scheduler should fail closed at compile and training: " +
-                  TypeId(type));
-        Check(cyxwiz::PipelineOperatorFactory::Instance().Create(type) == nullptr,
-              "blocked scheduler should not claim a PipelineExecutor owner: " +
-                  TypeId(type));
+        Check(support.compile_supported && support.training_supported,
+              "scheduler should compile and train: " + TypeId(type));
     }
 
     const auto* step = metadata.GetMetadata(gui::NodeType::StepLR);
@@ -2812,24 +2801,24 @@ void CheckBlockedSchedulerFamilyContract(
     Check(step->parameters.size() == 2 &&
               ParameterMatches(step, "step_size", "int", "10") &&
               ParameterMatches(step, "gamma", "float", "0.1"),
-          "StepLR preview should preserve its legacy saved parameters");
+          "StepLR parameters");
     Check(cosine->parameters.size() == 2 &&
               ParameterMatches(cosine, "T_max", "int", "100") &&
               ParameterMatches(cosine, "eta_min", "float", "0.0"),
-          "CosineAnnealing preview should preserve its legacy saved parameters");
-    Check(plateau->parameters.size() == 3 &&
-              ParameterMatches(plateau, "mode", "enum", "min") &&
-              HasEnumValue(plateau, "mode", "max") &&
+          "CosineAnnealing parameters");
+    Check(plateau->parameters.size() == 4 &&
               ParameterMatches(plateau, "factor", "float", "0.1") &&
-              ParameterMatches(plateau, "patience", "int", "10"),
-          "ReduceOnPlateau preview should preserve its legacy saved parameters");
+              ParameterMatches(plateau, "patience", "int", "10") &&
+              ParameterMatches(plateau, "threshold", "float", "0.0001") &&
+              ParameterMatches(plateau, "min_lr", "float", "0.0"),
+          "ReduceOnPlateau parameters (it watches the validation loss: no mode)");
     Check(exponential->parameters.size() == 1 &&
               ParameterMatches(exponential, "gamma", "float", "0.95"),
-          "ExponentialLR preview should preserve its legacy saved parameters");
+          "ExponentialLR parameters");
     Check(warmup->parameters.size() == 2 &&
-              ParameterMatches(warmup, "warmup_steps", "int", "1000") &&
-              ParameterMatches(warmup, "warmup_ratio", "float", "0.1"),
-          "Warmup preview should preserve its legacy saved parameters");
+              ParameterMatches(warmup, "warmup_epochs", "int", "5") &&
+              ParameterMatches(warmup, "start_factor", "float", "0.1"),
+          "Warmup parameters (torch LinearLR)");
 }
 
 void CheckBlockedRegularizationFamilyContract(
@@ -3547,7 +3536,7 @@ int main() {
     CheckPcaContract(metadata);
     CheckClassicalRegressionFamilyContract(metadata);
     CheckBlockedClassifierFamilyContract(metadata);
-    CheckBlockedSchedulerFamilyContract(metadata);
+    CheckSchedulerFamilyContract(metadata);
     CheckBlockedRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);
     CheckClassicalTreeMigrationGuard();
