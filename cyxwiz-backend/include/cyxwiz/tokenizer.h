@@ -29,6 +29,12 @@ CYXWIZ_API bool IsSentencePieceTokenizerType(TokenizerType type);
 CYXWIZ_API bool IsSentencePieceTokenizerAvailable();
 CYXWIZ_API std::string SentencePieceTokenizerUnavailableMessage();
 
+// Persisted ByteBPE piece boundary contract; fitting defaults remain v1.
+enum class ByteBPEPiecePolicy { WhitespaceV1 = 1, LeadingSpaceV2 = 2 };
+
+// Starting alphabet for strategy 3 (legacy name ByteBPE). Encoding follows artifact.
+enum class BPEInitialUnit { Byte = 0, UnicodeCharacter = 1 };
+
 // Result of tokenizing a single text
 struct CYXWIZ_API TokenizedText {
     std::vector<int> token_ids;
@@ -75,6 +81,15 @@ public:
     // triples are {left, right, result}, ordered by rank. Validation is atomic.
     bool SetByteBPE(const std::vector<std::string>& words,
                     const std::vector<std::array<int, 3>>& merges);
+    bool SetByteBPE(const std::vector<std::string>& words,
+                    const std::vector<std::array<int, 3>>& merges, ByteBPEPiecePolicy policy);
+    ByteBPEPiecePolicy GetBPEPiecePolicy() const { return bpe_piece_policy_; }
+    bool SetBPE(const std::vector<std::string>& words,
+                const std::vector<std::array<int, 3>>& merges, ByteBPEPiecePolicy policy,
+                BPEInitialUnit unit, size_t alphabet_size);
+    BPEInitialUnit GetBPEInitialUnit() const { return bpe_initial_unit_; }
+    size_t GetBPEAlphabetSize() const { return bpe_alphabet_size_; }
+    // Legacy family predicate: true for both starting alphabets of strategy 3.
     bool IsByteBPE() const { return byte_bpe_; }
     const std::vector<std::array<int, 3>>& GetBPEMerges() const { return bpe_merges_; }
     const std::map<std::pair<int, int>, std::pair<int, int>>& GetBPERanks() const {
@@ -99,6 +114,9 @@ private:
     int eos_idx_ = 3;   // [EOS]
 
     bool byte_bpe_ = false;
+    BPEInitialUnit bpe_initial_unit_ = BPEInitialUnit::Byte;
+    size_t bpe_alphabet_size_ = 256;
+    ByteBPEPiecePolicy bpe_piece_policy_ = ByteBPEPiecePolicy::WhitespaceV1;
     std::vector<std::array<int, 3>> bpe_merges_;
     std::map<std::pair<int, int>, std::pair<int, int>> bpe_ranks_;
     void AddSpecialTokens();
@@ -149,6 +167,10 @@ public:
     void SetCancellationQuery(std::function<bool()> query) { cancellation_query_ = std::move(query); }
     void ValidateVocabulary() const;
 
+    // Fitting only. Encoding always uses the policy stored in the vocabulary.
+    void SetBPEFitPiecePolicy(ByteBPEPiecePolicy policy);
+    void SetBPEFitInitialUnit(BPEInitialUnit unit);
+
     // Configuration
     void SetLowercase(bool v) { lowercase_ = v; }
     void SetMaxLength(int v) { max_length_ = v; }
@@ -170,6 +192,8 @@ public:
 
 private:
     TokenizerType type_;
+    BPEInitialUnit bpe_fit_initial_unit_ = BPEInitialUnit::Byte;
+    ByteBPEPiecePolicy bpe_fit_piece_policy_ = ByteBPEPiecePolicy::WhitespaceV1;
     Vocabulary vocab_;
     std::shared_ptr<SentencePieceTokenizerState> sentencepiece_;
 

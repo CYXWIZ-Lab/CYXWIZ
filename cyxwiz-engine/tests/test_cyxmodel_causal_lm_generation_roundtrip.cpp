@@ -197,8 +197,11 @@ void CheckTensorValues(const cyxwiz::Tensor& tensor,
 }
 
 
-void CheckBpeSnapshotRoundtrip(const std::filesystem::path& root) {
+void CheckBpeSnapshotRoundtrip(const std::filesystem::path& root, cyxwiz::ByteBPEPiecePolicy policy,
+    cyxwiz::BPEInitialUnit unit = cyxwiz::BPEInitialUnit::Byte) {
     cyxwiz::Tokenizer tokenizer(cyxwiz::TokenizerType::ByteBPE);
+    tokenizer.SetBPEFitPiecePolicy(policy);
+    tokenizer.SetBPEFitInitialUnit(unit);
     tokenizer.SetLowercase(false);
     tokenizer.SetPadding(false);
     tokenizer.Train({"In the beginning", "And God said"}, 1, 280);
@@ -225,7 +228,8 @@ void CheckBpeSnapshotRoundtrip(const std::filesystem::path& root) {
     source.Add<cyxwiz::TimeDistributedDenseModule>(4,width,true);
     source.SetTraining(false);
     cyxwiz::ModelExporter exporter;
-    const auto path=root/"bpe_snapshot.cyxmodel";
+    const auto path=root/(unit == cyxwiz::BPEInitialUnit::UnicodeCharacter ? "bpe_character_snapshot.cyxmodel" : policy == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2
+        ? "bpe_v2_snapshot.cyxmodel" : "bpe_snapshot.cyxmodel");
     const auto exported=exporter.ExportCyxModel(source,nullptr,nullptr,graph.dump(),path.string(),options);
     Check(exported.success,"BPE snapshot export: "+exported.error_message);
     Check(std::filesystem::is_regular_file(path),"native export must create a binary file");
@@ -490,7 +494,9 @@ int main(int argc, char** argv) {
         generated_ids);
     Check(!generated_text.empty(),
           "generated token IDs should decode through packaged tokenizer");
-    CheckBpeSnapshotRoundtrip(root);
+    CheckBpeSnapshotRoundtrip(root, cyxwiz::ByteBPEPiecePolicy::WhitespaceV1);
+    CheckBpeSnapshotRoundtrip(root, cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+    CheckBpeSnapshotRoundtrip(root, cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2, cyxwiz::BPEInitialUnit::UnicodeCharacter);
     fs::remove_all(root);
     std::cout << "CyxModel causal LM generation round-trip test passed\n";
     return 0;

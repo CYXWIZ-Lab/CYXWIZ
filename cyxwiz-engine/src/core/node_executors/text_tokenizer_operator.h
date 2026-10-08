@@ -88,6 +88,8 @@ private:
     int max_vocab_size_ = 10000;
     int pad_value_ = 0;
     std::string vocab_file_;
+    std::string bpe_initial_unit_; // omitted: artifact units on load, byte on fit
+    std::string bpe_piece_policy_; // omitted: artifact policy on load, whitespace_v1 on fit
     bool vocab_build_if_missing_ = false;
     size_t last_vocab_size_ = 0;
     PipelineOperatorProgressCallback progress_callback_;

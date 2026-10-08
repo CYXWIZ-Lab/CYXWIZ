@@ -143,6 +143,8 @@ private:
 
     int tokenizer_type_ = 1;
     int token_output_mode_ = 0;
+    std::string bpe_initial_unit_;
+    std::string bpe_piece_policy_;
     char document_id_col_[128] = "document_id";
     char split_col_[128] = "split";
     char token_ids_col_[128] = "token_ids";

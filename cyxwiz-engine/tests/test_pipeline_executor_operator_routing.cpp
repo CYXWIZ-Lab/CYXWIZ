@@ -2653,6 +2653,17 @@ int main(int argc, char** argv) {
         bool source_node;
     };
 
+    // TOFIX134 retired VisualizeData: reject the old type, without requiring
+    // it to remain in the live node capability registry.
+    auto retired_graph = nlohmann::json::parse(unsupported_json);
+    retired_graph["nodes"][1]["type"] = "VisualizeData";
+    retired_graph["nodes"][1]["name"] = "Retired visualizer";
+    cyxwiz::PipelineExecutor retired_visualizer;
+    Check(!retired_visualizer.ExecutePipeline(retired_graph.dump()),
+          "Retired VisualizeData should remain rejected");
+    Check(retired_visualizer.GetLastError().find("VisualizeData") != std::string::npos,
+          "Retired visualizer rejection should identify its type");
+
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
         {"SVMRegressor", false},
@@ -2660,7 +2671,6 @@ int main(int argc, char** argv) {
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
-        {"VisualizeData", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},

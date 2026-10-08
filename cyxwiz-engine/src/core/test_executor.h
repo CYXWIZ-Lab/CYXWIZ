@@ -6,6 +6,7 @@
 #include "test_dataset_selection.h"
 #include "text_dataset_batcher.h"
 #include <cyxwiz/tensor.h>
+#include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
 #include <functional>
@@ -168,7 +169,10 @@ public:
      * Set a pre-trained model for testing
      * If not set, will build model from config
      */
-    void SetModel(std::shared_ptr<SequentialModel> model);
+    // Pass the recorded owner when handing off from a different thread.
+    // Omitting it means the calling thread owns the supplied model's tensors.
+    void SetModel(std::shared_ptr<SequentialModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
 
     /**
      * Get the testing configuration
@@ -197,6 +201,7 @@ private:
 
     // Model and loss (no optimizer needed for testing)
     std::shared_ptr<SequentialModel> model_;
+    std::optional<ProcessDeviceSelection> model_device_;
     std::unique_ptr<Loss> loss_;
     RegressionMetricAccumulator regression_metrics_;
 
@@ -206,6 +211,7 @@ private:
      * Initialize testing components
      */
     bool Initialize(int batch_size);
+    void TestImpl(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
     void TestCausalSequence(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
 
     /**

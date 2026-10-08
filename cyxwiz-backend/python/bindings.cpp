@@ -2959,6 +2959,14 @@ Example queries:
         .value("SentencePieceUnigram", cyxwiz::TokenizerType::SentencePieceUnigram)
         .export_values();
 
+    py::enum_<cyxwiz::BPEInitialUnit>(m, "BPEInitialUnit")
+        .value("Byte", cyxwiz::BPEInitialUnit::Byte)
+        .value("UnicodeCharacter", cyxwiz::BPEInitialUnit::UnicodeCharacter);
+
+    py::enum_<cyxwiz::ByteBPEPiecePolicy>(m, "ByteBPEPiecePolicy")
+        .value("WhitespaceV1", cyxwiz::ByteBPEPiecePolicy::WhitespaceV1)
+        .value("LeadingSpaceV2", cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+
     py::class_<cyxwiz::Vocabulary>(m, "Vocabulary")
         .def(py::init<>())
         .def("build_from_documents", &cyxwiz::Vocabulary::BuildFromDocuments,
@@ -2978,6 +2986,9 @@ Example queries:
         .def("has_word", &cyxwiz::Vocabulary::HasWord,
             py::arg("word"), "Check if word is in vocabulary")
         .def("size", &cyxwiz::Vocabulary::Size, "Get vocabulary size")
+        .def_property_readonly("bpe_initial_unit", &cyxwiz::Vocabulary::GetBPEInitialUnit)
+        .def_property_readonly("bpe_alphabet_size", &cyxwiz::Vocabulary::GetBPEAlphabetSize)
+        .def_property_readonly("bpe_piece_policy", &cyxwiz::Vocabulary::GetBPEPiecePolicy)
         .def("save_to_file", &cyxwiz::Vocabulary::SaveToFile,
             py::arg("filepath"), "Save vocabulary to file")
         .def("load_from_file", &cyxwiz::Vocabulary::LoadFromFile,
@@ -3017,6 +3028,10 @@ Example queries:
         .def("get_vocabulary", static_cast<cyxwiz::Vocabulary& (cyxwiz::Tokenizer::*)()>(&cyxwiz::Tokenizer::GetVocabulary),
             py::return_value_policy::reference_internal,
             "Get the vocabulary")
+        .def("set_bpe_fit_initial_unit", &cyxwiz::Tokenizer::SetBPEFitInitialUnit,
+            py::arg("unit"), "Select BPE fit starting units; encoding follows the saved vocabulary")
+        .def("set_bpe_fit_piece_policy", &cyxwiz::Tokenizer::SetBPEFitPiecePolicy,
+            py::arg("policy"), "Select ByteBPE fitting policy; encoding follows the saved vocabulary")
         .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase,
             py::arg("value"), "Enable/disable lowercase normalization")
         .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength,
