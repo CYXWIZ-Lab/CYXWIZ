@@ -94,11 +94,14 @@ bool Hdf5LoadedSourceVerifier::Poll(const cyxwiz::Hdf5RegisteredSourceRequest& c
     if (!state_->done.load(std::memory_order_acquire)) {
         const auto state = task_->GetState();
         if (state != cyxwiz::TaskState::Cancelled && state != cyxwiz::TaskState::Failed) return false;
-        auto error = task_->GetErrorMessage();
         Cancel();
         result_.status = state == cyxwiz::TaskState::Cancelled
             ? cyxwiz::Hdf5TableStatus::Cancelled : cyxwiz::Hdf5TableStatus::ReadFailed;
-        result_.error = error.empty() ? "HDF5 loaded-state verification did not complete" : std::move(error);
+        // Task terminal state can precede its message writes. Detailed worker
+        // diagnostics are read only through the release/acquire result above.
+        result_.error = state == cyxwiz::TaskState::Cancelled
+            ? "HDF5 loaded-state verification cancelled before result delivery"
+            : "HDF5 loaded-state verification failed before result delivery";
         return true;
     }
     auto result = std::move(state_->result);

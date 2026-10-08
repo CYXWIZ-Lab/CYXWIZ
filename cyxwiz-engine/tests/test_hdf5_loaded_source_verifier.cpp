@@ -221,6 +221,18 @@ void TestController(const fs::path& path, const fs::path& other_path) {
     Check(!verifier.Busy(), "expired owner cannot start verification");
     Refused(verifier.Result(), Hdf5TableStatus::Cancelled);
 
+    owner = std::make_shared<int>(3);
+    {
+        Blocker blocker;
+        verifier.Start(request, owner);
+        Check(AsyncTaskManager::Instance().CancelOwnedBy(owner) == 1,
+              "manager cancels the queued verification without cancelling its owner");
+    }
+    Wait([] { return AsyncTaskManager::Instance().GetActiveTaskCount() == 0; });
+    Check(verifier.Poll(request) && !verifier.Busy(), "skipped worker still retires verification");
+    Refused(verifier.Result(), Hdf5TableStatus::Cancelled);
+    Check(!verifier.Poll(request), "manager cancellation is delivered only once");
+
     {
         Blocker blocker;
         auto queued = Snapshot(path);
