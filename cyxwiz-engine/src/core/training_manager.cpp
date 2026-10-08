@@ -331,9 +331,12 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         const auto activation =
             Device(selected->type, selected->device_id).ActivateExact(false);
         if (!activation.success) {
-            spdlog::warn("TrainingManager: could not select device type={} id={} for checkpoint loading: {}",
-                         static_cast<int>(selected->type), selected->device_id,
-                         activation.message);
+            result.error_message = fmt::format(
+                "Cannot load checkpoint on selected device (type={}, id={}): {}. "
+                "Select an available device and retry; no fallback was attempted.",
+                static_cast<int>(selected->type), selected->device_id, activation.message);
+            spdlog::error("TrainingManager: {}", result.error_message);
+            return result;
         }
     }
 

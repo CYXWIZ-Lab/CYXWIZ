@@ -1,4 +1,5 @@
 #include "test_executor.h"
+#include "execution_device_context.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
@@ -98,8 +99,15 @@ TestExecutor::~TestExecutor() {
     Stop();
 }
 
-void TestExecutor::SetModel(std::shared_ptr<SequentialModel> model) {
-    model_ = model;
+void TestExecutor::SetModel(std::shared_ptr<SequentialModel> model,
+                            std::optional<ProcessDeviceSelection> model_device) {
+    model_ = std::move(model);
+    model_device_ = model_device;
+    if (model_ && !model_device_) {
+        if (const auto* current = Device::GetCurrentDevice()) {
+            model_device_ = ProcessDeviceSelection{current->GetType(), current->GetDeviceId()};
+        }
+    }
     spdlog::info("TestExecutor: External model set");
 }
 
@@ -208,25 +216,74 @@ void TestExecutor::Test(
     TestBatchCallback batch_cb,
     TestCompleteCallback complete_cb)
 {
-    if (is_testing_.load()) {
+    if (is_testing_.exchange(true)) {
         spdlog::warn("TestExecutor: Already testing");
         return;
     }
-
-    is_testing_.store(true);
     stop_requested_.store(false);
-
-    if (config_.sequence_batch.enabled) {
-        try {
-            TestCausalSequence(batch_size, batch_cb, complete_cb);
-        } catch (const std::exception& e) {
-            is_testing_.store(false);
-            UpdateMetrics([&](TestingMetrics& m) {
-                m.is_testing = false; m.is_complete = false;
-                m.status_message = std::string("Testing failed: ") + e.what();
-            });
-            throw;
+    UpdateMetrics([](TestingMetrics& m) {
+        m = TestingMetrics{};
+        m.is_testing = true;
+        m.status_message = "Activating model device for testing";
+    });
+    try {
+        // All test modalities share this boundary. Activate the recorded owner
+        // BEFORE batch tensors, loss construction or the first model forward.
+        // Binding execution metadata alone does not switch ArrayFire's backend.
+        ScopedActiveExecutionDeviceContext active;
+        auto owner = model_device_;
+        if (!model_) owner = Device::GetProcessDevice();
+        if (model_ && !owner) {
+            throw std::runtime_error(
+                "Run Test has no model device ownership. Reload the checkpoint "
+                "through Train > Test > Load Checkpoint for Testing.");
         }
+        if (owner) {
+            const auto activation = Device(owner->type, owner->device_id).ActivateExact(false);
+            if (!activation.success) {
+                throw std::runtime_error(fmt::format(
+                    "Run Test could not activate the model device (type={}, id={}): {}. "
+                    "No fallback was attempted. Make that device available or reload "
+                    "the checkpoint on an available device before testing.",
+                    static_cast<int>(owner->type), owner->device_id, activation.message));
+            }
+        }
+        const auto policy = config_.forbid_native_cpu_fallback
+            ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
+            : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+        const auto context = CaptureCurrentExecutionDeviceContext(policy);
+        if (!context.valid) {
+            throw std::runtime_error("Run Test execution context is invalid: " + context.error);
+        }
+        if (!model_) {
+            if (const auto* current = Device::GetCurrentDevice()) {
+                model_device_ = ProcessDeviceSelection{current->GetType(), current->GetDeviceId()};
+            }
+        }
+        ScopedExecutionDeviceContext binding(context);
+        ScopedArrayFireFallbackPolicy fallback(policy);
+        spdlog::info(
+            "TestExecutor: model device activated; owner={}:{} effective={}:{} "
+            "device='{}' fallback_policy={} selection_fallback=false",
+            context.requested_backend, context.requested_device_id,
+            context.effective_backend, context.effective_device_id,
+            context.device_name, context.FallbackPolicyName());
+        TestImpl(batch_size, batch_cb, complete_cb);
+    } catch (const std::exception& e) {
+        is_testing_.store(false);
+        UpdateMetrics([&](TestingMetrics& m) {
+            m.is_testing = false;
+            m.is_complete = false;
+            m.status_message = std::string("Testing failed: ") + e.what();
+        });
+        throw;
+    }
+}
+
+void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
+                            TestCompleteCallback complete_cb) {
+    if (config_.sequence_batch.enabled) {
+        TestCausalSequence(batch_size, batch_cb, complete_cb);
         return;
     }
 
@@ -324,7 +381,7 @@ void TestExecutor::Test(
     if (total_batches == 0) {
         const std::string message =
             "Testing has no test batches. Check that the trained dataset has a "
-            "non-empty test split and that Tools > Test uses the same effective "
+            "non-empty test split and that Train > Test uses the same effective "
             "dataset/materialized dataset that training used.";
         UpdateMetrics([&message](TestingMetrics& m) {
             m.is_testing = false;

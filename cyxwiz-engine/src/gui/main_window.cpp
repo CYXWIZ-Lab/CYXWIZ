@@ -1,5 +1,3 @@
-#include "../core/legacy_dataset_batchers.h"
-#include "../core/training_export_metadata.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -7,8 +5,11 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h> // Before Parquet/gRPC headers undefine Windows OPTIONAL.
 #endif
 
+#include "../core/legacy_dataset_batchers.h"
+#include "../core/training_export_metadata.h"
 #include "main_window.h"
 #include "appearance_settings.h"
 #include "panel_memory.h"
@@ -1162,7 +1163,7 @@ MainWindow::MainWindow()
                     panel->SetVisible(true);
                 }
                 spdlog::info(
-                    "LoadCheckpoint: active model is ready for Tools > Test");
+                    "LoadCheckpoint: active model is ready for Train > Test");
             });
     });
 
@@ -5954,7 +5955,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     auto model = training.GetActiveModel();
     if (!model) {
         ShowOperationError("Cannot run test",
-            "No model is active. Train the graph, or use Tools > Checkpoints > Load Checkpoint "
+            "No model is active. Train the graph, or use Train > Test > Load Checkpoint "
             "for Testing with the graph the checkpoint was trained with open.");
         return;
     }
@@ -5997,7 +5998,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
     auto& tm = cyxwiz::TrainingManager::Instance();
     if (!tm.HasTrainedModel()) {
         ShowOperationError("Cannot run test",
-            "No model is active. Train a model, or use Tools > Checkpoints > Load "
+            "No model is active. Train a model, or use Train > Test > Load "
             "Checkpoint for Testing before running Test.");
         return;
     }
@@ -6073,17 +6074,23 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         return;
     }
 
+    if (!active_model_info.model_device) {
+        spdlog::error("StartTestingFromGraph: active model has no device ownership. "
+                      "Reload it through Train > Test > Load Checkpoint for Testing.");
+        return;
+    }
+
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
     if (auto arrow_dataset = registry.GetArrowDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingArrow(
             std::move(config), std::move(arrow_dataset), label_column,
-            test_selection.scope, test_batch_size, model, nullptr);
+            test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
     } else if (auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
-            test_selection.scope, test_batch_size, model, nullptr);
+            test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
     } else if (registry.IsTextDataset(dataset_name)) {
         const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
         if (!text_entry) {
@@ -6092,7 +6099,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr);
+            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
@@ -6102,7 +6109,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), cyxwiz::LegacyTestSource(dataset), test_batch_size, model, nullptr);
+            std::move(config), cyxwiz::LegacyTestSource(dataset), test_batch_size, model, nullptr, active_model_info.model_device);
     }
 
     if (started) {

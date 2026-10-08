@@ -65,6 +65,7 @@ add_executable(cyxwiz-tests
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
     unit/test_byte_bpe.cpp
+    unit/test_bpe_piece_policy.cpp
     unit/test_language_model_training.cpp
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp

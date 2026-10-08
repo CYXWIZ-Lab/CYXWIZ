@@ -2032,6 +2032,19 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ByteBPE artifact policy through the existing Arrow pipeline operator.
+find_package(Catch2 CONFIG REQUIRED)
+add_executable(test_bpe_piece_policy_operator tests/test_bpe_piece_policy_operator.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp)
+target_include_directories(test_bpe_piece_policy_operator PRIVATE src)
+target_link_libraries(test_bpe_piece_policy_operator PRIVATE Arrow::arrow_shared
+    Parquet::parquet_shared spdlog::spdlog fmt::fmt cyxwiz-backend Catch2::Catch2WithMain)
+if(WIN32)
+    target_compile_definitions(test_bpe_piece_policy_operator PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_bpe_piece_policy_operator PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
@@ -4983,6 +4996,15 @@ function(configure_training_executor_harness target_name)
     )
 endfunction()
 
+# Regression: checkpoint weights retain their owner across testing workers.
+add_executable(test_testing_device_handoff
+    tests/test_testing_device_handoff.cpp
+    src/core/test_executor.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_testing_device_handoff)
+target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
 # ===== Test: TrainingExecutor Arrow/Parquet Parity =====
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp

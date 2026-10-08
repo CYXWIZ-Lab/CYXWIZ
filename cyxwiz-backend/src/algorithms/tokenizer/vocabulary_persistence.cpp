@@ -13,6 +13,8 @@
 namespace cyxwiz {
 namespace {
 constexpr std::string_view kBPEHeader = "#cyxwiz-vocabulary-byte-bpe-v1";
+constexpr std::string_view kBPEV2Header = "#cyxwiz-vocabulary-byte-bpe-v2";
+constexpr std::string_view kCharacterBPEHeader = "#cyxwiz-vocabulary-character-bpe-v1";
 constexpr std::string_view kEncodedHeader = "#cyxwiz-vocabulary-hex-v1";
 
 bool ReadLine(std::istream& input, std::string& line) {
@@ -37,7 +39,17 @@ bool Vocabulary::SaveToStream(std::ostream& output) const {
             return token.empty() || std::any_of(token.begin(), token.end(),
                 [](unsigned char c) { return c < 32 || c >= 127; });
         });
-    if (encoded) output << (byte_bpe_ ? kBPEHeader : kEncodedHeader) << '\n' << idx_to_word_.size() << '\n';
+    if (encoded) {
+        const bool leading_space = byte_bpe_ && bpe_piece_policy_ == ByteBPEPiecePolicy::LeadingSpaceV2;
+        const bool characters = byte_bpe_ && bpe_initial_unit_ == BPEInitialUnit::UnicodeCharacter;
+        output << (characters ? kCharacterBPEHeader :
+            (byte_bpe_ ? (leading_space ? kBPEV2Header : kBPEHeader) : kEncodedHeader)) << '\n';
+        if (characters) {
+            output << (leading_space ? "leading_space_v2" : "whitespace_v1") << '\n';
+            output << bpe_alphabet_size_ << '\n';
+        } else if (leading_space) output << "leading_space_v2\n";
+        output << idx_to_word_.size() << '\n';
+    }
     constexpr char digits[] = "0123456789abcdef";
     for (const auto& token : idx_to_word_) {
         if (encoded) {
@@ -60,12 +72,28 @@ bool Vocabulary::SaveToStream(std::ostream& output) const {
 
 namespace {
 bool ReadArtifact(std::istream& input, std::vector<std::string>& tokens,
-                  std::vector<std::array<int, 3>>& merges, bool& bpe) {
+                  std::vector<std::array<int, 3>>& merges, bool& bpe, ByteBPEPiecePolicy& policy, BPEInitialUnit& unit, size_t& alphabet_size) {
     // Parse into local storage; failures must not modify the caller's state.
     std::vector<std::string> parsed;
     std::string line;
     if (!ReadLine(input, line)) return false;
-    bpe = line == kBPEHeader;
+    const bool characters = line == kCharacterBPEHeader;
+    bpe = line == kBPEHeader || line == kBPEV2Header || characters;
+    unit = characters ? BPEInitialUnit::UnicodeCharacter : BPEInitialUnit::Byte;
+    alphabet_size = 256;
+    policy = ByteBPEPiecePolicy::WhitespaceV1;
+    if (characters) {
+        if (!ReadLine(input, line)) return false;
+        if (line == "leading_space_v2") policy = ByteBPEPiecePolicy::LeadingSpaceV2;
+        else if (line != "whitespace_v1") return false;
+        if (!ReadLine(input, line)) return false;
+        const auto count = std::from_chars(line.data(), line.data() + line.size(), alphabet_size);
+        if (count.ec != std::errc{} || count.ptr != line.data() + line.size() ||
+            alphabet_size > static_cast<size_t>(std::numeric_limits<int>::max()) - 4) return false;
+    } else if (line == kBPEV2Header) {
+        if (!ReadLine(input, line) || line != "leading_space_v2") return false;
+        policy = ByteBPEPiecePolicy::LeadingSpaceV2;
+    }
     if (line == kEncodedHeader || bpe) {
         if (!ReadLine(input, line)) return false;
         size_t count = 0;
@@ -152,8 +180,11 @@ bool Vocabulary::LoadFromStream(std::istream& input) {
     std::vector<std::string> words;
     std::vector<std::array<int, 3>> merges;
     bool bpe = false;
-    if (!ReadArtifact(input, words, merges, bpe)) return false;
-    if (bpe) return SetByteBPE(words, merges);
+    ByteBPEPiecePolicy policy = ByteBPEPiecePolicy::WhitespaceV1;
+    BPEInitialUnit unit = BPEInitialUnit::Byte;
+    size_t alphabet_size = 256;
+    if (!ReadArtifact(input, words, merges, bpe, policy, unit, alphabet_size)) return false;
+    if (bpe) return SetBPE(words, merges, policy, unit, alphabet_size);
     std::unordered_map<std::string, int> indices;
     for (size_t i = 0; i < words.size(); ++i) {
         if (!indices.emplace(words[i], static_cast<int>(i)).second) {
@@ -170,6 +201,9 @@ bool Vocabulary::LoadFromStream(std::istream& input) {
     bos_idx_ = find_idx("[BOS]", 2);
     eos_idx_ = find_idx("[EOS]", 3);
     byte_bpe_ = false;
+    bpe_initial_unit_ = BPEInitialUnit::Byte;
+    bpe_alphabet_size_ = 256;
+    bpe_piece_policy_ = ByteBPEPiecePolicy::WhitespaceV1;
     bpe_merges_.clear();
     bpe_ranks_.clear();
     idx_to_word_ = std::move(words);

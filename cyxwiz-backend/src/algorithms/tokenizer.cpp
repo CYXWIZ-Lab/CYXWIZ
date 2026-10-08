@@ -35,6 +35,9 @@ Vocabulary::Vocabulary() {
 
 void Vocabulary::AddSpecialTokens() {
     byte_bpe_ = false;
+    bpe_initial_unit_ = BPEInitialUnit::Byte;
+    bpe_alphabet_size_ = 256;
+    bpe_piece_policy_ = ByteBPEPiecePolicy::WhitespaceV1;
     bpe_merges_.clear();
     bpe_ranks_.clear();
     pad_idx_ = 0; unk_idx_ = 1; bos_idx_ = 2; eos_idx_ = 3;

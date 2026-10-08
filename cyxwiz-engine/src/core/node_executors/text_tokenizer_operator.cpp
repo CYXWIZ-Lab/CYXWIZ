@@ -343,6 +343,8 @@ bool TextTokenizerOperator::Configure(
     text_col_.clear();
     label_col_.clear();
     vocab_file_.clear();
+    bpe_piece_policy_.clear();
+    bpe_initial_unit_.clear();
     max_length_ = 256;
     tokenizer_type_ = 1;
     lowercase_ = true;
@@ -402,6 +404,21 @@ bool TextTokenizerOperator::Configure(
     if (!read_int("max_vocab_size", 10000, max_vocab_size_)) return false;
     if (!read_int("pad_value",      0,     pad_value_))      return false;
 
+    if (const auto p = params.find("bpe_piece_policy"); p != params.end()) {
+        bpe_piece_policy_ = p->second;
+        if (tokenizer_type_ != 3 || (bpe_piece_policy_ != "whitespace_v1" &&
+                                    bpe_piece_policy_ != "leading_space_v2")) {
+            error = "TextTokenizer: bpe_piece_policy requires ByteBPE and whitespace_v1 or leading_space_v2";
+            return false;
+        }
+    }
+    if (const auto p = params.find("bpe_initial_unit"); p != params.end()) {
+        bpe_initial_unit_ = p->second;
+        if (tokenizer_type_ != 3 || (bpe_initial_unit_ != "byte" && bpe_initial_unit_ != "unicode_character")) {
+            error = "TextTokenizer: bpe_initial_unit requires BPE and byte or unicode_character";
+            return false;
+        }
+    }
     auto lcase = params.find("lowercase");
     if (lcase == params.end() || lcase->second.empty()) {
         lowercase_ = tokenizer_type_ != 3;
@@ -429,8 +446,8 @@ bool TextTokenizerOperator::Configure(
         error = "TextTokenizer: SentencePiece tokenizer support is not enabled in this build; install/build the optional provider or choose a native tokenizer family";
         return false;
     }
-    if (tokenizer_type_ == 3 && (lowercase_ || min_word_freq_ < 1 || max_vocab_size_ < 260)) {
-        error = "TextTokenizer: Byte BPE requires lowercase=false, min_word_freq>=1 and max_vocab_size>=260";
+    if (tokenizer_type_ == 3 && (lowercase_ || min_word_freq_ < 1 || max_vocab_size_ < (bpe_initial_unit_ == "byte" ? 260 : 4))) {
+        error = "TextTokenizer: BPE requires lowercase=false, min_word_freq>=1 and an explicit vocabulary cap covering the alphabet plus 4 specials (byte: at least 260)";
         return false;
     }
     if (output_mode_=="causal_windows" && (document_id_col_.empty() || split_col_.empty() ||
@@ -492,12 +509,31 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             default: tt = TokenizerType::Word; break;
         }
         Tokenizer tokenizer(tt);
+        if (bpe_piece_policy_ == "leading_space_v2")
+            tokenizer.SetBPEFitPiecePolicy(ByteBPEPiecePolicy::LeadingSpaceV2);
+        if (bpe_initial_unit_ == "unicode_character")
+            tokenizer.SetBPEFitInitialUnit(BPEInitialUnit::UnicodeCharacter);
         tokenizer.SetCancellationQuery(GetCancellationQuery());
         tokenizer.SetLowercase(lowercase_);
         tokenizer.SetMaxLength(max_length_);
         tokenizer.SetPadding(true);
         tokenizer.SetTruncation(true);
         return tokenizer;
+    };
+
+    auto validate_vocabulary = [&](const Tokenizer& tokenizer) {
+        tokenizer.ValidateVocabulary();
+        if (!bpe_initial_unit_.empty()) {
+            const auto expected = bpe_initial_unit_ == "byte" ? BPEInitialUnit::Byte : BPEInitialUnit::UnicodeCharacter;
+            if (tokenizer.GetVocabulary().GetBPEInitialUnit() != expected)
+                throw std::invalid_argument("BPE initial unit differs from vocab_file; follow the saved vocabulary or select a new file for refitting");
+        }
+        if (!bpe_piece_policy_.empty()) {
+            const auto expected = bpe_piece_policy_ == "leading_space_v2"
+                ? ByteBPEPiecePolicy::LeadingSpaceV2 : ByteBPEPiecePolicy::WhitespaceV1;
+            if (tokenizer.GetVocabulary().GetBPEPiecePolicy() != expected)
+                throw std::invalid_argument("ByteBPE piece policy differs from vocab_file; select the artifact policy or a new vocabulary path for refitting");
+        }
     };
 
     if (output_mode_ == "decode") {
@@ -513,7 +549,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "' for decode");
         }
         try {
-            tokenizer.ValidateVocabulary();
+            validate_vocabulary(tokenizer);
         } catch (const std::exception& e) {
             return arrow::Status::Invalid("TextTokenizer: ", e.what());
         }
@@ -659,7 +695,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     }
-    tokenizer.ValidateVocabulary();
+    validate_vocabulary(tokenizer);
     } catch (const std::exception& e) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::Invalid("TextTokenizer: ", e.what());
