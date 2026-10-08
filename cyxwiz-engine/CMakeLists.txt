@@ -342,12 +342,12 @@ set(ENGINE_SOURCES
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_parameter_rules.cpp
-    src/gui/properties_presets.cpp
     src/gui/properties_rows.cpp
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/properties_presentation.cpp
+    src/core/node_presets.cpp
     src/core/menu_presentation.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -5377,6 +5377,33 @@ endif()
 set_target_properties(test_properties_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Node presets (TOFIX129 A7-2) =====
+add_executable(test_node_presets
+    tests/test_node_presets.cpp
+    src/core/node_presets.cpp
+)
+
+target_include_directories(test_node_presets PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_node_presets PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+)
+
+if(WIN32)
+    target_compile_definitions(test_node_presets PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_node_presets PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME node_presets_contract COMMAND test_node_presets)
 
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation

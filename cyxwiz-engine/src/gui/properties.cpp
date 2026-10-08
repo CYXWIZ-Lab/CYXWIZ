@@ -8,7 +8,6 @@
 #include "properties_executor.h"
 #include "properties_node_editors.h"
 #include "properties_parameter_rules.h"
-#include "properties_presets.h"
 #include "properties_rows.h"
 #include "properties_truth.h"
 #include "../core/arrow_dataset.h"
@@ -441,17 +440,40 @@ void Properties::RenderHeader(MLNode& node) {
     ImGui::Spacing();
 }
 
+const cyxwiz::node_presets::Store& Properties::Presets() {
+    if (!presets_loaded_) {
+        presets_loaded_ = true;
+        if (!presets_.Load(cyxwiz::node_presets::DefaultStoreFile(), &presets_error_)) {
+            spdlog::warn("Properties: {}", presets_error_);
+        }
+    }
+    return presets_;
+}
+
 void Properties::RenderActionsMenu(MLNode& node) {
     if (!ImGui::BeginPopup("##actions")) return;
-    const auto presets = properties_presets::GetPresetsForNodeType(node.type);
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    const std::string& type_name = view_.header.type_name;
+    const auto presets = cyxwiz::node_presets::AllPresets(node.type, type_name, Presets());
     if (ImGui::BeginMenu("Apply preset", !presets.empty())) {
         for (const auto& preset : presets) {
-            if (ImGui::MenuItem(preset.c_str())) {
-                properties_presets::LoadPreset(node, preset);
+            ImGui::PushID(preset.name.c_str());
+            if (ImGui::MenuItem(preset.name.c_str())) {
+                cyxwiz::node_presets::Apply(preset, node);
                 NotifyEdited();
             }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                for (const auto& [k, v] : preset.parameters) ImGui::Text("%s = %s", k.c_str(), v.c_str());
+                if (!preset.builtin) ImGui::TextColored(t.text_dim, "Saved preset");
+                ImGui::EndTooltip();
+            }
+            ImGui::PopID();
         }
         ImGui::EndMenu();
+    }
+    if (presets.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("No presets for %s yet: save the current settings as one", type_name.c_str());
     }
     if (ImGui::BeginMenu("Save current as preset...")) {
         ImGui::SetNextItemWidth(180.0f);
@@ -460,9 +482,24 @@ void Properties::RenderActionsMenu(MLNode& node) {
         ImGui::SameLine();
         if ((cyxwiz::ui::PrimaryButton("Save", preset_name_buffer_[0] != '\0', "Give the preset a name",
                                        cyxwiz::ui::ButtonSize::Small) || enter) && preset_name_buffer_[0] != '\0') {
-            properties_presets::SavePreset(node, preset_name_buffer_);
+            Presets();
+            presets_.Put(type_name, preset_name_buffer_, cyxwiz::node_presets::ParametersToSave(node));
+            if (!presets_.Save(cyxwiz::node_presets::DefaultStoreFile(), &presets_error_)) {
+                spdlog::warn("Properties: {}", presets_error_);
+            }
             preset_name_buffer_[0] = '\0';
             ImGui::CloseCurrentPopup();
+        }
+        if (!presets_error_.empty()) ImGui::TextColored(t.error, "%s", presets_error_.c_str());
+        ImGui::EndMenu();
+    }
+    std::vector<cyxwiz::node_presets::Preset> saved = Presets().PresetsFor(type_name);
+    if (ImGui::BeginMenu("Delete saved preset", !saved.empty())) {
+        for (const auto& preset : saved) {
+            if (ImGui::MenuItem(preset.name.c_str())) {
+                presets_.Remove(type_name, preset.name);
+                presets_.Save(cyxwiz::node_presets::DefaultStoreFile(), &presets_error_);
+            }
         }
         ImGui::EndMenu();
     }

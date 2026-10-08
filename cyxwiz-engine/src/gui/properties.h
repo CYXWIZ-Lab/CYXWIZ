@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "../core/node_metadata.h"
+#include "../core/node_presets.h"
 #include "../core/properties_presentation.h"
 #include "node_config_dialog.h"
 #include "properties_node_editors.h"
@@ -117,6 +118,11 @@ private:
     char name_buffer_[128] = {};
     int name_buffer_node_ = -1;
     char preset_name_buffer_[64] = {};
+    // Saved presets (core/node_presets), read from the user's file on first use.
+    cyxwiz::node_presets::Store presets_;
+    bool presets_loaded_ = false;
+    std::string presets_error_;
+    const cyxwiz::node_presets::Store& Presets();
 
     // KNIME-style configuration dialogs
     std::unique_ptr<NodeConfigDialog> active_dialog_;
