@@ -3652,6 +3652,7 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
@@ -3766,6 +3767,7 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
@@ -5012,6 +5014,7 @@ add_executable(test_training_manager_session
     src/core/sequence_arrow_batcher.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
