@@ -37,6 +37,26 @@ TEST_CASE("Spatial sample shape excludes the runtime batch axis",
   CHECK_THROWS_AS(
       SpatialBatchToRows(Tensor({1, 2, 3, 1}, nullptr, DataType::Int32)),
       std::invalid_argument);
+  // An image batch [N,H,W,C] of the wrong sample shape is refused.
+  CHECK_THROWS_AS(SpatialBatchFromRows(Tensor({2, 2, 1, 3}, nullptr, DataType::Float32), {1, 2, 3}),
+                  std::invalid_argument);
+}
+
+TEST_CASE("Spatial ingress takes image batches [N,H,W,C] like rows (TOFIX140 A1b)",
+          "[spatial_layout][geometry]") {
+  // The image batcher's [N,H,W,C] batch and the same values as [N,H*W*C]
+  // rows give the same [H,W,C,N] tensor.
+  std::vector<float> values(2 * 2 * 3 * 4);
+  for (size_t i = 0; i < values.size(); ++i) values[i] = static_cast<float>(i);
+  const Tensor images({2, 2, 3, 4}, values.data(), DataType::Float32);
+  const Tensor rows({2, 24}, values.data(), DataType::Float32);
+  const Tensor a = SpatialBatchFromRows(images, {2, 3, 4});
+  const Tensor b = SpatialBatchFromRows(rows, {2, 3, 4});
+  REQUIRE(a.Shape() == std::vector<size_t>{2, 3, 4, 2});
+  REQUIRE(b.Shape() == a.Shape());
+  const float* pa = a.ReadData<float>();
+  const float* pb = b.ReadData<float>();
+  for (size_t i = 0; i < values.size(); ++i) CHECK(pa[i] == pb[i]);
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

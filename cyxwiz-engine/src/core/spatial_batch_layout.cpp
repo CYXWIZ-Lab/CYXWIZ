@@ -11,13 +11,18 @@ namespace cyxwiz {
 Tensor SpatialBatchFromRows(const Tensor &rows,
                             const std::vector<size_t> &sample_shape) {
   const size_t features = SpatialSampleElements(sample_shape);
-  if (rows.GetDataType() != DataType::Float32 || rows.Shape().size() != 2)
+  // The image batcher emits [N,H,W,C] (row-major, the same bytes as N rows of
+  // HWC); tabular batchers emit [N,H*W*C] rows. Both enter here.
+  const auto &in = rows.Shape();
+  const bool image_batch = in.size() == 4 && in[1] == sample_shape[0] &&
+                           in[2] == sample_shape[1] && in[3] == sample_shape[2];
+  if (rows.GetDataType() != DataType::Float32 || (in.size() != 2 && !image_batch))
     throw std::invalid_argument(
-        "Spatial batch ingress requires Float32 [N,H*W*C] rows");
-  if (rows.Shape()[1] != features)
+        "Spatial batch ingress requires Float32 [N,H*W*C] rows or [N,H,W,C] images");
+  if (!image_batch && in[1] != features)
     throw std::invalid_argument(
         "Spatial row feature count does not match [H,W,C]");
-  const auto shape = SpatialRuntimeShape(sample_shape, rows.Shape()[0]);
+  const auto shape = SpatialRuntimeShape(sample_shape, in[0]);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
   // Host-origin rows enter the selected device here; device-current rows reuse
   // the canonical semantic view. Avoid Reshape's host-copy compatibility path.
