@@ -761,30 +761,7 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         case NodeType::Split: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Multiple outputs for split
-            NodePin output1;
-            output1.id = next_pin_id_++;
-            output1.type = PinType::Tensor;
-            output1.name = "Output 1";
-            output1.is_input = false;
-            node.outputs.push_back(output1);
-
-            NodePin output2;
-            output2.id = next_pin_id_++;
-            output2.type = PinType::Tensor;
-            output2.name = "Output 2";
-            output2.is_input = false;
-            node.outputs.push_back(output2);
-
-            node.parameters["split_size"] = "2";
-            node.parameters["dim"] = "0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

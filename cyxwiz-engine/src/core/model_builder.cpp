@@ -444,6 +444,13 @@ bool BuildSequential(
                 std::to_string(i) + ": " + *reason);
         }
 
+        // A branched graph (TOFIX140 A2): a layer reads the width of the pin
+        // that feeds it, not the output of the layer before it in sort order.
+        if (!config.graph_op_node_ids.empty() && !layer_cfg.input_shape.empty() &&
+            layer_cfg.input_shape.size() <= 2) {
+            current_input_size = layer_cfg.input_shape.back();
+        }
+
         switch (layer_cfg.type) {
             case gui::NodeType::Dense: {
                 const size_t out_features =

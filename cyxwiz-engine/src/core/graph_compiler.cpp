@@ -3926,6 +3926,38 @@ void CollectGraphRuntimeOpNodeIds(
             continue;
         }
         const gui::MLNode& node = *it->second;
+        if (node.type == gui::NodeType::Split) {
+            // Fan-out (TOFIX140 A2): one input, Output 1 = the first
+            // split_size entries along dim, Output 2 = the rest.
+            if (CountConnectedSelectedTensorInputs(node, links, training_path_ids) != 1) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split '" + node.name + "' needs its input connected",
+                         node.id, node.name);
+                continue;
+            }
+            try {
+                const int dim = spatial::ParseIntParam(node.parameters, "dim", 1);
+                const int split_size = spatial::ParseIntParam(node.parameters, "split_size", 1);
+                if (dim == 0) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Split dim 0 is the batch; split a sample dimension (dim 1 = features)",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                if (split_size < 1) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Split split_size must be at least 1",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+            } catch (const std::invalid_argument& error) {
+                AddIssue(config, IssueLevel::Error, std::string("Split ") + error.what(),
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                continue;
+            }
+            config.graph_op_node_ids.push_back(node.id);
+            continue;
+        }
         if (!IsGraphRuntimeFanInOp(node.type) || node.id == fused_concat_node_id) {
             continue;
         }
@@ -4845,6 +4877,31 @@ TrainingConfiguration GraphCompiler::Compile(
     std::vector<size_t> current_shape = config.input_shape;
     bool sequence_fusion_emitted = false;
 
+    // A branched graph (TOFIX140 A2): every node takes the sample shape of the
+    // pin that feeds it, not of the node before it in sort order.
+    const bool branched = !config.graph_op_node_ids.empty();
+    std::unordered_map<int, std::vector<size_t>> pin_shapes;
+    const auto source_shape = [&](const gui::MLNode& n, size_t input_index)
+        -> const std::vector<size_t>* {
+        if (n.inputs.size() <= input_index) return nullptr;
+        for (const auto& link : links) {
+            if (link.to_node == n.id && link.to_pin == n.inputs[input_index].id) {
+                const auto found = pin_shapes.find(link.from_pin);
+                return found != pin_shapes.end() ? &found->second : nullptr;
+            }
+        }
+        return nullptr;
+    };
+    const auto record_outputs = [&](const gui::MLNode& n, const std::vector<size_t>& shape) {
+        for (const auto& pin : n.outputs) pin_shapes[pin.id] = shape;
+    };
+    // The sample axis of a batched dim (dim 1 = the first sample axis).
+    const auto sample_axis = [](int dim, size_t rank) -> std::optional<size_t> {
+        const long long axis = dim > 0 ? dim - 1LL : static_cast<long long>(rank) + dim;
+        if (dim == 0 || axis < 0 || axis >= static_cast<long long>(rank)) return std::nullopt;
+        return static_cast<size_t>(axis);
+    };
+
     for (int node_id : sorted_ids) {
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
@@ -4859,6 +4916,50 @@ TrainingConfiguration GraphCompiler::Compile(
             continue;
         }
 
+        if (branched) {
+            if (node->id == config.data_source_node_id) {
+                record_outputs(*node, config.input_shape);
+            } else if (const auto* fed = source_shape(*node, 0)) {
+                current_shape = *fed;
+            }
+        }
+
+        if (node->type == gui::NodeType::Split) {
+            // Only a Split the runtime-op pass accepted (valid parameters).
+            if (std::find(config.graph_op_node_ids.begin(), config.graph_op_node_ids.end(),
+                          node->id) == config.graph_op_node_ids.end()) continue;
+            std::vector<size_t> first = current_shape, second = current_shape;
+            const int dim = spatial::ParseIntParam(node->parameters, "dim", 1);
+            const int split_size = spatial::ParseIntParam(node->parameters, "split_size", 1);
+            const auto axis = sample_axis(dim, current_shape.size());
+            if (spatial::IsSpatialLayer(config.layers.empty() ? gui::NodeType::Dense
+                                                              : config.layers.front().type) &&
+                current_shape.size() == 3) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split runs on rows; in a CNN split after Flatten",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else if (!axis) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split dim " + std::to_string(dim) + " is outside the input [" +
+                             ShapeListText(current_shape) + "]",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else if (split_size < 1 || static_cast<size_t>(split_size) >= current_shape[*axis]) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split split_size " + std::to_string(split_size) +
+                             " must be less than the split dimension's size " +
+                             std::to_string(current_shape[*axis]) + ", so both outputs keep entries",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else {
+                first[*axis] = static_cast<size_t>(split_size);
+                second[*axis] = current_shape[*axis] - static_cast<size_t>(split_size);
+            }
+            if (node->outputs.size() == 2) {
+                pin_shapes[node->outputs[0].id] = first;
+                pin_shapes[node->outputs[1].id] = second;
+            }
+            continue;
+        }
+
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
             CYXWIZ_BUILDER_INFO("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
@@ -4866,6 +4967,7 @@ TrainingConfiguration GraphCompiler::Compile(
             ApplyTextInputShape(config);
             ApplyImageInputShape(config);
             current_shape = config.input_shape;
+            if (branched) record_outputs(*node, current_shape);
             if (node->type == gui::NodeType::Normalize) {
                 CYXWIZ_BUILDER_INFO("GraphCompiler: Normalization enabled - mean={}, std={}",
                              config.preprocessing.norm_mean, config.preprocessing.norm_std);
@@ -4884,6 +4986,56 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (IsGraphRuntimeFanInOp(node->type) &&
             HasConnectedInputAfterFirst(*node, links)) {
+            if (branched && ContainsWhenFiltered(training_path_ids, node->id)) {
+                // The merged sample shape: Concatenate adds along dim, the
+                // element-wise ops need equal shapes, TensorDot gives one value.
+                std::vector<std::vector<size_t>> inputs;
+                for (size_t i = 0; i < node->inputs.size(); ++i) {
+                    if (const auto* fed = source_shape(*node, i)) inputs.push_back(*fed);
+                }
+                std::vector<size_t> merged = inputs.empty() ? current_shape : inputs.front();
+                std::string mismatch;
+                if (node->type == gui::NodeType::TensorDot) {
+                    merged = {1};
+                } else if (node->type == gui::NodeType::Concatenate && !inputs.empty()) {
+                    const int dim = spatial::ParseIntParam(node->parameters, "dim", 1);
+                    const auto axis = sample_axis(dim, merged.size());
+                    if (!axis) {
+                        mismatch = "Concatenate dim " + std::to_string(dim) +
+                                   " is outside the input [" + ShapeListText(merged) + "]";
+                    } else {
+                        for (size_t i = 1; i < inputs.size() && mismatch.empty(); ++i) {
+                            auto other = inputs[i];
+                            if (other.size() != merged.size()) {
+                                mismatch = "Concatenate inputs have different ranks";
+                                break;
+                            }
+                            other[*axis] = merged[*axis];
+                            if (other != merged) {
+                                mismatch = "Concatenate inputs differ outside dim " + std::to_string(dim) +
+                                           ": [" + ShapeListText(merged) + "] and [" +
+                                           ShapeListText(inputs[i]) + "]";
+                                break;
+                            }
+                            merged[*axis] += inputs[i][*axis];
+                        }
+                    }
+                } else {
+                    for (size_t i = 1; i < inputs.size(); ++i) {
+                        if (inputs[i] != merged) {
+                            mismatch = node->name + " needs inputs of one shape: [" +
+                                       ShapeListText(merged) + "] and [" +
+                                       ShapeListText(inputs[i]) + "]";
+                            break;
+                        }
+                    }
+                }
+                if (!mismatch.empty()) {
+                    AddIssue(config, IssueLevel::Error, mismatch, node->id, node->name,
+                             errors::Compiler::TensorShapeMismatch);
+                }
+                record_outputs(*node, merged);
+            }
             continue;
         }
 
@@ -5087,6 +5239,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 layer.output_shape = InferOutputShape(layer, current_shape);
             }
             current_shape = layer.output_shape;
+            if (branched) record_outputs(*node, current_shape);
 
             config.layers.push_back(layer);
 
@@ -5094,6 +5247,18 @@ TrainingConfiguration GraphCompiler::Compile(
             if (node->type == gui::NodeType::Dense ||
                 node->type == gui::NodeType::TimeDistributed) {
                 config.output_size = layer.units;
+            }
+        }
+    }
+
+    // In a branched graph the model output is whatever feeds the loss.
+    if (branched) {
+        for (const auto& edge : config.graph_plan.edges) {
+            if (edge.to_node_id != config.graph_plan.loss_node_id ||
+                edge.to_pin_id != config.graph_plan.prediction_pin_id) continue;
+            const auto found = pin_shapes.find(edge.from_pin_id);
+            if (found != pin_shapes.end() && !found->second.empty()) {
+                config.output_size = found->second.back();
             }
         }
     }

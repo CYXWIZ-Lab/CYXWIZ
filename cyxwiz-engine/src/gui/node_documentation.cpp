@@ -1088,15 +1088,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Split] = {
         "Split",
-        "Divides tensor into multiple parts along a dimension.",
-        "Can split into equal parts or specify sizes.",
+        "Divides a tensor in two along a sample dimension.",
+        "Output 1 takes the first split_size entries along dim and Output 2 the rest, "
+        "like torch.split(x, [split_size, n - split_size], dim). Each output feeds its own "
+        "branch; merge the branches again with Concatenate, Add, Multiply or Average.",
         {
-            {"split_size", "Size of each split or list of sizes"},
-            {"dim", "Dimension to split"}
+            {"split_size", "Entries in Output 1 (at least 1, less than the dimension's size)"},
+            {"dim", "Batched dimension to split: 1 = features, -1 = last; 0 (the batch) is refused"}
         },
         {
-            "Useful for multi-head attention",
-            "Inverse of Concatenate"
+            "An unused output passes a zero gradient back",
+            "Inverse of Concatenate on the same dim",
+            "In a CNN, split after Flatten"
         },
         "Shape Operations"
     };

@@ -5538,6 +5538,107 @@ set_target_properties(test_cnn_graph_training PROPERTIES
 )
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
+set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/branch_graph_pytorch.json"
+)
+# ===== Test: branched graphs (Split) match PyTorch (TOFIX140 A2) =====
+add_executable(test_branch_graph_training
+    tests/test_branch_graph_training.cpp
+    src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
+    src/core/graph_node_factory.cpp
+    src/core/extension_node_registry.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/training_scheduler_controller.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/sequence_arrow_batcher.cpp
+    src/core/classification_decision.cpp
+    src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
+    src/core/regression_target_transform.cpp
+    src/core/preprocessing_state.cpp
+    src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
+    src/core/dataset_base.cpp
+    src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/training_trace_collector.cpp
+    src/core/route_qualification_snapshot.cpp
+    src/core/runtime_log_store.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+)
+
+target_include_directories(test_branch_graph_training PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_branch_graph_training PRIVATE
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_branch_graph_training PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+        CYXWIZ_BRANCH_GRAPH_FIXTURE="${CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE}"
+    )
+else()
+    target_compile_definitions(test_branch_graph_training PRIVATE
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+        CYXWIZ_BRANCH_GRAPH_FIXTURE="${CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE}"
+    )
+endif()
+
+set_target_properties(test_branch_graph_training PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_custom_target(copy_test_branch_graph_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_branch_graph_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_branch_graph_training>/computation_truth_fixtures/branch_graph_pytorch.json"
+    SOURCES "${CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_branch_graph_training copy_test_branch_graph_training_fixture)
+add_test(NAME branch_graph_pytorch_parity COMMAND test_branch_graph_training)
+
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider
     tests/benchmarks_conv2d_provider.cpp

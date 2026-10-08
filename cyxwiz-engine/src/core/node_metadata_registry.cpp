@@ -2726,11 +2726,16 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Split, NodeCategory::ShapeOps, "Split", ICON_FA_CODE_BRANCH,
-        {"split", "chunk", "shape", "tensor"}, 0, false, "Split tensor along a dimension", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output 1", PinType::Tensor, true, "First split"}, {"Output 2", PinType::Tensor, true, "Second split"}},
-        {{"split_size", "int", "2", "Split size", {}, ""}, {"dim", "int", "0", "Dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {"split", "chunk", "branch", "shape", "tensor"}, 0, false,
+        "Split a tensor in two along a sample dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor to split"}},
+        {{"Output 1", PinType::Tensor, true, "The first split_size entries along dim"},
+         {"Output 2", PinType::Tensor, false, "The remaining entries along dim (may stay unconnected)"}},
+        {{"split_size", "int", "2", "Entries in Output 1; Output 2 takes the rest", {}, "1-1048576",
+          "Split size", "Split", true, false},
+         {"dim", "int", "1", "Batched dimension to split (1 = features; 0, the batch, is refused)", {}, "",
+          "Dimension", "Split", true, false}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Concatenate, NodeCategory::MergeOps, "Concatenate", ICON_FA_CODE_BRANCH,
         {"concatenate", "concat", "cat", "merge", "tensor"}, 0, false, "Concatenate tensors along a dimension", "", "",

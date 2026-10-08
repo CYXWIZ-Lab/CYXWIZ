@@ -1715,9 +1715,12 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             }
 
             case NodeType::Split: {
+                // Output 1 = the first split_size entries, Output 2 = the rest.
                 std::string split_size = GetParamOrDefault(*node, "split_size", "2");
-                std::string dim = GetParamOrDefault(*node, "dim", "0");
-                code += "        " + out + " = " + input_expr(*node, 0) + ".split(" + split_size + ", " + dim + ")\n";
+                std::string dim = GetParamOrDefault(*node, "dim", "1");
+                const std::string source = input_expr(*node, 0);
+                code += "        " + out + " = " + source + ".split([" + split_size + ", " + source +
+                        ".shape()[" + dim + "] - " + split_size + "], " + dim + ")\n";
                 node_outputs[node->id] = out + "[0]";
                 for (size_t i = 0; i < node->outputs.size(); ++i) {
                     pin_outputs[node->outputs[i].id] = out + "[" + std::to_string(i) + "]";

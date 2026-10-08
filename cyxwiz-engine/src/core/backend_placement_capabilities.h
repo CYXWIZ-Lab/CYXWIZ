@@ -612,6 +612,7 @@ inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
         case gui::NodeType::Multiply:
         case gui::NodeType::Average:
         case gui::NodeType::Concatenate:
+        case gui::NodeType::Split:
         case gui::NodeType::TensorDot:
         case gui::NodeType::TensorCompare:
         case gui::NodeType::TensorLogicalMask:
@@ -673,6 +674,10 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
             placement.explanation +=
                 " Current Concatenate ArrayFire coverage is Float32/Float64 "
                 "2D concatenation through the row-major tensor bridge.";
+        } else if (node.type == gui::NodeType::Split) {
+            placement.explanation +=
+                " Split slices its input into two tensors with Tensor::Split "
+                "and concatenates the branch gradients back in backward.";
         } else if (node.type == gui::NodeType::TensorLogicalMask) {
             placement.explanation +=
                 " Current TensorLogicalMask ArrayFire coverage is "

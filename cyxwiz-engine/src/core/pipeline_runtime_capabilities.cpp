@@ -1293,6 +1293,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled and built as an elementwise tensor layer"},
         {gui::NodeType::Concatenate, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Split, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-out tensor op"},
         {gui::NodeType::Add, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
         {gui::NodeType::Multiply, PipelineTrainingSupportRole::ModelLayer,

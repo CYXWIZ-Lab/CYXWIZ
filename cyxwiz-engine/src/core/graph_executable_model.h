@@ -17,8 +17,10 @@ namespace cyxwiz {
  * Pin-aware graph executable.
  *
  * Consumes CompiledGraphPlan and executes selected layer nodes plus explicitly
- * enabled graph-op fan-in nodes. Graph ops stay opt-in via graph_op_node_ids so
- * unsupported multi-input/linalg nodes remain blocked at compile/build time.
+ * enabled graph ops: fan-in nodes (Add, Concatenate, ...) and the Split fan-out.
+ * Tensors are cached and gradients accumulated per output pin. Graph ops stay
+ * opt-in via graph_op_node_ids so unsupported multi-input/linalg nodes remain
+ * blocked at compile/build time.
  */
 class GraphExecutableModel final : public IExecutableModel {
 public:
