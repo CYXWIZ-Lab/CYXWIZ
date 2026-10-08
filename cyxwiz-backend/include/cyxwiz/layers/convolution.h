@@ -82,6 +82,12 @@ private:
     Tensor grad_weights_;
     Tensor grad_bias_;
     bool has_forward_ = false;
+    // Device-resident provider path (TOFIX140 A1b): tried before ArrayFire;
+    // a failed provider is not retried for this layer.
+    bool provider_disabled_ = false;
+    bool provider_logged_ = false;
+    bool TryProviderForward(const Tensor& input, const std::vector<size_t>& output_shape, Tensor& output);
+    bool TryProviderBackward(const Tensor& grad_output, Tensor& grad_input);
 };
 
 // ============================================================================

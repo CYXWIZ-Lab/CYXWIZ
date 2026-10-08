@@ -38,7 +38,7 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kProviderId = "cyxwiz.nvidia-cublas-cell";
-constexpr const char* kProviderSemver = "0.7.0-rnn-training";
+constexpr const char* kProviderSemver = "0.8.0-conv2d";
 
 // Fused cell kernels. Layout conventions shared with the CyxWiz CPU
 // references: x is [batch, seq, features] row-major, so the row index of
@@ -289,6 +289,98 @@ constexpr const char* kDeviceKernelSource = R"(
 extern "C" __global__ void cyxwiz_device_probe(const float* x, float* y, int n) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) y[i] = 2.0f * x[i];
+}
+
+// 2D convolution helpers (TOFIX140 A1b). Arrays are first-dimension-fastest:
+// x[h + H*(w + W*(c + C*n))]; the column matrix of sample b is
+// cols[kk + K*(m + P*b)] with kk = i + k*j + k*k*c (the weight layout
+// [k, k, Cin, Cout]) and m = oh + OH*ow, K = k*k*C, P = OH*OW. Samples
+// n0 .. n0+nb-1 of the batch are in one call.
+extern "C" __global__ void cyxwiz_conv_im2col(
+    const float* __restrict__ x, float* __restrict__ cols,
+    int H, int W, int C, int k, int stride, int pad, int OH, int OW,
+    int n0, long long total) {
+    const long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+    const int K = k * k * C;
+    const int P = OH * OW;
+    const int kk = (int)(idx % K);
+    const long long rest = idx / K;
+    const int m = (int)(rest % P);
+    const int b = (int)(rest / P);
+    const int i = kk % k;
+    const int j = (kk / k) % k;
+    const int c = kk / (k * k);
+    const int oh = m % OH;
+    const int ow = m / OH;
+    const int h = oh * stride - pad + i;
+    const int w = ow * stride - pad + j;
+    float v = 0.0f;
+    if (h >= 0 && h < H && w >= 0 && w < W) {
+        v = x[h + (long long)H * (w + (long long)W * (c + (long long)C * (n0 + b)))];
+    }
+    cols[idx] = v;
+}
+
+// dx gathered from the column gradient (no atomics): each input element sums
+// the column entries that read it.
+extern "C" __global__ void cyxwiz_conv_col2im(
+    const float* __restrict__ dcols, float* __restrict__ dx,
+    int H, int W, int C, int k, int stride, int pad, int OH, int OW,
+    int n0, long long total) {
+    const long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+    const int h = (int)(idx % H);
+    const int w = (int)((idx / H) % W);
+    const int c = (int)((idx / ((long long)H * W)) % C);
+    const int b = (int)(idx / ((long long)H * W * C));
+    const int K = k * k * C;
+    const int P = OH * OW;
+    float sum = 0.0f;
+    for (int i = 0; i < k; ++i) {
+        const int hh = h + pad - i;
+        if (hh < 0 || hh % stride != 0) continue;
+        const int oh = hh / stride;
+        if (oh >= OH) continue;
+        for (int j = 0; j < k; ++j) {
+            const int ww = w + pad - j;
+            if (ww < 0 || ww % stride != 0) continue;
+            const int ow = ww / stride;
+            if (ow >= OW) continue;
+            const int kk = i + k * j + k * k * c;
+            sum += dcols[kk + (long long)K * ((oh + OH * ow) + (long long)P * b)];
+        }
+    }
+    dx[h + (long long)H * (w + (long long)W * (c + (long long)C * (n0 + b)))] = sum;
+}
+
+// y[m + P*(co + Cout*n)] += bias[co]
+extern "C" __global__ void cyxwiz_conv_bias_add(
+    float* __restrict__ y, const float* __restrict__ bias, int P, int Cout, long long total) {
+    const long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+    y[idx] += bias[(int)((idx / P) % Cout)];
+}
+
+// db[co] = sum over n, m of dy[m + P*(co + Cout*n)]; one block per channel.
+extern "C" __global__ void cyxwiz_conv_bias_grad(
+    const float* __restrict__ dy, float* __restrict__ db, int P, int Cout, int N) {
+    __shared__ float partial[256];
+    const int co = blockIdx.x;
+    float sum = 0.0f;
+    const long long count = (long long)P * N;
+    for (long long t = threadIdx.x; t < count; t += blockDim.x) {
+        const long long n = t / P;
+        const long long m = t % P;
+        sum += dy[m + (long long)P * (co + (long long)Cout * n)];
+    }
+    partial[threadIdx.x] = sum;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) partial[threadIdx.x] += partial[threadIdx.x + s];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) db[co] = partial[0];
 }
 )";
 
@@ -755,6 +847,8 @@ public:
         for (auto& [dim, kernel] : attention_forward_) {
             if (kernel.module) cuModuleUnload(kernel.module);
         }
+        if (workspace_) cudaFree(workspace_);
+        if (cublas_) cublasDestroy(cublas_);
         if (module_) cuModuleUnload(module_);
     }
 
@@ -795,13 +889,49 @@ public:
         nvrtcGetPTX(program, ptx.data());
         nvrtcDestroyProgram(&program);
         if (cuModuleLoadData(&module_, ptx.c_str()) != CUDA_SUCCESS ||
-            cuModuleGetFunction(&probe_, module_, "cyxwiz_device_probe") != CUDA_SUCCESS) {
+            cuModuleGetFunction(&probe_, module_, "cyxwiz_device_probe") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&conv_im2col_, module_, "cyxwiz_conv_im2col") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&conv_col2im_, module_, "cyxwiz_conv_col2im") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&conv_bias_add_, module_, "cyxwiz_conv_bias_add") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&conv_bias_grad_, module_, "cyxwiz_conv_bias_grad") != CUDA_SUCCESS) {
             failure = "device kernel module load failed";
+            return false;
+        }
+        if (cublasCreate(&cublas_) != CUBLAS_STATUS_SUCCESS) {
+            cublas_ = nullptr;
+            failure = "cuBLAS handle for device-resident ops failed";
             return false;
         }
         device_ = native_device;
         ready_ = true;
         return true;
+    }
+
+    CUfunction ConvIm2col() const { return conv_im2col_; }
+    CUfunction ConvCol2im() const { return conv_col2im_; }
+    CUfunction ConvBiasAdd() const { return conv_bias_add_; }
+    CUfunction ConvBiasGrad() const { return conv_bias_grad_; }
+    // The cuBLAS handle bound to the caller's stream for this call.
+    cublasHandle_t Cublas(CUstream stream) {
+        cublasSetStream(cublas_, reinterpret_cast<cudaStream_t>(stream));
+        return cublas_;
+    }
+    // Stream-ordered scratch for the column matrices; grows, never shrinks.
+    // Growing waits for the stream so a buffer in use is not freed early.
+    float* Workspace(size_t floats, CUstream stream) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (floats <= workspace_floats_) return workspace_;
+        if (workspace_) {
+            cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream));
+            cudaFree(workspace_);
+            workspace_ = nullptr;
+            workspace_floats_ = 0;
+        }
+        void* ptr = nullptr;
+        if (cudaMalloc(&ptr, floats * sizeof(float)) != cudaSuccess) return nullptr;
+        workspace_ = static_cast<float*>(ptr);
+        workspace_floats_ = floats;
+        return workspace_;
     }
 
     CUfunction Probe() const { return probe_; }
@@ -873,6 +1003,13 @@ private:
     int device_ = -1;
     CUmodule module_ = nullptr;
     CUfunction probe_ = nullptr;
+    CUfunction conv_im2col_ = nullptr;
+    CUfunction conv_col2im_ = nullptr;
+    CUfunction conv_bias_add_ = nullptr;
+    CUfunction conv_bias_grad_ = nullptr;
+    cublasHandle_t cublas_ = nullptr;
+    float* workspace_ = nullptr;
+    size_t workspace_floats_ = 0;
     std::map<int, CompiledKernel> attention_forward_;
 };
 
@@ -960,6 +1097,14 @@ public:
                 std::string("request targets ") +
                 NeuralDevicePlatformName(request.target.platform) +
                 "; this provider serves cuda only";
+            return capability;
+        }
+        // Device-resident 2D convolution (TOFIX140 A1b).
+        if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
+            capability.detail = ConvContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
             return capability;
         }
         // v2 device-resident ops (tofix112 phase 5b).
@@ -1849,6 +1994,192 @@ private:
         return Ok();
     }
 
+    // ---- 2D convolution (TOFIX140 A1b) -------------------------------------
+    struct ConvGeometry {
+        int H = 0, W = 0, C = 0, N = 0, Cout = 0, k = 0, stride = 1, pad = 0, OH = 0, OW = 0;
+        size_t K = 0, P = 0;  // k*k*C, OH*OW
+    };
+
+    static ConvGeometry ConvGeometryOf(const NeuralOpRequest& r) {
+        ConvGeometry g;
+        g.H = static_cast<int>(r.conv_height);
+        g.W = static_cast<int>(r.conv_width);
+        g.C = static_cast<int>(r.input);
+        g.N = static_cast<int>(r.batch);
+        g.Cout = static_cast<int>(r.hidden);
+        g.k = static_cast<int>(r.conv_kernel);
+        g.stride = static_cast<int>(r.conv_stride);
+        g.pad = static_cast<int>(r.conv_padding);
+        g.OH = (g.H + 2 * g.pad - g.k) / g.stride + 1;
+        g.OW = (g.W + 2 * g.pad - g.k) / g.stride + 1;
+        g.K = static_cast<size_t>(g.k) * g.k * g.C;
+        g.P = static_cast<size_t>(g.OH) * g.OW;
+        return g;
+    }
+
+    static std::string ConvContractError(const NeuralOpRequest& r) {
+        if (!r.device_resident) return "conv2d runs device-resident only";
+        if (r.dtype != DataType::Float32) return "conv2d needs Float32";
+        if (r.batch == 0 || r.input == 0 || r.hidden == 0 || r.conv_height == 0 || r.conv_width == 0 ||
+            r.conv_kernel == 0 || r.conv_stride == 0) {
+            return "conv2d sizes must be positive";
+        }
+        const size_t limit = static_cast<size_t>(std::numeric_limits<int>::max() / 4);
+        if (r.batch > limit || r.input > limit || r.hidden > limit || r.conv_height > limit ||
+            r.conv_width > limit || r.conv_kernel > limit || r.conv_stride > limit || r.conv_padding > limit) {
+            return "conv2d sizes exceed the int range";
+        }
+        if (r.conv_height + 2 * r.conv_padding < r.conv_kernel ||
+            r.conv_width + 2 * r.conv_padding < r.conv_kernel) {
+            return "conv2d kernel does not fit the padded input";
+        }
+        const size_t K = r.conv_kernel * r.conv_kernel * r.input;
+        const size_t OH = (r.conv_height + 2 * r.conv_padding - r.conv_kernel) / r.conv_stride + 1;
+        const size_t OW = (r.conv_width + 2 * r.conv_padding - r.conv_kernel) / r.conv_stride + 1;
+        if (K > limit || OH * OW > limit) return "conv2d column matrix exceeds the int range";
+        return {};
+    }
+
+    // Samples per pass so a column matrix stays within ~128 MB (at least one).
+    static int ConvChunk(const ConvGeometry& g) {
+        constexpr size_t kMaxColumnFloats = size_t{32} << 20;
+        const size_t per_sample = std::max<size_t>(1, g.K * g.P);
+        return static_cast<int>(std::max<size_t>(1, std::min<size_t>(g.N, kMaxColumnFloats / per_sample)));
+    }
+
+    static unsigned Blocks(long long total, unsigned threads) {
+        return static_cast<unsigned>((total + threads - 1) / threads);
+    }
+
+    NeuralOpStatus ExecuteConv2dForward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const ConvGeometry g = ConvGeometryOf(r);
+        const size_t x_elems = static_cast<size_t>(g.H) * g.W * g.C * g.N;
+        const size_t w_elems = g.K * g.Cout;
+        const size_t y_elems = g.P * g.Cout * g.N;
+        if (buffers.inputs.size() != (r.conv_bias ? 3u : 2u) || buffers.outputs.size() != 1 ||
+            buffers.inputs[0].elements != x_elems || buffers.inputs[1].elements != w_elems ||
+            (r.conv_bias && buffers.inputs[2].elements != static_cast<size_t>(g.Cout)) ||
+            buffers.outputs[0].elements != y_elems) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "conv2d_forward buffers do not match the request (X, Wt[, B] -> Y)");
+        }
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        const int chunk = ConvChunk(g);
+        float* cols = device_state_.Workspace(g.K * g.P * static_cast<size_t>(chunk), stream);
+        if (!cols) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "conv2d column workspace");
+        const float* x = static_cast<const float*>(buffers.inputs[0].handle);
+        const float* wt = static_cast<const float*>(buffers.inputs[1].handle);
+        float* y = static_cast<float*>(buffers.outputs[0].handle);
+        cublasHandle_t blas = device_state_.Cublas(stream);
+        constexpr unsigned kThreads = 256;
+        const float one = 1.0f, zero = 0.0f;
+        int H = g.H, W = g.W, C = g.C, k = g.k, s = g.stride, p = g.pad, OH = g.OH, OW = g.OW;
+        for (int n0 = 0; n0 < g.N; n0 += chunk) {
+            const int nb = std::min(chunk, g.N - n0);
+            long long total = static_cast<long long>(g.K * g.P) * nb;
+            void* args[] = {const_cast<float**>(&x), &cols, &H, &W, &C, &k, &s, &p, &OH, &OW, const_cast<int*>(&n0), &total};
+            if (cuLaunchKernel(device_state_.ConvIm2col(), Blocks(total, kThreads), 1, 1, kThreads, 1, 1, 0, stream,
+                               args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d im2col launch failed");
+            }
+            // Per sample (column-major): Y_b[P x Cout] = cols_b^T[P x K] * Wt[K x Cout].
+            if (cublasSgemmStridedBatched(blas, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(g.P), g.Cout,
+                                          static_cast<int>(g.K), &one, cols, static_cast<int>(g.K),
+                                          static_cast<long long>(g.K * g.P), wt, static_cast<int>(g.K), 0, &zero,
+                                          y + static_cast<size_t>(n0) * g.P * g.Cout, static_cast<int>(g.P),
+                                          static_cast<long long>(g.P * g.Cout), nb) != CUBLAS_STATUS_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d forward GEMM failed");
+            }
+        }
+        if (r.conv_bias) {
+            const float* bias = static_cast<const float*>(buffers.inputs[2].handle);
+            int P = static_cast<int>(g.P), Cout = g.Cout;
+            long long total = static_cast<long long>(y_elems);
+            void* args[] = {&y, const_cast<float**>(&bias), &P, &Cout, &total};
+            if (cuLaunchKernel(device_state_.ConvBiasAdd(), Blocks(total, kThreads), 1, 1, kThreads, 1, 1, 0, stream,
+                               args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d bias launch failed");
+            }
+        }
+        return Ok();
+    }
+
+    NeuralOpStatus ExecuteConv2dBackward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const ConvGeometry g = ConvGeometryOf(r);
+        const size_t x_elems = static_cast<size_t>(g.H) * g.W * g.C * g.N;
+        const size_t w_elems = g.K * g.Cout;
+        const size_t y_elems = g.P * g.Cout * g.N;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        if (in.size() != 3 || out.size() != (r.conv_bias ? 3u : 2u) || in[0].elements != x_elems ||
+            in[1].elements != w_elems || in[2].elements != y_elems || out[0].elements != x_elems ||
+            out[1].elements != w_elems || (r.conv_bias && out[2].elements != static_cast<size_t>(g.Cout))) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "conv2d_backward buffers do not match the request (X, Wt, dY -> dX, dWt[, dB])");
+        }
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        const int chunk = ConvChunk(g);
+        const size_t cols_floats = g.K * g.P * static_cast<size_t>(chunk);
+        // Two column matrices: the recomputed im2col and its gradient.
+        float* work = device_state_.Workspace(2 * cols_floats, stream);
+        if (!work) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "conv2d column workspace");
+        float* cols = work;
+        float* dcols = work + cols_floats;
+        const float* x = static_cast<const float*>(in[0].handle);
+        const float* wt = static_cast<const float*>(in[1].handle);
+        const float* dy = static_cast<const float*>(in[2].handle);
+        float* dx = static_cast<float*>(out[0].handle);
+        float* dwt = static_cast<float*>(out[1].handle);
+        cublasHandle_t blas = device_state_.Cublas(stream);
+        constexpr unsigned kThreads = 256;
+        const float one = 1.0f, zero = 0.0f;
+        int H = g.H, W = g.W, C = g.C, k = g.k, s = g.stride, p = g.pad, OH = g.OH, OW = g.OW;
+        const int Kd = static_cast<int>(g.K), Pd = static_cast<int>(g.P);
+        bool first = true;
+        for (int n0 = 0; n0 < g.N; n0 += chunk) {
+            const int nb = std::min(chunk, g.N - n0);
+            long long cols_total = static_cast<long long>(g.K * g.P) * nb;
+            void* im_args[] = {const_cast<float**>(&x), &cols, &H, &W, &C, &k, &s, &p, &OH, &OW,
+                               const_cast<int*>(&n0), &cols_total};
+            if (cuLaunchKernel(device_state_.ConvIm2col(), Blocks(cols_total, kThreads), 1, 1, kThreads, 1, 1, 0,
+                               stream, im_args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d im2col launch failed");
+            }
+            const float* dy_chunk = dy + static_cast<size_t>(n0) * g.P * g.Cout;
+            // dWt[K x Cout] += cols_b[K x P] * dY_b[P x Cout], one sample at a time.
+            for (int b = 0; b < nb; ++b) {
+                if (cublasSgemm(blas, CUBLAS_OP_N, CUBLAS_OP_N, Kd, g.Cout, Pd, &one, cols + g.K * g.P * b, Kd,
+                                dy_chunk + g.P * g.Cout * b, Pd, first ? &zero : &one, dwt, Kd) !=
+                    CUBLAS_STATUS_SUCCESS) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d weight GEMM failed");
+                }
+                first = false;
+            }
+            // dcols_b[K x P] = Wt[K x Cout] * dY_b^T[Cout x P].
+            if (cublasSgemmStridedBatched(blas, CUBLAS_OP_N, CUBLAS_OP_T, Kd, Pd, g.Cout, &one, wt, Kd, 0, dy_chunk,
+                                          Pd, static_cast<long long>(g.P * g.Cout), &zero, dcols, Kd,
+                                          static_cast<long long>(g.K * g.P), nb) != CUBLAS_STATUS_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d input GEMM failed");
+            }
+            long long x_total = static_cast<long long>(g.H) * g.W * g.C * nb;
+            void* col_args[] = {&dcols, &dx, &H, &W, &C, &k, &s, &p, &OH, &OW, const_cast<int*>(&n0), &x_total};
+            if (cuLaunchKernel(device_state_.ConvCol2im(), Blocks(x_total, kThreads), 1, 1, kThreads, 1, 1, 0,
+                               stream, col_args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d col2im launch failed");
+            }
+        }
+        if (r.conv_bias) {
+            float* db = static_cast<float*>(out[2].handle);
+            int P = Pd, Cout = g.Cout, N = g.N;
+            void* args[] = {const_cast<float**>(&dy), &db, &P, &Cout, &N};
+            if (cuLaunchKernel(device_state_.ConvBiasGrad(), static_cast<unsigned>(g.Cout), 1, 1, 256, 1, 1, 0,
+                               stream, args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "conv2d bias gradient launch failed");
+            }
+        }
+        return Ok();
+    }
+
     NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
                                  NeuralDeviceOpBuffers& buffers) override {
         const NeuralCapability capability = QueryCapability(request);
@@ -1864,6 +2195,14 @@ private:
             }
             return request.op == NeuralOp::AttentionForward ? ExecuteAttentionForward(request, buffers)
                                                             : ExecuteAttentionBackward(request, buffers);
+        }
+        if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
+            std::string failure;
+            if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+            }
+            return request.op == NeuralOp::Conv2dForward ? ExecuteConv2dForward(request, buffers)
+                                                         : ExecuteConv2dBackward(request, buffers);
         }
         if (buffers.inputs.size() != 1 || buffers.outputs.size() != 1 ||
             buffers.inputs[0].elements != request.elements ||

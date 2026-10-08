@@ -96,6 +96,24 @@ def build() -> list[dict[str, Any]]:
         x, lambda t: functional.conv2d(t, w, b, stride=2, padding=0),
         {"weights": w, "bias": b}, {"weights": conv_weight, "bias": plain}))
 
+    # Conv2d at an image size (the ArrayFire CUDA path failed here; TOFIX140 A1b)
+    x = torch.randn(2, 3, 32, 32)
+    w = torch.randn(8, 3, 3, 3) * 0.3
+    b = torch.randn(8) * 0.1
+    cases.append(case(
+        "conv2d_image_32", "Conv2D", {"filters": 8, "kernel_size": 3, "stride": 1, "padding": 1},
+        x, lambda t: functional.conv2d(t, w, b, stride=1, padding=1),
+        {"weights": w, "bias": b}, {"weights": conv_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
+
+    # Conv2d with padding >= kernel (ArrayFire unwrap cannot; the provider can)
+    x = torch.randn(1, 2, 5, 5)
+    w = torch.randn(3, 2, 3, 3) * 0.3
+    b = torch.randn(3) * 0.1
+    cases.append(case(
+        "conv2d_k3_p3", "Conv2D", {"filters": 3, "kernel_size": 3, "stride": 2, "padding": 3},
+        x, lambda t: functional.conv2d(t, w, b, stride=2, padding=3),
+        {"weights": w, "bias": b}, {"weights": conv_weight, "bias": plain}))
+
     # MaxPool2d 2/2
     x = torch.randn(2, 3, 8, 8)
     cases.append(case(

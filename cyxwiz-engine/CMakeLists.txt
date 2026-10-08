@@ -5538,6 +5538,20 @@ set_target_properties(test_cnn_graph_training PROPERTIES
 )
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
+# ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
+add_executable(benchmark_conv2d_provider
+    tests/benchmarks_conv2d_provider.cpp
+)
+target_include_directories(benchmark_conv2d_provider PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(benchmark_conv2d_provider PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(benchmark_conv2d_provider PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
