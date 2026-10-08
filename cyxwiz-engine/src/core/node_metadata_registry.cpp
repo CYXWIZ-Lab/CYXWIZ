@@ -1168,7 +1168,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
         {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
         {NodeType::Augmentation, NodeCategory::Preprocessing, "Augmentation", {"augmentation", "transform"}},
-        {NodeType::TensorReshape, NodeCategory::ShapeOps, "Tensor Reshape", {"tensor", "reshape", "legacy"}},
         {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
         {NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", {"image", "crop"}},
         {NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", {"image", "crop", "augmentation"}},

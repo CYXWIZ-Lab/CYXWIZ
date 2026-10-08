@@ -309,14 +309,6 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             break;
         }
 
-        case NodeType::TensorReshape: {
-            properties_rows::Rows rows("##rows");
-            if (!rows.ok) break;
-            edited |= TextRow(node, "shape", "Target shape", "-1,28,28,1");
-            properties_rows::Note("Use -1 for the batch dimension");
-            break;
-        }
-
         // ========== Activation Functions ==========
         case NodeType::ReLU:
             Formula("ReLU activation", "f(x) = max(0, x)");

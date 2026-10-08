@@ -251,7 +251,6 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
         case NodeType::DataLoader:
         case NodeType::Augmentation:
         case NodeType::DataSplit:
-        case NodeType::TensorReshape:
         // Image Transform Nodes (Phase 1)
         case NodeType::Resize:
         case NodeType::CenterCrop:
@@ -631,33 +630,6 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::DataSplit: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
-        case NodeType::TensorReshape: {
-            // TensorReshape node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Any tensor — total element count must match the target "
-                "shape (one -1 entry is auto-computed).";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Reshaped to the comma-separated `shape` parameter — "
-                "e.g. '-1,28,28,1' to recover MNIST-shaped images from "
-                "a flattened tensor.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "-1,28,28,1";
             break;
         }
 

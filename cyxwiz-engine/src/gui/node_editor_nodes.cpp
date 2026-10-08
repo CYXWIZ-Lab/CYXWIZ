@@ -442,8 +442,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(0, 151, 167, 255);
         case NodeType::DataSplit:
             return IM_COL32(38, 198, 218, 255);
-        case NodeType::TensorReshape:
-            return IM_COL32(77, 208, 225, 255);
         case NodeType::Normalize:
             return IM_COL32(128, 222, 234, 255);
         case NodeType::OneHotEncode:

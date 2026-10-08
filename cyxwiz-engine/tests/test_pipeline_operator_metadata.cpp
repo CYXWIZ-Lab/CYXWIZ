@@ -6285,6 +6285,8 @@ int main() {
         Check(metadata.GetMetadata(retired) == nullptr,
               "retired plot node types are not registered: " + TypeId(retired));
     }
+    Check(metadata.GetMetadata(gui::NodeType::TensorReshape) == nullptr,
+          "retired Tensor Reshape (the Reshape node replaced it) is not registered");
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

@@ -284,7 +284,6 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::DataLoader:
         case NodeType::Augmentation:
         case NodeType::DataSplit:
-        case NodeType::TensorReshape:
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
             return "Data Pipeline";
@@ -1694,20 +1693,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "External Dev/Test sources are preserved by role resolution",
             "Do not build separate Val/Test model branches from legacy pins"
-        },
-        "Data Pipeline"
-    };
-
-    docs_[NodeType::TensorReshape] = {
-        "Tensor Reshape (Legacy)",
-        "Reshapes tensor dimensions. Legacy node - prefer the Reshape node instead.",
-        "Same as Reshape but with older interface.",
-        {
-            {"shape", "Target shape"}
-        },
-        {
-            "Use Reshape node instead",
-            "Kept for backward compatibility"
         },
         "Data Pipeline"
     };

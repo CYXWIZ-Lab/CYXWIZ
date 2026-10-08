@@ -216,7 +216,9 @@ enum class NodeType {
     DataLoader,         // Batch iterator with shuffle/drop_last
     Augmentation,       // Transform pipeline for data augmentation
     DataSplit,          // Train/val/test splitter
-    TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
+    TensorReshape,      // Retired (the Reshape node replaced it): the slot stays
+                        // so later ids do not move; a saved graph with one
+                        // fails to load with a message naming Reshape.
     Normalize,          // Normalize values (mean/std, domain-aware)
     OneHotEncode,       // Label encoding
 

@@ -1097,7 +1097,6 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::DataLoader, "DataLoader"},
         {gui::NodeType::Augmentation, "Augmentation"},
         {gui::NodeType::DataSplit, "DataSplit"},
-        {gui::NodeType::TensorReshape, "TensorReshape"},
         {gui::NodeType::Normalize, "Normalize"},
         {gui::NodeType::OneHotEncode, "OneHotEncode"},
         {gui::NodeType::TimeSeriesWindow, "TimeSeriesWindow"},

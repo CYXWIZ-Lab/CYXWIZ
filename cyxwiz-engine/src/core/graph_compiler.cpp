@@ -6184,25 +6184,6 @@ struct PreprocessingNodeSpec {
 
 // --- Tabular extractors (migrated from the old switch) ---
 
-static void ExtractReshape(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.preprocessing.has_reshape = true;
-    if (node.parameters.count("shape")) {
-        std::string shape_str = node.parameters.at("shape");
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
-
-        size_t pos = 0;
-        while ((pos = shape_str.find(',')) != std::string::npos) {
-            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str.substr(0, pos)));
-            shape_str.erase(0, pos + 1);
-        }
-        if (!shape_str.empty()) {
-            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str));
-        }
-    }
-}
-
 static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config) {
     config.preprocessing.has_onehot = true;
     if (node.parameters.count("num_classes"))
@@ -6393,7 +6374,6 @@ static void ExtractTextVectorizerShape(
 static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     // Tabular (existing, migrated from switch)
     {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractImageNormalize},
-    {gui::NodeType::TensorReshape,      PreprocessingDomain::Tabular,     ExtractReshape},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)

@@ -114,7 +114,6 @@ constexpr std::array<NodeTypeImportName, 204> kNodeTypeImportNames = {{
         {"DataLoader", NodeType::DataLoader},
         {"Augmentation", NodeType::Augmentation},
         {"DataSplit", NodeType::DataSplit},
-        {"TensorReshape", NodeType::TensorReshape},
         {"Normalize", NodeType::Normalize},
         {"OneHotEncode", NodeType::OneHotEncode},
         {"TextTokenizer", NodeType::TextTokenizer},

@@ -332,6 +332,12 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "a Plot node (its window picks the plot type)";
                 return false;
             }
+            if (node_type == NodeType::TensorReshape) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Tensor Reshape node, which the Reshape node replaced: remove it from the file or "
+                        "rebuild the graph with a Reshape node";
+                return false;
+            }
 
             const int saved_node_id = node_json.at("id").get<int>();
             const std::string saved_node_name = node_json.at("name").get<std::string>();

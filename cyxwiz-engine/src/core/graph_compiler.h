@@ -83,16 +83,13 @@ enum class PreprocessingDomain {
 
 /**
  * Tabular preprocessing configuration (the original v0.1 struct, kept for
- * backward compatibility). Extracted from Normalize / TensorReshape /
+ * backward compatibility). Extracted from Normalize /
  * OneHotEncode nodes.
  */
 struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
-
-    bool has_reshape = false;
-    std::vector<int> reshape_dims;
 
     bool has_onehot = false;
     size_t num_classes = 0;

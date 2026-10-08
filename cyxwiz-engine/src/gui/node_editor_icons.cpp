@@ -104,7 +104,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Shape Operations
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
                 return ICON_TI_ARROWS_MAXIMIZE;
             case NodeType::Permute:
@@ -559,7 +558,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Shape Operations
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -870,7 +868,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -1192,7 +1189,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -1514,7 +1510,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -1847,7 +1842,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
         // Shape Operations
         case NodeType::Reshape:
-        case NodeType::TensorReshape:
         case NodeType::View:
             return ICON_FA_EXPAND;
         case NodeType::Permute:

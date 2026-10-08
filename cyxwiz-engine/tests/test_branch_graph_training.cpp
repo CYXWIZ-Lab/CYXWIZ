@@ -6,6 +6,7 @@
 // fixtures/branch_graph_pytorch.json (generate_branch_graph_fixtures.py).
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/graph_executable_model.h"
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
@@ -299,6 +300,20 @@ int main(int, char** argv) {
         cyxwiz::GraphCompiler compiler;
         const auto config = compiler.Compile(graph.nodes, graph.links, true);
         Check(!config.is_valid, "Concatenate on a dim outside the rows is refused");
+    }
+
+    // Tensor Reshape is retired (Reshape replaced it): a saved graph with one
+    // fails to load with a message naming Reshape.
+    {
+        const json saved = {
+            {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(gui::NodeType::TensorReshape)},
+                                    {"name", "Old reshape"}, {"parameters", json::object()}}})},
+            {"links", json::array()}};
+        cyxwiz::GraphDocument graph;
+        std::string error;
+        Check(!cyxwiz::ParseGraphDocument(saved.dump(), graph, error) &&
+                  error.find("Reshape node replaced") != std::string::npos,
+              "a saved Tensor Reshape node is refused with a message naming Reshape: " + error);
     }
 
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";

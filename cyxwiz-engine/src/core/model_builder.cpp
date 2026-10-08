@@ -1414,7 +1414,6 @@ bool BuildSequential(
             case gui::NodeType::DataLoader:
             case gui::NodeType::Augmentation:
             case gui::NodeType::DataSplit:
-            case gui::NodeType::TensorReshape:
             case gui::NodeType::Normalize:
             case gui::NodeType::OneHotEncode:
             // Loss functions

@@ -2004,13 +2004,6 @@ void NodeEditor::RenderNodes() {
                 }
                 break;
             }
-            case NodeType::TensorReshape: {
-                auto it = node.parameters.find("shape");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shape: %s", it->second.c_str());
-                }
-                break;
-            }
             case NodeType::Normalize: {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
