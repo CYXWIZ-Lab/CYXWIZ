@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,9 @@ def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
     for p in params.values():
         p.requires_grad_(True)
     y = forward(x)
-    torch.manual_seed(hash(name) % (2**31))
+    # crc32, not hash(): str hashes are salted per process, so hash() made
+    # every regeneration rewrite every case's upstream gradient.
+    torch.manual_seed(zlib.crc32(name.encode()))
     grad_out = torch.randn_like(y)
     y.backward(grad_out)
     out: dict[str, Any] = {
