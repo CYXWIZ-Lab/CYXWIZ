@@ -6395,7 +6395,6 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
         case gui::NodeType::RNN:
-        case gui::NodeType::Bidirectional:
         case gui::NodeType::TimeDistributed:
             return true;
         default:

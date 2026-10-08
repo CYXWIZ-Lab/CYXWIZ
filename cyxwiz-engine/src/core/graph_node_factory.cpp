@@ -144,14 +144,12 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
         case NodeType::Embedding:
             return NodeCategory::Recurrent;
 
         // Attention & Transformer
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
         case NodeType::TransformerEncoder:
@@ -681,8 +679,7 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::RNN:
-        case NodeType::Bidirectional: {
+        case NodeType::RNN: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -704,7 +701,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);

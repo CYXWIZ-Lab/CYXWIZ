@@ -57,7 +57,6 @@ bool NASEvaluator::IsTrainableLayer(gui::NodeType type) {
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
             return true;
@@ -163,8 +162,7 @@ int64_t NASEvaluator::EstimateLayerParams(
             param_count = static_cast<int64_t>(vocab_size) * embed_dim;
             break;
         }
-        case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention: {
+        case gui::NodeType::MultiHeadAttention: {
             int dim = GetParam("embed_dim", 64);
             param_count = 4 * static_cast<int64_t>(dim) * dim;  // Q, K, V, O projections
             break;

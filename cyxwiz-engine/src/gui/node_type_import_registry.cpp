@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 204> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 201> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -25,11 +25,9 @@ constexpr std::array<NodeTypeImportName, 204> kNodeTypeImportNames = {{
         {"RNN", NodeType::RNN},
         {"LSTM", NodeType::LSTM},
         {"GRU", NodeType::GRU},
-        {"Bidirectional", NodeType::Bidirectional},
         {"TimeDistributed", NodeType::TimeDistributed},
         {"Embedding", NodeType::Embedding},
         {"MultiHeadAttention", NodeType::MultiHeadAttention},
-        {"SelfAttention", NodeType::SelfAttention},
         {"CrossAttention", NodeType::CrossAttention},
         {"LinearAttention", NodeType::LinearAttention},
         {"TransformerEncoder", NodeType::TransformerEncoder},

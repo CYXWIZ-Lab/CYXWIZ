@@ -129,11 +129,9 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::RNN: return "RNN";
         case gui::NodeType::LSTM: return "LSTM";
         case gui::NodeType::GRU: return "GRU";
-        case gui::NodeType::Bidirectional: return "Bidirectional";
         case gui::NodeType::TimeDistributed: return "TimeDistributed";
         case gui::NodeType::Embedding: return "Embedding";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
-        case gui::NodeType::SelfAttention: return "SelfAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::TransformerEncoder: return "TransformerEncoder";
@@ -321,7 +319,6 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     break;
                 }
                 case gui::NodeType::MultiHeadAttention:
-                case gui::NodeType::SelfAttention:
                 case gui::NodeType::CrossAttention: {
                     int64_t embed_dim = GetIntParam(*node, "embed_dim", 256);
                     int64_t num_heads = GetIntParam(*node, "num_heads", 8);
@@ -542,7 +539,6 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::RNN:
         case gui::NodeType::Embedding:
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::CrossAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
@@ -835,7 +831,6 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
             return {static_cast<size_t>(embed_dim)};
         }
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::CrossAttention: {
             // Output shape same as input for attention
             return input_shape;

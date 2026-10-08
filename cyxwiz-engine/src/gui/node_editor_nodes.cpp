@@ -303,14 +303,12 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
         case NodeType::Embedding:
             return IM_COL32(63, 81, 181, 255);
 
         // ===== Attention & Transformer - Deep Purple =====
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
         case NodeType::TransformerEncoder:

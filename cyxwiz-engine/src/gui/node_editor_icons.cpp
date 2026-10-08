@@ -67,7 +67,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_TI_ROTATE;
             case NodeType::Embedding:
@@ -75,7 +74,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
                 return ICON_TI_FOCUS;
@@ -510,7 +508,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_RI_REFRESH;
             case NodeType::Embedding:
@@ -520,7 +517,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -883,7 +879,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_LU_REPEAT;
             case NodeType::Embedding:
@@ -897,7 +892,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -1204,7 +1198,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_IO_REFRESH;
             case NodeType::Embedding:
@@ -1218,7 +1211,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -1525,7 +1517,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_PH_REPEAT;
             case NodeType::Embedding:
@@ -1539,7 +1530,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -1805,7 +1795,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
             return ICON_FA_ROTATE;
         case NodeType::Embedding:
@@ -1813,7 +1802,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
         // Attention & Transformer
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
             return ICON_FA_BULLSEYE;

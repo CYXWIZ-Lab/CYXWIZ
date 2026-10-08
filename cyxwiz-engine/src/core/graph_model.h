@@ -98,13 +98,17 @@ enum class NodeType {
     RNN,
     LSTM,
     GRU,
-    Bidirectional,
+    Bidirectional,      // Retired (LSTM/GRU/RNN's bidirectional setting
+                        // replaced it): the slot stays so later ids do not
+                        // move; a saved graph with one fails to load.
     TimeDistributed,
     Embedding,
 
     // ===== Attention & Transformer =====
     MultiHeadAttention,
-    SelfAttention,
+    SelfAttention,      // Retired (Multi-Head Attention replaced it): the slot
+                        // stays so later ids do not move; a saved graph with
+                        // one fails to load.
     CrossAttention,
     LinearAttention,      // O(n) linear attention (Performer/Linear Transformer)
     TransformerEncoder,

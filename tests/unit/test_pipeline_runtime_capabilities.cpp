@@ -63,7 +63,6 @@ TEST_CASE("Training capability registry keeps unsupported attention variants blo
     using gui::NodeType;
 
     const NodeType unsupported_nodes[] = {
-        NodeType::SelfAttention,
         NodeType::CrossAttention,
         NodeType::LinearAttention
     };

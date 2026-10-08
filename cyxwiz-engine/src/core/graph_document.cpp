@@ -338,6 +338,18 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "rebuild the graph with a Reshape node";
                 return false;
             }
+            if (node_type == NodeType::Bidirectional) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Bidirectional node, which the recurrent layers' bidirectional setting replaced: "
+                        "remove it from the file or use LSTM/GRU/RNN with bidirectional = true";
+                return false;
+            }
+            if (node_type == NodeType::SelfAttention) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Self Attention node, which Multi-Head Attention replaced: remove it from the file "
+                        "or rebuild the graph with a Multi-Head Attention node";
+                return false;
+            }
 
             const int saved_node_id = node_json.at("id").get<int>();
             const std::string saved_node_name = node_json.at("name").get<std::string>();

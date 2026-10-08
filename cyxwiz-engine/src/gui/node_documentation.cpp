@@ -163,14 +163,12 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
         case NodeType::Embedding:
             return "Recurrent";
 
         // Attention
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
         case NodeType::TransformerEncoder:
@@ -655,21 +653,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Recurrent"
     };
 
-    docs_[NodeType::Bidirectional] = {
-        "Bidirectional Wrapper",
-        "Blocked standalone-wrapper compatibility node.",
-        "No inner-layer binding or standalone wrapper owner exists in the visual "
-        "compiler/model path. Bidirectional limits must be validated on a concrete recurrent node.",
-        {
-            {"merge_mode", "Historical directional merge-mode text"}
-        },
-        {
-            "This node can be inspected in saved graphs but cannot compile or train",
-            "Configure directionality on a concrete recurrent node only within its verified limits"
-        },
-        "Recurrent"
-    };
-
     docs_[NodeType::Embedding] = {
         "Embedding",
         "Looks up trainable dense vectors for exact integer token IDs.",
@@ -720,25 +703,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "embed_dim must be divisible by num_heads",
             "8 heads is typical, 12-16 for larger models"
-        },
-        "Attention"
-    };
-
-    docs_[NodeType::SelfAttention] = {
-        "Self-Attention",
-        "Blocked compatibility node preserving the historical explicit Query, Key, "
-        "Value, Mask, Output, and Attn Weights graph contract.",
-        "No distinct Studio compiler/model owner exists. Use Multi-Head Attention "
-        "for the supported unary self-attention path.",
-        {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"},
-            {"dropout", "Attention-weight dropout"},
-            {"batch_first", "Whether the legacy tensor layout is batch-first"}
-        },
-        {
-            "This node can be inspected in saved graphs but cannot compile or train",
-            "Do not treat the optional Attn Weights pin as a produced runtime value"
         },
         "Attention"
     };

@@ -1086,17 +1086,11 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
         {gui::NodeType::ValueNetwork,
          "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::SelfAttention,
-         "retains a legacy explicit Query/Key/Value graph contract but has no distinct GraphCompiler/ModelBuilder execution owner; use Multi-Head Attention for supported unary self-attention",
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::CrossAttention,
          "the backend attention primitive can compute Query/Key/Value attention, but Studio has no graph-level multi-input CrossAttention owner or gradient/output contract",
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::LinearAttention,
          "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::Bidirectional,
-         "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node",
          PipelineBackendPrimitiveEvidence::Missing},
     };
     return capabilities;

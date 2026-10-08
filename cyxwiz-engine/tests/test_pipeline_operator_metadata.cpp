@@ -1715,7 +1715,6 @@ void CheckBlockedNormalizationFamilyContract(
 void CheckBlockedAttentionFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
-        gui::NodeType::SelfAttention,
         gui::NodeType::CrossAttention,
         gui::NodeType::LinearAttention,
     };
@@ -1736,32 +1735,26 @@ void CheckBlockedAttentionFamilyContract(
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
     }
 
-    for (const auto type : {gui::NodeType::SelfAttention,
-                            gui::NodeType::CrossAttention}) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta->inputs.size() == 4 &&
-                  meta->inputs[0].name == "Query" && meta->inputs[0].required &&
-                  meta->inputs[1].name == "Key" && meta->inputs[1].required &&
-                  meta->inputs[2].name == "Value" && meta->inputs[2].required &&
-                  meta->inputs[3].name == "Mask" && !meta->inputs[3].required &&
-                  !HasInputType(meta, "Context", gui::PinType::Tensor),
-              "saved self/cross-attention input pin order must remain compatible: " +
-                  TypeId(type));
-        Check(meta->outputs.size() == 2 &&
-                  meta->outputs[0].name == "Output" &&
-                  meta->outputs[0].required &&
-                  meta->outputs[1].name == "Attn Weights" &&
-                  !meta->outputs[1].required,
-              "saved self/cross-attention output pin order must remain compatible: " +
-                  TypeId(type));
-        Check(meta->parameters.size() == 4 &&
-                  ParameterMatches(meta, "embed_dim", "int", "512") &&
-                  ParameterMatches(meta, "num_heads", "int", "8") &&
-                  ParameterMatches(meta, "dropout", "float", "0.0") &&
-                  ParameterMatches(meta, "batch_first", "bool", "true"),
-              "saved self/cross-attention parameters must remain compatible: " +
-                  TypeId(type));
-    }
+    const auto* cross = metadata.GetMetadata(gui::NodeType::CrossAttention);
+    Check(cross->inputs.size() == 4 &&
+              cross->inputs[0].name == "Query" && cross->inputs[0].required &&
+              cross->inputs[1].name == "Key" && cross->inputs[1].required &&
+              cross->inputs[2].name == "Value" && cross->inputs[2].required &&
+              cross->inputs[3].name == "Mask" && !cross->inputs[3].required &&
+              !HasInputType(cross, "Context", gui::PinType::Tensor),
+          "saved cross-attention input pin order must remain compatible");
+    Check(cross->outputs.size() == 2 &&
+              cross->outputs[0].name == "Output" &&
+              cross->outputs[0].required &&
+              cross->outputs[1].name == "Attn Weights" &&
+              !cross->outputs[1].required,
+          "saved cross-attention output pin order must remain compatible");
+    Check(cross->parameters.size() == 4 &&
+              ParameterMatches(cross, "embed_dim", "int", "512") &&
+              ParameterMatches(cross, "num_heads", "int", "8") &&
+              ParameterMatches(cross, "dropout", "float", "0.0") &&
+              ParameterMatches(cross, "batch_first", "bool", "true"),
+          "saved cross-attention parameters must remain compatible");
 
     const auto* linear = metadata.GetMetadata(gui::NodeType::LinearAttention);
     Check(linear->inputs.size() == 4 &&
@@ -1783,40 +1776,6 @@ void CheckBlockedAttentionFamilyContract(
               ParameterMatches(linear, "eps", "float", "1e-6") &&
               ParameterMatches(linear, "causal", "bool", "false"),
           "saved linear-attention parameters must remain compatible");
-}
-
-void CheckBlockedRecurrentCompatibilityContract(
-    cyxwiz::NodeMetadataRegistry& metadata) {
-    for (const auto type : {gui::NodeType::Bidirectional}) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr,
-              "recurrent compatibility metadata should exist: " + TypeId(type));
-        Check(meta->category == gui::NodeCategory::Recurrent &&
-                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unowned recurrent compatibility node must remain blocked: " +
-                  TypeId(type));
-        Check(meta->inputs.size() == 1 && meta->outputs.size() >= 1 &&
-                  meta->inputs[0].name == "Input" &&
-                  meta->inputs[0].required &&
-                  meta->outputs[0].name == "Output" &&
-                  meta->outputs[0].required,
-              "recurrent compatibility pins must remain inspectable: " +
-                  TypeId(type));
-        CheckSupportAxis(meta, "Training Backend",
-                         "unsupported_sequential_model_layer", false,
-                         TypeId(type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
-        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
-    }
-
-    const auto* bidirectional =
-        metadata.GetMetadata(gui::NodeType::Bidirectional);
-    Check(bidirectional->outputs.size() == 1 &&
-              bidirectional->parameters.size() == 1 &&
-              ParameterMatches(bidirectional, "merge_mode", "string", "concat"),
-          "Bidirectional metadata must preserve its standalone wrapper sketch");
 }
 
 void CheckImplementedRecurrentConfigurationContract(
@@ -3510,7 +3469,6 @@ int main() {
     CheckBlockedUpsamplingFamilyContract(metadata);
     CheckBlockedNormalizationFamilyContract(metadata);
     CheckBlockedAttentionFamilyContract(metadata);
-    CheckBlockedRecurrentCompatibilityContract(metadata);
     CheckImplementedRecurrentConfigurationContract(metadata);
     CheckDataValidatorReferenceContract(metadata);
     CheckDataValidatorOutputMigrationGuard();
@@ -6227,6 +6185,10 @@ int main() {
     }
     Check(metadata.GetMetadata(gui::NodeType::TensorReshape) == nullptr,
           "retired Tensor Reshape (the Reshape node replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::Bidirectional) == nullptr,
+          "retired Bidirectional (the recurrent layers' bidirectional setting replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::SelfAttention) == nullptr,
+          "retired Self Attention (Multi-Head Attention replaced it) is not registered");
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

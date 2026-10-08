@@ -70,7 +70,6 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
-        case gui::NodeType::SelfAttention: return "SelfAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::ConvTranspose2D: return "ConvTranspose2D";
@@ -85,7 +84,6 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::LSTM: return "LSTM";
         case gui::NodeType::GRU: return "GRU";
         case gui::NodeType::RNN: return "RNN";
-        case gui::NodeType::Bidirectional: return "Bidirectional";
         case gui::NodeType::TimeDistributed: return "TimeDistributed";
         case gui::NodeType::ReLU: return "ReLU";
         case gui::NodeType::LeakyReLU: return "LeakyReLU";

@@ -474,11 +474,9 @@ ImU32 ArchitectureDiagram::GetLayerColor(gui::NodeType type) const {
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
         case gui::NodeType::RNN:
-        case gui::NodeType::Bidirectional:
             return IM_COL32(80, 150, 180, 255);
 
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::CrossAttention:
         case gui::NodeType::LinearAttention:
         case gui::NodeType::TransformerEncoder:
@@ -535,7 +533,6 @@ std::string ArchitectureDiagram::GetLayerCategory(gui::NodeType type) const {
         case gui::NodeType::RNN:
             return "Recurrent";
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
             return "Attention";
         default:
             return "Other";

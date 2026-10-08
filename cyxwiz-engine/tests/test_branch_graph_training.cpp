@@ -21,6 +21,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // Graph-only: no file loaders, so datasets are not read.
@@ -314,6 +315,23 @@ int main(int, char** argv) {
         Check(!cyxwiz::ParseGraphDocument(saved.dump(), graph, error) &&
                   error.find("Reshape node replaced") != std::string::npos,
               "a saved Tensor Reshape node is refused with a message naming Reshape: " + error);
+    }
+
+    // Bidirectional and Self Attention are retired (LSTM/GRU/RNN's
+    // bidirectional setting and Multi-Head Attention replaced them): a saved
+    // graph with one fails to load with a message naming the replacement.
+    for (const auto& [retired, name, replacement] :
+         {std::tuple{gui::NodeType::Bidirectional, "Old bidirectional", "bidirectional = true"},
+          std::tuple{gui::NodeType::SelfAttention, "Old self attention", "Multi-Head Attention replaced"}}) {
+        const json saved = {
+            {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},
+                                    {"name", name}, {"parameters", json::object()}}})},
+            {"links", json::array()}};
+        cyxwiz::GraphDocument graph;
+        std::string error;
+        Check(!cyxwiz::ParseGraphDocument(saved.dump(), graph, error) &&
+                  error.find(replacement) != std::string::npos,
+              std::string("a saved ") + name + " node is refused with a message naming its replacement: " + error);
     }
 
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";

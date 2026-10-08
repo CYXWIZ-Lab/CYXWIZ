@@ -2251,18 +2251,6 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Nonlinearity", "Recurrent", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
-        {"bidirectional", "wrapper", "sequence"}, 0, false,
-        "Blocked standalone bidirectional-wrapper compatibility node",
-        "The bidirectional setting belongs to concrete LSTM/GRU nodes and must "
-        "follow their own verified execution limits. No standalone wrapper binds "
-        "an inner recurrent layer in GraphCompiler, ModelBuilder, or SequentialModel.", "",
-        {{"Input", PinType::Tensor, true, "Legacy sequence input."}},
-        {{"Output", PinType::Tensor, true, "Legacy merged directional output; unavailable while blocked."}},
-        {{"merge_mode", "string", "concat", "Historical merge-mode text", {}, "",
-          "Merge Mode", "Wrapper", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
     RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed Dense", ICON_FA_REPEAT,
         {"time", "distributed", "sequence", "token", "ner", "token classifier"}, 0, false,
         "Apply one shared Dense token-classifier projection independently to every timestep",
@@ -2487,28 +2475,6 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"encoding_type", "enum", "sinusoidal", "sinusoidal: fixed sine/cosine values (original Transformer, no parameters). learned: a trainable position table initialized N(0, 0.02), as in GPT-2 and BERT.", {"sinusoidal", "learned"}, "",
           "Encoding Type", "Position", false, false}},
         NodeImplementationStatus::Implemented, 0});
-
-    RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
-        {"attention", "self_attention", "transformer"}, 0, false,
-        "Blocked self-attention compatibility node",
-        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
-        "Studio has no distinct SelfAttention GraphCompiler/ModelBuilder owner. "
-        "Use Multi-Head Attention for the supported unary self-attention path.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
-         {"Key", PinType::Tensor, true, "Legacy key tensor [batch, key/value length, embed_dim]."},
-         {"Value", PinType::Tensor, true, "Legacy value tensor [batch, key/value length, embed_dim]."},
-         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
-         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
-          "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
-          "Dropout", "Attention", true, false},
-         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
-          "Batch First", "Layout", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::CrossAttention, NodeCategory::Attention, "Cross Attention", ICON_FA_BULLSEYE,
         {"attention", "cross_attention", "transformer"}, 0, false,
