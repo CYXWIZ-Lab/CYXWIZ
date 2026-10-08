@@ -1508,14 +1508,29 @@ void CheckDataInputDialogReferenceContract(
           "DataInput must not seed removed streaming fields");
 }
 
-void CheckConv2DBlockedReferenceContract(
+// The CNN stack is a Studio layer since TOFIX140 A1: compiled, built and
+// trained on [H,W,C,N] with the PyTorch fixtures of computation_truth.
+void CheckSpatialLayerImplementedContract(
+    cyxwiz::NodeMetadataRegistry& metadata, gui::NodeType type) {
+    const auto* meta = metadata.GetMetadata(type);
+    Check(meta != nullptr, "spatial layer metadata should exist: " + TypeId(type));
+    Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              meta->badge.empty() && cyxwiz::CanAddNodeToGraph(*meta),
+          "spatial layer must be implemented and addable: " + TypeId(type));
+    Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
+              HasInputType(meta, "Input", gui::PinType::Tensor) &&
+              HasOutputType(meta, "Output", gui::PinType::Tensor),
+          "spatial layer keeps its one-in one-out tensor pins: " + TypeId(type));
+    CheckSupportAxis(meta, "Training Backend", "allowed", true, TypeId(type));
+    CheckSupportAxis(meta, "Compile", "supported", true, TypeId(type));
+    CheckSupportAxis(meta, "Training", "supported", true, TypeId(type));
+    CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
+}
+
+void CheckConv2DReferenceContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::Conv2D);
     const auto* meta = metadata.GetMetadata(gui::NodeType::Conv2D);
-    Check(meta != nullptr, "Conv2D metadata should exist");
-    Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
-          "Conv2D should remain blocked until ModelBuilder supports it");
-    Check(!cyxwiz::CanAddNodeToGraph(*meta),
-          "central graph-add policy should reject blocked Conv2D");
     Check(HasInputType(meta, "Input", gui::PinType::Tensor) &&
               HasOutputType(meta, "Output", gui::PinType::Tensor),
           "Conv2D metadata should preserve its saved-graph pin contract");
@@ -1528,26 +1543,20 @@ void CheckConv2DBlockedReferenceContract(
           "Conv2D metadata defaults should match the preserved graph contract");
     Check(!HasParameter(meta, "activation"),
           "Conv2D must not advertise an unexecuted inline activation");
-    CheckSupportAxis(meta, "Training Backend",
-                     "unsupported_sequential_model_layer", false, "Conv2D");
-    CheckSupportAxis(meta, "Compile", "unsupported", false, "Conv2D");
-    CheckSupportAxisReasonContains(
-        meta, "Support State", "not supported", "Conv2D");
 }
 
 void CheckConvolutionPoolingBlockedFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::initializer_list<gui::NodeType> family = {
         gui::NodeType::Conv1D,
-        gui::NodeType::Conv2D,
         gui::NodeType::Conv3D,
         gui::NodeType::DepthwiseConv2D,
-        gui::NodeType::MaxPool2D,
-        gui::NodeType::AvgPool2D,
         gui::NodeType::GlobalMaxPool,
         gui::NodeType::GlobalAvgPool,
         gui::NodeType::AdaptiveAvgPool,
     };
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
     for (const auto type : family) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
@@ -1618,24 +1627,9 @@ void CheckBlockedUpsamplingFamilyContract(
     for (const auto type : {gui::NodeType::ConvTranspose2D,
                             gui::NodeType::Upsample,
                             gui::NodeType::PixelShuffle}) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr,
-              "upsampling metadata should exist: " + TypeId(type));
-        Check(meta->category == gui::NodeCategory::Upsampling &&
-                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unowned upsampling node must remain blocked: " + TypeId(type));
-        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
-                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
-                  HasOutputType(meta, "Output", gui::PinType::Tensor),
-              "blocked upsampling pins should remain inspectable: " +
-                  TypeId(type));
-        CheckSupportAxis(meta, "Training Backend",
-                         "unsupported_sequential_model_layer", false,
-                         TypeId(type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
-        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+        CheckSpatialLayerImplementedContract(metadata, type);
+        Check(metadata.GetMetadata(type)->category == gui::NodeCategory::Upsampling,
+              "upsampling layer keeps its category: " + TypeId(type));
     }
 
     const auto* transpose =
@@ -1670,25 +1664,9 @@ void CheckBlockedNormalizationFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     for (const auto type : {gui::NodeType::GroupNorm,
                             gui::NodeType::InstanceNorm}) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr,
-              "normalization metadata should exist: " + TypeId(type));
-        Check(meta->category == gui::NodeCategory::Normalization &&
-                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unowned normalization node must remain blocked: " +
-                  TypeId(type));
-        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
-                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
-                  HasOutputType(meta, "Output", gui::PinType::Tensor),
-              "blocked normalization pins should remain inspectable: " +
-                  TypeId(type));
-        CheckSupportAxis(meta, "Training Backend",
-                         "unsupported_sequential_model_layer", false,
-                         TypeId(type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
-        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+        CheckSpatialLayerImplementedContract(metadata, type);
+        Check(metadata.GetMetadata(type)->category == gui::NodeCategory::Normalization,
+              "normalization layer keeps its category: " + TypeId(type));
     }
 
     const auto* group = metadata.GetMetadata(gui::NodeType::GroupNorm);
@@ -2929,13 +2907,15 @@ void CheckClassicalTreeFamilyContract(
                   meta->status == cyxwiz::NodeImplementationStatus::Implemented,
               "tree classifier should have implemented Analytics metadata: " +
                   TypeId(type));
+        // Data in; Predictions out plus the fitted Model for the Plot node
+        // (TOFIX134 P4.7 draws the trees from it).
         Check(meta->inputs.size() == 1 &&
                   HasInputType(meta, "Data", gui::PinType::Dataset) &&
-                  meta->outputs.size() == 1 &&
+                  meta->outputs.size() == 2 &&
                   HasOutputType(meta, "Predictions", gui::PinType::Dataset) &&
-                  !HasInputType(meta, "Labels", gui::PinType::Labels) &&
-                  !HasOutputType(meta, "Model", gui::PinType::Parameters),
-              "tree classifier should expose one table-in/table-out contract: " +
+                  HasOutputType(meta, "Model", gui::PinType::Parameters) &&
+                  !HasInputType(meta, "Labels", gui::PinType::Labels),
+              "tree classifier should expose table-in, predictions + model out: " +
                   TypeId(type));
         Check(FindParameter(meta, "target_col") != nullptr &&
                   FindParameter(meta, "target_col")->required &&
@@ -3547,7 +3527,7 @@ int main() {
     CheckUtilityNodeFamilyContract(metadata);
     CheckSimulationNodeFamilyContract(metadata);
     CheckDataInputDialogReferenceContract(metadata);
-    CheckConv2DBlockedReferenceContract(metadata);
+    CheckConv2DReferenceContract(metadata);
     CheckConvolutionPoolingBlockedFamilyContract(metadata);
     CheckBlockedUpsamplingFamilyContract(metadata);
     CheckBlockedNormalizationFamilyContract(metadata);
