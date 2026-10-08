@@ -11,6 +11,7 @@
 
 namespace cyxwiz {
 class AsyncTask;
+struct DatasetAuditResult;
 
 struct Hdf5SourceLoadRequest {
     std::string path;
@@ -23,6 +24,8 @@ struct Hdf5SourceLoadResult {
     Hdf5TableReadResult read;
     std::optional<Hdf5SourceStamp> source;
     bool source_changed = false;
+    // Audit refusal retains diagnostics only; cancellation/source changes clear them.
+    std::shared_ptr<const DatasetAuditResult> audit;
 };
 
 struct Hdf5SourceLoadTaskResult {
@@ -30,7 +33,8 @@ struct Hdf5SourceLoadTaskResult {
     Hdf5SourceLoadResult result;
 };
 
-// Prepares a private, validated Arrow table; never registers a dataset. The
+// Prepares a private, validated and audited Arrow table; never registers a dataset.
+// Audit scratch and diagnostics are outside the materialization byte cap. The
 // worker publishes terminal state before done (release). Queued cancellation
 // may prevent Execute entirely; callers must also observe the task state.
 std::shared_ptr<AsyncTask> MakeHdf5SourceLoadTask(

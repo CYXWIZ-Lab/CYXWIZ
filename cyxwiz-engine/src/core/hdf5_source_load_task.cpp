@@ -2,8 +2,11 @@
 #include "async_task_manager.h"
 
 #ifdef CYXWIZ_HAS_HDF5
+#include "arrow_dataset.h"
+#include "dataset_audit.h"
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
+#include <algorithm>
 #endif
 
 #include <new>
@@ -66,6 +69,7 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
     CheckCancellation(cancelled);
     if (read.status == Hdf5TableStatus::Cancelled) throw LoadCancelled{};
 
+    std::shared_ptr<DatasetAuditResult> audit;
     if (read.status == Hdf5TableStatus::Ok) {
         task.ReportProgress(0.75f, "Validating HDF5 table");
         CheckCancellation(cancelled);
@@ -79,6 +83,18 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
         CheckArrow(metadata->Set("hdf5.source_modified", std::to_string(before->modified)));
         CheckArrow(metadata->Set("hdf5.import_mode", "numeric_table"));
         read.table = read.table->ReplaceSchemaMetadata(std::move(metadata));
+
+        CheckCancellation(cancelled);
+        DatasetAuditOptions audit_options;
+        audit_options.should_cancel = cancelled;
+        audit_options.report_progress = [&task](float progress, const std::string& message) {
+            task.ReportProgress(0.78f + 0.14f * std::clamp(progress, 0.0f, 1.0f), message);
+        };
+        auto dataset = std::make_shared<ArrowDataset>(read.table, "HDF5 source");
+        audit = std::make_shared<DatasetAuditResult>(DatasetAudit::AuditTabular(
+            "HDF5 source", dataset, read.labels ? "label" : "", audit_options));
+        CheckCancellation(cancelled);
+        if (audit->cancelled) throw LoadCancelled{};
     }
 
     // No progress callbacks after the final stamp: callbacks can change the file.
@@ -89,9 +105,16 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
     if (!after || *after != *before) return ChangedSource();
     if (read.status != Hdf5TableStatus::Ok)
         return Failure(read.status, std::move(read.error));
+    if (audit->HasErrors()) {
+        auto result = Failure(Hdf5TableStatus::ReadFailed,
+                              "HDF5 source refused by dataset audit. " + FormatAuditSummary(*audit));
+        result.audit = std::move(audit);
+        return result;
+    }
     Hdf5SourceLoadResult result;
     result.read = std::move(read);
     result.source = after;
+    result.audit = std::move(audit);
     return result;
 }
 #endif

@@ -2,6 +2,7 @@
 #include "../src/core/async_task_manager.h"
 
 #ifdef CYXWIZ_HAS_HDF5
+#include "../src/core/dataset_audit.h"
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
 #include <highfive/highfive.hpp>
@@ -34,15 +35,17 @@ struct Workspace {
     ~Workspace() { std::error_code ec; std::filesystem::remove_all(path, ec); }
 };
 
-void CheckNoPayload(const Hdf5SourceLoadResult& result) {
+void CheckNoPayload(const Hdf5SourceLoadResult& result, bool audit_refusal = false) {
     const auto& read = result.read;
     Check(!read.table && !result.source && read.data.path.empty() && read.data.shape.empty() &&
               read.data.source_type.empty() && !read.labels && read.estimated_materialized_bytes == 0 &&
               read.row_offset == 0 && read.column_offset == 0, "failure clears every payload field");
+    Check(static_cast<bool>(result.audit) == audit_refusal, "only audit refusal retains diagnostics on failure");
 }
 
 void CheckTerminal(const std::shared_ptr<AsyncTask>& task,
-                   const std::shared_ptr<Hdf5SourceLoadTaskResult>& state, Hdf5TableStatus status) {
+                   const std::shared_ptr<Hdf5SourceLoadTaskResult>& state, Hdf5TableStatus status,
+                   bool audit_refusal = false) {
     Check(state->done.load(std::memory_order_acquire), "worker publishes done");
     Check(state->result.read.status == status, "expected load status: " + state->result.read.error);
     const auto terminal = status == Hdf5TableStatus::Ok ? TaskState::Completed :
@@ -50,18 +53,28 @@ void CheckTerminal(const std::shared_ptr<AsyncTask>& task,
     Check(task->GetState() == terminal, "task reaches matching terminal state");
     if (status != Hdf5TableStatus::Ok) {
         Check(!state->result.read.error.empty(), "failure explains its cause");
-        CheckNoPayload(state->result);
+        CheckNoPayload(state->result, audit_refusal);
     }
+#ifdef CYXWIZ_HAS_HDF5
+    if (status == Hdf5TableStatus::Ok)
+        Check(state->result.audit && !state->result.audit->cancelled && !state->result.audit->HasErrors(),
+              "successful load carries a completed accepting audit");
+    if (audit_refusal)
+        Check(status == Hdf5TableStatus::ReadFailed && state->result.audit &&
+                  !state->result.audit->cancelled && state->result.audit->HasErrors() && !state->result.source_changed,
+              "audit refusal carries completed error diagnostics only");
+#endif
     if (terminal == TaskState::Failed)
         Check(task->GetErrorMessage() == state->result.read.error, "task and result failure agree");
 }
 
-Hdf5SourceLoadResult Run(const Hdf5SourceLoadRequest& request, Hdf5TableStatus status) {
+Hdf5SourceLoadResult Run(const Hdf5SourceLoadRequest& request, Hdf5TableStatus status,
+                         bool audit_refusal = false) {
     auto state = std::make_shared<Hdf5SourceLoadTaskResult>();
     auto task = MakeHdf5SourceLoadTask(request, state);
     Check(task->IsCancellable() && !state->done.load(), "new task is cancellable and unpublished");
     task->Execute();
-    CheckTerminal(task, state, status);
+    CheckTerminal(task, state, status, audit_refusal);
     auto result = std::move(state->result);
     std::weak_ptr<Hdf5SourceLoadTaskResult> observer = state;
     state.reset();
@@ -96,6 +109,9 @@ void CreateFixture(const std::string& path) {
     file.createDataSet<uint64_t>("/nested/values", HighFive::DataSpace::From(values)).write(values);
     const std::vector<uint8_t> labels{2, 1, 0};
     file.createDataSet<uint8_t>("/labels", HighFive::DataSpace::From(labels)).write(labels);
+    const std::vector<uint64_t> exact_labels{9007199254740992ULL, 9007199254740993ULL,
+                                             std::numeric_limits<uint64_t>::max()};
+    file.createDataSet<uint64_t>("/exact_labels", HighFive::DataSpace::From(exact_labels)).write(exact_labels);
     const std::vector<std::vector<int16_t>> matrix{{-3, 4}, {5, -6}, {7, 8}};
     file.createDataSet<int16_t>("/matrix", HighFive::DataSpace::From(matrix)).write(matrix);
     const std::vector<float> floats{1.25f, -2.5f, 3.75f};
@@ -229,6 +245,73 @@ void TestValuesAndOwnership(const std::string& path) {
     Check(retained_table && retained_table->ValidateFull().ok(), "caller-owned table outlives task and result storage");
 }
 
+bool HasAuditIssue(const Hdf5SourceLoadResult& result, DatasetAuditSeverity severity, const std::string& code) {
+    if (!result.audit) return false;
+    for (const auto& issue : result.audit->issues)
+        if (issue.severity == severity && issue.code == code) return true;
+    return false;
+}
+
+void TestAudit(const std::string& path) {
+    Hdf5SourceLoadRequest request;
+    request.path = path;
+    request.settings.selection = {"/floats", ""};
+    const auto unlabeled = Run(request, Hdf5TableStatus::Ok);
+    Check(HasAuditIssue(unlabeled, DatasetAuditSeverity::Warning, "missing_label_column"),
+          "unlabeled source is accepted with a warning");
+    Check(unlabeled.audit->dataset_name == "HDF5 source" && unlabeled.audit->sample_count == 3 &&
+              unlabeled.audit->feature_count == 1, "private candidate audit reports counts");
+    request.settings.selection.label_path = "/exact_labels";
+    const auto labeled = Run(request, Hdf5TableStatus::Ok);
+    Check(labeled.audit->class_count == 3 &&
+              !HasAuditIssue(labeled, DatasetAuditSeverity::Warning, "missing_label_column"),
+          "adjacent uint64 labels above float64 precision remain distinct audit classes");
+    const auto labels = std::static_pointer_cast<arrow::UInt64Array>(labeled.read.table->column(1)->chunk(0));
+    Check(labels->Value(0) == 9007199254740992ULL && labels->Value(1) == 9007199254740993ULL &&
+              labels->Value(2) == std::numeric_limits<uint64_t>::max(), "audit does not coerce label values");
+    CheckMetadata(labeled.read.table, "label_column", "label");
+    CheckMetadata(labeled.read.table, "hdf5.label_path", "/exact_labels");
+
+    request.settings.selection = {"/slabs", ""};
+    const auto refused = Run(request, Hdf5TableStatus::ReadFailed, true);
+    Check(HasAuditIssue(refused, DatasetAuditSeverity::Error, "too_many_degenerate_columns") &&
+              refused.read.error.find("audit") != std::string::npos, "constant source refused with audit diagnostics");
+
+    bool auditing = false;
+    int audit_polls = 0;
+    request.cancel_requested = [&] { return auditing && ++audit_polls >= 3; };
+    auto state = std::make_shared<Hdf5SourceLoadTaskResult>();
+    auto task = MakeHdf5SourceLoadTask(request, state);
+    task->SetProgressCallback([&](float, const std::string& message) {
+        if (message == "Auditing columns") auditing = true;
+    });
+    task->Execute();
+    Check(audit_polls >= 3, "cancellation reaches the exact constant-column scan");
+    CheckTerminal(task, state, Hdf5TableStatus::Cancelled);
+    request.cancel_requested = {};
+
+    for (bool cancel : {false, true}) {
+        state = std::make_shared<Hdf5SourceLoadTaskResult>();
+        task = MakeHdf5SourceLoadTask(request, state);
+        bool acted = false;
+        float last_progress = 0.0f;
+        task->SetProgressCallback([&](float progress, const std::string& message) {
+            Check(progress >= last_progress, "audit progress remains monotonic");
+            last_progress = progress;
+            if (!acted && message == "Audit complete") {
+                Check(progress >= 0.91f && progress <= 0.93f, "audit completes within mapped progress window");
+                acted = true;
+                if (cancel) task->RequestCancel();
+                else ChangeTime(path);
+            }
+        });
+        task->Execute();
+        Check(acted, "reached completed audit before publication");
+        CheckTerminal(task, state, cancel ? Hdf5TableStatus::Cancelled : Hdf5TableStatus::ReadFailed);
+        if (!cancel) CheckChanged(state->result);
+    }
+}
+
 void TestFailures(const std::string& path, const Workspace& workspace) {
     Hdf5SourceLoadRequest request;
     request.path = path;
@@ -284,7 +367,7 @@ void TestFailures(const std::string& path, const Workspace& workspace) {
     request.path += ".missing";
     CheckChanged(Run(request, Hdf5TableStatus::ReadFailed));
     request.path = path;
-    for (float threshold : {0.05f, 0.15f, 0.75f, 0.95f}) {
+    for (float threshold : {0.05f, 0.15f, 0.75f, 0.78f, 0.90f, 0.95f}) {
         request.expected_source = ReadHdf5SourceStamp(path, error);
         auto state = std::make_shared<Hdf5SourceLoadTaskResult>();
         auto task = MakeHdf5SourceLoadTask(request, state);
@@ -394,6 +477,7 @@ int main() try {
     const auto path = (workspace.path / "source.h5").string();
     CreateFixture(path);
     TestValuesAndOwnership(path);
+    TestAudit(path);
     TestFailures(path, workspace);
     TestCancellation(path);
 #else

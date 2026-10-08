@@ -110,6 +110,7 @@ set(ENGINE_SOURCES
     src/core/console_commands_presentation.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_publication.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
@@ -4614,6 +4615,13 @@ foreach(hdf5_inspection_test IN ITEMS test_hdf5_inspection_task test_hdf5_inspec
     if(HighFive_FOUND AND NOT hdf5_inspection_test MATCHES "_unavailable$")
         target_link_libraries(${hdf5_inspection_test} PRIVATE HighFive)
         target_compile_definitions(${hdf5_inspection_test} PRIVATE CYXWIZ_HAS_HDF5)
+        if(hdf5_inspection_test STREQUAL "test_hdf5_source_load_task")
+            target_sources(${hdf5_inspection_test} PRIVATE
+                src/core/arrow_dataset.cpp src/core/dataset_audit.cpp
+                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp)
+            target_link_libraries(${hdf5_inspection_test} PRIVATE
+                Parquet::parquet_shared ${OpenCV_LIBS})
+        endif()
     endif()
     if(WIN32)
         target_compile_definitions(${hdf5_inspection_test} PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
@@ -4683,6 +4691,9 @@ set_target_properties(test_data_preview_service PROPERTIES
 
 add_executable(test_hdf5_prepared_source
     tests/test_hdf5_prepared_source.cpp
+    src/core/data_registry_publication.cpp
+    src/core/dataset_audit.cpp
+    src/core/image_utils.cpp
     src/core/hdf5_source_load_task.cpp
     src/core/hdf5_source_identity.cpp
     src/core/hdf5_input_settings.cpp
@@ -4699,7 +4710,7 @@ add_executable(test_hdf5_prepared_source
     src/core/parquet_backed_dataset.cpp)
 target_include_directories(test_hdf5_prepared_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_prepared_source PRIVATE
-    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared ${OpenCV_LIBS}
     spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 if(HighFive_FOUND)
     target_link_libraries(test_hdf5_prepared_source PRIVATE HighFive)
@@ -4709,6 +4720,27 @@ if(WIN32)
     target_compile_definitions(test_hdf5_prepared_source PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_hdf5_prepared_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_tabular_publication
+    tests/test_tabular_publication.cpp
+    tests/test_tabular_publication_staged.cpp
+    src/core/data_registry_publication.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/data_registry_sparse.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/dataset_base.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_tabular_publication PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_tabular_publication PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_tabular_publication PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_tabular_publication PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Stable error-code catalog and formatting =====
 add_executable(test_error_codes

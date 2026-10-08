@@ -136,13 +136,14 @@ DatasetHandle DataRegistry::LoadMNIST(const std::string& path, const std::string
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered MNIST dataset as '{}'", unique_name);
@@ -165,13 +166,14 @@ DatasetHandle DataRegistry::LoadCIFAR10(const std::string& path, const std::stri
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered CIFAR-10 dataset as '{}'", unique_name);
@@ -195,13 +197,14 @@ DatasetHandle DataRegistry::LoadCSV(const std::string& path, const std::string& 
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered CSV dataset as '{}'", unique_name);
@@ -222,13 +225,14 @@ DatasetHandle DataRegistry::LoadTSV(const std::string& path, const std::string& 
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered TSV dataset as '{}'", unique_name);
@@ -249,13 +253,14 @@ DatasetHandle DataRegistry::LoadJSON(const std::string& path, const std::string&
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered JSON dataset as '{}'", unique_name);
@@ -276,13 +281,14 @@ DatasetHandle DataRegistry::LoadTXT(const std::string& path, const std::string& 
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered TXT dataset as '{}'", unique_name);
@@ -306,13 +312,14 @@ DatasetHandle DataRegistry::LoadImageFolder(const std::string& path, const std::
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered ImageFolder dataset as '{}'", unique_name);
@@ -339,13 +346,14 @@ DatasetHandle DataRegistry::LoadImageCSV(const std::string& image_folder, const 
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered ImageCSV dataset as '{}' with {} samples", unique_name, dataset->Size());
@@ -370,13 +378,14 @@ DatasetHandle DataRegistry::LoadHuggingFace(const HuggingFaceConfig& config, con
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered HuggingFace dataset '{}' as '{}'", config.dataset_name, unique_name);
@@ -401,13 +410,14 @@ DatasetHandle DataRegistry::LoadStreamingDataset(const std::string& path, const 
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered streaming dataset as '{}' ({} estimated samples)",
@@ -442,13 +452,14 @@ DatasetHandle DataRegistry::LoadKaggle(const KaggleConfig& config, const std::st
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered Kaggle dataset as '{}' ({} samples)",
@@ -477,13 +488,14 @@ DatasetHandle DataRegistry::LoadCustom(const CustomConfig& config, const std::st
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered custom dataset as '{}' ({} samples)",
@@ -511,13 +523,14 @@ DatasetHandle DataRegistry::LoadHDF5(const std::string& path, const std::string&
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            InvalidateTabularPublicationUnlocked(unique_name);
             datasets_[unique_name] = dataset;
         }
 
         auto handle = DatasetHandle(dataset, unique_name);
 
-        if (on_loaded_) {
-            on_loaded_(unique_name, handle.GetInfo());
+        if (auto callback = GetDatasetLoadedCallback()) {
+            callback(unique_name, handle.GetInfo());
         }
 
         spdlog::info("Registered HDF5 dataset '{}': {} samples", unique_name, dataset->Size());
@@ -908,6 +921,7 @@ void DataRegistry::EvictOldest() {
         auto info = datasets_[oldest_name]->GetInfo();
         spdlog::info("Memory eviction: unloading '{}' ({} bytes)", oldest_name, info.memory_usage);
 
+        InvalidateTabularPublicationUnlocked(oldest_name);
         datasets_.erase(oldest_name);
         last_access_times_.erase(oldest_name);
         total_cache_evictions_++;
@@ -925,8 +939,13 @@ void DataRegistry::TrimMemory(size_t target_bytes) {
     size_t current = GetTotalMemoryUsage();
 
     // Notify about memory pressure if callback is set
-    if (current > memory_limit_ && on_memory_pressure_) {
-        on_memory_pressure_(current, memory_limit_);
+    MemoryPressureCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback = on_memory_pressure_;
+    }
+    if (current > memory_limit_ && callback) {
+        callback(current, memory_limit_);
     }
 
     // Keep evicting until we're under target
@@ -1405,6 +1424,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
+        InvalidateTabularPublicationUnlocked(unique_name);
         arrow_datasets_[unique_name] = dataset;
         parquet_backed_datasets_.erase(unique_name);
         sparse_feature_datasets_.erase(unique_name);
@@ -1598,6 +1618,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
             if (cached_dataset) {
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
+                    InvalidateTabularPublicationUnlocked(final_name);
                     arrow_datasets_[final_name] = cached_dataset;
                     parquet_backed_datasets_.erase(final_name);
                     sparse_feature_datasets_.erase(final_name);
@@ -1635,7 +1656,10 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
             // Backend switches are committed only after the replacement is
             // ready. This avoids a registry gap while a large CSV is parsed.
             std::lock_guard<std::mutex> lock(mutex_);
-            parquet_backed_datasets_.erase(dataset->GetName());
+            if (parquet_backed_datasets_.count(dataset->GetName())) {
+                InvalidateTabularPublicationUnlocked(dataset->GetName());
+                parquet_backed_datasets_.erase(dataset->GetName());
+            }
         }
         if (progress_callback) {
             (void)progress_callback(0.995f, "Writing persistent ingestion cache");
@@ -1694,6 +1718,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         std::lock_guard<std::mutex> lock(mutex_);
         // As above, remove the superseded backend only after the new one is
         // open and registered. Consumers always see a valid dataset.
+        InvalidateTabularPublicationUnlocked(unique_name);
         arrow_datasets_.erase(unique_name);
         RememberTabularSourcePathUnlocked(unique_name, path);
     }
@@ -1718,6 +1743,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
+        InvalidateTabularPublicationUnlocked(unique_name);
         arrow_datasets_[unique_name] = dataset;
         parquet_backed_datasets_.erase(unique_name);
         sparse_feature_datasets_.erase(unique_name);
@@ -1825,6 +1851,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadImageFolderToArrow(
         auto dataset = std::make_shared<ArrowDataset>(table, unique_name);
 
         std::lock_guard<std::mutex> lock(mutex_);
+        InvalidateTabularPublicationUnlocked(unique_name);
         arrow_datasets_[unique_name] = dataset;
         parquet_backed_datasets_.erase(unique_name);
         sparse_feature_datasets_.erase(unique_name);

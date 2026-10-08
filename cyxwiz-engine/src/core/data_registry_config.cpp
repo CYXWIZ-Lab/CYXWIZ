@@ -210,8 +210,8 @@ bool DataRegistry::ImportConfig(const std::string& filepath, std::string& out_na
     // Only load if not already present
     if (!already_loaded) {
         // Report progress
-        if (on_progress_) {
-            on_progress_(0.0f, "Loading dataset from config...");
+        if (auto callback = GetLoadProgressCallback()) {
+            callback(0.0f, "Loading dataset from config...");
         }
 
         handle = LoadDataset(info.path, info.name);
@@ -227,8 +227,8 @@ bool DataRegistry::ImportConfig(const std::string& filepath, std::string& out_na
     out_name = handle.GetName();
     out_split = split;  // Return the split config from the file
 
-    if (on_progress_) {
-        on_progress_(1.0f, already_loaded ? "Config applied" : "Dataset loaded successfully");
+    if (auto callback = GetLoadProgressCallback()) {
+        callback(1.0f, already_loaded ? "Config applied" : "Dataset loaded successfully");
     }
 
     spdlog::info("Imported dataset config from {}, {} '{}' (split: {:.0f}/{:.0f}/{:.0f})", filepath,

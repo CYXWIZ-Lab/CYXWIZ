@@ -17,9 +17,7 @@
 
 namespace cyxwiz {
 
-namespace {
-
-std::string NormalizeTabularSourcePath(const std::string& path) {
+std::string DataRegistry::NormalizeTabularSourcePath(const std::string& path) {
     if (path.empty()) return {};
     try {
         return std::filesystem::weakly_canonical(std::filesystem::absolute(path))
@@ -33,9 +31,6 @@ std::string NormalizeTabularSourcePath(const std::string& path) {
         }
     }
 }
-
-} // namespace
-
 
 // =============================================================================
 // Dataset Versioning
@@ -201,6 +196,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadArrowTable(
     }
 
     // Store in registry
+    InvalidateTabularPublicationUnlocked(dataset_name);
     arrow_datasets_[dataset_name] = dataset;
     parquet_backed_datasets_.erase(dataset_name);
     sparse_feature_datasets_.erase(dataset_name);
@@ -244,6 +240,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
     auto dataset = std::make_shared<ArrowDataset>(table, dataset_name);
 
     // Store in registry
+    InvalidateTabularPublicationUnlocked(dataset_name);
     arrow_datasets_[dataset_name] = dataset;
     parquet_backed_datasets_.erase(dataset_name);
     sparse_feature_datasets_.erase(dataset_name);
@@ -386,14 +383,19 @@ void DataRegistry::RememberTabularSourcePathUnlocked(
     const std::string normalized = NormalizeTabularSourcePath(path);
     if (name.empty() || normalized.empty()) return;
 
+    InvalidateTabularPublicationUnlocked(name);
     if (auto old_name = tabular_dataset_by_source_path_.find(normalized);
         old_name != tabular_dataset_by_source_path_.end() && old_name->second != name) {
+        InvalidateTabularPublicationUnlocked(old_name->second);
         tabular_source_paths_by_name_.erase(old_name->second);
     }
 
     if (auto old_path = tabular_source_paths_by_name_.find(name);
         old_path != tabular_source_paths_by_name_.end() && old_path->second != normalized) {
-        tabular_dataset_by_source_path_.erase(old_path->second);
+        auto reverse = tabular_dataset_by_source_path_.find(old_path->second);
+        if (reverse != tabular_dataset_by_source_path_.end() && reverse->second == name) {
+            tabular_dataset_by_source_path_.erase(reverse);
+        }
     }
 
     tabular_source_paths_by_name_[name] = normalized;
@@ -408,6 +410,7 @@ void DataRegistry::RegisterParquetBacked(
     if (parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end()) {
         spdlog::warn("RegisterParquetBacked: overwriting existing dataset '{}'", name);
     }
+    InvalidateTabularPublicationUnlocked(name);
     parquet_backed_datasets_[name] = dataset;
     arrow_datasets_.erase(name);
     sparse_feature_datasets_.erase(name);
@@ -421,6 +424,7 @@ void DataRegistry::RegisterParquetBacked(
 
 void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
     bool removed_arrow = false;
     bool removed_parquet = false;
     bool removed_sparse = false;
@@ -465,6 +469,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
                      kMaterializedSuffix) == 0;
     if (!already_materialized) {
         const std::string mat_name = name + kMaterializedSuffix;
+        InvalidateTabularPublicationUnlocked(mat_name);
         materialization_provenance_.erase(mat_name);
         bool mat_arrow = false;
         bool mat_parquet = false;
@@ -496,6 +501,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
 void DataRegistry::RegisterImageDataset(const std::string& name,
                                           const ImageDatasetEntry& entry) {
     std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
     image_dataset_entries_[name] = entry;
     spdlog::info("RegisterImageDataset '{}': {} images, {} classes, layout={}",
                  name, entry.num_images, entry.num_classes, entry.layout);
@@ -520,6 +526,7 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
 
     auto it = image_dataset_entries_.find(name);
     if (it != image_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
         image_dataset_entries_.erase(it);
         removed_any = true;
     }
@@ -532,6 +539,7 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
     // node's persisted dataset_name out of sync with the registry.
     auto ds_it = datasets_.find(name);
     if (ds_it != datasets_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
         datasets_.erase(ds_it);
         removed_any = true;
     }
@@ -546,6 +554,7 @@ void DataRegistry::UnregisterImageDataset(const std::string& name) {
 void DataRegistry::RegisterAudioDataset(const std::string& name,
                                           const AudioDatasetEntry& entry) {
     std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
     audio_dataset_entries_[name] = entry;
     spdlog::info("RegisterAudioDataset '{}': {} samples, {} classes, feature_type={}, sr={}",
                  name, entry.num_samples, entry.num_classes,
@@ -569,6 +578,7 @@ void DataRegistry::UnregisterAudioDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = audio_dataset_entries_.find(name);
     if (it != audio_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
         audio_dataset_entries_.erase(it);
         spdlog::debug("UnregisterAudioDataset '{}'", name);
     }
@@ -579,6 +589,7 @@ void DataRegistry::UnregisterAudioDataset(const std::string& name) {
 void DataRegistry::RegisterTextDataset(const std::string& name,
                                          const TextDatasetEntry& entry) {
     std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
     text_dataset_entries_[name] = entry;
     spdlog::info("RegisterTextDataset '{}': {} samples, {} classes, "
                  "vocab_size={}, tokenizer_type={}, max_length={}",
@@ -603,6 +614,7 @@ void DataRegistry::UnregisterTextDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = text_dataset_entries_.find(name);
     if (it != text_dataset_entries_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
         text_dataset_entries_.erase(it);
         spdlog::debug("UnregisterTextDataset '{}'", name);
     }
@@ -616,6 +628,7 @@ void DataRegistry::RestoreTabularDataset(
     if (name.empty() || (!arrow_dataset && !parquet_dataset)) return;
 
     std::lock_guard<std::mutex> lock(mutex_);
+    InvalidateTabularPublicationUnlocked(name);
     arrow_datasets_.erase(name);
     parquet_backed_datasets_.erase(name);
     sparse_feature_datasets_.erase(name);
@@ -632,6 +645,7 @@ void DataRegistry::RestoreTabularDataset(
 
 void DataRegistry::ClearAllTabularDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
+    tabular_publication_tokens_.clear();
 
     size_t arrow_count = arrow_datasets_.size();
     size_t parquet_count = parquet_backed_datasets_.size();

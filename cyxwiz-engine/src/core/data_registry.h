@@ -295,6 +295,63 @@ public:
     // Apache Arrow columnar data support (Data Studio foundation)
     std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    // A reservation for the current registration (including absence). Copies
+    // share validity; any writer of this name invalidates all outstanding copies.
+    class TabularPublicationToken {
+    public:
+        TabularPublicationToken() = default;
+
+    private:
+        friend class DataRegistry;
+        std::string name_;
+        std::shared_ptr<const void> token_;
+    };
+    // Empty names throw std::invalid_argument; default tokens are invalid.
+    TabularPublicationToken CaptureTabularPublication(const std::string& name);
+    // Exclusively owned worker-to-UI handoff. Dropping it before commit leaves
+    // the registry unchanged. After commit it retains displaced backing until
+    // destruction; release it on a thread suitable for reclaiming that backing.
+    class PreparedArrowPublication {
+    public:
+        PreparedArrowPublication();
+        ~PreparedArrowPublication();
+        PreparedArrowPublication(PreparedArrowPublication&&) noexcept;
+        PreparedArrowPublication& operator=(PreparedArrowPublication&&) noexcept;
+        PreparedArrowPublication(const PreparedArrowPublication&) = delete;
+        PreparedArrowPublication& operator=(const PreparedArrowPublication&) = delete;
+        // Explicit, at most once, outside the registry mutex. Call after node
+        // state is committed. Destruction never invokes callbacks.
+        void Notify() noexcept;
+
+    private:
+        friend class DataRegistry;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+    // Worker-side validation, path normalization, metadata and node allocation.
+    // No registry mutation or token consumption. Candidate name, table pointer
+    // and buffers must stay immutable through publication and while registered.
+    // Audit remains caller-owned.
+    static std::unique_ptr<PreparedArrowPublication> PrepareArrowTablePublication(
+        const TabularPublicationToken& token,
+        std::shared_ptr<class ArrowDataset> candidate,
+        const std::string& source_path, std::string& error);
+    // Commit without table scans, filesystem I/O or notification. Rechecks
+    // ownership/category under the mutex; callback copying precedes mutation.
+    // Caller checks node/project/selection ownership, commits here, swaps its
+    // prebuilt node state without throwing, then calls prepared.Notify().
+    bool TryPublishPreparedArrowTable(PreparedArrowPublication& prepared,
+                                      std::string& error);
+    // Prepare and audit the ArrowDataset privately before calling. The caller
+    // must keep its name, table pointer and buffers immutable during publication
+    // and while registered. ValidateFull and path normalization run outside the
+    // mutex; this is a worker-side boundary, not a render-frame operation.
+    // Only absent/Arrow/Parquet slots can be replaced. Source paths are recorded
+    // by name only: selection-based sources must not reuse filename-only lookup.
+    // A successful commit consumes the token, even if its callback throws.
+    bool TryPublishArrowTable(const TabularPublicationToken& token,
+                              std::shared_ptr<class ArrowDataset> candidate,
+                              const std::string& source_path, std::string& error);
     // Provenance only: no additional ownership of the potentially large table.
     // Reuse requires the exact source/output snapshots and disk artifact stamp.
     struct MaterializationProvenance {
@@ -577,16 +634,28 @@ public:
 
     // Memory pressure callback (called when over limit)
     using MemoryPressureCallback = std::function<void(size_t current, size_t limit)>;
-    void SetOnMemoryPressure(MemoryPressureCallback callback) { on_memory_pressure_ = std::move(callback); }
+    void SetOnMemoryPressure(MemoryPressureCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_memory_pressure_.swap(callback);
+    }
 
     // Callbacks
     using DatasetLoadedCallback = std::function<void(const std::string& name, const DatasetInfo& info)>;
     using DatasetUnloadedCallback = std::function<void(const std::string& name)>;
     using LoadProgressCallback = std::function<void(float progress, const std::string& status)>;
 
-    void SetOnDatasetLoaded(DatasetLoadedCallback callback) { on_loaded_ = std::move(callback); }
-    void SetOnDatasetUnloaded(DatasetUnloadedCallback callback) { on_unloaded_ = std::move(callback); }
-    void SetOnLoadProgress(LoadProgressCallback callback) { on_progress_ = std::move(callback); }
+    void SetOnDatasetLoaded(DatasetLoadedCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_loaded_.swap(callback);
+    }
+    void SetOnDatasetUnloaded(DatasetUnloadedCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_unloaded_.swap(callback);
+    }
+    void SetOnLoadProgress(LoadProgressCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_progress_.swap(callback);
+    }
 
     // Dataset configuration export/import
     bool ExportConfig(const std::string& name, const std::string& filepath) const;
@@ -634,8 +703,20 @@ public:
 private:
     DataRegistry() = default;
 
+    void InvalidateTabularPublicationUnlocked(const std::string& name) {
+        tabular_publication_tokens_.erase(name);
+    }
+    static std::string NormalizeTabularSourcePath(const std::string& path);
     void RememberTabularSourcePathUnlocked(const std::string& name, const std::string& path);
     void ForgetTabularSourcePathUnlocked(const std::string& name);
+    DatasetLoadedCallback GetDatasetLoadedCallback() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return on_loaded_;
+    }
+    LoadProgressCallback GetLoadProgressCallback() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return on_progress_;
+    }
 
     // Generate unique name if not provided
     std::string GenerateUniqueName(const std::string& base_name);
@@ -646,6 +727,8 @@ private:
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
     std::map<std::string, MaterializationProvenance> materialization_provenance_;
+    // Weak reservations avoid revisions/tombstones and cannot retain datasets.
+    std::map<std::string, std::weak_ptr<const void>> tabular_publication_tokens_;
 
     // Disk-backed Parquet datasets — populated by LoadTabularCSV when a file
     // is too large to fit comfortably in RAM. Lookups by name fall through
