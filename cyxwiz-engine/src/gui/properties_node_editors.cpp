@@ -1,14 +1,20 @@
+// Properties panel: the per-node editors (TOFIX129 A7). Only the node types
+// whose metadata says Custom come here (the NER vocabularies and sequence
+// nodes, the simulation signals) plus the fallback for types with no
+// metadata parameters (activations, Flatten, Reshape, Augmentation, plugin
+// nodes, and the generic key/value editor). Every row goes through
+// properties_rows so it carries its truth chip and the shared look.
 #include "properties_node_editors.h"
 #include "node_editor.h"
-#include "properties_truth.h"
+#include "properties_rows.h"
+#include "ui_buttons.h"
+#include "ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,289 +50,169 @@ int ParseIntOr(const std::string& text, int fallback) {
     }
 }
 
-void RenderPathLine(const char* label, const std::string& value) {
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine(120.0f);
-    if (value.empty()) {
-        ImGui::TextDisabled("<not set>");
-    } else {
-        ImGui::TextWrapped("%s", value.c_str());
-    }
-}
+// The rows below show the stored value, or `fallback` when the node has
+// none, and write the node only on a change (displaying never writes).
 
-bool RenderTextParameter(MLNode& node,
-                         const char* key,
-                         const char* label,
-                         const char* fallback = "",
-                         ImGuiInputTextFlags flags = 0,
-                         bool create_default = true) {
-    auto existing = node.parameters.find(key);
-    if (existing == node.parameters.end() && create_default) {
-        existing = node.parameters.emplace(key, fallback).first;
-    }
-
-    const std::string value =
-        existing != node.parameters.end() ? existing->second : fallback;
+bool TextRow(MLNode& node,
+             const char* key,
+             const char* label,
+             const char* fallback = "",
+             ImGuiInputTextFlags flags = 0) {
+    const std::string value = ParamOr(node, key, fallback);
     char buffer[256] = {};
-    strncpy(buffer, value.c_str(), sizeof(buffer) - 1);
-
-    ImGui::Text("%s:", label);
-    ImGui::SameLine(150.0f);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10.0f);
-    const std::string imgui_id = std::string("##") + key;
-    if (ImGui::InputText(imgui_id.c_str(), buffer, sizeof(buffer), flags)) {
-        node.parameters[key] = buffer;
-        return true;
-    }
-    return false;
+    std::strncpy(buffer, value.c_str(), sizeof(buffer) - 1);
+    properties_rows::Label(label);
+    ImGui::PushID(key);
+    const bool changed = ImGui::InputText("##v", buffer, sizeof(buffer), flags);
+    if (changed) node.parameters[key] = buffer;
+    ImGui::PopID();
+    properties_rows::Status(key);
+    return changed;
 }
 
-bool RenderBoolParameter(MLNode& node,
-                         const char* key,
-                         const char* label,
-                         bool fallback) {
-    std::string& value = node.parameters[key];
-    if (value.empty()) {
-        value = fallback ? "true" : "false";
-    }
+bool BoolRow(MLNode& node, const char* key, const char* label, bool fallback) {
+    const std::string value = ParamOr(node, key, fallback ? "true" : "false");
     bool enabled = value == "true";
-    if (ImGui::Checkbox(label, &enabled)) {
-        value = enabled ? "true" : "false";
-        return true;
-    }
-    return false;
+    properties_rows::Label(label);
+    ImGui::PushID(key);
+    const bool changed = ImGui::Checkbox("##v", &enabled);
+    if (changed) node.parameters[key] = enabled ? "true" : "false";
+    ImGui::PopID();
+    properties_rows::Status(key);
+    return changed;
 }
 
-bool RenderEnumParameter(MLNode& node,
-                         const char* key,
-                         const char* label,
-                         const char* const* values,
-                         int value_count,
-                         const char* fallback) {
-    std::string& value = node.parameters[key];
-    if (value.empty()) {
-        value = fallback;
-    }
+bool EnumRow(MLNode& node,
+             const char* key,
+             const char* label,
+             const char* const* values,
+             int value_count,
+             const char* fallback) {
+    const std::string value = ParamOr(node, key, fallback);
     int current = 0;
     for (int i = 0; i < value_count; ++i) {
-        if (value == values[i]) {
-            current = i;
-            break;
-        }
+        if (value == values[i]) current = i;
     }
-
-    ImGui::Text("%s:", label);
-    ImGui::SameLine(150.0f);
-    ImGui::SetNextItemWidth(180.0f);
-    const std::string imgui_id = std::string("##") + key;
-    if (ImGui::Combo(imgui_id.c_str(), &current, values, value_count)) {
-        value = values[current];
-        return true;
-    }
-    return false;
+    properties_rows::Label(label);
+    ImGui::PushID(key);
+    const bool changed = ImGui::Combo("##v", &current, values, value_count);
+    if (changed) node.parameters[key] = values[current];
+    ImGui::PopID();
+    properties_rows::Status(key);
+    return changed;
 }
 
-bool RenderFloatParameter(MLNode& node,
-                          const char* key,
-                          const char* label,
-                          const char* fallback,
-                          float min_value = 0.0f) {
-    std::string& value = node.parameters[key];
-    if (value.empty()) {
-        value = fallback;
+// InputFloat with `min_value` as the floor; `format` is the stored precision.
+bool FloatRow(MLNode& node,
+              const char* key,
+              const char* label,
+              float fallback,
+              float min_value = -INFINITY,
+              float step = 0.1f,
+              const char* format = "%.3f") {
+    float v = std::max(ParseFiniteFloatOr(ParamOr(node, key), fallback), min_value);
+    properties_rows::Label(label);
+    ImGui::PushID(key);
+    const bool changed = ImGui::InputFloat("##v", &v, step, step * 10.0f, format);
+    if (changed) {
+        v = std::max(v, min_value);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), format, v);
+        node.parameters[key] = buf;
     }
-    float parsed = min_value;
-    try {
-        parsed = std::stof(value);
-    } catch (...) {
-        parsed = std::stof(fallback);
-    }
-    if (!std::isfinite(parsed) || parsed < min_value) {
-        parsed = std::stof(fallback);
-    }
-
-    ImGui::Text("%s:", label);
-    ImGui::SameLine(150.0f);
-    ImGui::SetNextItemWidth(120.0f);
-    const std::string imgui_id = std::string("##") + key;
-    if (ImGui::InputFloat(imgui_id.c_str(), &parsed, 0.0f, 0.0f, "%.4f")) {
-        if (parsed < min_value) {
-            parsed = min_value;
-        }
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%.6g", parsed);
-        value = buffer;
-        return true;
-    }
-    return false;
+    ImGui::PopID();
+    properties_rows::Status(key);
+    return changed;
 }
 
-bool ParseNonNegativeFloatVector(const std::string& raw,
-                                 std::vector<float>& values,
-                                 std::string& error) {
-    std::string text = raw;
-    for (char& c : text) {
-        if (c == '[' || c == ']' || c == '(' || c == ')' ||
-            c == ',' || c == ';') {
-            c = ' ';
-        }
+bool SliderRow(MLNode& node, const char* key, const char* label, float fallback, float min_value, float max_value,
+               const char* format = "%.2f") {
+    float v = std::clamp(ParseFiniteFloatOr(ParamOr(node, key), fallback), min_value, max_value);
+    properties_rows::Label(label);
+    ImGui::PushID(key);
+    const bool changed = ImGui::SliderFloat("##v", &v, min_value, max_value, format);
+    if (changed) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), format, v);
+        node.parameters[key] = buf;
     }
+    ImGui::PopID();
+    properties_rows::Status(key);
+    return changed;
+}
 
-    values.clear();
-    std::istringstream in(text);
-    std::string token;
-    while (in >> token) {
-        try {
-            size_t parsed = 0;
-            const float weight = std::stof(token, &parsed);
-            if (parsed != token.size() || !std::isfinite(weight) ||
-                weight < 0.0f) {
-                throw std::runtime_error("invalid weight");
+void Note(const char* text) {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+// A one-line description of a node type with no settings (an activation).
+void Formula(const char* what, const char* formula) {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::TextUnformatted(what);
+    ImGui::TextColored(t.text_dim, "%s", formula);
+}
+
+void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    int win = std::clamp(ParseIntOr(ParamOr(node, "window_size"), 500), 10, 100000);
+    bool auto_scale = ParamOr(node, "auto_scale") == "true";
+    {
+        properties_rows::Rows rows("##scope");
+        if (rows.ok) {
+            properties_rows::Label("Window size");
+            if (ImGui::InputInt("##scope_win", &win)) {
+                win = std::clamp(win, 10, 100000);
+                node.parameters["window_size"] = std::to_string(win);
             }
-            values.push_back(weight);
-        } catch (...) {
-            error = "invalid non-negative number '" + token + "'";
-            return false;
+            properties_rows::Status("window_size");
+            properties_rows::Label("Auto scale");
+            if (ImGui::Checkbox("##scope_auto", &auto_scale)) node.parameters["auto_scale"] = auto_scale ? "true" : "false";
+            properties_rows::Status("auto_scale");
         }
     }
 
-    if (values.empty()) {
-        error = "enter at least one class weight";
-        return false;
-    }
-    return true;
-}
+    // Real-time signal plot
+    auto& buf = context.scope_buffers[node.id];
+    buf.max_samples = win;
 
-size_t ParsePositiveSizeOrZero(const std::string& value) {
-    try {
-        size_t parsed = 0;
-        const size_t count = std::stoul(value, &parsed);
-        if (parsed == value.size() && count > 0) {
-            return count;
+    float live_value = 0.0f;
+    const bool has_live_value =
+        context.node_editor &&
+        context.node_editor->IsGraphSimulationRunning() &&
+        node.inputs.size() == 1 &&
+        context.node_editor->TryGetSimulationScalar(node.inputs[0].id, live_value);
+    if (has_live_value) {
+        const float sample_time = context.node_editor->GetSimulationTime();
+        if (buf.times.empty() || sample_time > buf.times.back()) buf.Push(sample_time, live_value);
+    } else if (buf.times.empty()) {
+        Note("Connect one scalar signal and run the simulation to view data.");
+    }
+
+    if (!buf.times.empty()) {
+        // Copy deque to contiguous arrays for ImPlot
+        std::vector<float> t_arr(buf.times.begin(), buf.times.end());
+        std::vector<float> v_arr(buf.values.begin(), buf.values.end());
+        if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), ImPlotFlags_NoTitle)) {
+            ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
+            ImPlotAxisFlags y_flags = auto_scale ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
+            ImPlot::SetupAxes("Time (s)", "Value", x_flags, y_flags);
+            // Auto-scroll X axis to follow latest data
+            const float t_max = t_arr.back();
+            float t_window = t_arr.size() > 1 ? t_arr.back() - t_arr.front() : 2.0f;
+            if (t_window < 2.0f) t_window = 2.0f;
+            ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
+            ImPlot::PushStyleColor(ImPlotCol_Line, t.series[0]);
+            ImPlot::PlotLine("Signal", t_arr.data(), v_arr.data(), static_cast<int>(t_arr.size()));
+            ImPlot::PopStyleColor();
+            ImPlot::EndPlot();
         }
-    } catch (...) {
     }
-    return 0;
-}
-
-size_t FindExpectedClassCount(const RenderNodePropertiesContext& context) {
-    if (!context.node_editor) {
-        return 0;
-    }
-
-    for (const auto& graph_node : context.node_editor->GetNodes()) {
-        if (graph_node.type != NodeType::Output) {
-            continue;
-        }
-        auto it = graph_node.parameters.find("num_classes");
-        if (it != graph_node.parameters.end()) {
-            const size_t count = ParsePositiveSizeOrZero(it->second);
-            if (count > 0) {
-                return count;
-            }
-        }
-    }
-    return 0;
-}
-
-void RenderClassWeightsValidation(const MLNode& node,
-                                  const RenderNodePropertiesContext& context) {
-    const std::string weights = ParamOr(node, "class_weights", "");
-    std::vector<float> parsed_weights;
-    std::string error;
-    if (!ParseNonNegativeFloatVector(weights, parsed_weights, error)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
-                           "  Invalid weight vector: %s", error.c_str());
-        return;
-    }
-
-    const size_t expected_classes = FindExpectedClassCount(context);
-    if (expected_classes > 0 && parsed_weights.size() != expected_classes) {
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
-                           "  Weight count %zu does not match expected class count %zu.",
-                           parsed_weights.size(), expected_classes);
-        return;
-    }
-
-    if (expected_classes > 0) {
-        ImGui::TextDisabled("  %zu weights parsed. Expected class count: %zu.",
-                            parsed_weights.size(), expected_classes);
-    } else {
-        ImGui::TextDisabled("  %zu weights parsed. Expected class count is unknown until compile.",
-                            parsed_weights.size());
-    }
-}
-
-void RenderLossReduction(MLNode& node) {
-    static const char* reductions[] = {"mean", "sum", "none"};
-    RenderEnumParameter(node, "reduction", "Reduction",
-                        reductions, IM_ARRAYSIZE(reductions), "mean");
-}
-
-void RenderSimpleLossProperties(MLNode& node,
-                                const RenderNodePropertiesContext& context) {
-    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", node.name.c_str());
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    RenderLossReduction(node);
-
-    switch (node.type) {
-        case NodeType::CrossEntropyLoss: {
-            RenderTextParameter(node, "ignore_index", "Ignore index", "-100",
-                                ImGuiInputTextFlags_CharsDecimal);
-            RenderFloatParameter(node, "label_smoothing", "Label smoothing",
-                                 "0.0", 0.0f);
-            ImGui::TextDisabled("  Must be less than 1.0. Smooths hard class labels.");
-            static const char* weight_modes[] = {"none", "manual", "balanced"};
-            RenderEnumParameter(node, "class_weight", "Class weights",
-                                weight_modes, IM_ARRAYSIZE(weight_modes),
-                                "none");
-            const std::string mode = ParamOr(node, "class_weight", "none");
-            if (mode == "manual") {
-                RenderTextParameter(node, "class_weights", "Weight vector", "");
-                ImGui::TextDisabled("  Example: [1.0, 2.5, 1.0]. Length must match output classes.");
-                RenderClassWeightsValidation(node, context);
-            } else if (mode == "balanced") {
-                ImGui::TextDisabled("  Auto-computed from Arrow/text train labels when supported.");
-                ImGui::TextDisabled("  Unsupported dataset paths fall back to unweighted loss.");
-            }
-            break;
-        }
-        case NodeType::BCEWithLogits:
-            RenderFloatParameter(node, "pos_weight", "Positive weight",
-                                 "1.0", 0.000001f);
-            ImGui::TextDisabled("  Scales positive examples for imbalanced binary labels.");
-            break;
-        case NodeType::FocalLoss:
-            RenderFloatParameter(node, "alpha", "Alpha", "0.25", 0.0f);
-            RenderFloatParameter(node, "gamma", "Gamma", "2.0", 0.0f);
-            break;
-        case NodeType::SoftDiceLoss:
-            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
-            ImGui::TextDisabled("  Expects probability masks and same-shaped Float32 targets.");
-            break;
-        case NodeType::TverskyLoss:
-            RenderFloatParameter(node, "alpha", "Alpha", "0.5", 0.0f);
-            RenderFloatParameter(node, "beta", "Beta", "0.5", 0.0f);
-            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
-            ImGui::TextDisabled("  Alpha penalizes false positives; beta penalizes false negatives.");
-            break;
-        case NodeType::JaccardLoss:
-            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
-            ImGui::TextDisabled("  IoU-style overlap loss for same-shaped Float32 masks.");
-            break;
-        case NodeType::SmoothL1Loss:
-        case NodeType::HuberLoss:
-            RenderFloatParameter(node, "beta", "Beta", "1.0", 0.000001f);
-            break;
-        case NodeType::NLLLoss:
-            RenderTextParameter(node, "ignore_index", "Ignore index", "-100",
-                                ImGuiInputTextFlags_CharsDecimal);
-            break;
-        default:
-            break;
-    }
+    if (cyxwiz::ui::SecondaryButton("Clear")) buf.Clear();
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "Samples: %d", static_cast<int>(buf.times.size()));
 }
 
 }  // namespace
@@ -344,6 +230,7 @@ void ScopeBuffer::Clear() {
     times.clear();
     values.clear();
 }
+
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
     const auto publish_simulation_parameter =
         [&](const char* key) {
@@ -354,319 +241,34 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
                     node.id, key, value->second);
             }
         };
+    bool edited = false;
 
-    // Render editable parameters based on node type
     switch (node.type) {
-        case NodeType::Dense:
-        case NodeType::TimeDistributed: {
-            // Units
-            std::string& units = node.parameters["units"];
-            if (units.empty()) units = "64";
-            char u_buffer[16];
-            strncpy(u_buffer, units.c_str(), sizeof(u_buffer) - 1);
-            u_buffer[sizeof(u_buffer) - 1] = '\0';
-
-            ImGui::Text("Units:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##units", u_buffer, sizeof(u_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                units = u_buffer;
-                RefreshGeneratedNodeName(node);
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            if (node.type == NodeType::TimeDistributed) {
-                break;
-            }
-
-            // Activation function
-            std::string& activation = node.parameters["activation"];
-            if (activation.empty()) activation = "relu";
-
-            const char* activations[] = { "none", "relu", "sigmoid", "tanh", "softmax", "leaky_relu" };
-            int current_activation = 0;
-            for (int i = 0; i < 6; i++) {
-                if (activation == activations[i]) {
-                    current_activation = i;
-                    break;
-                }
-            }
-
-            ImGui::Text("Activation:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::Combo("##activation", &current_activation, activations, 6)) {
-                activation = activations[current_activation];
-            }
-            break;
-        }
-
-        case NodeType::Conv2D: {
-            // Filters
-            std::string& filters = node.parameters["filters"];
-            if (filters.empty()) filters = "32";
-            char f_buffer[16];
-            strncpy(f_buffer, filters.c_str(), sizeof(f_buffer) - 1);
-            f_buffer[sizeof(f_buffer) - 1] = '\0';
-
-            ImGui::Text("Filters:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##filters", f_buffer, sizeof(f_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                filters = f_buffer;
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            // Kernel Size
-            std::string& kernel = node.parameters["kernel_size"];
-            if (kernel.empty()) kernel = "3";
-            char k_buffer[16];
-            strncpy(k_buffer, kernel.c_str(), sizeof(k_buffer) - 1);
-            k_buffer[sizeof(k_buffer) - 1] = '\0';
-
-            ImGui::Text("Kernel Size:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##kernel", k_buffer, sizeof(k_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                kernel = k_buffer;
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            // Stride
-            std::string& stride = node.parameters["stride"];
-            if (stride.empty()) stride = "1";
-            char s_buffer[16];
-            strncpy(s_buffer, stride.c_str(), sizeof(s_buffer) - 1);
-            s_buffer[sizeof(s_buffer) - 1] = '\0';
-
-            ImGui::Text("Stride:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##stride", s_buffer, sizeof(s_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                stride = s_buffer;
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            // Padding
-            std::string& padding = node.parameters["padding"];
-            if (padding.empty()) padding = "same";
-
-            const char* paddings[] = { "same", "valid" };
-            int current_padding = (padding == "valid") ? 1 : 0;
-
-            ImGui::Text("Padding:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::Combo("##padding", &current_padding, paddings, 2)) {
-                padding = paddings[current_padding];
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            // Activation function
-            std::string& activation = node.parameters["activation"];
-            if (activation.empty()) activation = "relu";
-
-            const char* activations[] = { "none", "relu", "sigmoid", "tanh", "softmax", "leaky_relu" };
-            int current_activation = 0;
-            for (int i = 0; i < 6; i++) {
-                if (activation == activations[i]) {
-                    current_activation = i;
-                    break;
-                }
-            }
-
-            ImGui::Text("Activation:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::Combo("##activation_conv", &current_activation, activations, 6)) {
-                activation = activations[current_activation];
-            }
-            break;
-        }
-
-        case NodeType::MaxPool2D: {
-            // Pool Size
-            std::string& pool_size = node.parameters["pool_size"];
-            if (pool_size.empty()) pool_size = "2";
-            char p_buffer[16];
-            strncpy(p_buffer, pool_size.c_str(), sizeof(p_buffer) - 1);
-            p_buffer[sizeof(p_buffer) - 1] = '\0';
-
-            ImGui::Text("Pool Size:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##pool_size", p_buffer, sizeof(p_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                pool_size = p_buffer;
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-
-            // Stride
-            std::string& stride = node.parameters["stride"];
-            if (stride.empty()) stride = "2";
-            char s_buffer[16];
-            strncpy(s_buffer, stride.c_str(), sizeof(s_buffer) - 1);
-            s_buffer[sizeof(s_buffer) - 1] = '\0';
-
-            ImGui::Text("Stride:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##stride_pool", s_buffer, sizeof(s_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                stride = s_buffer;
-                context.invalidate_shapes();
-            }
-            break;
-        }
-
-        case NodeType::Dropout: {
-            std::string& rate_str = node.parameters["rate"];
-            if (rate_str.empty()) rate_str = "0.5";
-
-            float rate = std::stof(rate_str);
-            ImGui::Text("Drop Rate:");
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##rate", &rate, 0.0f, 1.0f, "%.2f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.2f", rate);
-                rate_str = buf;
-            }
-            break;
-        }
-
-        case NodeType::BatchNorm: {
-            // Momentum
-            std::string& momentum_str = node.parameters["momentum"];
-            if (momentum_str.empty()) momentum_str = "0.99";
-
-            float momentum = std::stof(momentum_str);
-            ImGui::Text("Momentum:");
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##momentum", &momentum, 0.0f, 1.0f, "%.3f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.3f", momentum);
-                momentum_str = buf;
-            }
-
-            ImGui::Spacing();
-
-            // Epsilon
-            std::string& epsilon_str = node.parameters["epsilon"];
-            if (epsilon_str.empty()) epsilon_str = "0.001";
-
-            float epsilon = std::stof(epsilon_str);
-            ImGui::Text("Epsilon:");
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##epsilon", &epsilon, 0.0001f, 0.01f, "%.4f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4f", epsilon);
-                epsilon_str = buf;
-            }
-            break;
-        }
-
-        case NodeType::Output: {
-            std::string classes = ParamOr(
-                node,
-                "num_classes",
-                ParamOr(node, "classes", "10").c_str());
-            char c_buffer[16];
-            strncpy(c_buffer, classes.c_str(), sizeof(c_buffer) - 1);
-            c_buffer[sizeof(c_buffer) - 1] = '\0';
-
-            ImGui::Text("Classes:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##classes", c_buffer, sizeof(c_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                properties_truth::WriteCanonicalAndAliases(
-                    node, "num_classes", c_buffer);
-                context.invalidate_shapes();
-            }
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Number of output classes");
-            break;
-        }
-
         case NodeType::SequenceTagOutput: {
-            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f),
-                               "Sequence tag output");
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Declares token-level logits and BIO decode metadata.");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            bool shape_changed = false;
-            shape_changed |= RenderTextParameter(
-                node, "num_tags", "Number of tags", "0",
-                ImGuiInputTextFlags_CharsDecimal);
-            RenderTextParameter(node, "tag_vocab_file", "Tag vocabulary", "");
-
-            std::string& decode_scheme = node.parameters["decode_scheme"];
-            if (decode_scheme.empty()) {
-                decode_scheme = "BIO";
-            }
-            const char* decode_schemes[] = {"BIO"};
-            int current_scheme = 0;
-            ImGui::Text("Decode scheme:");
-            ImGui::SameLine(150.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::Combo("##decode_scheme", &current_scheme,
-                             decode_schemes, 1)) {
-                decode_scheme = decode_schemes[current_scheme];
-            }
-
-            if (shape_changed) {
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Uses num_tags for CrossEntropy class-count validation.");
+            Note("Declares token-level logits and BIO decode metadata.");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            edited |= TextRow(node, "num_tags", "Number of tags", "0", ImGuiInputTextFlags_CharsDecimal);
+            edited |= TextRow(node, "tag_vocab_file", "Tag vocabulary", "");
+            static const char* decode_schemes[] = {"BIO"};
+            edited |= EnumRow(node, "decode_scheme", "Decode scheme", decode_schemes, 1, "BIO");
+            properties_rows::Note("Uses the number of tags for CrossEntropy class-count validation.");
             break;
         }
 
         case NodeType::NERSequenceBuilder: {
-            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f),
-                               "NER sequence materializer");
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Consumes sentence-level string-list columns and emits padded id tensors.");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            RenderTextParameter(node, "token_column", "Token column", "tokens");
-            RenderTextParameter(node, "pos_column", "POS column", "");
-            RenderTextParameter(node, "tag_column", "Tag column", "ner_tags");
-            RenderTextParameter(node, "sentence_id_column", "Sentence id", "");
-
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Required at launch: token and tag columns. POS and sentence id are optional.");
-            ImGui::Spacing();
-
-            bool shape_changed = false;
-            shape_changed |= RenderTextParameter(
-                node, "max_sequence_length", "Max sequence length", "0",
-                ImGuiInputTextFlags_CharsDecimal);
-            RenderTextParameter(node, "ignore_index", "Padding label", "-100");
-            RenderBoolParameter(node, "create_attention_mask",
-                                "Create attention mask", true);
-
-            if (shape_changed) {
-                context.invalidate_shapes();
-            }
-
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Outputs: word_ids, pos_ids, tag_ids, attention_mask, sequence_length.");
+            Note("Consumes sentence-level string-list columns and emits padded id tensors.");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            edited |= TextRow(node, "token_column", "Token column", "tokens");
+            edited |= TextRow(node, "pos_column", "POS column", "");
+            edited |= TextRow(node, "tag_column", "Tag column", "ner_tags");
+            edited |= TextRow(node, "sentence_id_column", "Sentence id", "");
+            properties_rows::Note("Required at launch: token and tag columns. POS and sentence id are optional.");
+            edited |= TextRow(node, "max_sequence_length", "Max sequence length", "0", ImGuiInputTextFlags_CharsDecimal);
+            edited |= TextRow(node, "ignore_index", "Padding label", "-100");
+            edited |= BoolRow(node, "create_attention_mask", "Create attention mask", true);
+            properties_rows::Note("Outputs: word_ids, pos_ids, tag_ids, attention_mask, sequence_length.");
             break;
         }
 
@@ -674,483 +276,170 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
         case NodeType::POSVocabulary:
         case NodeType::NERTagVocabulary: {
             const bool is_token = node.type == NodeType::TokenVocabulary;
-            const bool is_pos = node.type == NodeType::POSVocabulary;
             const bool is_tag = node.type == NodeType::NERTagVocabulary;
-            const char* title = is_token ? "Token vocabulary"
-                              : (is_pos ? "POS vocabulary"
-                                        : "NER tag vocabulary");
-            const char* default_column = is_token ? "tokens"
-                                       : (is_pos ? "pos_tags" : "ner_tags");
-
-            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f), "%s", title);
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                               "Builds a deterministic value,id table from one sequence column.");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            RenderTextParameter(node, "column", "Source column", default_column);
-            RenderTextParameter(node, "min_freq", "Minimum frequency", "1",
-                                ImGuiInputTextFlags_CharsDecimal);
-            RenderTextParameter(node, "max_vocab_size", "Max vocab size", "0",
-                                ImGuiInputTextFlags_CharsDecimal);
-            RenderTextParameter(node, "vocab_file", "Vocabulary file", "", 0,
-                                false);
-
-            ImGui::Spacing();
+            const char* default_column = is_token ? "tokens" : (is_tag ? "ner_tags" : "pos_tags");
+            Note("Builds a deterministic value,id table from one sequence column.");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            edited |= TextRow(node, "column", "Source column", default_column);
+            edited |= TextRow(node, "min_freq", "Minimum frequency", "1", ImGuiInputTextFlags_CharsDecimal);
+            edited |= TextRow(node, "max_vocab_size", "Max vocab size", "0", ImGuiInputTextFlags_CharsDecimal);
+            edited |= TextRow(node, "vocab_file", "Vocabulary file", "");
             if (is_tag) {
-                RenderTextParameter(node, "outside_tag", "Outside tag", "O");
-                RenderTextParameter(node, "bio_scheme", "Tag scheme", "BIO");
-                ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                                   "BIO tags are ordered deterministically with the outside tag first.");
+                edited |= TextRow(node, "outside_tag", "Outside tag", "O");
+                edited |= TextRow(node, "bio_scheme", "Tag scheme", "BIO");
+                properties_rows::Note("BIO tags are ordered deterministically with the outside tag first.");
             } else {
-                RenderBoolParameter(node, "lowercase", "Lowercase values",
-                                    is_token);
-                RenderTextParameter(node, "pad_token", "Padding token", "[PAD]");
-                RenderTextParameter(node, "unk_token", "Unknown token", "[UNK]");
-                ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
-                                   "Padding and unknown tokens are reserved before observed values.");
+                edited |= BoolRow(node, "lowercase", "Lowercase values", is_token);
+                edited |= TextRow(node, "pad_token", "Padding token", "[PAD]");
+                edited |= TextRow(node, "unk_token", "Unknown token", "[UNK]");
+                properties_rows::Note("Padding and unknown tokens are reserved before observed values.");
             }
             break;
         }
 
-        // ========== Data Pipeline Nodes ==========
-
-        case NodeType::DatasetInput:
-        case NodeType::DataLoader:
-        case NodeType::Augmentation:
-        case NodeType::DataSplit:
-            RenderDataPipelineNodeProperties(node, context);
+        case NodeType::Augmentation: {
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            edited |= TextRow(node, "transforms", "Transforms", "RandomFlip,Normalize");
+            properties_rows::Note("Comma-separated list");
+            edited |= SliderRow(node, "flip_prob", "Flip probability", 0.5f, 0.0f, 1.0f);
+            edited |= TextRow(node, "normalize_mean", "Normalize mean", "0.0");
+            edited |= TextRow(node, "normalize_std", "Normalize std", "1.0");
             break;
+        }
+
         case NodeType::TensorReshape: {
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Reshape Node");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Shape
-            std::string& shape = node.parameters["shape"];
-            if (shape.empty()) shape = "-1,28,28,1";
-            char shape_buffer[64];
-            strncpy(shape_buffer, shape.c_str(), sizeof(shape_buffer) - 1);
-            shape_buffer[sizeof(shape_buffer) - 1] = '\0';
-
-            ImGui::Text("Target Shape:");
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::InputText("##reshape", shape_buffer, sizeof(shape_buffer))) {
-                shape = shape_buffer;
-                context.invalidate_shapes();
-            }
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Use -1 for batch dimension");
-            break;
-        }
-
-        case NodeType::Normalize: {
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Normalize Node");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Mean
-            std::string& mean_str = node.parameters["mean"];
-            if (mean_str.empty()) mean_str = "0.0";
-            char mean_buffer[32];
-            strncpy(mean_buffer, mean_str.c_str(), sizeof(mean_buffer) - 1);
-            mean_buffer[sizeof(mean_buffer) - 1] = '\0';
-
-            ImGui::Text("Mean:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::InputText("##mean", mean_buffer, sizeof(mean_buffer))) {
-                mean_str = mean_buffer;
-            }
-
-            ImGui::Spacing();
-
-            // Std
-            std::string& std_str = node.parameters["std"];
-            if (std_str.empty()) std_str = "1.0";
-            char std_buffer[32];
-            strncpy(std_buffer, std_str.c_str(), sizeof(std_buffer) - 1);
-            std_buffer[sizeof(std_buffer) - 1] = '\0';
-
-            ImGui::Text("Standard Deviation:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::InputText("##std", std_buffer, sizeof(std_buffer))) {
-                std_str = std_buffer;
-            }
-
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Common values:");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "  MNIST: mean=0.1307, std=0.3081");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "  ImageNet: mean=0.485,0.456,0.406");
-            break;
-        }
-
-        case NodeType::OneHotEncode: {
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "One-Hot Encode Node");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Num classes
-            std::string& num_classes = node.parameters["num_classes"];
-            if (num_classes.empty()) num_classes = "10";
-            char classes_buffer[16];
-            strncpy(classes_buffer, num_classes.c_str(), sizeof(classes_buffer) - 1);
-            classes_buffer[sizeof(classes_buffer) - 1] = '\0';
-
-            ImGui::Text("Number of Classes:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##num_classes", classes_buffer, sizeof(classes_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                num_classes = classes_buffer;
-                context.invalidate_shapes();
-            }
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "MNIST=10, CIFAR-10=10, ImageNet=1000");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            edited |= TextRow(node, "shape", "Target shape", "-1,28,28,1");
+            properties_rows::Note("Use -1 for the batch dimension");
             break;
         }
 
         // ========== Activation Functions ==========
         case NodeType::ReLU:
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "ReLU Activation");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "f(x) = max(0, x)");
+            Formula("ReLU activation", "f(x) = max(0, x)");
             break;
-
         case NodeType::Sigmoid:
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Sigmoid Activation");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "f(x) = 1 / (1 + exp(-x))");
+            Formula("Sigmoid activation", "f(x) = 1 / (1 + exp(-x))");
             break;
-
         case NodeType::Tanh:
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Tanh Activation");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "f(x) = tanh(x)");
+            Formula("Tanh activation", "f(x) = tanh(x)");
             break;
-
         case NodeType::Softmax:
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Softmax Activation");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "f(x_i) = exp(x_i) / sum(exp(x))");
+            Formula("Softmax activation", "f(x_i) = exp(x_i) / sum(exp(x))");
             break;
-
-        case NodeType::LeakyReLU: {
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Leaky ReLU Activation");
-
-            std::string& slope_str = node.parameters["negative_slope"];
-            if (slope_str.empty()) slope_str = "0.01";
-            float slope = std::stof(slope_str);
-
-            ImGui::Text("Negative Slope:");
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##neg_slope", &slope, 0.001f, 0.3f, "%.3f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.3f", slope);
-                slope_str = buf;
-            }
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "f(x) = max(slope*x, x)");
-            break;
-        }
-
-        // ========== Loss Functions ==========
-        case NodeType::MSELoss:
-        case NodeType::CrossEntropyLoss:
-        case NodeType::FocalLoss:
-        case NodeType::SoftDiceLoss:
-        case NodeType::TverskyLoss:
-        case NodeType::JaccardLoss:
-        case NodeType::BCELoss:
-        case NodeType::BCEWithLogits:
-        case NodeType::L1Loss:
-        case NodeType::SmoothL1Loss:
-        case NodeType::HuberLoss:
-        case NodeType::NLLLoss:
-            RenderSimpleLossProperties(node, context);
-            break;
-
         case NodeType::Flatten:
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Flatten Layer");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Flattens input to 1D vector");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[H, W, C] -> [H * W * C]");
+            Formula("Flattens the input to one vector", "[H, W, C] -> [H * W * C]");
             break;
 
+        // ========== Simulation signals ==========
         case NodeType::SignalSlider: {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Signal Slider");
-            ImGui::Spacing();
-
-            std::string& val_str = node.parameters["value"];
-            std::string& min_str = node.parameters["min"];
-            std::string& max_str = node.parameters["max"];
-            float val = ParseFiniteFloatOr(val_str, 0.0f);
-            float mn = ParseFiniteFloatOr(min_str, -1.0f);
-            float mx = ParseFiniteFloatOr(max_str, 1.0f);
+            float val = ParseFiniteFloatOr(ParamOr(node, "value"), 0.0f);
+            float mn = ParseFiniteFloatOr(ParamOr(node, "min"), -1.0f);
+            float mx = ParseFiniteFloatOr(ParamOr(node, "max"), 1.0f);
             if (mn > mx) std::swap(mn, mx);
             val = std::clamp(val, mn, mx);
-
-            ImGui::Text("Value:");
-            ImGui::SetNextItemWidth(200.0f);
+            const auto store = [&](const char* key, float v, const char* format) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), format, v);
+                node.parameters[key] = buf;
+                publish_simulation_parameter(key);
+            };
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            properties_rows::Label("Value");
             if (ImGui::SliderFloat("##slider_val", &val, mn, mx)) {
-                char buf[32]; snprintf(buf, sizeof(buf), "%.4f", val);
-                val_str = buf;
-                publish_simulation_parameter("value");
+                store("value", val, "%.4f");
+                edited = true;
             }
-
-            ImGui::Text("Range:");
-            ImGui::SetNextItemWidth(90.0f);
+            properties_rows::Status("value");
+            properties_rows::Label("Range");
+            const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            ImGui::SetNextItemWidth(half);
             if (ImGui::InputFloat("##slider_min", &mn, 0, 0, "%.2f")) {
                 if (mn > mx) {
                     mx = mn;
-                    char max_buf[32];
-                    snprintf(max_buf, sizeof(max_buf), "%.2f", mx);
-                    max_str = max_buf;
-                    publish_simulation_parameter("max");
+                    store("max", mx, "%.2f");
                 }
-                char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mn);
-                min_str = buf;
-                val = std::clamp(val, mn, mx);
-                snprintf(buf, sizeof(buf), "%.4f", val);
-                val_str = buf;
-                publish_simulation_parameter("min");
-                publish_simulation_parameter("value");
+                store("min", mn, "%.2f");
+                store("value", std::clamp(val, mn, mx), "%.4f");
+                edited = true;
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
+            ImGui::SetNextItemWidth(half);
             if (ImGui::InputFloat("##slider_max", &mx, 0, 0, "%.2f")) {
                 if (mx < mn) {
                     mn = mx;
-                    char min_buf[32];
-                    snprintf(min_buf, sizeof(min_buf), "%.2f", mn);
-                    min_str = min_buf;
-                    publish_simulation_parameter("min");
+                    store("min", mn, "%.2f");
                 }
-                char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mx);
-                max_str = buf;
-                val = std::clamp(val, mn, mx);
-                snprintf(buf, sizeof(buf), "%.4f", val);
-                val_str = buf;
-                publish_simulation_parameter("max");
-                publish_simulation_parameter("value");
+                store("max", mx, "%.2f");
+                store("value", std::clamp(val, mn, mx), "%.4f");
+                edited = true;
             }
+            properties_rows::Status("min");
             break;
         }
 
         case NodeType::SineWave: {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Sine Wave Generator");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "A*sin(2*pi*f*t + phase) + offset");
-            ImGui::Spacing();
-
-            auto floatParam = [&](const char* label, const char* key, float step = 0.1f) {
-                std::string& s = node.parameters[key];
-                float v = ParseFiniteFloatOr(s, 0.0f);
-                ImGui::Text("%s:", label);
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                std::string id = std::string("##sine_") + key;
-                if (ImGui::InputFloat(id.c_str(), &v, step, step * 10, "%.3f")) {
-                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
-                    s = buf;
+            Note("A*sin(2*pi*f*t + phase) + offset");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            for (const auto& [label, key] : {std::pair{"Amplitude", "amplitude"}, std::pair{"Frequency", "frequency"},
+                                             std::pair{"Phase", "phase"}, std::pair{"Offset", "offset"}}) {
+                if (FloatRow(node, key, label, 0.0f)) {
                     publish_simulation_parameter(key);
+                    edited = true;
                 }
-            };
-            floatParam("Amplitude", "amplitude");
-            floatParam("Frequency", "frequency");
-            floatParam("Phase", "phase");
-            floatParam("Offset", "offset");
+            }
             break;
         }
 
         case NodeType::StepSignal: {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Step Signal");
-            ImGui::Spacing();
-
-            auto floatParam = [&](const char* label, const char* key) {
-                std::string& s = node.parameters[key];
-                float v = ParseFiniteFloatOr(s, 0.0f);
-                ImGui::Text("%s:", label);
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                std::string id = std::string("##step_") + key;
-                if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
-                    if (std::strcmp(key, "step_time") == 0) {
-                        v = std::max(v, 0.0f);
-                    }
-                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
-                    s = buf;
-                    publish_simulation_parameter(key);
-                }
-            };
-            floatParam("Step Time", "step_time");
-            floatParam("Initial Value", "initial_value");
-            floatParam("Final Value", "final_value");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            if (FloatRow(node, "step_time", "Step time", 0.0f, 0.0f)) { publish_simulation_parameter("step_time"); edited = true; }
+            if (FloatRow(node, "initial_value", "Initial value", 0.0f)) { publish_simulation_parameter("initial_value"); edited = true; }
+            if (FloatRow(node, "final_value", "Final value", 0.0f)) { publish_simulation_parameter("final_value"); edited = true; }
             break;
         }
 
         case NodeType::RampSignal: {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Ramp Signal");
-            ImGui::Spacing();
-
-            auto floatParam = [&](const char* label, const char* key) {
-                std::string& s = node.parameters[key];
-                float v = ParseFiniteFloatOr(s, 0.0f);
-                ImGui::Text("%s:", label);
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                std::string id = std::string("##ramp_") + key;
-                if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
-                    if (std::strcmp(key, "duration") == 0) {
-                        v = std::max(v, 0.001f);
-                    }
-                    char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
-                    s = buf;
-                    publish_simulation_parameter(key);
-                }
-            };
-            floatParam("Start Value", "start_value");
-            floatParam("End Value", "end_value");
-            floatParam("Duration", "duration");
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            if (FloatRow(node, "start_value", "Start value", 0.0f)) { publish_simulation_parameter("start_value"); edited = true; }
+            if (FloatRow(node, "end_value", "End value", 0.0f)) { publish_simulation_parameter("end_value"); edited = true; }
+            if (FloatRow(node, "duration", "Duration", 0.0f, 0.001f)) { publish_simulation_parameter("duration"); edited = true; }
             break;
         }
 
-        case NodeType::SignalScope: {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Signal Scope");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Plots incoming signal values in real-time");
-            ImGui::Spacing();
-
-            std::string& ws = node.parameters["window_size"];
-            int win = std::clamp(ParseIntOr(ws, 500), 10, 100000);
-            ImGui::Text("Window Size:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputInt("##scope_win", &win)) {
-                win = std::clamp(win, 10, 100000);
-                ws = std::to_string(win);
-            }
-
-            std::string& as = node.parameters["auto_scale"];
-            bool auto_s = (as == "true");
-            if (ImGui::Checkbox("Auto Scale", &auto_s)) {
-                as = auto_s ? "true" : "false";
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Real-time signal plot
-            auto& buf = context.scope_buffers[node.id];
-            buf.max_samples = win;
-
-            float live_value = 0.0f;
-            const bool has_live_value =
-                context.node_editor &&
-                context.node_editor->IsGraphSimulationRunning() &&
-                node.inputs.size() == 1 &&
-                context.node_editor->TryGetSimulationScalar(
-                    node.inputs[0].id, live_value);
-            if (has_live_value) {
-                const float sample_time =
-                    context.node_editor->GetSimulationTime();
-                if (buf.times.empty() || sample_time > buf.times.back()) {
-                    buf.Push(sample_time, live_value);
-                }
-            } else if (buf.times.empty()) {
-                ImGui::TextDisabled(
-                    "Connect one scalar signal and run simulation to view data.");
-            }
-
-            if (!buf.times.empty()) {
-                // Copy deque to contiguous arrays for ImPlot
-                std::vector<float> t_arr(buf.times.begin(), buf.times.end());
-                std::vector<float> v_arr(buf.values.begin(), buf.values.end());
-
-                ImPlotFlags plot_flags = ImPlotFlags_NoTitle;
-                if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), plot_flags)) {
-                    ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
-                    ImPlotAxisFlags y_flags = auto_s ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
-                    ImPlot::SetupAxes("Time (s)", "Value", x_flags, y_flags);
-
-                    // Auto-scroll X axis to follow latest data
-                    if (!t_arr.empty()) {
-                        float t_max = t_arr.back();
-                        float t_window = t_arr.size() > 1
-                                             ? t_arr.back() - t_arr.front()
-                                             : 2.0f;
-                        if (t_window < 2.0f) t_window = 2.0f;
-                        ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
-                    }
-
-                    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
-                    ImPlot::PlotLine("Signal", t_arr.data(), v_arr.data(), static_cast<int>(t_arr.size()));
-                    ImPlot::PopStyleColor();
-                    ImPlot::EndPlot();
-                }
-            }
-
-            // Controls
-            if (ImGui::Button("Clear")) {
-                buf.Clear();
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("Samples: %d", static_cast<int>(buf.times.size()));
-
+        case NodeType::SignalScope:
+            Note("Plots incoming signal values in real time");
+            RenderSignalScope(node, context);
             break;
-        }
 
         case NodeType::PluginCustom:
             RenderPluginCustomNodeProperties(node, context);
             break;
-        // ========== Smart I/O Nodes (Dialog-only configuration) ==========
-        case NodeType::DataInput:
-        case NodeType::DataOutput:
-            // These nodes are configured via the Open Dialog button only
-            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Use 'Open Dialog' to configure");
-            break;
-
-        case NodeType::DataConvert: {
-            const std::string status = ParamOr(node, "status", "Not run");
-            const std::string output = ParamOr(
-                node, "converted_output_path",
-                ParamOr(node, "parquet_output_path",
-                        ParamOr(node, "output_path").c_str()).c_str());
-            const std::string manifest = ParamOr(node, "manifest_path");
-            const std::string rows = ParamOr(node, "rows_written", "0");
-
-            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
-                               "Use 'Open Dialog' to configure and run");
-            ImGui::Spacing();
-            RenderPathLine("Source:", ParamOr(node, "input_path"));
-            RenderPathLine("Output:", output);
-            if (!manifest.empty()) {
-                RenderPathLine("Manifest:", manifest);
-            }
-            ImGui::Text("Rows written:");
-            ImGui::SameLine(120.0f);
-            ImGui::TextUnformatted(rows.c_str());
-            ImGui::Text("Status:");
-            ImGui::SameLine(120.0f);
-            ImGui::TextWrapped("%s", status.c_str());
-            break;
-        }
 
         default: {
-            // Generic parameter editor for nodes that don't have a
-            // custom case above (e.g. the new Image Transform nodes).
-            // Renders each parameter as an editable text field. Nodes
-            // with no parameters at all show a "no parameters" hint.
+            // Generic editor for a type with no metadata parameters and no
+            // case above: one text row per stored key.
             if (node.parameters.empty()) {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                                   "No editable parameters for this node type");
-            } else {
-                for (auto& [key, value] : node.parameters) {
-                    char buf[256] = {};
-                    strncpy(buf, value.c_str(), sizeof(buf) - 1);
-
-                    ImGui::Text("%s:", key.c_str());
-                    ImGui::SameLine(140);
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10);
-                    std::string label = "##param_" + key;
-                    if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) {
-                        value = buf;
-                    }
-                }
+                Note("No editable settings for this node type");
+                break;
+            }
+            properties_rows::Rows rows("##rows");
+            if (!rows.ok) break;
+            std::vector<std::string> keys;
+            for (const auto& [key, value] : node.parameters) keys.push_back(key);
+            for (const auto& key : keys) {
+                edited |= TextRow(node, key.c_str(), key.c_str(), "");
             }
             break;
         }
     }
+    if (edited && context.invalidate_shapes) context.invalidate_shapes();
 }
 } // namespace gui::properties_node_editors

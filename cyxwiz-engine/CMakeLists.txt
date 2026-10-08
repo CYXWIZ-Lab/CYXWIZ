@@ -340,7 +340,6 @@ set(ENGINE_SOURCES
     src/gui/properties_executor.cpp
     src/gui/properties_metadata_editor.cpp
     src/gui/properties_node_editors.cpp
-    src/gui/properties_data_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_presets.cpp
