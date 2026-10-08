@@ -8,7 +8,7 @@
 
 namespace cyxwiz::data_input {
 
-enum class SourcePreview { Unsupported, Delimited, RegisteredDataset };
+enum class SourcePreview { Unsupported, Delimited, RegisteredDataset, Hdf5Inspection };
 enum class SourceDependency { None, Hdf5 };
 
 // IDs preserve the dialog's existing saved/detected format mapping. Recognition
@@ -34,7 +34,7 @@ inline constexpr std::array<SourceFormatCapability, 12> kSourceFormats{{
     {4, "parquet", "Parquet", {"parquet"}, {"parquet", "pq"}, true, SourcePreview::RegisteredDataset},
     {5, "excel", "Excel", {"excel"}, {"xlsx", "xls"}, false, SourcePreview::Unsupported,
      SourceDependency::None, "Tabular Excel loading is not supported yet"},
-    {6, "hdf5", "HDF5", {"hdf5", "h5", "hdf"}, {"h5", "hdf5", "hdf"}, false, SourcePreview::Unsupported,
+    {6, "hdf5", "HDF5", {"hdf5", "h5", "hdf"}, {"h5", "hdf5", "hdf"}, false, SourcePreview::Hdf5Inspection,
      SourceDependency::Hdf5, "Tabular HDF5 loading is not supported yet; conversion and hierarchy inspection are separate capabilities"},
     {7, "feather", "Feather", {"feather"}, {"feather", "fea"}, true, SourcePreview::RegisteredDataset},
     {8, "arrow", "Arrow / IPC", {"arrow", "ipc"}, {"arrow", "ipc"}, true, SourcePreview::RegisteredDataset},

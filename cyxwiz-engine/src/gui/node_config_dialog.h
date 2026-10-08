@@ -25,6 +25,7 @@
 #include "data_input_capabilities.h"
 #include "data_preview_page_cache.h"
 #include "data_preview_table_renderer.h"
+#include "hdf5_source_inspector.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
@@ -56,6 +57,7 @@ public:
     // and Apply while busy so the user can't fire two concurrent loads.
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
+    virtual bool CanApply() const { return true; }
 
     // Optional graph context. Properties.cpp sets this right after
     // constructing a dialog so visualization / inspection dialogs can
@@ -66,6 +68,7 @@ public:
 
 protected:
     virtual void RenderContent() = 0;
+    virtual void OnClose() {}
     void RenderSettingsTab();
     void RenderAdvancedTab();
     void RenderPreviewTab();
@@ -246,9 +249,11 @@ public:
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
     bool IsBusy() const override { return is_loading_async_; }
+    bool CanApply() const override { return !IsHdf5Source(); }
 
 protected:
     void RenderContent() override;
+    void OnClose() override;
 
 private:
     // Data source types
@@ -277,6 +282,15 @@ private:
 
     // File source sub-renderers
     void RenderTabularOptions();
+    bool IsHdf5Source() const;
+    void SyncHdf5InspectorSource();
+    void RestoreOriginalHdf5Source();
+    Hdf5SourceInspector hdf5_inspector_;
+    std::string hdf5_source_path_;
+    std::string hdf5_source_project_root_;
+    std::string hdf5_source_graph_directory_;
+    std::string hdf5_source_launch_directory_;
+    std::string hdf5_source_resolved_path_;
     // Sequence (token tagging): a tabular file carrying the tagging contract
     // (data_input_dialog_sequence.cpp, TOFIX112).
     void LoadSequenceSettings();

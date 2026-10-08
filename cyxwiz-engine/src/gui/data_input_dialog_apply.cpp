@@ -21,6 +21,12 @@ namespace fs = std::filesystem;
 namespace gui {
 void DataInputDialog::Apply() {
     if (!node_) return;
+    if (IsHdf5Source()) {
+        apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
+        apply_success_ = false;
+        apply_status_timer_ = 8.0f;
+        return;
+    }
 
     // Apply also acts as confirmation. Reuse a valid registration when no
     // setting changed instead of parsing the same source again.

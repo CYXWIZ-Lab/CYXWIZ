@@ -71,6 +71,7 @@ void DataInputDialog::RenderFileSource() {
         file_category_ = category;
         sequence_tagging_ = sequence;
         has_changes_ = true;
+        SyncHdf5InspectorSource();
     };
     if (ImGui::RadioButton("Tabular", &cat_idx, 0)) pick(FileCategory::Tabular, false);
     ImGui::SameLine();
@@ -261,6 +262,12 @@ void DataInputDialog::RenderTabularOptions() {
                     "Example: na,?,missing. Arrow standard null spellings remain enabled.");
             }
         }
+    }
+
+    if (IsHdf5Source()) {
+        SyncHdf5InspectorSource();
+        hdf5_inspector_.RenderSettings();
+        return;
     }
 
     if (ImGui::CollapsingHeader(

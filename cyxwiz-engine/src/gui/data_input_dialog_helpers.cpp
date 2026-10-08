@@ -11,6 +11,8 @@
 #include "../core/data_registry.h"
 #include "../core/file_dialogs.h"
 #include "../core/data_input_formats.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
 
 #include <cstring>
 #include <string>
@@ -33,6 +35,11 @@ void DataInputDialog::DetectFileCategory() {
 }
 
 void DataInputDialog::LoadPreview() {
+    if (IsHdf5Source()) {
+        SyncHdf5InspectorSource();
+        hdf5_inspector_.Preview();
+        return;
+    }
     ResetPreviewPaging();
     preview_view_ = {};
     preview_error_.clear();
@@ -112,6 +119,7 @@ void DataInputDialog::LoadColumnList() {
 }
 
 void DataInputDialog::RefreshColumnList() {
+    SyncHdf5InspectorSource();
     ResetPreviewPaging();
     std::string selected_label;
     if (label_column_idx_ >= 0 &&
@@ -148,6 +156,7 @@ void DataInputDialog::RefreshColumnList() {
 }
 
 bool DataInputDialog::CanPageRegisteredPreview() const {
+    if (IsHdf5Source()) return false;
     if (!node_) return false;
     const auto parameter_matches = [this](const char* key, const std::string& value) {
         const auto it = node_->parameters.find(key);
@@ -353,6 +362,10 @@ void DataInputDialog::BrowseFile() {
                 const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
                 if (!extensions.empty()) filters.emplace_back(format.label, extensions);
             }
+            if (cyxwiz::data_input::kHdf5BuildAvailable) {
+                const auto* hdf5 = cyxwiz::data_input::FindFormat("hdf5");
+                filters.emplace_back("HDF5 (inspection only)", cyxwiz::data_input::ExtensionFilter(*hdf5));
+            }
             filters.emplace_back("All Files", "*");
             break;
         case FileCategory::Image:
@@ -431,6 +444,81 @@ std::string DataInputDialog::CurrentApplySummary() const {
 
 const char* DataInputDialog::BackendSummary() const {
     return data_input::BackendSummary(loaded_backend_);
+}
+
+bool DataInputDialog::IsHdf5Source() const {
+    if (source_type_ != SourceType::File ||
+        (file_category_ != FileCategory::Tabular && file_category_ != FileCategory::TimeSeries)) return false;
+    const auto format_name = cyxwiz::data_input::ResolveFormat(data_input::FileTypeParam(detected_type_), file_path_);
+    const auto* format = cyxwiz::data_input::FindFormat(format_name);
+    return format && format->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection;
+}
+
+void DataInputDialog::SyncHdf5InspectorSource() {
+    if (!IsHdf5Source() || file_path_[0] == '\0') {
+        hdf5_inspector_.SetSource("");
+        hdf5_source_path_.clear();
+        return;
+    }
+
+    const auto& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    const auto& graph_directory = cyxwiz::GraphDataSearchDirectory();
+    const auto launch_directory = cyxwiz::EngineLaunchDirectory();
+    // Avoid repeating the resolver's filesystem probes on every render pass.
+    if (hdf5_source_path_ != file_path_ ||
+        hdf5_source_project_root_ != project_root ||
+        hdf5_source_graph_directory_ != graph_directory ||
+        hdf5_source_launch_directory_ != launch_directory) {
+        hdf5_source_resolved_path_ = cyxwiz::ResolveProjectDataPath(file_path_, project_root);
+        hdf5_source_path_ = file_path_;
+        hdf5_source_project_root_ = project_root;
+        hdf5_source_graph_directory_ = graph_directory;
+        hdf5_source_launch_directory_ = launch_directory;
+    }
+    hdf5_inspector_.SetSource(hdf5_source_resolved_path_);
+}
+
+void DataInputDialog::RestoreOriginalHdf5Source() {
+    const auto original = [this](const char* key) {
+        const auto it = original_params_.find(key);
+        return it == original_params_.end() ? std::string{} : it->second;
+    };
+    const auto path = original("file_path");
+    const auto source = data_input::SourceTypeFromParam(original("source_type"), SourceType::File);
+    const auto category = data_input::FileCategoryFromParam(original("file_category"),
+        data_input::DetectFileCategoryForPath(path, FileCategory::Tabular));
+    int type = data_input::DetectFileTypeForPath(path, nullptr);
+    const auto canonical_type = original("file_type");
+    const auto saved_type = !canonical_type.empty() && canonical_type != "auto"
+        ? canonical_type : original("type");
+    if (!saved_type.empty()) type = data_input::FileTypeFromParam(saved_type, type);
+    const auto* format = cyxwiz::data_input::FindFormat(
+        cyxwiz::data_input::ResolveFormat(data_input::FileTypeParam(type), path));
+    const bool original_hdf5 = source == SourceType::File &&
+        (category == FileCategory::Tabular || category == FileCategory::TimeSeries) &&
+        format && format->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection;
+    if (!original_hdf5 && !IsHdf5Source()) return;
+
+    // Restore the source before its selection, including when the user edited
+    // the file path or switched away from the original HDF5 category.
+    source_type_ = source;
+    file_category_ = category;
+    std::strncpy(file_path_, path.c_str(), sizeof(file_path_) - 1);
+    file_path_[sizeof(file_path_) - 1] = '\0';
+    const auto folder = original("folder_path");
+    std::strncpy(folder_path_, folder.c_str(), sizeof(folder_path_) - 1);
+    folder_path_[sizeof(folder_path_) - 1] = '\0';
+    detected_type_ = type;
+    file_size_ = 0;
+    LoadSequenceSettings();
+    RefreshColumnList();
+    if (original_hdf5) hdf5_inspector_.RestoreSettings(original_params_);
+}
+
+void DataInputDialog::OnClose() {
+    hdf5_inspector_.Reset();
+    hdf5_source_path_.clear();
+    ResetPreviewPaging();
 }
 
 bool DataInputDialog::IsApplySupported() const {

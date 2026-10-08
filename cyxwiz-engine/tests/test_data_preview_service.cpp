@@ -148,7 +148,8 @@ void TestPreviewSourceContract() {
                 ? "loading is not supported" : "Apply this source first";
             Check(rejected.error.find(expected_reason) != std::string::npos &&
                       rejected.columns.empty() && rejected.rows.empty(),
-                  extension + ": explicit/auto non-delimited preview must reject before file I/O");
+                  extension + " (type " + std::to_string(selected_type) +
+                      "): non-delimited preview must reject before file I/O; got: " + rejected.error);
         }
     }
     for (const auto* format : {"auto", "hdf5", "h5"}) {

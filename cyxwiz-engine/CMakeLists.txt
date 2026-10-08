@@ -363,6 +363,12 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_io_dialogs.cpp
     src/core/data_convert_task.cpp
+    src/core/hdf5_inspection_task.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_load_task.cpp
+    src/gui/hdf5_source_inspector.cpp
+    src/gui/hdf5_source_inspector_render.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp
     src/gui/loaders/data_loader.cpp
@@ -4556,6 +4562,52 @@ if(WIN32)
 endif()
 set_target_properties(test_data_convert_task PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+add_executable(test_hdf5_input_settings
+    tests/test_hdf5_input_settings.cpp src/core/hdf5_input_settings.cpp)
+target_include_directories(test_hdf5_input_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_hdf5_input_settings PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+foreach(hdf5_inspection_test IN ITEMS test_hdf5_inspection_task test_hdf5_inspection_task_unavailable
+                                     test_hdf5_source_inspector test_hdf5_source_load_task
+                                     test_hdf5_source_load_task_unavailable)
+    add_executable(${hdf5_inspection_test}
+        src/core/hdf5_source_identity.cpp
+        src/core/hdf5_input_settings.cpp
+        src/core/hdf5_table_adapter.cpp
+        src/core/async_task_manager.cpp
+        src/core/training_trace_collector.cpp
+        src/core/crash_run_recorder.cpp)
+    if(hdf5_inspection_test MATCHES "^test_hdf5_source_load_task")
+        target_sources(${hdf5_inspection_test} PRIVATE
+            src/core/hdf5_source_load_task.cpp tests/test_hdf5_source_load_task.cpp)
+    else()
+        target_sources(${hdf5_inspection_test} PRIVATE
+            src/core/hdf5_inspection_task.cpp src/utils/hdf5_browser_page.cpp)
+    endif()
+    if(hdf5_inspection_test STREQUAL "test_hdf5_source_inspector")
+        target_sources(${hdf5_inspection_test} PRIVATE
+            tests/test_hdf5_source_inspector.cpp
+            src/gui/hdf5_source_inspector.cpp
+            src/gui/hdf5_source_inspector_render.cpp
+            src/gui/data_preview_table_renderer.cpp
+            src/gui/ui_buttons.cpp src/gui/ui_tokens.cpp src/core/appearance_options.cpp)
+        target_link_libraries(${hdf5_inspection_test} PRIVATE imgui::imgui)
+    elseif(hdf5_inspection_test MATCHES "^test_hdf5_inspection_task")
+        target_sources(${hdf5_inspection_test} PRIVATE tests/test_hdf5_inspection_task.cpp)
+    endif()
+    target_include_directories(${hdf5_inspection_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(${hdf5_inspection_test} PRIVATE
+        cyxwiz-backend Arrow::arrow_shared spdlog::spdlog nlohmann_json::nlohmann_json)
+    if(HighFive_FOUND AND NOT hdf5_inspection_test MATCHES "_unavailable$")
+        target_link_libraries(${hdf5_inspection_test} PRIVATE HighFive)
+        target_compile_definitions(${hdf5_inspection_test} PRIVATE CYXWIZ_HAS_HDF5)
+    endif()
+    if(WIN32)
+        target_compile_definitions(${hdf5_inspection_test} PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+    set_target_properties(${hdf5_inspection_test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endforeach()
+
 add_executable(test_data_convert_format_controls tests/test_data_convert_format_controls.cpp)
 target_link_libraries(test_data_convert_format_controls PRIVATE imgui::imgui)
 set_target_properties(test_data_convert_format_controls PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -4615,6 +4667,35 @@ endif()
 set_target_properties(test_data_preview_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+add_executable(test_hdf5_prepared_source
+    tests/test_hdf5_prepared_source.cpp
+    src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_table_adapter.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/data_preview_service.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/dataset_base.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_hdf5_prepared_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_hdf5_prepared_source PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(HighFive_FOUND)
+    target_link_libraries(test_hdf5_prepared_source PRIVATE HighFive)
+    target_compile_definitions(test_hdf5_prepared_source PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+if(WIN32)
+    target_compile_definitions(test_hdf5_prepared_source PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_hdf5_prepared_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Stable error-code catalog and formatting =====
 add_executable(test_error_codes

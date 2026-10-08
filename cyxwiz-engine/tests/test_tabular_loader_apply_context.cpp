@@ -73,6 +73,9 @@ int main() {
               !cyxwiz::data_input::BuildAvailable(*hdf5, false) &&
               cyxwiz::data_input::BuildAvailable(*hdf5, true),
           "HighFive availability must not enable the incomplete Data Input adapter");
+    Check(hdf5->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection &&
+              !hdf5->executable,
+          "HDF5 source inspection must remain separate from production loading");
     Check(std::string(cyxwiz::data_input::UnsupportedReason("h5", false)).find("not compiled") != std::string::npos,
           "A build without HDF5 must report its missing dependency");
     Check(cyxwiz::data_input::ExtensionFilter().find("h5") == std::string::npos &&

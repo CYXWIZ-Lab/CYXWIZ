@@ -17,6 +17,11 @@ namespace fs = std::filesystem;
 namespace gui {
 
 void DataInputDialog::RenderPreviewPanel() {
+    if (IsHdf5Source()) {
+        SyncHdf5InspectorSource();
+        hdf5_inspector_.RenderPreview();
+        return;
+    }
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 

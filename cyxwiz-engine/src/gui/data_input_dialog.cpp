@@ -172,6 +172,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (strlen(file_path_) > 0) {
             RefreshColumnList();
         }
+        if (IsHdf5Source()) {
+            SyncHdf5InspectorSource();
+            hdf5_inspector_.RestoreSettings(node_->parameters);
+        }
         if (node_->parameters.count("selected_columns") &&
             !available_columns_.empty()) {
             try {
@@ -347,14 +351,19 @@ DataInputDialog::DataInputDialog(MLNode* node)
 }
 
 void DataInputDialog::Reset() {
+    hdf5_inspector_.Reset();
+    hdf5_source_path_.clear();
     if (!node_) return;
     node_->parameters = original_params_;
+    RestoreOriginalHdf5Source();
     ResetPreviewPaging();
     preview_loaded_ = false;
     has_changes_ = false;
 }
 
 void DataInputDialog::RenderContent() {
+    SyncHdf5InspectorSource();
+    hdf5_inspector_.Poll();
     // Pick up the async load result, if the worker has finished, and apply
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();
@@ -372,6 +381,7 @@ void DataInputDialog::RenderContent() {
         "Choose a source, inspect the contract, then apply it to this DataInput node.");
     ImGui::Spacing();
     RenderSourceSelector();
+    SyncHdf5InspectorSource();
     ImGui::Spacing();
 
     // KNIME-style tab bar at TOP based on source type

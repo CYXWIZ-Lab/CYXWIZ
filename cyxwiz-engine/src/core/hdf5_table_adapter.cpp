@@ -1,4 +1,5 @@
 #include "hdf5_table_adapter.h"
+#include "hdf5_object_path.h"
 #include "hdf5_table_internal.h"
 
 #ifdef CYXWIZ_HAS_HDF5
@@ -10,7 +11,6 @@
 #include <array>
 #include <limits>
 #include <stdexcept>
-#include <string_view>
 #endif
 
 namespace cyxwiz {
@@ -66,18 +66,9 @@ HighFive::File hdf5_detail::OpenFile(const std::string& path) {
 }
 
 void hdf5_detail::ValidatePathSyntax(const std::string& path, bool allow_root) {
-    if (allow_root && path == "/") return;
-    if (path.size() < 2 || path.size() > 4096 || path.front() != '/' || path.back() == '/' ||
-        path.find('\0') != std::string::npos)
-        throw ReadFailure(Hdf5TableStatus::InvalidSelection, "Select an absolute HDF5 object path of at most 4096 bytes");
-    for (size_t begin = 1; begin < path.size();) {
-        auto end = path.find('/', begin);
-        if (end == std::string::npos) end = path.size();
-        const std::string_view component(path.data() + begin, end - begin);
-        if (component.empty() || component == "." || component == "..")
-            throw ReadFailure(Hdf5TableStatus::InvalidSelection, "Invalid HDF5 dataset path: '" + path + "'");
-        begin = end + 1;
-    }
+    std::string error;
+    if (!ValidateHdf5ObjectPath(path, error, allow_root))
+        throw ReadFailure(Hdf5TableStatus::InvalidSelection, error);
 }
 
 void hdf5_detail::ValidateLocalPath(const HighFive::File& file, const std::string& path,

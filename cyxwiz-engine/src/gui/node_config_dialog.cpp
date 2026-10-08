@@ -110,6 +110,7 @@ void NodeConfigDialog::Open() {
 
 void NodeConfigDialog::Close() {
     is_open_ = false;
+    OnClose();
 }
 
 bool NodeConfigDialog::Render() {
@@ -151,7 +152,7 @@ bool NodeConfigDialog::Render() {
         // Grey out OK/Apply while a subclass reports it's busy (e.g. async
         // data load in DataInputDialog). Cancel stays enabled so the user
         // can always bail out.
-        bool busy = IsBusy();
+        bool busy = IsBusy() || !CanApply();
 
         ImGui::BeginDisabled(busy);
         if (ImGui::Button("OK", ImVec2(button_width, 0))) {
@@ -173,7 +174,7 @@ bool NodeConfigDialog::Render() {
     }
     ImGui::End();
 
-    if (should_close) {
+    if (should_close || !is_open_) {
         Close();
     }
 
