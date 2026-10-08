@@ -8,6 +8,7 @@
 #include "../core/compiled_node_presentation.h"
 #include "icons.h"
 #include "node_editor.h"
+#include "properties_rows.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "ui_widgets.h"
@@ -140,7 +141,7 @@ void Properties::RenderCompiledCard(MLNode& node) {
     }
 
     const bool open = compiled_details_open_.count(node.id) > 0;
-    if (cyxwiz::ui::LinkButton(open ? "Hide##compiled" : "Details##compiled")) {
+    if (properties_rows::Disclosure("Details##compiled", open) != open) {
         if (open) {
             compiled_details_open_.erase(node.id);
         } else {

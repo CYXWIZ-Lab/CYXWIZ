@@ -48,6 +48,10 @@ void Status(const char* key);
 // A read-only value row: label, value text, the status of `key`.
 void ReadOnly(const char* label, const std::string& value, const char* key);
 
+// "> Details" as the Engine's other tree rows: returns the new open state
+// (the caller keeps it, so it can be per node). Draws nothing below itself.
+bool Disclosure(const char* label, bool open);
+
 // A chip in the shared status colours.
 void Chip(const cyxwiz::properties_view::Chip& chip);
 const ImVec4& ChipColour(cyxwiz::properties_view::ChipKind kind);

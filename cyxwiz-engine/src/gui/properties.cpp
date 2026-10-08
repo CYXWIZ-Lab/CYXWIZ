@@ -567,7 +567,7 @@ void Properties::RenderSettings(MLNode& node) {
 
     if (!view_.truths.empty()) {
         const bool open = settings_details_open_.count(node.id) > 0;
-        if (cyxwiz::ui::LinkButton(open ? "Hide##settings" : "Details##settings")) {
+        if (properties_rows::Disclosure("Details##settings", open) != open) {
             if (open) settings_details_open_.erase(node.id);
             else settings_details_open_.insert(node.id);
         }

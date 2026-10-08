@@ -7,6 +7,7 @@
 #include "../core/sequence_fusion_presentation.h"
 #include "icons.h"
 #include "node_editor.h"
+#include "properties_rows.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "ui_widgets.h"
@@ -74,7 +75,7 @@ void Properties::RenderFusionCard(MLNode& node) {
 
     if (!card.details.empty()) {
         const bool open = fusion_details_open_.count(node.id) > 0;
-        if (cyxwiz::ui::LinkButton(open ? "Hide" : "Details")) {
+        if (properties_rows::Disclosure("Details##fusion", open) != open) {
             if (open) {
                 fusion_details_open_.erase(node.id);
             } else {

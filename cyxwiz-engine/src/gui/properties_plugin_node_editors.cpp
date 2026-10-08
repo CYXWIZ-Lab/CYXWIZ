@@ -71,8 +71,7 @@ void RenderMissingExtension(const MLNode& node, RenderNodePropertiesContext cont
     }
     auto& open = OpenMissingDetails();
     const bool details_open = open.count(node.id) > 0;
-    ImGui::SameLine();
-    if (cyxwiz::ui::LinkButton(details_open ? "Hide" : "Details")) {
+    if (properties_rows::Disclosure("Details##missing", details_open) != details_open) {
         if (details_open) open.erase(node.id); else open.insert(node.id);
     }
     if (open.count(node.id) > 0) {

@@ -152,6 +152,11 @@ void ReadOnly(const char* label, const std::string& value, const char* key) {
     Status(key);
 }
 
+bool Disclosure(const char* label, bool open) {
+    ImGui::SetNextItemOpen(open, ImGuiCond_Always);
+    return ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_NoAutoOpenOnLog);
+}
+
 const ImVec4& ChipColour(ChipKind kind) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     switch (kind) {
