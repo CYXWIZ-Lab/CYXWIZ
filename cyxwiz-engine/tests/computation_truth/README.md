@@ -412,6 +412,17 @@ matches torch's learning rate after every epoch, replays Reduce LR's
 validation losses through the backend scheduler, and resumes a run from its
 checkpoint on torch's sequence.
 
+The regularization nodes (L1, L2, Elastic Net; TOFIX140 A4) sit between the
+loss and the optimizer. GraphCompiler turns the one on that wire into
+`TrainingConfiguration::regularization_l1/l2`, and TrainingExecutor adds
+`l1 x sign(w) + 2 x l2 x w` to each trainable parameter's gradient once per
+optimizer step, before clipping. `regularization_node_pytorch_parity`
+(test_regularization_node_training.cpp, fixture from
+generate_regularization_node_fixtures.py) first checks that the Engine's
+model_seed 52 initialisation is the fixture's start, then trains a compiled
+graph per node and matches torch's parameters after
+`(mse + penalty).backward()` and SGD steps.
+
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the

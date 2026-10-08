@@ -5669,6 +5669,28 @@ add_custom_target(copy_test_scheduler_node_training_fixture
 add_dependencies(test_scheduler_node_training copy_test_scheduler_node_training_fixture)
 add_test(NAME scheduler_node_pytorch_parity COMMAND test_scheduler_node_training)
 
+# ===== Test: regularization nodes vs PyTorch (TOFIX140 A4) =====
+set(CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/regularization_node_pytorch.json")
+add_executable(test_regularization_node_training
+    tests/test_regularization_node_training.cpp
+)
+configure_training_executor_harness(test_regularization_node_training)
+target_compile_definitions(test_regularization_node_training PRIVATE
+    CYXWIZ_REGULARIZATION_NODE_FIXTURE="${CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_regularization_node_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_regularization_node_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_regularization_node_training>/computation_truth_fixtures/regularization_node_pytorch.json"
+    SOURCES "${CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
+add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
+
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider
     tests/benchmarks_conv2d_provider.cpp

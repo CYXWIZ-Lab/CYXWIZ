@@ -322,8 +322,6 @@ void CheckTrainingCapabilityContract(
     check_unsupported(
         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities());
     check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities());
-    check_unsupported(
         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities());
 
     std::map<int, cyxwiz::PipelineTrainingSupportRole> roles_by_type;

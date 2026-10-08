@@ -437,7 +437,6 @@ std::string BuildNodeContractInventoryJson(
             role != training_roles.end() ||
             IsPipelineSupportedTrainingBackendNode(metadata->type) ||
             IsPipelineUnsupportedSequentialModelLayer(metadata->type) ||
-            IsPipelineUnsupportedTrainingControlNode(metadata->type) ||
             IsPipelineUnsupportedTrainingWorkflowNode(metadata->type);
         if (role != training_roles.end()) {
             focused_tests.push_back("test_graph_compiler_deferred_nodes");

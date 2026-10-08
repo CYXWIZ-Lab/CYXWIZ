@@ -721,6 +721,7 @@ private:
     const MLNode* FindExportOptimizerNode() const;
     const MLNode* FindExportSchedulerNode() const;
     std::string PyTorchOptimizerSetup() const;
+    std::string PyTorchPenaltyLines() const;
     std::string PyTorchStepLines() const;
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);

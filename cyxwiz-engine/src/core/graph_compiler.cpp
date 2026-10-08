@@ -2627,6 +2627,76 @@ void ExtractSchedulerConfiguration(const std::vector<gui::MLNode>& nodes,
     config.scheduler_node_id = node.id;
 }
 
+bool IsRegularizationNode(gui::NodeType type) {
+    return type == gui::NodeType::L1Regularization || type == gui::NodeType::L2Regularization ||
+           type == gui::NodeType::ElasticNet;
+}
+
+// Regularization nodes (TOFIX140 A4): the one node wired loss -> node ->
+// optimizer becomes config.regularization_l1/l2, whose gradient
+// TrainingExecutor adds to every optimizer step.
+void ExtractRegularizationConfiguration(const std::vector<gui::MLNode>& nodes,
+                                        const std::vector<gui::NodeLink>& links,
+                                        const gui::MLNode* loss_node,
+                                        const gui::MLNode* optimizer_node,
+                                        TrainingConfiguration& config) {
+    const auto linked = [&](int from, int to) {
+        return std::any_of(links.begin(), links.end(), [&](const gui::NodeLink& link) {
+            return link.from_node == from && link.to_node == to;
+        });
+    };
+    std::vector<const gui::MLNode*> attached;
+    for (const auto& node : nodes) {
+        if (!IsRegularizationNode(node.type)) continue;
+        if (!loss_node || !optimizer_node || !linked(loss_node->id, node.id) ||
+            !linked(node.id, optimizer_node->id)) {
+            AddIssue(config, IssueLevel::Error,
+                     "Regularization '" + node.name + "' must sit between the training loss and the optimizer: "
+                     "link the loss's output to its Loss input and its Loss output to the optimizer's Loss input",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        attached.push_back(&node);
+    }
+    if (attached.empty()) return;
+    const gui::MLNode& node = *attached.front();
+    if (attached.size() > 1) {
+        for (size_t i = 1; i < attached.size(); ++i) {
+            AddIssue(config, IssueLevel::Error,
+                     "The loss already has the regularization '" + node.name + "'; one per loss (Elastic Net "
+                     "combines L1 and L2): remove '" + attached[i]->name + "'",
+                     attached[i]->id, attached[i]->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+
+    bool ok = true;
+    const auto number = [&](const char* key, const char* fallback, double low, double high,
+                            const char* range) {
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? fallback : it->second;
+        try {
+            size_t used = 0;
+            const double value = std::stod(text, &used);
+            if (used == text.size() && std::isfinite(value) && value >= low && value <= high) return value;
+        } catch (const std::exception&) {
+        }
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid regularization parameter '" + std::string(key) + "': '" + text +
+                     "' must be a number from " + range,
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        ok = false;
+        return 0.0;
+    };
+    const double lambda = number("lambda", "0.01", 0.0, 1.0e6, "0 to 1000000");
+    double l1_ratio = node.type == gui::NodeType::L1Regularization ? 1.0 : 0.0;
+    if (node.type == gui::NodeType::ElasticNet) l1_ratio = number("l1_ratio", "0.5", 0.0, 1.0, "0 to 1");
+    if (!ok) return;
+    config.regularization_l1 = static_cast<float>(lambda * l1_ratio);
+    config.regularization_l2 = static_cast<float>(lambda * (1.0 - l1_ratio));
+    config.regularization_node_id = node.id;
+}
+
 void ExtractOptimizerConfiguration(const gui::MLNode& node,
                                    TrainingConfiguration& config) {
     config.optimizer_type = node.type;
@@ -3956,26 +4026,6 @@ void ValidateTrainingPathImplementationStatus(
     }
 }
 
-void ValidateUnsupportedTrainingControlNodes(
-    const std::vector<gui::MLNode>& nodes,
-    TrainingConfiguration& config) {
-
-    for (const auto& node : nodes) {
-        const auto training_support =
-            ResolvePipelineTrainingBackendSupport(node.type);
-        if (training_support.compile_supported ||
-            training_support.mode !=
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
-            continue;
-        }
-
-        std::ostringstream msg;
-        msg << "Node '" << node.name << "' is " << training_support.reason;
-        AddIssue(config, IssueLevel::Error, msg.str(), node.id,
-                 node.name, errors::Compiler::UnsupportedTrainingNode);
-    }
-}
-
 // Extension nodes (TOFIX125) are never passed over: the layer loop only
 // handles node types it knows, so without this an extension node on the
 // training path would be left out of the model with no message.
@@ -4317,7 +4367,6 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateOptimizerReachesLoss(nodes, links, config);
         ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
         ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
-        ValidateUnsupportedTrainingControlNodes(nodes, config);
         ValidateExtensionNodes(nodes, training_path_ids, config);
 
         if (dataset_node && !HasReachablePreTrainInspectionNode(nodes, dataset_reachable)) {
@@ -5491,6 +5540,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ExtractOptimizerConfiguration(*optimizer_node, config);
     }
     ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
+    ExtractRegularizationConfiguration(nodes, links, loss_node, optimizer_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||

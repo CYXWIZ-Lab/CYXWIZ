@@ -1112,22 +1112,6 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 }
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingControlCapabilities() {
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::L1Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::L2Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss; AdamW weight decay is separate",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::ElasticNet,
-         "has no Engine owner that reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss",
-         PipelineBackendPrimitiveEvidence::Missing},
-    };
-    return capabilities;
-}
-
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingWorkflowCapabilities() {
     static constexpr const char* kDatasetReason =
         "has a typed metric-learning batch helper, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
@@ -1390,6 +1374,12 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the training scheduler, stepped after each completed epoch"},
         {gui::NodeType::WarmupScheduler, PipelineTrainingSupportRole::TrainingControl,
          "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::L1Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::L2Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::ElasticNet, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
     };
     return capabilities;
 }
@@ -1615,8 +1605,6 @@ const char* PipelineTrainingBackendSupportModeName(
         return "allowed";
     case PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer:
         return "unsupported_sequential_model_layer";
-    case PipelineTrainingBackendSupportMode::UnsupportedTrainingControl:
-        return "unsupported_training_control";
     case PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow:
         return "unsupported_training_workflow";
     }
@@ -1892,14 +1880,6 @@ const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType n
         : nullptr;
 }
 
-const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type) {
-    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-    return support.mode ==
-               PipelineTrainingBackendSupportMode::UnsupportedTrainingControl
-        ? support.reason
-        : nullptr;
-}
-
 const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type) {
     const auto support = ResolvePipelineTrainingBackendSupport(node_type);
     return support.mode ==
@@ -1910,10 +1890,6 @@ const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_
 
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
-}
-
-bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
-    return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
 }
 
 bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type) {
@@ -1958,22 +1934,6 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
                 false,
                 layer_it->reason,
                 layer_it->primitive_evidence};
-    }
-
-    const auto& control_capabilities =
-        GetPipelineUnsupportedTrainingControlCapabilities();
-    auto control_it = std::find_if(
-        control_capabilities.begin(),
-        control_capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (control_it != control_capabilities.end()) {
-        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingControl,
-                false,
-                false,
-                control_it->reason,
-                control_it->primitive_evidence};
     }
 
     const auto& workflow_capabilities =

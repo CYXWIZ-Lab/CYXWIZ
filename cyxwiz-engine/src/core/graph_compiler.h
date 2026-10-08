@@ -554,6 +554,11 @@ struct TrainingConfiguration {
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;
     int scheduler_node_id = -1;
+    // Regularization node between the loss and the optimizer (TOFIX140 A4):
+    // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
+    float regularization_l1 = 0.0f;
+    float regularization_l2 = 0.0f;
+    int regularization_node_id = -1;
 
     // Validation
     bool is_valid = false;

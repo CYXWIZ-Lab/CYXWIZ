@@ -476,16 +476,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                     reason);
             }
             if (support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
-                UpsertSupportAxis(
-                    metadata,
-                    "Training Role",
-                    PipelineTrainingSupportRoleName(
-                        PipelineTrainingSupportRole::TrainingControl),
-                    false,
-                    reason);
-            }
-            if (support.mode ==
                 PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow) {
                 UpsertSupportAxis(
                     metadata,
@@ -523,11 +513,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
     for (const auto& capability :
          GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
-        apply_training_backend_status(capability.node_type);
-    }
-
-    for (const auto& capability :
-         GetPipelineUnsupportedTrainingControlCapabilities()) {
         apply_training_backend_status(capability.node_type);
     }
 
@@ -3341,33 +3326,46 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"start_factor", "float", "0.1", "First epoch's learning rate as a fraction of learning_rate (above 0, at most 1)", {}, "0.000001-1.0", "Start factor", "Schedule"}},
         NodeImplementationStatus::Implemented, 0});
 
+    // Regularization penalties (TOFIX140 A4): wired between the loss and the
+    // optimizer (Loss -> L2 -> Optimizer). GraphCompiler turns the one on the
+    // training loss into TrainingConfiguration::regularization and
+    // TrainingExecutor adds the penalty's gradient to every optimizer step.
+    const PortDefinition penalty_input{"Loss", PinType::Loss, true,
+                                       "The training loss output"};
+    const PortDefinition penalty_output{"Loss", PinType::Loss, true,
+                                        "The loss plus the penalty; connect it to the optimizer's Loss input"};
     RegisterNode({NodeType::L1Regularization, NodeCategory::Regularization, "L1 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l1", "regularization"}, 0, false,
-        "Blocked legacy L1 penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"l1", "lasso", "penalty", "regularization"}, 0, false,
+        "Adds lambda x the sum of absolute parameter values to the loss",
+        "loss = loss + lambda x sum(|w|) over every trainable parameter (weights and biases), as in PyTorch's "
+        "loss + lam * sum(p.abs().sum() for p in model.parameters()). Its gradient lambda x sign(w) joins every "
+        "optimizer step before gradient clipping. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::L2Regularization, NodeCategory::Regularization, "L2 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l2", "regularization"}, 0, false,
-        "Blocked legacy L2 penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss. AdamW weight decay is a separate optimizer behavior.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"l2", "ridge", "penalty", "regularization"}, 0, false,
+        "Adds lambda x the sum of squared parameter values to the loss",
+        "loss = loss + lambda x sum(w^2) over every trainable parameter (weights and biases), as in PyTorch's "
+        "loss + lam * sum(p.pow(2).sum() for p in model.parameters()). Its gradient 2 x lambda x w joins every "
+        "optimizer step before gradient clipping. With SGD this equals the optimizer's weight_decay = 2 x lambda; "
+        "with Adam the penalty passes through the moment estimates, and AdamW's weight_decay is decoupled, so "
+        "they differ. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ElasticNet, NodeCategory::Regularization, "Elastic Net", ICON_FA_GRADUATION_CAP,
-        {"elasticnet", "regularization"}, 0, false,
-        "Blocked legacy Elastic Net penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy overall penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"},
-         {"l1_ratio", "float", "0.5", "Legacy L1 share retained for saved graphs", {}, "", "L1 ratio", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"elasticnet", "elastic net", "penalty", "regularization"}, 0, false,
+        "Adds a mix of the L1 and L2 penalties to the loss",
+        "loss = loss + lambda x (l1_ratio x sum(|w|) + (1 - l1_ratio) x sum(w^2)) over every trainable parameter "
+        "(weights and biases). l1_ratio 1 is L1 Regularization, 0 is L2 Regularization. The gradient joins every "
+        "optimizer step before gradient clipping. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"},
+         {"l1_ratio", "float", "0.5", "Share of the L1 term (0 to 1); the rest is L2", {}, "0.0-1.0", "L1 ratio", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Output, NodeCategory::Training, "Output", ICON_FA_ARROW_RIGHT,
         {"output", "final", "predictions", "classes"}, 0, false,

@@ -1146,6 +1146,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "    #         optimizer.zero_grad()\n";
     code += "    #         output = model(data)\n";
     code += "    #         loss = criterion(output, target)\n";
+    code += PyTorchPenaltyLines();
     code += "    #         loss.backward()\n";
     code += PyTorchStepLines();
 
@@ -1290,6 +1291,36 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
         }
     }
     return code + "\n";
+}
+
+// The regularization node feeding the export optimizer's Loss input
+// (TOFIX140 A4) as a loss term; the compiler trains the same one.
+std::string NodeEditor::PyTorchPenaltyLines() const {
+    const MLNode* optimizer = FindExportOptimizerNode();
+    if (!optimizer) return {};
+    for (const auto& link : links_) {
+        if (link.to_node != optimizer->id) continue;
+        for (const auto& node : nodes_) {
+            if (node.id != link.from_node) continue;
+            const std::string lambda = GetParamOrDefault(node, "lambda", "0.01");
+            const std::string l1 = "sum(p.abs().sum() for p in model.parameters())";
+            const std::string l2 = "sum(p.pow(2).sum() for p in model.parameters())";
+            switch (node.type) {
+                case NodeType::L1Regularization:
+                    return "    #         loss = loss + " + lambda + " * " + l1 + "  # L1 Regularization node\n";
+                case NodeType::L2Regularization:
+                    return "    #         loss = loss + " + lambda + " * " + l2 + "  # L2 Regularization node\n";
+                case NodeType::ElasticNet: {
+                    const std::string ratio = GetParamOrDefault(node, "l1_ratio", "0.5");
+                    return "    #         loss = loss + " + lambda + " * (" + ratio + " * " + l1 + " + (1 - " +
+                           ratio + ") * " + l2 + ")  # Elastic Net node\n";
+                }
+                default:
+                    break;
+            }
+        }
+    }
+    return {};
 }
 
 std::string NodeEditor::PyTorchStepLines() const {

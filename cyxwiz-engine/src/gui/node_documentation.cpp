@@ -1530,46 +1530,51 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Regularization Nodes =====
     docs_[NodeType::L1Regularization] = {
         "L1 Regularization (Lasso)",
-        "Adds sum of absolute weights to loss. Encourages sparsity - "
-        "some weights become exactly zero.",
-        "loss = original_loss + lambda * sum(|weights|).",
+        "Adds lambda x the sum of absolute parameter values to the training loss. Pushes weights "
+        "towards exactly zero. Wire it between the loss and the optimizer: Loss -> L1 -> Optimizer.",
+        "loss = loss + lambda * sum(|w|) over every trainable parameter (weights and biases); the "
+        "gradient lambda * sign(w) joins every optimizer step before gradient clipping, as PyTorch's "
+        "loss + lam * sum(p.abs().sum() for p in model.parameters()).",
         {
-            {"lambda", "Regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"}
         },
         {
-            "Use for feature selection (zeroes unimportant weights)",
-            "Usually applied via optimizer weight_decay"
+            "One regularization node per loss; Elastic Net combines L1 and L2",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };
 
     docs_[NodeType::L2Regularization] = {
         "L2 Regularization (Ridge)",
-        "Adds sum of squared weights to loss. Encourages small weights, "
-        "prevents any weight from being too large.",
-        "loss = original_loss + lambda * sum(weights^2).",
+        "Adds lambda x the sum of squared parameter values to the training loss. Keeps weights small. "
+        "Wire it between the loss and the optimizer: Loss -> L2 -> Optimizer.",
+        "loss = loss + lambda * sum(w^2) over every trainable parameter (weights and biases); the "
+        "gradient 2 * lambda * w joins every optimizer step before gradient clipping.",
         {
-            {"lambda", "Regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"}
         },
         {
-            "Standard regularization, usually via weight_decay",
-            "Doesn't produce sparse weights like L1"
+            "With SGD this equals weight_decay = 2 * lambda; with Adam it is not the same, and AdamW's "
+            "weight_decay is decoupled from the loss",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };
 
     docs_[NodeType::ElasticNet] = {
         "Elastic Net Regularization",
-        "Combines L1 and L2 regularization. Balance between sparsity (L1) "
-        "and weight shrinkage (L2).",
-        "loss = original_loss + alpha*L1 + beta*L2.",
+        "Adds a mix of the L1 and L2 penalties to the training loss. Wire it between the loss and the "
+        "optimizer: Loss -> Elastic Net -> Optimizer.",
+        "loss = loss + lambda * (l1_ratio * sum(|w|) + (1 - l1_ratio) * sum(w^2)) over every trainable "
+        "parameter. l1_ratio 1 is L1 Regularization, 0 is L2 Regularization.",
         {
-            {"l1_ratio", "Balance between L1 and L2 (0-1)"},
-            {"alpha", "Overall regularization strength"}
+            {"lambda", "Penalty strength (0 or above)"},
+            {"l1_ratio", "Share of the L1 term, 0 to 1"}
         },
         {
-            "Good when you want some sparsity with stability",
-            "l1_ratio=0.5 for equal L1/L2"
+            "l1_ratio 0.5 weighs both terms equally",
+            "The reported training loss is the data loss without the penalty"
         },
         "Regularization"
     };

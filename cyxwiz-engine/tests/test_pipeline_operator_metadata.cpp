@@ -2821,7 +2821,7 @@ void CheckSchedulerFamilyContract(
           "Warmup parameters (torch LinearLR)");
 }
 
-void CheckBlockedRegularizationFamilyContract(
+void CheckRegularizationFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
         gui::NodeType::L1Regularization,
@@ -2831,34 +2831,26 @@ void CheckBlockedRegularizationFamilyContract(
 
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr && meta->IsTemplate() &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unintegrated regularization node should remain blocked: " +
-                  TypeId(type));
+        Check(meta != nullptr &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "regularization should be implemented and addable: " + TypeId(type));
         Check(meta->inputs.size() == 1 &&
-                  HasInputType(meta, "Parameters", gui::PinType::Parameters) &&
+                  HasInputType(meta, "Loss", gui::PinType::Loss) &&
                   meta->outputs.size() == 1 &&
-                  HasOutputType(meta, "Penalty", gui::PinType::Loss),
-              "blocked regularization node should preserve its saved-graph pin contract: " +
+                  HasOutputType(meta, "Loss", gui::PinType::Loss),
+              "regularization sits between the loss and the optimizer: " +
                   TypeId(type));
-        Check(meta->brief_description.find("Blocked") != std::string::npos &&
-                  meta->help_text.find("No Engine owner") != std::string::npos &&
-                  meta->help_text.find("selected training loss") !=
-                      std::string::npos,
-              "blocked regularization help should state its missing loss owner: " +
+        Check(meta->help_text.find("loss = ") != std::string::npos,
+              "regularization help should state its PyTorch loss term: " +
                   TypeId(type));
 
         const auto support =
             cyxwiz::ResolvePipelineTrainingBackendSupport(type);
-        Check(support.mode ==
-                  cyxwiz::PipelineTrainingBackendSupportMode::
-                      UnsupportedTrainingControl &&
-                  !support.compile_supported && !support.training_supported,
-              "blocked regularization node should fail closed at compile and training: " +
-                  TypeId(type));
+        Check(support.compile_supported && support.training_supported,
+              "regularization should compile and train: " + TypeId(type));
         Check(cyxwiz::PipelineOperatorFactory::Instance().Create(type) == nullptr,
-              "blocked regularization node should not claim a PipelineExecutor owner: " +
+              "regularization is a training term, not a PipelineExecutor operator: " +
                   TypeId(type));
     }
 
@@ -2867,19 +2859,15 @@ void CheckBlockedRegularizationFamilyContract(
     const auto* elastic = metadata.GetMetadata(gui::NodeType::ElasticNet);
     Check(l1->parameters.size() == 1 &&
               ParameterMatches(l1, "lambda", "float", "0.01"),
-          "L1 preview should preserve its legacy saved parameter");
+          "L1 parameters");
     Check(l2->parameters.size() == 1 &&
               ParameterMatches(l2, "lambda", "float", "0.01") &&
-              l2->help_text.find("AdamW weight decay is a separate") !=
-                  std::string::npos,
-          "L2 preview should preserve its legacy parameter and distinguish AdamW");
+              l2->help_text.find("weight_decay") != std::string::npos,
+          "L2 parameters and its relation to weight_decay");
     Check(elastic->parameters.size() == 2 &&
               ParameterMatches(elastic, "lambda", "float", "0.01") &&
-              ParameterMatches(elastic, "l1_ratio", "float", "0.5") &&
-              !HasParameter(elastic, "l1_lambda") &&
-              !HasParameter(elastic, "l2_lambda") &&
-              !HasParameter(elastic, "alpha"),
-          "Elastic Net preview should preserve only its created legacy parameters");
+              ParameterMatches(elastic, "l1_ratio", "float", "0.5"),
+          "Elastic Net parameters");
 }
 
 void CheckClassicalTreeFamilyContract(
@@ -3537,7 +3525,7 @@ int main() {
     CheckClassicalRegressionFamilyContract(metadata);
     CheckBlockedClassifierFamilyContract(metadata);
     CheckSchedulerFamilyContract(metadata);
-    CheckBlockedRegularizationFamilyContract(metadata);
+    CheckRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);
     CheckClassicalTreeMigrationGuard();
     CheckStaticCreationAdapter(metadata);
@@ -3950,36 +3938,6 @@ int main() {
                       TypeId(capability.node_type));
         }
 
-        std::set<int> unsupported_training_control_types;
-        for (const auto& capability :
-             cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
-            const int key = static_cast<int>(capability.node_type);
-            Check(unsupported_training_control_types.insert(key).second,
-                  "duplicate unsupported training control capability: " +
-                      TypeId(capability.node_type));
-            Check(capability.reason != nullptr &&
-                      std::string(capability.reason).size() > 16,
-                  "unsupported training control reason is too weak: " +
-                      TypeId(capability.node_type));
-            Check(cyxwiz::IsPipelineUnsupportedTrainingControlNode(
-                      capability.node_type),
-                  "unsupported training control capability does not resolve: " +
-                      TypeId(capability.node_type));
-            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
-                capability.node_type);
-            Check(support.mode ==
-                      cyxwiz::PipelineTrainingBackendSupportMode::
-                          UnsupportedTrainingControl,
-                  "unsupported training control should resolve through unified support: " +
-                      TypeId(capability.node_type));
-            Check(!support.compile_supported && !support.training_supported,
-                  "unsupported training control should block compile/training: " +
-                      TypeId(capability.node_type));
-            Check(support.reason == capability.reason,
-                  "unsupported training control reason should be shared: " +
-                      TypeId(capability.node_type));
-        }
-
         std::set<int> unsupported_training_workflow_types;
         for (const auto& capability :
              cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
@@ -4027,8 +3985,6 @@ int main() {
                       TypeId(capability.node_type));
             Check(!cyxwiz::IsPipelineUnsupportedSequentialModelLayer(
                       capability.node_type) &&
-                      !cyxwiz::IsPipelineUnsupportedTrainingControlNode(
-                          capability.node_type) &&
                       !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
                           capability.node_type),
                   "supported training backend should not overlap unsupported lists: " +
@@ -5571,11 +5527,6 @@ int main() {
           "training backend support mode name for unsupported layer is stable");
     Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
               cyxwiz::PipelineTrainingBackendSupportMode::
-                  UnsupportedTrainingControl)) ==
-              "unsupported_training_control",
-          "training backend support mode name for unsupported control is stable");
-    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
-              cyxwiz::PipelineTrainingBackendSupportMode::
                   UnsupportedTrainingWorkflow)) ==
               "unsupported_training_workflow",
           "training backend support mode name for unsupported workflow is stable");
@@ -6406,72 +6357,6 @@ int main() {
                   training_axis->reason.find(capability.reason) !=
                       std::string::npos,
               "unsupported training type " + TypeId(type) +
-                  " should expose reason on structured support axis");
-    }
-
-    for (const auto& capability :
-         cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
-        const auto* meta = metadata.GetMetadata(capability.node_type);
-        Check(meta != nullptr,
-              "missing unsupported training control metadata for type " +
-                  TypeId(capability.node_type));
-        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
-              "unsupported training control " + TypeId(capability.node_type) +
-                  " should not be marked implemented");
-        Check(meta->badge == "Blocked",
-              "unsupported training control " + TypeId(capability.node_type) +
-                  " should carry blocked badge");
-        CheckSupportAxis(
-            meta,
-            "Training Backend",
-            cyxwiz::PipelineTrainingBackendSupportModeName(
-                cyxwiz::PipelineTrainingBackendSupportMode::
-                    UnsupportedTrainingControl),
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Training Role",
-            cyxwiz::PipelineTrainingSupportRoleName(
-                cyxwiz::PipelineTrainingSupportRole::TrainingControl),
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Compile",
-            "unsupported",
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Training",
-            "unsupported",
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Implementation Owner",
-            "training_backend",
-            true,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Support State",
-            "blocked",
-            false,
-            TypeId(capability.node_type));
-        Check(!cyxwiz::CanAddNodeToGraph(*meta),
-              "frontend should block unsupported training controls from support_axes: " +
-                  TypeId(capability.node_type));
-        Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
-              "frontend should find unsupported training control reason from support_axes: " +
-                  TypeId(capability.node_type));
-        const auto* training_axis = FindSupportAxis(meta, "Training Backend");
-        Check(training_axis != nullptr &&
-                  capability.reason != nullptr &&
-                  training_axis->reason.find(capability.reason) !=
-                      std::string::npos,
-              "unsupported training control " + TypeId(capability.node_type) +
                   " should expose reason on structured support axis");
     }
 

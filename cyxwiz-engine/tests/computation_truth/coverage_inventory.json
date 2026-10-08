@@ -582,6 +582,22 @@
       "gaps": []
     },
     {
+      "id": "REG-PENALTY-001",
+      "family": "regularization",
+      "operation": "L1, L2 and Elastic Net loss penalties over every trainable parameter",
+      "tier": 1,
+      "owner": "cyxwiz-engine/src/core/training_executor.cpp",
+      "implementation": ["cyxwiz-engine/src/core/graph_compiler.cpp", "cyxwiz-engine/src/core/training_executor.cpp", "cyxwiz-backend/src/core/tensor_elementwise.cpp"],
+      "callers": ["graph regularization nodes wired between the loss and the optimizer, compiled into TrainingConfiguration::regularization_l1/l2 (TOFIX140 A4)"],
+      "contract": "Each optimizer step adds l1 x sign(w) + 2 x l2 x w to every trainable parameter's gradient once, after gradient accumulation and before global-norm clipping, which is torch's backward of loss + l1 x sum(|w|) + l2 x sum(w^2); Elastic Net is l1 = lambda x l1_ratio, l2 = lambda x (1 - l1_ratio). The reported training loss stays the data loss.",
+      "supported": "Float32 trainable parameters of a graph training run",
+      "oracle": "PyTorch",
+      "tests": ["test_regularization_node_training"],
+      "execution": "backend-resident tensor ops (Sign, scalar multiply, add) on the averaged gradients at the TrainingExecutor optimizer-update boundary; strict ArrayFire CPU with no native fallback in the parity test",
+      "status": "covered",
+      "gaps": []
+    },
+    {
       "id": "METRIC-LEARNING-001",
       "family": "metric",
       "operation": "pair-distance accuracy/means and retrieval Recall@k/MRR/nearest-neighbor class agreement",

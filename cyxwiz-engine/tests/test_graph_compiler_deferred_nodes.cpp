@@ -1754,28 +1754,6 @@ int main() {
     Check(HasIssueText(config, "message-passing kernels"),
           "GNN marker sketch should report missing message-passing contract");
 
-    for (const auto& scheduler_case :
-         cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
-        auto scheduler = Node(18,
-                              scheduler_case.node_type,
-                              "UnsupportedTrainingControl",
-                              {},
-                              {});
-
-        nodes = {data, dense, loss, optimizer, scheduler};
-        links = {
-            Link(1, 1, 101, 2, 201),
-            Link(2, 2, 202, 4, 401),
-            Link(3, 1, 102, 4, 402),
-            Link(4, 4, 403, 5, 501),
-        };
-
-        config = compiler.Compile(nodes, links, true);
-        Check(!config.is_valid,
-              "unsupported training control should block compile");
-        Check(HasIssueText(config, scheduler_case.reason),
-              "unsupported training control should report execution gap");
-    }
 
     for (const auto& workflow_case :
          cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
