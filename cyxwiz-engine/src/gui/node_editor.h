@@ -48,7 +48,6 @@ class PlotWindow;
 
 namespace gui {
 class Properties;
-class ShapeInferenceEngine;
 
 // Icon pack selection for node icons
 enum class IconPack {
@@ -890,7 +889,6 @@ private:
     int pending_flatten_to_pin_ = -1;
 
     // Shape inference engine and validation warnings
-    std::unique_ptr<ShapeInferenceEngine> shape_inference_;
     std::vector<ValidationWarning> validation_warnings_;
 
     // Deferred clear flag (to call ImNodes clear inside BeginNodeEditor scope)

@@ -621,10 +621,6 @@ struct NodePin {
 
     // Visual indicators
     bool is_required = true;         // Visual indicator for required pins
-
-    // Shape information (for smart validation and inference)
-    std::vector<size_t> shape;       // Tensor shape flowing through pin
-    bool shape_valid = false;        // Whether shape has been computed
 };
 
 // Visual node structure

@@ -8,7 +8,6 @@
 #include "node_documentation.h"
 #include "graph_replacement_policy.h"
 #include "../core/test_manager.h"
-#include "node_editor_shape_inference.h"
 #include "panels/script_editor.h"
 #include "properties.h"
 #include "patterns/pattern_library.h"
@@ -148,7 +147,6 @@ NodeEditor::NodeEditor()
     style.Flags |= ImNodesStyleFlags_GridLines;
 
     // Initialize shape inference engine
-    shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
@@ -977,11 +975,6 @@ void NodeEditor::Render() {
                          pending_flatten_from_node_, flatten_node.id);
                 CreateLink(flatten_out, pending_flatten_to_pin_,
                          flatten_node.id, pending_flatten_to_node_);
-
-                // Invalidate shape cache
-                if (shape_inference_) {
-                    shape_inference_->InvalidateShapes();
-                }
 
                 // Save undo state
                 SaveUndoState();
@@ -4349,11 +4342,6 @@ void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
         // Update existing DatasetInput node
         dataset_input->parameters["dataset_name"] = dataset_name;
         dataset_input->name = "Dataset: " + dataset_name;
-    }
-
-    // Trigger shape inference
-    if (shape_inference_) {
-        shape_inference_->ComputeAllShapes(nodes_, links_);
     }
 
     // Save undo state

@@ -318,7 +318,6 @@ set(ENGINE_SOURCES
     src/gui/node_type_import_registry.cpp
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
-    src/gui/node_editor_shape_inference.cpp
     src/gui/tensor_shape_inference_contract.cpp
     src/gui/node_editor_skip.cpp
     src/gui/node_editor_add_search.cpp
