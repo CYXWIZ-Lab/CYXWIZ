@@ -51,6 +51,10 @@ void StatusText(Status status, const char* text = nullptr);
 void StatusChip(Status status, const char* text = nullptr);
 // "Status:" followed by the icon and word of each status, muted.
 void StatusLegend(std::initializer_list<Status> statuses);
+// Tinted pill with a dot and `text` in any colour (a truth status, an
+// implementation state). `ChipWidth` is the width it will take.
+void Chip(const char* text, const ImVec4& colour);
+float ChipWidth(const char* text);
 
 // Shown after the usual delay, also over disabled items, wrapped at 420 px.
 void Tooltip(const char* text);

@@ -82,7 +82,8 @@ enum class SettingsRoute {
 struct Setting {
     const ParameterDefinition* param = nullptr;
     std::string key;
-    std::string label;
+    std::string label;              // short form (the group's words dropped)
+    std::string full_label;         // the metadata's display name
     std::string value;
     bool stored = false;            // the node has a value for this key
     bool required = false;

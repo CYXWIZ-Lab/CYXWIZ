@@ -229,7 +229,8 @@ View Build(const Inputs& in) {
             row.param = &param;
             row.key = param.name;
             const std::string group_name = param.advanced ? "Advanced settings" : param.group;
-            row.label = ShortLabel(ParameterLabel(param), group_name);
+            row.full_label = ParameterLabel(param);
+            row.label = ShortLabel(row.full_label, group_name);
             const auto it = node.parameters.find(param.name);
             row.stored = it != node.parameters.end() && !it->second.empty();
             row.value = row.stored ? it->second : param.default_value;

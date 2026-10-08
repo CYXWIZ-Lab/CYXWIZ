@@ -336,7 +336,6 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_sequence_fusion.cpp
-    src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
     src/gui/properties_metadata_editor.cpp
@@ -345,7 +344,7 @@ set(ENGINE_SOURCES
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_presets.cpp
-    src/gui/properties_shape_info.cpp
+    src/gui/properties_rows.cpp
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp

@@ -136,21 +136,29 @@ void StatusText(Status status, const char* text) {
     ImGui::TextColored(s.colour, "%s %s", s.icon, text && text[0] ? text : s.label);
 }
 
-void StatusChip(Status status, const char* text) {
+void Chip(const char* text, const ImVec4& colour) {
     const Tokens& t = CurrentTokens();
-    const StatusStyle s = StatusStyleFor(status);
-    const char* label = text && text[0] ? text : s.label;
     const float height = ImGui::GetFrameHeight() - 4.0f;
     const float dot = 6.0f;
-    const ImVec2 text_size = ImGui::CalcTextSize(label);
+    const ImVec2 text_size = ImGui::CalcTextSize(text);
     const ImVec2 size(t.space_md * 2.0f + dot + t.space_sm + text_size.x, height);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(s.colour, 0.16f)), height * 0.5f);
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(colour, 0.16f)), height * 0.5f);
     const float cy = pos.y + height * 0.5f;
-    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, cy), dot * 0.5f, ToU32(s.colour));
-    dl->AddText(ImVec2(pos.x + t.space_md + dot + t.space_sm, cy - text_size.y * 0.5f), ToU32(s.colour), label);
+    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, cy), dot * 0.5f, ToU32(colour));
+    dl->AddText(ImVec2(pos.x + t.space_md + dot + t.space_sm, cy - text_size.y * 0.5f), ToU32(colour), text);
+}
+
+float ChipWidth(const char* text) {
+    const Tokens& t = CurrentTokens();
+    return t.space_md * 2.0f + 6.0f + t.space_sm + ImGui::CalcTextSize(text).x;
+}
+
+void StatusChip(Status status, const char* text) {
+    const StatusStyle s = StatusStyleFor(status);
+    Chip(text && text[0] ? text : s.label, s.colour);
 }
 
 void StatusLegend(std::initializer_list<Status> statuses) {

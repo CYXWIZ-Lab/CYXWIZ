@@ -43,6 +43,9 @@ public:
     bool ParametersCounting() const { return pending_.valid(); }
     // Increments each time a compile finishes (for callers that mirror it).
     uint64_t ResultSerial() const { return result_serial_; }
+    // The hash of the graph seen by the last Update (a cache key for views
+    // derived from the canvas, e.g. the Properties panel).
+    uint64_t GraphRevision() const { return seen_revision_; }
 
     // Error-level issues of the latest compile on this node.
     bool NodeHasError(int node_id) const;
