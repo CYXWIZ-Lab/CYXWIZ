@@ -516,6 +516,8 @@ void DataInputDialog::RestoreOriginalHdf5Source() {
 }
 
 void DataInputDialog::OnClose() {
+    hdf5_loaded_source_.Cancel();
+    hdf5_restore_parameters_.clear();
     hdf5_inspector_.Reset();
     hdf5_source_path_.clear();
     ResetPreviewPaging();

@@ -26,6 +26,7 @@
 #include "data_preview_page_cache.h"
 #include "data_preview_table_renderer.h"
 #include "hdf5_source_inspector.h"
+#include "hdf5_loaded_source_verifier.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
@@ -250,7 +251,7 @@ public:
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
-    bool IsBusy() const override { return is_loading_async_; }
+    bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
     bool CanApply() const override { return !IsHdf5Source(); }
 
 protected:
@@ -288,6 +289,12 @@ private:
     void SyncHdf5InspectorSource();
     void RestoreOriginalHdf5Source();
     Hdf5SourceInspector hdf5_inspector_;
+    Hdf5LoadedSourceVerifier hdf5_loaded_source_;
+    std::map<std::string, std::string> hdf5_restore_parameters_;
+    void BeginHdf5LoadedSourceVerification();
+    void PollHdf5LoadedSourceVerification();
+    bool BuildHdf5RestoreRequest(cyxwiz::Hdf5RegisteredSourceRequest& request,
+                               std::string& error) const;
     std::string hdf5_source_path_;
     std::string hdf5_source_project_root_;
     std::string hdf5_source_graph_directory_;

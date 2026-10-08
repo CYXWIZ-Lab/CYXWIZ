@@ -82,6 +82,7 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
         CheckArrow(metadata->Set("hdf5.source_size", std::to_string(before->size)));
         CheckArrow(metadata->Set("hdf5.source_modified", std::to_string(before->modified)));
         CheckArrow(metadata->Set("hdf5.import_mode", "numeric_table"));
+        CheckArrow(metadata->Set("hdf5.max_materialized_bytes", std::to_string(request.settings.max_materialized_bytes)));
         read.table = read.table->ReplaceSchemaMetadata(std::move(metadata));
 
         CheckCancellation(cancelled);

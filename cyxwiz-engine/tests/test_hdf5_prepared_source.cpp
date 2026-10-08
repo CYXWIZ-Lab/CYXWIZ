@@ -7,6 +7,7 @@
 #include "../src/core/data_registry.h"
 #include "../src/core/dataset_audit.h"
 #include "../src/core/hdf5_source_load_task.h"
+#include "../src/core/hdf5_registered_source.h"
 
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
@@ -281,6 +282,15 @@ void TestPreparedSource() {
               "registered signed label remains aligned at row " + std::to_string(row));
     }
     CheckSourceMetadata(table, *request.expected_source, request.settings);
+    CheckMetadata(table, "hdf5.max_materialized_bytes", std::to_string(request.settings.max_materialized_bytes));
+    cyxwiz::Hdf5RegisteredSourceRequest restore_request{
+        workspace.name, path, registry.GetTabularSourcePath(workspace.name).value_or(""), restored.settings, registered};
+    const auto verified = cyxwiz::VerifyHdf5RegisteredSource(restore_request);
+    Check(verified.status == cyxwiz::Hdf5TableStatus::Ok && verified.rows == 4 && verified.columns == 2,
+          "saved HDF5 settings match the registered source receipt: " + verified.error);
+    restore_request.settings.selection.data_path = "/other";
+    Check(cyxwiz::VerifyHdf5RegisteredSource(restore_request).status != cyxwiz::Hdf5TableStatus::Ok,
+          "same registered name cannot restore a different HDF5 selection");
 
     cyxwiz::DataPreviewRequest preview;
     preview.dataset_name = workspace.name;

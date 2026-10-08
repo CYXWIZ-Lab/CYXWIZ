@@ -310,7 +310,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
         // to the loader that owns it, then RestoreFromRegistry reads
         // the entry. This collapses the pre-refactor 5-branch inline
         // probe into one dispatch.
-        if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
+        if (IsHdf5Source()) {
+            BeginHdf5LoadedSourceVerification();
+        } else if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
             loaded_dataset_name_ = node_->parameters["dataset_name"];
             loaded_memory_is_estimate_ = false;
 
@@ -351,11 +353,13 @@ DataInputDialog::DataInputDialog(MLNode* node)
 }
 
 void DataInputDialog::Reset() {
+    hdf5_loaded_source_.Cancel();
     hdf5_inspector_.Reset();
     hdf5_source_path_.clear();
     if (!node_) return;
     node_->parameters = original_params_;
     RestoreOriginalHdf5Source();
+    if (IsHdf5Source()) BeginHdf5LoadedSourceVerification();
     ResetPreviewPaging();
     preview_loaded_ = false;
     has_changes_ = false;
@@ -364,6 +368,7 @@ void DataInputDialog::Reset() {
 void DataInputDialog::RenderContent() {
     SyncHdf5InspectorSource();
     hdf5_inspector_.Poll();
+    PollHdf5LoadedSourceVerification();
     // Pick up the async load result, if the worker has finished, and apply
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();

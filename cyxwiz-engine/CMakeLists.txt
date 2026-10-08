@@ -362,12 +362,15 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
     src/gui/data_input_dialog_apply.cpp
+    src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
     src/core/data_convert_task.cpp
     src/core/hdf5_inspection_task.cpp
     src/core/hdf5_source_identity.cpp
     src/core/hdf5_input_settings.cpp
     src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_registered_source.cpp
+    src/gui/hdf5_loaded_source_verifier.cpp
     src/gui/hdf5_source_inspector.cpp
     src/gui/hdf5_source_inspector_render.cpp
     src/gui/data_input_dialog.cpp
@@ -4691,6 +4694,7 @@ set_target_properties(test_data_preview_service PROPERTIES
 
 add_executable(test_hdf5_prepared_source
     tests/test_hdf5_prepared_source.cpp
+    src/core/hdf5_registered_source.cpp
     src/core/data_registry_publication.cpp
     src/core/dataset_audit.cpp
     src/core/image_utils.cpp
@@ -4720,6 +4724,26 @@ if(WIN32)
     target_compile_definitions(test_hdf5_prepared_source PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_hdf5_prepared_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_hdf5_loaded_source_verifier
+    tests/test_hdf5_loaded_source_verifier.cpp
+    src/core/hdf5_registered_source.cpp
+    src/gui/hdf5_loaded_source_verifier.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_hdf5_loaded_source_verifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_hdf5_loaded_source_verifier PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_hdf5_loaded_source_verifier PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_hdf5_loaded_source_verifier PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 add_executable(test_tabular_publication
     tests/test_tabular_publication.cpp
