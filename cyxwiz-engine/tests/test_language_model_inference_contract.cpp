@@ -5,6 +5,8 @@
 #include "inference/text_inference_input.h"
 
 #include <cyxwiz/tensor.h>
+#include <cyxwiz/tokenizer.h>
+#include <sstream>
 
 #include <cstdint>
 #include <cstdlib>
@@ -292,9 +294,74 @@ void TestRuntimeOutputContractRejectsTooSmallVocab() {
           "vocab compatibility error should be clear");
 }
 
+
+void TestTokenizerIdentity() {
+    using namespace cyxwiz;
+    Tokenizer expected(TokenizerType::Word), selected(TokenizerType::Word);
+    expected.GetVocabulary().SetVocabulary({"hello", "world"});
+    selected.SetVocabulary(expected.GetVocabulary());
+    auto result = ValidateLanguageModelTokenizerIdentity(selected, &expected);
+    Check(result.compatible && result.verified, "same identity is verified");
+    selected.SetMaxLength(12);
+    selected.SetPadding(false);
+    selected.SetAddEos(true);
+    Check(ValidateLanguageModelTokenizerIdentity(selected, &expected).compatible,
+          "generation length/padding/EOS are not tokenizer identity");
+    selected.GetVocabulary().SetVocabulary({"world", "hello"});
+    Check(selected.GetVocabularySize() == expected.GetVocabularySize(), "equal-size fixture");
+    result = ValidateLanguageModelTokenizerIdentity(selected, &expected);
+    Check(!result.compatible && result.message.find("Equal vocabulary sizes") != std::string::npos,
+          "equal-size reordered tokens fail with actionable message");
+    selected.SetVocabulary(expected.GetVocabulary());
+    selected.SetLowercase(false);
+    Check(!ValidateLanguageModelTokenizerIdentity(selected, &expected).compatible,
+          "normalization mismatch is rejected");
+    Tokenizer character(TokenizerType::Character);
+    character.SetVocabulary(expected.GetVocabulary());
+    Check(!ValidateLanguageModelTokenizerIdentity(character, &expected).compatible,
+          "same tokens with different family rejected");
+    result = ValidateLanguageModelTokenizerIdentity(selected, nullptr);
+    Check(result.compatible && !result.verified && result.message.find("unverified") != std::string::npos,
+          "legacy model without metadata is explicitly unverified");
+
+    std::vector<std::string> words{"[PAD]", "[UNK]", "[BOS]", "[EOS]"};
+    for (int i = 0; i < 256; ++i) words.emplace_back(1, static_cast<char>(i));
+    Tokenizer bpe1(TokenizerType::ByteBPE), bpe2(TokenizerType::ByteBPE);
+    Check(bpe1.GetVocabulary().SetByteBPE(words, {}, ByteBPEPiecePolicy::WhitespaceV1), "v1 fixture");
+    Check(bpe2.GetVocabulary().SetByteBPE(words, {}, ByteBPEPiecePolicy::LeadingSpaceV2), "v2 fixture");
+    Check(!ValidateLanguageModelTokenizerIdentity(bpe2, &bpe1).compatible,
+          "identical token lists with different BPE piece policy rejected");
+    words.insert(words.end(), {"ab", "bc", "abc"});
+    Check(bpe1.GetVocabulary().SetByteBPE(words, {{101,102,260},{102,103,261},{260,103,262}}), "merge fixture 1");
+    Check(bpe2.GetVocabulary().SetByteBPE(words, {{101,102,260},{102,103,261},{101,261,262}}), "merge fixture 2");
+    Check(!ValidateLanguageModelTokenizerIdentity(bpe2, &bpe1).compatible,
+          "identical words/policy with different merge rules rejected");
+    std::ostringstream persisted;
+    Check(bpe1.GetVocabulary().SaveToStream(persisted), "serialize fixture");
+    std::string crlf;
+    for (char c : persisted.str()) { if (c == '\n') crlf += '\r'; crlf += c; }
+    std::istringstream restored(crlf);
+    Check(bpe2.GetVocabulary().LoadFromStream(restored), "reload CRLF fixture");
+    Check(ValidateLanguageModelTokenizerIdentity(bpe2, &bpe1).verified,
+          "equivalent serialized artifacts with different line endings accepted");
+}
+
+void TestFrozenTokenizerFiles(const char* first, const char* second) {
+    cyxwiz::Tokenizer v1(cyxwiz::TokenizerType::ByteBPE), v2(cyxwiz::TokenizerType::ByteBPE);
+    v1.SetLowercase(false); v2.SetLowercase(false);
+    Check(v1.GetVocabulary().LoadFromFile(first), "load first frozen vocabulary");
+    Check(v2.GetVocabulary().LoadFromFile(second), "load second frozen vocabulary");
+    Check(cyxwiz::ValidateLanguageModelTokenizerIdentity(v1, &v1).verified, "first frozen identity");
+    Check(cyxwiz::ValidateLanguageModelTokenizerIdentity(v2, &v2).verified, "second frozen identity");
+    Check(!cyxwiz::ValidateLanguageModelTokenizerIdentity(v1, &v2).compatible, "reject first/second mismatch");
+    Check(!cyxwiz::ValidateLanguageModelTokenizerIdentity(v2, &v1).compatible, "reject second/first mismatch");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    TestTokenizerIdentity();
+    if (argc == 3) TestFrozenTokenizerFiles(argv[1], argv[2]);
     TestPackageContractAcceptsBertEncoder();
     TestPackageContractRejectsMissingBertTokenizer();
     TestPackageContractRejectsBertTokenTypeIds();

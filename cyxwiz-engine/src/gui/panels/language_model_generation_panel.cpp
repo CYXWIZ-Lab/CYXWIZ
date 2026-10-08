@@ -25,6 +25,12 @@
 
 namespace cyxwiz {
 
+namespace {
+constexpr const char* kTokenizerLabels[] = {
+    "Whitespace", "Word", "Character", "Byte BPE", "WordPiece",
+    "SentencePiece BPE (optional)", "SentencePiece Unigram (optional)"};
+} // namespace
+
 LanguageModelGenerationPanel::LanguageModelGenerationPanel()
     : Panel("Language Model Generation", false) {
     status_ =
@@ -56,23 +62,72 @@ void LanguageModelGenerationPanel::Render() {
     ImGui::End();
 }
 
+void LanguageModelGenerationPanel::InvalidateOutput() {
+    action_error_.clear();
+    compatibility_status_.clear();
+    status_.clear();
+    has_result_ = false;
+    stop_reason_.clear();
+    generated_ids_.clear();
+    generated_text_.clear();
+    last_candidates_.clear();
+    sampling_settings_.clear();
+}
+
+std::string LanguageModelGenerationPanel::RequireActiveTokenizerIdentity(
+    const Tokenizer& tokenizer,
+    const std::shared_ptr<SequentialModel>& session_model) const {
+    TextTokenizerPackage prepared;
+    const Tokenizer* expected = imported_model_tokenizer_.get();
+    if (!use_imported_model_) {
+        expected = nullptr;
+        const auto info = TrainingManager::Instance().GetActiveModelInfo();
+        // Keep the captured model alive and ensure these metadata belong to it.
+        // A later replacement is safe: this action continues with the pinned model.
+        if (TrainingManager::Instance().GetActiveModel() != session_model)
+            throw std::runtime_error("Active model changed during tokenizer validation. Retry with the newly loaded model.");
+        if (info.evaluation_config) {
+            const auto& sequence = info.evaluation_config->sequence_batch;
+            if (!sequence.tokenizer_config_json.empty() ||
+                !sequence.tokenizer_vocabulary_artifact.empty()) {
+                if (sequence.tokenizer_config_json.empty() ||
+                    sequence.tokenizer_vocabulary_artifact.empty())
+                    throw std::runtime_error("Active model tokenizer metadata is incomplete: configuration and vocabulary are both required.");
+                std::string error;
+                if (!LoadTextTokenizerPackage(sequence.tokenizer_config_json,
+                        sequence.tokenizer_vocabulary_artifact, prepared, error) ||
+                    !prepared.tokenizer || !prepared.has_vocabulary)
+                    throw std::runtime_error("Active model tokenizer metadata is incomplete or invalid: " + error);
+                expected = prepared.tokenizer.get();
+            }
+        }
+    }
+    const auto identity = ValidateLanguageModelTokenizerIdentity(tokenizer, expected,
+        use_packaged_tokenizer_ ? packaged_tokenizer_model_data_ : std::string_view{},
+        use_imported_model_ ? imported_model_tokenizer_data_ : std::string_view{});
+    if (!identity.compatible) throw std::runtime_error(identity.message);
+    return identity.message;
+}
+
 void LanguageModelGenerationPanel::RenderPrompt() {
     ImGui::Text("%s Prompt", ICON_FA_KEYBOARD);
     if (ImGui::RadioButton("Text prompt", use_text_prompt_)) {
+        InvalidateOutput();
         use_text_prompt_ = true;
     }
     ImGui::SameLine();
     if (ImGui::RadioButton("Raw token IDs", !use_text_prompt_)) {
+        InvalidateOutput();
         use_text_prompt_ = false;
     }
 
     if (use_text_prompt_) {
-        ImGui::InputTextMultiline("##TextPrompt",
+        if (ImGui::InputTextMultiline("##TextPrompt",
                                   text_prompt_,
                                   sizeof(text_prompt_),
-                                  ImVec2(-1, 96));
+                                  ImVec2(-1, 96))) InvalidateOutput();
 
-        ImGui::InputText("Vocabulary file", vocab_file_, sizeof(vocab_file_));
+        if (ImGui::InputText("Vocabulary file", vocab_file_, sizeof(vocab_file_))) InvalidateOutput();
         ImGui::SameLine();
         if (ImGui::Button("Browse##GenerationVocab")) {
             auto result = FileDialogs::OpenFile(
@@ -80,6 +135,7 @@ void LanguageModelGenerationPanel::RenderPrompt() {
                 {{"Vocabulary", "txt,vocab"},
                  {"All Files", "*"}});
             if (result) {
+                InvalidateOutput();
                 std::snprintf(vocab_file_,
                               sizeof(vocab_file_),
                               "%s",
@@ -87,7 +143,7 @@ void LanguageModelGenerationPanel::RenderPrompt() {
             }
         }
 
-        ImGui::InputText("CyxModel package", cyxmodel_path_, sizeof(cyxmodel_path_));
+        if (ImGui::InputText("CyxModel package", cyxmodel_path_, sizeof(cyxmodel_path_))) InvalidateOutput();
         ImGui::SameLine();
         if (ImGui::Button("Browse##GenerationCyxModel")) {
             auto result = FileDialogs::OpenFile(
@@ -95,6 +151,7 @@ void LanguageModelGenerationPanel::RenderPrompt() {
                 {{"CyxModel", "cyxmodel"},
                  {"All Files", "*"}});
             if (result) {
+                InvalidateOutput();
                 std::snprintf(cyxmodel_path_,
                               sizeof(cyxmodel_path_),
                               "%s",
@@ -110,13 +167,13 @@ void LanguageModelGenerationPanel::RenderPrompt() {
             LoadModelAndTokenizerFromCyxModel();
         }
 
-        ImGui::Checkbox("Use packaged tokenizer assets", &use_packaged_tokenizer_);
+        if (ImGui::Checkbox("Use packaged tokenizer assets", &use_packaged_tokenizer_)) InvalidateOutput();
         if (!packaged_tokenizer_summary_.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", packaged_tokenizer_summary_.c_str());
         }
         if (imported_model_) {
-            ImGui::Checkbox("Use imported .cyxmodel model", &use_imported_model_);
+            if (ImGui::Checkbox("Use imported .cyxmodel model", &use_imported_model_)) InvalidateOutput();
             ImGui::SameLine();
             ImGui::TextDisabled("%s", imported_model_source_.c_str());
             if (!imported_model_summary_.empty()) {
@@ -124,21 +181,22 @@ void LanguageModelGenerationPanel::RenderPrompt() {
             }
         }
 
-        const char* tokenizer_types[] = {"Whitespace", "Word", "Character", "Byte BPE", "WordPiece", "SentencePiece BPE (optional)", "SentencePiece Unigram (optional)"};
         if (use_packaged_tokenizer_) {
             ImGui::BeginDisabled();
         }
-        if (ImGui::Combo("Tokenizer", &tokenizer_type_idx_, tokenizer_types, 7) && tokenizer_type_idx_ == 3)
-            lowercase_ = false;
+        if (ImGui::Combo("Tokenizer", &tokenizer_type_idx_, kTokenizerLabels, 7)) {
+            InvalidateOutput();
+            if (tokenizer_type_idx_ == 3) lowercase_ = false;
+        }
         ImGui::SameLine();
         ImGui::BeginDisabled(tokenizer_type_idx_ == 3);
-        ImGui::Checkbox("Lowercase", &lowercase_);
+        if (ImGui::Checkbox("Lowercase", &lowercase_)) InvalidateOutput();
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::Checkbox("BOS", &add_bos_);
+        if (ImGui::Checkbox("BOS", &add_bos_)) InvalidateOutput();
         ImGui::SameLine();
-        ImGui::Checkbox("EOS", &add_eos_);
-        ImGui::InputInt("Max prompt length", &max_length_);
+        if (ImGui::Checkbox("EOS", &add_eos_)) InvalidateOutput();
+        if (ImGui::InputInt("Max prompt length", &max_length_)) InvalidateOutput();
         if (use_packaged_tokenizer_) {
             ImGui::EndDisabled();
         }
@@ -146,10 +204,10 @@ void LanguageModelGenerationPanel::RenderPrompt() {
             "Manual mode uses the selected vocabulary file. Packaged mode uses "
             "tokenizer/config.json and tokenizer/vocab.txt from a .cyxmodel.");
     } else {
-        ImGui::InputTextMultiline("##PromptTokenIds",
+        if (ImGui::InputTextMultiline("##PromptTokenIds",
                                   prompt_ids_,
                                   sizeof(prompt_ids_),
-                                  ImVec2(-1, 96));
+                                  ImVec2(-1, 96))) InvalidateOutput();
         ImGui::TextDisabled(
             "Use spaces, commas, or new lines. Example: 1 42 17");
     }
@@ -158,27 +216,35 @@ void LanguageModelGenerationPanel::RenderPrompt() {
 void LanguageModelGenerationPanel::RenderControls() {
     ImGui::Text("%s Generation controls", ICON_FA_SLIDERS);
     ImGui::PushItemWidth(180);
-    ImGui::InputInt("Max new tokens", &max_new_tokens_);
-    ImGui::InputFloat("Temperature", &temperature_, 0.05f, 0.25f, "%.3f");
-    ImGui::InputInt("Top-K (0 disables)", &top_k_);
-    ImGui::InputFloat("Top-P", &top_p_, 0.05f, 0.25f, "%.3f");
-    ImGui::InputInt("EOS token (-1 disables)", &eos_token_id_);
-    ImGui::InputInt("Seed", &seed_);
+    if (ImGui::InputInt("Max new tokens", &max_new_tokens_)) InvalidateOutput();
+    if (ImGui::InputFloat("Temperature", &temperature_, 0.05f, 0.25f, "%.3f")) InvalidateOutput();
+    if (ImGui::InputInt("Top-K (0 disables)", &top_k_)) InvalidateOutput();
+    if (ImGui::InputFloat("Top-P", &top_p_, 0.05f, 0.25f, "%.3f")) InvalidateOutput();
+    if (ImGui::InputInt("EOS token (-1 disables)", &eos_token_id_)) InvalidateOutput();
+    if (ImGui::InputInt("Seed", &seed_)) InvalidateOutput();
     ImGui::PopItemWidth();
 
-    ImGui::Checkbox("Multinomial sampling", &multinomial_sampling_);
+    if (ImGui::Checkbox("Multinomial sampling", &multinomial_sampling_)) InvalidateOutput();
     ImGui::SameLine();
-    ImGui::Checkbox("Include prompt in output", &include_prompt_);
+    if (ImGui::Checkbox("Include prompt in output", &include_prompt_)) InvalidateOutput();
 
     auto& training = TrainingManager::Instance();
-    const bool has_model = (use_imported_model_ && imported_model_) ||
-                           training.HasTrainedModel();
+    const auto session_model = training.GetActiveModel();
+    const std::weak_ptr<SequentialModel> current_owner = session_model;
+    if (observed_session_model_.owner_before(current_owner) ||
+        current_owner.owner_before(observed_session_model_)) {
+        if (!use_imported_model_) InvalidateOutput();
+        observed_session_model_ = session_model;
+        const auto info = training.GetActiveModelInfo();
+        session_model_status_ = !session_model ? "Active model: none"
+            : (info.origin == ActiveModelOrigin::LoadedCheckpoint
+                ? "Active checkpoint: " + info.checkpoint_path
+                : "Active model: trained in this session");
+    }
+    const bool has_model = (use_imported_model_ && imported_model_) || session_model;
     active_model_status_ = use_imported_model_ && imported_model_
-        ? "Active model: imported .cyxmodel"
-        : (training.HasTrainedModel()
-            ? "Active model: last trained model"
-            : "Active model: none");
-    ImGui::TextDisabled("%s", active_model_status_.c_str());
+        ? "Active package: " + imported_model_source_ : session_model_status_;
+    ImGui::TextWrapped("%s", active_model_status_.c_str());
     if (!has_model) {
         ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.15f, 1.0f),
                            "%s No trained or imported model available",
@@ -199,14 +265,23 @@ void LanguageModelGenerationPanel::RenderControls() {
         ImGui::EndDisabled();
     }
 
-    if (!compatibility_status_.empty()) {
+    // Keep actionable errors beside the buttons, outside the output area.
+    // Use text and an icon as well as color, and wrap long paths/messages.
+    if (!action_error_.empty()) {
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.35f, 1.0f));
+        ImGui::Text("%s Action blocked", ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextWrapped("%s", action_error_.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::Button("Copy error")) ImGui::SetClipboardText(action_error_.c_str());
+    } else if (!compatibility_status_.empty()) {
         ImGui::TextWrapped("%s", compatibility_status_.c_str());
     }
 }
 
 void LanguageModelGenerationPanel::RenderResult() {
     ImGui::Text("%s Result", ICON_FA_TERMINAL);
-    if (!status_.empty()) {
+    if (!status_.empty() && action_error_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
 
@@ -269,6 +344,7 @@ void LanguageModelGenerationPanel::RenderResult() {
 }
 
 void LanguageModelGenerationPanel::RunGeneration() {
+    InvalidateOutput();
     try {
         if (use_imported_model_) {
             if (use_text_prompt_ && !use_packaged_tokenizer_) {
@@ -278,12 +354,17 @@ void LanguageModelGenerationPanel::RunGeneration() {
             RequireImportedModelPackageContract();
         }
 
+        const auto session_model = TrainingManager::Instance().GetActiveModel();
+        auto* model = use_imported_model_ ? imported_model_.get() : session_model.get();
+        if (!model) throw std::runtime_error("No trained or imported model is available");
+        std::string tokenizer_identity = "Raw token IDs: tokenizer identity not checked.";
         std::unique_ptr<Tokenizer> tokenizer;
         std::vector<int64_t> prompt;
         size_t tokenizer_vocab_size = 0;
         size_t max_sequence_length = 0;
         if (use_text_prompt_) {
             tokenizer = BuildTokenizer();
+            tokenizer_identity = RequireActiveTokenizerIdentity(*tokenizer, session_model);
             prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
             tokenizer_vocab_size = tokenizer->GetVocabularySize();
             max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
@@ -321,10 +402,6 @@ void LanguageModelGenerationPanel::RunGeneration() {
                 "Prompt length leaves no generation budget for max context");
         }
 
-        auto* model = ActiveModel();
-        if (model == nullptr) {
-            throw std::runtime_error("No trained or imported model is available");
-        }
 
         Tensor contract_input({1, prompt.size()}, prompt.data(), DataType::Int64);
         const Tensor contract_logits = model->Forward(contract_input);
@@ -362,7 +439,8 @@ void LanguageModelGenerationPanel::RunGeneration() {
         has_result_ = true;
         status_ = "Generation completed: " +
                   std::to_string(report.new_token_ids.size()) +
-                  " new token IDs.";
+                  " new token IDs. " + tokenizer_identity;
+        spdlog::info("Language Model Generation: {}", status_);
     } catch (const std::exception& e) {
         has_result_ = false;
         generated_ids_.clear();
@@ -374,15 +452,14 @@ void LanguageModelGenerationPanel::RunGeneration() {
         last_remaining_budget_ = 0;
         last_candidates_.clear();
         status_ = std::string("Generation failed: ") + e.what();
+        action_error_ = status_;
+        spdlog::error("Language Model Generation: {}", status_);
     }
 }
 
 void LanguageModelGenerationPanel::CheckModelCompatibility() {
+    InvalidateOutput();
     try {
-        auto* model = ActiveModel();
-        if (model == nullptr) {
-            throw std::runtime_error("No trained or imported model is available");
-        }
         if (use_imported_model_) {
             if (use_text_prompt_ && !use_packaged_tokenizer_) {
                 throw std::runtime_error(
@@ -391,12 +468,17 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
             RequireImportedModelPackageContract();
         }
 
+        const auto session_model = TrainingManager::Instance().GetActiveModel();
+        auto* model = use_imported_model_ ? imported_model_.get() : session_model.get();
+        if (!model) throw std::runtime_error("No trained or imported model is available");
+        std::string tokenizer_identity = "Raw token IDs: tokenizer identity not checked.";
         std::unique_ptr<Tokenizer> tokenizer;
         std::vector<int64_t> prompt;
         size_t tokenizer_vocab_size = 0;
         size_t max_sequence_length = 0;
         if (use_text_prompt_) {
             tokenizer = BuildTokenizer();
+            tokenizer_identity = RequireActiveTokenizerIdentity(*tokenizer, session_model);
             prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
             tokenizer_vocab_size = tokenizer->GetVocabularySize();
             max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
@@ -440,10 +522,12 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
                     ", eos=" + std::to_string(tokenizer->GetEosId());
             }
         }
-        compatibility_status_ += ".";
+        compatibility_status_ += ". " + tokenizer_identity;
     } catch (const std::exception& e) {
         compatibility_status_ =
             std::string("Not compatible for generation: ") + e.what();
+        action_error_ = compatibility_status_;
+        spdlog::error("Language Model Generation: {}", action_error_);
     }
 }
 
@@ -462,6 +546,7 @@ void LanguageModelGenerationPanel::RequireImportedModelPackageContract() const {
 }
 
 void LanguageModelGenerationPanel::LoadTokenizerFromCyxModel() {
+    InvalidateOutput();
     try {
         if (cyxmodel_path_[0] == '\0') {
             throw std::invalid_argument("Choose a .cyxmodel package first");
@@ -522,10 +607,12 @@ void LanguageModelGenerationPanel::LoadTokenizerFromCyxModel() {
         packaged_tokenizer_model_data_.clear();
         packaged_tokenizer_summary_.clear();
         status_ = std::string("Failed to load packaged tokenizer: ") + e.what();
+        action_error_ = status_;
     }
 }
 
 void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
+    InvalidateOutput();
     try {
         if (cyxmodel_path_[0] == '\0') {
             throw std::invalid_argument("Choose a .cyxmodel package first");
@@ -566,6 +653,8 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
             &contract_tokenizer_package,
             cyxmodel_path_);
         imported_model_contract_ = package_contract;
+        imported_model_tokenizer_ = std::move(contract_tokenizer_package.tokenizer);
+        imported_model_tokenizer_data_ = packaged_tokenizer_model_data_;
         imported_model_summary_ =
             "package: family=" +
             (package_contract.model_family.empty() ? std::string("unspecified")
@@ -585,6 +674,7 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
             ? "Package contract is compatible; use Check compatibility to "
               "validate the active runtime graph."
             : "Package contract failed: " + package_contract.error;
+        if (!package_contract.compatible) action_error_ = compatibility_status_;
         use_imported_model_ = true;
         spdlog::info("Language Model Generation: loaded '{}' ({} layers); {}",
                      imported_model_source_, imported_model_->Size(), compatibility_status_);
@@ -597,17 +687,13 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
         imported_model_source_.clear();
         imported_model_summary_.clear();
         imported_model_contract_ = {};
+        imported_model_tokenizer_.reset();
+        imported_model_tokenizer_data_.clear();
         use_imported_model_ = false;
         status_ = std::string("Failed to load model package: ") + e.what();
+        action_error_ = status_;
         spdlog::error("Language Model Generation: {}", status_);
     }
-}
-
-SequentialModel* LanguageModelGenerationPanel::ActiveModel() const {
-    if (use_imported_model_ && imported_model_) {
-        return imported_model_.get();
-    }
-    return TrainingManager::Instance().GetLastTrainedModel();
 }
 
 std::vector<int64_t> LanguageModelGenerationPanel::ParsePromptIds() const {
@@ -696,7 +782,29 @@ std::unique_ptr<Tokenizer> LanguageModelGenerationPanel::BuildTokenizer() const 
         throw std::runtime_error(
             "Failed to load vocabulary file: " + std::string(vocab_file_));
     }
-    tokenizer->ValidateVocabulary();
+    try {
+        tokenizer->ValidateVocabulary();
+    } catch (const std::invalid_argument& e) {
+        // Validation remains owned by Tokenizer; this only adds GUI guidance.
+        const std::string selected = kTokenizerLabels[std::clamp(tokenizer_type_idx_, 0, 6)];
+        std::string guidance;
+        if (tokenizer->GetVocabulary().IsByteBPE() &&
+            !IsSentencePieceTokenizerType(type)) {
+            guidance = "Selected " + selected +
+                "; this vocabulary requires Byte BPE. Set Tokenizer to Byte BPE "
+                "and Lowercase to off.";
+        } else if (type == TokenizerType::ByteBPE) {
+            guidance = "Selected Byte BPE, but this vocabulary has no BPE merge rules. "
+                "Choose the BPE vocabulary used by the active model, or select "
+                "the tokenizer type that was used to train it.";
+        } else if (IsSentencePieceTokenizerType(type)) {
+            guidance = "Selected " + selected +
+                ". Use a .cyxmodel package containing tokenizer/model.spm and "
+                "a build with SentencePiece support.";
+        }
+        throw std::invalid_argument(guidance.empty() ? e.what()
+            : guidance + " Details: " + e.what());
+    }
     return tokenizer;
 }
 
