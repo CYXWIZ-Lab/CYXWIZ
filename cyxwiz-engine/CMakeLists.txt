@@ -349,6 +349,7 @@ set(ENGINE_SOURCES
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
+    src/core/properties_presentation.cpp
     src/core/menu_presentation.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -5378,6 +5379,41 @@ endif()
 set_target_properties(test_properties_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Properties panel view model (TOFIX129 A7) =====
+add_executable(test_properties_presentation
+    tests/test_properties_presentation.cpp
+    src/core/properties_presentation.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/gui/properties_parameter_rules.cpp
+    src/gui/properties_truth.cpp
+)
+
+target_include_directories(test_properties_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+target_link_libraries(test_properties_presentation PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_properties_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_properties_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME properties_presentation_contract COMMAND test_properties_presentation)
 
 # ===== Test: Active Device Runtime Truth =====
 add_executable(test_device_runtime_truth

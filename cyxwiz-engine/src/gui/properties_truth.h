@@ -63,6 +63,7 @@ struct DatasetTruthFact {
     std::string dataset_name;
     std::string backing_store;
     bool found = false;
+    size_t rows = 0;  // rows, samples or images; 0 when unknown
     std::vector<std::string> columns;
     bool has_labels = false;
     bool has_label_column_metadata = false;
