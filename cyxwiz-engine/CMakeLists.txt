@@ -5783,6 +5783,7 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
