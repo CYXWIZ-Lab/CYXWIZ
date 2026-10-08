@@ -921,6 +921,8 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Resize,  // TOFIX140 A1: the image input shape comes from it
+        gui::NodeType::PReLU,   // TOFIX140 A2
+        gui::NodeType::SELU,    // TOFIX140 A2
     };
     for (const auto type : expected_supported_catalog_nodes) {
         const auto* supported = metadata.GetMetadata(type);
@@ -933,7 +935,6 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     }
 
     const std::vector<gui::NodeType> expected_catalog_previews = {
-        gui::NodeType::PReLU,
         gui::NodeType::HuggingFaceDataset,
         gui::NodeType::PluginCustom,
     };

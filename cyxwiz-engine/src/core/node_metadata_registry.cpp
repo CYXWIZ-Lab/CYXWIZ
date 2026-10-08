@@ -1160,9 +1160,7 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", {"transformer", "attention", "encoder"}},
         {NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", {"transformer", "attention", "decoder"}},
         {NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", {"transformer", "position", "encoding"}},
-        {NodeType::PReLU, NodeCategory::Activation, "PReLU", {"activation", "relu"}},
         {NodeType::ELU, NodeCategory::Activation, "ELU", {"activation"}},
-        {NodeType::SELU, NodeCategory::Activation, "SELU", {"activation"}},
         {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
@@ -2993,6 +2991,26 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
         {{"alpha", "float", "1.0", "Positive negative-saturation scale", {}, ">0"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SELU, NodeCategory::Activation, "SELU", ICON_FA_BOLT,
+        {"selu", "activation", "self-normalizing"}, 0, false, "Scaled exponential linear unit",
+        "scale * (x if x > 0 else alpha * (exp(x) - 1)) with the fixed constants of Klambauer et al. "
+        "(PyTorch SELU); keeps activations self-normalising in deep Dense stacks.", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::PReLU, NodeCategory::Activation, "PReLU", ICON_FA_BOLT,
+        {"prelu", "parametric", "relu", "activation"}, 0, false, "ReLU with a learned negative slope",
+        "max(0, x) + a * min(0, x) with a learned (PyTorch PReLU): one shared slope, or one per feature "
+        "of the input's dimension 1 ([batch, features] rows). Inside a convolution section only the "
+        "shared slope applies.", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {{"num_parameters", "int", "1", "1 = one shared slope; otherwise one slope per input feature",
+          {}, "1-1048576", "Slopes", "PReLU", true, false},
+         {"init", "float", "0.25", "Initial value of every slope", {}, "", "Initial slope", "PReLU", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Swish, NodeCategory::Activation, "Swish", ICON_FA_BOLT,

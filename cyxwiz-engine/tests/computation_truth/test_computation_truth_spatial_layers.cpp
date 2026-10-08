@@ -1,7 +1,8 @@
-// The spatial (CNN) layers against PyTorch (TOFIX140 A1): every case of
-// fixtures/spatial_layers_pytorch.json is replayed through the backend's
-// SequentialModel modules on [H,W,C,N] tensors - SetParameters, Forward,
-// Backward, GetGradients - and compared within the fixture's tolerance.
+// The layers TOFIX140 brings out of the blocked catalog, against PyTorch:
+// every case of fixtures/spatial_layers_pytorch.json (CNN layers on
+// [H,W,C,N], PReLU/SELU on [N,F] rows) is replayed through the backend's
+// SequentialModel modules - SetParameters, Forward, Backward, GetGradients -
+// and compared within the fixture's tolerance.
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include "test_device_selection.h"
@@ -96,6 +97,10 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
             g.at("mode").get<int>() == 0 ? UpsampleMode::Nearest : UpsampleMode::Bilinear);
     if (layer == "PixelShuffle")
         return std::make_unique<PixelShuffleModule>(g.at("upscale_factor").get<int>());
+    if (layer == "PReLU")
+        return std::make_unique<PReLUModule>(g.at("num_parameters").get<int>(), g.at("init").get<float>());
+    if (layer == "SELU")
+        return std::make_unique<SELUModule>();
     Check(false, "unknown layer in fixture: " + layer);
     return nullptr;
 }
@@ -124,7 +129,8 @@ int main(int, char** argv) {
         const std::string layer = c.at("layer").get<std::string>();
         const Tolerance tol{c.at("tolerance").at("atol").get<float>(), c.at("tolerance").at("rtol").get<float>()};
         const cyxwiz::Tensor input = ReadTensor(c.at("input"));
-        const size_t channels_in = input.Shape()[2];
+        // [H,W,C,N] samples carry their channels on axis 2; [N,F] rows have none.
+        const size_t channels_in = input.Shape().size() == 4 ? input.Shape()[2] : 0;
 
         auto module = MakeModule(layer, c.at("geometry"), channels_in);
         std::map<std::string, cyxwiz::Tensor> parameters;

@@ -1138,6 +1138,22 @@ private:
 };
 
 /**
+ * @brief Wrapper for SELU activation (TOFIX140 A2)
+ */
+class CYXWIZ_API SELUModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    SELUModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "SELU"; }
+
+private:
+    std::unique_ptr<SELUActivation> activation_;
+};
+
+/**
  * @brief Wrapper for GELU activation
  */
 class CYXWIZ_API GELUModule : public Module {

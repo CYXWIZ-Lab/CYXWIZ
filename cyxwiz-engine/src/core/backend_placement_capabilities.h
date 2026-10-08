@@ -90,6 +90,8 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::ReLU: return "ReLU";
         case gui::NodeType::LeakyReLU: return "LeakyReLU";
         case gui::NodeType::ELU: return "ELU";
+        case gui::NodeType::SELU: return "SELU";
+        case gui::NodeType::PReLU: return "PReLU";
         case gui::NodeType::GELU: return "GELU";
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
@@ -158,6 +160,8 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:
         case gui::NodeType::ELU:
+        case gui::NodeType::SELU:
+        case gui::NodeType::PReLU:
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:

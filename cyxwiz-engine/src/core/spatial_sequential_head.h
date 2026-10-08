@@ -67,7 +67,15 @@ ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
       closed = true;
       continue;
     }
-    if (!spatial_layer && !spatial::IsShapePreservingLayer(layer.type) &&
+    // PReLU's per-feature slopes act on dimension 1, which is W in [H,W,C,N]:
+    // only the shared slope is element-wise there.
+    const bool shared_prelu = layer.type == gui::NodeType::PReLU &&
+                              spatial::ParseIntParam(layer.parameters, "num_parameters", 1) == 1;
+    if (layer.type == gui::NodeType::PReLU && !shared_prelu)
+      throw std::invalid_argument(
+          "PReLU before Flatten needs one shared slope (num_parameters = 1); per-channel "
+          "slopes are not supported on [H,W,C] samples (index " + std::to_string(i) + ")");
+    if (!spatial_layer && !spatial::IsShapePreservingLayer(layer.type) && !shared_prelu &&
         layer.type != gui::NodeType::Output)
       throw std::invalid_argument(
           "Spatial head requires Flatten before layer index " + std::to_string(i) +

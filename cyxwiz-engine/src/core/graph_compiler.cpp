@@ -10,6 +10,7 @@
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
 #include "spatial_layer_shapes.h"
+#include "spatial_sequential_head.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -5630,6 +5631,29 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    // The model builder's spatial section rules (layer order, Flatten, shared
+    // PReLU slope): reported here so the graph shows them before training.
+    // Skipped when the graph already has errors, which these would repeat.
+    if (!config.HasErrors() && UsesSpatialSequentialInput(config)) {
+        try {
+            ResolveSpatialSequentialHead(config);
+        } catch (const std::invalid_argument& error) {
+            const std::string message = error.what();
+            int node_id = -1;
+            std::string node_name;
+            const auto at = message.find("index ");
+            if (at != std::string::npos) {
+                const size_t index = std::strtoul(message.c_str() + at + 6, nullptr, 10);
+                if (index < config.layers.size()) {
+                    node_id = config.layers[index].node_id;
+                    node_name = config.layers[index].name;
+                }
+            }
+            AddIssue(config, IssueLevel::Error, message, node_id, node_name,
+                     errors::Compiler::TensorShapeMismatch);
+        }
+    }
+
     // Final verdict: is_valid is the absence of any Error-level issue.
     // Warnings and Info don't block training.
     config.is_valid = !config.HasErrors();
@@ -5939,6 +5963,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::LayerNorm:
+        case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
@@ -6540,6 +6565,8 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:
+        case gui::NodeType::PReLU:
+        case gui::NodeType::SELU:
         case gui::NodeType::ELU:
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:

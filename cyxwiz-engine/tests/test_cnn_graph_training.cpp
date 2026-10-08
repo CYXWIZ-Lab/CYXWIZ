@@ -196,6 +196,42 @@ int main() {
     const float* values = logits.ReadData<float>();
     for (size_t i = 0; i < batch * 2; ++i) Check(std::isfinite(values[i]), "logits are finite");
 
+    // ---- PReLU (shared slope) and SELU inside the conv section (TOFIX140 A2) ----
+    {
+        auto variant = nodes;
+        for (auto& n : variant) {
+            if (n.name == "ReLU") {
+                n.type = gui::NodeType::PReLU;
+                n.parameters = {{"num_parameters", "1"}, {"init", "0.25"}};
+            }
+            if (n.name == "ReLU 2") n.type = gui::NodeType::SELU;
+        }
+        const auto vconfig = compiler.Compile(variant, links, true);
+        Check(vconfig.is_valid, "a CNN with PReLU and SELU compiles");
+        auto vbuilt = cyxwiz::BuildExecutableFromConfig(vconfig);
+        Check(vbuilt.ok(), "ModelBuilder builds PReLU and SELU: " + vbuilt.error_message);
+        long long vparams = 0;
+        for (const auto& [name, tensor] : vbuilt.model->GetParameters()) vparams += static_cast<long long>(tensor.NumElements());
+        Check(vparams == parameters + 1, "PReLU adds one learnable slope: " + std::to_string(vparams));
+        const cyxwiz::Tensor vlogits = vbuilt.model->Forward(spatial);
+        Check(vlogits.Shape() == std::vector<size_t>{batch, 2}, "PReLU/SELU CNN forward gives [N, 2]");
+
+        // Per-channel slopes act on dimension 1 (W in [H,W,C,N]): refused there.
+        for (auto& n : variant) {
+            if (n.type == gui::NodeType::PReLU) n.parameters["num_parameters"] = "16";
+        }
+        const auto bad = compiler.Compile(variant, links, true);
+        bool reported = false;
+        for (const auto& issue : bad.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error && issue.message.find("shared slope") != std::string::npos &&
+                issue.node_name == "ReLU") reported = true;  // the node keeps its name "ReLU" in this variant
+        }
+        Check(!bad.is_valid && reported, "the compiler reports the per-channel PReLU on its node");
+        const auto bad_built = cyxwiz::BuildExecutableFromConfig(bad);
+        Check(!bad_built.ok() && bad_built.error_message.find("shared slope") != std::string::npos,
+              "per-channel PReLU before Flatten is refused with the reason: " + bad_built.error_message);
+    }
+
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";
     return 0;
 }

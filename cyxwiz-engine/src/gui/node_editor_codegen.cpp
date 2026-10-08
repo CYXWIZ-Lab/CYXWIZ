@@ -993,6 +993,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -1353,6 +1354,7 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -1662,6 +1664,7 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        " + out + " = self.layer" + std::to_string(layer_idx++) + ".forward(" + input_expr(*node, 0) + ")\n";
                 record_output(out);
                 break;
@@ -2282,6 +2285,11 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        case NodeType::PReLU:
+            code = "nn.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
+                   ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
+            break;
+
         case NodeType::PluginCustom: {
             if (!node.extension_type_id.empty())
                 code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
@@ -2372,6 +2380,15 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
             it = node.parameters.find("embedding_dim");
             if (it != node.parameters.end()) embedding_dim = it->second;
             code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
+            break;
+        }
+
+        case NodeType::PReLU: {
+            // One shared slope shares the alpha over every non-batch axis.
+            const std::string init = GetParamOrDefault(node, "init", "0.25");
+            code = GetParamOrDefault(node, "num_parameters", "1") == "1"
+                ? "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "), shared_axes=[1])"
+                : "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "))";
             break;
         }
 
@@ -2483,6 +2500,15 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             it = node.parameters.find("embedding_dim");
             if (it != node.parameters.end()) embedding_dim = it->second;
             code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
+            break;
+        }
+
+        case NodeType::PReLU: {
+            // One shared slope shares the alpha over every non-batch axis.
+            const std::string init = GetParamOrDefault(node, "init", "0.25");
+            code = GetParamOrDefault(node, "num_parameters", "1") == "1"
+                ? "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "), shared_axes=[1])"
+                : "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "))";
             break;
         }
 
@@ -2809,6 +2835,11 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
         case NodeType::TensorLogicalMask:
         case NodeType::TensorIndexSelect:
             code = "";
+            break;
+
+        case NodeType::PReLU:
+            code = "cx.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
+                   ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
             break;
 
         case NodeType::PluginCustom: {

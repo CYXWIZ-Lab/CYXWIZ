@@ -1016,6 +1016,30 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::SELU: {
+                model.Add<SELUModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] SELU", i);
+                break;
+            }
+
+            case gui::NodeType::PReLU: {
+                const int slopes = static_cast<int>(ParseSizeParam(layer_cfg, "num_parameters", 1));
+                const float init = ParseFloatParam(layer_cfg, "init", 0.25f);
+                if (slopes < 1) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU needs at least one slope");
+                }
+                if (slopes > 1 && current_input_size != 0 && static_cast<size_t>(slopes) != current_input_size &&
+                    !(spatial_head && i < spatial_head->input_shapes.size())) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU has " + std::to_string(slopes) + " slopes but its input has " +
+                                             std::to_string(current_input_size) + " features");
+                }
+                model.Add<PReLUModule>(slopes, init);
+                CYXWIZ_BUILDER_INFO("  [{}] PReLU(slopes={}, init={})", i, slopes, init);
+                break;
+            }
+
             case gui::NodeType::GELU: {
                 model.Add<GELUModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] GELU", i);

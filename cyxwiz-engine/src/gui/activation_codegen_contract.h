@@ -78,6 +78,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Mish:
                 result.expression = "F.mish(" + input_expression + ")";
                 break;
+            case NodeType::SELU:
+                result.expression = "F.selu(" + input_expression + ")";
+                break;
             case NodeType::Sigmoid:
                 result.expression = "torch.sigmoid(" + input_expression + ")";
                 break;
@@ -119,6 +122,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
                 result.expression = input_expression +
                     " * tf.math.tanh(tf.math.softplus(" + input_expression + "))";
                 break;
+            case NodeType::SELU:
+                result.expression = "tf.nn.selu(" + input_expression + ")";
+                break;
             case NodeType::Sigmoid:
                 result.expression = "tf.nn.sigmoid(" + input_expression + ")";
                 break;
@@ -157,6 +163,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Mish:
                 result.expression = "cx.mish(" + input_expression + ")";
                 break;
+            case NodeType::SELU:
+                result.expression = "cx.SELU().forward(" + input_expression + ")";
+                break;
             case NodeType::Sigmoid:
                 result.expression = "cx.sigmoid(" + input_expression + ")";
                 break;
@@ -193,6 +202,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
         case NodeType::Mish:
             result.expression =
                 "layers.Lambda(lambda x: x * tf.math.tanh(tf.math.softplus(x)))";
+            break;
+        case NodeType::SELU:
+            result.expression = "layers.Activation('selu')";
             break;
         case NodeType::Sigmoid:
             result.expression = "layers.Activation('sigmoid')";

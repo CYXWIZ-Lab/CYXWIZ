@@ -382,35 +382,12 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::Softmax:
         case NodeType::LeakyReLU:
         case NodeType::ELU:
+        case NodeType::SELU:
+        case NodeType::PReLU:
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
-        case NodeType::PReLU:
-        case NodeType::SELU: {
-            // Catalog-preview activations remain constructible only for
-            // compatibility with saved graphs.
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::PReLU) {
-                node.parameters["num_parameters"] = "1";
-                node.parameters["init"] = "0.25";
-            }
             break;
         }
 

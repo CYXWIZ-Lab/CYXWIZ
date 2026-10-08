@@ -138,6 +138,21 @@ std::string ELUModule::GetName() const {
 }
 
 // ============================================================================
+// SELUModule Implementation (TOFIX140 A2)
+// ============================================================================
+
+SELUModule::SELUModule() : activation_(std::make_unique<SELUActivation>()) {}
+
+Tensor SELUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor SELUModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
 // GELUModule Implementation
 // ============================================================================
 

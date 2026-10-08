@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""PyTorch fixtures for the spatial (CNN) layers CyxWiz runs on [H,W,C,N]
-(TOFIX140 A1): Conv2d, MaxPool2d, AvgPool2d, ConvTranspose2d, GroupNorm,
-InstanceNorm2d, Upsample (nearest, bilinear) and PixelShuffle.
+"""PyTorch fixtures for the layers CyxWiz brings out of the blocked catalog
+(TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
+AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
+bilinear), PixelShuffle - and the activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -51,7 +52,9 @@ def transpose_weight(tensor: torch.Tensor) -> dict[str, Any]:
 
 def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
          forward, params: dict[str, torch.Tensor], param_writers: dict[str, Any],
-         tolerance=(1e-4, 1e-4)) -> dict[str, Any]:
+         tolerance=(1e-4, 1e-4), rows: bool = False) -> dict[str, Any]:
+    """rows=True: x is [N, F] rows, written as is (no [H,W,C,N] reorder)."""
+    layout = plain if rows else hwcn
     x = x.clone().requires_grad_(True)
     for p in params.values():
         p.requires_grad_(True)
@@ -64,10 +67,10 @@ def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
         "layer": layer,
         "geometry": geometry,
         "tolerance": {"atol": tolerance[0], "rtol": tolerance[1]},
-        "input": hwcn(x),
-        "output": hwcn(y),
-        "grad_output": hwcn(grad_out),
-        "grad_input": hwcn(x.grad),
+        "input": layout(x),
+        "output": layout(y),
+        "grad_output": layout(grad_out),
+        "grad_input": layout(x.grad),
         "parameters": {k: param_writers[k](v) for k, v in params.items()},
         "parameter_gradients": {k: param_writers[k](v.grad) for k, v in params.items()},
     }
@@ -169,6 +172,21 @@ def build() -> list[dict[str, Any]]:
         "upsample_bilinear_x2", "Upsample", {"scale_factor": 2, "mode": 1},
         x, lambda t: functional.interpolate(t, scale_factor=2, mode="bilinear", align_corners=False),
         {}, {}))
+
+    # Activations on [N, F] rows (TOFIX140 A2)
+    x = torch.randn(4, 6)
+    a = torch.tensor([0.25])
+    cases.append(case(
+        "prelu_shared", "PReLU", {"num_parameters": 1, "init": 0.25},
+        x, lambda t: functional.prelu(t, a), {"alpha": a}, {"alpha": plain}, rows=True))
+    x = torch.randn(4, 6)
+    a = torch.rand(6) * 0.5
+    cases.append(case(
+        "prelu_per_feature", "PReLU", {"num_parameters": 6, "init": 0.25},
+        x, lambda t: functional.prelu(t, a), {"alpha": a}, {"alpha": plain}, rows=True))
+    x = torch.randn(4, 6) * 2.0
+    cases.append(case(
+        "selu", "SELU", {}, x, lambda t: functional.selu(t), {}, {}, rows=True))
 
     # PixelShuffle r=2, 8 channels -> 2
     x = torch.randn(2, 8, 3, 3)
