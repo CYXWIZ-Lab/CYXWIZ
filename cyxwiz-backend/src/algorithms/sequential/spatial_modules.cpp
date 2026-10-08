@@ -265,4 +265,20 @@ std::string GlobalAvgPool2DModule::GetName() const {
     return "GlobalAvgPool2D";
 }
 
+GlobalMaxPool2DModule::GlobalMaxPool2DModule()
+    : layer_(std::make_unique<GlobalMaxPool2DLayer>()) {}
+
+// As GlobalAvgPool2DModule: [C,N] from the layer, [N,C] rows for Dense.
+Tensor GlobalMaxPool2DModule::Forward(const Tensor& input) {
+    return layer_->Forward(input).Transpose();
+}
+
+Tensor GlobalMaxPool2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output.Transpose());
+}
+
+std::string GlobalMaxPool2DModule::GetName() const {
+    return "GlobalMaxPool2D";
+}
+
 } // namespace cyxwiz

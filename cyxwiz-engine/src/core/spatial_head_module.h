@@ -59,6 +59,20 @@ private:
   std::vector<size_t> input_shape_;
 };
 
+// Ends the section with Global Max Pool: [L,C,N] -> [N,C], each channel's
+// maximum over L (torch adaptive_max_pool1d(x, 1).flatten(1)); the backend's
+// 2-D global max pool on the [L,1,C,N] view.
+class SequenceGlobalMaxPoolModule final : public Module {
+public:
+  Tensor Forward(const Tensor &input) override;
+  Tensor Backward(const Tensor &gradient) override;
+  std::string GetName() const override { return "SequenceGlobalMaxPool"; }
+
+private:
+  GlobalMaxPool2DModule pool_;
+  std::vector<size_t> input_shape_;
+};
+
 // Ends the section with Global Avg Pool: [L,C,N] -> [N,C], each channel's
 // mean over L (torch adaptive_avg_pool1d(x, 1).flatten(1)).
 class SequenceGlobalAvgPoolModule final : public Module {

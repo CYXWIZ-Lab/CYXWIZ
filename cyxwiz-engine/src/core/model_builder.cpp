@@ -1468,31 +1468,34 @@ bool BuildSequential(
                 // These are not layers in the sequential model
                 break;
 
-            // Global Avg Pool ends the spatial section like Flatten:
-            // [H,W,C,N] -> [N,C] rows (torch adaptive_avg_pool2d + flatten).
-            case gui::NodeType::GlobalAvgPool: {
+            // A global pool ends the spatial or sequence section like Flatten:
+            // one value per channel, [N,C] rows (torch adaptive_avg/max_pool + flatten).
+            case gui::NodeType::GlobalAvgPool:
+            case gui::NodeType::GlobalMaxPool: {
+                const bool average = layer_cfg.type == gui::NodeType::GlobalAvgPool;
                 if (sequence_section && sequence_section->close_index == i) {
-                    model.Add<SequenceGlobalAvgPoolModule>();
+                    if (average) {
+                        model.Add<SequenceGlobalAvgPoolModule>();
+                    } else {
+                        model.Add<SequenceGlobalMaxPoolModule>();
+                    }
                     current_input_size = sequence_section->features;
-                    CYXWIZ_BUILDER_INFO("  [{}] SequenceGlobalAvgPool [L,C,N] -> [N,{}]", i,
-                                        current_input_size);
-                    break;
-                }
-                if (!spatial_head || spatial_head->flatten_index != i) {
+                } else if (spatial_head && spatial_head->flatten_index == i) {
+                    if (average) {
+                        model.Add<GlobalAvgPool2DModule>();
+                    } else {
+                        model.Add<GlobalMaxPool2DModule>();
+                    }
+                    current_input_size = spatial_head->features;
+                } else {
                     throw std::runtime_error(
-                        "Global Avg Pool at index " + std::to_string(i) +
-                        " needs an [H,W,C] sample from the spatial section before it");
+                        std::string(average ? "Global Avg Pool" : "Global Max Pool") + " at index " +
+                        std::to_string(i) + " needs an [H,W,C] or [L,C] sample before it");
                 }
-                model.Add<GlobalAvgPool2DModule>();
-                current_input_size = spatial_head->features;
-                CYXWIZ_BUILDER_INFO("  [{}] GlobalAvgPool2D [H,W,C,N] -> [N,{}]",
-                                    i, current_input_size);
+                CYXWIZ_BUILDER_INFO("  [{}] {} -> [N,{}]", i,
+                                    model.GetModule(model.Size() - 1)->GetName(), current_input_size);
                 break;
             }
-
-            case gui::NodeType::GlobalMaxPool:
-                spdlog::warn("  [{}] GlobalMaxPool is not supported in SequentialModel", i);
-                break;
 
             default:
                 spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));

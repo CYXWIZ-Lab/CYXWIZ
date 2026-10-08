@@ -189,7 +189,7 @@ void CheckShapesAndRefusals() {
           "Conv1D reads the rows as [10, 1] and gives [10, 4], got " + ShapeText(LayerNamed(config, "Conv").output_shape));
     Check(LayerNamed(config, "Flatten").output_shape == std::vector<size_t>{40}, "Flatten -> 40");
     const auto section = cyxwiz::ResolveSequenceConvSection(config);
-    Check(section && section->from_rows && section->features == 40 && !section->global_average,
+    Check(section && section->from_rows && section->features == 40 && !section->global_pool,
           "the sequence section opens on the rows and ends at Flatten with 40 features");
 
     // Time-series windows: blocks of input_width values per feature.
@@ -210,7 +210,7 @@ void CheckShapesAndRefusals() {
                             Layer(5, gui::NodeType::Flatten, "Flatten"), Layer(6, gui::NodeType::Dense, "Dense", {{"units", "1"}})}),
                  "Conv", "make it the first model layer", "Conv1D after Dense");
     CheckRefused(Chain(10, {Conv(3, "Conv", 4, 3, "same"), Layer(6, gui::NodeType::Dense, "Dense", {{"units", "1"}})}),
-                 "Dense", "needs Flatten or Global Avg Pool before", "Dense straight after Conv1D");
+                 "Dense", "needs Flatten or a global pool before", "Dense straight after Conv1D");
     CheckRefused(Chain(10, {Conv(3, "Conv", 4, 3, "same"), Layer(5, gui::NodeType::Flatten, "Flatten"),
                             Conv(4, "Conv 2", 4, 3, "same"), Layer(6, gui::NodeType::Dense, "Dense", {{"units", "1"}})}),
                  "Conv 2", "needs an [L, C] sequence and gets [40]", "Conv1D after Flatten");
@@ -320,15 +320,18 @@ void CheckPyTorch(const json& fixture) {
                               {"embedding_dim", std::to_string(g.at("embedding_dim").get<int>())}}),
                        Conv(3, "Conv", g.at("filters").get<int>(), g.at("kernel_size").get<int>(),
                             g.at("padding").get<std::string>()),
-                       Layer(4, gui::NodeType::ReLU, "ReLU"), Layer(5, gui::NodeType::GlobalAvgPool, "GAP"),
+                       Layer(4, gui::NodeType::ReLU, "ReLU"),
+                       Layer(5, g.at("pool").get<std::string>() == "max" ? gui::NodeType::GlobalMaxPool
+                                                                          : gui::NodeType::GlobalAvgPool,
+                             "GAP"),
                        Layer(6, gui::NodeType::Dense, "Dense", {{"units", std::to_string(g.at("units").get<int>())}})}),
                 name);
             Check(LayerNamed(config, "Conv").input_shape ==
                       std::vector<size_t>{length, g.at("embedding_dim").get<size_t>()},
                   "Conv1D after an Embedding reads [L, E], got " + ShapeText(LayerNamed(config, "Conv").input_shape));
             const auto section = cyxwiz::ResolveSequenceConvSection(config);
-            Check(section && !section->from_rows && section->global_average,
-                  "the section opens after the Embedding and ends at Global Avg Pool");
+            Check(section && !section->from_rows && section->global_pool,
+                  "the section opens after the Embedding and ends at the global pool");
             const auto shape = c.at("input").at("shape").get<std::vector<size_t>>();
             const auto ids = c.at("input").at("values").get<std::vector<int32_t>>();
             CheckPyTorchCase(c, config, cyxwiz::Tensor(shape, ids.data(), cyxwiz::DataType::Int32), tolerance);

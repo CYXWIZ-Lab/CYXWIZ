@@ -10,12 +10,13 @@ namespace cyxwiz {
 
 // The spatial section of a sequential model (TOFIX140 A1): the layers that
 // run on [H,W,C,N] tensors, from the first spatial layer up to the Flatten or
-// Global Avg Pool that turns the sample back into a row for Dense. A model may
+// global pool (Global Avg / Max Pool) that turns the sample back into a row
+// for Dense. A model may
 // also stay spatial to its end (neither: it outputs [H,W,C,N]).
 struct SpatialSequentialHead {
   static constexpr size_t kNoFlatten = std::numeric_limits<size_t>::max();
-  size_t flatten_index = kNoFlatten;         // the Flatten / Global Avg Pool that ends the section
-  bool global_average = false;               // it is a Global Avg Pool ([N,C] rows)
+  size_t flatten_index = kNoFlatten;         // the Flatten / global pool that ends the section
+  bool global_pool = false;                  // it is a Global Avg / Max Pool ([N,C] rows)
   std::vector<size_t> sample_shape;          // [H,W,C] entering it
   size_t features = 0;                       // row width after it: H*W*C, or C
   // The [H,W,C] sample entering each spatial-section layer (index = layer
@@ -28,7 +29,7 @@ struct SpatialSequentialHead {
 inline bool UsesSpatialSequentialInput(const TrainingConfiguration &config) {
   return !config.layers.empty() &&
          (spatial::IsSpatialLayer(config.layers.front().type) ||
-          config.layers.front().type == gui::NodeType::GlobalAvgPool);
+          spatial::IsGlobalPoolLayer(config.layers.front().type));
 }
 
 // Resolves the section. Only an explicit first spatial layer opts in;
@@ -53,23 +54,22 @@ ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
     const auto &layer = config.layers[i];
     const bool spatial_layer = spatial::IsSpatialLayer(layer.type);
     if (closed) {
-      if (spatial_layer || layer.type == gui::NodeType::GlobalAvgPool)
+      if (spatial_layer || spatial::IsGlobalPoolLayer(layer.type))
         throw std::invalid_argument(
             "Spatial layers cannot follow the row Flatten head (index " +
             std::to_string(i) + ")");
       continue;
     }
-    if (layer.type == gui::NodeType::Flatten ||
-        layer.type == gui::NodeType::GlobalAvgPool) {
-      const bool global_average = layer.type == gui::NodeType::GlobalAvgPool;
+    if (layer.type == gui::NodeType::Flatten || spatial::IsGlobalPoolLayer(layer.type)) {
+      const bool global_pool = spatial::IsGlobalPoolLayer(layer.type);
       if (shape.empty())
         throw std::invalid_argument(
-            std::string(global_average ? "Global Avg Pool" : "Spatial Flatten") +
+            std::string(global_pool ? "A global pool" : "Spatial Flatten") +
             " requires explicit input_shape [H,W,C]");
       head.flatten_index = i;
-      head.global_average = global_average;
+      head.global_pool = global_pool;
       head.sample_shape = shape;
-      head.features = global_average ? shape[2] : SpatialSampleElements(shape);
+      head.features = global_pool ? shape[2] : SpatialSampleElements(shape);
       closed = true;
       continue;
     }
@@ -84,7 +84,7 @@ ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
     if (!spatial_layer && !spatial::IsShapePreservingLayer(layer.type) && !shared_prelu &&
         layer.type != gui::NodeType::Output)
       throw std::invalid_argument(
-          "Spatial head requires Flatten or Global Avg Pool before layer index " + std::to_string(i) +
+          "Spatial head requires Flatten or a global pool before layer index " + std::to_string(i) +
           "; only convolution, pooling, normalisation, upsampling and "
           "activation layers run before Flatten");
     head.input_shapes.resize(i + 1);

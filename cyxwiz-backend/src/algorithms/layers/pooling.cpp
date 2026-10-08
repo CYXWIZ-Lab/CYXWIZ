@@ -790,4 +790,176 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
     return grad_input;
 }
 
+// ============================================================================
+// GlobalMaxPool2D Layer Implementation
+// ============================================================================
+
+Tensor GlobalMaxPool2DLayer::Forward(const Tensor& input) {
+    has_forward_ = false;
+    ValidatePoolInput(input, "GlobalMaxPool2D");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    bool use_native_cpu = false;
+    if (ShouldForceArrayFireBackendFallbackForTesting(
+            "GlobalMaxPool2DLayer::Forward")) {
+        LogPoolingFallbackOnce(
+            "GlobalMaxPool2DLayer::Forward",
+            "forced ArrayFire backend fallback test hook",
+            input,
+            "input");
+        use_native_cpu = true;
+    }
+    if (!use_native_cpu) {
+        try {
+            const af::array positions = af::moddims(
+                TensorToAf(input),
+                af::dim4(static_cast<dim_t>(in_h * in_w),
+                         static_cast<dim_t>(channels),
+                         static_cast<dim_t>(batch_size)));
+            af::array output = af::moddims(
+                af::max(positions, 0),
+                af::dim4(static_cast<dim_t>(channels),
+                         static_cast<dim_t>(batch_size)));
+            output.eval();
+            Tensor result = Tensor::FromSemanticArray(
+                output, {channels, batch_size});
+            cached_input_ = input;
+            has_forward_ = true;
+            return result;
+        } catch (const af::exception& e) {
+            LogPoolingFallbackOnce(
+                "GlobalMaxPool2DLayer::Forward", e.what(), input, "input");
+        }
+    }
+#else
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("input", shape));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "GlobalMaxPool2DLayer::Forward",
+        BackendFallbackReason::BackendUnavailable,
+        "ArrayFire support is not compiled",
+        context);
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "GlobalMaxPool2DLayer::Forward");
+
+    Tensor output({channels, batch_size}, DataType::Float32);
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            float best = -std::numeric_limits<float>::infinity();
+            for (size_t h = 0; h < in_h; ++h) {
+                for (size_t w = 0; w < in_w; ++w) {
+                    best = std::max(best, input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)]);
+                }
+            }
+            output_data[c * batch_size + b] = best;
+        }
+    }
+
+    cached_input_ = input;
+    has_forward_ = true;
+    return output;
+}
+
+Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
+    if (!has_forward_) {
+        throw std::logic_error(
+            "GlobalMaxPool2DLayer::Backward requires a successful Forward call");
+    }
+    ValidatePoolInput(cached_input_, "GlobalMaxPool2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(
+            "GlobalMaxPool2D backward requires Float32 grad_output");
+    }
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    if (grad_output.Shape() != std::vector<size_t>{channels, batch_size}) {
+        throw std::runtime_error("GlobalMaxPool2D backward gradient shape mismatch");
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    bool use_native_cpu = false;
+    if (ShouldForceArrayFireBackendFallbackForTesting(
+            "GlobalMaxPool2DLayer::Backward")) {
+        LogPoolingFallbackOnce(
+            "GlobalMaxPool2DLayer::Backward",
+            "forced ArrayFire backend fallback test hook",
+            grad_output,
+            "grad_output");
+        use_native_cpu = true;
+    }
+    if (!use_native_cpu) {
+        try {
+            const dim_t count = static_cast<dim_t>(in_h * in_w);
+            const dim_t c_dim = static_cast<dim_t>(channels);
+            const dim_t n_dim = static_cast<dim_t>(batch_size);
+            const af::array positions = af::moddims(
+                TensorToAf(cached_input_), af::dim4(count, c_dim, n_dim));
+            af::array maxima;
+            af::array argmax;
+            af::max(maxima, argmax, positions, 0);  // the first maximum, as torch
+            // One-hot over the H*W positions at each channel's argmax.
+            const af::array iota = af::iota(af::dim4(count), af::dim4(1, c_dim, n_dim), u32);
+            const af::array mask =
+                (iota == af::tile(argmax, static_cast<unsigned>(count))).as(f32);
+            const af::array grad = af::moddims(
+                TensorToAf(grad_output), af::dim4(1, c_dim, n_dim));
+            af::array grad_input = af::moddims(
+                mask * af::tile(grad, static_cast<unsigned>(count)),
+                af::dim4(static_cast<dim_t>(in_h), static_cast<dim_t>(in_w), c_dim, n_dim));
+            grad_input.eval();
+            return Tensor::FromSemanticArray(grad_input, cached_input_.Shape());
+        } catch (const af::exception& e) {
+            LogPoolingFallbackOnce(
+                "GlobalMaxPool2DLayer::Backward", e.what(), grad_output,
+                "grad_output");
+        }
+    }
+#else
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("grad_output", grad_output.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "GlobalMaxPool2DLayer::Backward",
+        BackendFallbackReason::BackendUnavailable,
+        "ArrayFire support is not compiled",
+        context);
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "GlobalMaxPool2DLayer::Backward");
+
+    Tensor grad_input(input_shape, DataType::Float32);
+    const float* input_data = cached_input_.ReadData<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    float* grad_input_data = grad_input.MutableData<float>();
+    std::fill(grad_input_data, grad_input_data + grad_input.NumElements(), 0.0f);
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            // The first maximum in torch's order: h, then w.
+            size_t best_index = Pool4DIndex(0, 0, c, b, in_w, channels, batch_size);
+            for (size_t h = 0; h < in_h; ++h) {
+                for (size_t w = 0; w < in_w; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, in_w, channels, batch_size);
+                    if (input_data[index] > input_data[best_index]) best_index = index;
+                }
+            }
+            grad_input_data[best_index] = grad_data[c * batch_size + b];
+        }
+    }
+    return grad_input;
+}
+
 } // namespace cyxwiz

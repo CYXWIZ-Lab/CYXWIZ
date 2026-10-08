@@ -382,6 +382,22 @@ private:
 };
 
 /**
+ * @brief Parameter-free SequentialModel adapter for GlobalMaxPool2DLayer:
+ * [H,W,C,N] in, [N,C] rows out (torch adaptive_max_pool2d(x, 1).flatten(1)).
+ */
+class CYXWIZ_API GlobalMaxPool2DModule : public Module {
+public:
+    GlobalMaxPool2DModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<GlobalMaxPool2DLayer> layer_;
+};
+
+/**
  * @brief Wrapper for LinearLayer
  */
 class CYXWIZ_API LinearModule : public Module {

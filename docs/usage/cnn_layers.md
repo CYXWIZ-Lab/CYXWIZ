@@ -2,7 +2,8 @@
 
 An image graph trains as a CNN when its first model layer is a convolution
 layer. The layers run on whole images, `[H, W, C]` per sample, until a
-**Flatten** or **Global Avg Pool** turns each sample into a row for Dense.
+**Flatten**, **Global Avg Pool** or **Global Max Pool** turns each sample into a
+row for Dense.
 
 ```
 Image Data Input -> Resize 64x64 -> Conv2D 16 -> ReLU -> MaxPool2D -> Conv2D 32 -> ReLU
@@ -29,14 +30,16 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | --- | --- | --- | --- |
 | Flatten | every value, `H x W x C` | `H x W x C` inputs | `torch.flatten(x, 1)` |
 | Global Avg Pool | each channel's mean over H and W, `C` | `C` inputs | `adaptive_avg_pool2d(x, 1).flatten(1)` |
+| Global Max Pool | each channel's maximum over H and W, `C` | `C` inputs | `adaptive_max_pool2d(x, 1).flatten(1)` |
 
 Global Avg Pool keeps the model small: after a `[16, 16, 32]` feature map,
 Dense(2) needs 66 weights instead of Flatten's 16,386. Its gradient spreads
-each channel's gradient evenly over the `H x W` positions.
+each channel's gradient evenly over the `H x W` positions; Global Max Pool
+sends it to the position holding the maximum (the first one, as torch).
 
 Rules the compiler checks:
 
-- Global Avg Pool must follow a convolution, pooling or normalisation layer
+- A global pool must follow a convolution, pooling or normalisation layer
   (or their activations); after Flatten or Dense there is no `[H, W, C]`
   sample to average.
 - No convolution layer after the Flatten or Global Avg Pool.
@@ -65,25 +68,27 @@ It gets its sequence one of two ways:
   `x.transpose(1, 2)`. Activations and Dropout may sit between them.
 
 ```
-Text: Data Input -> Embedding -> Conv1D -> ReLU -> Global Avg Pool -> Dense -> Cross Entropy
+Text: Data Input -> Embedding -> Conv1D -> ReLU -> Global Max Pool -> Dense -> Cross Entropy
 Series: Data Input -> Time Series Window -> Conv1D -> ReLU -> Flatten -> Dense -> MSE
 ```
 
 Only Conv1D, activations and Dropout run on the sequence; end it with
-**Flatten** (`C x L` values per sample, torch's `flatten` order) or **Global
-Avg Pool** (each channel's mean over `L`) before Dense. The compiler reports
+**Flatten** (`C x L` values per sample, torch's `flatten` order), **Global
+Avg Pool** (each channel's mean over `L`) or **Global Max Pool** (its
+maximum: max-over-time pooling for text) before Dense. The compiler reports
 on the node: Conv1D anywhere else (after Dense, after the Flatten), a Dense
 straight after Conv1D, a kernel longer than the sequence.
 
 ## Checked against PyTorch
 
-`spatial_layers_pytorch_parity` replays every layer above, Global Avg Pool
+`spatial_layers_pytorch_parity` replays every layer above, the global pools
 and Conv1D included, against torch (forward, input gradient and parameter gradients;
 `tests/computation_truth/fixtures/spatial_layers_pytorch.json`).
 `cnn_graph_training_contract` compiles the example graph with Flatten and with
 Global Avg Pool, checks the shapes and parameter counts against torch's, and
 runs it forward and backward. `conv1d_graph_pytorch_parity` builds a Conv1D
-graph on table rows (Flatten) and on an Embedding (Global Avg Pool), sets
+graph on table rows (Flatten) and on an Embedding (Global Avg Pool, and the
+text CNN with Global Max Pool), sets
 torch's parameters on the built model and matches torch's output and every
 parameter gradient, then trains the rows graph with the TrainingExecutor.
 

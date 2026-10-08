@@ -448,13 +448,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::GlobalMaxPool] = {
         "Global Max Pooling",
-        "Takes the maximum value across all spatial dimensions. "
-        "Reduces each feature map to a single value.",
-        "Output shape: (batch, channels). Often used before final Dense layer.",
+        "Takes each channel's maximum over its height and width (or over the sequence length after "
+        "Conv1D). Ends the convolution section the way Flatten does, with one value per channel.",
+        "[H,W,C] -> [C] or [L,C] -> [C], as torch adaptive_max_pool2d / adaptive_max_pool1d(x, 1)"
+        ".flatten(1); the gradient goes to the first position holding the maximum.",
         {},
         {
-            "Alternative to Flatten that's input-size independent",
-            "Good for variable-size inputs"
+            "Max-over-time pooling for text CNNs: Embedding -> Conv1D -> ReLU -> Global Max Pool",
+            "Far fewer Dense weights than Flatten: C inputs"
         },
         "Pooling"
     };

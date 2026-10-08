@@ -75,6 +75,12 @@ inline bool IsSpatialLayer(gui::NodeType type) {
     }
 }
 
+// Global Avg / Max Pool: end a spatial ([H,W,C]) or sequence ([L,C]) section
+// with one value per channel.
+inline bool IsGlobalPoolLayer(gui::NodeType type) {
+    return type == gui::NodeType::GlobalAvgPool || type == gui::NodeType::GlobalMaxPool;
+}
+
 // Element-wise layers that pass a [H,W,C,N] tensor through unchanged.
 inline bool IsShapePreservingLayer(gui::NodeType type) {
     switch (type) {

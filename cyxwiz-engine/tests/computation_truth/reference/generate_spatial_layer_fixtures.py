@@ -3,7 +3,8 @@
 (TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
 bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
-Conv1d on [L,C,N] sequences - and the activations PReLU and SELU on [N, F] rows.
+Conv1d on [L,C,N] sequences, global max pooling - and the activations PReLU and
+SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -242,6 +243,16 @@ def build() -> list[dict[str, Any]]:
         x, lambda t: functional.conv1d(t, w, b, stride=1, padding=1),
         {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, tolerance=(2e-4, 2e-4),
         sequence=True))
+
+    # Global max pooling: [N,C,H,W] -> [N,C] rows; the gradient goes to the maximum
+    x = torch.randn(2, 3, 5, 5)
+    cases.append(case(
+        "global_max_pool_c3", "GlobalMaxPool", {},
+        x, lambda t: functional.adaptive_max_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
+    x = torch.randn(4, 16, 16, 16)
+    cases.append(case(
+        "global_max_pool_image_16", "GlobalMaxPool", {},
+        x, lambda t: functional.adaptive_max_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
 
     return cases
 

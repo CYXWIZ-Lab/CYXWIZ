@@ -248,7 +248,7 @@ int main() {
         Check(gconfig.is_valid, "a CNN ending in Global Avg Pool compiles");
         Check(LayerNamed(gconfig, "GAP").output_shape == std::vector<size_t>{32}, "Global Avg Pool [16,16,32] -> [32]");
         const auto ghead = cyxwiz::ResolveSpatialSequentialHead(gconfig);
-        Check(ghead && ghead->global_average && ghead->features == 32, "the spatial head ends at Global Avg Pool, 32 features");
+        Check(ghead && ghead->global_pool && ghead->features == 32, "the spatial head ends at Global Avg Pool, 32 features");
         auto gbuilt = cyxwiz::BuildExecutableFromConfig(gconfig);
         Check(gbuilt.ok(), "ModelBuilder builds Global Avg Pool: " + gbuilt.error_message);
         long long gparams = 0;
@@ -275,9 +275,27 @@ int main() {
         bool reported = false;
         for (const auto& issue : bad.issues) {
             if (issue.level == cyxwiz::IssueLevel::Error && issue.node_name == "GAP" &&
-                issue.message.find("averages each channel") != std::string::npos) reported = true;
+                issue.message.find("pools each channel") != std::string::npos) reported = true;
         }
         Check(!bad.is_valid && reported, "Global Avg Pool after Flatten is refused on its node");
+    }
+
+    // ---- Global Max Pool the same way ----------------------------------------
+    {
+        auto variant = nodes;
+        for (auto& n : variant) {
+            if (n.name == "Flatten") {
+                n.type = gui::NodeType::GlobalMaxPool;
+                n.name = "GMP";
+            }
+        }
+        const auto mconfig = compiler.Compile(variant, links, true);
+        Check(mconfig.is_valid, "a CNN ending in Global Max Pool compiles");
+        Check(LayerNamed(mconfig, "GMP").output_shape == std::vector<size_t>{32}, "Global Max Pool [16,16,32] -> [32]");
+        auto mbuilt = cyxwiz::BuildExecutableFromConfig(mconfig);
+        Check(mbuilt.ok(), "ModelBuilder builds Global Max Pool: " + mbuilt.error_message);
+        const cyxwiz::Tensor mlogits = mbuilt.model->Forward(spatial);
+        Check(mlogits.Shape() == std::vector<size_t>{batch, 2}, "Global Max Pool CNN forward gives [N, 2]");
     }
 
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";

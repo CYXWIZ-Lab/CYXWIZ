@@ -6040,10 +6040,10 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (!config.HasErrors()) {
-        // Global Avg Pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
+        // A global pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
         for (size_t i = 0; i < config.layers.size(); ++i) {
             const auto& layer = config.layers[i];
-            if (layer.type != gui::NodeType::GlobalAvgPool) continue;
+            if (!spatial::IsGlobalPoolLayer(layer.type)) continue;
             if (sequence_section && sequence_section->close_index == i) continue;
             const bool after_spatial =
                 i == 0 ? UsesSpatialSequentialInput(config)
@@ -6051,7 +6051,7 @@ TrainingConfiguration GraphCompiler::Compile(
                              spatial::IsShapePreservingLayer(config.layers[i - 1].type);
             if (!UsesSpatialSequentialInput(config) || !after_spatial) {
                 AddIssue(config, IssueLevel::Error,
-                         "Global Avg Pool averages each channel of an [H,W,C] or [L,C] sample: place it after a "
+                         layer.name + " pools each channel of an [H,W,C] or [L,C] sample: place it after a "
                          "convolution, pooling or normalisation layer (and their activations), before Dense",
                          layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
             }

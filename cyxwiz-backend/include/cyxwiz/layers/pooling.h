@@ -83,4 +83,24 @@ private:
     bool has_forward_ = false;
 };
 
+// ============================================================================
+// GlobalMaxPool2D Layer - each channel's maximum over H and W
+// ============================================================================
+
+// [H,W,C,N] -> [C,N] (torch adaptive_max_pool2d(x, 1)); the gradient goes to
+// the first position holding the maximum.
+class CYXWIZ_API GlobalMaxPool2DLayer : public Layer {
+public:
+    GlobalMaxPool2DLayer() = default;
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "GlobalMaxPool2D"; }
+
+private:
+    bool has_forward_ = false;
+};
+
 } // namespace cyxwiz

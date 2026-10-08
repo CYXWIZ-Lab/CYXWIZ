@@ -5,6 +5,7 @@ builds from a compiled graph, against torch, for both ways a sequence enters:
   rows:      x [N, F] -> x.view(N, 1, F) -> Conv1d -> ReLU -> flatten -> Linear
   embedding: ids [N, L] -> Embedding -> transpose(1, 2) -> Conv1d -> ReLU
              -> mean over L (global average pool) -> Linear
+  text CNN:  the same with max over L (global max pool)
 
 Each case stores the input, every parameter (torch layouts: Conv1d weight
 [Cout, Cin, k], Linear weight [out, in], Embedding weight [num, dim]), the
@@ -72,7 +73,7 @@ def rows_case() -> dict[str, Any]:
     return case
 
 
-def embedding_case() -> dict[str, Any]:
+def embedding_case(pool: str = "avg") -> dict[str, Any]:
     n, length, vocab, dim = 3, 8, 12, 5
     ids = torch.randint(0, vocab, (n, length), dtype=torch.int32)
     params = {
@@ -86,12 +87,14 @@ def embedding_case() -> dict[str, Any]:
     def forward() -> torch.Tensor:
         e = functional.embedding(ids.long(), params["embedding.weight"])  # [N, L, E]
         h = functional.conv1d(e.transpose(1, 2), params["conv.weights"], params["conv.bias"])
-        h = functional.relu(h).mean(dim=2)  # adaptive_avg_pool1d(h, 1).flatten(1)
+        h = functional.relu(h)
+        # adaptive_avg_pool1d / adaptive_max_pool1d(h, 1).flatten(1)
+        h = h.mean(dim=2) if pool == "avg" else h.amax(dim=2)
         return functional.linear(h, params["dense.weight"], params["dense.bias"])
 
-    case = finish("embedding_global_avg_pool", ids, params, forward)
+    case = finish("embedding_global_" + pool + "_pool", ids, params, forward)
     case["graph"] = {"length": length, "vocab": vocab, "embedding_dim": dim, "filters": 6,
-                     "kernel_size": 3, "padding": "valid", "units": 2}
+                     "kernel_size": 3, "padding": "valid", "units": 2, "pool": pool}
     return case
 
 
@@ -104,7 +107,7 @@ def main() -> None:
         "schema_version": SCHEMA_VERSION,
         "torch_version": torch.__version__,
         "tolerance": {"atol": 1e-5, "rtol": 1e-4},
-        "cases": [rows_case(), embedding_case()],
+        "cases": [rows_case(), embedding_case(), embedding_case("max")],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")

@@ -13,7 +13,7 @@ namespace cyxwiz {
 
 // The 1-D (Conv1D) section of a sequential model (TOFIX140): the layers that
 // run on [L,C,N] sequences, from the first Conv1D up to the Flatten or Global
-// Avg Pool that turns each sample back into a row for Dense. It opens either
+// Avg / Max Pool that turns each sample back into a row for Dense. It opens either
 // on the model's input rows (Conv1D first: time-series windows, audio
 // features, table rows) or after an Embedding ([N,L,E] token vectors).
 // The compiler reports its rules; ModelBuilder builds from it.
@@ -21,8 +21,8 @@ struct SequenceConvSection {
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
   size_t open_index = kNone;                  // the first Conv1D
   bool from_rows = false;                     // opens on the input rows, else after an Embedding
-  size_t close_index = kNone;                 // the Flatten / Global Avg Pool that ends it
-  bool global_average = false;                // it is a Global Avg Pool ([N,C] rows)
+  size_t close_index = kNone;                 // the Flatten / global pool that ends it
+  bool global_pool = false;                   // it is a Global Avg / Max Pool ([N,C] rows)
   std::vector<size_t> close_sample;           // [L,C] entering the close
   size_t features = 0;                        // row width after it: C*L, or C
   // The [L,C] sample entering each section layer (index = layer index);
@@ -75,15 +75,15 @@ ResolveSequenceConvSection(const TrainingConfiguration &config) {
     const auto &layer = layers[i];
     if (closed) {
       if (layer.type == gui::NodeType::Conv1D)
-        throw std::invalid_argument("Conv1D cannot follow the Flatten or Global Avg Pool that ended the "
+        throw std::invalid_argument("Conv1D cannot follow the Flatten or global pool that ended the "
                                     "sequence section (index " + std::to_string(i) + ")");
       continue;
     }
-    if (layer.type == gui::NodeType::Flatten || layer.type == gui::NodeType::GlobalAvgPool) {
+    if (layer.type == gui::NodeType::Flatten || spatial::IsGlobalPoolLayer(layer.type)) {
       section.close_index = i;
-      section.global_average = layer.type == gui::NodeType::GlobalAvgPool;
+      section.global_pool = spatial::IsGlobalPoolLayer(layer.type);
       section.close_sample = shape;
-      if (shape.size() == 2) section.features = section.global_average ? shape[1] : shape[0] * shape[1];
+      if (shape.size() == 2) section.features = section.global_pool ? shape[1] : shape[0] * shape[1];
       closed = true;
       continue;
     }
@@ -93,7 +93,7 @@ ResolveSequenceConvSection(const TrainingConfiguration &config) {
     if (spatial::IsShapePreservingLayer(layer.type)) continue;
     if (layer.type != gui::NodeType::Conv1D)
       throw std::invalid_argument(
-          "The sequence section needs Flatten or Global Avg Pool before layer index " + std::to_string(i) +
+          "The sequence section needs Flatten or a global pool before layer index " + std::to_string(i) +
           "; only Conv1D, activations and Dropout run on [L, C] sequences");
     try {
       if (shape.empty())
@@ -107,7 +107,7 @@ ResolveSequenceConvSection(const TrainingConfiguration &config) {
   }
   if (!closed)
     throw std::invalid_argument(
-        "End the sequence section with Flatten or Global Avg Pool before Dense and the loss (index " +
+        "End the sequence section with Flatten or a global pool before Dense and the loss (index " +
         std::to_string(open) + ")");
   return section;
 }

@@ -122,6 +122,22 @@ Tensor SequenceFlattenModule::Backward(const Tensor &gradient) {
       .Permute({2, 1, 0});
 }
 
+Tensor SequenceGlobalMaxPoolModule::Forward(const Tensor &input) {
+  input_shape_.clear();
+  const auto &in = input.Shape();
+  if (in.size() != 3)
+    throw std::invalid_argument("Global Max Pool over a sequence needs an [L, C, N] input");
+  Tensor output = pool_.Forward(input.Reshape({in[0], 1, in[1], in[2]}));
+  input_shape_ = in;
+  return output;
+}
+
+Tensor SequenceGlobalMaxPoolModule::Backward(const Tensor &gradient) {
+  if (input_shape_.empty())
+    throw std::logic_error("SequenceGlobalMaxPool backward requires a successful forward");
+  return pool_.Backward(gradient).Reshape(input_shape_);
+}
+
 Tensor SequenceGlobalAvgPoolModule::Forward(const Tensor &input) {
   input_shape_.clear();
   const auto &in = input.Shape();

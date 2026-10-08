@@ -2583,13 +2583,13 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
         {"global", "max", "pooling"}, 0, false,
-        "Blocked global max-pooling design node retained for graph compatibility",
-        "No backend global-max layer or ModelBuilder/SequentialModel execution "
-        "path currently owns this node.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Channel summary; unavailable at runtime while this node is blocked."}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        "Takes each channel's maximum over H and W ([H,W,C] -> [C]) or over L ([L,C] -> [C])",
+        "torch adaptive_max_pool2d(x, 1).flatten(1) (adaptive_max_pool1d after Conv1D): ends the "
+        "convolution section the way Flatten does, with one value per channel; the gradient goes to the "
+        "position holding the maximum.", "",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map or [L,C] sequence from a convolution layer"}},
+        {{"Output", PinType::Tensor, true, "[C] channel maxima; connect a Dense layer"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalAvgPool, NodeCategory::Pooling, "Global Avg Pool", ICON_FA_COMPRESS,
         {"global", "average", "pooling"}, 0, false,
