@@ -339,9 +339,11 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Convolutional Layers =====
     docs_[NodeType::Conv1D] = {
         "Conv1D",
-        "1D convolution layer for sequence data. Slides a kernel across the input sequence "
-        "to extract local features. Commonly used for text and time series.",
-        "Input shape: (batch, channels, length). Output: (batch, out_channels, new_length).",
+        "1D convolution over a sequence: slides a kernel along the length to extract local "
+        "patterns. Put it first for time-series windows, audio features or table rows (channel-major "
+        "rows), or after an Embedding for text. End with Flatten or Global Avg Pool before Dense.",
+        "[L, C] -> [floor((L + 2p - k) / s) + 1, filters], as torch.nn.Conv1d on (batch, channels, "
+        "length).",
         {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the sliding window"},

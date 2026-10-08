@@ -11,6 +11,7 @@
 #include "upsampling_configuration_policy.h"
 #include "spatial_layer_shapes.h"
 #include "spatial_sequential_head.h"
+#include "sequence_conv_section.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -4980,6 +4981,10 @@ TrainingConfiguration GraphCompiler::Compile(
             if (total_input > 0) {
                 config.input_size = static_cast<size_t>(total_input);
                 config.input_shape = {static_cast<size_t>(total_input)};
+                // Each row is one block of input_width values per feature
+                // (time_series_window_operator.h): torch [N, C, L].
+                config.sequence_input_shape = {static_cast<size_t>(input_width),
+                                               static_cast<size_t>(num_features)};
             }
             CYXWIZ_BUILDER_INFO("GraphCompiler: TimeSeriesWindow found - regression mode, "
                          "input_size={} (input_width={} x num_features={}), "
@@ -5303,7 +5308,32 @@ TrainingConfiguration GraphCompiler::Compile(
             }
 
             // Infer output shape
-            if (spatial::IsSpatialLayer(node->type)) {
+            if (node->type == gui::NodeType::Conv1D) {
+                // sequence_conv_section.h: first in the model, the input rows
+                // are its [L, C] sample; after an Embedding, [L, E].
+                if (config.layers.empty()) {
+                    current_shape = SequenceInputSample(config);
+                    layer.input_shape = current_shape;
+                }
+                layer.output_shape.clear();
+                try {
+                    if (current_shape.size() == 2) {
+                        layer.output_shape = spatial::Conv1DSampleShapeAfter(layer.parameters, current_shape);
+                    } else if (current_shape.empty()) {
+                        spatial::ResolveGeometry(node->type, layer.parameters, 0);
+                    } else {
+                        AddIssue(config, IssueLevel::Error,
+                                 node->name + " needs an [L, C] sequence and gets [" +
+                                     ShapeListText(current_shape) + "]: make it the first model layer "
+                                     "(time-series windows, audio features, table rows) or put it after an "
+                                     "Embedding",
+                                 node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                    }
+                } catch (const std::invalid_argument& error) {
+                    AddIssue(config, IssueLevel::Error, error.what(), node->id, node->name,
+                             errors::Compiler::TensorShapeMismatch);
+                }
+            } else if (spatial::IsSpatialLayer(node->type)) {
                 // The one spatial rule (spatial_layer_shapes.h): the same
                 // formulas feed the model builder and the training ingress.
                 layer.output_shape = current_shape;
@@ -5986,18 +6016,42 @@ TrainingConfiguration GraphCompiler::Compile(
     // The model builder's spatial section rules (layer order, Flatten, shared
     // PReLU slope): reported here so the graph shows them before training.
     // Skipped when the graph already has errors, which these would repeat.
+    // Reports a section rule's "index N" on that layer's node.
+    const auto report_layer_rule = [&config](const std::string& message) {
+        int node_id = -1;
+        std::string node_name;
+        const auto at = message.find("index ");
+        if (at != std::string::npos) {
+            const size_t index = std::strtoul(message.c_str() + at + 6, nullptr, 10);
+            if (index < config.layers.size()) {
+                node_id = config.layers[index].node_id;
+                node_name = config.layers[index].name;
+            }
+        }
+        AddIssue(config, IssueLevel::Error, message, node_id, node_name,
+                 errors::Compiler::TensorShapeMismatch);
+    };
+    std::optional<SequenceConvSection> sequence_section;
     if (!config.HasErrors()) {
-        // Global Avg Pool only ends a spatial section ([H,W,C] samples).
+        try {
+            sequence_section = ResolveSequenceConvSection(config);
+        } catch (const std::invalid_argument& error) {
+            report_layer_rule(error.what());
+        }
+    }
+    if (!config.HasErrors()) {
+        // Global Avg Pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
         for (size_t i = 0; i < config.layers.size(); ++i) {
             const auto& layer = config.layers[i];
             if (layer.type != gui::NodeType::GlobalAvgPool) continue;
+            if (sequence_section && sequence_section->close_index == i) continue;
             const bool after_spatial =
                 i == 0 ? UsesSpatialSequentialInput(config)
                        : spatial::IsSpatialLayer(config.layers[i - 1].type) ||
                              spatial::IsShapePreservingLayer(config.layers[i - 1].type);
             if (!UsesSpatialSequentialInput(config) || !after_spatial) {
                 AddIssue(config, IssueLevel::Error,
-                         "Global Avg Pool averages each channel of an [H,W,C] sample: place it after a "
+                         "Global Avg Pool averages each channel of an [H,W,C] or [L,C] sample: place it after a "
                          "convolution, pooling or normalisation layer (and their activations), before Dense",
                          layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
             }
@@ -6007,19 +6061,7 @@ TrainingConfiguration GraphCompiler::Compile(
         try {
             ResolveSpatialSequentialHead(config);
         } catch (const std::invalid_argument& error) {
-            const std::string message = error.what();
-            int node_id = -1;
-            std::string node_name;
-            const auto at = message.find("index ");
-            if (at != std::string::npos) {
-                const size_t index = std::strtoul(message.c_str() + at + 6, nullptr, 10);
-                if (index < config.layers.size()) {
-                    node_id = config.layers[index].node_id;
-                    node_name = config.layers[index].name;
-                }
-            }
-            AddIssue(config, IssueLevel::Error, message, node_id, node_name,
-                     errors::Compiler::TensorShapeMismatch);
+            report_layer_rule(error.what());
         }
     }
 
@@ -6299,6 +6341,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
 
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
@@ -6680,6 +6723,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             // the struct slim; the raw parameter passthrough is enough.
             break;
 
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:

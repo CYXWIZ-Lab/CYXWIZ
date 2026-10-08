@@ -1071,9 +1071,6 @@ GetPipelineFloatParameterRuntimeCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::Conv1D,
-         "has an ArrayFire-first backend primitive with tested multi-channel/multi-batch layout, padding/stride, residency, declared dilation fallback behavior, and a direct SequentialModel adapter, but is not supported by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Conv3D,
          "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
          PipelineBackendPrimitiveEvidence::Missing},
@@ -1182,6 +1179,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable ArrayFire convolution layer"},
         {gui::NodeType::MaxPool2D, PipelineTrainingSupportRole::ModelLayer,
          "compiled as an ArrayFire pooling layer"},
+        {gui::NodeType::Conv1D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 1-D convolution on [L,C,N] sequences (input rows or after an Embedding)"},
         {gui::NodeType::GlobalAvgPool, PipelineTrainingSupportRole::ModelLayer,
          "compiled as the ArrayFire global average pool that ends the spatial section with [N,C] rows"},
         {gui::NodeType::AvgPool2D, PipelineTrainingSupportRole::ModelLayer,

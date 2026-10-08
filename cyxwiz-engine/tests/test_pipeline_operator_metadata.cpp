@@ -1549,7 +1549,6 @@ void CheckConv2DReferenceContract(
 void CheckConvolutionPoolingBlockedFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::initializer_list<gui::NodeType> family = {
-        gui::NodeType::Conv1D,
         gui::NodeType::Conv3D,
         gui::NodeType::DepthwiseConv2D,
         gui::NodeType::GlobalMaxPool,
@@ -1558,6 +1557,7 @@ void CheckConvolutionPoolingBlockedFamilyContract(
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalAvgPool);
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::Conv1D);
     for (const auto type : family) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
@@ -1588,7 +1588,7 @@ void CheckConvolutionPoolingBlockedFamilyContract(
                   ParameterMatches(meta, "stride", "int", "1") &&
                   ParameterMatches(meta, "padding", "enum", "same") &&
                   !HasParameter(meta, "activation"),
-              "blocked convolution contract should preserve only real saved fields: " +
+              "convolution contract keeps exactly its saved fields: " +
                   TypeId(type));
     }
 

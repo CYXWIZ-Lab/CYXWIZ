@@ -765,6 +765,12 @@ bool TrainingManager::StartTrainingAudio(
         static_cast<size_t>(batcher->GetFeatureRows()),
         static_cast<size_t>(batcher->GetFeatureCols())
     };
+    // [rows, cols] = [bins, frames] per sample, torch [N, C, L]: a Conv1D
+    // convolves over the frames with one channel per bin.
+    config.sequence_input_shape = {
+        static_cast<size_t>(batcher->GetFeatureCols()),
+        static_cast<size_t>(batcher->GetFeatureRows())
+    };
 
     spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}, seed={}",
                  batcher->GetNumSamples(), config.input_size,

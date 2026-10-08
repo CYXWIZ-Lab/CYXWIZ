@@ -1,7 +1,7 @@
 #pragma once
 
 // The one shape rule for the spatial (CNN) layers (TOFIX140 A1): what a
-// layer makes of a [H,W,C] sample. The graph compiler (the As compiled
+// layer makes of a [H,W,C] sample (Conv1D: of an [L,C] sample). The graph compiler (the As compiled
 // card, the parameter count), the spatial sequential head (ModelBuilder) and
 // the training ingress all read this header, so they never disagree.
 // Formulas are PyTorch's (torch.nn.Conv2d / MaxPool2d / AvgPool2d /
@@ -100,6 +100,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
     Geometry g;
     switch (type) {
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv1D:
             g.channels_out = ParseIntParam(params, "filters", 32);
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
@@ -134,7 +135,22 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
     if (type == gui::NodeType::ConvTranspose2D && (g.output_padding < 0 || g.output_padding >= g.stride))
         throw std::invalid_argument("output_padding must be smaller than the stride");
     if (g.channels_out < 0) throw std::invalid_argument("the channel count cannot be negative");
+    if (type == gui::NodeType::Conv1D && g.channels_out == 0) throw std::invalid_argument("filters must be positive");
     return g;
+}
+
+// Conv1D on an [L, C] sample (TOFIX140): torch Conv1d on [N, C, L] gives
+// L_out = floor((L + 2p - k) / s) + 1 with `filters` channels. The 1-D
+// section (sequence_conv_section.h) and the compiler read this one rule.
+inline std::vector<size_t> Conv1DSampleShapeAfter(const Params& params, const std::vector<size_t>& in) {
+    if (in.size() != 2) throw std::invalid_argument("Conv1D needs an [L, C] input sample");
+    const Geometry g = ResolveGeometry(gui::NodeType::Conv1D, params, in[1]);
+    const long length = static_cast<long>(in[0]);
+    const long out = (length + 2 * g.padding - g.kernel) / g.stride + 1;
+    if (length + 2 * g.padding < g.kernel || out <= 0)
+        throw std::invalid_argument("kernel " + std::to_string(g.kernel) + " does not fit a length-" +
+                                    std::to_string(length) + " sequence");
+    return {static_cast<size_t>(out), static_cast<size_t>(g.channels_out)};
 }
 
 // The [H,W,C] sample a spatial or shape-preserving layer produces from

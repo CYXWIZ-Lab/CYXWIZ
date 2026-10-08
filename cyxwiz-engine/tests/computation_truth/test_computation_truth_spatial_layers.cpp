@@ -1,6 +1,7 @@
 // The layers TOFIX140 brings out of the blocked catalog, against PyTorch:
 // every case of fixtures/spatial_layers_pytorch.json (CNN layers on
-// [H,W,C,N], global average pooling to [N,C] rows, PReLU/SELU on [N,F] rows)
+// [H,W,C,N], global average pooling to [N,C] rows, Conv1D on [L,C,N],
+// PReLU/SELU on [N,F] rows)
 // is replayed through the backend's
 // SequentialModel modules - SetParameters, Forward, Backward, GetGradients -
 // and compared within the fixture's tolerance.
@@ -72,6 +73,10 @@ void CheckTensor(const cyxwiz::Tensor& actual, const json& expected, const Toler
 
 std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json& g, size_t channels_in) {
     using namespace cyxwiz;
+    if (layer == "Conv1D")
+        return std::make_unique<Conv1DModule>(static_cast<int>(channels_in), g.at("filters").get<int>(),
+                                              g.at("kernel_size").get<int>(), g.at("stride").get<int>(),
+                                              g.at("padding").get<int>(), 1, true);
     if (layer == "Conv2D")
         return std::make_unique<Conv2DModule>(static_cast<int>(channels_in), g.at("filters").get<int>(),
                                               g.at("kernel_size").get<int>(), g.at("stride").get<int>(),
@@ -132,8 +137,10 @@ int main(int, char** argv) {
         const std::string layer = c.at("layer").get<std::string>();
         const Tolerance tol{c.at("tolerance").at("atol").get<float>(), c.at("tolerance").at("rtol").get<float>()};
         const cyxwiz::Tensor input = ReadTensor(c.at("input"));
-        // [H,W,C,N] samples carry their channels on axis 2; [N,F] rows have none.
-        const size_t channels_in = input.Shape().size() == 4 ? input.Shape()[2] : 0;
+        // [H,W,C,N] samples carry their channels on axis 2, [L,C,N] sequences
+        // on axis 1; [N,F] rows have none.
+        const size_t rank = input.Shape().size();
+        const size_t channels_in = rank == 4 ? input.Shape()[2] : rank == 3 ? input.Shape()[1] : 0;
 
         auto module = MakeModule(layer, c.at("geometry"), channels_in);
         std::map<std::string, cyxwiz::Tensor> parameters;

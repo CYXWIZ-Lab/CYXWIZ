@@ -3,7 +3,7 @@
 (TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
 bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
-and the activations PReLU and SELU on [N, F] rows.
+Conv1d on [L,C,N] sequences - and the activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -37,6 +37,12 @@ def hwcn(tensor: torch.Tensor) -> dict[str, Any]:
     return {"shape": list(value.shape), "values": value.reshape(-1).tolist()}
 
 
+def lcn(tensor: torch.Tensor) -> dict[str, Any]:
+    """[N,C,L] -> [L,C,N], row-major values (the backend's Conv1D layout)."""
+    value = tensor.detach().permute(2, 1, 0).contiguous()
+    return {"shape": list(value.shape), "values": value.reshape(-1).tolist()}
+
+
 def plain(tensor: torch.Tensor) -> dict[str, Any]:
     value = tensor.detach().contiguous()
     return {"shape": list(value.shape), "values": value.reshape(-1).tolist()}
@@ -54,11 +60,13 @@ def transpose_weight(tensor: torch.Tensor) -> dict[str, Any]:
 
 def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
          forward, params: dict[str, torch.Tensor], param_writers: dict[str, Any],
-         tolerance=(1e-4, 1e-4), rows: bool = False, rows_out: bool = False) -> dict[str, Any]:
+         tolerance=(1e-4, 1e-4), rows: bool = False, rows_out: bool = False,
+         sequence: bool = False) -> dict[str, Any]:
     """rows=True: x is [N, F] rows, written as is (no [H,W,C,N] reorder).
-    rows_out=True: the output (and its gradient) is [N, F] rows."""
-    layout = plain if rows else hwcn
-    out_layout = plain if rows or rows_out else hwcn
+    rows_out=True: the output (and its gradient) is [N, F] rows.
+    sequence=True: x and the output are [N,C,L] sequences, written [L,C,N]."""
+    layout = plain if rows else lcn if sequence else hwcn
+    out_layout = plain if rows or rows_out else lcn if sequence else hwcn
     x = x.clone().requires_grad_(True)
     for p in params.values():
         p.requires_grad_(True)
@@ -210,6 +218,30 @@ def build() -> list[dict[str, Any]]:
     cases.append(case(
         "global_avg_pool_image_16", "GlobalAvgPool", {},
         x, lambda t: functional.adaptive_avg_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
+
+    # Conv1d on [L,C,N] sequences (TOFIX140): weights [Cout, Cin, k] as torch
+    x = torch.randn(2, 3, 10)
+    w = torch.randn(4, 3, 3) * 0.3
+    b = torch.randn(4) * 0.1
+    cases.append(case(
+        "conv1d_same_k3", "Conv1D", {"filters": 4, "kernel_size": 3, "stride": 1, "padding": 1},
+        x, lambda t: functional.conv1d(t, w, b, stride=1, padding=1),
+        {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, sequence=True))
+    x = torch.randn(3, 2, 17)
+    w = torch.randn(5, 2, 5) * 0.3
+    b = torch.randn(5) * 0.1
+    cases.append(case(
+        "conv1d_valid_k5_s2", "Conv1D", {"filters": 5, "kernel_size": 5, "stride": 2, "padding": 0},
+        x, lambda t: functional.conv1d(t, w, b, stride=2, padding=0),
+        {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, sequence=True))
+    x = torch.randn(4, 16, 64)  # a text-CNN size: 16 embedding channels, 64 tokens
+    w = torch.randn(8, 16, 3) * 0.2
+    b = torch.randn(8) * 0.1
+    cases.append(case(
+        "conv1d_text_64", "Conv1D", {"filters": 8, "kernel_size": 3, "stride": 1, "padding": 1},
+        x, lambda t: functional.conv1d(t, w, b, stride=1, padding=1),
+        {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, tolerance=(2e-4, 2e-4),
+        sequence=True))
 
     return cases
 

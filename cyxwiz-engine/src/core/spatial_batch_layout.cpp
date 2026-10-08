@@ -69,4 +69,77 @@ Tensor SpatialFlattenModule::Backward(const Tensor &gradient) {
   return SpatialBatchFromRows(gradient, sample_shape_);
 }
 
+SequenceRowsModule::SequenceRowsModule(size_t length, size_t channels)
+    : length_(length), channels_(channels) {
+  if (length_ == 0 || channels_ == 0)
+    throw std::invalid_argument("SequenceRows needs a non-empty [L, C] sample");
+}
+
+Tensor SequenceRowsModule::Forward(const Tensor &input) {
+  input_shape_.clear();
+  const auto &in = input.Shape();
+  const bool rows = in.size() == 2 && in[1] == channels_ * length_;
+  const bool cube = in.size() == 3 && in[1] == channels_ && in[2] == length_;
+  if (input.GetDataType() != DataType::Float32 || (!rows && !cube))
+    throw std::invalid_argument(
+        "Conv1D input rows must be Float32 [N, C*L] or [N, C, L] with C=" +
+        std::to_string(channels_) + ", L=" + std::to_string(length_));
+  Tensor output = input.Reshape({in[0], channels_, length_}).Permute({2, 1, 0});
+  input_shape_ = in;
+  return output;
+}
+
+Tensor SequenceRowsModule::Backward(const Tensor &gradient) {
+  if (input_shape_.empty())
+    throw std::logic_error("SequenceRows backward requires a successful forward");
+  return gradient.Permute({2, 1, 0}).Reshape(input_shape_);
+}
+
+Tensor SequenceChannelsLastModule::Forward(const Tensor &input) {
+  if (input.Shape().size() != 3)
+    throw std::invalid_argument("Conv1D after an Embedding needs its [N, L, E] output");
+  return input.Permute({1, 2, 0});
+}
+
+Tensor SequenceChannelsLastModule::Backward(const Tensor &gradient) {
+  return gradient.Permute({2, 0, 1});
+}
+
+Tensor SequenceFlattenModule::Forward(const Tensor &input) {
+  input_shape_.clear();
+  const auto &in = input.Shape();
+  if (in.size() != 3)
+    throw std::invalid_argument("SequenceFlatten needs an [L, C, N] input");
+  Tensor output = input.Permute({2, 1, 0}).Reshape({in[2], in[1] * in[0]});
+  input_shape_ = in;
+  return output;
+}
+
+Tensor SequenceFlattenModule::Backward(const Tensor &gradient) {
+  if (input_shape_.empty())
+    throw std::logic_error("SequenceFlatten backward requires a successful forward");
+  return gradient.Reshape({input_shape_[2], input_shape_[1], input_shape_[0]})
+      .Permute({2, 1, 0});
+}
+
+Tensor SequenceGlobalAvgPoolModule::Forward(const Tensor &input) {
+  input_shape_.clear();
+  const auto &in = input.Shape();
+  if (in.size() != 3)
+    throw std::invalid_argument("Global Avg Pool over a sequence needs an [L, C, N] input");
+  Tensor output = input.Mean(0).Reshape({in[1], in[2]}).Transpose();
+  input_shape_ = in;
+  return output;
+}
+
+Tensor SequenceGlobalAvgPoolModule::Backward(const Tensor &gradient) {
+  if (input_shape_.empty())
+    throw std::logic_error("SequenceGlobalAvgPool backward requires a successful forward");
+  const size_t length = input_shape_[0];
+  return gradient.Transpose()
+             .Reshape({1, input_shape_[1], input_shape_[2]})
+             .BroadcastTo(input_shape_) *
+         (1.0f / static_cast<float>(length));
+}
+
 } // namespace cyxwiz

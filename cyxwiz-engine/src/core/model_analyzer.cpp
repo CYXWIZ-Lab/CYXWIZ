@@ -1,4 +1,5 @@
 #include "model_analyzer.h"
+#include "spatial_layer_shapes.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -270,8 +271,17 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.flops = ComputeDenseFLOPs(in_features, out_features, bias, batch_size);
                     break;
                 }
+                case gui::NodeType::Conv1D: {
+                    // [L, C] -> [L_out, filters]: filters x (C x k) weights + bias
+                    const int64_t in_channels = current_shape.size() == 2 ? current_shape[1] : 1;
+                    const int64_t filters = GetIntParam(*node, "filters", 32);
+                    const int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
+                    const int64_t out_length = output_shape.size() == 2 ? output_shape[0] : 1;
+                    layer_analysis.parameters = filters * in_channels * kernel_size + filters;
+                    layer_analysis.flops = 2 * in_channels * kernel_size * filters * out_length * batch_size;
+                    break;
+                }
                 case gui::NodeType::Conv2D:
-                case gui::NodeType::Conv1D:
                 case gui::NodeType::Conv3D: {
                     int64_t in_channels = current_shape.size() >= 3 ? current_shape[2] : 1;
                     int64_t filters = GetIntParam(*node, "filters", 32);
@@ -762,6 +772,13 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::Dense: {
             int units = GetIntParam(node, "units", 128);
             return {static_cast<size_t>(units)};
+        }
+        case gui::NodeType::Conv1D: {
+            try {
+                return spatial::Conv1DSampleShapeAfter(node.parameters, input_shape);
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
         }
         case gui::NodeType::Conv2D: {
             int filters = GetIntParam(node, "filters", 32);

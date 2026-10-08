@@ -448,6 +448,10 @@ struct TrainingConfiguration {
 
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST
+    // [L, C] when the input rows are channel-major sequences, torch's [N,C,L]
+    // (time-series windows: [input_width, features]; audio: [frames, bins]).
+    // A first-layer Conv1D reads it (sequence_conv_section.h).
+    std::vector<size_t> sequence_input_shape;
     size_t input_size = 0;              // Flattened size
     size_t output_size = 0;             // Number of classes
 

@@ -2103,25 +2103,27 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "1d", "sequence"}, 0, false,
-        "Blocked 1D convolution layer retained for graph compatibility",
-        "The backend contains a native Conv1D primitive, but GraphCompiler, "
-        "ModelBuilder, and SequentialModel do not own an executable Conv1D "
-        "path. Its Tensor layout, ArrayFire-first execution, fallback, and "
-        "training integration must be proven before this node is enabled.",
+        "1-D convolution over a sequence: [L, C] -> [L_out, filters]",
+        "torch.nn.Conv1d on [N, C, L]: L_out = floor((L + 2p - kernel_size) / stride) + 1. First in the "
+        "model it reads the input rows as channel-major sequences (time-series windows: one channel per "
+        "feature; audio features: one channel per frequency bin; table rows: one channel); after an "
+        "Embedding it convolves over the tokens with one channel per embedding dimension. End the "
+        "sequence layers with Flatten or Global Avg Pool before Dense.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy sequence feature-map input; no executable Engine layout contract exists yet."}},
+          "[L, C] sequence: the model's input rows, or an Embedding's [L, E] output"}},
         {{"Output", PinType::Tensor, true,
-          "Convolved feature map; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "[L_out, filters] sequence; connect Conv1D, an activation, Flatten or Global Avg Pool"}},
+        {{"filters", "int", "32", "Output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy kernel width", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Kernel width along the sequence", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Step along the sequence", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels), keeps L at "
+          "stride 1; valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "3d", "volume"}, 0, false,

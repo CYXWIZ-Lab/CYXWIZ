@@ -9,6 +9,7 @@
 #include "upsampling_configuration_policy.h"
 #include "spatial_head_module.h"
 #include "spatial_sequential_head.h"
+#include "sequence_conv_section.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -396,6 +397,7 @@ bool BuildSequential(
     size_t current_input_size = config.input_size;
     size_t current_sequence_length = config.input_size > 0 ? config.input_size : 1;
     const auto spatial_head = ResolveSpatialSequentialHead(config);
+    const auto sequence_section = ResolveSequenceConvSection(config);
 
     for (size_t i = 0; i < config.layers.size(); ++i) {
         const auto& layer_cfg = config.layers[i];
@@ -1169,8 +1171,38 @@ bool BuildSequential(
                 break;
             }
 
+            // The sequence section (TOFIX140): Conv1D on [L,C,N], opened on
+            // the input rows or after an Embedding (sequence_conv_section.h).
+            case gui::NodeType::Conv1D: {
+                if (!sequence_section || i >= sequence_section->input_shapes.size() ||
+                    sequence_section->input_shapes[i].size() != 2) {
+                    throw std::runtime_error(
+                        "Conv1D at index " + std::to_string(i) +
+                        " needs its [L, C] input sample (the input rows' length is not known yet)");
+                }
+                const auto& in_shape = sequence_section->input_shapes[i];
+                if (i == sequence_section->open_index) {
+                    if (sequence_section->from_rows) {
+                        model.Add<SequenceRowsModule>(in_shape[0], in_shape[1]);
+                    } else {
+                        model.Add<SequenceChannelsLastModule>();
+                    }
+                }
+                const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
+                model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
+                                        g.stride, g.padding, 1, true);
+                CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
+                                    in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
+                                    in_shape[0], in_shape[1]);
+                break;
+            }
+
             case gui::NodeType::Flatten: {
-                if (spatial_head && spatial_head->flatten_index == i) {
+                if (sequence_section && sequence_section->close_index == i) {
+                    model.Add<SequenceFlattenModule>();
+                    current_input_size = sequence_section->features;
+                    CYXWIZ_BUILDER_INFO("  [{}] SequenceFlatten [L,C,N] -> [N,{}]", i, current_input_size);
+                } else if (spatial_head && spatial_head->flatten_index == i) {
                     model.Add<SpatialFlattenModule>(spatial_head->sample_shape);
                     current_input_size = spatial_head->features;
                     CYXWIZ_BUILDER_INFO("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
@@ -1439,6 +1471,13 @@ bool BuildSequential(
             // Global Avg Pool ends the spatial section like Flatten:
             // [H,W,C,N] -> [N,C] rows (torch adaptive_avg_pool2d + flatten).
             case gui::NodeType::GlobalAvgPool: {
+                if (sequence_section && sequence_section->close_index == i) {
+                    model.Add<SequenceGlobalAvgPoolModule>();
+                    current_input_size = sequence_section->features;
+                    CYXWIZ_BUILDER_INFO("  [{}] SequenceGlobalAvgPool [L,C,N] -> [N,{}]", i,
+                                        current_input_size);
+                    break;
+                }
                 if (!spatial_head || spatial_head->flatten_index != i) {
                     throw std::runtime_error(
                         "Global Avg Pool at index " + std::to_string(i) +

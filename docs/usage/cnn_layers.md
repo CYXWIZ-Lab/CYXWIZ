@@ -42,13 +42,49 @@ Rules the compiler checks:
 - No convolution layer after the Flatten or Global Avg Pool.
 - Only the layers in the first table run before it.
 
+## Conv1D: convolution over a sequence
+
+Conv1D slides its kernel along one axis. It runs on `[L, C]` samples: a
+length `L` with `C` channels, as `torch.nn.Conv1d` on `[N, C, L]`. Output:
+`[floor((L + 2p - kernel_size) / stride) + 1, filters]`; `padding` is `same`
+(keeps `L` at stride 1, odd kernels) or `valid` (none).
+
+It gets its sequence one of two ways:
+
+- **First model layer**: it reads each input row as channels laid end to
+  end, torch's `x.view(N, C, L)`:
+
+  | Data | Channels C | Length L |
+  | --- | --- | --- |
+  | Time Series Window (`input_width` W, `feature_cols`) | 1 + the feature columns | W |
+  | Audio features (Spectrogram, Mel, MFCC) | frequency bins (rows) | frames |
+  | Table rows of F numbers | 1 | F |
+
+- **After an Embedding** (text): `[L, E]` token vectors, convolved over the
+  tokens with one channel per embedding dimension, torch's
+  `x.transpose(1, 2)`. Activations and Dropout may sit between them.
+
+```
+Text: Data Input -> Embedding -> Conv1D -> ReLU -> Global Avg Pool -> Dense -> Cross Entropy
+Series: Data Input -> Time Series Window -> Conv1D -> ReLU -> Flatten -> Dense -> MSE
+```
+
+Only Conv1D, activations and Dropout run on the sequence; end it with
+**Flatten** (`C x L` values per sample, torch's `flatten` order) or **Global
+Avg Pool** (each channel's mean over `L`) before Dense. The compiler reports
+on the node: Conv1D anywhere else (after Dense, after the Flatten), a Dense
+straight after Conv1D, a kernel longer than the sequence.
+
 ## Checked against PyTorch
 
 `spatial_layers_pytorch_parity` replays every layer above, Global Avg Pool
-included, against torch (forward, input gradient and parameter gradients;
+and Conv1D included, against torch (forward, input gradient and parameter gradients;
 `tests/computation_truth/fixtures/spatial_layers_pytorch.json`).
 `cnn_graph_training_contract` compiles the example graph with Flatten and with
 Global Avg Pool, checks the shapes and parameter counts against torch's, and
-runs it forward and backward.
+runs it forward and backward. `conv1d_graph_pytorch_parity` builds a Conv1D
+graph on table rows (Flatten) and on an Embedding (Global Avg Pool), sets
+torch's parameters on the built model and matches torch's output and every
+parameter gradient, then trains the rows graph with the TrainingExecutor.
 
 The code export does not write CNN layers with their settings yet.

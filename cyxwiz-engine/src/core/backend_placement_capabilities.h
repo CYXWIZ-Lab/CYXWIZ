@@ -119,6 +119,7 @@ inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
 inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
