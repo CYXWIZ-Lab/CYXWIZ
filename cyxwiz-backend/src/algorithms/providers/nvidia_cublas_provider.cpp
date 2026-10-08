@@ -16,6 +16,7 @@
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 
 #include "cyxwiz/neural_provider.h"
+#include "neural_conv2d_contract.h"
 
 #include <cublas_v2.h>
 #include <cuda.h>
@@ -1101,7 +1102,7 @@ public:
         }
         // Device-resident 2D convolution (TOFIX140 A1b).
         if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
-            capability.detail = ConvContractError(request);
+            capability.detail = conv2d_contract::ContractError(request);
             if (!capability.detail.empty()) return capability;
             capability.supported = true;
             capability.reason = BackendFallbackReason::BackendInternalError;
@@ -1994,65 +1995,13 @@ private:
         return Ok();
     }
 
-    // ---- 2D convolution (TOFIX140 A1b) -------------------------------------
-    struct ConvGeometry {
-        int H = 0, W = 0, C = 0, N = 0, Cout = 0, k = 0, stride = 1, pad = 0, OH = 0, OW = 0;
-        size_t K = 0, P = 0;  // k*k*C, OH*OW
-    };
-
-    static ConvGeometry ConvGeometryOf(const NeuralOpRequest& r) {
-        ConvGeometry g;
-        g.H = static_cast<int>(r.conv_height);
-        g.W = static_cast<int>(r.conv_width);
-        g.C = static_cast<int>(r.input);
-        g.N = static_cast<int>(r.batch);
-        g.Cout = static_cast<int>(r.hidden);
-        g.k = static_cast<int>(r.conv_kernel);
-        g.stride = static_cast<int>(r.conv_stride);
-        g.pad = static_cast<int>(r.conv_padding);
-        g.OH = (g.H + 2 * g.pad - g.k) / g.stride + 1;
-        g.OW = (g.W + 2 * g.pad - g.k) / g.stride + 1;
-        g.K = static_cast<size_t>(g.k) * g.k * g.C;
-        g.P = static_cast<size_t>(g.OH) * g.OW;
-        return g;
-    }
-
-    static std::string ConvContractError(const NeuralOpRequest& r) {
-        if (!r.device_resident) return "conv2d runs device-resident only";
-        if (r.dtype != DataType::Float32) return "conv2d needs Float32";
-        if (r.batch == 0 || r.input == 0 || r.hidden == 0 || r.conv_height == 0 || r.conv_width == 0 ||
-            r.conv_kernel == 0 || r.conv_stride == 0) {
-            return "conv2d sizes must be positive";
-        }
-        const size_t limit = static_cast<size_t>(std::numeric_limits<int>::max() / 4);
-        if (r.batch > limit || r.input > limit || r.hidden > limit || r.conv_height > limit ||
-            r.conv_width > limit || r.conv_kernel > limit || r.conv_stride > limit || r.conv_padding > limit) {
-            return "conv2d sizes exceed the int range";
-        }
-        if (r.conv_height + 2 * r.conv_padding < r.conv_kernel ||
-            r.conv_width + 2 * r.conv_padding < r.conv_kernel) {
-            return "conv2d kernel does not fit the padded input";
-        }
-        const size_t K = r.conv_kernel * r.conv_kernel * r.input;
-        const size_t OH = (r.conv_height + 2 * r.conv_padding - r.conv_kernel) / r.conv_stride + 1;
-        const size_t OW = (r.conv_width + 2 * r.conv_padding - r.conv_kernel) / r.conv_stride + 1;
-        if (K > limit || OH * OW > limit) return "conv2d column matrix exceeds the int range";
-        return {};
-    }
-
-    // Samples per pass so a column matrix stays within ~128 MB (at least one).
-    static int ConvChunk(const ConvGeometry& g) {
-        constexpr size_t kMaxColumnFloats = size_t{32} << 20;
-        const size_t per_sample = std::max<size_t>(1, g.K * g.P);
-        return static_cast<int>(std::max<size_t>(1, std::min<size_t>(g.N, kMaxColumnFloats / per_sample)));
-    }
-
+    // ---- 2D convolution (TOFIX140 A1b; contract in neural_conv2d_contract.h) -
     static unsigned Blocks(long long total, unsigned threads) {
         return static_cast<unsigned>((total + threads - 1) / threads);
     }
 
     NeuralOpStatus ExecuteConv2dForward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
-        const ConvGeometry g = ConvGeometryOf(r);
+        const conv2d_contract::Geometry g = conv2d_contract::GeometryOf(r);
         const size_t x_elems = static_cast<size_t>(g.H) * g.W * g.C * g.N;
         const size_t w_elems = g.K * g.Cout;
         const size_t y_elems = g.P * g.Cout * g.N;
@@ -2064,7 +2013,7 @@ private:
                         "conv2d_forward buffers do not match the request (X, Wt[, B] -> Y)");
         }
         const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
-        const int chunk = ConvChunk(g);
+        const int chunk = conv2d_contract::Chunk(g);
         float* cols = device_state_.Workspace(g.K * g.P * static_cast<size_t>(chunk), stream);
         if (!cols) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "conv2d column workspace");
         const float* x = static_cast<const float*>(buffers.inputs[0].handle);
@@ -2105,7 +2054,7 @@ private:
     }
 
     NeuralOpStatus ExecuteConv2dBackward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
-        const ConvGeometry g = ConvGeometryOf(r);
+        const conv2d_contract::Geometry g = conv2d_contract::GeometryOf(r);
         const size_t x_elems = static_cast<size_t>(g.H) * g.W * g.C * g.N;
         const size_t w_elems = g.K * g.Cout;
         const size_t y_elems = g.P * g.Cout * g.N;
@@ -2118,7 +2067,7 @@ private:
                         "conv2d_backward buffers do not match the request (X, Wt, dY -> dX, dWt[, dB])");
         }
         const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
-        const int chunk = ConvChunk(g);
+        const int chunk = conv2d_contract::Chunk(g);
         const size_t cols_floats = g.K * g.P * static_cast<size_t>(chunk);
         // Two column matrices: the recomputed im2col and its gradient.
         float* work = device_state_.Workspace(2 * cols_floats, stream);

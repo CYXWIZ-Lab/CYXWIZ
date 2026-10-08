@@ -4,6 +4,7 @@
 // Backward, GetGradients - and compared within the fixture's tolerance.
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include "test_device_selection.h"
 
 #include <nlohmann/json.hpp>
 
@@ -109,6 +110,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
     const auto path = FixturePath(argv[0]);
     std::ifstream in(path);
     Check(static_cast<bool>(in), "cannot open " + path.string());

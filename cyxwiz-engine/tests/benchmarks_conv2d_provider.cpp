@@ -4,6 +4,7 @@
 // Not a ctest entry: a measurement tool.
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include "computation_truth/test_device_selection.h"
 
 #include <chrono>
 #include <cstdio>
@@ -42,6 +43,7 @@ cyxwiz::Tensor Random(const std::vector<size_t>& shape, unsigned seed) {
 }  // namespace
 
 int main() {
+    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return 1;
     struct Case { const char* name; size_t h, w, cin, cout, batch; int iterations; };
     const Case cases[] = {
         {"conv 3->16 @64x64, batch 32", 64, 64, 3, 16, 32, 10},
