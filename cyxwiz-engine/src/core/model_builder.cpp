@@ -1049,6 +1049,68 @@ bool BuildSequential(
                 break;
             }
 
+            // The CNN stack (TOFIX140 A1): [H,W,C,N] modules, channels from
+            // the spatial head's shape walk (the compiler's rule).
+            case gui::NodeType::Conv2D:
+            case gui::NodeType::MaxPool2D:
+            case gui::NodeType::AvgPool2D:
+            case gui::NodeType::ConvTranspose2D:
+            case gui::NodeType::GroupNorm:
+            case gui::NodeType::InstanceNorm: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " is outside the spatial head (Flatten before Dense)");
+                }
+                const auto& in_shape = spatial_head->input_shapes[i];
+                const int channels = static_cast<int>(in_shape[2]);
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[2]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " +
+                                             std::to_string(i) + ": " + error.what());
+                }
+                switch (layer_cfg.type) {
+                    case gui::NodeType::Conv2D:
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::MaxPool2D:
+                        model.Add<MaxPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] MaxPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::AvgPool2D:
+                        model.Add<AvgPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] AvgPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::ConvTranspose2D:
+                        model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
+                                                         g.output_padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
+                        break;
+                    case gui::NodeType::GroupNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", true);
+                        model.Add<GroupNormModule>(g.groups, channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] GroupNorm(groups={}, channels={})", i, g.groups, channels);
+                        break;
+                    }
+                    case gui::NodeType::InstanceNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", false);
+                        model.Add<InstanceNorm2DModule>(channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                break;
+            }
+
             case gui::NodeType::Upsample:
             case gui::NodeType::PixelShuffle: {
                 UpsamplingConfiguration resolved;
@@ -1339,13 +1401,11 @@ bool BuildSequential(
                 // These are not layers in the sequential model
                 break;
 
-            // CNN layers (not yet supported in SequentialModel, need CNN module wrappers)
-            case gui::NodeType::Conv2D:
-            case gui::NodeType::MaxPool2D:
-            case gui::NodeType::AvgPool2D:
+            // Global pooling emits [C,N] (batch-last): needs a transpose
+            // before Dense; TOFIX140 A2.
             case gui::NodeType::GlobalMaxPool:
             case gui::NodeType::GlobalAvgPool:
-                spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
+                spdlog::warn("  [{}] global pooling {} not yet supported in SequentialModel",
                              i, static_cast<int>(layer_cfg.type));
                 break;
 

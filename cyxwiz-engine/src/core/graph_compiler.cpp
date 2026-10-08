@@ -9,6 +9,7 @@
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
+#include "spatial_layer_shapes.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -40,6 +41,19 @@
 #include <unordered_set>
 
 namespace cyxwiz {
+
+namespace {
+// "28, 28, 1"
+std::string ShapeListText(const std::vector<size_t>& shape) {
+    std::string out;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i) out += ", ";
+        out += std::to_string(shape[i]);
+    }
+    return out;
+}
+}  // namespace
+
 
 namespace {
 // Local helpers for issue collection. Kept in an anonymous namespace so
@@ -2058,6 +2072,22 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
         out << i.message;
     }
     return out.str();
+}
+
+// An image Data Input feeds [H, W, C] samples: the Resize node's target (or
+// the batcher's 224x224 default), 1 channel when grayscale. The same numbers
+// TrainingManager uses when it builds the ImageDatasetBatcher, so the As
+// compiled card's shapes are the training shapes (TOFIX140 A1).
+void ApplyImageInputShape(TrainingConfiguration& config) {
+    if (config.preprocessing_domain != PreprocessingDomain::Image) {
+        return;
+    }
+    const auto& image = config.image_preprocessing;
+    const size_t width = image.target_width > 0 ? static_cast<size_t>(image.target_width) : 224;
+    const size_t height = image.target_height > 0 ? static_cast<size_t>(image.target_height) : 224;
+    const size_t channels = image.convert_to_grayscale ? 1 : 3;
+    config.input_shape = {height, width, channels};
+    config.input_size = height * width * channels;
 }
 
 void ApplyTextInputShape(TrainingConfiguration& config) {
@@ -4759,6 +4789,8 @@ TrainingConfiguration GraphCompiler::Compile(
     }
 
     // Get topologically sorted node IDs
+    ApplyImageInputShape(config);
+
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
     ValidateSparseFeatureTrainingContract(
@@ -4831,6 +4863,7 @@ TrainingConfiguration GraphCompiler::Compile(
             CYXWIZ_BUILDER_INFO("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
             ExtractPreprocessing(*node, config);
             ApplyTextInputShape(config);
+            ApplyImageInputShape(config);
             current_shape = config.input_shape;
             if (node->type == gui::NodeType::Normalize) {
                 CYXWIZ_BUILDER_INFO("GraphCompiler: Normalization enabled - mean={}, std={}",
@@ -4932,22 +4965,32 @@ TrainingConfiguration GraphCompiler::Compile(
             }
 
             // Infer output shape
-            if (node->type == gui::NodeType::Upsample ||
-                node->type == gui::NodeType::PixelShuffle) {
-                // Diagnostic geometry does not promote Studio executability.
-                // Keep unsupported-node issues until the batch/head path is qualified.
+            if (spatial::IsSpatialLayer(node->type)) {
+                // The one spatial rule (spatial_layer_shapes.h): the same
+                // formulas feed the model builder and the training ingress.
                 layer.output_shape = current_shape;
-                UpsamplingConfiguration resolved;
-                if (const auto reason = ResolveUpsamplingConfiguration(
-                        node->type, layer.parameters, resolved)) {
-                    AddIssue(config, IssueLevel::Error, *reason, node->id,
-                             node->name, errors::Compiler::InvalidParameter);
+                if (node->type == gui::NodeType::Upsample ||
+                    node->type == gui::NodeType::PixelShuffle) {
+                    UpsamplingConfiguration resolved;
+                    if (const auto reason = ResolveUpsamplingConfiguration(
+                            node->type, layer.parameters, resolved)) {
+                        AddIssue(config, IssueLevel::Error, *reason, node->id,
+                                 node->name, errors::Compiler::InvalidParameter);
+                    } else {
+                        layer.scale_factor = resolved.factor;
+                        layer.upsample_mode = resolved.mode;
+                    }
+                }
+                if (current_shape.size() != 3) {
+                    AddIssue(config, IssueLevel::Error,
+                             node->name + " needs an image-shaped input [H, W, C]; it has " +
+                                 (current_shape.empty() ? std::string("no shape yet")
+                                                        : "[" + ShapeListText(current_shape) + "]"),
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
                 } else {
-                    layer.scale_factor = resolved.factor;
-                    layer.upsample_mode = resolved.mode;
                     try {
-                        layer.output_shape = InferUpsamplingSampleShape(
-                            node->type, resolved, current_shape);
+                        layer.output_shape = spatial::SampleShapeAfter(
+                            node->type, layer.parameters, current_shape);
                     } catch (const std::logic_error& error) {
                         AddIssue(config, IssueLevel::Error, error.what(), node->id,
                                  node->name, errors::Compiler::TensorShapeMismatch);
@@ -6264,22 +6307,19 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             break;
 
         case gui::NodeType::Conv2D:
-            if (node.parameters.count("filters"))
-                layer.filters = std::stoi(node.parameters.at("filters"));
-            if (node.parameters.count("kernel_size"))
-                layer.kernel_size = std::stoi(node.parameters.at("kernel_size"));
-            if (node.parameters.count("stride"))
-                layer.stride = std::stoi(node.parameters.at("stride"));
-            if (node.parameters.count("padding"))
-                layer.padding = std::stoi(node.parameters.at("padding"));
-            break;
-
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
-            if (node.parameters.count("pool_size"))
-                layer.pool_size = std::stoi(node.parameters.at("pool_size"));
-            if (node.parameters.count("stride"))
-                layer.stride = std::stoi(node.parameters.at("stride"));
+            // The spatial rule resolves the geometry ("same" and "valid" are
+            // words); a bad value becomes a compile issue in the shape loop.
+            try {
+                const auto g = spatial::ResolveGeometry(node.type, node.parameters, 0);
+                layer.filters = g.channels_out;
+                layer.kernel_size = g.kernel;
+                layer.pool_size = g.kernel;
+                layer.stride = g.stride;
+                layer.padding = g.padding;
+            } catch (const std::invalid_argument&) {
+            }
             break;
 
         case gui::NodeType::BatchNorm:
@@ -6416,22 +6456,16 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         }
 
         case gui::NodeType::Conv2D:
-            // Conv2D: [H, W, C] -> [(H + 2*padding - kernel_size) / stride + 1, W', filters]
-            if (input_shape.size() >= 2) {
-                size_t out_h = (input_shape[0] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
-                size_t out_w = (input_shape[1] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
-                output_shape = {out_h, out_w, static_cast<size_t>(layer.filters)};
-            }
-            break;
-
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
-            // Pool2D: [H, W, C] -> [H/pool_size, W/pool_size, C]
-            if (input_shape.size() >= 3) {
-                int stride = layer.stride > 0 ? layer.stride : layer.pool_size;
-                size_t out_h = (input_shape[0] - layer.pool_size) / stride + 1;
-                size_t out_w = (input_shape[1] - layer.pool_size) / stride + 1;
-                output_shape = {out_h, out_w, input_shape[2]};
+        case gui::NodeType::ConvTranspose2D:
+        case gui::NodeType::GroupNorm:
+        case gui::NodeType::InstanceNorm:
+            // spatial_layer_shapes.h; the compile loop reports the reasons.
+            try {
+                output_shape = spatial::SampleShapeAfter(layer.type, layer.parameters, input_shape);
+            } catch (const std::exception&) {
+                output_shape = input_shape;
             }
             break;
 

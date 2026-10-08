@@ -149,6 +149,8 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::TensorStd:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
+        case gui::NodeType::GroupNorm:
+        case gui::NodeType::InstanceNorm:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:

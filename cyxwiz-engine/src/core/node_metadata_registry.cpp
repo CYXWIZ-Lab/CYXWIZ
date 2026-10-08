@@ -2097,25 +2097,25 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::Conv2D, NodeCategory::Layers, "Conv2D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "cnn"}, 0, false,
-        "Blocked 2D convolution layer retained for graph compatibility",
-        "Saved Conv2D nodes remain visible and inspectable, but cannot compile "
-        "or train until ModelBuilder owns a supported Conv2D module path. Use "
-        "separate activation nodes; the legacy inline activation field is not "
-        "an executable contract.",
-        "",
+        "2D convolution over an image feature map",
+        "Slides filters x kernel x kernel windows over the [H, W, C] sample; the output has "
+        "'filters' channels and, with padding 'same' at stride 1, the same height and width "
+        "(PyTorch Conv2d rules). Put an activation node after it. Runs on ArrayFire; the "
+        "shapes on the As compiled card are the training shapes.",
+        "Data Input (images) -> Resize -> Conv2D -> ReLU -> MaxPool2D -> Flatten -> Dense -> Output",
         {{"Input", PinType::Tensor, true,
-          "Input feature map [batch, channels, height, width]."}},
+          "Image feature map [H, W, C] per sample (from the Data Input or a spatial layer)."}},
         {{"Output", PinType::Tensor, true,
-          "Convolved feature map; unavailable at runtime while this node is blocked."}},
+          "Convolved feature map [H', W', filters]."}},
         {{"filters", "int", "32", "Number of output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
          {"kernel_size", "int", "3", "Square kernel width and height", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
          {"stride", "int", "1", "Spatial step between kernel applications", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "1d", "sequence"}, 0, false,
@@ -2330,13 +2330,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
         {"groupnorm", "normalization", "small batch", "channels"}, 0, false,
-        "Normalize channels in groups for each sample (blocked Engine layer)",
-        "The saved-graph contract matches the native GroupNormLayer constructor, but Studio has no "
-        "ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
-        "eventually be Float32 [H,W,C,N], with num_channels equal to C and divisible by num_groups.", "",
-        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        "Normalize channels in groups for each sample",
+        "Normalizes each sample over groups of channels (PyTorch GroupNorm); num_groups must divide "
+        "the input's channel count, which the compiler takes from the layer before it.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+          "Normalized feature map, same shape."}},
         {{"num_groups", "int", "32", "Number of channel groups; must divide num_channels", {},
           "1-1048576", "Groups", "Normalization", true, false},
          {"num_channels", "int", "256", "Expected input channel count C", {},
@@ -2345,24 +2344,23 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "0.000000001-1.0", "Epsilon", "Normalization", true, true},
          {"affine", "bool", "true", "Learn one scale and bias per channel", {}, "",
           "Affine", "Normalization", false, true}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
         {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,
-        "Normalize each channel independently per sample (blocked Engine layer)",
-        "The saved-graph contract matches the native InstanceNorm2DLayer constructor, but Studio has "
-        "no ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
-        "eventually be Float32 [H,W,C,N], with num_features equal to C.", "",
-        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        "Normalize each channel independently per sample",
+        "Normalizes every channel of every sample over its height and width (PyTorch "
+        "InstanceNorm2d); the channel count comes from the layer before it.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+          "Normalized feature map, same shape."}},
         {{"num_features", "int", "64", "Expected input channel count C", {},
           "1-1048576", "Channels", "Normalization", true, false},
          {"eps", "float", "1e-5", "Positive numerical-stability term", {},
           "0.000000001-1.0", "Epsilon", "Normalization", true, true},
          {"affine", "bool", "false", "Learn one scale and bias per channel", {}, "",
           "Affine", "Normalization", false, true}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
         {"attention", "transformer", "self-attention"}, 0, false,
@@ -2571,31 +2569,31 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
         {"maxpool", "pooling"}, 0, false,
-        "Blocked 2D max-pooling layer retained for graph compatibility",
-        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        "Keeps the largest value of each pooling window",
+        "Reduces height and width by the stride (PyTorch MaxPool2d rules); the channel count "
+        "stays. Runs on ArrayFire.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pooled feature map [H', W', C]."}},
+        {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
-         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
           "Stride", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
         {"avgpool", "average", "pooling"}, 0, false,
-        "Blocked 2D average-pooling layer retained for graph compatibility",
-        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        "Averages each pooling window",
+        "Reduces height and width by the stride (PyTorch AvgPool2d rules); the channel count "
+        "stays. Runs on ArrayFire.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pooled feature map [H', W', C]."}},
+        {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
-         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
           "Stride", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
         {"global", "max", "pooling"}, 0, false,
@@ -2633,60 +2631,58 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::ConvTranspose2D, NodeCategory::Upsampling, "ConvTranspose2D", ICON_FA_EXPAND,
         {"convtranspose", "transposed", "convolution", "upsample"}, 0, false,
-        "Blocked transposed-convolution layer retained for graph compatibility",
-        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct an executable Studio layer. "
-        "ArrayFire-first forward/backward and training ownership remain unproven.",
+        "Transposed convolution: learned upsampling",
+        "Enlarges the sample by the stride (PyTorch ConvTranspose2d rules: (H-1)*stride - "
+        "2*padding + kernel + output_padding) with out_channels channels. The input channel "
+        "count comes from the layer before it. Runs on ArrayFire.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+          "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
-        {{"in_channels", "int", "64", "Legacy input-channel count", {}, "1-1048576",
+          "Upsampled feature map [H', W', out_channels]."}},
+        {{"in_channels", "int", "64", "Expected input channels (the compiler uses the actual count)", {}, "1-1048576",
           "Input Channels", "Transposed Convolution", true, false},
-         {"out_channels", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+         {"out_channels", "int", "32", "Output channels", {}, "1-1048576",
           "Output Channels", "Transposed Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Square kernel size", {}, "1-1048576",
           "Kernel Size", "Transposed Convolution", true, false},
-         {"stride", "int", "2", "Legacy spatial stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial stride (the upsampling factor)", {}, "1-1048576",
           "Stride", "Transposed Convolution", true, false},
-         {"padding", "int", "1", "Legacy symmetric input padding", {}, "0-1048576",
+         {"padding", "int", "1", "Symmetric input padding", {}, "0-1048576",
           "Padding", "Transposed Convolution", true, false},
-         {"output_padding", "int", "1", "Legacy output-shape adjustment", {}, "0-1048576",
+         {"output_padding", "int", "1", "Extra size on one side of the output (smaller than the stride)", {}, "0-1048576",
           "Output Padding", "Transposed Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
         {"upsample", "resize", "interpolate"}, 0, false,
-        "Blocked spatial upsampling layer retained for graph compatibility",
-        "ArrayFire-first nearest/bilinear execution and exact ModelBuilder construction exist. "
-        "Studio remains blocked pending spatial batch-layout and saved-graph training integration. "
-        "Interpolation codes remain 0=nearest and 1=bilinear for saved-graph compatibility.",
+        "Enlarge the sample by a whole factor",
+        "Nearest or bilinear interpolation on ArrayFire; height and width are multiplied by the "
+        "scale factor, the channels stay. Interpolation codes: 0=nearest, 1=bilinear.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+          "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
-        {{"scale_factor", "int", "2", "Legacy positive spatial scale", {}, "1-1048576",
+          "Upsampled feature map [H*scale, W*scale, C]."}},
+        {{"scale_factor", "int", "2", "Positive spatial scale", {}, "1-1048576",
           "Scale Factor", "Upsampling", true, false},
-         {"mode", "enum", "0", "Legacy interpolation code: 0=nearest, 1=bilinear",
+         {"mode", "enum", "0", "Interpolation: 0=nearest, 1=bilinear",
           {"0", "1"}, "", "Interpolation Mode", "Upsampling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PixelShuffle, NodeCategory::Upsampling, "Pixel Shuffle", ICON_FA_EXPAND,
         {"pixel", "shuffle", "subpixel", "upsample"}, 0, false,
-        "Blocked depth-to-space layer retained for graph compatibility",
-        "ArrayFire-first depth-to-space execution, channel-divisibility validation, "
-        "and exact ModelBuilder construction exist. Studio remains blocked pending "
-        "spatial batch-layout and saved-graph training integration.",
+        "Depth to space: trade channels for resolution",
+        "Rearranges channels into a larger sample (PyTorch PixelShuffle): the channel count must "
+        "be divisible by the square of the upscale factor. Runs on ArrayFire.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature map whose channels must be divisible by upscale_factor squared."}},
+          "Image feature map [H, W, C] per sample, C divisible by upscale_factor squared."}},
         {{"Output", PinType::Tensor, true,
-          "Depth-to-space result; unavailable at runtime while this node is blocked."}},
-        {{"upscale_factor", "int", "2", "Legacy positive spatial upscale factor", {}, "1-1048576",
+          "Feature map [H*r, W*r, C/r^2]."}},
+        {{"upscale_factor", "int", "2", "Positive spatial upscale factor", {}, "1-1048576",
           "Upscale Factor", "Upsampling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,
         {"flatten", "reshape"}, 0, false, "Collapse each sample to one feature dimension", "", "",

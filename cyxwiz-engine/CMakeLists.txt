@@ -5405,6 +5405,50 @@ set_target_properties(test_node_presets PROPERTIES
 )
 add_test(NAME node_presets_contract COMMAND test_node_presets)
 
+# ===== Test: spatial (CNN) layers against PyTorch (TOFIX140 A1) =====
+add_executable(test_computation_truth_spatial_layers
+    tests/computation_truth/test_computation_truth_spatial_layers.cpp
+)
+
+target_include_directories(test_computation_truth_spatial_layers PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+target_link_libraries(test_computation_truth_spatial_layers PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+set(CYXWIZ_SPATIAL_LAYERS_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/spatial_layers_pytorch.json"
+)
+
+add_custom_target(copy_test_computation_truth_spatial_layers_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_spatial_layers>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_SPATIAL_LAYERS_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_spatial_layers>/computation_truth_fixtures/spatial_layers_pytorch.json"
+    SOURCES "${CYXWIZ_SPATIAL_LAYERS_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+
+add_dependencies(test_computation_truth_spatial_layers
+    copy_test_computation_truth_spatial_layers_fixture
+)
+
+if(WIN32)
+    target_compile_definitions(test_computation_truth_spatial_layers PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_computation_truth_spatial_layers PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME spatial_layers_pytorch_parity COMMAND test_computation_truth_spatial_layers)
+
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp

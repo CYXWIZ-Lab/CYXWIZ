@@ -694,6 +694,9 @@ bool TrainingManager::StartTrainingImage(
         ? config.image_preprocessing.target_height : 224;
     int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
     config.input_size = static_cast<size_t>(tw * th * ch);
+    // The [H,W,C] sample the spatial layers (Conv2D...) unpack the rows into;
+    // the compiler sets the same (ApplyImageInputShape).
+    config.input_shape = {static_cast<size_t>(th), static_cast<size_t>(tw), static_cast<size_t>(ch)};
 
     spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}, seed={}",
                  batcher->GetNumSamples(), config.input_size, tw, th, ch,
