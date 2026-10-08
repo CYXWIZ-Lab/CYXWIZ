@@ -28,7 +28,10 @@ would be working for free.
    (from the central server's heartbeat, "checked N s ago") and **Connected to
    node** once the link is up.
 5. **Start training**: the Engine measures whether the graph fits the node's
-   memory ("Will this job fit?") and sends the job. Progress shows in the P2P
+   memory ("Will this job fit?") and sends the job. The node has no copy of
+   your data: the Engine ships the table it loaded at Apply, so every Data
+   Input the job trains on must have been applied in this session, and the
+   card shows **Data problem** (Start off) when the file cannot be read. Progress shows in the P2P
    Training panel. Only graphs whose Data Input feeds the Data Loader directly
    can train on a node; data preparation nodes (tokenizers, vectorizers,
    normalisation, time series, audio) are refused with a message, so prepare the
@@ -79,4 +82,7 @@ Common ones:
 | Sign in to reserve a node | not signed in, or the saved session expired |
 | Node rejected connection: Invalid or expired auth token | the node and the central server use different P2P secrets, or the token's reservation is over |
 | node '...' is a data preparation step | the graph needs preparing in the Engine first (see Steps, 5) |
+| dataset '...' is not loaded in the Engine (apply its Data Input first) | the Data Input was never applied in this session; open it and Apply |
+| dataset '...' is empty (0 rows); apply its Data Input again | the last Apply read nothing (file moved or unreadable); nothing is sent to the node |
+| Data problem (job-fit card) | the Engine could not read the job's data while measuring it; Start training stays off until the Data Input loads |
 | Could not extend the reservation | the central server refused (ended, or not yours) |

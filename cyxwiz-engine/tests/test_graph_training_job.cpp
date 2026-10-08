@@ -1,12 +1,14 @@
 // Headless graph training (TOFIX118 P2): trains the tracked causal-LM example
 // graph through RunGraphTrainingJob, linked against cyxwiz-training-core only
 // (what a Server Node links), and checks the fail-closed refusals.
+#include "../src/core/arrow_dataset.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
+#include <arrow/table.h>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -389,6 +391,23 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(!result.ok && Contains(result.error, "file not found"), "missing file refused: " + result.error);
         Check(result.failure == cyxwiz::TrainingFailureKind::DataError, "a missing file is a data error");
+    }
+    {
+        // An Arrow IPC file with a schema and no rows: what an Engine shipped
+        // when an Apply had registered nothing (E3 2026-10-08).
+        const fs::path empty_file = work / "empty.arrow";
+        const auto rows = cyxwiz::ArrowDataset::FromParquet(parquet.string(), "tokens");
+        auto empty_table = arrow::Table::MakeEmpty(rows->GetArrowTable()->schema()).ValueOrDie();
+        Check(cyxwiz::ArrowDataset(empty_table, "empty").ExportFeather(empty_file.string()),
+              "schema-only Arrow IPC file written");
+        const auto reopened = cyxwiz::ArrowDataset::FromFile(empty_file.string(), "empty");
+        Check(reopened && reopened->GetNumRows() == 0, "a schema-only Arrow IPC file reads as 0 rows");
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = LoadTokenWindowGraph(root).dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = empty_file.string();
+        const auto result = cyxwiz::RunGraphTrainingJob(request);
+        Check(!result.ok && Contains(result.error, "empty (0 rows)"), "empty dataset refused: " + result.error);
+        Check(result.failure == cyxwiz::TrainingFailureKind::DataError, "an empty dataset is a data error");
     }
     {
         nlohmann::json graph = LoadTokenWindowGraph(root);

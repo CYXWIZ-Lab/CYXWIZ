@@ -75,6 +75,8 @@ JobFitCard ConnectionDialog::CurrentJobFitCard() const {
     inputs.estimate_backend = estimate_result_.backend;
     inputs.estimate_device = estimate_device_;
     inputs.estimate_error = estimate_result_.error;
+    inputs.estimate_data_error =
+        estimate_state_ == JobEstimateState::Failed && estimate_result_.failure == TrainingFailureKind::DataError;
     inputs.node_device = reserved_node_.device_type;
     inputs.node_device_bytes = static_cast<std::uint64_t>(std::max<long long>(0, reserved_node_.vram_bytes));
     inputs.rejection_reason = last_rejection_reason_;

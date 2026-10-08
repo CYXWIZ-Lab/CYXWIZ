@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <string>
 #include <utility>
 #include <vector>
@@ -87,6 +90,24 @@ inline bool IsBlankTextCsvRow(const std::vector<std::string>& fields) {
 }
 
 } // namespace detail
+
+// A text source must exist before anything is registered under its name: a
+// missing file used to register an empty table (E3 2026-10-08, TOFIX118).
+inline TextCsvPreflightResult ValidateTextSource(const std::string& path) {
+    std::error_code ec;
+    const std::filesystem::path source(path);
+    if (std::filesystem::is_regular_file(source, ec) || std::filesystem::is_directory(source, ec)) {
+        return {};
+    }
+    return {false, "file not found: " + path};
+}
+
+// A text load that read nothing registers nothing.
+inline TextCsvPreflightResult ValidateTextSamples(std::size_t num_samples, const std::string& path) {
+    if (num_samples > 0) return {};
+    return {false, "no text samples could be read from '" + path +
+                       "' (check the file, its text and label columns, and the delimiter)"};
+}
 
 inline TextCsvPreflightResult ValidateTextCsvRowWidths(
     const std::string& path,

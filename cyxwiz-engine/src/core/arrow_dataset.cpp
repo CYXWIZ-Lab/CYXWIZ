@@ -165,7 +165,9 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFeather(const std::string& path,
         batches.push_back(maybe_batch.ValueOrDie());
     }
 
-    auto maybe_table = arrow::Table::FromRecordBatches(batches);
+    // With the file's schema a file holding no batches is a 0-row table, not
+    // an error; the caller decides what an empty dataset means.
+    auto maybe_table = arrow::Table::FromRecordBatches(reader->schema(), batches);
     if (!maybe_table.ok()) {
         spdlog::error("Failed to create table from record batches: {}", maybe_table.status().ToString());
         return nullptr;

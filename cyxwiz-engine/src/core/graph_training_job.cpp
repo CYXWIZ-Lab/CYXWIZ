@@ -160,6 +160,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                         " files are not supported by this host (use Parquet or Arrow IPC)");
         }
         if (!dataset) return Fail(TrainingFailureKind::DataError, "Data Input '" + node.name + "': could not read " + path);
+        if (dataset->GetNumRows() == 0) {
+            return Fail(TrainingFailureKind::DataError,
+                        "Data Input '" + node.name + "': the dataset is empty (0 rows) in " + path);
+        }
         datasets[name] = dataset;
         source_paths[name] = path;
         spdlog::info("Graph training job: loaded '{}' ({} rows) from {}", name, dataset->GetNumRows(), path);

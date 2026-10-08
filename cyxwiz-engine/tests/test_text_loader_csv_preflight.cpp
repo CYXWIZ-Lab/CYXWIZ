@@ -101,5 +101,23 @@ int main() {
     }
 
     std::cout << "Text loader CSV preflight validation passed\n";
+    {
+        // E3 2026-10-08: a missing file or a load that read nothing must not
+        // register anything under the dataset name.
+        const auto missing = cyxwiz::loaders::ValidateTextSource(
+            (std::filesystem::temp_directory_path() / "cyxwiz_no_such_text_source.csv").string());
+        Check(!missing.ok && missing.message.rfind("file not found: ", 0) == 0,
+              "a missing text source is refused before loading");
+        const auto path = WriteTempFile("cyxwiz_text_preflight_exists.csv", "text,label\nhi,a\n");
+        Check(cyxwiz::loaders::ValidateTextSource(path.string()).ok, "an existing file passes");
+        Check(cyxwiz::loaders::ValidateTextSource(std::filesystem::temp_directory_path().string()).ok,
+              "a corpus directory passes");
+        std::filesystem::remove(path);
+        const auto none = cyxwiz::loaders::ValidateTextSamples(0, "x.csv");
+        Check(!none.ok && none.message.find("no text samples could be read from 'x.csv'") != std::string::npos,
+              "zero samples are refused");
+        Check(cyxwiz::loaders::ValidateTextSamples(1, "x.csv").ok, "one sample passes");
+    }
+
     return 0;
 }

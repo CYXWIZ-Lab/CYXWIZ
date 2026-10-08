@@ -210,6 +210,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 auto& reg = cyxwiz::DataRegistry::Instance();
 
                 fs::path source(path);
+                const auto source_check = ValidateTextSource(path);
+                if (!source_check.ok) {
+                    throw std::runtime_error(source_check.message);
+                }
                 const std::string ext = LowerExtension(source);
                 const bool native_arrow_text_file =
                     fs::is_regular_file(source) &&
@@ -222,6 +226,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 if (native_arrow_text_file) {
                     cyxwiz::TextDataset probe(path, probe_cfg);
                     auto info = probe.GetInfo();
+                    const auto samples_check = ValidateTextSamples(info.num_samples, path);
+                    if (!samples_check.ok) {
+                        throw std::runtime_error(samples_check.message);
+                    }
 
                     const char delimiter = (ext == ".tsv") ? '\t' : ',';
                     const auto csv_preflight =
@@ -279,6 +287,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 } else {
                     cyxwiz::TextDataset probe(path, probe_cfg);
                     auto info = probe.GetInfo();
+                    const auto samples_check = ValidateTextSamples(info.num_samples, path);
+                    if (!samples_check.ok) {
+                        throw std::runtime_error(samples_check.message);
+                    }
 
                     auto raw_table_result = cyxwiz::BuildRawTextArrowTable(
                         probe, text_col, label_col);

@@ -60,8 +60,13 @@ bool DatasetFileServer::RegisterJob(const std::string& job_id, const std::string
     cyxwiz::GraphJobDatasetPlan plan;
     if (!cyxwiz::PlanGraphJobDatasets(graph_json, plan, error)) return false;
     for (const auto& name : plan.ship) {
-        if (!cyxwiz::GraphArrowDataset(name) && !cyxwiz::GraphParquetDataset(name)) {
+        const auto arrow = cyxwiz::GraphArrowDataset(name);
+        if (!arrow && !cyxwiz::GraphParquetDataset(name)) {
             error = "dataset '" + name + "' is not loaded in the Engine (apply its Data Input first)";
+            return false;
+        }
+        if (arrow && arrow->GetNumRows() == 0) {
+            error = "dataset '" + name + "' is empty (0 rows); apply its Data Input again";
             return false;
         }
     }
