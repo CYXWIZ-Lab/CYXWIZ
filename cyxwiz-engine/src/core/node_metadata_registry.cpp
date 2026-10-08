@@ -2591,13 +2591,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::GlobalAvgPool, NodeCategory::Pooling, "Global Avg Pool", ICON_FA_COMPRESS,
         {"global", "average", "pooling"}, 0, false,
-        "Blocked global average-pooling layer retained for graph compatibility",
-        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Channel average; unavailable at runtime while this node is blocked."}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        "Averages each channel over H and W: [H,W,C] -> [C]",
+        "torch adaptive_avg_pool2d(x, 1).flatten(1): ends the convolution section the way Flatten "
+        "does, with one value per channel instead of H x W x C, so the Dense after it needs C inputs.", "",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map from a convolution, pooling or normalisation layer"}},
+        {{"Output", PinType::Tensor, true, "[C] channel averages; connect a Dense layer"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdaptiveAvgPool, NodeCategory::Pooling,
         "Adaptive Average Pool", ICON_FA_COMPRESS,

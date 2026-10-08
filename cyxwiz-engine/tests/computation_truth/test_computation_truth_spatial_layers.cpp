@@ -1,6 +1,7 @@
 // The layers TOFIX140 brings out of the blocked catalog, against PyTorch:
 // every case of fixtures/spatial_layers_pytorch.json (CNN layers on
-// [H,W,C,N], PReLU/SELU on [N,F] rows) is replayed through the backend's
+// [H,W,C,N], global average pooling to [N,C] rows, PReLU/SELU on [N,F] rows)
+// is replayed through the backend's
 // SequentialModel modules - SetParameters, Forward, Backward, GetGradients -
 // and compared within the fixture's tolerance.
 #include <cyxwiz/sequential.h>
@@ -95,6 +96,8 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
         return std::make_unique<Upsample2DModule>(
             g.at("scale_factor").get<int>(),
             g.at("mode").get<int>() == 0 ? UpsampleMode::Nearest : UpsampleMode::Bilinear);
+    if (layer == "GlobalAvgPool")
+        return std::make_unique<GlobalAvgPool2DModule>();
     if (layer == "PixelShuffle")
         return std::make_unique<PixelShuffleModule>(g.at("upscale_factor").get<int>());
     if (layer == "PReLU")

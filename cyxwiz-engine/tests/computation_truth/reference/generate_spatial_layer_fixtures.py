@@ -2,7 +2,8 @@
 """PyTorch fixtures for the layers CyxWiz brings out of the blocked catalog
 (TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
-bilinear), PixelShuffle - and the activations PReLU and SELU on [N, F] rows.
+bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
+and the activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -53,9 +54,11 @@ def transpose_weight(tensor: torch.Tensor) -> dict[str, Any]:
 
 def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
          forward, params: dict[str, torch.Tensor], param_writers: dict[str, Any],
-         tolerance=(1e-4, 1e-4), rows: bool = False) -> dict[str, Any]:
-    """rows=True: x is [N, F] rows, written as is (no [H,W,C,N] reorder)."""
+         tolerance=(1e-4, 1e-4), rows: bool = False, rows_out: bool = False) -> dict[str, Any]:
+    """rows=True: x is [N, F] rows, written as is (no [H,W,C,N] reorder).
+    rows_out=True: the output (and its gradient) is [N, F] rows."""
     layout = plain if rows else hwcn
+    out_layout = plain if rows or rows_out else hwcn
     x = x.clone().requires_grad_(True)
     for p in params.values():
         p.requires_grad_(True)
@@ -71,8 +74,8 @@ def case(name: str, layer: str, geometry: dict[str, Any], x: torch.Tensor,
         "geometry": geometry,
         "tolerance": {"atol": tolerance[0], "rtol": tolerance[1]},
         "input": layout(x),
-        "output": layout(y),
-        "grad_output": layout(grad_out),
+        "output": out_layout(y),
+        "grad_output": out_layout(grad_out),
         "grad_input": layout(x.grad),
         "parameters": {k: param_writers[k](v) for k, v in params.items()},
         "parameter_gradients": {k: param_writers[k](v.grad) for k, v in params.items()},
@@ -196,6 +199,17 @@ def build() -> list[dict[str, Any]]:
     cases.append(case(
         "pixel_shuffle_r2", "PixelShuffle", {"upscale_factor": 2},
         x, lambda t: functional.pixel_shuffle(t, 2), {}, {}))
+
+    # Global average pooling ends the spatial section: [N,C,H,W] -> [N,C] rows
+    # (TOFIX140 A4b), torch adaptive_avg_pool2d(x, 1).flatten(1)
+    x = torch.randn(2, 3, 5, 5)
+    cases.append(case(
+        "global_avg_pool_c3", "GlobalAvgPool", {},
+        x, lambda t: functional.adaptive_avg_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
+    x = torch.randn(4, 16, 16, 16)
+    cases.append(case(
+        "global_avg_pool_image_16", "GlobalAvgPool", {},
+        x, lambda t: functional.adaptive_avg_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
 
     return cases
 

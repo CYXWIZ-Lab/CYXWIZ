@@ -5986,6 +5986,23 @@ TrainingConfiguration GraphCompiler::Compile(
     // The model builder's spatial section rules (layer order, Flatten, shared
     // PReLU slope): reported here so the graph shows them before training.
     // Skipped when the graph already has errors, which these would repeat.
+    if (!config.HasErrors()) {
+        // Global Avg Pool only ends a spatial section ([H,W,C] samples).
+        for (size_t i = 0; i < config.layers.size(); ++i) {
+            const auto& layer = config.layers[i];
+            if (layer.type != gui::NodeType::GlobalAvgPool) continue;
+            const bool after_spatial =
+                i == 0 ? UsesSpatialSequentialInput(config)
+                       : spatial::IsSpatialLayer(config.layers[i - 1].type) ||
+                             spatial::IsShapePreservingLayer(config.layers[i - 1].type);
+            if (!UsesSpatialSequentialInput(config) || !after_spatial) {
+                AddIssue(config, IssueLevel::Error,
+                         "Global Avg Pool averages each channel of an [H,W,C] sample: place it after a "
+                         "convolution, pooling or normalisation layer (and their activations), before Dense",
+                         layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+            }
+        }
+    }
     if (!config.HasErrors() && UsesSpatialSequentialInput(config)) {
         try {
             ResolveSpatialSequentialHead(config);

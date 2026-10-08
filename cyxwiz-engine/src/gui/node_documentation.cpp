@@ -459,13 +459,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::GlobalAvgPool] = {
         "Global Average Pooling",
-        "Takes the average across all spatial dimensions. "
-        "Popular in modern architectures like ResNet and EfficientNet.",
-        "Reduces (batch, C, H, W) to (batch, C).",
+        "Averages each channel over its height and width. Ends the convolution section of a model "
+        "the way Flatten does, with one value per channel. Used by ResNet and EfficientNet.",
+        "[H,W,C] -> [C], as torch adaptive_avg_pool2d(x, 1).flatten(1); the gradient spreads each "
+        "channel's gradient evenly over its H x W positions.",
         {},
         {
-            "Reduces overfitting compared to large Dense layers",
-            "Standard in most modern CNN architectures"
+            "Place it after the last convolution block, before Dense",
+            "Far fewer Dense weights than Flatten: C inputs instead of H x W x C"
         },
         "Pooling"
     };

@@ -1553,11 +1553,11 @@ void CheckConvolutionPoolingBlockedFamilyContract(
         gui::NodeType::Conv3D,
         gui::NodeType::DepthwiseConv2D,
         gui::NodeType::GlobalMaxPool,
-        gui::NodeType::GlobalAvgPool,
         gui::NodeType::AdaptiveAvgPool,
     };
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalAvgPool);
     for (const auto type : family) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
@@ -1616,7 +1616,7 @@ void CheckConvolutionPoolingBlockedFamilyContract(
 
     Check(metadata.GetMetadata(gui::NodeType::GlobalMaxPool)->parameters.empty() &&
               metadata.GetMetadata(gui::NodeType::GlobalAvgPool)->parameters.empty(),
-          "global pooling compatibility contracts should have no parameters");
+          "global pooling nodes have no parameters");
     const auto* adaptive = metadata.GetMetadata(gui::NodeType::AdaptiveAvgPool);
     Check(adaptive->parameters.size() == 1 &&
               ParameterMatches(adaptive, "output_size", "int", "1"),

@@ -1436,12 +1436,23 @@ bool BuildSequential(
                 // These are not layers in the sequential model
                 break;
 
-            // Global pooling emits [C,N] (batch-last): needs a transpose
-            // before Dense; TOFIX140 A2.
+            // Global Avg Pool ends the spatial section like Flatten:
+            // [H,W,C,N] -> [N,C] rows (torch adaptive_avg_pool2d + flatten).
+            case gui::NodeType::GlobalAvgPool: {
+                if (!spatial_head || spatial_head->flatten_index != i) {
+                    throw std::runtime_error(
+                        "Global Avg Pool at index " + std::to_string(i) +
+                        " needs an [H,W,C] sample from the spatial section before it");
+                }
+                model.Add<GlobalAvgPool2DModule>();
+                current_input_size = spatial_head->features;
+                CYXWIZ_BUILDER_INFO("  [{}] GlobalAvgPool2D [H,W,C,N] -> [N,{}]",
+                                    i, current_input_size);
+                break;
+            }
+
             case gui::NodeType::GlobalMaxPool:
-            case gui::NodeType::GlobalAvgPool:
-                spdlog::warn("  [{}] global pooling {} not yet supported in SequentialModel",
-                             i, static_cast<int>(layer_cfg.type));
+                spdlog::warn("  [{}] GlobalMaxPool is not supported in SequentialModel", i);
                 break;
 
             default:

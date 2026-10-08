@@ -251,12 +251,14 @@ std::string AvgPool2DModule::GetName() const {
 GlobalAvgPool2DModule::GlobalAvgPool2DModule()
     : layer_(std::make_unique<GlobalAvgPool2DLayer>()) {}
 
+// The layer gives [C,N]; the model's next layer (Dense) takes [N,C] rows, as
+// torch's adaptive_avg_pool2d(x, 1).flatten(1).
 Tensor GlobalAvgPool2DModule::Forward(const Tensor& input) {
-    return layer_->Forward(input);
+    return layer_->Forward(input).Transpose();
 }
 
 Tensor GlobalAvgPool2DModule::Backward(const Tensor& grad_output) {
-    return layer_->Backward(grad_output);
+    return layer_->Backward(grad_output.Transpose());
 }
 
 std::string GlobalAvgPool2DModule::GetName() const {

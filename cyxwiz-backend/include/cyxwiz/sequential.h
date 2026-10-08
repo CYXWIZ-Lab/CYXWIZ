@@ -365,10 +365,9 @@ private:
 };
 
 /**
- * @brief Parameter-free SequentialModel adapter for GlobalAvgPool2DLayer.
- *
- * Studio remains blocked while the primitive is native CPU-only and lacks the
- * complete Part F numerical, residency, and training evidence.
+ * @brief Parameter-free SequentialModel adapter for GlobalAvgPool2DLayer:
+ * [H,W,C,N] in, [N,C] rows out (torch adaptive_avg_pool2d(x, 1).flatten(1)),
+ * so it ends a spatial section the way Flatten does.
  */
 class CYXWIZ_API GlobalAvgPool2DModule : public Module {
 public:

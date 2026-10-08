@@ -232,6 +232,54 @@ int main() {
               "per-channel PReLU before Flatten is refused with the reason: " + bad_built.error_message);
     }
 
+    // ---- Global Avg Pool ends the conv section instead of Flatten (TOFIX140 A4b) ----
+    {
+        auto variant = nodes;
+        for (auto& n : variant) {
+            if (n.name == "Flatten") {
+                n.type = gui::NodeType::GlobalAvgPool;
+                n.name = "GAP";
+            }
+        }
+        const auto gconfig = compiler.Compile(variant, links, true);
+        for (const auto& issue : gconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.message << "\n";
+        }
+        Check(gconfig.is_valid, "a CNN ending in Global Avg Pool compiles");
+        Check(LayerNamed(gconfig, "GAP").output_shape == std::vector<size_t>{32}, "Global Avg Pool [16,16,32] -> [32]");
+        const auto ghead = cyxwiz::ResolveSpatialSequentialHead(gconfig);
+        Check(ghead && ghead->global_average && ghead->features == 32, "the spatial head ends at Global Avg Pool, 32 features");
+        auto gbuilt = cyxwiz::BuildExecutableFromConfig(gconfig);
+        Check(gbuilt.ok(), "ModelBuilder builds Global Avg Pool: " + gbuilt.error_message);
+        long long gparams = 0;
+        for (const auto& [name, tensor] : gbuilt.model->GetParameters()) gparams += static_cast<long long>(tensor.NumElements());
+        // Dense now takes 32 inputs: 32*2 + 2 = 66 (torch: Linear(32, 2))
+        Check(gparams == 448 + 4640 + 66, "learnable parameters 5,154, got " + std::to_string(gparams));
+        const cyxwiz::Tensor glogits = gbuilt.model->Forward(spatial);
+        Check(glogits.Shape() == std::vector<size_t>{batch, 2}, "Global Avg Pool CNN forward gives [N, 2], got " +
+                                                                    ShapeText(glogits.Shape()));
+        std::vector<float> ones(batch * 2, 1.0f);
+        const cyxwiz::Tensor ggrad = gbuilt.model->Backward(cyxwiz::Tensor({batch, 2}, ones.data(), cyxwiz::DataType::Float32));
+        Check(ggrad.Shape() == std::vector<size_t>{64, 64, 3, batch}, "backward reaches the input as [64, 64, 3, N]");
+
+        // After Flatten it has no [H,W,C] sample to average: refused on its node.
+        auto after_flatten = nodes;
+        auto gap = Layer(14, gui::NodeType::GlobalAvgPool, "GAP");
+        after_flatten.push_back(gap);
+        auto relinked = links;
+        for (auto& link : relinked) {
+            if (link.from_node == 9 && link.to_node == 10) link = Link(link.id, 9, 14);
+        }
+        relinked.push_back(Link(20, 14, 10));
+        const auto bad = compiler.Compile(after_flatten, relinked, true);
+        bool reported = false;
+        for (const auto& issue : bad.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error && issue.node_name == "GAP" &&
+                issue.message.find("averages each channel") != std::string::npos) reported = true;
+        }
+        Check(!bad.is_valid && reported, "Global Avg Pool after Flatten is refused on its node");
+    }
+
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";
     return 0;
 }
