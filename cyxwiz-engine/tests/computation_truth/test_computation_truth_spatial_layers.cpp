@@ -105,6 +105,8 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
         return std::make_unique<GlobalAvgPool2DModule>();
     if (layer == "GlobalMaxPool")
         return std::make_unique<GlobalMaxPool2DModule>();
+    if (layer == "AdaptiveAvgPool")
+        return std::make_unique<AdaptiveAvgPool2DModule>(g.at("output_h").get<int>(), g.at("output_w").get<int>());
     if (layer == "PixelShuffle")
         return std::make_unique<PixelShuffleModule>(g.at("upscale_factor").get<int>());
     if (layer == "PReLU")

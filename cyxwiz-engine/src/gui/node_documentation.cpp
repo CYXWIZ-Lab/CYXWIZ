@@ -474,15 +474,15 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::AdaptiveAvgPool] = {
         "Adaptive Average Pooling",
-        "Pools to a fixed output size regardless of input size. "
-        "Automatically calculates kernel and stride.",
-        "Set output_size to (1,1) for global average pooling.",
+        "Average-pools a feature map to a fixed output_size x output_size, whatever its input size.",
+        "[H,W,C] -> [s,s,C], as torch.nn.AdaptiveAvgPool2d(s): cell i averages rows floor(i*H/s) to "
+        "ceil((i+1)*H/s) - 1 and the same columns; bins may overlap.",
         {
-            {"output_size", "Target output dimensions (H, W)"}
+            {"output_size", "Output height and width s"}
         },
         {
-            "Enables networks to accept variable input sizes",
-            "Use (1,1) as GAP, (7,7) for certain transfer learning"
+            "output_size 1 is a global average pool that keeps [1,1,C]; Flatten then gives C",
+            "Before Flatten it fixes the Dense input size: s x s x C"
         },
         "Pooling"
     };

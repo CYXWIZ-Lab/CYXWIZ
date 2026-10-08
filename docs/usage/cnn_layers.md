@@ -21,6 +21,7 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | MaxPool2D / AvgPool2D (`pool_size`, `stride`) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
+| Adaptive Avg Pool (`output_size` s) | `[s, s, C]` for any H, W (cell i averages rows `floor(i*H/s)` to `ceil((i+1)*H/s) - 1`) | `nn.AdaptiveAvgPool2d(s)` |
 | Upsample, PixelShuffle | scaled | `nn.Upsample` / `nn.PixelShuffle` |
 | Activations, Dropout | unchanged | PReLU only with one shared slope (`num_parameters` 1) |
 

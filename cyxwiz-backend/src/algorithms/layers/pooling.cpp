@@ -95,7 +95,23 @@ Pool2DGeometry ValidatePoolBackwardInput(const Tensor& cached_input,
     return geometry;
 }
 
+// torch's adaptive pooling bins: [floor(i*in/out), ceil((i+1)*in/out)).
+size_t AdaptiveBinStart(size_t i, size_t in, size_t out) { return (i * in) / out; }
+size_t AdaptiveBinEnd(size_t i, size_t in, size_t out) { return ((i + 1) * in + out - 1) / out; }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+
+// The [out, in] matrix whose row i averages bin i: Y = P_h X P_w^T.
+af::array AdaptiveAverageMatrix(size_t in, size_t out) {
+    std::vector<float> values(out * in, 0.0f);
+    for (size_t i = 0; i < out; ++i) {
+        const size_t start = AdaptiveBinStart(i, in, out);
+        const size_t end = AdaptiveBinEnd(i, in, out);
+        const float weight = 1.0f / static_cast<float>(end - start);
+        for (size_t j = start; j < end; ++j) values[i + out * j] = weight;  // column-major
+    }
+    return af::array(static_cast<dim_t>(out), static_cast<dim_t>(in), values.data());
+}
 
 void LogPoolingFallbackOnce(
     const char* operation_name,
@@ -957,6 +973,187 @@ Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
                 }
             }
             grad_input_data[best_index] = grad_data[c * batch_size + b];
+        }
+    }
+    return grad_input;
+}
+
+// ============================================================================
+// AdaptiveAvgPool2D Layer Implementation
+// ============================================================================
+
+AdaptiveAvgPool2DLayer::AdaptiveAvgPool2DLayer(int out_h, int out_w)
+    : out_h_(out_h), out_w_(out_w) {
+    if (out_h <= 0 || out_w <= 0) {
+        throw std::invalid_argument("AdaptiveAvgPool2D output size must be positive");
+    }
+}
+
+Tensor AdaptiveAvgPool2DLayer::Forward(const Tensor& input) {
+    has_forward_ = false;
+    ValidatePoolInput(input, "AdaptiveAvgPool2D");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const size_t out_h = static_cast<size_t>(out_h_);
+    const size_t out_w = static_cast<size_t>(out_w_);
+    const std::vector<size_t> output_shape{out_h, out_w, channels, batch_size};
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    bool use_native_cpu = false;
+    if (ShouldForceArrayFireBackendFallbackForTesting(
+            "AdaptiveAvgPool2DLayer::Forward")) {
+        LogPoolingFallbackOnce(
+            "AdaptiveAvgPool2DLayer::Forward",
+            "forced ArrayFire backend fallback test hook",
+            input,
+            "input");
+        use_native_cpu = true;
+    }
+    if (!use_native_cpu) {
+        try {
+            const unsigned c = static_cast<unsigned>(channels);
+            const unsigned n = static_cast<unsigned>(batch_size);
+            const af::array rows = af::tile(AdaptiveAverageMatrix(in_h, out_h), 1, 1, c, n);
+            const af::array cols_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_w, out_w)), 1, 1, c, n);
+            af::array output = af::matmul(af::matmul(rows, TensorToAf(input)), cols_t);
+            output.eval();
+            Tensor result = Tensor::FromSemanticArray(output, output_shape);
+            cached_input_ = input;
+            has_forward_ = true;
+            return result;
+        } catch (const af::exception& e) {
+            LogPoolingFallbackOnce(
+                "AdaptiveAvgPool2DLayer::Forward", e.what(), input, "input");
+        }
+    }
+#else
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("input", shape));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "AdaptiveAvgPool2DLayer::Forward",
+        BackendFallbackReason::BackendUnavailable,
+        "ArrayFire support is not compiled",
+        context);
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "AdaptiveAvgPool2DLayer::Forward");
+
+    Tensor output(output_shape, DataType::Float32);
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
+    for (size_t oh = 0; oh < out_h; ++oh) {
+        const size_t h0 = AdaptiveBinStart(oh, in_h, out_h);
+        const size_t h1 = AdaptiveBinEnd(oh, in_h, out_h);
+        for (size_t ow = 0; ow < out_w; ++ow) {
+            const size_t w0 = AdaptiveBinStart(ow, in_w, out_w);
+            const size_t w1 = AdaptiveBinEnd(ow, in_w, out_w);
+            const float scale = 1.0f / static_cast<float>((h1 - h0) * (w1 - w0));
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t b = 0; b < batch_size; ++b) {
+                    float sum = 0.0f;
+                    for (size_t h = h0; h < h1; ++h) {
+                        for (size_t w = w0; w < w1; ++w) {
+                            sum += input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)];
+                        }
+                    }
+                    output_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] = sum * scale;
+                }
+            }
+        }
+    }
+    cached_input_ = input;
+    has_forward_ = true;
+    return output;
+}
+
+Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
+    if (!has_forward_) {
+        throw std::logic_error(
+            "AdaptiveAvgPool2DLayer::Backward requires a successful Forward call");
+    }
+    ValidatePoolInput(cached_input_, "AdaptiveAvgPool2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(
+            "AdaptiveAvgPool2D backward requires Float32 grad_output");
+    }
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    const size_t out_h = static_cast<size_t>(out_h_);
+    const size_t out_w = static_cast<size_t>(out_w_);
+    if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, channels, batch_size}) {
+        throw std::runtime_error("AdaptiveAvgPool2D backward gradient shape mismatch");
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    bool use_native_cpu = false;
+    if (ShouldForceArrayFireBackendFallbackForTesting(
+            "AdaptiveAvgPool2DLayer::Backward")) {
+        LogPoolingFallbackOnce(
+            "AdaptiveAvgPool2DLayer::Backward",
+            "forced ArrayFire backend fallback test hook",
+            grad_output,
+            "grad_output");
+        use_native_cpu = true;
+    }
+    if (!use_native_cpu) {
+        try {
+            const unsigned c = static_cast<unsigned>(channels);
+            const unsigned n = static_cast<unsigned>(batch_size);
+            // dX = P_h^T dY P_w
+            const af::array rows_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_h, out_h)), 1, 1, c, n);
+            const af::array cols = af::tile(AdaptiveAverageMatrix(in_w, out_w), 1, 1, c, n);
+            af::array grad_input = af::matmul(af::matmul(rows_t, TensorToAf(grad_output)), cols);
+            grad_input.eval();
+            return Tensor::FromSemanticArray(grad_input, input_shape);
+        } catch (const af::exception& e) {
+            LogPoolingFallbackOnce(
+                "AdaptiveAvgPool2DLayer::Backward", e.what(), grad_output,
+                "grad_output");
+        }
+    }
+#else
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("grad_output", grad_output.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "AdaptiveAvgPool2DLayer::Backward",
+        BackendFallbackReason::BackendUnavailable,
+        "ArrayFire support is not compiled",
+        context);
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "AdaptiveAvgPool2DLayer::Backward");
+
+    Tensor grad_input(input_shape, DataType::Float32);
+    const float* grad_data = grad_output.ReadData<float>();
+    float* grad_input_data = grad_input.MutableData<float>();
+    std::fill(grad_input_data, grad_input_data + grad_input.NumElements(), 0.0f);
+    for (size_t oh = 0; oh < out_h; ++oh) {
+        const size_t h0 = AdaptiveBinStart(oh, in_h, out_h);
+        const size_t h1 = AdaptiveBinEnd(oh, in_h, out_h);
+        for (size_t ow = 0; ow < out_w; ++ow) {
+            const size_t w0 = AdaptiveBinStart(ow, in_w, out_w);
+            const size_t w1 = AdaptiveBinEnd(ow, in_w, out_w);
+            const float scale = 1.0f / static_cast<float>((h1 - h0) * (w1 - w0));
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t b = 0; b < batch_size; ++b) {
+                    const float g = grad_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] * scale;
+                    for (size_t h = h0; h < h1; ++h) {
+                        for (size_t w = w0; w < w1; ++w) {
+                            grad_input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)] += g;
+                        }
+                    }
+                }
+            }
         }
     }
     return grad_input;

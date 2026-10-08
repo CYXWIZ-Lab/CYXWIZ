@@ -398,6 +398,24 @@ private:
 };
 
 /**
+ * @brief Parameter-free SequentialModel adapter for AdaptiveAvgPool2DLayer:
+ * [H,W,C,N] -> [out_h,out_w,C,N] (torch AdaptiveAvgPool2d).
+ */
+class CYXWIZ_API AdaptiveAvgPool2DModule : public Module {
+public:
+    AdaptiveAvgPool2DModule(int out_h, int out_w);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<AdaptiveAvgPool2DLayer> layer_;
+    int out_h_;
+    int out_w_;
+};
+
+/**
  * @brief Wrapper for LinearLayer
  */
 class CYXWIZ_API LinearModule : public Module {

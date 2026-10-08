@@ -280,6 +280,34 @@ int main() {
         Check(!bad.is_valid && reported, "Global Avg Pool after Flatten is refused on its node");
     }
 
+    // ---- Adaptive Avg Pool inside the section: [16,16,32] -> [4,4,32] -> 512 ----
+    {
+        auto variant = nodes;
+        auto adaptive = Layer(14, gui::NodeType::AdaptiveAvgPool, "Adaptive", {{"output_size", "4"}});
+        variant.push_back(adaptive);
+        auto relinked = links;
+        for (auto& link : relinked) {
+            if (link.from_node == 8 && link.to_node == 9) link = Link(link.id, 8, 14);
+        }
+        relinked.push_back(Link(21, 14, 9));
+        const auto aconfig = compiler.Compile(variant, relinked, true);
+        for (const auto& issue : aconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.message << "\n";
+        }
+        Check(aconfig.is_valid, "a CNN with Adaptive Avg Pool compiles");
+        Check(LayerNamed(aconfig, "Adaptive").output_shape == std::vector<size_t>{4, 4, 32},
+              "Adaptive Avg Pool [16,16,32] -> [4,4,32], got " + ShapeText(LayerNamed(aconfig, "Adaptive").output_shape));
+        Check(LayerNamed(aconfig, "Flatten").output_shape == std::vector<size_t>{512}, "Flatten -> 512");
+        auto abuilt = cyxwiz::BuildExecutableFromConfig(aconfig);
+        Check(abuilt.ok(), "ModelBuilder builds Adaptive Avg Pool: " + abuilt.error_message);
+        long long aparams = 0;
+        for (const auto& [name, tensor] : abuilt.model->GetParameters()) aparams += static_cast<long long>(tensor.NumElements());
+        // Dense now takes 512 inputs: 512*2 + 2 = 1026 (torch: Linear(512, 2))
+        Check(aparams == 448 + 4640 + 1026, "learnable parameters 6,114, got " + std::to_string(aparams));
+        const cyxwiz::Tensor alogits = abuilt.model->Forward(spatial);
+        Check(alogits.Shape() == std::vector<size_t>{batch, 2}, "Adaptive Avg Pool CNN forward gives [N, 2]");
+    }
+
     // ---- Global Max Pool the same way ----------------------------------------
     {
         auto variant = nodes;

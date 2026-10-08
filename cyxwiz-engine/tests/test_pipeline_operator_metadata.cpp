@@ -1551,13 +1551,13 @@ void CheckConvolutionPoolingBlockedFamilyContract(
     const std::initializer_list<gui::NodeType> family = {
         gui::NodeType::Conv3D,
         gui::NodeType::DepthwiseConv2D,
-        gui::NodeType::AdaptiveAvgPool,
     };
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalAvgPool);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::Conv1D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalMaxPool);
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AdaptiveAvgPool);
     for (const auto type : family) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,

@@ -281,4 +281,21 @@ std::string GlobalMaxPool2DModule::GetName() const {
     return "GlobalMaxPool2D";
 }
 
+AdaptiveAvgPool2DModule::AdaptiveAvgPool2DModule(int out_h, int out_w)
+    : layer_(std::make_unique<AdaptiveAvgPool2DLayer>(out_h, out_w)),
+      out_h_(out_h),
+      out_w_(out_w) {}
+
+Tensor AdaptiveAvgPool2DModule::Forward(const Tensor& input) {
+    return layer_->Forward(input);
+}
+
+Tensor AdaptiveAvgPool2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output);
+}
+
+std::string AdaptiveAvgPool2DModule::GetName() const {
+    return "AdaptiveAvgPool2D(" + std::to_string(out_h_) + "x" + std::to_string(out_w_) + ")";
+}
+
 } // namespace cyxwiz

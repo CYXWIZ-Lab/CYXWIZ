@@ -13,7 +13,7 @@ TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
                                 NodeType::ConvTranspose2D, NodeType::Upsample,
                                 NodeType::PixelShuffle, NodeType::GroupNorm,
                                 NodeType::InstanceNorm, NodeType::GlobalAvgPool, NodeType::Conv1D,
-                                NodeType::GlobalMaxPool}) {
+                                NodeType::GlobalMaxPool, NodeType::AdaptiveAvgPool}) {
         CAPTURE(static_cast<int>(type));
         const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
         REQUIRE(support.mode == PipelineTrainingBackendSupportMode::Allowed);

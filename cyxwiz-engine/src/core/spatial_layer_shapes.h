@@ -69,10 +69,18 @@ inline bool IsSpatialLayer(gui::NodeType type) {
         case gui::NodeType::InstanceNorm:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
+        case gui::NodeType::AdaptiveAvgPool:
             return true;
         default:
             return false;
     }
+}
+
+// Adaptive Avg Pool's square output size (torch AdaptiveAvgPool2d(output_size)).
+inline int AdaptiveOutputSize(const Params& params) {
+    const int size = ParseIntParam(params, "output_size", 1);
+    if (size <= 0) throw std::invalid_argument("output_size must be positive");
+    return size;
 }
 
 // Global Avg / Max Pool: end a spatial ([H,W,C]) or sequence ([L,C]) section
@@ -125,6 +133,9 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.stride = ParseIntParam(params, "stride", 2);
             g.padding = ParseIntParam(params, "padding", 1);
             g.output_padding = ParseIntParam(params, "output_padding", 1);
+            break;
+        case gui::NodeType::AdaptiveAvgPool:
+            AdaptiveOutputSize(params);
             break;
         case gui::NodeType::GroupNorm:
             g.groups = ParseIntParam(params, "num_groups", 32);
@@ -193,6 +204,10 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
             return in;
         case gui::NodeType::InstanceNorm:
             return in;
+        case gui::NodeType::AdaptiveAvgPool: {
+            const size_t size = static_cast<size_t>(AdaptiveOutputSize(params));
+            return {size, size, in[2]};
+        }
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle: {
             UpsamplingConfiguration resolved;

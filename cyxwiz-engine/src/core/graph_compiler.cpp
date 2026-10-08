@@ -6347,6 +6347,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::GlobalMaxPool:
         case gui::NodeType::GlobalAvgPool:
+        case gui::NodeType::AdaptiveAvgPool:
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
@@ -6878,6 +6879,7 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::AdaptiveAvgPool:
             // spatial_layer_shapes.h; the compile loop reports the reasons.
             try {
                 output_shape = spatial::SampleShapeAfter(layer.type, layer.parameters, input_shape);

@@ -3,8 +3,8 @@
 (TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
 bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
-Conv1d on [L,C,N] sequences, global max pooling - and the activations PReLU and
-SELU on [N, F] rows.
+Conv1d on [L,C,N] sequences, global max pooling, adaptive average pooling -
+and the activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -253,6 +253,17 @@ def build() -> list[dict[str, Any]]:
     cases.append(case(
         "global_max_pool_image_16", "GlobalMaxPool", {},
         x, lambda t: functional.adaptive_max_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
+
+    # Adaptive average pooling: overlapping bins (5 -> 2), uneven bins (7x6 -> 3x4),
+    # more outputs than inputs (3 -> 4), and the global case (-> 1)
+    for name, size, out in [("adaptive_avg_pool_5_to_2", (5, 5), (2, 2)),
+                            ("adaptive_avg_pool_7x6_to_3x4", (7, 6), (3, 4)),
+                            ("adaptive_avg_pool_3_to_4", (3, 3), (4, 4)),
+                            ("adaptive_avg_pool_8_to_1", (8, 8), (1, 1))]:
+        x = torch.randn(2, 3, *size)
+        cases.append(case(
+            name, "AdaptiveAvgPool", {"output_h": out[0], "output_w": out[1]},
+            x, lambda t, out=out: functional.adaptive_avg_pool2d(t, out), {}, {}))
 
     return cases
 

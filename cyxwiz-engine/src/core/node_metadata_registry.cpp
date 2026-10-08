@@ -2569,16 +2569,16 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::AdaptiveAvgPool, NodeCategory::Pooling,
         "Adaptive Average Pool", ICON_FA_COMPRESS,
         {"pooling", "adaptive", "average"}, 0, false,
-        "Blocked adaptive average-pooling design node retained for graph compatibility",
-        "No backend adaptive-pooling layer, GraphCompiler extraction, "
-        "ModelBuilder module, or SequentialModel execution path currently owns this node.",
+        "Average-pools any [H,W,C] feature map to output_size x output_size",
+        "torch.nn.AdaptiveAvgPool2d(output_size): output cell i averages input rows "
+        "floor(i x H / s) .. ceil((i + 1) x H / s) - 1 (likewise columns), so any input size gives the "
+        "same output size. Stays in the convolution section: Flatten or a global pool still ends it.",
         "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Adaptively pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"output_size", "int", "1", "Legacy square output size", {}, "1-1048576",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map"}},
+        {{"Output", PinType::Tensor, true, "[output_size, output_size, C] feature map"}},
+        {{"output_size", "int", "1", "Output height and width", {}, "1-1048576",
           "Output Size", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ConvTranspose2D, NodeCategory::Upsampling, "ConvTranspose2D", ICON_FA_EXPAND,
         {"convtranspose", "transposed", "convolution", "upsample"}, 0, false,

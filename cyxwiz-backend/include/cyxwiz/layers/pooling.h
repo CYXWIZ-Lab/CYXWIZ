@@ -103,4 +103,27 @@ private:
     bool has_forward_ = false;
 };
 
+// ============================================================================
+// AdaptiveAvgPool2D Layer - average pooling to a fixed output size
+// ============================================================================
+
+// [H,W,C,N] -> [out_h,out_w,C,N] (torch AdaptiveAvgPool2d): output bin i
+// averages input rows floor(i*H/out_h) .. ceil((i+1)*H/out_h) - 1, likewise
+// for columns. Bins may overlap; out may exceed H.
+class CYXWIZ_API AdaptiveAvgPool2DLayer : public Layer {
+public:
+    AdaptiveAvgPool2DLayer(int out_h, int out_w);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override { return {}; }
+    void SetParameters(const std::map<std::string, Tensor>&) override {}
+    std::string GetName() const override { return "AdaptiveAvgPool2D"; }
+
+private:
+    int out_h_;
+    int out_w_;
+    bool has_forward_ = false;
+};
+
 } // namespace cyxwiz

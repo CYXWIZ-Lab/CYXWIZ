@@ -1173,6 +1173,18 @@ bool BuildSequential(
 
             // The sequence section (TOFIX140): Conv1D on [L,C,N], opened on
             // the input rows or after an Embedding (sequence_conv_section.h).
+            // Adaptive Avg Pool: [H,W,C,N] -> [s,s,C,N] (torch AdaptiveAvgPool2d).
+            case gui::NodeType::AdaptiveAvgPool: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error("Adaptive Avg Pool at index " + std::to_string(i) +
+                                             " is outside the spatial section (Flatten before Dense)");
+                }
+                const int size = spatial::AdaptiveOutputSize(layer_cfg.parameters);
+                model.Add<AdaptiveAvgPool2DModule>(size, size);
+                CYXWIZ_BUILDER_INFO("  [{}] AdaptiveAvgPool2D -> [{}, {}, C]", i, size, size);
+                break;
+            }
+
             case gui::NodeType::Conv1D: {
                 if (!sequence_section || i >= sequence_section->input_shapes.size() ||
                     sequence_section->input_shapes[i].size() != 2) {
