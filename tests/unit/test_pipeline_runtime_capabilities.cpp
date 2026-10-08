@@ -13,7 +13,8 @@ TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
                                 NodeType::ConvTranspose2D, NodeType::Upsample,
                                 NodeType::PixelShuffle, NodeType::GroupNorm,
                                 NodeType::InstanceNorm, NodeType::GlobalAvgPool, NodeType::Conv1D,
-                                NodeType::GlobalMaxPool, NodeType::AdaptiveAvgPool}) {
+                                NodeType::GlobalMaxPool, NodeType::AdaptiveAvgPool,
+                                NodeType::DepthwiseConv2D}) {
         CAPTURE(static_cast<int>(type));
         const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
         REQUIRE(support.mode == PipelineTrainingBackendSupportMode::Allowed);
@@ -22,7 +23,7 @@ TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
         REQUIRE(support.reason != nullptr);
     }
     // The ones without an owner stay blocked.
-    for (const NodeType type : {NodeType::Conv3D, NodeType::DepthwiseConv2D}) {
+    for (const NodeType type : {NodeType::Conv3D}) {
         CAPTURE(static_cast<int>(type));
         CHECK(cyxwiz::ResolvePipelineTrainingBackendSupport(type).mode ==
               PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);

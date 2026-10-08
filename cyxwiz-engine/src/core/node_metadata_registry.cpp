@@ -2148,25 +2148,22 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
         "Depthwise Conv2D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "depthwise", "image"}, 0, false,
-        "Blocked depthwise convolution design node retained for graph compatibility",
-        "No backend depthwise layer, GraphCompiler extraction, ModelBuilder "
-        "module, or SequentialModel execution path currently owns this node.",
+        "Convolves each channel with its own kernels: [H,W,C] -> [H',W',C x depth_multiplier]",
+        "torch.nn.Conv2d(C, C x M, kernel_size, stride, padding, groups=C): output channel c x M + m "
+        "convolves input channel c alone, so it has k x k x C x M weights instead of Conv2D's "
+        "k x k x C x filters. Follow it with a 1x1 Conv2D (pointwise) for a depthwise separable block.",
         "",
-        {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
-        {{"Output", PinType::Tensor, true,
-          "Depthwise feature map; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
-          "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map"}},
+        {{"Output", PinType::Tensor, true, "[H',W',C x depth_multiplier] feature map"}},
+        {{"kernel_size", "int", "3", "Square kernel size", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Convolution stride", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels); valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false},
-         {"depth_multiplier", "int", "1", "Legacy channel multiplier", {}, "1-1048576",
+         {"depth_multiplier", "int", "1", "Output channels per input channel (M)", {}, "1-1048576",
           "Depth Multiplier", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
         {"lstm", "recurrent", "sequence"}, 0, false,

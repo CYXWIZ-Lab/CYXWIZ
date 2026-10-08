@@ -308,6 +308,33 @@ int main() {
         Check(alogits.Shape() == std::vector<size_t>{batch, 2}, "Adaptive Avg Pool CNN forward gives [N, 2]");
     }
 
+    // ---- Depthwise Conv2D in place of Conv 32: 16 channels x 2 = 32 ------------
+    {
+        auto variant = nodes;
+        for (auto& n : variant) {
+            if (n.name == "Conv 32") {
+                n.type = gui::NodeType::DepthwiseConv2D;
+                n.name = "Depthwise";
+                n.parameters = {{"kernel_size", "3"}, {"stride", "1"}, {"padding", "same"}, {"depth_multiplier", "2"}};
+            }
+        }
+        const auto dconfig = compiler.Compile(variant, links, true);
+        for (const auto& issue : dconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.message << "\n";
+        }
+        Check(dconfig.is_valid, "a CNN with Depthwise Conv2D compiles");
+        Check(LayerNamed(dconfig, "Depthwise").output_shape == std::vector<size_t>{32, 32, 32},
+              "Depthwise x2 over [32,32,16] -> [32,32,32], got " + ShapeText(LayerNamed(dconfig, "Depthwise").output_shape));
+        auto dbuilt = cyxwiz::BuildExecutableFromConfig(dconfig);
+        Check(dbuilt.ok(), "ModelBuilder builds Depthwise Conv2D: " + dbuilt.error_message);
+        long long dparams = 0;
+        for (const auto& [name, tensor] : dbuilt.model->GetParameters()) dparams += static_cast<long long>(tensor.NumElements());
+        // Depthwise: 3*3*1*32 + 32 = 320 (torch Conv2d(16, 32, 3, groups=16)) in place of Conv 32's 4,640
+        Check(dparams == 448 + 320 + 16386, "learnable parameters 17,154, got " + std::to_string(dparams));
+        const cyxwiz::Tensor dlogits = dbuilt.model->Forward(spatial);
+        Check(dlogits.Shape() == std::vector<size_t>{batch, 2}, "Depthwise CNN forward gives [N, 2]");
+    }
+
     // ---- Global Max Pool the same way ----------------------------------------
     {
         auto variant = nodes;

@@ -24,7 +24,8 @@ using Params = std::map<std::string, std::string>;
 
 // The resolved geometry of a convolution or pooling layer.
 struct Geometry {
-    int channels_out = 0;    // Conv2D filters / ConvTranspose2D out_channels; 0 = keeps C
+    int channels_out = 0;    // Conv2D filters / ConvTranspose2D out_channels / Depthwise C x M; 0 = keeps C
+    int depth_multiplier = 1;  // DepthwiseConv2D only
     int kernel = 1;
     int stride = 1;
     int padding = 0;
@@ -62,6 +63,7 @@ inline int ResolvePadding(const Params& params, int kernel) {
 inline bool IsSpatialLayer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Conv2D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::ConvTranspose2D:
@@ -116,6 +118,15 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
         case gui::NodeType::Conv2D:
         case gui::NodeType::Conv1D:
             g.channels_out = ParseIntParam(params, "filters", 32);
+            g.kernel = ParseIntParam(params, "kernel_size", 3);
+            g.stride = ParseIntParam(params, "stride", 1);
+            g.padding = ResolvePadding(params, g.kernel);
+            break;
+        case gui::NodeType::DepthwiseConv2D:
+            // torch Conv2d(C, C x M, k, groups=C): C x M output channels
+            g.depth_multiplier = ParseIntParam(params, "depth_multiplier", 1);
+            if (g.depth_multiplier <= 0) throw std::invalid_argument("depth_multiplier must be positive");
+            g.channels_out = static_cast<int>(channels_in) * g.depth_multiplier;
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
             g.padding = ResolvePadding(params, g.kernel);
@@ -181,6 +192,7 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
     const long w = static_cast<long>(in[1]);
     switch (type) {
         case gui::NodeType::Conv2D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D: {
             const Geometry g = ResolveGeometry(type, params, in[2]);

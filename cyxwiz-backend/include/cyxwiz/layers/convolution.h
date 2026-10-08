@@ -91,6 +91,42 @@ private:
 };
 
 // ============================================================================
+// DepthwiseConv2D Layer - one set of kernels per input channel
+// ============================================================================
+
+// [H,W,C,N] -> [out_h,out_w,C*M,N], torch Conv2d(C, C*M, k, groups=C): output
+// channel c*M + m convolves input channel c alone. Weights [k,k,1,C*M] (the
+// Conv2D layout with one input channel per group), bias [C*M].
+class CYXWIZ_API DepthwiseConv2DLayer : public Layer {
+public:
+    DepthwiseConv2DLayer(int channels, int depth_multiplier, int kernel_size,
+                         int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "DepthwiseConv2D"; }
+
+    int GetChannels() const { return channels_; }
+    int GetDepthMultiplier() const { return multiplier_; }
+
+private:
+    int channels_;
+    int multiplier_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    bool use_bias_;
+
+    Tensor weights_;
+    Tensor bias_;
+    Tensor grad_weights_;
+    Tensor grad_bias_;
+    bool has_forward_ = false;
+};
+
+// ============================================================================
 // ConvTranspose2D Layer - 2D Transposed Convolution
 // ============================================================================
 

@@ -1085,6 +1085,7 @@ bool BuildSequential(
             // The CNN stack (TOFIX140 A1): [H,W,C,N] modules, channels from
             // the spatial head's shape walk (the compiler's rule).
             case gui::NodeType::Conv2D:
+            case gui::NodeType::DepthwiseConv2D:
             case gui::NodeType::MaxPool2D:
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::ConvTranspose2D:
@@ -1114,6 +1115,12 @@ bool BuildSequential(
                         model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
                         CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::DepthwiseConv2D:
+                        model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
+                                                         g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
+                                            g.depth_multiplier, g.kernel, g.stride, g.padding);
                         break;
                     case gui::NodeType::MaxPool2D:
                         model.Add<MaxPool2DModule>(g.kernel, g.stride, g.padding);

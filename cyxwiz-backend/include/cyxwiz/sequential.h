@@ -250,6 +250,32 @@ private:
 };
 
 /**
+ * @brief SequentialModel adapter for DepthwiseConv2DLayer ([H,W,C,N] ->
+ * [out_h,out_w,C*M,N], torch Conv2d groups=C).
+ */
+class CYXWIZ_API DepthwiseConv2DModule : public Module {
+public:
+    DepthwiseConv2DModule(int channels, int depth_multiplier, int kernel_size,
+                          int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<DepthwiseConv2DLayer> layer_;
+    int channels_;
+    int multiplier_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+};
+
+/**
  * @brief SequentialModel ownership adapter for ConvTranspose2DLayer.
  *
  * Preserves the existing `[H,W,C,N]` Tensor contract and native formulas.

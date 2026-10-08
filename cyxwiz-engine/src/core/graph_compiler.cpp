@@ -6343,6 +6343,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dense:
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::GlobalMaxPool:
@@ -6725,6 +6726,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
             // The spatial rule resolves the geometry ("same" and "valid" are
@@ -6880,6 +6882,7 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
         case gui::NodeType::AdaptiveAvgPool:
+        case gui::NodeType::DepthwiseConv2D:
             // spatial_layer_shapes.h; the compile loop reports the reasons.
             try {
                 output_shape = spatial::SampleShapeAfter(layer.type, layer.parameters, input_shape);

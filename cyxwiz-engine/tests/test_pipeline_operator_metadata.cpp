@@ -1550,7 +1550,6 @@ void CheckConvolutionPoolingBlockedFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::initializer_list<gui::NodeType> family = {
         gui::NodeType::Conv3D,
-        gui::NodeType::DepthwiseConv2D,
     };
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
@@ -1558,6 +1557,7 @@ void CheckConvolutionPoolingBlockedFamilyContract(
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::Conv1D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalMaxPool);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AdaptiveAvgPool);
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::DepthwiseConv2D);
     for (const auto type : family) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
@@ -1594,14 +1594,14 @@ void CheckConvolutionPoolingBlockedFamilyContract(
 
     const auto* depthwise =
         metadata.GetMetadata(gui::NodeType::DepthwiseConv2D);
-    Check(depthwise->parameters.size() == 5 &&
-              ParameterMatches(depthwise, "filters", "int", "32") &&
+    Check(depthwise->parameters.size() == 4 &&
+              !HasParameter(depthwise, "filters") &&
               ParameterMatches(depthwise, "kernel_size", "int", "3") &&
               ParameterMatches(depthwise, "stride", "int", "1") &&
               ParameterMatches(depthwise, "padding", "enum", "same") &&
               ParameterMatches(depthwise, "depth_multiplier", "int", "1") &&
               !HasParameter(depthwise, "activation"),
-          "DepthwiseConv2D should preserve its compatibility fields without a fictional activation");
+          "DepthwiseConv2D takes kernel_size/stride/padding/depth_multiplier; its channels come from the input");
 
     for (const auto type : {gui::NodeType::MaxPool2D,
                             gui::NodeType::AvgPool2D}) {

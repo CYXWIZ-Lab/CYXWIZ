@@ -105,6 +105,10 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
         return std::make_unique<GlobalAvgPool2DModule>();
     if (layer == "GlobalMaxPool")
         return std::make_unique<GlobalMaxPool2DModule>();
+    if (layer == "DepthwiseConv2D")
+        return std::make_unique<DepthwiseConv2DModule>(
+            static_cast<int>(channels_in), g.at("depth_multiplier").get<int>(), g.at("kernel_size").get<int>(),
+            g.at("stride").get<int>(), g.at("padding").get<int>(), true);
     if (layer == "AdaptiveAvgPool")
         return std::make_unique<AdaptiveAvgPool2DModule>(g.at("output_h").get<int>(), g.at("output_w").get<int>());
     if (layer == "PixelShuffle")

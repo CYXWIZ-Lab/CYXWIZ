@@ -119,6 +119,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::Dense:
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::GlobalMaxPool:

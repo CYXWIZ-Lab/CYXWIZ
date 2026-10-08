@@ -394,13 +394,15 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::DepthwiseConv2D] = {
         "Depthwise Conv2D",
-        "Depthwise separable convolution that applies a single filter per input channel. "
-        "Much more efficient than standard Conv2D, used in MobileNet and EfficientNet.",
-        "Each input channel is convolved independently.",
+        "Convolves each input channel with its own depth_multiplier kernels. Far fewer weights than "
+        "Conv2D; used in MobileNet and EfficientNet.",
+        "[H,W,C] -> [H',W',C*M], as torch.nn.Conv2d(C, C*M, k, groups=C): output channel c*M + m "
+        "sees only input channel c. H' = floor((H + 2p - k) / s) + 1.",
         {
-            {"kernel_size", "Size of the depthwise kernel"},
-            {"stride", "Step size"},
-            {"padding", "Zero-padding"}
+            {"kernel_size", "Square kernel size k"},
+            {"stride", "Step size s"},
+            {"padding", "same ((k-1)/2, odd k) or valid (0)"},
+            {"depth_multiplier", "Output channels per input channel M"}
         },
         {
             "Follow with 1x1 Conv2D (pointwise) for full depthwise separable conv",

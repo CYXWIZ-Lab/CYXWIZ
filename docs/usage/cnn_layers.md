@@ -18,6 +18,7 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | Node | Output shape | PyTorch |
 | --- | --- | --- |
 | Conv2D (`filters`, `kernel_size`, `stride`, `padding`: a number, `same` or `valid`) | `[floor((H + 2p - k) / s) + 1, ..., filters]` | `nn.Conv2d` |
+| Depthwise Conv2D (`kernel_size`, `stride`, `padding`, `depth_multiplier` M) | same formula, `C x M` channels; channel `c*M + m` sees only input channel `c` | `nn.Conv2d(C, C*M, k, groups=C)` |
 | MaxPool2D / AvgPool2D (`pool_size`, `stride`) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |

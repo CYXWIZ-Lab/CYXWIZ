@@ -1074,9 +1074,6 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
         {gui::NodeType::Conv3D,
          "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
          PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::DepthwiseConv2D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
@@ -1165,6 +1162,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
         // Data Input and the Flatten; PyTorch fixtures in computation_truth.
         {gui::NodeType::Conv2D, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable ArrayFire convolution layer"},
+        {gui::NodeType::DepthwiseConv2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire depthwise convolution (one kernel set per channel)"},
         {gui::NodeType::MaxPool2D, PipelineTrainingSupportRole::ModelLayer,
          "compiled as an ArrayFire pooling layer"},
         {gui::NodeType::Conv1D, PipelineTrainingSupportRole::ModelLayer,

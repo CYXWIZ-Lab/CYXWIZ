@@ -3,8 +3,8 @@
 (TOFIX140): the spatial (CNN) layers on [H,W,C,N] - Conv2d, MaxPool2d,
 AvgPool2d, ConvTranspose2d, GroupNorm, InstanceNorm2d, Upsample (nearest,
 bilinear), PixelShuffle, global average pooling ([H,W,C,N] -> [N,C] rows) -
-Conv1d on [L,C,N] sequences, global max pooling, adaptive average pooling -
-and the activations PReLU and SELU on [N, F] rows.
+Conv1d on [L,C,N] sequences, global max pooling, adaptive average pooling,
+depthwise Conv2d (groups = C) - and the activations PReLU and SELU on [N, F] rows.
 
 Every case stores the input, the parameters, the forward output, a fixed
 upstream gradient and the gradients PyTorch computes for the input and the
@@ -264,6 +264,19 @@ def build() -> list[dict[str, Any]]:
         cases.append(case(
             name, "AdaptiveAvgPool", {"output_h": out[0], "output_w": out[1]},
             x, lambda t, out=out: functional.adaptive_avg_pool2d(t, out), {}, {}))
+
+    # Depthwise Conv2d: groups = C, weights [C*M, 1, k, k] -> backend [k, k, 1, C*M]
+    for name, c, m, k, s, p, size in [("depthwise_same_k3", 4, 1, 3, 1, 1, 8),
+                                      ("depthwise_m2_k3_s2", 3, 2, 3, 2, 0, 9),
+                                      ("depthwise_image_32", 16, 1, 3, 1, 1, 32)]:
+        x = torch.randn(2, c, size, size)
+        w = torch.randn(c * m, 1, k, k) * 0.4
+        b = torch.randn(c * m) * 0.1
+        cases.append(case(
+            name, "DepthwiseConv2D",
+            {"depth_multiplier": m, "kernel_size": k, "stride": s, "padding": p},
+            x, lambda t, w=w, b=b, s=s, p=p, c=c: functional.conv2d(t, w, b, stride=s, padding=p, groups=c),
+            {"weights": w, "bias": b}, {"weights": conv_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
 
     return cases
 
