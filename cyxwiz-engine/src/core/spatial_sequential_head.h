@@ -3,18 +3,22 @@
 #include "graph_compiler.h"
 #include "spatial_layer_shapes.h"
 
+#include <limits>
 #include <optional>
 
 namespace cyxwiz {
 
 // The spatial section of a sequential model (TOFIX140 A1): the layers that
-// run on [H,W,C,N] tensors, from the first spatial layer to the Flatten
-// that turns the sample back into a row for Dense.
+// run on [H,W,C,N] tensors, from the first spatial layer up to the Flatten
+// that turns the sample back into a row for Dense. A model may also stay
+// spatial to its end (no Flatten: it outputs [H,W,C,N]).
 struct SpatialSequentialHead {
-  size_t flatten_index = 0;                  // the Flatten that ends the section
+  static constexpr size_t kNoFlatten = std::numeric_limits<size_t>::max();
+  size_t flatten_index = kNoFlatten;         // the Flatten that ends the section
   std::vector<size_t> sample_shape;          // [H,W,C] entering the Flatten
   size_t features = 0;                       // H*W*C
-  // The [H,W,C] sample entering each layer before the Flatten (index = layer index).
+  // The [H,W,C] sample entering each spatial-section layer (index = layer
+  // index); empty entries when the model has no input_shape.
   std::vector<std::vector<size_t>> input_shapes;
 };
 
@@ -27,45 +31,77 @@ inline bool UsesSpatialSequentialInput(const TrainingConfiguration &config) {
 
 // Resolves the section. Only an explicit first spatial layer opts in;
 // ordinary tabular/sequence paths are untouched. Throws std::invalid_argument
-// when the section is not well formed (a non-spatial layer before the
-// Flatten, a kernel that does not fit, no input shape).
+// with the layer index when the section is not well formed.
 inline std::optional<SpatialSequentialHead>
 ResolveSpatialSequentialHead(const TrainingConfiguration &config) {
   if (!UsesSpatialSequentialInput(config))
     return std::nullopt;
 
   auto shape = config.input_shape;
-  if (shape.size() != 3)
-    throw std::invalid_argument(
-        "Spatial layers need an image input_shape [H,W,C]; the Data Input gives " +
-        std::to_string(shape.size()) + " dimensions");
-  const auto elements = SpatialSampleElements(shape);
-  if (config.input_size != 0 && config.input_size != elements)
-    throw std::invalid_argument(
-        "Spatial input_size must match input_shape [H,W,C]");
+  if (!shape.empty()) {
+    const auto elements = SpatialSampleElements(shape);
+    if (config.input_size != 0 && config.input_size != elements)
+      throw std::invalid_argument(
+          "Spatial input_size must match input_shape [H,W,C]");
+  }
 
   SpatialSequentialHead head;
   bool closed = false;
-  for (size_t i = 0; i < config.layers.size() && !closed; ++i) {
+  for (size_t i = 0; i < config.layers.size(); ++i) {
     const auto &layer = config.layers[i];
+    const bool spatial_layer = spatial::IsSpatialLayer(layer.type);
+    if (closed) {
+      if (spatial_layer)
+        throw std::invalid_argument(
+            "Spatial layers cannot follow the row Flatten head (index " +
+            std::to_string(i) + ")");
+      continue;
+    }
     if (layer.type == gui::NodeType::Flatten) {
+      if (shape.empty())
+        throw std::invalid_argument(
+            "Spatial Flatten requires explicit input_shape [H,W,C]");
       head.flatten_index = i;
       head.sample_shape = shape;
       head.features = SpatialSampleElements(shape);
       closed = true;
       continue;
     }
-    if (!spatial::IsSpatialLayer(layer.type) && !spatial::IsShapePreservingLayer(layer.type))
+    if (!spatial_layer && !spatial::IsShapePreservingLayer(layer.type) &&
+        layer.type != gui::NodeType::Output)
       throw std::invalid_argument(
           "Spatial head requires Flatten before layer index " + std::to_string(i) +
-          " (" + layer.name + "); only convolution, pooling, normalisation, "
-          "upsampling and activation layers run before Flatten");
-    head.input_shapes.push_back(shape);
-    shape = spatial::SampleShapeAfter(layer.type, layer.parameters, shape);
+          "; only convolution, pooling, normalisation, upsampling and "
+          "activation layers run before Flatten");
+    head.input_shapes.resize(i + 1);
+    head.input_shapes[i] = shape;
+    if (!spatial_layer) continue;
+    const char *what = layer.type == gui::NodeType::Upsample ||
+                               layer.type == gui::NodeType::PixelShuffle
+                           ? "upsampling"
+                           : "layer";
+    try {
+      if (shape.empty()) {
+        // No sample shape yet: still validate the persisted parameters.
+        if (layer.type == gui::NodeType::Upsample ||
+            layer.type == gui::NodeType::PixelShuffle) {
+          UpsamplingConfiguration resolved;
+          if (auto error = ResolveUpsamplingConfiguration(
+                  layer.type, layer.parameters, resolved, layer.scale_factor,
+                  layer.upsample_mode))
+            throw std::invalid_argument(*error);
+        } else {
+          spatial::ResolveGeometry(layer.type, layer.parameters, 0);
+        }
+      } else {
+        shape = spatial::SampleShapeAfter(layer.type, layer.parameters, shape);
+      }
+    } catch (const std::invalid_argument &error) {
+      throw std::invalid_argument(std::string("invalid ") + what +
+                                  " configuration at index " +
+                                  std::to_string(i) + ": " + error.what());
+    }
   }
-  if (!closed)
-    throw std::invalid_argument(
-        "Spatial layers need a Flatten before the Dense head (or the Output)");
   return head;
 }
 

@@ -1063,6 +1063,11 @@ bool BuildSequential(
                         " is outside the spatial head (Flatten before Dense)");
                 }
                 const auto& in_shape = spatial_head->input_shapes[i];
+                if (in_shape.size() != 3) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " needs the model's input_shape [H,W,C] to know its channels");
+                }
                 const int channels = static_cast<int>(in_shape[2]);
                 spatial::Geometry g;
                 try {

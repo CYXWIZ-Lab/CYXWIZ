@@ -3,36 +3,29 @@
 
 #include "../../cyxwiz-engine/src/core/pipeline_runtime_capabilities.h"
 
-TEST_CASE("Upsample mode-specific backend evidence does not promote Studio training support",
-          "[pipeline][capabilities][upsample]") {
-    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::Upsample);
-    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-    REQUIRE_FALSE(support.compile_supported);
-    REQUIRE_FALSE(support.training_supported);
-    REQUIRE(support.reason != nullptr);
-    const std::string reason(support.reason);
-    CHECK(reason.find("ArrayFire-first nearest") != std::string::npos);
-    CHECK(reason.find("nearest/bilinear") != std::string::npos);
-    CHECK(reason.find("exact ModelBuilder construction") != std::string::npos);
-    CHECK(reason.find("spatial batch-layout") != std::string::npos);
-    CHECK(reason.find("observed native fallback") != std::string::npos);
-    CHECK(reason.find("ModelBuilder") != std::string::npos);
-    CHECK(reason.find("Studio training workflow") != std::string::npos);
-}
-
-TEST_CASE("PixelShuffle backend evidence does not promote Studio training support",
-          "[pipeline][capabilities][pixelshuffle]") {
-    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::PixelShuffle);
-    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-    REQUIRE_FALSE(support.compile_supported);
-    REQUIRE_FALSE(support.training_supported);
-    REQUIRE(support.reason != nullptr);
-    const std::string reason(support.reason);
-    CHECK(reason.find("ArrayFire-first") != std::string::npos);
-    CHECK(reason.find("exact ModelBuilder construction") != std::string::npos);
-    CHECK(reason.find("spatial batch-layout") != std::string::npos);
-    CHECK(reason.find("ModelBuilder") != std::string::npos);
-    CHECK(reason.find("Studio training workflow") != std::string::npos);
+TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
+          "[pipeline][capabilities][spatial]") {
+    using cyxwiz::PipelineTrainingBackendSupportMode;
+    using gui::NodeType;
+    // Compiled, built and trained on [H,W,C,N]; PyTorch parity in
+    // cyxwiz-engine/tests/computation_truth (spatial_layers_pytorch_parity).
+    for (const NodeType type : {NodeType::Conv2D, NodeType::MaxPool2D, NodeType::AvgPool2D,
+                                NodeType::ConvTranspose2D, NodeType::Upsample,
+                                NodeType::PixelShuffle, NodeType::GroupNorm,
+                                NodeType::InstanceNorm}) {
+        CAPTURE(static_cast<int>(type));
+        const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+        REQUIRE(support.mode == PipelineTrainingBackendSupportMode::Allowed);
+        CHECK(support.compile_supported);
+        CHECK(support.training_supported);
+        REQUIRE(support.reason != nullptr);
+    }
+    // The ones without an owner stay blocked.
+    for (const NodeType type : {NodeType::Conv1D, NodeType::Conv3D, NodeType::GlobalAvgPool}) {
+        CAPTURE(static_cast<int>(type));
+        CHECK(cyxwiz::ResolvePipelineTrainingBackendSupport(type).mode ==
+              PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
+    }
 }
 
 TEST_CASE("Training capability registry exposes tested causal LM building blocks",

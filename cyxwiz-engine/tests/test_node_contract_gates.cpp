@@ -457,10 +457,15 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Resize is a training preprocessing contract since TOFIX140 A1: the
+    // compiler takes the image input shape [H,W,C] from it.
+    {
+        const auto* resize = registry.GetMetadata(gui::NodeType::Resize);
+        Check(resize != nullptr && resize->IsImplemented() &&
+                  cyxwiz::CanAddNodeToGraph(*resize) && !resize->parameters.empty(),
+              "Resize must be an implemented, addable preprocessing node");
+    }
     for (const auto [type, expected_evidence] : {
-             std::pair{gui::NodeType::Resize,
-                       cyxwiz::PipelineBackendPrimitiveEvidence::
-                           ProvenNodePrimitive},
              std::pair{gui::NodeType::AudioAugmentation,
                        cyxwiz::PipelineBackendPrimitiveEvidence::
                            RelatedHelperOnly}}) {

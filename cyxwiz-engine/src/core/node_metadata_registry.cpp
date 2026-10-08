@@ -1636,15 +1636,17 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
 
     RegisterNode({NodeType::Resize, NodeCategory::Preprocessing, "Resize", ICON_FA_EXPAND,
         {"image", "resize", "width", "height", "aspect"}, 0, false,
-        "Configure the image batcher's target decode dimensions",
-        "Blocked until node-level output-shape, persisted-graph, and live image-training evidence is complete. The existing image batcher consumes this configuration, but that wiring alone is not production proof.",
-        "",
-        {{"Input", PinType::Tensor, true, "Image tensor [batch, channels, H, W]"}},
-        {{"Output", PinType::Tensor, true, "Image tensor resized to the configured width and height"}},
+        "The size every image is decoded to for training",
+        "The image batcher resizes each image to this width and height (mode: exact, fit, fill or "
+        "center) and the compiler takes the model's input shape [H, W, C] from it, so the "
+        "convolution layers after it know their sizes. Required for an image Data Input.",
+        "Data Input (images) -> Resize -> Conv2D -> ... -> Flatten -> Dense",
+        {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
+        {{"Output", PinType::Tensor, true, "Images resized to [height, width, channels]"}},
         {{"width", "int", "224", "Positive output width in pixels", {}, ">0", "Width", "Output shape", true},
          {"height", "int", "224", "Positive output height in pixels", {}, ">0", "Height", "Output shape", true},
          {"mode", "enum", "exact", "Aspect-ratio and crop policy", {"exact", "fit", "fill", "center"}, "", "Mode", "Resize policy"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
