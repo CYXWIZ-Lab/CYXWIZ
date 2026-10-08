@@ -3,13 +3,29 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz {
 
 class Tensor;
+class Tokenizer;
 struct ProbeResult;
 struct TextTokenizerPackage;
+
+// Semantic identity, independent of vocabulary filename and generation length.
+// A missing expected tokenizer is explicitly unverified, never a verified match.
+struct LanguageModelTokenizerIdentity {
+    bool compatible = false;
+    bool verified = false;
+    std::string message;
+};
+
+LanguageModelTokenizerIdentity ValidateLanguageModelTokenizerIdentity(
+    const Tokenizer& selected,
+    const Tokenizer* expected,
+    std::string_view selected_model_artifact = {},
+    std::string_view expected_model_artifact = {});
 
 struct LanguageModelPackageContract {
     bool compatible = false;

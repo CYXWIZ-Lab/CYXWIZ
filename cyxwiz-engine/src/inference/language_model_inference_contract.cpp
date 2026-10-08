@@ -52,6 +52,43 @@ void FinishContract(bool& compatible,
 
 } // namespace
 
+LanguageModelTokenizerIdentity ValidateLanguageModelTokenizerIdentity(
+    const Tokenizer& selected,
+    const Tokenizer* expected,
+    std::string_view selected_model_artifact,
+    std::string_view expected_model_artifact) {
+    if (!expected) {
+        return {true, false,
+            "Tokenizer identity unverified: the active model has no prepared tokenizer metadata."};
+    }
+    const auto mismatch = [](const std::string& reason) {
+        return LanguageModelTokenizerIdentity{false, false,
+            "Tokenizer mismatch: " + reason +
+            ". Select the tokenizer used with the active model. Equal vocabulary sizes do not imply equal token IDs."};
+    };
+    if (selected.GetType() != expected->GetType())
+        return mismatch("tokenizer families differ");
+    if (selected.GetLowercase() != expected->GetLowercase())
+        return mismatch("lowercase settings differ");
+    if (IsSentencePieceTokenizerType(selected.GetType())) {
+        if (selected_model_artifact.empty() || expected_model_artifact.empty())
+            return {false, false, "Cannot verify tokenizer identity: SentencePiece model bytes are missing."};
+        if (selected_model_artifact != expected_model_artifact)
+            return mismatch("SentencePiece model artifacts differ");
+    } else {
+        // Canonical persistence includes token order, special tokens, BPE merge
+        // ranks, piece policy and initial alphabet. Filename/newline changes do
+        // not cause a false mismatch. Work occurs only on an explicit UI action.
+        std::ostringstream selected_artifact, expected_artifact;
+        if (!selected.GetVocabulary().SaveToStream(selected_artifact) ||
+            !expected->GetVocabulary().SaveToStream(expected_artifact))
+            return {false, false, "Cannot verify tokenizer identity: vocabulary serialization failed."};
+        if (selected_artifact.str() != expected_artifact.str())
+            return mismatch("vocabulary token mapping or BPE encoding rules differ");
+    }
+    return {true, true, "Tokenizer identity matches the active model's prepared tokenizer."};
+}
+
 LanguageModelPackageContract ValidateLanguageModelPackageContract(
     const ProbeResult& probe,
     const TextTokenizerPackage* tokenizer_package,
