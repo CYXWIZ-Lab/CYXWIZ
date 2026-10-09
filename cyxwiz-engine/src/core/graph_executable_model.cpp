@@ -62,6 +62,23 @@ std::vector<CompiledGraphEdge> TensorIncomingEdges(const CompiledGraphPlan& plan
     return edges;
 }
 
+// The node's incoming tensor edges ordered by the input pin they reach (the
+// order the compiler's shape pass uses), not by link creation order;
+// unconnected optional pins are skipped.
+std::vector<CompiledGraphEdge> TensorIncomingEdgesInPinOrder(const CompiledGraphPlan& plan,
+                                                             const CompiledGraphNode& node) {
+    auto edges = TensorIncomingEdges(plan, node.node_id);
+    const auto pin_index = [&node](int pin_id) {
+        const auto found = std::find(node.input_pin_ids.begin(), node.input_pin_ids.end(), pin_id);
+        return found == node.input_pin_ids.end() ? node.input_pin_ids.size()
+                                                 : static_cast<size_t>(found - node.input_pin_ids.begin());
+    };
+    std::stable_sort(edges.begin(), edges.end(), [&](const CompiledGraphEdge& a, const CompiledGraphEdge& b) {
+        return pin_index(a.to_pin_id) < pin_index(b.to_pin_id);
+    });
+    return edges;
+}
+
 // The edge into each input pin of a node, in pin order (not link order):
 // what a multi-input layer (Cross Attention) needs to tell its inputs apart.
 std::vector<CompiledGraphEdge> TensorIncomingEdgesByPin(const CompiledGraphPlan& plan,
@@ -624,7 +641,7 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             executed = true;
             }
         } else if (IsGraphOpNode(node.node_id)) {
-            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            const auto incoming = TensorIncomingEdgesInPinOrder(plan_, node);
             std::vector<const Tensor*> inputs;
             inputs.reserve(incoming.size());
             for (const auto& edge : incoming) {
@@ -698,7 +715,7 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
             continue;
         }
 
-        const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+        const auto incoming = TensorIncomingEdgesInPinOrder(plan_, node);
         if (node.type == gui::NodeType::Split && IsGraphOpNode(node.node_id)) {
             // Concatenate the branch gradients back, in output order; an
             // unused branch gives zeros.

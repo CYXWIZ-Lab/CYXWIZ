@@ -248,6 +248,32 @@ void RunCase(const json& c) {
         CheckClose(bias->second, layer.at("grad_bias"), tolerance, name + " " + layer_name + " bias gradient");
     }
     std::cout << "  " << name << ": forward, input and layer gradients match PyTorch\n";
+
+    // A merge takes its inputs in pin order, as the compiler's shapes do, not
+    // in the order its links were made: reversing the links into Concatenate
+    // changes nothing.
+    if (name == "split_concat") {
+        auto reversed = graph;
+        std::vector<gui::NodeLink> into_concat;
+        std::erase_if(reversed.links, [&](const gui::NodeLink& link) {
+            if (link.to_node != 5) return false;
+            into_concat.push_back(link);
+            return true;
+        });
+        reversed.links.insert(reversed.links.end(), into_concat.rbegin(), into_concat.rend());
+        cyxwiz::GraphCompiler reversed_compiler;
+        const auto reversed_config = reversed_compiler.Compile(reversed.nodes, reversed.links, true);
+        Check(reversed_config.is_valid, name + ": the graph with reversed Concatenate links compiles");
+        auto rebuilt = cyxwiz::BuildExecutableFromConfig(reversed_config);
+        Check(rebuilt.ok(), name + ": reversed links build: " + rebuilt.error_message);
+        rebuilt.model->SetParameters(parameters);
+        rebuilt.model->SetTraining(true);
+        CheckClose(rebuilt.model->Forward(ReadTensor(c.at("input"))), c.at("output"), tolerance,
+                   name + " forward with Concatenate links made in reverse");
+        CheckClose(rebuilt.model->Backward(ReadTensor(c.at("grad_output"))), c.at("grad_input"), tolerance,
+                   name + " input gradient with Concatenate links made in reverse");
+        std::cout << "  " << name << ": reversed Concatenate links give the same result\n";
+    }
 }
 
 std::filesystem::path FixturePath(const char* argv0) {
