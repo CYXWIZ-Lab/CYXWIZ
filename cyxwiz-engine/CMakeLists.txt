@@ -4016,6 +4016,9 @@ endif()
 set_target_properties(test_compiled_node_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+# Reads examples/cyxgraph/NER from the repository.
+add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
