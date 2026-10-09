@@ -214,9 +214,11 @@ int main() {
                       {Pin(202, gui::PinType::Tensor, "Output", false)});
     dense.parameters["units"] = "2";
 
+    // A node that is still a template (Lambda); Tensor Batch MatMul was the
+    // example until it was implemented (TOFIX140 Group C).
     auto batch_matmul = Node(3,
-                             gui::NodeType::TensorBatchMatMul,
-                             "Deferred BatchMatMul",
+                             gui::NodeType::Lambda,
+                             "Deferred Lambda",
                              {Pin(301, gui::PinType::Tensor, "A", true),
                               Pin(302, gui::PinType::Tensor, "B", true)},
                              {Pin(303, gui::PinType::Tensor, "Output", false)});
@@ -312,10 +314,10 @@ int main() {
               !config.dataset_roles.test.IsSupplied(),
           "disconnected legacy role hints must not affect resolved partitions");
 
-    Check(!config.is_valid, "training path with template TensorBatchMatMul must be invalid");
+    Check(!config.is_valid, "training path with template Lambda must be invalid");
     Check(HasIssueText(config, "template/deferred"),
           "compile should report template/deferred status");
-    Check(HasIssueText(config, "Deferred BatchMatMul"),
+    Check(HasIssueText(config, "Deferred Lambda"),
           "compile issue should name the deferred node");
     Check(HasIssueCode(config,
                        cyxwiz::errors::Compiler::UnsupportedTrainingNode),
@@ -325,7 +327,7 @@ int main() {
 
     auto side_dot = batch_matmul;
     side_dot.id = 6;
-    side_dot.name = "Disconnected Deferred BatchMatMul";
+    side_dot.name = "Disconnected Deferred Lambda";
     side_dot.inputs = {Pin(601, gui::PinType::Tensor, "A", true),
                        Pin(602, gui::PinType::Tensor, "B", true)};
     side_dot.outputs = {Pin(603, gui::PinType::Tensor, "Output", false)};
@@ -352,7 +354,7 @@ int main() {
           "deferred node outside selected training path should not block compile");
     Check(AllIssuesHaveCodes(config),
           "valid compile warnings should still carry codes");
-    Check(!HasIssueText(config, "Disconnected Deferred BatchMatMul"),
+    Check(!HasIssueText(config, "Disconnected Deferred Lambda"),
           "compile should not report side deferred node");
     Check(config.layers.size() == 1,
           "linear selected path should still compile one sequential layer");

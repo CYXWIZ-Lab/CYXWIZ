@@ -2827,11 +2827,15 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBatchMatMul, NodeCategory::Analytics, "Tensor Batch MatMul", ICON_FA_CALCULATOR,
-        {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Blocked batched matrix multiplication retained for graph compatibility", "", "",
-        {{"A", PinType::Tensor, true, "Left tensor [batch, rows, inner]"},
-         {"B", PinType::Tensor, true, "Right tensor [batch, inner, columns] with the same data type"}},
+        {"tensor", "batch", "matmul", "matrix", "linalg", "bmm"}, 0, false,
+        "Multiply two matrices per sample (torch.bmm)",
+        "Per sample A [rows, inner] times B [inner, columns] gives [rows, columns]; A is the first input, B the "
+        "second (the order matters). Both usually come from branches of the same graph. Trains: the gradient "
+        "goes to both inputs (dA = G B^T, dB = A^T G).", "",
+        {{"A", PinType::Tensor, true, "Left matrix per sample [batch, rows, inner]"},
+         {"B", PinType::Tensor, true, "Right matrix per sample [batch, inner, columns], same data type"}},
         {{"Output", PinType::Tensor, true, "Batched matrix product [batch, rows, columns]"}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorCompare, NodeCategory::Analytics, "Tensor Compare", ICON_FA_CALCULATOR,
         {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare A with a scalar or a second tensor", "", "",

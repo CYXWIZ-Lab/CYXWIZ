@@ -508,7 +508,7 @@ int main() {
           "failed to load deferred merge pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_tensor_dot", "TensorDot").string()),
           "failed to load graph-runtime dot pattern");
-    Check(library.LoadPatternFromFile(WritePattern("guard_batch_matmul", "TensorBatchMatMul").string()),
+    Check(library.LoadPatternFromFile(WritePattern("guard_lambda", "Lambda").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
           "failed to load implemented attention-node pattern");
@@ -575,8 +575,8 @@ int main() {
     nodes.clear();
     links.clear();
     Check(!library.InstantiatePatternWithCreator(
-              "guard_batch_matmul", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template TensorBatchMatMul pattern should be rejected");
+              "guard_lambda", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "template Lambda pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
     Check(creator_calls == 4, "template rejection should not call node creator");
 
@@ -676,7 +676,7 @@ int main() {
     Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER parameter rejection should leave no partial graph");
 
     Check(!library.InstantiatePattern(
-              "guard_batch_matmul", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+              "guard_lambda", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
 
     Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),

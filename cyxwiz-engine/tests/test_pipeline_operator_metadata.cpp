@@ -3223,13 +3223,15 @@ void CheckTensorFanInFamilyContract(
 
     const auto* batch_matmul =
         metadata.GetMetadata(gui::NodeType::TensorBatchMatMul);
-    Check(batch_matmul != nullptr && batch_matmul->IsTemplate() &&
-              batch_matmul->badge == "Blocked" &&
-              !cyxwiz::CanAddNodeToGraph(*batch_matmul) &&
+    Check(batch_matmul != nullptr && !batch_matmul->IsTemplate() &&
+              batch_matmul->badge.empty() &&
+              cyxwiz::CanAddNodeToGraph(*batch_matmul) &&
               HasInput(batch_matmul, "A", true) &&
-              HasInput(batch_matmul, "B", true),
-          "TensorBatchMatMul should preserve its static contract while "
-          "remaining blocked from new graphs");
+              HasInput(batch_matmul, "B", true) &&
+              HasOutputType(batch_matmul, "Output", gui::PinType::Tensor) &&
+              batch_matmul->parameters.empty(),
+          "TensorBatchMatMul should expose its implemented two-input graph "
+          "contract (TOFIX140 Group C)");
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);
     Check(compare != nullptr && HasInput(compare, "A", true) &&

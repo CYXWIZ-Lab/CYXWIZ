@@ -227,6 +227,13 @@ Tensor RunLinalgForward(const CompiledGraphNode& node,
         }
         return inputs[0]->Dot(*inputs[1]);
     }
+    if (node.type == gui::NodeType::TensorBatchMatMul) {
+        // [N, n, k] x [N, k, m] -> [N, n, m] (torch.bmm), A = Input 1 (pin order).
+        if (inputs.size() != 2) {
+            throw std::runtime_error("GraphExecutableModel TensorBatchMatMul needs exactly two inputs");
+        }
+        return inputs[0]->BatchMatMul(*inputs[1]);
+    }
 
     throw std::runtime_error("GraphExecutableModel unsupported linalg graph op");
 }
@@ -293,6 +300,14 @@ std::vector<Tensor> RunMaskBackward(const std::vector<const Tensor*>& inputs,
 std::vector<Tensor> RunLinalgBackward(const CompiledGraphNode& node,
                                       const std::vector<const Tensor*>& inputs,
                                       const Tensor& grad_output) {
+    if (node.type == gui::NodeType::TensorBatchMatMul) {
+        if (inputs.size() != 2) {
+            throw std::runtime_error("GraphExecutableModel TensorBatchMatMul backward needs exactly two inputs");
+        }
+        // dA = G B^T, dB = A^T G (per batch).
+        return {grad_output.BatchMatMul(inputs[1]->Transpose(1, 2)),
+                inputs[0]->Transpose(1, 2).BatchMatMul(grad_output)};
+    }
     if (node.type == gui::NodeType::TensorDot) {
         if (inputs.size() != 2) {
             throw std::runtime_error("GraphExecutableModel TensorDot backward needs exactly two inputs");
@@ -477,7 +492,8 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
             node->type != gui::NodeType::Concatenate &&
             node->type != gui::NodeType::TensorCompare &&
             node->type != gui::NodeType::TensorLogicalMask &&
-            node->type != gui::NodeType::TensorDot) {
+            node->type != gui::NodeType::TensorDot &&
+            node->type != gui::NodeType::TensorBatchMatMul) {
             throw std::invalid_argument("GraphExecutableModel unsupported graph op node");
         }
         if (TensorIncomingEdges(plan_, node_id).size() < 2) {
@@ -665,7 +681,7 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             } else if (node.type == gui::NodeType::TensorCompare ||
                        node.type == gui::NodeType::TensorLogicalMask) {
                 output = RunMaskForward(node, inputs);
-            } else if (node.type == gui::NodeType::TensorDot) {
+            } else if (node.type == gui::NodeType::TensorDot || node.type == gui::NodeType::TensorBatchMatMul) {
                 output = RunLinalgForward(node, inputs);
             } else {
                 output = RunMergeForward(node.type, inputs);
@@ -811,7 +827,7 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
             } else if (node.type == gui::NodeType::TensorCompare ||
                        node.type == gui::NodeType::TensorLogicalMask) {
                 input_grads = RunMaskBackward(inputs, grad);
-            } else if (node.type == gui::NodeType::TensorDot) {
+            } else if (node.type == gui::NodeType::TensorDot || node.type == gui::NodeType::TensorBatchMatMul) {
                 input_grads = RunLinalgBackward(node, inputs, grad);
             } else {
                 input_grads = RunMergeBackward(node.type, inputs, grad);

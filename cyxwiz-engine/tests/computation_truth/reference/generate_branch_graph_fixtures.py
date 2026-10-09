@@ -90,6 +90,16 @@ def build() -> list[dict[str, Any]]:
 
     cases.append(case("split_add_last_dim", 3, -1, {"Dense A": e, "Dense B": f},
                       torch.randn(4, 6), split_add, (4, 2)))
+
+    # Tensor Batch MatMul (TOFIX140 Group C): rows [N, 5, 3] split 2 | 3 into
+    # A [2, 3] and B [3, 3]; torch.bmm(A, B) [2, 3] -> flatten -> Dense C (2).
+    g = torch.nn.Linear(6, 2)
+
+    def split_bmm(x):
+        first, second = split(x, 2, 1)
+        return g(torch.bmm(first, second).flatten(1))
+
+    cases.append(case("split_bmm", 2, 1, {"Dense C": g}, torch.randn(4, 5, 3), split_bmm, (4, 2)))
     return cases
 
 

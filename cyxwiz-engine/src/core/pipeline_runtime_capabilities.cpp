@@ -1221,6 +1221,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled and executed as a graph fan-in tensor layer"},
         {gui::NodeType::TensorDot, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorBatchMatMul, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in batched matrix product"},
         {gui::NodeType::TensorCompare, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a scalar tensor mask or graph fan-in comparison layer"},
         {gui::NodeType::TensorLogicalMask, PipelineTrainingSupportRole::ModelLayer,

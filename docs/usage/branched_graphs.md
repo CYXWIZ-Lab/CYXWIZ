@@ -23,12 +23,31 @@ Data [6] -> Split -> Output 1 [2] -> Dense A (3) --\
 Properties shows each Dense with its own input (`[2]` and `[4]`), and the
 Concatenate output is `[6]`.
 
+## Two-input operations
+
+Besides the merges, two nodes combine branches in a way that needs their
+inputs in order (Input 1 / A first):
+
+| Node | Per sample | PyTorch |
+| --- | --- | --- |
+| Tensor Dot | A · B, one value per row | `(a * b).sum(-1)` |
+| Tensor Batch MatMul | A `[rows, inner]` × B `[inner, columns]` → `[rows, columns]` | `torch.bmm(a, b)` |
+| Cross Attention | Query over Key / Value (see [cross_attention.md](cross_attention.md)) | `nn.MultiheadAttention(q, k, v)` |
+
+Example: rows of `[5, 3]`, Split size 2 → A `[2, 3]` and B `[3, 3]`;
+Tensor Batch MatMul gives `[2, 3]`; Flatten → `[6]` → Dense.
+
+Inputs are taken by pin, never by the order the links were drawn: linking
+Input 2 before Input 1 changes nothing.
+
 ## Rules the compiler checks
 
 - Split needs its input connected. Split size must be at least 1 and less
   than the split dimension, so both outputs keep entries.
 - Add, Multiply and Average need inputs of one shape. Concatenate inputs must
   agree on every dimension except `dim`.
+- Tensor Batch MatMul needs two matrices per sample, with A's columns equal
+  to B's rows.
 - An output you leave unconnected is fine: its branch passes a zero gradient
   back.
 - In a CNN, split after Flatten. Before Flatten the tensors are images

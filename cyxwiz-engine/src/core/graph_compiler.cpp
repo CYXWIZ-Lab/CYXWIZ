@@ -1167,7 +1167,8 @@ bool IsGraphRuntimeBinaryMaskOp(gui::NodeType type) {
 }
 
 bool IsGraphRuntimeLinalgOp(gui::NodeType type) {
-    return type == gui::NodeType::TensorDot;
+    return type == gui::NodeType::TensorDot ||
+           type == gui::NodeType::TensorBatchMatMul;
 }
 
 bool IsGraphRuntimeFanInOp(gui::NodeType type) {
@@ -5469,6 +5470,16 @@ TrainingConfiguration GraphCompiler::Compile(
                 std::string mismatch;
                 if (node->type == gui::NodeType::TensorDot) {
                     merged = {1};
+                } else if (node->type == gui::NodeType::TensorBatchMatMul) {
+                    // Per sample [n, k] x [k, m] -> [n, m] (Input 1 times Input 2).
+                    if (inputs.size() != 2 || inputs[0].size() != 2 || inputs[1].size() != 2) {
+                        mismatch = "Tensor Batch MatMul needs two [rows, columns] matrices per sample";
+                    } else if (inputs[0][1] != inputs[1][0]) {
+                        mismatch = "Tensor Batch MatMul inner sizes differ: [" + ShapeListText(inputs[0]) +
+                                   "] x [" + ShapeListText(inputs[1]) + "] (A's columns must equal B's rows)";
+                    } else {
+                        merged = {inputs[0][0], inputs[1][1]};
+                    }
                 } else if (node->type == gui::NodeType::Concatenate && !inputs.empty()) {
                     const int dim = spatial::ParseIntParam(node->parameters, "dim", 1);
                     const auto axis = sample_axis(dim, merged.size());

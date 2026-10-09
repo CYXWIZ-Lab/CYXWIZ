@@ -101,6 +101,7 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::Average: return "Average";
         case gui::NodeType::Concatenate: return "Concatenate";
         case gui::NodeType::TensorDot: return "TensorDot";
+        case gui::NodeType::TensorBatchMatMul: return "TensorBatchMatMul";
         default: return "Layer";
     }
 }
@@ -617,6 +618,7 @@ inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
         case gui::NodeType::Concatenate:
         case gui::NodeType::Split:
         case gui::NodeType::TensorDot:
+        case gui::NodeType::TensorBatchMatMul:
         case gui::NodeType::TensorCompare:
         case gui::NodeType::TensorLogicalMask:
             return true;

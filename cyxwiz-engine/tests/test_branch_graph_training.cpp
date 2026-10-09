@@ -118,7 +118,13 @@ Graph BuildGraph(const json& c) {
     data.type = gui::NodeType::DataInput;
     data.name = "Rows";
     data.outputs = {Pin(111, gui::PinType::Tensor, "Data", false), Pin(112, gui::PinType::Labels, "Labels", false)};
-    data.parameters = {{"dataset_name", "branch_rows"}, {"shape", "[6]"}};
+    // The sample shape of the case's input (all but the batch axis).
+    const auto input_shape = c.at("input").at("shape").get<std::vector<size_t>>();
+    std::string sample_shape = "[";
+    for (size_t i = 1; i < input_shape.size(); ++i) {
+        sample_shape += (i > 1 ? ", " : "") + std::to_string(input_shape[i]);
+    }
+    data.parameters = {{"dataset_name", "branch_rows"}, {"shape", sample_shape + "]"}};
     gui::MLNode loss = Node(9, gui::NodeType::MSELoss, "MSE", 0, 0);
     loss.inputs = {Pin(901, gui::PinType::Tensor, "Predictions", true), Pin(902, gui::PinType::Labels, "Targets", true)};
     loss.outputs = {Pin(911, gui::PinType::Loss, "Loss", false)};
@@ -150,6 +156,18 @@ Graph BuildGraph(const json& c) {
         l.id = 901; l.from_node = from; l.from_pin = from * 100 + 11; l.to_node = 9; l.to_pin = 901;
         g.links.push_back(l);
     };
+    if (name == "split_bmm") {
+        // A = Output 1, B = Output 2: Batch MatMul -> Flatten -> Dense C.
+        g.nodes.push_back(Node(5, gui::NodeType::TensorBatchMatMul, "Batch MatMul", 2, 1));
+        g.nodes.push_back(Node(6, gui::NodeType::Flatten, "Flatten", 1, 1));
+        g.nodes.push_back(Node(7, gui::NodeType::Dense, "Dense C", 1, 1, {{"units", units("Dense C")}}));
+        g.links.push_back(Link(2, 0, 5, 0));
+        g.links.push_back(Link(2, 1, 5, 1));
+        g.links.push_back(Link(5, 0, 6, 0));
+        g.links.push_back(Link(6, 0, 7, 0));
+        to_loss(7);
+        return g;
+    }
     g.nodes.push_back(Node(3, gui::NodeType::Dense, "Dense A", 1, 1, {{"units", units("Dense A")}}));
     g.links.push_back(Link(2, 0, 3, 0));
     if (name == "split_one_branch") {
@@ -251,8 +269,8 @@ void RunCase(const json& c) {
 
     // A merge takes its inputs in pin order, as the compiler's shapes do, not
     // in the order its links were made: reversing the links into Concatenate
-    // changes nothing.
-    if (name == "split_concat") {
+    // or Batch MatMul (A x B, not B x A) changes nothing.
+    if (name == "split_concat" || name == "split_bmm") {
         auto reversed = graph;
         std::vector<gui::NodeLink> into_concat;
         std::erase_if(reversed.links, [&](const gui::NodeLink& link) {
@@ -263,16 +281,16 @@ void RunCase(const json& c) {
         reversed.links.insert(reversed.links.end(), into_concat.rbegin(), into_concat.rend());
         cyxwiz::GraphCompiler reversed_compiler;
         const auto reversed_config = reversed_compiler.Compile(reversed.nodes, reversed.links, true);
-        Check(reversed_config.is_valid, name + ": the graph with reversed Concatenate links compiles");
+        Check(reversed_config.is_valid, name + ": the graph with reversed merge links compiles");
         auto rebuilt = cyxwiz::BuildExecutableFromConfig(reversed_config);
         Check(rebuilt.ok(), name + ": reversed links build: " + rebuilt.error_message);
         rebuilt.model->SetParameters(parameters);
         rebuilt.model->SetTraining(true);
         CheckClose(rebuilt.model->Forward(ReadTensor(c.at("input"))), c.at("output"), tolerance,
-                   name + " forward with Concatenate links made in reverse");
+                   name + " forward with the merge links made in reverse");
         CheckClose(rebuilt.model->Backward(ReadTensor(c.at("grad_output"))), c.at("grad_input"), tolerance,
-                   name + " input gradient with Concatenate links made in reverse");
-        std::cout << "  " << name << ": reversed Concatenate links give the same result\n";
+                   name + " input gradient with the merge links made in reverse");
+        std::cout << "  " << name << ": reversed merge links give the same result\n";
     }
 }
 
@@ -293,7 +311,13 @@ int main(int, char** argv) {
     std::ifstream in(FixturePath(argv[0]));
     Check(in.good(), "branch_graph_pytorch.json is readable");
     const json fixture = json::parse(in);
-    for (const auto& c : fixture.at("cases")) RunCase(c);
+    for (const auto& c : fixture.at("cases")) {
+        try {
+            RunCase(c);
+        } catch (const std::exception& e) {
+            Check(false, c.at("name").get<std::string>() + " threw: " + e.what());
+        }
+    }
 
     // The compiler refuses the splits the runtime cannot run, on the node.
     const auto& first = fixture.at("cases").at(0);
