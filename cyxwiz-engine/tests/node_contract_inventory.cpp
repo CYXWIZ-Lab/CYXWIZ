@@ -147,8 +147,7 @@ std::string TriageClass(
     if (owner == "training_backend") {
         return "blocked_training_contract_incomplete";
     }
-    if (owner != "unknown" && owner != "none" &&
-        owner != "unowned_training_workflow") {
+    if (owner != "unknown" && owner != "none") {
         return "partially_implemented_bounded_subset";
     }
     if (FindAxis(metadata, "Implementation Owner") != nullptr ||
@@ -436,8 +435,7 @@ std::string BuildNodeContractInventoryJson(
         const bool training_declared =
             role != training_roles.end() ||
             IsPipelineSupportedTrainingBackendNode(metadata->type) ||
-            IsPipelineUnsupportedSequentialModelLayer(metadata->type) ||
-            IsPipelineUnsupportedTrainingWorkflowNode(metadata->type);
+            IsPipelineUnsupportedSequentialModelLayer(metadata->type);
         if (role != training_roles.end()) {
             focused_tests.push_back("test_graph_compiler_deferred_nodes");
         }

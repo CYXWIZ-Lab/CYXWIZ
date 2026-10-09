@@ -3655,8 +3655,7 @@ int main() {
                       HasInputType(meta, "Embeddings", gui::PinType::Tensor),
                   "Embedding / Pair Score Output: implemented sinks on the encoder output");
             const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
-            Check(support.compile_supported && support.training_supported &&
-                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+            Check(support.compile_supported && support.training_supported,
                   "Embedding / Pair Score Output compile into the training configuration");
         }
         Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
@@ -3686,8 +3685,7 @@ int main() {
                       meta->badge.empty() && cyxwiz::CanAddNodeToGraph(*meta),
                   "metric-learning training nodes should be implemented and addable");
             const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
-            Check(support.compile_supported && support.training_supported &&
-                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+            Check(support.compile_supported && support.training_supported,
                   "metric-learning training nodes should compile and train");
         }
         for (const auto& [type, output] :
@@ -3724,8 +3722,7 @@ int main() {
                       meta->parameters.front().default_value == value,
                   "Pair / Retrieval Metrics: implemented sinks on the encoder output");
             const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
-            Check(support.compile_supported && support.training_supported &&
-                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+            Check(support.compile_supported && support.training_supported,
                   "Pair / Retrieval Metrics compile into the training evaluation");
         }
     }
@@ -3890,36 +3887,6 @@ int main() {
                       TypeId(capability.node_type));
         }
 
-        std::set<int> unsupported_training_workflow_types;
-        for (const auto& capability :
-             cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
-            const int key = static_cast<int>(capability.node_type);
-            Check(unsupported_training_workflow_types.insert(key).second,
-                  "duplicate unsupported training workflow capability: " +
-                      TypeId(capability.node_type));
-            Check(capability.reason != nullptr &&
-                      std::string(capability.reason).size() > 16,
-                  "unsupported training workflow reason is too weak: " +
-                      TypeId(capability.node_type));
-            Check(cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
-                      capability.node_type),
-                  "unsupported training workflow capability does not resolve: " +
-                      TypeId(capability.node_type));
-            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
-                capability.node_type);
-            Check(support.mode ==
-                      cyxwiz::PipelineTrainingBackendSupportMode::
-                          UnsupportedTrainingWorkflow,
-                  "unsupported training workflow should resolve through unified support: " +
-                      TypeId(capability.node_type));
-            Check(!support.compile_supported && !support.training_supported,
-                  "unsupported training workflow should block compile/training: " +
-                      TypeId(capability.node_type));
-            Check(support.reason == capability.reason,
-                  "unsupported training workflow reason should be shared: " +
-                      TypeId(capability.node_type));
-        }
-
         std::set<int> supported_training_types;
         for (const auto& capability :
              cyxwiz::GetPipelineSupportedTrainingBackendCapabilities()) {
@@ -3936,9 +3903,7 @@ int main() {
                   "supported training backend capability does not resolve: " +
                       TypeId(capability.node_type));
             Check(!cyxwiz::IsPipelineUnsupportedSequentialModelLayer(
-                      capability.node_type) &&
-                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
-                          capability.node_type),
+                      capability.node_type),
                   "supported training backend should not overlap unsupported lists: " +
                       TypeId(capability.node_type));
             const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
@@ -5477,11 +5442,6 @@ int main() {
                   UnsupportedSequentialModelLayer)) ==
               "unsupported_sequential_model_layer",
           "training backend support mode name for unsupported layer is stable");
-    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
-              cyxwiz::PipelineTrainingBackendSupportMode::
-                  UnsupportedTrainingWorkflow)) ==
-              "unsupported_training_workflow",
-          "training backend support mode name for unsupported workflow is stable");
 
     for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
         Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),
@@ -6318,52 +6278,6 @@ int main() {
                       std::string::npos,
               "unsupported training type " + TypeId(type) +
                   " should expose reason on structured support axis");
-    }
-
-    for (const auto& capability :
-         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
-        const auto* meta = metadata.GetMetadata(capability.node_type);
-        Check(meta != nullptr,
-              "missing unsupported training workflow metadata for type " +
-                  TypeId(capability.node_type));
-        Check(meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked",
-              "unsupported training workflow should remain blocked: " +
-                  TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Training Backend",
-            cyxwiz::PipelineTrainingBackendSupportModeName(
-                cyxwiz::PipelineTrainingBackendSupportMode::
-                    UnsupportedTrainingWorkflow),
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(
-            meta,
-            "Training Role",
-            cyxwiz::PipelineTrainingSupportRoleName(
-                cyxwiz::PipelineTrainingSupportRole::TrainingWorkflow),
-            false,
-            TypeId(capability.node_type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false,
-                         TypeId(capability.node_type));
-        CheckSupportAxis(meta, "Training", "unsupported", false,
-                         TypeId(capability.node_type));
-        CheckSupportAxis(meta, "Implementation Owner",
-                         "unowned_training_workflow", false,
-                         TypeId(capability.node_type));
-        CheckSupportAxis(meta, "Support State", "blocked", false,
-                         TypeId(capability.node_type));
-        Check(!cyxwiz::CanAddNodeToGraph(*meta) &&
-                  !FrontendSupportBlockReasonFromAxes(meta).empty(),
-              "frontend should fail closed with a structured workflow reason: " +
-                  TypeId(capability.node_type));
-        const auto* training_axis = FindSupportAxis(meta, "Training Backend");
-        Check(training_axis != nullptr && capability.reason != nullptr &&
-                  training_axis->reason.find(capability.reason) !=
-                      std::string::npos,
-              "unsupported training workflow should expose the canonical reason: " +
-                  TypeId(capability.node_type));
     }
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);

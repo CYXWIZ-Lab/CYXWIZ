@@ -126,7 +126,6 @@ struct PipelineSupportedTrainingRoleCapability {
 enum class PipelineTrainingBackendSupportMode {
     Allowed,
     UnsupportedSequentialModelLayer,
-    UnsupportedTrainingWorkflow,
 };
 
 struct PipelineTrainingBackendSupport {
@@ -278,9 +277,6 @@ GetPipelineFloatParameterRuntimeCapabilities();
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities();
 
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingWorkflowCapabilities();
-
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities();
 
@@ -369,11 +365,7 @@ bool ValidatePipelineRuntimeParameterCapabilities(
 
 const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type);
 
-const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type);
-
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
-
-bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
 

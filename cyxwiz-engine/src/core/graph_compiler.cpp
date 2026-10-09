@@ -4198,19 +4198,11 @@ void ValidateTrainingPathImplementationStatus(
         if (LooksLikeMetricLearningTrainingSketch(node,
                                                   metric_learning_key)) {
             std::ostringstream msg;
-            const auto support =
-                ResolvePipelineTrainingBackendSupport(node.type);
-            if (support.mode == PipelineTrainingBackendSupportMode::
-                                    UnsupportedTrainingWorkflow &&
-                support.reason != nullptr) {
-                msg << "Node '" << node.name << "' " << support.reason;
-            } else {
-                msg << "Node '" << node.name
-                    << "' sketches metric-learning training via '"
-                    << metric_learning_key
-                    << "', but no typed visual graph or TrainingExecutor "
-                       "owner is registered for the workflow.";
-            }
+            msg << "Node '" << node.name
+                << "' sketches metric-learning training via '"
+                << metric_learning_key
+                << "', but no typed visual graph or TrainingExecutor "
+                   "owner is registered for the workflow.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name,
                      errors::Compiler::UnsupportedTrainingNode);
             continue;

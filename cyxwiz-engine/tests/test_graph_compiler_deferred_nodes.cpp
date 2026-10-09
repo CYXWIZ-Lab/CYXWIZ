@@ -1620,11 +1620,6 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "typed metric-learning output node should be invalid");
-    Check(HasIssueText(
-              config,
-              cyxwiz::ResolvePipelineUnsupportedTrainingWorkflowReason(
-                  gui::NodeType::PairScoreOutput)),
-          "typed metric-learning node should report its canonical workflow gap");
     Check(config.metric_learning_graph.detected,
           "metric-learning contract should detect typed PairScoreOutput");
     Check(config.metric_learning_graph.kind ==
@@ -1754,34 +1749,6 @@ int main() {
     Check(HasIssueText(config, "message-passing kernels"),
           "GNN marker sketch should report missing message-passing contract");
 
-
-    for (const auto& workflow_case :
-         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
-        auto workflow = Node(
-            18,
-            workflow_case.node_type,
-            "UnsupportedTrainingWorkflow",
-            {Pin(1801, gui::PinType::Tensor, "Input", true)},
-            {Pin(1802, gui::PinType::Tensor, "Output", false)});
-
-        nodes = {data, workflow, dense, loss, optimizer};
-        links = {
-            Link(1, 1, 101, 18, 1801),
-            Link(2, 18, 1802, 2, 201),
-            Link(3, 2, 202, 4, 401),
-            Link(4, 1, 102, 4, 402),
-            Link(5, 4, 403, 5, 501),
-        };
-
-        config = compiler.Compile(nodes, links, true);
-        Check(!config.is_valid,
-              "unsupported metric-learning workflow should block the selected path");
-        Check(HasIssueText(config, workflow_case.reason),
-              "unsupported metric-learning workflow should report its canonical gap");
-        Check(HasIssueCode(config,
-                           cyxwiz::errors::Compiler::UnsupportedTrainingNode),
-              "unsupported metric-learning workflow should expose the unsupported-node code");
-    }
 
     auto blocked_lambda = Node(
         18,

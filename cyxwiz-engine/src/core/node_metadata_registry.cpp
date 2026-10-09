@@ -475,16 +475,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                     false,
                     reason);
             }
-            if (support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow) {
-                UpsertSupportAxis(
-                    metadata,
-                    "Training Role",
-                    PipelineTrainingSupportRoleName(
-                        PipelineTrainingSupportRole::TrainingWorkflow),
-                    false,
-                    reason);
-            }
             UpsertSupportAxis(
                 metadata,
                 "Compile",
@@ -497,15 +487,11 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 support.training_supported ? "supported" : "unsupported",
                 support.training_supported,
                 reason);
-            const bool workflow_unowned =
-                support.mode == PipelineTrainingBackendSupportMode::
-                                    UnsupportedTrainingWorkflow;
             UpsertSupportAxis(
                 metadata,
                 "Implementation Owner",
-                workflow_unowned ? "unowned_training_workflow"
-                                 : "training_backend",
-                !workflow_unowned,
+                "training_backend",
+                true,
                 reason);
 
             ApplySupportState(metadata, "blocked", false, reason);
@@ -513,11 +499,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
     for (const auto& capability :
          GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
-        apply_training_backend_status(capability.node_type);
-    }
-
-    for (const auto& capability :
-         GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
         apply_training_backend_status(capability.node_type);
     }
 
@@ -630,8 +611,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             });
         if (owner_it == metadata.support_axes.end() ||
             !owner_it->supported || owner_it->value == "none" ||
-            owner_it->value == "unknown" ||
-            owner_it->value == "unowned_training_workflow") {
+            owner_it->value == "unknown") {
             UpsertSupportAxis(
                 metadata,
                 "Implementation Owner",

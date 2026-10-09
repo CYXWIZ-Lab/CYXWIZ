@@ -1090,12 +1090,6 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     return capabilities;
 }
 
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingWorkflowCapabilities() {
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {};
-    return capabilities;
-}
-
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities() {
     static const std::vector<PipelineSupportedTrainingNodeCapability>
@@ -1581,8 +1575,6 @@ const char* PipelineTrainingBackendSupportModeName(
         return "allowed";
     case PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer:
         return "unsupported_sequential_model_layer";
-    case PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow:
-        return "unsupported_training_workflow";
     }
     return "unknown";
 }
@@ -1856,20 +1848,8 @@ const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType n
         : nullptr;
 }
 
-const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type) {
-    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-    return support.mode ==
-               PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow
-        ? support.reason
-        : nullptr;
-}
-
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
-}
-
-bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type) {
-    return ResolvePipelineUnsupportedTrainingWorkflowReason(node_type) != nullptr;
 }
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
@@ -1910,22 +1890,6 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
                 false,
                 layer_it->reason,
                 layer_it->primitive_evidence};
-    }
-
-    const auto& workflow_capabilities =
-        GetPipelineUnsupportedTrainingWorkflowCapabilities();
-    auto workflow_it = std::find_if(
-        workflow_capabilities.begin(),
-        workflow_capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (workflow_it != workflow_capabilities.end()) {
-        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow,
-                false,
-                false,
-                workflow_it->reason,
-                workflow_it->primitive_evidence};
     }
 
     const auto& supported_capabilities =

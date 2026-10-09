@@ -281,8 +281,7 @@ void CheckPropertyAndSupportContract(const cyxwiz::NodeMetadata& metadata) {
     Check(state != nullptr,
           "implemented node has no declared support state: " +
               TypeId(metadata.type));
-    Check(owner->value != "none" && owner->value != "unknown" &&
-              owner->value != "unowned_training_workflow",
+    Check(owner->value != "none" && owner->value != "unknown",
           "implemented node declares no executable/UI owner: " +
               TypeId(metadata.type) + "=" + owner->value);
     Check(state->value != "blocked" && cyxwiz::CanAddNodeToGraph(metadata),
@@ -321,8 +320,6 @@ void CheckTrainingCapabilityContract(
     };
     check_unsupported(
         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities());
-    check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities());
 
     std::map<int, cyxwiz::PipelineTrainingSupportRole> roles_by_type;
     for (const auto& capability :
