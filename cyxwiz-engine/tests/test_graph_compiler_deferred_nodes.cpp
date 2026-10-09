@@ -1238,6 +1238,17 @@ int main() {
     Check(HasIssueText(config, "causal language-model contract"),
           "causal sketch should report missing causal language-model contract");
 
+    // Multi-Head Attention implements causal itself: its own setting is not
+    // a generative sketch (it was refused before the fix).
+    auto causal_attention = causal_dense;
+    causal_attention.type = gui::NodeType::MultiHeadAttention;
+    causal_attention.name = "Causal Attention";
+    causal_attention.parameters = {{"embed_dim", "4"}, {"num_heads", "2"}, {"causal", "true"}};
+    nodes = {data, causal_attention, loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!HasIssueText(config, "causal language-model contract"),
+          "Multi-Head Attention's own causal setting is not refused as a generative sketch");
+
     auto pretrained = Node(28,
                            gui::NodeType::PretrainedMobileNet,
                            "Imported MobileNet",

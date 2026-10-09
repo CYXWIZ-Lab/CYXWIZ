@@ -4097,8 +4097,15 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
+        // A setting the node's own implemented contract declares (Multi-Head
+        // or Linear Attention's causal mask) is not a generative sketch.
+        gui::MLNode undeclared_settings = node;
+        if (const auto* meta = registry.GetMetadata(node.type);
+            meta && meta->status == NodeImplementationStatus::Implemented) {
+            for (const auto& parameter : meta->parameters) undeclared_settings.parameters.erase(parameter.name);
+        }
         std::string generative_key;
-        if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
+        if (LooksLikeGenerativeTrainingSketch(undeclared_settings, generative_key)) {
             std::ostringstream msg;
             msg << "Node '" << node.name
                 << "' sketches decoder/generative training via '"
