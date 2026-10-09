@@ -224,11 +224,15 @@ def case(name: str, kind: str, margin: float, mining: str = "random") -> dict[st
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
+    with torch.no_grad():
+        # What Embedding Output writes after training: every row, in order.
+        embeddings_after = encoder(x).tolist()
     return {
         "name": name,
         "kind": kind,
         "margin": margin,
         "mining": mining,
+        "embeddings_after": embeddings_after,
         "batch_losses": losses,
         "parameters_after": {
             w1: first.weight.detach().reshape(-1).tolist(),

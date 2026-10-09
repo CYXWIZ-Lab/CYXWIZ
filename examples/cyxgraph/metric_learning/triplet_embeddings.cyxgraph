@@ -1,0 +1,296 @@
+{
+ "id": "triplet_embeddings",
+ "name": "Triplet embeddings",
+ "description": "Four classes of 8-feature rows embedded in 2-D with the Triplet Loss (semi-hard mining); validation Recall@5 / pair metrics each epoch, the embeddings written to exports/, pair scoring saved with the model.",
+ "category": "Metric Learning",
+ "tags": [
+  "metric learning",
+  "embedding",
+  "siamese"
+ ],
+ "parameters": [],
+ "template": {
+  "nodes": [
+   {
+    "id": "in",
+    "type": "DataInput",
+    "name": "Metric blobs",
+    "pos": [
+     0,
+     0
+    ],
+    "params": {
+     "file_path": "examples/datasets/metric_blobs.csv",
+     "file_category": "tabular",
+     "label_column": "class"
+    }
+   },
+   {
+    "id": "split",
+    "type": "DataSplit",
+    "name": "Split 70 / 15 / 15",
+    "pos": [
+     240,
+     0
+    ],
+    "params": {
+     "train_ratio": "0.7",
+     "val_ratio": "0.15",
+     "test_ratio": "0.15"
+    }
+   },
+   {
+    "id": "loader",
+    "type": "DataLoader",
+    "name": "Loader",
+    "pos": [
+     480,
+     0
+    ],
+    "params": {
+     "batch_size": "64",
+     "epochs": "20"
+    }
+   },
+   {
+    "id": "builder",
+    "type": "TripletDatasetBuilder",
+    "name": "Triplet Dataset Builder",
+    "pos": [
+     720,
+     0
+    ],
+    "params": {
+     "mining": "semi_hard"
+    }
+   },
+   {
+    "id": "d1",
+    "type": "Dense",
+    "name": "Dense (32)",
+    "pos": [
+     960,
+     0
+    ],
+    "params": {
+     "units": "32"
+    }
+   },
+   {
+    "id": "r1",
+    "type": "ReLU",
+    "name": "ReLU",
+    "pos": [
+     0,
+     260
+    ],
+    "params": {}
+   },
+   {
+    "id": "d2",
+    "type": "Dense",
+    "name": "Dense (16)",
+    "pos": [
+     240,
+     260
+    ],
+    "params": {
+     "units": "16"
+    }
+   },
+   {
+    "id": "r2",
+    "type": "ReLU",
+    "name": "ReLU 2",
+    "pos": [
+     480,
+     260
+    ],
+    "params": {}
+   },
+   {
+    "id": "emb",
+    "type": "Dense",
+    "name": "Embedding (2)",
+    "pos": [
+     720,
+     260
+    ],
+    "params": {
+     "units": "2"
+    }
+   },
+   {
+    "id": "loss",
+    "type": "TripletLoss",
+    "name": "Triplet Loss",
+    "pos": [
+     960,
+     260
+    ],
+    "params": {
+     "margin": "1.0"
+    }
+   },
+   {
+    "id": "adam",
+    "type": "Adam",
+    "name": "Adam",
+    "pos": [
+     1200,
+     260
+    ],
+    "params": {
+     "learning_rate": "0.005"
+    }
+   },
+   {
+    "id": "out",
+    "type": "Output",
+    "name": "Output",
+    "pos": [
+     1440,
+     260
+    ],
+    "params": {}
+   },
+   {
+    "id": "retrieval",
+    "type": "RetrievalMetrics",
+    "name": "Retrieval Metrics",
+    "pos": [
+     720,
+     520
+    ],
+    "params": {
+     "k": "5"
+    }
+   },
+   {
+    "id": "pairs",
+    "type": "PairMetrics",
+    "name": "Pair Metrics",
+    "pos": [
+     960,
+     520
+    ],
+    "params": {
+     "threshold": "0.5"
+    }
+   },
+   {
+    "id": "export",
+    "type": "EmbeddingOutput",
+    "name": "Embedding Output",
+    "pos": [
+     1200,
+     520
+    ],
+    "params": {
+     "file_path": "exports/triplet_embeddings_embeddings.parquet",
+     "partition": "all",
+     "include_metadata": "true"
+    }
+   },
+   {
+    "id": "serve",
+    "type": "PairScoreOutput",
+    "name": "Pair Score Output",
+    "pos": [
+     1440,
+     520
+    ],
+    "params": {
+     "score_mode": "distance",
+     "threshold": "0.5"
+    }
+   }
+  ],
+  "links": [
+   {
+    "from": "in",
+    "to": "split"
+   },
+   {
+    "from": "split",
+    "to": "loader"
+   },
+   {
+    "from": "loader",
+    "to": "builder"
+   },
+   {
+    "from": "builder",
+    "to": "d1"
+   },
+   {
+    "from": "d1",
+    "to": "r1"
+   },
+   {
+    "from": "r1",
+    "to": "d2"
+   },
+   {
+    "from": "d2",
+    "to": "r2"
+   },
+   {
+    "from": "r2",
+    "to": "emb"
+   },
+   {
+    "from": "emb",
+    "to": "loss"
+   },
+   {
+    "from": "loader",
+    "to": "loss",
+    "from_pin": 1,
+    "to_pin": 1
+   },
+   {
+    "from": "loss",
+    "to": "adam"
+   },
+   {
+    "from": "adam",
+    "to": "out"
+   },
+   {
+    "from": "emb",
+    "to": "retrieval"
+   },
+   {
+    "from": "loader",
+    "to": "retrieval",
+    "from_pin": 1,
+    "to_pin": 1
+   },
+   {
+    "from": "emb",
+    "to": "pairs"
+   },
+   {
+    "from": "loader",
+    "to": "pairs",
+    "from_pin": 1,
+    "to_pin": 1
+   },
+   {
+    "from": "emb",
+    "to": "export"
+   },
+   {
+    "from": "loader",
+    "to": "export",
+    "from_pin": 1,
+    "to_pin": 1
+   },
+   {
+    "from": "emb",
+    "to": "serve"
+   }
+  ]
+ }
+}

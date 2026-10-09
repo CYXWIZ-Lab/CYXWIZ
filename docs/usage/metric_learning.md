@@ -128,7 +128,31 @@ confusion matrix and the per-class tab show that classifier (the Overview says
 triplets of the test rows. With Pair / Retrieval Metrics in the graph, the
 Overview also shows Recall@k, MRR, the pair accuracy and the mean distances.
 
-## Not yet
+## Exporting and serving
 
-The Embedding and Pair Score outputs (exporting embeddings, scoring new pairs)
-are still blocked (TOFIX140 A5 step 4).
+Two more side nodes on the encoder output turn the trained model into
+something you can use:
+
+| Node | Settings | What it does |
+| --- | --- | --- |
+| Embedding Output | `file_path` (exports/embeddings.parquet), `partition` (all / train / validation / test), `include_metadata` | After training, every row of the partition goes through the trained encoder and the Parquet file gets one row per data row: `e0 .. e(D-1)` and, with metadata, `class`, `partition` and `row` (position in the partition). A relative path is in the project folder. Load it with a Data Input and plot it: a 2-D embedding is a scatter of e0 against e1 coloured by class. |
+| Pair Score Output | `score_mode` (distance / negative_distance / cosine_similarity), `threshold` (0.5) | Saved with the trained model (Export Model). The local inference server's `/v1/pair-score` uses this mode when a request gives none, and adds `"same": true/false` to every pair plus the `threshold` to the response: same when the distance is at most the threshold, the negative distance at least -threshold, or the cosine similarity at least the threshold. `/v1/model` shows the defaults under `pair_score_defaults`. A request that asks for another `score_mode` gets scores without same / different. |
+
+Pick the threshold from Pair Metrics: its mean same-class and other-class
+distances show where to cut.
+
+Serving embeddings needs no node: `/v1/embeddings` returns them for any loaded
+model.
+
+## Example
+
+`examples/cyxgraph/metric_learning/` has two runnable graphs on
+`examples/datasets/metric_blobs.csv` (480 rows, 8 features, 4 classes, label
+column `class`, split 70 / 15 / 15):
+
+- `triplet_embeddings.cyxgraph`: Triplet Loss with semi-hard mining.
+- `contrastive_pairs.cyxgraph`: Contrastive Loss with random pairs.
+
+Both carry Retrieval Metrics (k 5), Pair Metrics, an Embedding Output
+(`exports/<graph>_embeddings.parquet`) and a Pair Score Output. Open one, apply
+the Data Input (right-click > Configure..., Apply), Train, then Test.

@@ -1098,7 +1098,8 @@ void TrainingExecutor::Train(
     ISequenceBatcher* active_sequence_batcher = nullptr;
     // Pair / Triplet Dataset Builder (TOFIX140 A5): one sampler per distinct batcher.
     std::vector<std::unique_ptr<MetricBatchSampler>> metric_samplers;
-    // Pair / Retrieval Metrics read the plain validation / test rows.
+    // Pair / Retrieval Metrics and Embedding Output read the plain rows.
+    IBatcher* metric_eval_train = nullptr;
     IBatcher* metric_eval_val = nullptr;
     IBatcher* metric_eval_test = nullptr;
 
@@ -1192,6 +1193,7 @@ void TrainingExecutor::Train(
         };
         IBatcher* const train_source = active_train_ibatcher;
         IBatcher* const val_source = active_val_ibatcher;
+        metric_eval_train = train_source;
         if (val_source != train_source) metric_eval_val = val_source;
         if (active_test_ibatcher != train_source && active_test_ibatcher != val_source) {
             metric_eval_test = active_test_ibatcher;
@@ -2002,6 +2004,39 @@ void TrainingExecutor::Train(
     } else if (!stop_requested_.load() && active_test_ibatcher) {
         spdlog::warn("TrainingExecutor: configured test split produced 0 held-out samples; "
                      "test metrics were skipped");
+    }
+
+    // Embedding Output (TOFIX140 A5): the trained encoder's embeddings of the
+    // chosen partition, written to a Parquet file.
+    if (config_.embedding_output && !stop_requested_.load()) {
+        std::vector<EmbeddingExportPart> parts;
+        const std::string& partition = config_.embedding_output_partition;
+        if (partition == "all" || partition == "train") parts.push_back({"train", metric_eval_train});
+        if (partition == "all" || partition == "validation") parts.push_back({"validation", metric_eval_val});
+        if (partition == "all" || partition == "test") parts.push_back({"test", metric_eval_test});
+        const BatcherPhase phases[] = {train_batcher_phase, val_batcher_phase, test_batcher_phase};
+        try {
+            model_->SetTraining(false);
+            for (auto& part : parts) {
+                if (!part.rows) continue;
+                part.rows->SetPhase(part.partition == "train" ? phases[0]
+                                    : part.partition == "validation" ? phases[1] : phases[2]);
+            }
+            const size_t rows = WriteEmbeddingsParquet(
+                parts, [this](const Batch& batch) { return ForwardBatch(batch); },
+                config_.embedding_output_metadata, config_.embedding_output_path);
+            for (auto& part : parts) {
+                if (part.rows) part.rows->SetPhase(train_batcher_phase);
+            }
+            spdlog::info("Embedding Output: wrote {} rows ({}) to {}", rows, partition,
+                         config_.embedding_output_path);
+            UpdateMetrics([&](TrainingMetrics& m) {
+                m.embedding_output_file = config_.embedding_output_path;
+                m.embedding_output_rows = rows;
+            });
+        } catch (const std::exception& e) {
+            spdlog::error("Embedding Output failed: {}", e.what());
+        }
     }
 
     // Notify plugin hooks: training end

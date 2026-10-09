@@ -186,6 +186,7 @@ MetricPairScoreInferenceInput ParseMetricPairScoreInferenceInput(
         }
         parsed.score_mode =
             ParsePairScoreMode(request_body.at("score_mode").get<std::string>());
+        parsed.has_score_mode = true;
     }
 
     ParsePairedOptionalIds(request_body,

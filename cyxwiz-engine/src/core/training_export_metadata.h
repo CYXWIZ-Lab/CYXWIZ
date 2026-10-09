@@ -4,6 +4,7 @@
 #include "model_format.h"
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace cyxwiz {
@@ -40,6 +41,15 @@ inline ExportOptions TrainingExportMetadata(const TrainingConfiguration& source)
     options.sequence_pos_pad_id = sequence.pos_pad_id;
     options.sequence_tag_ignore_index = sequence.ignore_index;
     options.sequence_target_ignore_index = sequence.target_ignore_index;
+    // Pair Score Output (TOFIX140 A5): the inference server's /v1/pair-score
+    // defaults (PairScoreDefaultsFromMetadata).
+    if (source.pair_score_output) {
+        options.custom_metadata["pair_score_mode"] = source.pair_score_mode;
+        std::ostringstream threshold;
+        threshold.precision(17);
+        threshold << source.pair_score_threshold;
+        options.custom_metadata["pair_score_threshold"] = threshold.str();
+    }
     return options;
 }
 } // namespace cyxwiz

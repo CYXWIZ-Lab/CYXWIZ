@@ -76,6 +76,9 @@ struct TrainingMetrics {
     std::optional<RetrievalMetricResult> val_retrieval_metrics;
     std::optional<PairMetricResult> test_pair_metrics;
     std::optional<RetrievalMetricResult> test_retrieval_metrics;
+    // Embedding Output: the file written after training and its row count.
+    std::string embedding_output_file;
+    size_t embedding_output_rows = 0;
 
     // Active-model provenance after training. Run-history fields above remain
     // about executed work; restored checkpoint state is reported separately.

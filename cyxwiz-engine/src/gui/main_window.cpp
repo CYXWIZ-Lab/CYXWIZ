@@ -3920,6 +3920,14 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "StartTrainingFromGraph: using project checkpoint directory '{}'",
                 config.checkpoint_dir);
         }
+        // Embedding Output: a relative file path is in the project folder.
+        if (config.embedding_output && project.HasActiveProject() &&
+            std::filesystem::path(config.embedding_output_path).is_relative()) {
+            config.embedding_output_path =
+                (std::filesystem::path(project.GetProjectRoot()) / config.embedding_output_path)
+                    .lexically_normal()
+                    .string();
+        }
 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();

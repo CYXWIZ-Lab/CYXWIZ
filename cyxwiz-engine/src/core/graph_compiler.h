@@ -583,6 +583,18 @@ struct TrainingConfiguration {
     double pair_metric_threshold = 0.5;
     bool retrieval_metrics = false;
     size_t retrieval_k = 10;
+    // Embedding Output: after training, the partition's embeddings are
+    // written to embedding_output_path (made absolute in the project by the
+    // host that starts training).
+    bool embedding_output = false;
+    std::string embedding_output_path;
+    std::string embedding_output_partition = "all";
+    bool embedding_output_metadata = true;
+    // Pair Score Output: saved with the trained model as the inference
+    // server's /v1/pair-score defaults.
+    bool pair_score_output = false;
+    std::string pair_score_mode = "distance";
+    double pair_score_threshold = 0.5;
 
     // Validation
     bool is_valid = false;

@@ -1839,18 +1839,14 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
         // ExtractMetricEvaluationConfiguration).
         case gui::NodeType::PairMetrics:
         case gui::NodeType::RetrievalMetrics:
+        case gui::NodeType::EmbeddingOutput:
+        case gui::NodeType::PairScoreOutput:
         case gui::NodeType::PairDatasetBuilder:
         case gui::NodeType::TripletDatasetBuilder:
         case gui::NodeType::ContrastiveLoss:
         case gui::NodeType::CosineEmbeddingLoss:
         case gui::NodeType::TripletLoss:
             return false;
-        case gui::NodeType::EmbeddingOutput:
-            matched_key = "EmbeddingOutput";
-            return true;
-        case gui::NodeType::PairScoreOutput:
-            matched_key = "PairScoreOutput";
-            return true;
         default:
             break;
     }
@@ -2824,7 +2820,78 @@ void ExtractMetricEvaluationConfiguration(const std::vector<gui::MLNode>& nodes,
     const int embedding_source = loss_node ? source_of(*loss_node, 0) : -1;
     bool seen_pair = false;
     bool seen_retrieval = false;
+    bool seen_embedding_output = false;
+    bool seen_pair_score_output = false;
     for (const auto& node : nodes) {
+        const bool embedding_output = node.type == gui::NodeType::EmbeddingOutput;
+        const bool pair_score_output = node.type == gui::NodeType::PairScoreOutput;
+        if (embedding_output || pair_score_output) {
+            const std::string what = embedding_output ? "Embedding Output" : "Pair Score Output";
+            bool& seen = embedding_output ? seen_embedding_output : seen_pair_score_output;
+            if (seen) {
+                AddIssue(config, IssueLevel::Error, "The graph already has a " + what + " node; remove '" + node.name + "'",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            seen = true;
+            if (config.metric_sampling == MetricSampling::None) {
+                AddIssue(config, IssueLevel::Error,
+                         what + " '" + node.name + "' exports a metric-learning model: train it with a Pair or "
+                         "Triplet Dataset Builder and its loss",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            if (embedding_source < 0 || source_of(node, 0) != embedding_source) {
+                AddIssue(config, IssueLevel::Error,
+                         what + " '" + node.name + "' takes the encoder output: link its Embeddings input from the "
+                         "layer that feeds the loss",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            const auto param = [&](const char* key, const char* fallback) {
+                const auto it = node.parameters.find(key);
+                return it == node.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+            };
+            if (embedding_output) {
+                const std::string path = param("file_path", "exports/embeddings.parquet");
+                const std::string partition = param("partition", "all");
+                if (partition != "all" && partition != "train" && partition != "validation" && partition != "test") {
+                    AddIssue(config, IssueLevel::Error,
+                             "Invalid Embedding Output partition '" + partition + "': choose all, train, validation "
+                             "or test",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                config.embedding_output = true;
+                config.embedding_output_path = path;
+                config.embedding_output_partition = partition;
+                config.embedding_output_metadata = param("include_metadata", "true") != "false";
+            } else {
+                const std::string mode = param("score_mode", "distance");
+                const std::string threshold_text = param("threshold", "0.5");
+                double threshold = 0.0;
+                bool ok = mode == "distance" || mode == "negative_distance" || mode == "cosine_similarity";
+                try {
+                    size_t used = 0;
+                    threshold = std::stod(threshold_text, &used);
+                    ok = ok && used == threshold_text.size() && std::isfinite(threshold);
+                } catch (const std::exception&) {
+                    ok = false;
+                }
+                if (!ok) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Invalid Pair Score Output settings: score_mode '" + mode +
+                                 "' (distance, negative_distance or cosine_similarity), threshold '" +
+                                 threshold_text + "' (a number)",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                config.pair_score_output = true;
+                config.pair_score_mode = mode;
+                config.pair_score_threshold = threshold;
+            }
+            continue;
+        }
         const bool pair = node.type == gui::NodeType::PairMetrics;
         if (!pair && node.type != gui::NodeType::RetrievalMetrics) continue;
         const std::string what = pair ? "Pair Metrics" : "Retrieval Metrics";

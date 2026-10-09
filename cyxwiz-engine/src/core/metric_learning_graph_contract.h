@@ -205,7 +205,7 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
 
     // Pair and triplet training (TOFIX140 A5): a typed builder and its loss
     // train through MetricBatchSampler and the stacked metric losses; Pair /
-    // Retrieval Metrics measure them.
+    // Retrieval Metrics measure them; the outputs export / serve them.
     const bool triplet_training =
         contract.kind == MetricLearningGraphKind::TripletTraining &&
         !contract.triplet_dataset_builder_node_ids.empty() && contract.HasTripletLoss() &&
@@ -214,7 +214,7 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         contract.kind == MetricLearningGraphKind::PairTraining &&
         !contract.pair_dataset_builder_node_ids.empty() && contract.HasPairLoss() &&
         contract.triplet_dataset_builder_node_ids.empty() && !contract.HasTripletLoss();
-    if ((triplet_training || pair_training) && !contract.has_sketch_nodes && !contract.HasInferenceOutput()) {
+    if ((triplet_training || pair_training) && !contract.has_sketch_nodes) {
         contract.executable = true;
         return contract;
     }
@@ -235,7 +235,7 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
 
     if (contract.HasInferenceOutput()) {
         AddBlocker(contract,
-                   "visual graph/runtime routing for metric-learning outputs is not implemented");
+                   "metric-learning outputs need a model trained by a Pair or Triplet Dataset Builder and its loss");
     }
     AddBlocker(contract,
                "visual metric-learning graph execution is not implemented");

@@ -3635,65 +3635,6 @@ int main() {
     }
 
     {
-        struct MetricLearningMetadataCase {
-            gui::NodeType type;
-            std::string name;
-            std::string required_parameter;
-        };
-
-        const MetricLearningMetadataCase cases[] = {
-            {gui::NodeType::EmbeddingOutput, "Embedding Output",
-             "include_metadata"},
-            {gui::NodeType::PairScoreOutput, "Pair Score Output",
-             "score_mode"},
-        };
-
-        for (const auto& node_case : cases) {
-            const auto* meta = metadata.GetMetadata(node_case.type);
-            Check(meta != nullptr,
-                  "metric-learning metadata missing: " + node_case.name);
-            Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
-                  "metric-learning metadata should be template-blocked: " +
-                      node_case.name);
-            Check(meta->badge == "Blocked",
-                  "metric-learning metadata should show blocked badge: " +
-                      node_case.name);
-            Check(!cyxwiz::CanAddNodeToGraph(*meta),
-                  "metric-learning node should remain unavailable: " +
-                      node_case.name);
-            Check(meta->category == gui::NodeCategory::Training,
-                  "metric-learning metadata should live under Training: " +
-                      node_case.name);
-            Check(HasParameter(meta, node_case.required_parameter),
-                  "metric-learning metadata missing required parameter: " +
-                      node_case.name);
-            Check(meta->brief_description.find("Metric") != std::string::npos ||
-                      meta->brief_description.find("metric") !=
-                          std::string::npos ||
-                      ContainsString(meta->keywords, "metric"),
-                  "metric-learning metadata should describe metric-learning: " +
-                      node_case.name);
-            Check(!meta->help_text.empty(),
-                  "metric-learning metadata should explain its bounded contract: " +
-                      node_case.name);
-            const auto support =
-                cyxwiz::ResolvePipelineTrainingBackendSupport(node_case.type);
-            Check(support.mode ==
-                      cyxwiz::PipelineTrainingBackendSupportMode::
-                          UnsupportedTrainingWorkflow &&
-                      !support.compile_supported && !support.training_supported,
-                  "metric-learning node should fail closed as a training workflow: " +
-                      node_case.name);
-            Check(cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
-                      node_case.type),
-                  "metric-learning workflow capability should resolve: " +
-                      node_case.name);
-            Check(cyxwiz::PipelineOperatorFactory::Instance().Create(
-                      node_case.type) == nullptr,
-                  "metric-learning node should not claim a PipelineExecutor owner: " +
-                      node_case.name);
-        }
-
         Check(ParameterMatches(
                   metadata.GetMetadata(gui::NodeType::ContrastiveLoss),
                   "margin", "float", "1.0") &&
@@ -3704,17 +3645,32 @@ int main() {
                       metadata.GetMetadata(gui::NodeType::TripletLoss),
                       "margin", "float", "1.0"),
               "metric-learning losses should preserve their distinct margins");
-        Check(ParameterMatches(
-                  metadata.GetMetadata(gui::NodeType::PairScoreOutput),
-                  "score_mode", "enum", "distance"),
-              "PairScoreOutput should preserve its scoring mode");
-
-        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
-                            "Embedding Records", gui::PinType::Dataset),
-              "EmbeddingOutput should expose dataset records");
-        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::PairScoreOutput),
-                            "Pair Scores", gui::PinType::Dataset),
-              "PairScoreOutput should expose pair score records");
+        // Embedding Output writes a file after training; Pair Score Output's
+        // settings are saved with the model for /v1/pair-score (TOFIX140 A5).
+        for (const auto type : {gui::NodeType::EmbeddingOutput, gui::NodeType::PairScoreOutput}) {
+            const auto* meta = metadata.GetMetadata(type);
+            Check(meta != nullptr &&
+                      meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                      meta->badge.empty() && cyxwiz::CanAddNodeToGraph(*meta) && meta->outputs.empty() &&
+                      HasInputType(meta, "Embeddings", gui::PinType::Tensor),
+                  "Embedding / Pair Score Output: implemented sinks on the encoder output");
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+            Check(support.compile_supported && support.training_supported &&
+                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+                  "Embedding / Pair Score Output compile into the training configuration");
+        }
+        Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
+                               "file_path", "string", "exports/embeddings.parquet") &&
+                  ParameterMatches(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
+                                   "partition", "enum", "all") &&
+                  ParameterMatches(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
+                                   "include_metadata", "bool", "true"),
+              "Embedding Output: file, partition and metadata settings");
+        Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::PairScoreOutput),
+                               "score_mode", "enum", "distance") &&
+                  ParameterMatches(metadata.GetMetadata(gui::NodeType::PairScoreOutput),
+                                   "threshold", "float", "0.5"),
+              "Pair Score Output: score mode and threshold");
 
         // Pair and triplet metric learning train (TOFIX140 A5): the builders
         // stack in-batch pairs / triplets by class id and the losses split

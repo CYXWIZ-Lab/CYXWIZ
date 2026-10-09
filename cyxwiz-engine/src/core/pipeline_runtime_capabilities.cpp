@@ -1092,15 +1092,7 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingWorkflowCapabilities() {
-    static constexpr const char* kOutputReason =
-        "has inference response packaging helpers, but visual graph/runtime routing from the encoder to this output is not implemented";
-
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::EmbeddingOutput, kOutputReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::PairScoreOutput, kOutputReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-    };
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {};
     return capabilities;
 }
 
@@ -1360,6 +1352,10 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
         {gui::NodeType::RetrievalMetrics, PipelineTrainingSupportRole::TrainingControl,
          "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::EmbeddingOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the embeddings file written after training"},
+        {gui::NodeType::PairScoreOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the pair-score defaults saved with the trained model"},
     };
     return capabilities;
 }

@@ -300,6 +300,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         int64_t new_sequence_pos_pad_id = 0;
         int64_t new_sequence_tag_ignore_index = -100;
         int64_t new_sequence_target_ignore_index = -100;
+        std::optional<PairScoreDefaults> new_pair_score_defaults;
         std::vector<std::string> new_sequence_token_vocabulary;
         std::vector<std::string> new_sequence_pos_vocabulary;
         std::vector<std::string> new_sequence_tag_vocabulary;
@@ -352,6 +353,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         new_sequence_pos_pad_id = probe.sequence_pos_pad_id;
         new_sequence_tag_ignore_index = probe.sequence_tag_ignore_index;
         new_sequence_target_ignore_index = probe.sequence_target_ignore_index;
+        new_pair_score_defaults = PairScoreDefaultsFromMetadata(probe.custom_metadata);
 
         if (probe.has_sequence_token_vocabulary ||
             probe.has_sequence_pos_vocabulary ||
@@ -416,6 +418,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         sequence_token_vocabulary_ = std::move(new_sequence_token_vocabulary);
         sequence_pos_vocabulary_ = std::move(new_sequence_pos_vocabulary);
         sequence_tag_vocabulary_ = std::move(new_sequence_tag_vocabulary);
+        pair_score_defaults_ = new_pair_score_defaults;
         model_path_ = model_path;
 
         spdlog::info("Loaded model: {} ({} layers)", GetModelName(), model_->Size());
@@ -450,6 +453,7 @@ void LocalInferenceServer::UnloadModel() {
     sequence_token_vocabulary_.clear();
     sequence_pos_vocabulary_.clear();
     sequence_tag_vocabulary_.clear();
+    pair_score_defaults_.reset();
     model_path_.clear();
 }
 
@@ -656,6 +660,12 @@ void LocalInferenceServer::HandleModelInfo(const httplib::Request&, httplib::Res
         }},
         {"layers", json::array()}
     };
+    if (pair_score_defaults_) {
+        response["pair_score_defaults"] = {
+            {"score_mode", PairScoreModeName(pair_score_defaults_->mode)},
+            {"threshold", pair_score_defaults_->threshold},
+        };
+    }
 
     // Add layer info
     for (size_t i = 0; i < model_->Size(); ++i) {
@@ -1180,8 +1190,13 @@ void LocalInferenceServer::HandlePairScore(const httplib::Request& req,
         return;
     }
 
+    // The model's Pair Score Output settings: its mode when the request names
+    // none, and same / different when the request's mode is the model's.
+    if (pair_score_defaults_ && !input.has_score_mode) {
+        input.score_mode = pair_score_defaults_->mode;
+    }
     try {
-        const auto output = BuildPairScoreOutputResponse(
+        auto output = BuildPairScoreOutputResponse(
             embedding_a,
             embedding_b,
             input.score_mode,
@@ -1189,6 +1204,9 @@ void LocalInferenceServer::HandlePairScore(const httplib::Request& req,
             input.sample_id_b,
             input.class_id_a,
             input.class_id_b);
+        if (pair_score_defaults_ && input.score_mode == pair_score_defaults_->mode) {
+            ApplyPairScoreThreshold(output, pair_score_defaults_->threshold);
+        }
         json response = PairScoreOutputResponseToJson(output);
         auto end_time = std::chrono::high_resolution_clock::now();
         response["latency_ms"] = std::chrono::duration<double, std::milli>(

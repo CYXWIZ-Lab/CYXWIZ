@@ -1,6 +1,9 @@
 #include "metric_learning_evaluation.h"
 
+#include "arrow_dataset.h"
 #include "graph_compiler.h"
+
+#include <arrow/api.h>
 
 #include "metric_learning_mining.h"
 #include "metric_learning_sampling.h"
@@ -10,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -118,6 +122,83 @@ MetricEvaluation EvaluateMetricEmbeddings(std::vector<float> embeddings, size_t 
     if (spec.nearest_neighbours && n >= 2) result.nearest_classes = NearestClasses(embeddings, d, class_ids);
     result.class_ids = std::move(class_ids);
     return result;
+}
+
+size_t WriteEmbeddingsParquet(const std::vector<EmbeddingExportPart>& parts,
+                              const std::function<Tensor(const Batch&)>& forward,
+                              bool include_metadata,
+                              const std::string& path) {
+    std::vector<float> embeddings;
+    std::vector<int64_t> class_ids, positions;
+    std::vector<std::string> partitions;
+    size_t d = 0;
+    for (const auto& part : parts) {
+        if (!part.rows) continue;
+        int64_t position = 0;
+        part.rows->Reset();
+        while (!part.rows->IsEpochComplete()) {
+            Batch batch = part.rows->GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto ids = ReadBatchClassIds(batch.labels, batch.size);
+            const Tensor output = forward(batch);
+            const auto& shape = output.Shape();
+            if (shape.size() != 2 || shape[0] != batch.size || (d != 0 && shape[1] != d)) {
+                throw std::runtime_error("Embedding Output needs [N, D] embeddings from the encoder");
+            }
+            d = shape[1];
+            const float* values = output.ReadData<float>();
+            embeddings.insert(embeddings.end(), values, values + batch.size * d);
+            class_ids.insert(class_ids.end(), ids.begin(), ids.end());
+            for (size_t i = 0; i < batch.size; ++i) {
+                positions.push_back(position++);
+                partitions.push_back(part.partition);
+            }
+        }
+        part.rows->Reset();
+    }
+    const size_t n = class_ids.size();
+    if (n == 0) throw std::runtime_error("Embedding Output found no rows in the chosen partition");
+
+    const auto ok = [](const arrow::Status& status) {
+        if (!status.ok()) throw std::runtime_error("Embedding Output: " + status.ToString());
+    };
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    for (size_t k = 0; k < d; ++k) {
+        arrow::FloatBuilder builder;
+        ok(builder.Reserve(static_cast<int64_t>(n)));
+        for (size_t i = 0; i < n; ++i) builder.UnsafeAppend(embeddings[i * d + k]);
+        std::shared_ptr<arrow::Array> array;
+        ok(builder.Finish(&array));
+        fields.push_back(arrow::field("e" + std::to_string(k), arrow::float32()));
+        columns.push_back(array);
+    }
+    if (include_metadata) {
+        arrow::Int64Builder classes, rows;
+        arrow::StringBuilder names;
+        ok(classes.AppendValues(class_ids));
+        ok(rows.AppendValues(positions));
+        ok(names.AppendValues(partitions));
+        std::shared_ptr<arrow::Array> class_array, name_array, row_array;
+        ok(classes.Finish(&class_array));
+        ok(names.Finish(&name_array));
+        ok(rows.Finish(&row_array));
+        fields.push_back(arrow::field("class", arrow::int64()));
+        fields.push_back(arrow::field("partition", arrow::utf8()));
+        fields.push_back(arrow::field("row", arrow::int64()));
+        columns.push_back(class_array);
+        columns.push_back(name_array);
+        columns.push_back(row_array);
+    }
+    const auto parent = std::filesystem::path(path).parent_path();
+    std::error_code ec;
+    if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+    const ArrowDataset table(arrow::Table::Make(arrow::schema(fields), columns, static_cast<int64_t>(n)),
+                             "embeddings");
+    if (!table.ExportParquet(path)) {
+        throw std::runtime_error("Embedding Output could not write '" + path + "'");
+    }
+    return n;
 }
 
 MetricEvaluation EvaluateMetricLearning(IBatcher& rows,

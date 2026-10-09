@@ -239,6 +239,43 @@ void TestOutputJsonContracts() {
               "pair-score JSON should serialize score value");
 }
 
+// Pair Score Output (TOFIX140 A5): the settings saved with a model become
+// the defaults, and its threshold answers same / different per mode.
+void TestPairScoreDefaultsAndThreshold() {
+    Check(!cyxwiz::PairScoreDefaultsFromMetadata({}).has_value(),
+          "a model without Pair Score Output has no pair-score defaults");
+    const auto defaults = cyxwiz::PairScoreDefaultsFromMetadata(
+        {{"pair_score_mode", "cosine_similarity"}, {"pair_score_threshold", "0.8"}, {"other", "x"}});
+    Check(defaults && defaults->mode == cyxwiz::PairScoreMode::CosineSimilarity &&
+              std::abs(defaults->threshold - 0.8) < 1e-12,
+          "the saved mode and threshold are read back");
+
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::EuclideanDistance, 0.5, 0.5) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::EuclideanDistance, 0.51, 0.5),
+          "distance: same at or below the threshold");
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::NegativeEuclideanDistance, -0.5, 0.5) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::NegativeEuclideanDistance, -0.6, 0.5),
+          "negative distance: same at or above -threshold");
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::CosineSimilarity, 0.8, 0.8) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::CosineSimilarity, 0.79, 0.8),
+          "cosine similarity: same at or above the threshold");
+
+    // Distances 0.1 and 5 against threshold 0.5.
+    auto response = cyxwiz::BuildPairScoreOutputResponse(
+        FloatTensor({2, 2}, {0.0f, 0.0f, 0.0f, 0.0f}), FloatTensor({2, 2}, {0.1f, 0.0f, 3.0f, 4.0f}),
+        cyxwiz::PairScoreMode::EuclideanDistance);
+    cyxwiz::ApplyPairScoreThreshold(response, 0.5);
+    Check(response.same.size() == 2 && response.same[0] && !response.same[1], "same / different per pair");
+    const auto json = cyxwiz::PairScoreOutputResponseToJson(response);
+    Check(json.at("threshold").get<double>() == 0.5 && json.at("records").at(0).at("same").get<bool>() &&
+              !json.at("records").at(1).at("same").get<bool>(),
+          "the response carries the threshold and same per record");
+    const auto plain = cyxwiz::PairScoreOutputResponseToJson(cyxwiz::BuildPairScoreOutputResponse(
+        FloatTensor({1, 1}, {0.0f}), FloatTensor({1, 1}, {1.0f})));
+    Check(!plain.contains("threshold") && !plain.at("records").at(0).contains("same"),
+          "without a threshold the response is unchanged");
+}
+
 void TestOutputValidation() {
     bool rejected_embedding_metadata = false;
     try {
@@ -342,6 +379,7 @@ int main() {
     TestPairScoreSimilarityModes();
     TestScoreModeParsing();
     TestOutputJsonContracts();
+    TestPairScoreDefaultsAndThreshold();
     TestOutputValidation();
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     TestDeviceOutputMaterializationAttribution();

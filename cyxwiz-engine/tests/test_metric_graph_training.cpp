@@ -18,10 +18,12 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/metric_learning_inference_outputs.h"
 #include "../src/core/metric_learning_mining.h"
 #include "../src/core/metric_learning_sampling.h"
 #include "../src/core/stacked_metric_loss.h"
 #include "../src/core/test_executor.h"
+#include "../src/core/training_export_metadata.h"
 #include "../src/core/training_executor.h"
 #include "../src/core/training_resume_checkpoint.h"
 #include "route_qualification_test_fixture.h"
@@ -134,9 +136,12 @@ struct Graph {
 // to the loss. builder is PairDatasetBuilder, TripletDatasetBuilder or none.
 // metrics: also Pair Metrics (threshold 0.5) and Retrieval Metrics (k 2) on
 // `metrics_from` (default: the Embedding layer, which feeds the loss).
+// outputs_path: also Embedding Output (writing there, all rows) and Pair Score
+// Output (cosine_similarity, threshold 0.8) on the Embedding layer.
 Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, const std::string& margin,
                  double learning_rate, const std::string& mining = "random", bool metrics = false,
-                 int metrics_from = 5, const std::string& k = "2") {
+                 int metrics_from = 5, const std::string& k = "2", const std::string& outputs_path = "",
+                 const std::string& partition = "all") {
     Graph g;
     gui::MLNode data;
     data.id = 1;
@@ -201,6 +206,23 @@ Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, 
         g.links.push_back(Link(9, 1, 112, 11, 1102));
         g.links.push_back(Link(10, metrics_from, metrics_from * 100 + 11, 12, 1201));
         g.links.push_back(Link(11, 1, 112, 12, 1202));
+    }
+    if (!outputs_path.empty()) {
+        auto embeddings = FactoryNode(gui::NodeType::EmbeddingOutput, 13, "Embedding Output");
+        auto scores = FactoryNode(gui::NodeType::PairScoreOutput, 14, "Pair Score Output");
+        Check(embeddings.inputs.size() == 2 && embeddings.outputs.empty() &&
+                  embeddings.parameters.at("partition") == "all" && scores.inputs.size() == 1 &&
+                  scores.outputs.empty() && scores.parameters.at("score_mode") == "distance",
+              "Embedding / Pair Score Output: inputs from the encoder, nothing out");
+        embeddings.parameters["file_path"] = outputs_path;
+        embeddings.parameters["partition"] = partition;
+        scores.parameters["score_mode"] = "cosine_similarity";
+        scores.parameters["threshold"] = "0.8";
+        g.nodes.push_back(embeddings);
+        g.nodes.push_back(scores);
+        g.links.push_back(Link(12, 5, 511, 13, 1301));
+        g.links.push_back(Link(13, 1, 112, 13, 1302));
+        g.links.push_back(Link(14, 5, 511, 14, 1401));
     }
     return g;
 }
@@ -448,6 +470,11 @@ void CheckRefusals() {
     CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "random", true, 5,
                             "0"),
                  "k", "Retrieval Metrics k 0");
+    CheckRefused(BuildGraph(std::nullopt, NodeType::MSELoss, "", 0.1, "random", false, 5, "2", "e.parquet"),
+                 "Pair or Triplet Dataset Builder", "the outputs on a model without a builder");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "random", false, 5,
+                            "2", "e.parquet", "everything"),
+                 "partition", "an unknown Embedding Output partition");
 }
 
 // The mining rules on a hand-made batch: rows 0, 1 class 0; rows 2, 3 class 1.
@@ -600,6 +627,51 @@ int main(int, char** argv) {
                   trained.metrics.val_pair_metrics->accuracy >= 0.0 &&
                   trained.metrics.val_pair_metrics->accuracy <= 1.0,
               "a validated epoch reports the Pair / Retrieval Metrics of the 6 validation rows");
+    }
+
+    // Embedding Output and Pair Score Output: after training, the file holds
+    // every row's embedding from the trained encoder (torch's, from the same
+    // trained parameters), with class, partition and row; the pair-score
+    // settings go into the exported model's metadata.
+    {
+        const json& c = fixture.at("cases").at(0);
+        const fs::path file = work_dir / "exports" / "embeddings.parquet";
+        auto config = CompileValid(BuildGraph(gui::NodeType::TripletDatasetBuilder, gui::NodeType::TripletLoss,
+                                              "1", learning_rate, "random", false, 5, "2", file.string()),
+                                   fixture, "the outputs graph");
+        Check(config.embedding_output && config.embedding_output_partition == "all" && config.pair_score_output &&
+                  config.pair_score_mode == "cosine_similarity" && std::abs(config.pair_score_threshold - 0.8) < 1e-12,
+              "the outputs compile into the configuration");
+        const auto metadata = cyxwiz::TrainingExportMetadata(config).custom_metadata;
+        const auto defaults = cyxwiz::PairScoreDefaultsFromMetadata(metadata);
+        Check(defaults && defaults->mode == cyxwiz::PairScoreMode::CosineSimilarity &&
+                  std::abs(defaults->threshold - 0.8) < 1e-12,
+              "the exported model carries the Pair Score Output defaults");
+        const auto trained = Train(config, dataset, epochs, "the outputs run");
+        Check(trained.metrics.embedding_output_file == file.string() && trained.metrics.embedding_output_rows == 12,
+              "Embedding Output wrote the 12 rows");
+        const auto written = cyxwiz::ArrowDataset::FromParquet(file.string(), "written");
+        Check(written && written->GetArrowTable(), "the embeddings file reads back");
+        const auto table = written->GetArrowTable();
+        const auto expected = c.at("embeddings_after").get<std::vector<std::vector<double>>>();
+        Check(table->num_rows() == 12 && table->num_columns() == 5 && table->schema()->field(0)->name() == "e0" &&
+                  table->schema()->field(2)->name() == "class" && table->schema()->field(3)->name() == "partition" &&
+                  table->schema()->field(4)->name() == "row",
+              "columns e0, e1, class, partition, row");
+        const auto column = [&](int i) { return table->column(i)->chunk(0); };
+        const auto e0 = std::static_pointer_cast<arrow::FloatArray>(column(0));
+        const auto e1 = std::static_pointer_cast<arrow::FloatArray>(column(1));
+        const auto classes = std::static_pointer_cast<arrow::Int64Array>(column(2));
+        const auto parts = std::static_pointer_cast<arrow::StringArray>(column(3));
+        const auto rows = std::static_pointer_cast<arrow::Int64Array>(column(4));
+        const auto label = fixture.at("label").get<std::vector<int64_t>>();
+        bool same = true;
+        for (int64_t i = 0; i < 12; ++i) {
+            same = same && std::abs(e0->Value(i) - expected[i][0]) <= tolerance &&
+                   std::abs(e1->Value(i) - expected[i][1]) <= tolerance && classes->Value(i) == label[i] &&
+                   parts->GetString(i) == "train" && rows->Value(i) == i;
+        }
+        Check(same, "each row's embedding matches torch's trained encoder, with its class, partition and row");
     }
 
     for (const auto& c : fixture.at("cases")) {

@@ -3455,24 +3455,40 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::EmbeddingOutput, NodeCategory::Training, "Embedding Output", ICON_FA_CUBE,
-        {"metric", "learning", "embedding", "output"}, 0, false,
-        "Blocked metric-learning embedding-output contract",
-        "Preserves embedding-output metadata settings for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
-        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"}},
-        {{"Embedding Records", PinType::Dataset, true, "Embedding output records"}},
-        {{"include_metadata", "bool", "true", "Include sample/class metadata", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "embedding", "output", "export", "parquet"}, 0, false,
+        "Writes the trained encoder's embeddings of a partition to a Parquet file",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. After training, every row "
+        "of the chosen partition (all, train, validation or test) goes through the trained encoder once and "
+        "the file gets one row per data row: columns e0 .. e(D-1) and, with metadata, the class id, the "
+        "partition and the row's position in it. A relative path is taken from the project folder. Load the "
+        "file with a Data Input to plot it (a 2-D embedding is a scatter coloured by class).", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"file_path", "string", "exports/embeddings.parquet", "Parquet file to write (relative: in the project)", {},
+          "", "File", "Output"},
+         {"partition", "enum", "all", "Which rows to embed", {"all", "train", "validation", "test"}, "",
+          "Rows", "Output"},
+         {"include_metadata", "bool", "true", "Add the class id, partition and row columns", {}, "",
+          "Metadata", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairScoreOutput, NodeCategory::Training, "Pair Score Output", ICON_FA_CHART_LINE,
-        {"metric", "learning", "pair", "score", "output"}, 0, false,
-        "Blocked metric-learning pair-score output contract",
-        "Preserves distance or similarity scoring mode for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"}},
-        {{"Pair Scores", PinType::Dataset, true, "Pair score records"}},
-        {{"score_mode", "enum", "distance", "Score mode",
-          {"distance", "negative_distance", "cosine_similarity"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "score", "output", "verification", "serving"}, 0, false,
+        "Sets how the trained model scores pairs when it is served",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. Its score mode and "
+        "threshold are saved with the trained model; the local inference server's /v1/pair-score uses them "
+        "when a request gives no score_mode, and answers same / different: same when the distance is at most "
+        "the threshold (distance), the negative distance at least -threshold (negative_distance), or the "
+        "cosine similarity at least the threshold (cosine_similarity). Pair Metrics shows which threshold "
+        "separates same-class from other-class pairs.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"}},
+        {},
+        {{"score_mode", "enum", "distance", "What a pair's score is",
+          {"distance", "negative_distance", "cosine_similarity"}, "", "Score", "Serving"},
+         {"threshold", "float", "0.5", "Where same / different is decided (see the help)", {}, "", "Threshold",
+          "Serving"}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

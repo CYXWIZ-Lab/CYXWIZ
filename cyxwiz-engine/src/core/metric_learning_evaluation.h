@@ -61,6 +61,19 @@ MetricEvaluation EvaluateMetricLearning(IBatcher& rows,
                                         const std::function<Tensor(const Batch&)>& forward,
                                         const MetricEvaluationSpec& spec);
 
+// Embedding Output: the embeddings of each part's rows (read to the end of
+// its current phase), written to one Parquet file: e0 .. e(D-1) and, with
+// metadata, class (int64), partition (string) and row (position in the
+// partition). Returns the number of rows written; throws on failure.
+struct EmbeddingExportPart {
+    std::string partition;
+    IBatcher* rows = nullptr;
+};
+size_t WriteEmbeddingsParquet(const std::vector<EmbeddingExportPart>& parts,
+                              const std::function<Tensor(const Batch&)>& forward,
+                              bool include_metadata,
+                              const std::string& path);
+
 // The same over embeddings already collected (row-major [n, d]) and their
 // class ids; pairs as {first row, second row, similar}.
 MetricEvaluation EvaluateMetricEmbeddings(std::vector<float> embeddings, size_t d,

@@ -1,6 +1,8 @@
 // local_inference_server.h - Embedded HTTP inference server for the Engine
 #pragma once
 
+#include <optional>
+#include "core/metric_learning_inference_outputs.h"
 #include "bert_encoder_inference_contract.h"
 #include "language_model_inference_contract.h"
 
@@ -149,6 +151,8 @@ private:
     std::vector<std::string> sequence_token_vocabulary_;
     std::vector<std::string> sequence_pos_vocabulary_;
     std::vector<std::string> sequence_tag_vocabulary_;
+    // Pair Score Output settings saved with the model (TOFIX140 A5).
+    std::optional<PairScoreDefaults> pair_score_defaults_;
 
     std::string model_path_;
     int port_ = 0;
