@@ -1052,6 +1052,21 @@ void TrainingManager::TrainingThreadFunc(
                     static_cast<double>(train_acc) * 100.0,
                     static_cast<double>(val_acc) * 100.0);
             }
+            // Pair / Retrieval Metrics (TOFIX140 A5), in percent like accuracy.
+            {
+                const TrainingMetrics latest = exec->GetMetrics();
+                if (latest.val_pair_metrics && val_loss >= 0.0f) {
+                    panel->AddCustomMetric("Val Pair Accuracy", epoch, latest.val_pair_metrics->accuracy * 100.0);
+                }
+                if (latest.val_retrieval_metrics && val_loss >= 0.0f) {
+                    panel->AddCustomMetric("Val Recall@" + std::to_string(latest.val_retrieval_metrics->k), epoch,
+                                           latest.val_retrieval_metrics->recall_at_k * 100.0);
+                    panel->AddCustomMetric("Val MRR", epoch,
+                                           latest.val_retrieval_metrics->mean_reciprocal_rank * 100.0);
+                    panel->AddCustomMetric("Val 1-NN Agreement", epoch,
+                                           latest.val_retrieval_metrics->nearest_neighbor_class_agreement * 100.0);
+                }
+            }
             // Update training state with timing info
             panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
             if (sequence_mode) {

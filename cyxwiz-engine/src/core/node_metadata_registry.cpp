@@ -3424,25 +3424,35 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairMetrics, NodeCategory::Training, "Pair Metrics", ICON_FA_CHART_LINE,
-        {"metric", "learning", "pair", "metrics"}, 0, false,
-        "Blocked metric-learning pair-metrics contract",
-        "Preserves the distance threshold for saved graphs. The visual runtime does not yet compute and report pair metrics from routed embedding batches.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Metrics", PinType::Dataset, true, "Pair metric rows"}},
-        {{"threshold", "float", "0.5", "Distance threshold", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "metrics", "verification", "evaluation"}, 0, false,
+        "Measures how well a metric model tells same-class pairs from other pairs",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. At every validated epoch "
+        "(validation rows), at the end of training (held-out test rows) and in the Test step, each row of a "
+        "batch is paired with a same-class or an other-class row of that batch in turn (seeded by the Data "
+        "Loader seed) and a pair is called similar when the Euclidean distance of its embeddings is at most "
+        "the threshold. Reports the pair accuracy and the mean distance of same-class and of other-class "
+        "pairs. Cosine Embedding models are measured on L2-normalised embeddings.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"threshold", "float", "0.5", "Distance at or below which a pair is called similar", {}, "0.0-1000000.0",
+          "Threshold", "Metrics"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RetrievalMetrics, NodeCategory::Training, "Retrieval Metrics", ICON_FA_CHART_LINE,
-        {"metric", "learning", "retrieval", "metrics"}, 0, false,
-        "Blocked metric-learning retrieval-metrics contract",
-        "Preserves the retrieval cutoff for recall@k, MRR, and nearest-neighbor agreement. The visual runtime does not yet own metric computation and reporting.", "",
-        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"},
-         {"Class IDs", PinType::Labels, true, "Class ids"}},
-        {{"Metrics", PinType::Dataset, true, "Retrieval metric rows"}},
-        {{"k", "int", "10", "Retrieval cutoff", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "retrieval", "metrics", "recall", "mrr", "evaluation"}, 0, false,
+        "Measures how well a metric model finds rows of the same class among their nearest neighbours",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. At every validated epoch "
+        "(validation rows), at the end of training (held-out test rows) and in the Test step, every row is a "
+        "query against all the other rows (leave-one-out, Euclidean distance; up to 4096 rows): Recall@k is "
+        "the share of queries with a same-class row among their k nearest, MRR the mean of 1 / rank of the "
+        "first same-class row, 1-NN agreement the share whose nearest row is of their class. Cosine "
+        "Embedding models are measured on L2-normalised embeddings.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"k", "int", "10", "How many nearest rows Recall@k looks at", {}, "1-1000", "k", "Metrics"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::EmbeddingOutput, NodeCategory::Training, "Embedding Output", ICON_FA_CUBE,
         {"metric", "learning", "embedding", "output"}, 0, false,

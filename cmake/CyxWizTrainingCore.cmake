@@ -15,6 +15,8 @@ set(_cyxwiz_engine_src "${CMAKE_SOURCE_DIR}/cyxwiz-engine/src")
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_executor.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_sampling.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_evaluation.cpp
+    ${_cyxwiz_engine_src}/core/metric_learning_metrics.cpp
     ${_cyxwiz_engine_src}/core/training_generation_preview.cpp
     ${_cyxwiz_engine_src}/core/language_model_generation.cpp
     ${_cyxwiz_engine_src}/core/training_scheduler_controller.cpp

@@ -6,6 +6,7 @@
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
+#include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
@@ -1097,6 +1098,9 @@ void TrainingExecutor::Train(
     ISequenceBatcher* active_sequence_batcher = nullptr;
     // Pair / Triplet Dataset Builder (TOFIX140 A5): one sampler per distinct batcher.
     std::vector<std::unique_ptr<MetricBatchSampler>> metric_samplers;
+    // Pair / Retrieval Metrics read the plain validation / test rows.
+    IBatcher* metric_eval_val = nullptr;
+    IBatcher* metric_eval_test = nullptr;
 
     size_t num_train_samples = 0;
     size_t num_val_samples = 0;
@@ -1188,6 +1192,10 @@ void TrainingExecutor::Train(
         };
         IBatcher* const train_source = active_train_ibatcher;
         IBatcher* const val_source = active_val_ibatcher;
+        if (val_source != train_source) metric_eval_val = val_source;
+        if (active_test_ibatcher != train_source && active_test_ibatcher != val_source) {
+            metric_eval_test = active_test_ibatcher;
+        }
         active_train_ibatcher = wrap(train_source);
         // Keep the executor's aliasing: a validation or test batcher that is
         // the training batcher stays the same object.
@@ -1545,6 +1553,18 @@ void TrainingExecutor::Train(
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
+            if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
+                metric_eval_val->SetPhase(val_batcher_phase);
+                const MetricEvaluation evaluation = EvaluateMetricLearning(
+                    *metric_eval_val, [this](const Batch& batch) { return ForwardBatch(batch); },
+                    MetricEvaluationSpecFor(config_));
+                metric_eval_val->SetPhase(train_batcher_phase);
+                spdlog::info("Epoch {} validation: {}", epoch, DescribeMetricEvaluation(evaluation));
+                UpdateMetrics([&evaluation](TrainingMetrics& m) {
+                    m.val_pair_metrics = evaluation.pair;
+                    m.val_retrieval_metrics = evaluation.retrieval;
+                });
+            }
         } else if (!should_validate_this_epoch) {
             spdlog::debug("TrainingExecutor: Skipping validation at epoch {} (validation_freq={})",
                           epoch, validation_freq);
@@ -1965,6 +1985,19 @@ void TrainingExecutor::Train(
             spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
                          test_evaluation.loss, test_evaluation.accuracy * 100.0f,
                          active_test_ibatcher->GetNumSamples());
+        }
+        if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_test) {
+            model_->SetTraining(false);
+            metric_eval_test->SetPhase(test_batcher_phase);
+            const MetricEvaluation evaluation = EvaluateMetricLearning(
+                *metric_eval_test, [this](const Batch& batch) { return ForwardBatch(batch); },
+                MetricEvaluationSpecFor(config_));
+            metric_eval_test->SetPhase(train_batcher_phase);
+            spdlog::info("Held-out test: {}", DescribeMetricEvaluation(evaluation));
+            UpdateMetrics([&evaluation](TrainingMetrics& m) {
+                m.test_pair_metrics = evaluation.pair;
+                m.test_retrieval_metrics = evaluation.retrieval;
+            });
         }
     } else if (!stop_requested_.load() && active_test_ibatcher) {
         spdlog::warn("TrainingExecutor: configured test split produced 0 held-out samples; "

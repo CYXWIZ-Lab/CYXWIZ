@@ -1,4 +1,6 @@
 #include "test_executor.h"
+#include "metric_learning_evaluation.h"
+#include "metric_learning_sampling.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
@@ -216,22 +218,6 @@ void TestExecutor::Test(
     is_testing_.store(true);
     stop_requested_.store(false);
 
-    // TOFIX140 A5 step 3 gives metric learning its own test metrics; until
-    // then the per-sample class decisions below do not apply to embeddings.
-    if (config_.metric_sampling != MetricSampling::None) {
-        const std::string detail =
-            "the Test step does not evaluate metric-learning models yet; the "
-            "training run reports their pair or triplet accuracy";
-        UpdateMetrics([&detail](TestingMetrics& m) {
-            m.is_testing = false;
-            m.is_complete = false;
-            m.status_message = "Testing failed: " + detail;
-        });
-        spdlog::error("TestExecutor: {}", detail);
-        is_testing_.store(false);
-        throw std::runtime_error(detail);
-    }
-
     if (config_.sequence_batch.enabled) {
         try {
             TestCausalSequence(batch_size, batch_cb, complete_cb);
@@ -361,7 +347,13 @@ void TestExecutor::Test(
     float total_loss = 0.0f;
     int batch_num = 0;
 
-    while (true) {
+    if (config_.metric_sampling != MetricSampling::None) {
+        IBatcher* rows = use_arrow_dataset_ ? static_cast<IBatcher*>(arrow_test_batcher.get())
+                         : use_parquet_dataset_ ? static_cast<IBatcher*>(parquet_test_batcher.get())
+                                                : external_test_batcher.get();
+        TestMetricLearning(*rows, batch_size);
+    }
+    while (config_.metric_sampling == MetricSampling::None) {
         if (ShouldStop()) break;
 
         Batch batch;
@@ -504,6 +496,65 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
             m.confusion_matrix.Add(true_class, pred_class);
         });
     }
+}
+
+void TestExecutor::TestMetricLearning(IBatcher& rows, int batch_size) {
+    // The loss over the builder's pairs / triplets, as in training.
+    MetricBatchSampler sampler(rows, config_.metric_sampling, config_.metric_mining,
+                               static_cast<uint64_t>(std::max(config_.dataloader_seed, 0)));
+    double loss_sum = 0.0;
+    int loss_batches = 0;
+    sampler.Reset();
+    while (!ShouldStop() && !sampler.IsEpochComplete()) {
+        if (batch_limit_ > 0 && loss_batches >= batch_limit_) break;
+        Batch batch = sampler.GetNextBatch();
+        if (!batch.IsValid()) break;
+        const Tensor embeddings = Forward(batch.data);
+        loss_sum += ComputeLoss(embeddings, batch.labels);
+        ++loss_batches;
+    }
+
+    // 1-NN classification + the Pair / Retrieval Metrics over the plain rows.
+    MetricEvaluationSpec spec = MetricEvaluationSpecFor(config_);
+    spec.nearest_neighbours = true;
+    if (batch_limit_ > 0) {
+        spec.max_rows = std::min(spec.max_rows, static_cast<size_t>(batch_limit_) * static_cast<size_t>(batch_size));
+    }
+    const MetricEvaluation evaluation =
+        EvaluateMetricLearning(rows, [this](const Batch& batch) { return Forward(batch.data); }, spec);
+    int64_t max_class = 0;
+    for (int64_t id : evaluation.class_ids) max_class = std::max(max_class, id);
+    const int num_classes = static_cast<int>(max_class) + 1;
+
+    UpdateMetrics([&](TestingMetrics& m) {
+        m.metric_learning_mode = true;
+        m.pair_metrics = evaluation.pair;
+        m.retrieval_metrics = evaluation.retrieval;
+        m.partial = evaluation.truncated;
+        m.test_loss = loss_batches > 0 ? static_cast<float>(loss_sum / loss_batches) : 0.0f;
+        m.current_batch = loss_batches;
+        m.confusion_matrix.Resize(num_classes);
+        m.per_class_metrics.assign(static_cast<size_t>(num_classes), ClassMetrics{});
+        for (int i = 0; i < num_classes; ++i) {
+            m.per_class_metrics[static_cast<size_t>(i)].class_id = i;
+            m.per_class_metrics[static_cast<size_t>(i)].class_name =
+                static_cast<size_t>(i) < external_source_.class_names.size()
+                    ? external_source_.class_names[static_cast<size_t>(i)]
+                    : "Class " + std::to_string(i);
+        }
+        for (size_t i = 0; i < evaluation.nearest_classes.size(); ++i) {
+            const int truth = static_cast<int>(evaluation.class_ids[i]);
+            const int predicted = static_cast<int>(evaluation.nearest_classes[i]);
+            m.total_samples++;
+            if (predicted == truth) m.correct_predictions++;
+            m.predictions.push_back(predicted);
+            m.ground_truth.push_back(truth);
+            m.confidences.push_back(1.0f);
+            m.confusion_matrix.Add(truth, predicted);
+        }
+    });
+    spdlog::info("TestExecutor: metric-learning test: 1-NN accuracy over {} rows; {}",
+                 evaluation.nearest_classes.size(), DescribeMetricEvaluation(evaluation));
 }
 
 void TestExecutor::ComputePerClassMetrics() {

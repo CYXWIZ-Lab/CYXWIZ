@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
@@ -16,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -75,6 +77,13 @@ struct TestingMetrics {
     float test_mae = 0.0f;
     float test_rmse = 0.0f;
     size_t total_target_values = 0;
+    // Metric-learning model (TOFIX140 A5): accuracy, confusion matrix and
+    // per-class metrics are those of a 1-NN classifier over the test rows
+    // (each row takes the class of its nearest other row); the Pair /
+    // Retrieval Metrics nodes add their results.
+    bool metric_learning_mode = false;
+    std::optional<PairMetricResult> pair_metrics;
+    std::optional<RetrievalMetricResult> retrieval_metrics;
 
     // Detailed results
     ConfusionMatrix confusion_matrix;
@@ -217,6 +226,9 @@ private:
      * Process a single batch
      */
     void ProcessBatch(const Batch& batch);
+    // Metric-learning models: the loss over the builder's pairs / triplets and
+    // the 1-NN / Pair / Retrieval evaluation of the test rows.
+    void TestMetricLearning(IBatcher& rows, int batch_size);
 
     /**
      * Compute per-class metrics from confusion matrix

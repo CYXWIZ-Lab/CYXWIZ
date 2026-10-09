@@ -10,6 +10,7 @@
 // Also: the samplers' picks, the stacked losses, the pair/triplet accuracy
 // decisions, and the compiler's refusals.
 #include "../src/core/arrow_dataset.h"
+#include "algorithms/arrayfire_backend_utils.h"
 #include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -20,6 +21,7 @@
 #include "../src/core/metric_learning_mining.h"
 #include "../src/core/metric_learning_sampling.h"
 #include "../src/core/stacked_metric_loss.h"
+#include "../src/core/test_executor.h"
 #include "../src/core/training_executor.h"
 #include "../src/core/training_resume_checkpoint.h"
 #include "route_qualification_test_fixture.h"
@@ -130,8 +132,11 @@ struct Graph {
 
 // Data -> [builder] -> Dense 4 -> ReLU -> Dense 2 -> loss -> SGD; the labels go
 // to the loss. builder is PairDatasetBuilder, TripletDatasetBuilder or none.
+// metrics: also Pair Metrics (threshold 0.5) and Retrieval Metrics (k 2) on
+// `metrics_from` (default: the Embedding layer, which feeds the loss).
 Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, const std::string& margin,
-                 double learning_rate, const std::string& mining = "random") {
+                 double learning_rate, const std::string& mining = "random", bool metrics = false,
+                 int metrics_from = 5, const std::string& k = "2") {
     Graph g;
     gui::MLNode data;
     data.id = 1;
@@ -183,6 +188,20 @@ Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, 
     sgd.parameters = {{"learning_rate", std::to_string(learning_rate)}, {"momentum", "0"}};
     g.nodes.push_back(sgd);
     g.links.push_back(Link(7, 9, 911, 10, 1001));
+    if (metrics) {
+        auto pair = FactoryNode(gui::NodeType::PairMetrics, 11, "Pair Metrics");
+        auto retrieval = FactoryNode(gui::NodeType::RetrievalMetrics, 12, "Retrieval Metrics");
+        Check(pair.inputs.size() == 2 && pair.outputs.empty() && pair.parameters.at("threshold") == "0.5" &&
+                  retrieval.inputs.size() == 2 && retrieval.outputs.empty() && retrieval.parameters.at("k") == "10",
+              "Pair / Retrieval Metrics: Embeddings + Class IDs in, nothing out, threshold 0.5 / k 10");
+        retrieval.parameters["k"] = k;
+        g.nodes.push_back(pair);
+        g.nodes.push_back(retrieval);
+        g.links.push_back(Link(8, metrics_from, metrics_from * 100 + 11, 11, 1101));
+        g.links.push_back(Link(9, 1, 112, 11, 1102));
+        g.links.push_back(Link(10, metrics_from, metrics_from * 100 + 11, 12, 1201));
+        g.links.push_back(Link(11, 1, 112, 12, 1202));
+    }
     return g;
 }
 
@@ -422,6 +441,13 @@ void CheckRefusals() {
                  "mining", "semi-hard mining on pairs");
     CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "hardest"),
                  "mining", "an unknown mining");
+    CheckRefused(BuildGraph(std::nullopt, NodeType::MSELoss, "", 0.1, "random", true),
+                 "Pair or Triplet Dataset Builder", "metrics nodes on a model without a builder");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "random", true, 3),
+                 "layer that feeds the loss", "metrics nodes on another layer than the encoder output");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "random", true, 5,
+                            "0"),
+                 "k", "Retrieval Metrics k 0");
 }
 
 // The mining rules on a hand-made batch: rows 0, 1 class 0; rows 2, 3 class 1.
@@ -515,6 +541,66 @@ int main(int, char** argv) {
     CheckParameters(start.parameters, fixture.at("initial_parameters"), 1.0e-8,
                     "the Engine's seed " + std::to_string(kModelSeed) +
                         " initialisation is the fixture's (if it changed, regenerate the fixture from these values)");
+
+    // The Test step of the untrained triplet model (TestExecutor builds the
+    // seeded start): the loss over the builder's picks, a 1-NN classifier over
+    // all rows, and the Pair / Retrieval Metrics, each as torch computes them.
+    {
+        const json& expected = fixture.at("test_step");
+        auto config = CompileValid(BuildGraph(gui::NodeType::TripletDatasetBuilder, gui::NodeType::TripletLoss,
+                                              "1.0", learning_rate, "random", true),
+                                   fixture, "the Test-step graph");
+        Check(config.pair_metrics && config.retrieval_metrics && config.retrieval_k == 2 &&
+                  std::abs(config.pair_metric_threshold - 0.5) < 1e-12,
+              "the Pair / Retrieval Metrics nodes compile into the evaluation");
+        SelectArrayFireCpu();
+        // As training does before building the model, so the model the
+        // TestExecutor builds is the seeded start.
+        cyxwiz::SeedCurrentArrayFireRandomEngine(static_cast<uint64_t>(kModelSeed));
+        cyxwiz::TestExecutor tester(config, dataset, "label", cyxwiz::TestDatasetScope::EntireProvidedDataset);
+        cyxwiz::TestingMetrics result;
+        tester.Test(config.batch_size, nullptr, [&](const cyxwiz::TestingMetrics& m) { result = m; });
+        const auto close = [&](double actual, const char* key) {
+            return std::abs(actual - expected.at(key).get<double>()) <= tolerance;
+        };
+        Check(result.is_complete && result.metric_learning_mode, "the Test step tests a metric model");
+        Check(result.predictions == expected.at("nearest_classes").get<std::vector<int>>() &&
+                  close(result.test_accuracy, "nn_accuracy"),
+              "Test-step 1-NN classes and accuracy match torch");
+        Check(result.retrieval_metrics && result.retrieval_metrics->k == 2 &&
+                  close(result.retrieval_metrics->recall_at_k, "recall_at_k") &&
+                  close(result.retrieval_metrics->mean_reciprocal_rank, "mrr") &&
+                  close(result.retrieval_metrics->nearest_neighbor_class_agreement, "nn_agreement"),
+              "Test-step Recall@2, MRR and 1-NN agreement match torch, got " +
+                  (result.retrieval_metrics
+                       ? std::to_string(result.retrieval_metrics->k) + " / " +
+                             std::to_string(result.retrieval_metrics->recall_at_k) + " / " +
+                             std::to_string(result.retrieval_metrics->mean_reciprocal_rank) + " / " +
+                             std::to_string(result.retrieval_metrics->nearest_neighbor_class_agreement)
+                       : std::string("none")));
+        Check(result.pair_metrics && result.pair_metrics->pair_count == expected.at("pair_count").get<size_t>() &&
+                  close(result.pair_metrics->accuracy, "pair_accuracy") &&
+                  close(result.pair_metrics->positive_distance_mean, "positive_distance_mean") &&
+                  close(result.pair_metrics->negative_distance_mean, "negative_distance_mean"),
+              "Test-step pair metrics match torch");
+        Check(close(result.test_loss, "loss"), "Test-step loss matches torch, got " + std::to_string(result.test_loss));
+    }
+
+    // Validation: with a validation split, every validated epoch carries the
+    // Pair / Retrieval Metrics of the validation rows.
+    {
+        auto config = CompileValid(BuildGraph(gui::NodeType::PairDatasetBuilder, gui::NodeType::ContrastiveLoss,
+                                              "1.0", learning_rate, "random", true),
+                                   fixture, "the validated graph");
+        config.train_ratio = 0.5f;
+        config.val_ratio = 0.5f;
+        const auto trained = Train(config, dataset, 2, "the validated run");
+        Check(trained.metrics.val_pair_metrics && trained.metrics.val_retrieval_metrics &&
+                  trained.metrics.val_retrieval_metrics->query_count == 6 &&
+                  trained.metrics.val_pair_metrics->accuracy >= 0.0 &&
+                  trained.metrics.val_pair_metrics->accuracy <= 1.0,
+              "a validated epoch reports the Pair / Retrieval Metrics of the 6 validation rows");
+    }
 
     for (const auto& c : fixture.at("cases")) {
         const std::string name = c.at("name").get<std::string>();

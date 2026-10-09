@@ -88,8 +88,47 @@ loss 5 - 1 + 1 = 5; one with d(a, p) = 1 and d(a, n) = 3 has loss 0 and counts
 as correct. With Contrastive `margin` 2.0, a same-class pair at distance 5 has
 loss 25, and an other-class pair at distance 1 has loss (2 - 1)² = 1.
 
+## Measuring the model
+
+Add **Pair Metrics** and/or **Retrieval Metrics** as side nodes: link their
+Embeddings input from the layer that feeds the loss (the encoder output) and
+their Class IDs from the Data Loader's Labels. They do not change training.
+
+```
+... -> Dense (D) --> Triplet Loss -> optimizer
+            |------> Retrieval Metrics (k)
+            |------> Pair Metrics (threshold)
+Data Loader --Labels--> each of them
+```
+
+| Node | Setting | Reports |
+| --- | --- | --- |
+| Retrieval Metrics | `k` (10) | Every row is a query against all the other rows (leave-one-out). **Recall@k**: share of queries with a same-class row among their k nearest. **MRR**: mean of 1 / rank of the first same-class row. **1-NN agreement**: share whose nearest row is of their class. |
+| Pair Metrics | `threshold` (0.5) | Each row is paired with a same-class or an other-class row of its batch in turn (seeded by the Data Loader seed); a pair is called similar when its embeddings are at most `threshold` apart. **Pair accuracy**, and the mean distance of same-class and of other-class pairs (pick the threshold between them). |
+
+When they run:
+
+- **Every validated epoch**, on the validation rows: a Console line
+  (`Epoch 3 validation: pair accuracy 0.9100 ..., Recall@10 0.9700, MRR 0.8800, 1-NN 0.8500 over 240 rows`)
+  and the dashboard series *Val Pair Accuracy*, *Val Recall@k*, *Val MRR* and
+  *Val 1-NN Agreement* (in %).
+- **At the end of training**, on the held-out test rows (Console line).
+- **In the Test step** (below).
+
+Distances are Euclidean; for a Cosine Embedding model the embeddings are
+L2-normalised first, so the ranking is the cosine ranking. Up to 4096 rows of a
+partition are used (the Console says when the cap is hit).
+
+## Testing a metric model
+
+Train > Test tests a metric model as a **1-NN classifier**: every test row takes
+the class of its nearest other test row in the embedding space. Accuracy, the
+confusion matrix and the per-class tab show that classifier (the Overview says
+"1-NN Accuracy"). The test loss is the model's loss over the builder's pairs or
+triplets of the test rows. With Pair / Retrieval Metrics in the graph, the
+Overview also shows Recall@k, MRR, the pair accuracy and the mean distances.
+
 ## Not yet
 
-Pair / Retrieval Metrics and the Embedding and Pair Score outputs are still
-blocked (TOFIX140 A5 steps 3-4). The Test step does not yet evaluate
-metric-learning models.
+The Embedding and Pair Score outputs (exporting embeddings, scoring new pairs)
+are still blocked (TOFIX140 A5 step 4).

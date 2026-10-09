@@ -224,11 +224,17 @@ void TestResultsPanel::RenderOverviewTab() {
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);  // Use default font
     ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
 
-    ImGui::TextColored(acc_color, "Accuracy");
+    // A metric-learning model is tested as a 1-NN classifier (TOFIX140 A5).
+    ImGui::TextColored(acc_color, results_.metric_learning_mode ? "1-NN Accuracy" : "Accuracy");
     ImGui::SameLine();
     ImGui::SetCursorPosX(150);
     ImGui::TextColored(acc_color, "%.2f%%", results_.test_accuracy * 100);
     ImGui::PopFont();
+    if (results_.metric_learning_mode) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Each test row takes the class of its nearest other test row in the embedding space.");
+        ImGui::PopTextWrapPos();
+    }
 
     ImGui::Separator();
 
@@ -282,6 +288,35 @@ void TestResultsPanel::RenderOverviewTab() {
     ImGui::Columns(1);
 
     ImGui::Separator();
+
+    if (results_.pair_metrics || results_.retrieval_metrics) {
+        if (results_.retrieval_metrics) {
+            const auto& r = *results_.retrieval_metrics;
+            ImGui::Text("Recall@%zu", r.k);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(r.recall_at_k)), "%.4f", r.recall_at_k);
+            ImGui::Text("MRR");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(r.mean_reciprocal_rank)), "%.4f",
+                               r.mean_reciprocal_rank);
+        }
+        if (results_.pair_metrics) {
+            const auto& pm = *results_.pair_metrics;
+            ImGui::Text("Pair Accuracy");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(pm.accuracy)), "%.4f", pm.accuracy);
+            ImGui::SameLine();
+            ImGui::TextDisabled("threshold %g, %zu pairs", pm.threshold, pm.pair_count);
+            ImGui::Text("Mean Distance");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::Text("same class %.4f / other class %.4f", pm.positive_distance_mean, pm.negative_distance_mean);
+        }
+        ImGui::Separator();
+    }
 
     // Class summary
     if (!results_.per_class_metrics.empty()) {

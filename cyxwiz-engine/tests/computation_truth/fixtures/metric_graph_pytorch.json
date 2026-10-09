@@ -182,6 +182,34 @@
       1
     ]
   ],
+  "test_step": {
+    "k": 2,
+    "pair_threshold": 0.5,
+    "margin": 1.0,
+    "loss": 0.37852755188941956,
+    "nearest_classes": [
+      0,
+      1,
+      2,
+      0,
+      1,
+      2,
+      0,
+      1,
+      0,
+      0,
+      1,
+      2
+    ],
+    "nn_accuracy": 0.9166666666666666,
+    "recall_at_k": 1.0,
+    "mrr": 0.9583333333333334,
+    "nn_agreement": 0.9166666666666666,
+    "pair_count": 12,
+    "pair_accuracy": 0.9166666666666666,
+    "positive_distance_mean": 0.13331615898477417,
+    "negative_distance_mean": 0.7563742991661351
+  },
   "cases": [
     {
       "name": "triplet_margin_1",

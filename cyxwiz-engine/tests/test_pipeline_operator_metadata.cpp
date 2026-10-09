@@ -18,6 +18,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -3641,8 +3642,6 @@ int main() {
         };
 
         const MetricLearningMetadataCase cases[] = {
-            {gui::NodeType::PairMetrics, "Pair Metrics", "threshold"},
-            {gui::NodeType::RetrievalMetrics, "Retrieval Metrics", "k"},
             {gui::NodeType::EmbeddingOutput, "Embedding Output",
              "include_metadata"},
             {gui::NodeType::PairScoreOutput, "Pair Score Output",
@@ -3752,6 +3751,26 @@ int main() {
             Check(HasInputType(loss, "Embeddings", gui::PinType::Tensor) &&
                       HasInputType(loss, "Class IDs", gui::PinType::Labels),
                   "metric losses take the stacked embeddings and the class ids");
+        }
+        // Pair / Retrieval Metrics measure the trained encoder: side sinks.
+        for (const auto& [type, parameter, value] :
+             {std::tuple{gui::NodeType::PairMetrics, "threshold", "0.5"},
+              std::tuple{gui::NodeType::RetrievalMetrics, "k", "10"}}) {
+            const auto* meta = metadata.GetMetadata(type);
+            Check(meta != nullptr &&
+                      meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                      meta->badge.empty() && cyxwiz::CanAddNodeToGraph(*meta) &&
+                      meta->outputs.empty() &&
+                      HasInputType(meta, "Embeddings", gui::PinType::Tensor) &&
+                      HasInputType(meta, "Class IDs", gui::PinType::Labels) &&
+                      meta->parameters.size() == 1 &&
+                      meta->parameters.front().name == parameter &&
+                      meta->parameters.front().default_value == value,
+                  "Pair / Retrieval Metrics: implemented sinks on the encoder output");
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+            Check(support.compile_supported && support.training_supported &&
+                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+                  "Pair / Retrieval Metrics compile into the training evaluation");
         }
     }
 

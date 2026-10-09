@@ -239,6 +239,68 @@ def case(name: str, kind: str, margin: float, mining: str = "random") -> dict[st
     }
 
 
+def test_step(k: int, threshold: float, margin: float) -> dict[str, Any]:
+    """The Test step of the untrained triplet model (the Engine's seeded start):
+    the triplet loss over the builder's picks (key = the DataLoader seed, as a
+    batcher that never gets an epoch seed), then over all rows a 1-NN classifier,
+    leave-one-out Recall@k / MRR / 1-NN agreement, and the pair metrics of the
+    seeded pairs of each batch at the threshold (Euclidean, <= is similar)."""
+    w1, b1, w2, b2 = engine_names()
+    first = torch.nn.Linear(3, 4)
+    second = torch.nn.Linear(4, 2)
+    with torch.no_grad():
+        first.weight.copy_(torch.tensor(INITIAL[w1]).reshape(4, 3))
+        first.bias.copy_(torch.tensor(INITIAL[b1], dtype=torch.float32))
+        second.weight.copy_(torch.tensor(INITIAL[w2]).reshape(2, 4))
+        second.bias.copy_(torch.tensor(INITIAL[b2], dtype=torch.float32))
+    encoder = torch.nn.Sequential(first, torch.nn.ReLU(), second)
+    x = torch.tensor(X)
+    with torch.no_grad():
+        losses = []
+        pairs = []
+        for batch_index, start in enumerate(range(0, len(LABEL), BATCH_SIZE)):
+            ids = LABEL[start:start + BATCH_SIZE]
+            picks = select_triplets(ids, DATALOADER_SEED, batch_index)
+            rows = [start + p[block] for block in range(3) for p in picks]
+            losses.append(batch_loss("triplet", encoder(x[rows]), picks, margin).item())
+            pairs += [(start + a, start + b, sim) for a, b, sim in select_pairs(ids, DATALOADER_SEED, batch_index)]
+        e = encoder(x).double().tolist()
+    n = len(LABEL)
+
+    def dist(i: int, j: int) -> float:
+        return sum((a - b) ** 2 for a, b in zip(e[i], e[j])) ** 0.5
+
+    nearest = []
+    hits = 0
+    reciprocal = 0.0
+    agree = 0
+    for q in range(n):
+        ranked = sorted((dist(q, c), c) for c in range(n) if c != q)
+        nearest.append(LABEL[ranked[0][1]])
+        first_rank = next(r + 1 for r, (_, c) in enumerate(ranked) if LABEL[c] == LABEL[q])
+        hits += first_rank <= k
+        reciprocal += 1.0 / first_rank
+        agree += LABEL[ranked[0][1]] == LABEL[q]
+    correct_pairs = sum((dist(a, b) <= threshold) == (sim == 1) for a, b, sim in pairs)
+    same = [dist(a, b) for a, b, sim in pairs if sim == 1]
+    other = [dist(a, b) for a, b, sim in pairs if sim == 0]
+    return {
+        "k": k,
+        "pair_threshold": threshold,
+        "margin": margin,
+        "loss": sum(losses) / len(losses),
+        "nearest_classes": nearest,
+        "nn_accuracy": sum(a == b for a, b in zip(nearest, LABEL)) / n,
+        "recall_at_k": hits / n,
+        "mrr": reciprocal / n,
+        "nn_agreement": agree / n,
+        "pair_count": len(pairs),
+        "pair_accuracy": correct_pairs / len(pairs),
+        "positive_distance_mean": sum(same) / len(same),
+        "negative_distance_mean": sum(other) / len(other),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -259,6 +321,7 @@ def main() -> None:
         # test checks against SelectBatchTriplets / SelectBatchPairs directly.
         "first_batch_triplets": [list(t) for t in select_triplets(LABEL[:BATCH_SIZE], first_key, 0)],
         "first_batch_pairs": [list(p) for p in select_pairs(LABEL[:BATCH_SIZE], first_key, 0)],
+        "test_step": test_step(2, 0.5, 1.0),
         "cases": [
             case("triplet_margin_1", "triplet", 1.0),
             # A small margin leaves some triplets already satisfied (zero loss).

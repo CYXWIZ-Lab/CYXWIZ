@@ -576,6 +576,13 @@ struct TrainingConfiguration {
     MetricMining metric_mining = MetricMining::Random;
     int metric_builder_node_id = -1;
     float pair_decision_threshold = 0.0f;
+    // Pair / Retrieval Metrics nodes on the encoder output (TOFIX140 A5):
+    // evaluated at validated epochs, on the held-out test rows and in the
+    // Test step (metric_learning_evaluation.h).
+    bool pair_metrics = false;
+    double pair_metric_threshold = 0.5;
+    bool retrieval_metrics = false;
+    size_t retrieval_k = 10;
 
     // Validation
     bool is_valid = false;

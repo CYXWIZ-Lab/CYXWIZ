@@ -1780,6 +1780,7 @@ target_include_directories(test_metric_learning_metrics PRIVATE
 target_link_libraries(test_metric_learning_metrics PRIVATE
     cyxwiz-backend
 )
+add_test(NAME metric_learning_metrics COMMAND test_metric_learning_metrics)
 
 if(WIN32)
     target_compile_definitions(test_metric_learning_metrics PRIVATE
@@ -4183,6 +4184,8 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -4266,6 +4269,8 @@ add_executable(cyxwiz-graph-compile-check
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -4350,6 +4355,8 @@ add_executable(test_compiled_node_presentation
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5422,6 +5429,8 @@ add_executable(test_cnn_graph_training
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5513,6 +5522,8 @@ add_executable(test_branch_graph_training
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5639,6 +5650,9 @@ set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
 add_executable(test_metric_graph_training
     tests/test_metric_graph_training.cpp
+    src/core/test_executor.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
 )
 configure_training_executor_harness(test_metric_graph_training)
 target_compile_definitions(test_metric_graph_training PRIVATE
@@ -5724,6 +5738,8 @@ add_executable(test_cnn_image_training_smoke
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/metric_learning_sampling.cpp
+    src/core/metric_learning_evaluation.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp

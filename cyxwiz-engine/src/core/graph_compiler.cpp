@@ -1835,19 +1835,16 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
 bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
                                            std::string& matched_key) {
     switch (node.type) {
-        // These train (ExtractMetricSamplingConfiguration).
+        // These train or measure (ExtractMetricSamplingConfiguration,
+        // ExtractMetricEvaluationConfiguration).
+        case gui::NodeType::PairMetrics:
+        case gui::NodeType::RetrievalMetrics:
         case gui::NodeType::PairDatasetBuilder:
         case gui::NodeType::TripletDatasetBuilder:
         case gui::NodeType::ContrastiveLoss:
         case gui::NodeType::CosineEmbeddingLoss:
         case gui::NodeType::TripletLoss:
             return false;
-        case gui::NodeType::PairMetrics:
-            matched_key = "PairMetrics";
-            return true;
-        case gui::NodeType::RetrievalMetrics:
-            matched_key = "RetrievalMetrics";
-            return true;
         case gui::NodeType::EmbeddingOutput:
             matched_key = "EmbeddingOutput";
             return true;
@@ -2807,6 +2804,77 @@ void ExtractMetricSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
         config.pair_decision_threshold = static_cast<float>(margin / 2.0);
     } else if (spec->loss == gui::NodeType::CosineEmbeddingLoss) {
         config.pair_decision_threshold = static_cast<float>((1.0 + margin) / 2.0);
+    }
+}
+
+// Pair / Retrieval Metrics (TOFIX140 A5): side nodes that measure a metric
+// model. Their Embeddings input must come from the layer that feeds the loss
+// (the evaluation embeds rows with the trained model's output).
+void ExtractMetricEvaluationConfiguration(const std::vector<gui::MLNode>& nodes,
+                                          const std::vector<gui::NodeLink>& links,
+                                          const gui::MLNode* loss_node,
+                                          TrainingConfiguration& config) {
+    const auto source_of = [&](const gui::MLNode& node, size_t input) -> int {
+        if (input >= node.inputs.size()) return -1;
+        for (const auto& link : links) {
+            if (link.to_node == node.id && link.to_pin == node.inputs[input].id) return link.from_node;
+        }
+        return -1;
+    };
+    const int embedding_source = loss_node ? source_of(*loss_node, 0) : -1;
+    bool seen_pair = false;
+    bool seen_retrieval = false;
+    for (const auto& node : nodes) {
+        const bool pair = node.type == gui::NodeType::PairMetrics;
+        if (!pair && node.type != gui::NodeType::RetrievalMetrics) continue;
+        const std::string what = pair ? "Pair Metrics" : "Retrieval Metrics";
+        if ((pair && seen_pair) || (!pair && seen_retrieval)) {
+            AddIssue(config, IssueLevel::Error, "The graph already has a " + what + " node; remove '" + node.name + "'",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        (pair ? seen_pair : seen_retrieval) = true;
+        if (config.metric_sampling == MetricSampling::None) {
+            AddIssue(config, IssueLevel::Error,
+                     what + " '" + node.name + "' measures a metric-learning model: train it with a Pair or Triplet "
+                     "Dataset Builder and its loss",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        if (embedding_source < 0 || source_of(node, 0) != embedding_source) {
+            AddIssue(config, IssueLevel::Error,
+                     what + " '" + node.name + "' measures the encoder output: link its Embeddings input from the "
+                     "layer that feeds the loss",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        const char* key = pair ? "threshold" : "k";
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? (pair ? "0.5" : "10")
+                                                                                     : it->second;
+        bool ok = false;
+        double value = 0.0;
+        try {
+            size_t used = 0;
+            value = std::stod(text, &used);
+            ok = used == text.size() && std::isfinite(value) &&
+                 (pair ? value >= 0.0 && value <= 1.0e6 : value >= 1.0 && value <= 1000.0 && value == std::floor(value));
+        } catch (const std::exception&) {
+        }
+        if (!ok) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid " + what + " " + key + " '" + text + "': must be " +
+                         (pair ? "a number from 0 to 1000000" : "a whole number from 1 to 1000"),
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            continue;
+        }
+        if (pair) {
+            config.pair_metrics = true;
+            config.pair_metric_threshold = value;
+        } else {
+            config.retrieval_metrics = true;
+            config.retrieval_k = static_cast<size_t>(value);
+        }
     }
 }
 
@@ -5684,6 +5752,7 @@ TrainingConfiguration GraphCompiler::Compile(
     ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
     ExtractRegularizationConfiguration(nodes, links, loss_node, optimizer_node, config);
     ExtractMetricSamplingConfiguration(nodes, training_path_ids, loss_node, config);
+    ExtractMetricEvaluationConfiguration(nodes, links, loss_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||

@@ -1092,16 +1092,10 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingWorkflowCapabilities() {
-    static constexpr const char* kMetricsReason =
-        "has a focused metric helper, but no visual graph or TrainingExecutor owner computes and reports it from metric-learning batches";
     static constexpr const char* kOutputReason =
         "has inference response packaging helpers, but visual graph/runtime routing from the encoder to this output is not implemented";
 
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::PairMetrics, kMetricsReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::RetrievalMetrics, kMetricsReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::EmbeddingOutput, kOutputReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::PairScoreOutput, kOutputReason,
@@ -1361,6 +1355,11 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the training loss penalty; its gradient joins every optimizer step"},
         {gui::NodeType::ElasticNet, PipelineTrainingSupportRole::TrainingControl,
          "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        // Metric learning (TOFIX140 A5): side nodes on the encoder output.
+        {gui::NodeType::PairMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::RetrievalMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
     };
     return capabilities;
 }

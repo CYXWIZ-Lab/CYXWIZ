@@ -2,6 +2,7 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
 #include "parquet_backed_dataset.h"
@@ -68,6 +69,13 @@ struct TrainingMetrics {
     float test_mae = 0.0f;
     float test_rmse = 0.0f;
     bool has_test_metrics = false;
+
+    // Pair / Retrieval Metrics nodes (TOFIX140 A5): the latest validated
+    // epoch's, and the held-out test rows' after training.
+    std::optional<PairMetricResult> val_pair_metrics;
+    std::optional<RetrievalMetricResult> val_retrieval_metrics;
+    std::optional<PairMetricResult> test_pair_metrics;
+    std::optional<RetrievalMetricResult> test_retrieval_metrics;
 
     // Active-model provenance after training. Run-history fields above remain
     // about executed work; restored checkpoint state is reported separately.

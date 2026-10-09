@@ -91,6 +91,10 @@ inline MetricLearningGraphKind InferMetricLearningGraphKind(
         !contract.triplet_loss_node_ids.empty()) {
         return MetricLearningGraphKind::TripletTraining;
     }
+    if (!contract.pair_dataset_builder_node_ids.empty() ||
+        !contract.pair_loss_node_ids.empty()) {
+        return MetricLearningGraphKind::PairTraining;
+    }
     if (!contract.pair_score_output_node_ids.empty()) {
         return MetricLearningGraphKind::PairScoring;
     }
@@ -98,9 +102,7 @@ inline MetricLearningGraphKind InferMetricLearningGraphKind(
         !contract.retrieval_metric_node_ids.empty()) {
         return MetricLearningGraphKind::EmbeddingExport;
     }
-    if (!contract.pair_dataset_builder_node_ids.empty() ||
-        !contract.pair_loss_node_ids.empty() ||
-        !contract.pair_metric_node_ids.empty()) {
+    if (!contract.pair_metric_node_ids.empty()) {
         return MetricLearningGraphKind::PairTraining;
     }
     return MetricLearningGraphKind::None;
@@ -202,7 +204,8 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
     }
 
     // Pair and triplet training (TOFIX140 A5): a typed builder and its loss
-    // train through MetricBatchSampler and the stacked metric losses.
+    // train through MetricBatchSampler and the stacked metric losses; Pair /
+    // Retrieval Metrics measure them.
     const bool triplet_training =
         contract.kind == MetricLearningGraphKind::TripletTraining &&
         !contract.triplet_dataset_builder_node_ids.empty() && contract.HasTripletLoss() &&
@@ -211,9 +214,7 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         contract.kind == MetricLearningGraphKind::PairTraining &&
         !contract.pair_dataset_builder_node_ids.empty() && contract.HasPairLoss() &&
         contract.triplet_dataset_builder_node_ids.empty() && !contract.HasTripletLoss();
-    if ((triplet_training || pair_training) && !contract.has_sketch_nodes &&
-        contract.pair_metric_node_ids.empty() && contract.retrieval_metric_node_ids.empty() &&
-        !contract.HasInferenceOutput()) {
+    if ((triplet_training || pair_training) && !contract.has_sketch_nodes && !contract.HasInferenceOutput()) {
         contract.executable = true;
         return contract;
     }
