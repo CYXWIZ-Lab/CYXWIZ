@@ -3739,10 +3739,11 @@ int main() {
              {std::pair{gui::NodeType::PairDatasetBuilder, "Pairs"},
               std::pair{gui::NodeType::TripletDatasetBuilder, "Triplets"}}) {
             const auto* builder = metadata.GetMetadata(type);
-            Check(builder->parameters.empty() &&
+            Check(builder->parameters.size() == 1 &&
+                      ParameterMatches(builder, "mining", "enum", "random") &&
                       HasInputType(builder, "Data", gui::PinType::Tensor) &&
                       HasOutputType(builder, output, gui::PinType::Tensor),
-                  "the Pair / Triplet Dataset Builder takes the Data tensor and has no settings");
+                  "the Pair / Triplet Dataset Builder takes the Data tensor; its one setting is mining");
         }
         for (const auto type : {gui::NodeType::ContrastiveLoss,
                                 gui::NodeType::CosineEmbeddingLoss,

@@ -98,46 +98,14 @@ std::vector<std::array<int, 3>> SelectBatchPairs(
     return pairs;
 }
 
-std::vector<int64_t> ReadBatchClassIds(const Tensor& labels, size_t rows) {
-    if (labels.NumElements() != rows) {
-        throw std::runtime_error(
-            std::string(kBuilderName) + " needs one class id per row; the labels have " +
-            std::to_string(labels.NumElements()) + " values for " + std::to_string(rows) + " rows");
-    }
-    std::vector<int64_t> ids(rows);
-    switch (labels.GetDataType()) {
-        case DataType::Int32: {
-            const int32_t* values = labels.ReadData<int32_t>();
-            for (size_t i = 0; i < rows; ++i) ids[i] = values[i];
-            break;
-        }
-        case DataType::Int64: {
-            const int64_t* values = labels.ReadData<int64_t>();
-            for (size_t i = 0; i < rows; ++i) ids[i] = values[i];
-            break;
-        }
-        case DataType::Float32: {
-            const float* values = labels.ReadData<float>();
-            for (size_t i = 0; i < rows; ++i) {
-                if (!std::isfinite(values[i]) || values[i] != std::round(values[i])) {
-                    throw std::runtime_error(std::string(kBuilderName) +
-                                             " needs whole-number class ids; a label is " +
-                                             std::to_string(values[i]));
-                }
-                ids[i] = static_cast<int64_t>(values[i]);
-            }
-            break;
-        }
-        default:
-            throw std::runtime_error(std::string(kBuilderName) + " needs Int32, Int64 or Float32 class ids");
-    }
-    return ids;
-}
-
-MetricBatchSampler::MetricBatchSampler(IBatcher& source, MetricSampling sampling, uint64_t seed)
-    : source_(&source), sampling_(sampling), seed_(seed), epoch_key_(seed) {
+MetricBatchSampler::MetricBatchSampler(IBatcher& source, MetricSampling sampling, MetricMining mining,
+                                       uint64_t seed)
+    : source_(&source), sampling_(sampling), mining_(mining), seed_(seed), epoch_key_(seed) {
     if (sampling_ == MetricSampling::None) {
         throw std::invalid_argument("MetricBatchSampler needs pair or triplet sampling");
+    }
+    if (sampling_ == MetricSampling::Pairs && mining_ == MetricMining::SemiHard) {
+        throw std::invalid_argument("semi-hard mining is for triplets; pairs take random or hard");
     }
 }
 
@@ -150,6 +118,8 @@ void MetricBatchSampler::Reset() {
     source_->Reset();
     batch_index_ = 0;
     skipped_batches_ = 0;
+    rows_seen_ = 0;
+    rows_left_out_ = 0;
 }
 
 Batch MetricBatchSampler::GetNextBatch() {
@@ -165,9 +135,16 @@ Batch MetricBatchSampler::GetNextBatch() {
         const auto picks = triplets ? SelectBatchTriplets(class_ids, epoch_key_, batch_index_)
                                     : SelectBatchPairs(class_ids, epoch_key_, batch_index_);
         ++batch_index_;
+        // Random picks take one entry per row that has a partner.
+        rows_seen_ += batch.size;
+        rows_left_out_ += batch.size - picks.size();
         if (picks.empty()) {
             ++skipped_batches_;
             continue;
+        }
+        if (mining_ != MetricMining::Random) {
+            // The loss mines from this batch's embeddings.
+            return batch;
         }
 
         const size_t count = picks.size();

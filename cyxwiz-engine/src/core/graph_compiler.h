@@ -571,6 +571,9 @@ struct TrainingConfiguration {
     // (Contrastive: distance below margin / 2; Cosine Embedding: cosine above
     // (1 + margin) / 2).
     MetricSampling metric_sampling = MetricSampling::None;
+    // The builder's `mining`: random stacks seeded picks; hard / semi-hard
+    // let the loss mine from the batch's embeddings.
+    MetricMining metric_mining = MetricMining::Random;
     int metric_builder_node_id = -1;
     float pair_decision_threshold = 0.0f;
 

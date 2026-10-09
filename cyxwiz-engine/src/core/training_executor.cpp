@@ -1182,7 +1182,8 @@ void TrainingExecutor::Train(
         const auto seed = static_cast<std::uint64_t>(std::max(config_.dataloader_seed, 0));
         const auto wrap = [&](IBatcher* source) -> IBatcher* {
             if (!source) return nullptr;
-            metric_samplers.push_back(std::make_unique<MetricBatchSampler>(*source, config_.metric_sampling, seed));
+            metric_samplers.push_back(std::make_unique<MetricBatchSampler>(
+                *source, config_.metric_sampling, config_.metric_mining, seed));
             return metric_samplers.back().get();
         };
         IBatcher* const train_source = active_train_ibatcher;
@@ -1765,6 +1766,19 @@ void TrainingExecutor::Train(
                 active_sequence_batcher) {
                 active_sequence_batcher->Reset();
             } else {
+                // Batch coverage (TOFIX140 A5): the training sampler is the
+                // first one; rows whose class had no partner in their batch
+                // taught nothing this epoch.
+                if (!metric_samplers.empty() && metric_samplers.front()->RowsLeftOut() > 0) {
+                    const auto& sampler = *metric_samplers.front();
+                    spdlog::warn(
+                        "Epoch {}: {} of {} rows ({:.1f}%) had no partner in their batch (their class had no other "
+                        "row, or no other class was in the batch) and were left out; raise the Data Loader batch "
+                        "size so each batch holds several rows of each class",
+                        epoch, sampler.RowsLeftOut(), sampler.RowsSeen(),
+                        100.0 * static_cast<double>(sampler.RowsLeftOut()) /
+                            static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
+                }
                 active_train_ibatcher->Reset();
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
@@ -2075,7 +2089,7 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
 
     const auto accuracy_count = CountClassificationDecisionScalars(
         predictions, targets, batch_size, num_classes,
-        ClassificationDecisionModeForLoss(config_.loss_type),
+        ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
         ClassificationMetricIgnoreIndex(config_),
         config_.pair_decision_threshold);
     return accuracy_count.total > 0
@@ -3107,7 +3121,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         } else {
             const auto accuracy_scalar = BuildClassificationDecisionScalar(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type),
+                ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
                 metric_ignore_index, config_.pair_decision_threshold);
             AccumulateDeviceClassificationCounts(
                 device_accuracy_counts,
@@ -3309,7 +3323,7 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type),
+                ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
                 metric_ignore_index, config_.pair_decision_threshold);
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);

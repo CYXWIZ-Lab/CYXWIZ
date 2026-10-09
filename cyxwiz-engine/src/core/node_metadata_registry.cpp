@@ -3356,11 +3356,13 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         "the class id: rows take a same-class partner and an other-class partner in turn (the other kind when "
         "one is missing). The model then sees the stacked batch [firsts; seconds] and runs once over it, so one "
         "encoder embeds both sides; the pair labels (similar or not) go to the loss. Picks depend on the "
-        "DataLoader seed, epoch, batch and row only, so runs replay. Needs a Contrastive or Cosine Embedding "
-        "Loss.", "",
+        "DataLoader seed, epoch, batch and row only, so runs replay. Mining 'hard' instead passes the batch "
+        "through and the loss takes, for every row, its farthest same-class row and its closest other-class "
+        "row from the embeddings. Needs a Contrastive or Cosine Embedding Loss.", "",
         {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
-        {{"Pairs", PinType::Tensor, true, "Stacked [firsts; seconds] rows for the encoder"}},
-        {},
+        {{"Pairs", PinType::Tensor, true, "Stacked [firsts; seconds] rows (random) or the batch (hard)"}},
+        {{"mining", "enum", "random", "How partners are picked: random in-batch picks, or the hardest ones "
+          "from the embeddings", {"random", "hard"}, "", "Mining", "Sampling"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
@@ -3371,10 +3373,14 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         "the stacked batch [anchors; positives; negatives] and runs once over it, so one encoder (one set of "
         "weights) embeds all three. Rows whose class has no other row in the batch are not anchors; a batch "
         "with no triplet is skipped. Picks depend on the DataLoader seed, epoch, batch and row only, so runs "
-        "replay. Needs a Triplet Loss.", "",
+        "replay. Mining 'hard' or 'semi_hard' instead passes the batch through and the loss picks from the "
+        "embeddings: hard = for every row its farthest same-class and closest other-class row; semi_hard = for "
+        "every same-class pair, the closest other-class row farther away than the pair (FaceNet). Needs a "
+        "Triplet Loss.", "",
         {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
-        {{"Triplets", PinType::Tensor, true, "Stacked [anchors; positives; negatives] rows for the encoder"}},
-        {},
+        {{"Triplets", PinType::Tensor, true, "Stacked [anchors; positives; negatives] rows (random) or the batch"}},
+        {{"mining", "enum", "random", "How positives and negatives are picked: random in-batch picks, or hard / "
+          "semi-hard ones from the embeddings", {"random", "hard", "semi_hard"}, "", "Mining", "Sampling"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,

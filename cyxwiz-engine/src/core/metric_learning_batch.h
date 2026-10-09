@@ -14,6 +14,16 @@ enum class MetricSampling {
     Triplets,
 };
 
+// How a Pair / Triplet Dataset Builder picks partners: Random stacks seeded
+// in-batch picks before the encoder (MetricBatchSampler); Hard and SemiHard
+// pass the batch through and the loss mines from its embeddings
+// (metric_learning_mining.h). SemiHard is for triplets only.
+enum class MetricMining {
+    Random,
+    Hard,
+    SemiHard,
+};
+
 enum class MetricLearningLabelConvention {
     ContrastiveZeroSimilarOneDissimilar,
     CosineOneSimilarNegativeOneDissimilar,

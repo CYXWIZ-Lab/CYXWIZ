@@ -2755,6 +2755,23 @@ void ExtractMetricSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
     }
     if (builders.size() > 1) return;
 
+    const bool triplets = builder.type == gui::NodeType::TripletDatasetBuilder;
+    const auto mining_it = builder.parameters.find("mining");
+    const std::string mining = mining_it == builder.parameters.end() || mining_it->second.empty()
+        ? "random" : mining_it->second;
+    MetricMining metric_mining = MetricMining::Random;
+    if (mining == "hard") {
+        metric_mining = MetricMining::Hard;
+    } else if (mining == "semi_hard" && triplets) {
+        metric_mining = MetricMining::SemiHard;
+    } else if (mining != "random") {
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid mining '" + mining + "' on '" + builder.name + "': choose " +
+                     (triplets ? "random, hard or semi_hard" : "random or hard"),
+                 builder.id, builder.name, errors::Compiler::InvalidParameter);
+        return;
+    }
+
     const auto it = loss_node->parameters.find("margin");
     const std::string text =
         it == loss_node->parameters.end() || it->second.empty() ? spec->default_margin : it->second;
@@ -2782,6 +2799,7 @@ void ExtractMetricSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
         return;
     }
     config.metric_sampling = spec->sampling;
+    config.metric_mining = metric_mining;
     config.metric_builder_node_id = builder.id;
     // Pair accuracy calls a pair similar halfway between the loss's targets:
     // distance 0 vs the margin, cosine 1 vs the margin.

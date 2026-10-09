@@ -1,6 +1,7 @@
 #include "classification_decision.h"
 
 #include "algorithms/arrayfire_backend_utils.h"
+#include "metric_learning_mining.h"
 
 #include <cyxwiz/tensor.h>
 
@@ -133,6 +134,46 @@ ClassificationDecisionScalar BuildPairDecisionScalar(
         if (called_similar == (flags[i] == 1.0f)) ++correct;
     }
     const float counts[] = {static_cast<float>(correct), static_cast<float>(pairs)};
+    return {Tensor({2}, counts, DataType::Float32)};
+}
+
+// predictions [N, D] and the batch's class ids: the triplets / pairs the loss
+// mines, decided as in the stacked modes. Host-side, like the mining.
+ClassificationDecisionScalar BuildMinedDecisionScalar(
+    const Tensor& predictions,
+    const Tensor& class_ids,
+    ClassificationDecisionMode mode,
+    float threshold) {
+    const auto& shape = predictions.Shape();
+    if (shape.size() != 2 || shape[0] == 0 || predictions.GetDataType() != DataType::Float32) {
+        return {};
+    }
+    const bool cosine = mode == ClassificationDecisionMode::PairCosineHard;
+    const auto ids = ReadBatchClassIds(class_ids, shape[0]);
+    const auto distances = MiningDistances(predictions.ReadData<float>(), shape[0], shape[1],
+                                           cosine ? MiningDistance::Cosine : MiningDistance::Euclidean);
+    const size_t n = shape[0];
+    size_t correct = 0;
+    size_t total = 0;
+    if (mode == ClassificationDecisionMode::TripletOrderHard ||
+        mode == ClassificationDecisionMode::TripletOrderSemiHard) {
+        const auto triplets = MineTriplets(
+            ids, distances,
+            mode == ClassificationDecisionMode::TripletOrderHard ? MetricMining::Hard : MetricMining::SemiHard);
+        for (const auto& t : triplets) {
+            if (distances[t[0] * n + t[1]] < distances[t[0] * n + t[2]]) ++correct;
+        }
+        total = triplets.size();
+    } else {
+        // Cosine distance is 1 - cos: cos > threshold is distance < 1 - threshold.
+        const double cut = cosine ? 1.0 - threshold : threshold;
+        const auto pairs = MinePairs(ids, distances);
+        for (const auto& p : pairs) {
+            if ((distances[p[0] * n + p[1]] < cut) == (p[2] == 1)) ++correct;
+        }
+        total = pairs.size();
+    }
+    const float counts[] = {static_cast<float>(correct), static_cast<float>(total)};
     return {Tensor({2}, counts, DataType::Float32)};
 }
 
@@ -275,6 +316,9 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     if (mode == ClassificationDecisionMode::PairDistance ||
         mode == ClassificationDecisionMode::PairCosine) {
         return BuildPairDecisionScalar(predictions, targets, batch_size, mode, pair_threshold);
+    }
+    if (IsMinedMetricDecision(mode)) {
+        return BuildMinedDecisionScalar(predictions, targets, mode, pair_threshold);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

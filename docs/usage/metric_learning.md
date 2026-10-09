@@ -20,11 +20,35 @@ encoder: every row of a pair or triplet goes through the same weights.
 
 | Node | Settings | What it does | PyTorch |
 | --- | --- | --- | --- |
-| Triplet Dataset Builder | none | Turns each batch of class-labelled rows into triplets: for every row, a positive of the same class and a negative of another class, from the same batch. The batch the model sees is `[anchors; positives; negatives]`. | `x[torch.cat([a, p, n])]` |
-| Pair Dataset Builder | none | Turns each batch into pairs: every row gets a partner from the same batch, a same-class one and an other-class one in turn. The batch the model sees is `[firsts; seconds]`; the loss gets "similar or not" for each pair. | `x[torch.cat([a, b])]` |
+| Triplet Dataset Builder | `mining` (random) | Turns each batch of class-labelled rows into triplets: for every row, a positive of the same class and a negative of another class, from the same batch. With `random` mining the batch the model sees is `[anchors; positives; negatives]`. | `x[torch.cat([a, p, n])]` |
+| Pair Dataset Builder | `mining` (random) | Turns each batch into pairs: every row gets a partner from the same batch, a same-class one and an other-class one in turn. The batch the model sees is `[firsts; seconds]`; the loss gets "similar or not" for each pair. | `x[torch.cat([a, b])]` |
 | Triplet Loss | `margin` (1.0, above 0) | mean over triplets of max(0, d(a, p) - d(a, n) + margin), d the Euclidean distance | `F.triplet_margin_loss(a, p, n, margin)` |
 | Contrastive Loss | `margin` (1.0, 0 or more) | mean over pairs of d² for a same-class pair and max(0, margin - d)² otherwise | `(s * d**2 + (1 - s) * F.relu(margin - d)**2).mean()` |
 | Cosine Embedding Loss | `margin` (0.0, -1 to 1) | mean over pairs of 1 - cos(a, b) for a same-class pair and max(0, cos(a, b) - margin) otherwise | `F.cosine_embedding_loss(a, b, y, margin)` with y = ±1 |
+
+### Mining (the builders' one setting)
+
+`mining` decides how the partners are picked:
+
+| mining | Builders | What happens |
+| --- | --- | --- |
+| `random` (default) | both | The builder picks a random positive and negative (or partner) for each row from the batch, before the encoder, and stacks them. |
+| `hard` | both | The batch goes through the encoder as it is. The loss then takes, for each row, its **farthest** same-class row and its **closest** other-class row: the examples the model gets most wrong (batch-hard). Pairs: each row gives two pairs, one of each kind. |
+| `semi_hard` | Triplet only | For every same-class pair (anchor, positive), the closest other-class row that is still farther from the anchor than the positive (FaceNet). When none is, the farthest negative. |
+
+When to use which: start with `random`. Use `hard` or `semi_hard` once the
+loss levels off and the easy triplets no longer teach anything; `semi_hard` is
+the gentler of the two (`hard` can push a model with noisy labels toward
+collapse). Hard mining also costs less, because the encoder runs over the batch
+once instead of over the stacked 2-3 times larger batch. For Cosine Embedding
+Loss, "far" and "close" are measured by cosine.
+
+### Batch coverage
+
+Each epoch, the run logs a warning when some rows had no partner in their batch
+(their class had no other row, or no other class was there), with the share
+left out. Those rows taught nothing that epoch: raise the Data Loader batch
+size so each batch holds several rows of each class.
 
 The Pair Dataset Builder goes with the Contrastive or Cosine Embedding Loss,
 the Triplet Dataset Builder with the Triplet Loss; Compile refuses any other

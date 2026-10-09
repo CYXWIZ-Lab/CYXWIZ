@@ -15,6 +15,10 @@ encoder runs once over the stacked rows, and
     cosine:      cosine_embedding_loss(a, b, +1 / -1, margin)
     loss.backward(); optimizer.step()
 
+With mining hard / semi_hard the encoder runs over the plain batch and the
+picks come from the detached embeddings' distances (mine_triplets / mine_pairs
+mirror metric_learning_mining.h); the loss indexes the picked rows.
+
     py -3.12 generate_metric_graph_fixtures.py
 """
 
@@ -109,6 +113,60 @@ def select_pairs(class_ids: list[int], key: int, batch_index: int) -> list[tuple
     return pairs
 
 
+def mining_distances(embeddings: torch.Tensor, cosine: bool) -> list[list[float]]:
+    e = embeddings.detach().double().tolist()
+    n = len(e)
+    d = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if cosine:
+                dot = sum(a * b for a, b in zip(e[i], e[j]))
+                aa = sum(a * a for a in e[i])
+                bb = sum(b * b for b in e[j])
+                value = 1.0 - dot / ((aa + 1e-12) * (bb + 1e-12)) ** 0.5
+            else:
+                value = sum((a - b) ** 2 for a, b in zip(e[i], e[j])) ** 0.5
+            d[i][j] = d[j][i] = value
+    return d
+
+
+def mine_triplets(ids: list[int], d: list[list[float]], mining: str) -> list[tuple[int, int, int]]:
+    """hard: farthest positive + closest negative per anchor; semi_hard: for every
+    same-class pair, the closest negative farther than the positive, else the
+    farthest negative (TF Addons). Ties go to the lowest index."""
+    n = len(ids)
+    triplets = []
+    for a in range(n):
+        positives = [j for j in range(n) if j != a and ids[j] == ids[a]]
+        negatives = [j for j in range(n) if ids[j] != ids[a]]
+        if not positives or not negatives:
+            continue
+        farthest_positive = max(positives, key=lambda j: (d[a][j], -j))
+        closest_negative = min(negatives, key=lambda j: (d[a][j], j))
+        farthest_negative = max(negatives, key=lambda j: (d[a][j], -j))
+        if mining == "hard":
+            triplets.append((a, farthest_positive, closest_negative))
+            continue
+        for p in positives:
+            outside = [j for j in negatives if d[a][j] > d[a][p]]
+            semi = min(outside, key=lambda j: (d[a][j], j)) if outside else farthest_negative
+            triplets.append((a, p, semi))
+    return triplets
+
+
+def mine_pairs(ids: list[int], d: list[list[float]]) -> list[tuple[int, int, int]]:
+    n = len(ids)
+    pairs = []
+    for a in range(n):
+        positives = [j for j in range(n) if j != a and ids[j] == ids[a]]
+        negatives = [j for j in range(n) if ids[j] != ids[a]]
+        if positives:
+            pairs.append((a, max(positives, key=lambda j: (d[a][j], -j)), 1))
+        if negatives:
+            pairs.append((a, min(negatives, key=lambda j: (d[a][j], j)), 0))
+    return pairs
+
+
 def engine_names() -> tuple[str, str, str, str]:
     names = list(INITIAL)
     weights = [n for n in names if n.endswith("weight")]
@@ -132,7 +190,7 @@ def batch_loss(kind: str, embeddings: torch.Tensor, picks: list[tuple[int, int, 
     return torch.nn.functional.cosine_embedding_loss(a, b, 2 * similar - 1, margin=margin)
 
 
-def case(name: str, kind: str, margin: float) -> dict[str, Any]:
+def case(name: str, kind: str, margin: float, mining: str = "random") -> dict[str, Any]:
     w1, b1, w2, b2 = engine_names()
     first = torch.nn.Linear(3, 4)
     second = torch.nn.Linear(4, 2)
@@ -151,10 +209,18 @@ def case(name: str, kind: str, margin: float) -> dict[str, Any]:
     for epoch in range(1, EPOCHS + 1):
         key = training_epoch_seed(DATALOADER_SEED, epoch)
         for batch_index, start in enumerate(range(0, len(LABEL), BATCH_SIZE)):
-            picks = select(LABEL[start:start + BATCH_SIZE], key, batch_index)
-            rows = [start + p[block] for block in range(blocks) for p in picks]
+            ids = LABEL[start:start + BATCH_SIZE]
             optimizer.zero_grad()
-            loss = batch_loss(kind, encoder(x[rows]), picks, margin)
+            if mining == "random":
+                picks = select(ids, key, batch_index)
+                rows = [start + p[block] for block in range(blocks) for p in picks]
+                embeddings = encoder(x[rows])
+            else:
+                batch = encoder(x[start:start + BATCH_SIZE])
+                distances = mining_distances(batch, kind == "cosine")
+                picks = mine_triplets(ids, distances, mining) if kind == "triplet" else mine_pairs(ids, distances)
+                embeddings = batch[[p[block] for block in range(blocks) for p in picks]]
+            loss = batch_loss(kind, embeddings, picks, margin)
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
@@ -162,6 +228,7 @@ def case(name: str, kind: str, margin: float) -> dict[str, Any]:
         "name": name,
         "kind": kind,
         "margin": margin,
+        "mining": mining,
         "batch_losses": losses,
         "parameters_after": {
             w1: first.weight.detach().reshape(-1).tolist(),
@@ -200,6 +267,10 @@ def main() -> None:
             case("contrastive_margin_0_3", "contrastive", 0.3),
             case("cosine_margin_0", "cosine", 0.0),
             case("cosine_margin_0_5", "cosine", 0.5),
+            case("triplet_hard", "triplet", 1.0, "hard"),
+            case("triplet_semi_hard", "triplet", 0.5, "semi_hard"),
+            case("contrastive_hard", "contrastive", 1.0, "hard"),
+            case("cosine_hard", "cosine", 0.2, "hard"),
         ],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

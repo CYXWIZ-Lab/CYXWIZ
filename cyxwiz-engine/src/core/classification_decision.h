@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_model.h"
+#include "metric_learning_batch.h"
 
 #include <cyxwiz/tensor.h>
 
@@ -24,7 +25,20 @@ enum class ClassificationDecisionMode {
     // (Contrastive) or its cosine above (Cosine Embedding) the pair threshold.
     PairDistance,
     PairCosine,
+    // The same decisions over the triplets / pairs the loss mines from an
+    // unstacked [N, D] batch with its class ids (metric_learning_mining.h).
+    TripletOrderHard,
+    TripletOrderSemiHard,
+    PairDistanceHard,
+    PairCosineHard,
 };
+
+inline bool IsMinedMetricDecision(ClassificationDecisionMode mode) {
+    return mode == ClassificationDecisionMode::TripletOrderHard ||
+           mode == ClassificationDecisionMode::TripletOrderSemiHard ||
+           mode == ClassificationDecisionMode::PairDistanceHard ||
+           mode == ClassificationDecisionMode::PairCosineHard;
+}
 
 inline bool UsesScalarBinaryTargets(gui::NodeType loss_type) {
     return loss_type == gui::NodeType::BCELoss ||
@@ -35,16 +49,21 @@ inline bool UsesClassIndexTargets(gui::NodeType loss_type) {
     return loss_type == gui::NodeType::CrossEntropyLoss;
 }
 
+// mining: the Pair / Triplet Dataset Builder's (config.metric_mining).
 inline ClassificationDecisionMode ClassificationDecisionModeForLoss(
-    gui::NodeType loss_type) {
+    gui::NodeType loss_type,
+    MetricMining mining = MetricMining::Random) {
+    const bool random = mining == MetricMining::Random;
     if (loss_type == gui::NodeType::TripletLoss) {
-        return ClassificationDecisionMode::TripletOrder;
+        if (random) return ClassificationDecisionMode::TripletOrder;
+        return mining == MetricMining::Hard ? ClassificationDecisionMode::TripletOrderHard
+                                            : ClassificationDecisionMode::TripletOrderSemiHard;
     }
     if (loss_type == gui::NodeType::ContrastiveLoss) {
-        return ClassificationDecisionMode::PairDistance;
+        return random ? ClassificationDecisionMode::PairDistance : ClassificationDecisionMode::PairDistanceHard;
     }
     if (loss_type == gui::NodeType::CosineEmbeddingLoss) {
-        return ClassificationDecisionMode::PairCosine;
+        return random ? ClassificationDecisionMode::PairCosine : ClassificationDecisionMode::PairCosineHard;
     }
     if (loss_type == gui::NodeType::BCEWithLogits) {
         return ClassificationDecisionMode::BinaryLogit;

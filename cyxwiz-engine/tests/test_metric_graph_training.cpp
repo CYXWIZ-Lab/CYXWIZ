@@ -17,6 +17,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/metric_learning_mining.h"
 #include "../src/core/metric_learning_sampling.h"
 #include "../src/core/stacked_metric_loss.h"
 #include "../src/core/training_executor.h"
@@ -129,7 +130,8 @@ struct Graph {
 
 // Data -> [builder] -> Dense 4 -> ReLU -> Dense 2 -> loss -> SGD; the labels go
 // to the loss. builder is PairDatasetBuilder, TripletDatasetBuilder or none.
-Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, const std::string& margin, double learning_rate) {
+Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, const std::string& margin,
+                 double learning_rate, const std::string& mining = "random") {
     Graph g;
     gui::MLNode data;
     data.id = 1;
@@ -143,8 +145,9 @@ Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, 
         auto stacker = FactoryNode(*builder, 2, "Builder");
         Check(stacker.inputs.size() == 1 && stacker.inputs[0].type == gui::PinType::Tensor &&
                   stacker.outputs.size() == 1 && stacker.outputs[0].type == gui::PinType::Tensor &&
-                  stacker.parameters.empty(),
-              "Pair / Triplet Dataset Builder: one Tensor input, one Tensor output, no settings");
+                  stacker.parameters.size() == 1 && stacker.parameters.at("mining") == "random",
+              "Pair / Triplet Dataset Builder: one Tensor input, one Tensor output, mining random by default");
+        stacker.parameters["mining"] = mining;
         g.nodes.push_back(stacker);
         g.links.push_back(Link(1, 1, 111, 2, 201));
         from_node = 2;
@@ -415,6 +418,55 @@ void CheckRefusals() {
                  "a negative contrastive margin");
     CheckRefused(BuildGraph(NodeType::PairDatasetBuilder, NodeType::CosineEmbeddingLoss, "1.5", 0.1), "margin",
                  "a cosine margin above 1");
+    CheckRefused(BuildGraph(NodeType::PairDatasetBuilder, NodeType::ContrastiveLoss, "1.0", 0.1, "semi_hard"),
+                 "mining", "semi-hard mining on pairs");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1, "hardest"),
+                 "mining", "an unknown mining");
+}
+
+// The mining rules on a hand-made batch: rows 0, 1 class 0; rows 2, 3 class 1.
+// Distances from row 0: row 1 at 4, row 2 at 1, row 3 at 6.
+void CheckMining() {
+    const float points[] = {0, 0, 4, 0, 0, 1, 6, 0};
+    const std::vector<int64_t> ids = {0, 0, 1, 1};
+    const auto distances = cyxwiz::MiningDistances(points, 4, 2, cyxwiz::MiningDistance::Euclidean);
+    Check(std::abs(distances[0 * 4 + 1] - 4.0) < 1e-12 && std::abs(distances[0 * 4 + 3] - 6.0) < 1e-12,
+          "Euclidean mining distances");
+    const auto hard = cyxwiz::MineTriplets(ids, distances, cyxwiz::MetricMining::Hard);
+    Check(hard.size() == 4 && hard[0] == std::array<int, 3>{0, 1, 2},
+          "hard: row 0 takes its farthest positive (1) and closest negative (2)");
+    // Semi-hard for (0, 1): negatives farther than 4 -> row 3 (6).
+    const auto semi = cyxwiz::MineTriplets(ids, distances, cyxwiz::MetricMining::SemiHard);
+    Check(semi.size() == 4 && semi[0] == std::array<int, 3>{0, 1, 3},
+          "semi-hard: the closest negative farther than the positive");
+    // Row 1 (4,0): positive 0 at 4; negatives 2 at sqrt(17) ~ 4.12, 3 at 2 ->
+    // 2 is the only one farther than 4.
+    Check(semi[1] == std::array<int, 3>{1, 0, 2}, "semi-hard for row 1 takes row 2");
+    // Row 3 (6,0): positive 2 at sqrt(37) ~ 6.08; negatives 0 at 6, 1 at 2: none
+    // farther -> the farthest negative, row 0.
+    Check(semi[3] == std::array<int, 3>{3, 2, 0}, "semi-hard falls back to the farthest negative");
+    const auto pairs = cyxwiz::MinePairs(ids, distances);
+    Check(pairs.size() == 8 && pairs[0] == std::array<int, 3>{0, 1, 1} && pairs[1] == std::array<int, 3>{0, 2, 0},
+          "hard pairs: per row, the farthest positive and the closest negative");
+    const auto cosine = cyxwiz::MiningDistances(points, 4, 2, cyxwiz::MiningDistance::Cosine);
+    Check(std::abs(cosine[1 * 4 + 3]) < 1e-9 && std::abs(cosine[1 * 4 + 2] - 1.0) < 1e-9,
+          "cosine mining distances: same direction 0, orthogonal 1");
+
+    // A mined loss sums each row's gradients over every pick it is in.
+    const cyxwiz::Tensor embeddings({4, 2}, points, cyxwiz::DataType::Float32);
+    const float id_values[] = {0, 0, 1, 1};
+    const cyxwiz::Tensor class_ids({4}, id_values, cyxwiz::DataType::Float32);
+    cyxwiz::StackedTripletLoss mined(1.0f, cyxwiz::MetricMining::Hard);
+    const cyxwiz::Tensor gradient = mined.Backward(embeddings, class_ids);
+    Check(gradient.Shape() == std::vector<size_t>{4, 2}, "a mined loss's gradient covers the N batch rows");
+    // Translating every row leaves the loss unchanged: the gradients sum to 0.
+    const float* g = gradient.ReadData<float>();
+    Check(std::abs(g[0] + g[2] + g[4] + g[6]) < 1e-5f && std::abs(g[1] + g[3] + g[5] + g[7]) < 1e-5f,
+          "the mined triplet gradients sum to zero over the rows");
+    const auto mined_count = cyxwiz::CountClassificationDecisionScalars(
+        embeddings, class_ids, 4, 2, cyxwiz::ClassificationDecisionMode::TripletOrderHard);
+    // Hard triplets: (0,1,2) 4<1 no; (1,0,3) 4<2 no; (2,3,0) sqrt37<1 no; (3,2,1) sqrt37<2 no.
+    Check(mined_count.correct == 0 && mined_count.total == 4, "mined triplet decision: 0 of 4");
 }
 
 gui::NodeType BuilderFor(const std::string& kind) {
@@ -449,6 +501,7 @@ int main(int, char** argv) {
     CheckSampler(fixture);
     CheckStackedLoss();
     CheckRefusals();
+    CheckMining();
     const auto dataset = MakeDataset(fixture);
 
     // The start: the Engine's seeded initialisation (learning rate 0 leaves
@@ -466,10 +519,15 @@ int main(int, char** argv) {
     for (const auto& c : fixture.at("cases")) {
         const std::string name = c.at("name").get<std::string>();
         const std::string kind = c.at("kind").get<std::string>();
+        const std::string mining = c.at("mining").get<std::string>();
         char margin[32];
         std::snprintf(margin, sizeof(margin), "%g", c.at("margin").get<double>());
-        const auto config =
-            CompileValid(BuildGraph(BuilderFor(kind), LossFor(kind), margin, learning_rate), fixture, name);
+        const auto config = CompileValid(BuildGraph(BuilderFor(kind), LossFor(kind), margin, learning_rate, mining),
+                                         fixture, name);
+        Check(config.metric_mining == (mining == "random" ? cyxwiz::MetricMining::Random
+                                       : mining == "hard" ? cyxwiz::MetricMining::Hard
+                                                          : cyxwiz::MetricMining::SemiHard),
+              name + ": the mining is the builder's");
         Check(config.loss_type == LossFor(kind) &&
                   config.metric_sampling ==
                       (kind == "triplet" ? cyxwiz::MetricSampling::Triplets : cyxwiz::MetricSampling::Pairs),

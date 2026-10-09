@@ -42,11 +42,13 @@ float Accuracy(const Tensor& predictions,
 
     const bool pairs = mode == ClassificationDecisionMode::PairDistance ||
                        mode == ClassificationDecisionMode::PairCosine;
-    if (mode == ClassificationDecisionMode::TripletOrder || pairs) {
-        // Stacked [anchors; positives; negatives] or [firsts; seconds].
+    const bool mined = IsMinedMetricDecision(mode);
+    if (mode == ClassificationDecisionMode::TripletOrder || pairs || mined) {
+        // Stacked [anchors; positives; negatives] or [firsts; seconds], or
+        // the unstacked batch the loss mines from.
+        const size_t units = mined ? shape[0] : shape[0] / (pairs ? 2 : 3);
         const auto count = CountClassificationDecisionScalars(
-            predictions, targets, shape[0] / (pairs ? 2 : 3), shape[1], mode,
-            std::nullopt, pair_threshold);
+            predictions, targets, units, shape[1], mode, std::nullopt, pair_threshold);
         return count.total > 0
             ? static_cast<float>(count.correct) / static_cast<float>(count.total)
             : 0.0f;
@@ -346,7 +348,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         // Same stacked pair / triplet batches as Train (TOFIX140 A5).
         auto source = std::move(batcher);
         batcher = std::make_unique<MetricBatchSampler>(
-            *source, config.metric_sampling, static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
+            *source, config.metric_sampling, config.metric_mining,
+            static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
         metric_source = std::move(source);
     }
     batcher->SetBatchInspectionEnabled(true);
@@ -443,7 +446,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         result.last_accuracy = Accuracy(
             predictions, batch.labels,
-            ClassificationDecisionModeForLoss(config.loss_type),
+            ClassificationDecisionModeForLoss(config.loss_type, config.metric_mining),
             config.pair_decision_threshold);
 
         const auto shape_compatibility = CheckDebugPredictionTargetShapes(

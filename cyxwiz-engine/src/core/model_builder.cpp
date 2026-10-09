@@ -1828,7 +1828,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             const float margin = resolved.margin.value();
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Triplet loss "
                          "(stacked batch, margin={})", margin);
-            return std::make_unique<StackedTripletLoss>(margin);
+            return std::make_unique<StackedTripletLoss>(margin, config.metric_mining);
         }
         case gui::NodeType::ContrastiveLoss:
         case gui::NodeType::CosineEmbeddingLoss: {
@@ -1840,7 +1840,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                          contrastive ? "Contrastive" : "Cosine Embedding", margin);
             return std::make_unique<StackedPairLoss>(
                 contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
-                margin);
+                margin, config.metric_mining);
         }
         default:
             // Training another objective than the graph's would be silent

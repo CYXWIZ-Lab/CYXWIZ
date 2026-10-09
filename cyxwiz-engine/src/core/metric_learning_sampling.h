@@ -13,9 +13,14 @@
 // left out, and a batch with nothing to pick is skipped. The picks depend
 // only on (key, batch index, row), through SplitMix64, so a run replays them
 // and the PyTorch fixture reproduces them.
+// With hard / semi-hard mining the batch passes through unstacked (labels =
+// class ids) and the loss picks from the embeddings (metric_learning_mining.h);
+// batches with nothing to pick are still skipped. Either way the sampler
+// counts the rows of each epoch that had no partner in their batch.
 
 #include "dataset_batcher.h"
 #include "metric_learning_batch.h"
+#include "metric_learning_mining.h"
 
 #include <array>
 #include <cstdint>
@@ -40,15 +45,12 @@ std::vector<std::array<int, 3>> SelectBatchPairs(
     uint64_t key,
     uint64_t batch_index);
 
-// Class ids of a batch's labels: Int32/Int64/Float32, shape [N] or [N, 1].
-std::vector<int64_t> ReadBatchClassIds(const Tensor& labels, size_t rows);
-
 class MetricBatchSampler final : public IBatcher {
 public:
     // The picks are keyed by the executor's epoch shuffle seed (training: one
     // key per epoch, from the run's DataLoader seed); a batcher that is never
     // given one (validation) keeps `seed`, so it scores the same picks.
-    MetricBatchSampler(IBatcher& source, MetricSampling sampling, uint64_t seed);
+    MetricBatchSampler(IBatcher& source, MetricSampling sampling, MetricMining mining, uint64_t seed);
 
     Batch GetNextBatch() override;
     void Reset() override;
@@ -70,14 +72,21 @@ public:
 
     // Batches of this epoch that gave nothing to pick (skipped).
     size_t SkippedBatches() const { return skipped_batches_; }
+    // Rows of this epoch, and those of them that had no partner in their
+    // batch (triplets: no same-class or no other-class row; pairs: neither).
+    size_t RowsSeen() const { return rows_seen_; }
+    size_t RowsLeftOut() const { return rows_left_out_; }
 
 private:
     IBatcher* source_;
     MetricSampling sampling_;
+    MetricMining mining_;
     uint64_t seed_;
     uint64_t epoch_key_;
     uint64_t batch_index_ = 0;
     size_t skipped_batches_ = 0;
+    size_t rows_seen_ = 0;
+    size_t rows_left_out_ = 0;
 };
 
 }  // namespace cyxwiz
