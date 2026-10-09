@@ -4438,6 +4438,7 @@ set_target_properties(test_console_session_model PROPERTIES
 # TrainingExecutor harness sources and cyxwiz-training-core come from
 # cmake/CyxWizTrainingCore.cmake (included above).
 target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-training-core)
+cyxwiz_enable_pch(cyxwiz-engine)
 
 
 function(configure_training_executor_harness target_name)
@@ -5644,3 +5645,35 @@ target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 set_source_files_properties(src/gui/dialogs/about_dialog.cpp PROPERTIES COMPILE_DEFINITIONS "CYXWIZ_GIT_COMMIT=\"${CYXWIZ_GIT_COMMIT}\"")
+
+# Precompiled headers for the test targets with several sources of their own
+# (the smaller ones would spend more on the header than they save).
+cyxwiz_enable_pch(test_arrow_integration)
+cyxwiz_enable_pch(test_debug_executor)
+cyxwiz_enable_pch(test_operator_configure_resets)
+cyxwiz_enable_pch(test_pipeline_operator_metadata)
+cyxwiz_enable_pch(test_node_contract_gates)
+cyxwiz_enable_pch(test_pipeline_executor_operator_routing)
+cyxwiz_enable_pch(test_pipeline_operator_materializer_parity)
+cyxwiz_enable_pch(test_data_convert_pipeline_input)
+cyxwiz_enable_pch(test_graph_compiler_causal_lm_shape)
+cyxwiz_enable_pch(test_graph_training_sequence_preflight)
+cyxwiz_enable_pch(test_text_gui_training_launch)
+cyxwiz_enable_pch(test_cyxmodel_layernorm_roundtrip)
+cyxwiz_enable_pch(test_cyxmodel_mha_roundtrip)
+cyxwiz_enable_pch(test_cyxmodel_transformer_encoder_roundtrip)
+cyxwiz_enable_pch(test_cyxmodel_transformer_decoder_roundtrip)
+cyxwiz_enable_pch(test_cyxmodel_causal_lm_generation_roundtrip)
+cyxwiz_enable_pch(test_saved_ner_sequence_smoke)
+cyxwiz_enable_pch(cyxwiz-graph-compile-check)
+cyxwiz_enable_pch(test_compiled_node_presentation)
+cyxwiz_enable_pch(test_data_preview_service)
+cyxwiz_enable_pch(test_training_manager_session)
+cyxwiz_enable_pch(test_text_dataset_batcher_arrow)
+cyxwiz_enable_pch(test_modality_batcher_drop_last)
+cyxwiz_enable_pch(test_debugger_contracts)
+cyxwiz_enable_pch(test_cnn_graph_training)
+cyxwiz_enable_pch(test_branch_graph_training)
+cyxwiz_enable_pch(test_cnn_image_training_smoke)
+cyxwiz_enable_pch(test_pipeline_materializer_cache)
+cyxwiz_enable_pch(test_engine_node_parity)

@@ -45,6 +45,41 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/runtime_log_store.cpp
 )
 
+# Precompiled header (build speed): standard and third-party headers that
+# most engine sources include and that rarely change. C sources in a target
+# are left alone. cyxwiz_enable_pch(target [extra headers...]).
+set(CYXWIZ_PCH_HEADERS
+    "$<$<COMPILE_LANGUAGE:CXX>:<string>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<vector>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<algorithm>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<memory>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<cmath>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<cstdint>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<filesystem>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<map>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<sstream>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<functional>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<utility>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<fstream>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<chrono>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<mutex>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<optional>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<thread>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<atomic>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<stdexcept>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<limits>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<set>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<array>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<unordered_map>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<string_view>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<spdlog/spdlog.h>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<nlohmann/json.hpp>>"
+    "$<$<COMPILE_LANGUAGE:CXX>:<arrow/api.h>>"
+)
+function(cyxwiz_enable_pch target)
+    target_precompile_headers(${target} PRIVATE ${CYXWIZ_PCH_HEADERS} ${ARGN})
+endfunction()
+
 if(TARGET cyxwiz-training-core)
     return()
 endif()
@@ -111,6 +146,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/checkpoint_payload_io.cpp
 )
 target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
+cyxwiz_enable_pch(cyxwiz-training-core)
 target_link_libraries(cyxwiz-training-core PUBLIC
     Arrow::arrow_shared
     Parquet::parquet_shared
