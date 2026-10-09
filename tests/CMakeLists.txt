@@ -73,15 +73,13 @@ add_executable(cyxwiz-tests
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_archive.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
-    ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
     ../cyxwiz-engine/src/core/nas_evaluator.cpp
-    ../cyxwiz-engine/src/core/compute_runtime_config.cpp
-    ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
     ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
+target_link_libraries(cyxwiz-tests PRIVATE cyxwiz-training-core)
 
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2
@@ -179,13 +177,9 @@ add_executable(test_model_builder_upsampling
     unit/test_model_builder_upsampling.cpp
     unit/test_spatial_batch_layout.cpp
     unit/test_spatial_head.cpp
-    ../cyxwiz-engine/src/core/spatial_batch_layout.cpp
     ../cyxwiz-engine/src/core/synthetic_batch.cpp
-    ../cyxwiz-engine/src/core/model_builder.cpp
-    ../cyxwiz-engine/src/core/stacked_metric_loss.cpp
-    ../cyxwiz-engine/src/core/executable_model.cpp
-    ../cyxwiz-engine/src/core/graph_executable_model.cpp
 )
+target_link_libraries(test_model_builder_upsampling PRIVATE cyxwiz-training-core)
 target_include_directories(test_model_builder_upsampling PRIVATE
     ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src
@@ -251,8 +245,8 @@ if(CYXWIZ_BUILD_ENGINE)
     add_executable(test_route_qualification_process
         ../cyxwiz-engine/tests/test_route_qualification_process.cpp
         ../cyxwiz-engine/src/core/route_qualification_service.cpp
-        ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     )
+target_link_libraries(test_route_qualification_process PRIVATE cyxwiz-training-core)
     add_executable(test_route_probe_environment_child
         ../cyxwiz-engine/tests/test_route_probe_environment_child.cpp
     )
