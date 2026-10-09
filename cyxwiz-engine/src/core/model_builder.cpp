@@ -1821,9 +1821,11 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             return std::make_unique<StackedTripletLoss>(margin);
         }
         default:
-            CYXWIZ_BUILDER_INFO("TrainingExecutor: Defaulting to CrossEntropy loss "
-                         "(reduction={})", ReductionName(reduction));
-            return CreateLoss(LossType::CrossEntropy, reduction);
+            // Training another objective than the graph's would be silent
+            // and wrong; the compiler should have refused this node.
+            throw std::runtime_error(
+                "ModelBuilder has no loss implementation for node type " +
+                std::to_string(static_cast<int>(config.loss_type)));
     }
 }
 
