@@ -5266,6 +5266,12 @@ TrainingConfiguration GraphCompiler::Compile(
         training_path_ids,
         sequence_fusion ? sequence_fusion->concat_node_id : -1,
         config);
+    for (const int id : sorted_ids) {
+        const gui::MLNode* node = FindNodeById(id, nodes);
+        if (node && node->type == gui::NodeType::CrossAttention && ContainsWhenFiltered(training_path_ids, id)) {
+            config.multi_input_layer_node_ids.push_back(id);
+        }
+    }
     config.graph_plan = BuildCompiledGraphPlan(
         nodes,
         links,
@@ -5308,7 +5314,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // A branched graph (TOFIX140 A2): every node takes the sample shape of the
     // pin that feeds it, not of the node before it in sort order.
-    const bool branched = !config.graph_op_node_ids.empty();
+    const bool branched = !config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty();
     std::unordered_map<int, std::vector<size_t>> pin_shapes;
     const auto source_shape = [&](const gui::MLNode& n, size_t input_index)
         -> const std::vector<size_t>* {
@@ -5350,6 +5356,43 @@ TrainingConfiguration GraphCompiler::Compile(
                 record_outputs(*node, config.input_shape);
             } else if (const auto* fed = source_shape(*node, 0)) {
                 current_shape = *fed;
+            }
+        }
+
+        if (node->type == gui::NodeType::CrossAttention && branched) {
+            // Query [Tq, E] over Key / Value [Tk, E] (TOFIX140 Group C).
+            const char* names[] = {"Query", "Key", "Value"};
+            const std::vector<size_t>* fed[3] = {source_shape(*node, 0), source_shape(*node, 1),
+                                                 source_shape(*node, 2)};
+            const int embed_dim = spatial::ParseIntParam(node->parameters, "embed_dim", 512);
+            const int heads = spatial::ParseIntParam(node->parameters, "num_heads", 8);
+            bool ok = true;
+            for (int i = 0; i < 3 && ok; ++i) {
+                if (!fed[i]) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string("Cross Attention needs its ") + names[i] + " input connected",
+                             node->id, node->name, errors::Compiler::InvalidConnectivity);
+                    ok = false;
+                } else if (fed[i]->size() != 2 || static_cast<int>(fed[i]->back()) != embed_dim) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string("Cross Attention ") + names[i] + " must be a [length, " +
+                                 std::to_string(embed_dim) + "] sequence (embed_dim), got [" +
+                                 ShapeListText(*fed[i]) + "]",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                    ok = false;
+                }
+            }
+            if (ok && (*fed[1])[0] != (*fed[2])[0]) {
+                AddIssue(config, IssueLevel::Error,
+                         "Cross Attention Key and Value must have the same length, got " +
+                             std::to_string((*fed[1])[0]) + " and " + std::to_string((*fed[2])[0]),
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            }
+            if (heads <= 0 || embed_dim <= 0 || embed_dim % heads != 0) {
+                AddIssue(config, IssueLevel::Error,
+                         "Cross Attention embed_dim " + std::to_string(embed_dim) +
+                             " must divide evenly into num_heads " + std::to_string(heads),
+                         node->id, node->name, errors::Compiler::InvalidParameter);
             }
         }
 
@@ -6620,6 +6663,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
+        case gui::NodeType::CrossAttention:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:

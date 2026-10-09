@@ -1716,7 +1716,6 @@ void CheckBlockedNormalizationFamilyContract(
 void CheckBlockedAttentionFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
-        gui::NodeType::CrossAttention,
         gui::NodeType::LinearAttention,
     };
 
@@ -1736,26 +1735,25 @@ void CheckBlockedAttentionFamilyContract(
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
     }
 
+    // Cross Attention trains (TOFIX140 Group C): Query over Key / Value.
     const auto* cross = metadata.GetMetadata(gui::NodeType::CrossAttention);
-    Check(cross->inputs.size() == 4 &&
+    Check(cross->status == cyxwiz::NodeImplementationStatus::Implemented && cross->badge.empty() &&
+              cyxwiz::CanAddNodeToGraph(*cross),
+          "Cross Attention is implemented and can be added");
+    CheckSupportAxis(cross, "Compile", "supported", true, TypeId(gui::NodeType::CrossAttention));
+    Check(cross->inputs.size() == 3 &&
               cross->inputs[0].name == "Query" && cross->inputs[0].required &&
               cross->inputs[1].name == "Key" && cross->inputs[1].required &&
-              cross->inputs[2].name == "Value" && cross->inputs[2].required &&
-              cross->inputs[3].name == "Mask" && !cross->inputs[3].required &&
-              !HasInputType(cross, "Context", gui::PinType::Tensor),
-          "saved cross-attention input pin order must remain compatible");
-    Check(cross->outputs.size() == 2 &&
-              cross->outputs[0].name == "Output" &&
-              cross->outputs[0].required &&
-              cross->outputs[1].name == "Attn Weights" &&
-              !cross->outputs[1].required,
-          "saved cross-attention output pin order must remain compatible");
+              cross->inputs[2].name == "Value" && cross->inputs[2].required,
+          "Cross Attention inputs: Query, Key, Value (torch nn.MultiheadAttention(q, k, v))");
+    Check(cross->outputs.size() == 1 && cross->outputs[0].name == "Output" && cross->outputs[0].required,
+          "Cross Attention output: the attention result");
     Check(cross->parameters.size() == 4 &&
               ParameterMatches(cross, "embed_dim", "int", "512") &&
               ParameterMatches(cross, "num_heads", "int", "8") &&
               ParameterMatches(cross, "dropout", "float", "0.0") &&
-              ParameterMatches(cross, "batch_first", "bool", "true"),
-          "saved cross-attention parameters must remain compatible");
+              ParameterMatches(cross, "use_bias", "bool", "true"),
+          "Cross Attention settings: embed_dim, num_heads, dropout, use_bias");
 
     const auto* linear = metadata.GetMetadata(gui::NodeType::LinearAttention);
     Check(linear->inputs.size() == 4 &&

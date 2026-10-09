@@ -721,6 +721,10 @@ NodeEditor::FindUnsupportedSequentialLayerError(
                     node->type)) {
             return EffectiveNodeName(*node) + ": " + reason;
         }
+        if (node->type == NodeType::CrossAttention) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not support Cross Attention (a two-input layer) yet; train it in Studio";
+        }
     }
     return std::nullopt;
 }

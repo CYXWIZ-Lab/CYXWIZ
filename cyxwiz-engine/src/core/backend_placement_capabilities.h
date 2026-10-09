@@ -179,6 +179,7 @@ inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
     return type == gui::NodeType::RNN ||
            type == gui::NodeType::LayerNorm ||
            type == gui::NodeType::MultiHeadAttention ||
+           type == gui::NodeType::CrossAttention ||
            type == gui::NodeType::TransformerEncoder ||
            type == gui::NodeType::TransformerDecoder ||
            type == gui::NodeType::PositionalEncoding;
@@ -227,6 +228,7 @@ inline LayerCapability ClassifyLayer(const CompiledLayer& layer) {
     };
     const bool is_transformer_sequence_layer =
         layer.type == gui::NodeType::MultiHeadAttention ||
+        layer.type == gui::NodeType::CrossAttention ||
         layer.type == gui::NodeType::TransformerEncoder ||
         layer.type == gui::NodeType::TransformerDecoder;
     bool supported = nonempty && layer.type == gui::NodeType::LayerNorm && rank <= 3;

@@ -62,6 +62,25 @@ std::vector<CompiledGraphEdge> TensorIncomingEdges(const CompiledGraphPlan& plan
     return edges;
 }
 
+// The edge into each input pin of a node, in pin order (not link order):
+// what a multi-input layer (Cross Attention) needs to tell its inputs apart.
+std::vector<CompiledGraphEdge> TensorIncomingEdgesByPin(const CompiledGraphPlan& plan,
+                                                        const CompiledGraphNode& node) {
+    const auto incoming = TensorIncomingEdges(plan, node.node_id);
+    std::vector<CompiledGraphEdge> edges;
+    edges.reserve(node.input_pin_ids.size());
+    for (int pin_id : node.input_pin_ids) {
+        const auto found = std::find_if(incoming.begin(), incoming.end(),
+                                        [pin_id](const CompiledGraphEdge& edge) { return edge.to_pin_id == pin_id; });
+        if (found == incoming.end()) {
+            throw std::runtime_error("GraphExecutableModel layer node " + std::to_string(node.node_id) +
+                                     " has an unconnected input");
+        }
+        edges.push_back(*found);
+    }
+    return edges;
+}
+
 const CompiledGraphNode* FindPlanNode(const CompiledGraphPlan& plan, int node_id) {
     for (const auto& node : plan.nodes) {
         if (node.node_id == node_id) {
@@ -410,7 +429,12 @@ GraphExecutableModel::GraphExecutableModel(std::unique_ptr<SequentialModel> mode
             "GraphExecutableModel requires an available data-to-loss graph plan");
     }
 
-    if (graph_op_node_ids_.empty()) {
+    bool multi_input_layer = false;
+    for (size_t i = 0; i < model_->Size(); ++i) {
+        const Module* module = model_->GetModule(i);
+        multi_input_layer = multi_input_layer || (module && module->InputCount() > 1);
+    }
+    if (graph_op_node_ids_.empty() && !multi_input_layer) {
         std::string reason;
         if (!CanRunLinearPlan(plan_, layer_node_ids_, &reason)) {
             throw std::invalid_argument(
@@ -568,6 +592,21 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
                                          std::to_string(node.node_id));
             }
 
+            if (module->InputCount() > 1) {
+                // One tensor per input pin, in pin order.
+                std::vector<Tensor> inputs;
+                for (const auto& edge : TensorIncomingEdgesByPin(plan_, node)) {
+                    const Tensor* input_tensor = FindCachedTensor(edge.from_node_id, edge.from_pin_id);
+                    if (!input_tensor) {
+                        throw std::runtime_error("GraphExecutableModel missing cached input tensor");
+                    }
+                    inputs.push_back(*input_tensor);
+                }
+                const auto layer_start = std::chrono::steady_clock::now();
+                output = module->ForwardInputs(inputs);
+                TraceLayer("ModelForward", module_index, *module, layer_start);
+                executed = true;
+            } else {
             const auto incoming = TensorIncomingEdges(plan_, node.node_id);
             if (incoming.size() != 1) {
                 throw std::runtime_error(
@@ -583,6 +622,7 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             output = module->Forward(*input_tensor);
             TraceLayer("ModelForward", module_index, *module, layer_start);
             executed = true;
+            }
         } else if (IsGraphOpNode(node.node_id)) {
             const auto incoming = TensorIncomingEdges(plan_, node.node_id);
             std::vector<const Tensor*> inputs;
@@ -709,6 +749,23 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
             if (!module) {
                 throw std::runtime_error("GraphExecutableModel missing module for node " +
                                          std::to_string(node.node_id));
+            }
+            if (module->InputCount() > 1) {
+                // One gradient per input pin; inputs fed from the same output
+                // (Key = Value) sum in the pin gradients.
+                const auto edges = TensorIncomingEdgesByPin(plan_, node);
+                const auto layer_start = std::chrono::steady_clock::now();
+                const std::vector<Tensor> input_grads = module->BackwardInputs(grad);
+                TraceLayer("ModelBackward", module_index, *module, layer_start);
+                if (input_grads.size() != edges.size()) {
+                    throw std::runtime_error("GraphExecutableModel: a multi-input layer returned " +
+                                             std::to_string(input_grads.size()) + " gradients for " +
+                                             std::to_string(edges.size()) + " inputs");
+                }
+                for (size_t i = 0; i < edges.size(); ++i) {
+                    AccumulatePinGrad(pin_grads, edges[i].from_node_id, edges[i].from_pin_id, input_grads[i]);
+                }
+                continue;
             }
             if (incoming.size() != 1) {
                 throw std::runtime_error(

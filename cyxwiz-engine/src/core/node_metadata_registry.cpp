@@ -2317,15 +2317,15 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"attention", "transformer", "self-attention"}, 0, false,
         "Trainable self-attention over a sequence tensor",
         "Connect one sequence tensor to Query. Studio uses it as query, key, and value. "
-        "Cross-attention and attention masks remain fail-closed until their "
-        "multi-input runtime contract is implemented.",
+        "For attention over another sequence use the Cross Attention node; attention masks "
+        "remain fail-closed.",
         "",
         {{"Query", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features], used as query, key, and value."},
          {"Key", PinType::Tensor, false,
-          "Reserved for cross-attention; connecting this pin is currently rejected."},
+          "Not used: connecting it is rejected; use the Cross Attention node."},
          {"Value", PinType::Tensor, false,
-          "Reserved for cross-attention; connecting this pin is currently rejected."},
+          "Not used: connecting it is rejected; use the Cross Attention node."},
          {"Mask", PinType::Tensor, false,
           "Reserved for attention masking; connecting this pin is currently rejected."}},
         {{"Output", PinType::Tensor, true,
@@ -2454,25 +2454,27 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CrossAttention, NodeCategory::Attention, "Cross Attention", ICON_FA_BULLSEYE,
-        {"attention", "cross_attention", "transformer"}, 0, false,
-        "Blocked cross-attention compatibility node",
-        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
-        "Studio has no multi-input CrossAttention GraphCompiler/ModelBuilder owner.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
-         {"Key", PinType::Tensor, true, "Legacy context key tensor [batch, key/value length, embed_dim]."},
-         {"Value", PinType::Tensor, true, "Legacy context value tensor [batch, key/value length, embed_dim]."},
-         {"Mask", PinType::Tensor, false, "Optional legacy cross-attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
-         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+        {"attention", "cross_attention", "cross-attention", "encoder-decoder", "transformer"}, 0, false,
+        "Trainable attention of one sequence (Query) over another (Key / Value)",
+        "Each Query position attends over the Key / Value sequence: softmax(Q K^T / sqrt(d)) V per head, "
+        "with learned projections W_q, W_k, W_v, W_o (torch.nn.MultiheadAttention(query, key, value), "
+        "batch first). Query is [batch, query length, embed_dim]; Key and Value are [batch, key length, "
+        "embed_dim] and may come from another branch with a different length (link the same layer to both "
+        "for the usual memory input). The output has the Query's shape. Code export does not support it yet.",
+        "",
+        {{"Query", PinType::Tensor, true, "Query sequence [batch, query length, embed_dim]."},
+         {"Key", PinType::Tensor, true, "Key sequence [batch, key length, embed_dim]."},
+         {"Value", PinType::Tensor, true, "Value sequence [batch, key length, embed_dim] (often the same as Key)."}},
+        {{"Output", PinType::Tensor, true, "Attention result [batch, query length, embed_dim]."}},
+        {{"embed_dim", "int", "512", "Feature width of Query, Key and Value", {}, "1-65536",
           "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
-          "Dropout", "Attention", true, false},
-         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
-          "Batch First", "Layout", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"num_heads", "int", "8", "Number of attention heads; embed_dim must divide evenly", {}, "1-4096",
+          "Attention Heads", "Attention", true, false},
+         {"dropout", "float", "0.0", "Dropout on the attention weights while training", {}, "0.0-0.999",
+          "Dropout", "Regularization", false, false},
+         {"use_bias", "bool", "true", "Enable bias in the attention projections", {}, "",
+          "Use Bias", "Advanced", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LinearAttention, NodeCategory::Attention, "Linear Attention", ICON_FA_BULLSEYE,
         {"attention", "linear_attention", "performer"}, 0, false,

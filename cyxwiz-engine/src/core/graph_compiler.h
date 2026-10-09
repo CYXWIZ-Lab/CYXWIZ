@@ -436,6 +436,9 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Layers with several inputs (Cross Attention): the graph runtime runs
+    // them, so the model is built as a graph even without graph ops.
+    std::vector<int> multi_input_layer_node_ids;
 
     // Passive metric-learning graph contract. Populated when the selected
     // training path contains metric-learning nodes, but remains

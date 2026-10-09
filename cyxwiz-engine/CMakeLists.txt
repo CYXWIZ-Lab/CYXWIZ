@@ -5065,6 +5065,63 @@ add_custom_target(copy_test_branch_graph_training_fixture
 add_dependencies(test_branch_graph_training copy_test_branch_graph_training_fixture)
 add_test(NAME branch_graph_pytorch_parity COMMAND test_branch_graph_training)
 
+# ===== Test: Cross Attention graphs vs PyTorch (TOFIX140 Group C) =====
+set(CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cross_attention_graph_pytorch.json"
+)
+add_executable(test_cross_attention_graph_training
+    tests/test_cross_attention_graph_training.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_link_libraries(test_cross_attention_graph_training PRIVATE cyxwiz-training-core)
+
+target_include_directories(test_cross_attention_graph_training PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cross_attention_graph_training PRIVATE
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cross_attention_graph_training PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_CROSS_ATTENTION_GRAPH_FIXTURE="${CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE}"
+    )
+else()
+    target_compile_definitions(test_cross_attention_graph_training PRIVATE
+        CYXWIZ_CROSS_ATTENTION_GRAPH_FIXTURE="${CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE}"
+    )
+endif()
+
+set_target_properties(test_cross_attention_graph_training PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_custom_target(copy_test_cross_attention_graph_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_cross_attention_graph_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_cross_attention_graph_training>/computation_truth_fixtures/cross_attention_graph_pytorch.json"
+    SOURCES "${CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_cross_attention_graph_training copy_test_cross_attention_graph_training_fixture)
+add_test(NAME cross_attention_graph_pytorch_parity COMMAND test_cross_attention_graph_training)
+
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
@@ -5681,6 +5738,7 @@ cyxwiz_enable_pch(test_modality_batcher_drop_last)
 cyxwiz_enable_pch(test_debugger_contracts)
 cyxwiz_enable_pch(test_cnn_graph_training)
 cyxwiz_enable_pch(test_branch_graph_training)
+cyxwiz_enable_pch(test_cross_attention_graph_training)
 cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_pipeline_materializer_cache)
 cyxwiz_enable_pch(test_engine_node_parity)

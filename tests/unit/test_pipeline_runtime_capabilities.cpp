@@ -64,7 +64,6 @@ TEST_CASE("Training capability registry keeps unsupported attention variants blo
     using gui::NodeType;
 
     const NodeType unsupported_nodes[] = {
-        NodeType::CrossAttention,
         NodeType::LinearAttention
     };
 
@@ -76,6 +75,15 @@ TEST_CASE("Training capability registry keeps unsupported attention variants blo
         REQUIRE_FALSE(support.training_supported);
         REQUIRE(support.reason != nullptr);
     }
+}
+
+TEST_CASE("Cross Attention is a supported trainable model layer (TOFIX140 Group C)",
+          "[pipeline_runtime_capabilities][attention]") {
+    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::CrossAttention);
+    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
+    REQUIRE(support.compile_supported);
+    REQUIRE(support.training_supported);
+    REQUIRE_FALSE(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(gui::NodeType::CrossAttention));
 }
 
 TEST_CASE("Simple RNN is a supported trainable model layer after the Studio wiring",

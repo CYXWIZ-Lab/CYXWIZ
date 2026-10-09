@@ -711,19 +711,20 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::CrossAttention] = {
         "Cross-Attention",
-        "Blocked compatibility node preserving explicit Query, Key, Value, Mask, "
-        "Output, and Attn Weights pins.",
-        "The backend attention primitive supports Q/K/V computation, but Studio has "
-        "no graph-level multi-input execution and gradient owner for this node.",
+        "Trainable attention of a Query sequence over a Key / Value sequence.",
+        "Each Query position attends over the Key / Value sequence (softmax(Q K^T / sqrt(d)) V per head) "
+        "with learned projections, as torch.nn.MultiheadAttention(query, key, value) with batch_first. "
+        "Query, Key and Value usually come from different graph branches; the output has the Query's shape.",
         {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"},
-            {"dropout", "Attention-weight dropout"},
-            {"batch_first", "Whether the legacy tensor layout is batch-first"}
+            {"embed_dim", "Feature width of Query, Key and Value"},
+            {"num_heads", "Number of attention heads (embed_dim must divide evenly)"},
+            {"dropout", "Dropout on the attention weights while training"},
+            {"use_bias", "Bias in the attention projections"}
         },
         {
-            "This node can be inspected in saved graphs but cannot compile or train",
-            "Key and Value remain separate compatibility inputs, not a Context alias"
+            "Link the same layer to Key and Value for the usual encoder memory input",
+            "Query and Key may have different lengths; Key and Value must match",
+            "Code export does not support Cross Attention yet"
         },
         "Attention"
     };

@@ -181,6 +181,13 @@ public:
     virtual Tensor ForwardIncremental(const Tensor& input, size_t /*position_offset*/) { return Forward(input); }
     virtual void ResetIncrementalState() {}
 
+    // Modules with several inputs (Cross Attention). The graph runtime passes
+    // one tensor per input pin, in pin order, and gets one gradient per input
+    // pin back. A single-input module keeps the defaults.
+    virtual size_t InputCount() const { return 1; }
+    virtual Tensor ForwardInputs(const std::vector<Tensor>& inputs) { return Forward(inputs.at(0)); }
+    virtual std::vector<Tensor> BackwardInputs(const Tensor& grad_output) { return {Backward(grad_output)}; }
+
 protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
@@ -859,9 +866,8 @@ private:
 /**
  * @brief Wrapper around MultiHeadAttentionLayer for self-attention.
  *
- * Consumes and returns `[batch, seq_len, embed_dim]` tensors. Multi-input
- * cross-attention is intentionally not exposed through SequentialModel yet;
- * graph/compiler support must define that contract first.
+ * Consumes and returns `[batch, seq_len, embed_dim]` tensors. Cross attention
+ * (separate query and key/value inputs) is CrossAttentionModule.
  */
 // Attention-level choices for the standalone MultiHeadAttention node
 // (tofix112): the same options the decoder block uses, so research blocks can
@@ -909,6 +915,36 @@ private:
     float dropout_;
     bool use_bias_;
     MultiHeadAttentionOptions options_;
+};
+
+/**
+ * @brief Cross attention over MultiHeadAttentionLayer (TOFIX140 Group C).
+ *
+ * Three inputs, in pin order: query [batch, tq, embed_dim], key and value
+ * [batch, tk, embed_dim] (torch nn.MultiheadAttention(q, k, v), batch_first).
+ * Returns [batch, tq, embed_dim]; BackwardInputs returns {dQ, dK, dV}. Only
+ * the graph runtime drives it (Forward with one tensor is refused).
+ */
+class CYXWIZ_API CrossAttentionModule : public Module {
+public:
+    CrossAttentionModule(size_t embed_dim, size_t num_heads, float dropout = 0.0f, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    size_t InputCount() const override { return 3; }
+    Tensor ForwardInputs(const std::vector<Tensor>& inputs) override;
+    std::vector<Tensor> BackwardInputs(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<MultiHeadAttentionLayer> layer_;
+    size_t embed_dim_;
+    size_t num_heads_;
 };
 
 /**

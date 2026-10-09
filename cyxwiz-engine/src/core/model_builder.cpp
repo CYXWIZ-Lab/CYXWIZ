@@ -449,8 +449,8 @@ bool BuildSequential(
 
         // A branched graph (TOFIX140 A2): a layer reads the width of the pin
         // that feeds it, not the output of the layer before it in sort order.
-        if (!config.graph_op_node_ids.empty() && !layer_cfg.input_shape.empty() &&
-            layer_cfg.input_shape.size() <= 2) {
+        if ((!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) &&
+            !layer_cfg.input_shape.empty() && layer_cfg.input_shape.size() <= 2) {
             current_input_size = layer_cfg.input_shape.back();
         }
 
@@ -610,6 +610,7 @@ bool BuildSequential(
                         nt == gui::NodeType::LayerNorm ||
                         nt == gui::NodeType::PositionalEncoding ||
                         nt == gui::NodeType::MultiHeadAttention ||
+                        nt == gui::NodeType::CrossAttention ||
                         nt == gui::NodeType::TransformerEncoder ||
                         nt == gui::NodeType::TransformerDecoder ||
                         nt == gui::NodeType::TimeDistributed) {
@@ -824,6 +825,30 @@ bool BuildSequential(
                 current_input_size = next_is_transformer
                     ? d_model
                     : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::CrossAttention: {
+                // Query over Key / Value (TOFIX140 Group C); the graph runtime
+                // feeds its three inputs (CrossAttentionModule::ForwardInputs).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const float dropout = std::stof(param("dropout", "0.0"));
+                const std::string bias = param("use_bias", "true");
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("CrossAttention embed_dim does not match the Query width");
+                }
+                if (heads == 0 || embed_dim % heads != 0) {
+                    throw std::runtime_error("CrossAttention embed_dim must be divisible by num_heads");
+                }
+                model.Add<CrossAttentionModule>(embed_dim, heads, dropout, bias != "false" && bias != "0");
+                CYXWIZ_BUILDER_INFO("  [{}] CrossAttention(embed_dim={}, heads={}, dropout={})", i, embed_dim,
+                                    heads, dropout);
+                current_input_size = embed_dim;
                 break;
             }
 
@@ -1980,7 +2005,7 @@ QuietModelBuildScope::~QuietModelBuildScope() {
 }
 
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
-    if (!config.graph_op_node_ids.empty()) {
+    if (!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) {
         return BuildGraphExecutableFromConfig(config);
     }
 
@@ -2009,7 +2034,9 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
 
     const bool has_graph_ops = !config.graph_op_node_ids.empty();
 
-    if (!has_graph_ops) {
+    // Multi-input layers (Cross Attention) run in the graph runtime even when
+    // the graph has no merge / split ops.
+    if (!has_graph_ops && config.multi_input_layer_node_ids.empty()) {
         std::string reason;
         if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
                                                    layer_node_ids,
