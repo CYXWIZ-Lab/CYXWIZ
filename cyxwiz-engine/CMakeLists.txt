@@ -1696,6 +1696,7 @@ endif()
 set_target_properties(test_debug_executor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_test(NAME debug_executor COMMAND test_debug_executor)
 
 # ===== Test: Siamese Backend Smoke =====
 add_executable(test_siamese_backend_smoke

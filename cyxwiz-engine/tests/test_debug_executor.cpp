@@ -303,10 +303,13 @@ void TestBuildSequentialTabular() {
                "Output marker provenance should not own a module");
 
     auto skipped_cfg = MakeTabularConfig();
+    // A layer type the builder has no module for (TensorBatchMatMul is still
+    // a template node). Conv2D used to be that type; since c5433f95 (TOFIX140
+    // A1) it builds a real module and needs the spatial head's input shape.
     CompiledLayer unsupported;
-    unsupported.type = gui::NodeType::Conv2D;
+    unsupported.type = gui::NodeType::TensorBatchMatMul;
     unsupported.node_id = 99;
-    unsupported.name = "Unsupported Conv";
+    unsupported.name = "Unsupported BatchMatMul";
     skipped_cfg.layers.insert(skipped_cfg.layers.begin(), unsupported);
     auto skipped = BuildSequentialFromConfig(skipped_cfg);
     ExpectTrue(skipped.ok(),
@@ -2301,10 +2304,13 @@ void TestDebugExecutorSkippedLayerMapping() {
     spdlog::info("--- TestDebugExecutorSkippedLayerMapping ---");
     auto cfg = MakeTabularConfig();
 
+    // A layer type the builder has no module for (TensorBatchMatMul is still
+    // a template node). Conv2D used to be that type; since c5433f95 (TOFIX140
+    // A1) it builds a real module and needs the spatial head's input shape.
     CompiledLayer unsupported;
-    unsupported.type = gui::NodeType::Conv2D;
+    unsupported.type = gui::NodeType::TensorBatchMatMul;
     unsupported.node_id = 99;
-    unsupported.name = "Unsupported Conv";
+    unsupported.name = "Unsupported BatchMatMul";
     cfg.layers.insert(cfg.layers.begin(), unsupported);
 
     DebugExecutor exe(cfg);
