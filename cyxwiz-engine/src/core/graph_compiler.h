@@ -4,6 +4,7 @@
 #include "compiled_graph_plan.h"
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
+#include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
@@ -563,11 +564,15 @@ struct TrainingConfiguration {
     float regularization_l1 = 0.0f;
     float regularization_l2 = 0.0f;
     int regularization_node_id = -1;
-    // Triplet Dataset Builder + Triplet Loss (TOFIX140 A5): TrainingExecutor
-    // wraps every batcher in a TripletBatchSampler, so the model runs once over
-    // [anchors; positives; negatives] picked in-batch by class id.
-    bool triplet_sampling = false;
-    int triplet_builder_node_id = -1;
+    // Pair / Triplet Dataset Builder + its loss (TOFIX140 A5): TrainingExecutor
+    // wraps every batcher in a MetricBatchSampler, so the model runs once over
+    // [firsts; seconds] or [anchors; positives; negatives] picked in-batch by
+    // class id. Pair accuracy calls a pair similar at pair_decision_threshold
+    // (Contrastive: distance below margin / 2; Cosine Embedding: cosine above
+    // (1 + margin) / 2).
+    MetricSampling metric_sampling = MetricSampling::None;
+    int metric_builder_node_id = -1;
+    float pair_decision_threshold = 0.0f;
 
     // Validation
     bool is_valid = false;
@@ -649,6 +654,8 @@ struct TrainingConfiguration {
             case gui::NodeType::TverskyLoss: return "Tversky";
             case gui::NodeType::JaccardLoss: return "Jaccard";
             case gui::NodeType::TripletLoss: return "Triplet";
+            case gui::NodeType::ContrastiveLoss: return "Contrastive";
+            case gui::NodeType::CosineEmbeddingLoss: return "CosineEmbedding";
             default: return "CrossEntropy";
         }
     }

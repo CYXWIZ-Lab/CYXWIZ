@@ -71,6 +71,71 @@ ClassificationDecisionScalar BuildTripletOrderScalar(
     return {Tensor({2}, counts, DataType::Float32)};
 }
 
+// predictions [2P, D]: rows 0..P-1 firsts, P..2P-1 seconds; similar [P] is 1
+// for a same-class pair. A pair is called similar when its distance is below
+// the threshold (PairDistance) or its cosine above it (PairCosine).
+ClassificationDecisionScalar BuildPairDecisionScalar(
+    const Tensor& predictions,
+    const Tensor& similar,
+    size_t pairs,
+    ClassificationDecisionMode mode,
+    float threshold) {
+    const auto& shape = predictions.Shape();
+    if (shape.size() != 2 || shape[0] != 2 * pairs || similar.NumElements() != pairs ||
+        predictions.GetDataType() != DataType::Float32 || similar.GetDataType() != DataType::Float32) {
+        return {};
+    }
+    const bool by_distance = mode == ClassificationDecisionMode::PairDistance;
+    // As the backend Cosine Embedding loss.
+    constexpr float kCosineEpsilon = 1.0e-12f;
+    const size_t width = shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array all = predictions.GetArrayRowMajor2D();
+        const double count = static_cast<double>(pairs);
+        const af::array a = all(af::seq(0.0, count - 1.0), af::span);
+        const af::array b = all(af::seq(count, 2.0 * count - 1.0), af::span);
+        const af::array called_similar = by_distance
+            ? af::sqrt(af::sum((a - b) * (a - b), 1)) < threshold
+            : af::sum(a * b, 1) / af::sqrt((af::sum(a * a, 1) + kCosineEpsilon) *
+                                           (af::sum(b * b, 1) + kCosineEpsilon)) > threshold;
+        const af::array truth = af::flat(similar.GetSemanticArray()) == 1.0f;
+        af::array correct = af::sum(af::flat((af::flat(called_similar) == truth).as(f32)));
+        af::array counts = af::join(0, correct, af::constant(static_cast<float>(pairs), 1));
+        counts.eval();
+        return {Tensor::FromSemanticArray(counts, {2})};
+    } catch (const af::exception& e) {
+        const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string context = BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext("predictions", predictions.Shape()));
+        ThrowIfArrayFireNativeCpuFallbackForbidden("PairDecisionCount", reason, e.what(), context);
+        spdlog::warn("{}", BuildArrayFireBackendFallbackMessage(
+                               "PairDecisionCount", reason,
+                               reason != BackendFallbackReason::CudaJitParamOverflow, e.what(), context));
+    }
+#endif
+    const float* values = predictions.ReadData<float>();
+    const float* flags = similar.ReadData<float>();
+    size_t correct = 0;
+    for (size_t i = 0; i < pairs; ++i) {
+        const float* a = values + i * width;
+        const float* b = values + (pairs + i) * width;
+        double dot = 0.0, aa = 0.0, bb = 0.0, dd = 0.0;
+        for (size_t j = 0; j < width; ++j) {
+            dot += static_cast<double>(a[j]) * b[j];
+            aa += static_cast<double>(a[j]) * a[j];
+            bb += static_cast<double>(b[j]) * b[j];
+            dd += static_cast<double>(a[j] - b[j]) * (a[j] - b[j]);
+        }
+        const bool called_similar = by_distance
+            ? std::sqrt(dd) < threshold
+            : dot / std::sqrt((aa + kCosineEpsilon) * (bb + kCosineEpsilon)) > threshold;
+        if (called_similar == (flags[i] == 1.0f)) ++correct;
+    }
+    const float counts[] = {static_cast<float>(correct), static_cast<float>(pairs)};
+    return {Tensor({2}, counts, DataType::Float32)};
+}
+
 ClassificationDecisionCount CountClassificationDecisionsCpu(
     const Tensor& predictions,
     const Tensor& targets,
@@ -199,12 +264,17 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index) {
+    std::optional<int> ignore_index,
+    float pair_threshold) {
     if (batch_size == 0 || output_width == 0) {
         return {};
     }
     if (mode == ClassificationDecisionMode::TripletOrder) {
         return BuildTripletOrderScalar(predictions, batch_size);
+    }
+    if (mode == ClassificationDecisionMode::PairDistance ||
+        mode == ClassificationDecisionMode::PairCosine) {
+        return BuildPairDecisionScalar(predictions, targets, batch_size, mode, pair_threshold);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -281,11 +351,12 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index) {
+    std::optional<int> ignore_index,
+    float pair_threshold) {
     return ReadClassificationDecisionScalar(
         BuildClassificationDecisionScalar(
             predictions, targets, batch_size, output_width, mode,
-            ignore_index));
+            ignore_index, pair_threshold));
 }
 
 } // namespace cyxwiz

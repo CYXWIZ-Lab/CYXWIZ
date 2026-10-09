@@ -808,7 +808,9 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::SoftDiceLoss ||
            type == gui::NodeType::TverskyLoss ||
            type == gui::NodeType::JaccardLoss ||
-           type == gui::NodeType::TripletLoss;
+           type == gui::NodeType::TripletLoss ||
+           type == gui::NodeType::ContrastiveLoss ||
+           type == gui::NodeType::CosineEmbeddingLoss;
 }
 
 bool IsTrueParameter(const gui::MLNode& node, const char* key) {
@@ -1833,19 +1835,13 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
 bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
                                            std::string& matched_key) {
     switch (node.type) {
-        // The triplet nodes train (ExtractTripletSamplingConfiguration).
+        // These train (ExtractMetricSamplingConfiguration).
+        case gui::NodeType::PairDatasetBuilder:
         case gui::NodeType::TripletDatasetBuilder:
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss:
         case gui::NodeType::TripletLoss:
             return false;
-        case gui::NodeType::PairDatasetBuilder:
-            matched_key = "PairDatasetBuilder";
-            return true;
-        case gui::NodeType::ContrastiveLoss:
-            matched_key = "ContrastiveLoss";
-            return true;
-        case gui::NodeType::CosineEmbeddingLoss:
-            matched_key = "CosineEmbeddingLoss";
-            return true;
         case gui::NodeType::PairMetrics:
             matched_key = "PairMetrics";
             return true;
@@ -2687,26 +2683,54 @@ void ExtractRegularizationConfiguration(const std::vector<gui::MLNode>& nodes,
     config.regularization_node_id = node.id;
 }
 
-// Metric learning (TOFIX140 A5): a Triplet Dataset Builder on the training
-// path and a Triplet Loss come as a pair; together they set
-// config.triplet_sampling, which TrainingExecutor turns into a
-// TripletBatchSampler around every batcher.
-void ExtractTripletSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
-                                         const std::unordered_set<int>& training_path_ids,
-                                         const gui::MLNode* loss_node,
-                                         TrainingConfiguration& config) {
+// Metric learning (TOFIX140 A5): a Pair / Triplet Dataset Builder on the
+// training path and its loss come as a pair; together they set
+// config.metric_sampling, which TrainingExecutor turns into a
+// MetricBatchSampler around every batcher.
+struct MetricLossSpec {
+    gui::NodeType loss;
+    gui::NodeType builder;
+    const char* loss_name;
+    const char* builder_name;
+    const char* stack;
+    MetricSampling sampling;
+    double low;
+    bool low_inclusive;
+    double high;
+    const char* range_text;
+    const char* default_margin;
+};
+
+constexpr MetricLossSpec kMetricLossSpecs[] = {
+    {gui::NodeType::TripletLoss, gui::NodeType::TripletDatasetBuilder, "Triplet Loss", "Triplet Dataset Builder",
+     "[anchors; positives; negatives]", MetricSampling::Triplets, 0.0, false, 1.0e6,
+     "greater than 0, up to 1000000", "1.0"},
+    {gui::NodeType::ContrastiveLoss, gui::NodeType::PairDatasetBuilder, "Contrastive Loss", "Pair Dataset Builder",
+     "[firsts; seconds]", MetricSampling::Pairs, 0.0, true, 1.0e6, "from 0 to 1000000", "1.0"},
+    {gui::NodeType::CosineEmbeddingLoss, gui::NodeType::PairDatasetBuilder, "Cosine Embedding Loss",
+     "Pair Dataset Builder", "[firsts; seconds]", MetricSampling::Pairs, -1.0, true, 1.0, "from -1 to 1", "0.0"},
+};
+
+void ExtractMetricSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
+                                        const std::unordered_set<int>& training_path_ids,
+                                        const gui::MLNode* loss_node,
+                                        TrainingConfiguration& config) {
     std::vector<const gui::MLNode*> builders;
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::TripletDatasetBuilder && training_path_ids.count(node.id) > 0) {
+        if ((node.type == gui::NodeType::PairDatasetBuilder || node.type == gui::NodeType::TripletDatasetBuilder) &&
+            training_path_ids.count(node.id) > 0) {
             builders.push_back(&node);
         }
     }
-    const bool triplet_loss = loss_node && loss_node->type == gui::NodeType::TripletLoss;
+    const MetricLossSpec* spec = nullptr;
+    for (const auto& candidate : kMetricLossSpecs) {
+        if (loss_node && loss_node->type == candidate.loss) spec = &candidate;
+    }
     if (builders.empty()) {
-        if (triplet_loss) {
+        if (spec) {
             AddIssue(config, IssueLevel::Error,
-                     "Triplet Loss '" + loss_node->name + "' needs a Triplet Dataset Builder between the Data node "
-                     "and the encoder: it scores stacked [anchors; positives; negatives] embeddings",
+                     std::string(spec->loss_name) + " '" + loss_node->name + "' needs a " + spec->builder_name +
+                         " between the Data node and the encoder: it scores stacked " + spec->stack + " embeddings",
                      loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
         }
         return;
@@ -2714,43 +2738,58 @@ void ExtractTripletSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
     const gui::MLNode& builder = *builders.front();
     for (size_t i = 1; i < builders.size(); ++i) {
         AddIssue(config, IssueLevel::Error,
-                 "The training path already has the Triplet Dataset Builder '" + builder.name + "'; remove '" +
+                 "The training path already has the dataset builder '" + builder.name + "'; remove '" +
                      builders[i]->name + "'",
                  builders[i]->id, builders[i]->name, errors::Compiler::InvalidConnectivity);
     }
-    if (!triplet_loss) {
+    if (!spec || spec->builder != builder.type) {
+        const bool triplets = builder.type == gui::NodeType::TripletDatasetBuilder;
         AddIssue(config, IssueLevel::Error,
-                 "Triplet Dataset Builder '" + builder.name + "' feeds the model stacked [anchors; positives; "
-                 "negatives] rows, which only a Triplet Loss scores: use a Triplet Loss",
+                 std::string(triplets ? "Triplet Dataset Builder '" : "Pair Dataset Builder '") + builder.name +
+                     (triplets ? "' feeds the model stacked [anchors; positives; negatives] rows, which only a "
+                                 "Triplet Loss scores: use a Triplet Loss"
+                               : "' feeds the model stacked [firsts; seconds] rows, which only a Contrastive or "
+                                 "Cosine Embedding Loss scores: use one of them"),
                  builder.id, builder.name, errors::Compiler::InvalidConnectivity);
         return;
     }
     if (builders.size() > 1) return;
 
     const auto it = loss_node->parameters.find("margin");
-    const std::string text = it == loss_node->parameters.end() || it->second.empty() ? "1.0" : it->second;
+    const std::string text =
+        it == loss_node->parameters.end() || it->second.empty() ? spec->default_margin : it->second;
+    double margin = 0.0;
     bool margin_ok = false;
     try {
         size_t used = 0;
-        const double margin = std::stod(text, &used);
-        margin_ok = used == text.size() && std::isfinite(margin) && margin >= 0.0 && margin <= 1.0e6;
+        margin = std::stod(text, &used);
+        margin_ok = used == text.size() && std::isfinite(margin) &&
+                    (spec->low_inclusive ? margin >= spec->low : margin > spec->low) && margin <= spec->high;
     } catch (const std::exception&) {
     }
     if (!margin_ok) {
         AddIssue(config, IssueLevel::Error,
-                 "Invalid Triplet Loss margin '" + text + "': must be a number from 0 to 1000000",
+                 "Invalid " + std::string(spec->loss_name) + " margin '" + text + "': must be a number " +
+                     spec->range_text,
                  loss_node->id, loss_node->name, errors::Compiler::InvalidParameter);
         return;
     }
     if (config.target.value_kind != TargetValueKind::Categorical) {
         AddIssue(config, IssueLevel::Error,
-                 "Triplet Loss reads the label column as class ids; the graph turns it into a non-categorical "
-                 "target",
+                 std::string(spec->loss_name) + " reads the label column as class ids; the graph turns it into a "
+                 "non-categorical target",
                  loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
         return;
     }
-    config.triplet_sampling = true;
-    config.triplet_builder_node_id = builder.id;
+    config.metric_sampling = spec->sampling;
+    config.metric_builder_node_id = builder.id;
+    // Pair accuracy calls a pair similar halfway between the loss's targets:
+    // distance 0 vs the margin, cosine 1 vs the margin.
+    if (spec->loss == gui::NodeType::ContrastiveLoss) {
+        config.pair_decision_threshold = static_cast<float>(margin / 2.0);
+    } else if (spec->loss == gui::NodeType::CosineEmbeddingLoss) {
+        config.pair_decision_threshold = static_cast<float>((1.0 + margin) / 2.0);
+    }
 }
 
 void ExtractOptimizerConfiguration(const gui::MLNode& node,
@@ -5626,7 +5665,7 @@ TrainingConfiguration GraphCompiler::Compile(
     }
     ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
     ExtractRegularizationConfiguration(nodes, links, loss_node, optimizer_node, config);
-    ExtractTripletSamplingConfiguration(nodes, training_path_ids, loss_node, config);
+    ExtractMetricSamplingConfiguration(nodes, training_path_ids, loss_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||
@@ -6683,7 +6722,8 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
-    // Metric learning: compiled by ExtractTripletSamplingConfiguration
+    // Metric learning: compiled by ExtractMetricSamplingConfiguration
+    {gui::NodeType::PairDatasetBuilder,    PreprocessingDomain::General,  nullptr},
     {gui::NodeType::TripletDatasetBuilder, PreprocessingDomain::General,  nullptr},
     // Image (Phase 1)
     {gui::NodeType::Resize,             PreprocessingDomain::Image,       ExtractImageResize},

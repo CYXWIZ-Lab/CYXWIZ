@@ -1,13 +1,16 @@
-// Triplet metric learning through the Engine's own path (TOFIX140 A5), against
-// PyTorch: Data Input -> Triplet Dataset Builder -> Dense -> ReLU -> Dense ->
-// Triplet Loss -> SGD. The builder stacks [anchors; positives; negatives]
-// (TripletBatchSampler), the encoder runs once over the stack, the Triplet
-// Loss splits it, and the trained parameters match torch's from the same
-// start and the same picks: fixtures/triplet_graph_pytorch.json
-// (generate_triplet_graph_fixtures.py). The start is the Engine's own seeded
+// Metric learning through the Engine's own path (TOFIX140 A5), against
+// PyTorch: Data Input -> Pair / Triplet Dataset Builder -> Dense -> ReLU ->
+// Dense -> Triplet, Contrastive or Cosine Embedding Loss -> SGD. The builder
+// stacks [anchors; positives; negatives] or [firsts; seconds]
+// (MetricBatchSampler), the encoder runs once over the stack, the loss splits
+// it, and every batch loss and the trained parameters match torch's from the
+// same start and the same picks: fixtures/metric_graph_pytorch.json
+// (generate_metric_graph_fixtures.py). The start is the Engine's own seeded
 // initialisation, which the fixture records and the test checks first.
-// Also: the sampler's picks, the stacked loss, and the compiler's refusals.
+// Also: the samplers' picks, the stacked losses, the pair/triplet accuracy
+// decisions, and the compiler's refusals.
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
@@ -33,6 +36,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,9 +56,9 @@ void Check(bool condition, const std::string& message) {
 
 std::filesystem::path FixturePath(const char* argv0) {
     const auto beside =
-        std::filesystem::path(argv0).parent_path() / "computation_truth_fixtures" / "triplet_graph_pytorch.json";
+        std::filesystem::path(argv0).parent_path() / "computation_truth_fixtures" / "metric_graph_pytorch.json";
     if (std::filesystem::exists(beside)) return beside;
-    return CYXWIZ_TRIPLET_GRAPH_FIXTURE;
+    return CYXWIZ_METRIC_GRAPH_FIXTURE;
 }
 
 std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset(const json& fixture) {
@@ -74,7 +78,7 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset(const json& fixture) {
         columns.push_back(array);
     }
     auto table = arrow::Table::Make(arrow::schema(fields), columns, static_cast<int64_t>(x.size()));
-    return std::make_shared<cyxwiz::ArrowDataset>(std::move(table), "triplet_rows");
+    return std::make_shared<cyxwiz::ArrowDataset>(std::move(table), "metric_rows");
 }
 
 gui::NodePin Pin(int id, gui::PinType type, const std::string& name, bool is_input) {
@@ -123,24 +127,25 @@ struct Graph {
     std::vector<gui::NodeLink> links;
 };
 
-// Data -> [Builder] -> Dense 4 -> ReLU -> Dense 2 -> loss -> SGD; the labels go
-// to the loss.
-Graph BuildGraph(bool builder, gui::NodeType loss_type, const std::string& margin, double learning_rate) {
+// Data -> [builder] -> Dense 4 -> ReLU -> Dense 2 -> loss -> SGD; the labels go
+// to the loss. builder is PairDatasetBuilder, TripletDatasetBuilder or none.
+Graph BuildGraph(std::optional<gui::NodeType> builder, gui::NodeType loss_type, const std::string& margin, double learning_rate) {
     Graph g;
     gui::MLNode data;
     data.id = 1;
     data.type = gui::NodeType::DataInput;
     data.name = "Data";
     data.outputs = {Pin(111, gui::PinType::Tensor, "Data", false), Pin(112, gui::PinType::Labels, "Labels", false)};
-    data.parameters = {{"dataset_name", "triplet_rows"}, {"shape", "[3]"}};
+    data.parameters = {{"dataset_name", "metric_rows"}, {"shape", "[3]"}};
     g.nodes.push_back(data);
     int from_node = 1, from_pin = 111;
     if (builder) {
-        auto triplets = FactoryNode(gui::NodeType::TripletDatasetBuilder, 2, "Triplets");
-        Check(triplets.inputs.size() == 1 && triplets.inputs[0].type == gui::PinType::Tensor &&
-                  triplets.outputs.size() == 1 && triplets.outputs[0].type == gui::PinType::Tensor,
-              "Triplet Dataset Builder: one Tensor input, one Tensor output");
-        g.nodes.push_back(triplets);
+        auto stacker = FactoryNode(*builder, 2, "Builder");
+        Check(stacker.inputs.size() == 1 && stacker.inputs[0].type == gui::PinType::Tensor &&
+                  stacker.outputs.size() == 1 && stacker.outputs[0].type == gui::PinType::Tensor &&
+                  stacker.parameters.empty(),
+              "Pair / Triplet Dataset Builder: one Tensor input, one Tensor output, no settings");
+        g.nodes.push_back(stacker);
         g.links.push_back(Link(1, 1, 111, 2, 201));
         from_node = 2;
         from_pin = 211;
@@ -158,7 +163,7 @@ Graph BuildGraph(bool builder, gui::NodeType loss_type, const std::string& margi
               loss.outputs[0].type == gui::PinType::Loss,
           "loss node: Tensor + Labels in, Loss out");
     if (!margin.empty()) {
-        Check(loss.parameters.count("margin") == 1, "Triplet Loss has a margin");
+        Check(loss.parameters.count("margin") == 1, "the metric loss has a margin");
         loss.parameters["margin"] = margin;
     }
     g.nodes.push_back(loss);
@@ -195,7 +200,7 @@ cyxwiz::TrainingConfiguration CompileValid(const Graph& graph, const json& fixtu
     if (!config.is_valid) PrintIssues(config);
     Check(config.is_valid, what + " compiles");
     // Every row trains, in order, in batches of batch_size.
-    config.dataset_name = "triplet_rows";
+    config.dataset_name = "metric_rows";
     config.batch_size = fixture.at("batch_size").get<int>();
     config.train_ratio = 1.0f;
     config.val_ratio = 0.0f;
@@ -208,7 +213,7 @@ cyxwiz::TrainingConfiguration CompileValid(const Graph& graph, const json& fixtu
     config.early_stopping_patience = 0;
     config.log_interval = 0;
     config.checkpoint_dir =
-        (std::filesystem::temp_directory_path() / "cyxwiz_triplet_graph_checkpoints").string();
+        (std::filesystem::temp_directory_path() / "cyxwiz_metric_graph_checkpoints").string();
     return config;
 }
 
@@ -318,6 +323,21 @@ void CheckSampler(const json& fixture) {
     Check(cyxwiz::SelectBatchTriplets({3, 3, 3}, key, 0).empty(), "one class: no negatives, no triplets");
     Check(cyxwiz::SelectBatchTriplets(first, key, 0) == cyxwiz::SelectBatchTriplets(first, key, 0),
           "the picks replay");
+
+    const auto pairs = cyxwiz::SelectBatchPairs(first, key, 0);
+    const auto expected_pairs = fixture.at("first_batch_pairs").get<std::vector<std::array<int, 3>>>();
+    Check(pairs == expected_pairs, "the pair sampler's first-batch picks are the fixture's");
+    size_t similar = 0;
+    for (const auto& p : pairs) {
+        Check(p[0] != p[1] && (first[p[0]] == first[p[1]]) == (p[2] == 1),
+              "a pair's label says whether its rows share a class");
+        similar += static_cast<size_t>(p[2]);
+    }
+    Check(similar * 2 == pairs.size(), "rows take same-class and other-class partners in turn");
+    // A row with no partner of its kind takes the other kind; a lone row none.
+    const auto one_class = cyxwiz::SelectBatchPairs({3, 3, 3}, key, 0);
+    Check(one_class.size() == 3 && one_class[0][2] == 1 && one_class[1][2] == 1, "one class: all similar");
+    Check(cyxwiz::SelectBatchPairs({7}, key, 0).empty(), "one row: no pair");
 }
 
 void CheckStackedLoss() {
@@ -337,15 +357,73 @@ void CheckStackedLoss() {
         refused = std::string(e.what()).find("[3T, D]") != std::string::npos;
     }
     Check(refused, "4 rows is not a stack of triplets");
+
+    // P = 2, D = 2: (0,0)-(3,4) similar (d = 5), (0,0)-(0,1) dissimilar (d = 1).
+    const float pair_values[] = {0, 0, 0, 0, 3, 4, 0, 1};
+    const cyxwiz::Tensor pair_embeddings({4, 2}, pair_values, cyxwiz::DataType::Float32);
+    const float flags[] = {1, 0};
+    const cyxwiz::Tensor similar({2}, flags, cyxwiz::DataType::Float32);
+    cyxwiz::StackedPairLoss contrastive(cyxwiz::StackedPairLoss::Kind::Contrastive, 2.0f);
+    const float contrastive_value = contrastive.Forward(pair_embeddings, similar).ReadData<float>()[0];
+    // (5^2 + max(0, 2 - 1)^2) / 2 = 13
+    Check(std::abs(contrastive_value - 13.0f) < 1e-4f, "contrastive (25 + 1) / 2 = 13, got " +
+                                                         std::to_string(contrastive_value));
+    const cyxwiz::Tensor pair_gradient = contrastive.Backward(pair_embeddings, similar);
+    Check(pair_gradient.Shape() == std::vector<size_t>{4, 2}, "the pair gradient is stacked like the embeddings");
+    const float* g = pair_gradient.ReadData<float>();
+    Check(std::abs(g[0] + g[4]) < 1e-6f && std::abs(g[1] + g[5]) < 1e-6f,
+          "a contrastive pair's two gradients are opposite");
+
+    // Accuracy: contrastive margin 2 -> threshold 1: d = 5 called dissimilar
+    // (wrong), d = 1 not below 1 -> dissimilar (right): 1 of 2.
+    const auto distance_count = cyxwiz::CountClassificationDecisionScalars(
+        pair_embeddings, similar, 2, 2, cyxwiz::ClassificationDecisionMode::PairDistance, std::nullopt, 1.0f);
+    Check(distance_count.correct == 1 && distance_count.total == 2, "pair distance decision: 1 of 2");
+    // cos((1,0),(1,0.1)) ~ 0.995 similar (right), cos((1,0),(-1,0)) = -1
+    // dissimilar (right) at threshold 0.5.
+    const float cosine_values[] = {1, 0, 1, 0, 1, 0.1f, -1, 0};
+    const auto cosine_count = cyxwiz::CountClassificationDecisionScalars(
+        cyxwiz::Tensor({4, 2}, cosine_values, cyxwiz::DataType::Float32), similar, 2, 2,
+        cyxwiz::ClassificationDecisionMode::PairCosine, std::nullopt, 0.5f);
+    Check(cosine_count.correct == 2 && cosine_count.total == 2, "pair cosine decision: 2 of 2");
+    // Triplet: d(a,p) = 5 > d(a,n) = 1 -> wrong.
+    const auto triplet_count = cyxwiz::CountClassificationDecisionScalars(
+        embeddings, ids, 1, 2, cyxwiz::ClassificationDecisionMode::TripletOrder);
+    Check(triplet_count.correct == 0 && triplet_count.total == 1, "triplet order decision: 0 of 1");
 }
 
 void CheckRefusals() {
-    CheckRefused(BuildGraph(false, gui::NodeType::TripletLoss, "", 0.1), "Triplet Dataset Builder",
+    using gui::NodeType;
+    CheckRefused(BuildGraph(std::nullopt, NodeType::TripletLoss, "", 0.1), "Triplet Dataset Builder",
                  "Triplet Loss without the builder");
-    CheckRefused(BuildGraph(true, gui::NodeType::MSELoss, "", 0.1), "Triplet Loss",
-                 "the builder with another loss");
-    CheckRefused(BuildGraph(true, gui::NodeType::TripletLoss, "-1", 0.1), "margin",
-                 "a negative margin");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::MSELoss, "", 0.1), "Triplet Loss",
+                 "the Triplet builder with another loss");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::ContrastiveLoss, "1.0", 0.1),
+                 "Triplet Loss", "the Triplet builder with a pair loss");
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "-1", 0.1), "margin",
+                 "a negative triplet margin");
+    // The backend Triplet Loss needs a positive margin.
+    CheckRefused(BuildGraph(NodeType::TripletDatasetBuilder, NodeType::TripletLoss, "0", 0.1), "margin",
+                 "a zero triplet margin");
+    CheckRefused(BuildGraph(std::nullopt, NodeType::ContrastiveLoss, "1.0", 0.1), "Pair Dataset Builder",
+                 "Contrastive Loss without the builder");
+    CheckRefused(BuildGraph(std::nullopt, NodeType::CosineEmbeddingLoss, "0.0", 0.1), "Pair Dataset Builder",
+                 "Cosine Embedding Loss without the builder");
+    CheckRefused(BuildGraph(NodeType::PairDatasetBuilder, NodeType::TripletLoss, "1.0", 0.1),
+                 "Contrastive or Cosine Embedding", "the Pair builder with the Triplet Loss");
+    CheckRefused(BuildGraph(NodeType::PairDatasetBuilder, NodeType::ContrastiveLoss, "-0.5", 0.1), "margin",
+                 "a negative contrastive margin");
+    CheckRefused(BuildGraph(NodeType::PairDatasetBuilder, NodeType::CosineEmbeddingLoss, "1.5", 0.1), "margin",
+                 "a cosine margin above 1");
+}
+
+gui::NodeType BuilderFor(const std::string& kind) {
+    return kind == "triplet" ? gui::NodeType::TripletDatasetBuilder : gui::NodeType::PairDatasetBuilder;
+}
+
+gui::NodeType LossFor(const std::string& kind) {
+    if (kind == "triplet") return gui::NodeType::TripletLoss;
+    return kind == "contrastive" ? gui::NodeType::ContrastiveLoss : gui::NodeType::CosineEmbeddingLoss;
 }
 
 }  // namespace
@@ -356,13 +434,13 @@ int main(int, char** argv) {
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
 
-    const fs::path work_dir = fs::temp_directory_path() / "cyxwiz_triplet_graph_training";
+    const fs::path work_dir = fs::temp_directory_path() / "cyxwiz_metric_graph_training";
     fs::remove_all(work_dir);
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(work_dir / "debug_runs");
 
     std::ifstream in(FixturePath(argv[0]));
-    Check(in.good(), "triplet_graph_pytorch.json is readable");
+    Check(in.good(), "metric_graph_pytorch.json is readable");
     const json fixture = json::parse(in);
     const double tolerance = fixture.at("tolerance").get<double>();
     const double learning_rate = fixture.at("learning_rate").get<double>();
@@ -375,8 +453,9 @@ int main(int, char** argv) {
 
     // The start: the Engine's seeded initialisation (learning rate 0 leaves
     // it untouched) is the one torch starts from.
-    auto still = CompileValid(BuildGraph(true, gui::NodeType::TripletLoss, "1.0", learning_rate), fixture,
-                              "the start");
+    auto still = CompileValid(
+        BuildGraph(gui::NodeType::TripletDatasetBuilder, gui::NodeType::TripletLoss, "1.0", learning_rate), fixture,
+        "the start");
     still.learning_rate = 0.0f;
     const auto start = Train(still, dataset, 1, "the start");
     // 9 significant digits round-trip a float exactly.
@@ -386,11 +465,15 @@ int main(int, char** argv) {
 
     for (const auto& c : fixture.at("cases")) {
         const std::string name = c.at("name").get<std::string>();
+        const std::string kind = c.at("kind").get<std::string>();
         char margin[32];
         std::snprintf(margin, sizeof(margin), "%g", c.at("margin").get<double>());
         const auto config =
-            CompileValid(BuildGraph(true, gui::NodeType::TripletLoss, margin, learning_rate), fixture, name);
-        Check(config.loss_type == gui::NodeType::TripletLoss, name + ": the loss is Triplet");
+            CompileValid(BuildGraph(BuilderFor(kind), LossFor(kind), margin, learning_rate), fixture, name);
+        Check(config.loss_type == LossFor(kind) &&
+                  config.metric_sampling ==
+                      (kind == "triplet" ? cyxwiz::MetricSampling::Triplets : cyxwiz::MetricSampling::Pairs),
+              name + ": the loss and the sampling are the graph's");
         const auto trained = Train(config, dataset, epochs, name);
         // The batch callback reports the epoch's running mean loss.
         const auto batch_losses = c.at("batch_losses").get<std::vector<double>>();
@@ -418,10 +501,10 @@ int main(int, char** argv) {
                         name + ": trained parameters match torch");
         const float accuracy = trained.metrics.train_accuracy;
         Check(accuracy >= 0.0f && accuracy <= 1.0f,
-              name + ": triplet accuracy (d(a,p) < d(a,n)) is a fraction, got " + std::to_string(accuracy));
+              name + ": the pair / triplet accuracy is a fraction, got " + std::to_string(accuracy));
     }
 
     fs::remove_all(work_dir);
-    std::cout << "Triplet metric learning matches PyTorch: " << fixture.at("cases").size() << " cases\n";
+    std::cout << "Metric learning matches PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

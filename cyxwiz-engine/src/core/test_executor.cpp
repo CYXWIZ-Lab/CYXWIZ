@@ -218,10 +218,10 @@ void TestExecutor::Test(
 
     // TOFIX140 A5 step 3 gives metric learning its own test metrics; until
     // then the per-sample class decisions below do not apply to embeddings.
-    if (config_.triplet_sampling) {
+    if (config_.metric_sampling != MetricSampling::None) {
         const std::string detail =
-            "the Test step does not evaluate Triplet Loss models yet; the "
-            "training run reports their triplet accuracy";
+            "the Test step does not evaluate metric-learning models yet; the "
+            "training run reports their pair or triplet accuracy";
         UpdateMetrics([&detail](TestingMetrics& m) {
             m.is_testing = false;
             m.is_complete = false;

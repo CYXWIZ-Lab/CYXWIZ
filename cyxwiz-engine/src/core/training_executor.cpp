@@ -1095,8 +1095,8 @@ void TrainingExecutor::Train(
     BatcherPhase val_batcher_phase = BatcherPhase::Val;
     BatcherPhase test_batcher_phase = BatcherPhase::Test;
     ISequenceBatcher* active_sequence_batcher = nullptr;
-    // Triplet Dataset Builder (TOFIX140 A5): one sampler per distinct batcher.
-    std::vector<std::unique_ptr<TripletBatchSampler>> triplet_samplers;
+    // Pair / Triplet Dataset Builder (TOFIX140 A5): one sampler per distinct batcher.
+    std::vector<std::unique_ptr<MetricBatchSampler>> metric_samplers;
 
     size_t num_train_samples = 0;
     size_t num_val_samples = 0;
@@ -1169,11 +1169,11 @@ void TrainingExecutor::Train(
         return;
     }
 
-    if (config_.triplet_sampling) {
+    if (config_.metric_sampling != MetricSampling::None) {
         // Table batchers hand out class-index labels; the image, audio and
         // text batchers only one-hot to the model width (the embedding size).
         if (mode_ != DatasetMode::Arrow && mode_ != DatasetMode::Parquet) {
-            fail_run("Triplet Dataset Builder trains on table datasets (Arrow or Parquet) in this version");
+            fail_run("The Pair / Triplet Dataset Builder trains on table datasets (Arrow or Parquet) in this version");
             return;
         }
         // The epoch shuffle seed keys the training picks; a batcher never
@@ -1182,8 +1182,8 @@ void TrainingExecutor::Train(
         const auto seed = static_cast<std::uint64_t>(std::max(config_.dataloader_seed, 0));
         const auto wrap = [&](IBatcher* source) -> IBatcher* {
             if (!source) return nullptr;
-            triplet_samplers.push_back(std::make_unique<TripletBatchSampler>(*source, seed));
-            return triplet_samplers.back().get();
+            metric_samplers.push_back(std::make_unique<MetricBatchSampler>(*source, config_.metric_sampling, seed));
+            return metric_samplers.back().get();
         };
         IBatcher* const train_source = active_train_ibatcher;
         IBatcher* const val_source = active_val_ibatcher;
@@ -2076,7 +2076,8 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
     const auto accuracy_count = CountClassificationDecisionScalars(
         predictions, targets, batch_size, num_classes,
         ClassificationDecisionModeForLoss(config_.loss_type),
-        ClassificationMetricIgnoreIndex(config_));
+        ClassificationMetricIgnoreIndex(config_),
+        config_.pair_decision_threshold);
     return accuracy_count.total > 0
         ? static_cast<float>(accuracy_count.correct) /
               static_cast<float>(accuracy_count.total)
@@ -3107,7 +3108,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             const auto accuracy_scalar = BuildClassificationDecisionScalar(
                 predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type),
-                metric_ignore_index);
+                metric_ignore_index, config_.pair_decision_threshold);
             AccumulateDeviceClassificationCounts(
                 device_accuracy_counts,
                 device_accuracy_counts_initialized,
@@ -3309,7 +3310,7 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type),
-                metric_ignore_index);
+                metric_ignore_index, config_.pair_decision_threshold);
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
         }

@@ -201,11 +201,17 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         return contract;
     }
 
-    // Triplet training (TOFIX140 A5): the typed builder and loss train
-    // through TripletBatchSampler and StackedTripletLoss.
-    if (contract.kind == MetricLearningGraphKind::TripletTraining && !contract.has_sketch_nodes &&
+    // Pair and triplet training (TOFIX140 A5): a typed builder and its loss
+    // train through MetricBatchSampler and the stacked metric losses.
+    const bool triplet_training =
+        contract.kind == MetricLearningGraphKind::TripletTraining &&
         !contract.triplet_dataset_builder_node_ids.empty() && contract.HasTripletLoss() &&
-        contract.pair_dataset_builder_node_ids.empty() && !contract.HasPairLoss() &&
+        contract.pair_dataset_builder_node_ids.empty() && !contract.HasPairLoss();
+    const bool pair_training =
+        contract.kind == MetricLearningGraphKind::PairTraining &&
+        !contract.pair_dataset_builder_node_ids.empty() && contract.HasPairLoss() &&
+        contract.triplet_dataset_builder_node_ids.empty() && !contract.HasTripletLoss();
+    if ((triplet_training || pair_training) && !contract.has_sketch_nodes &&
         contract.pair_metric_node_ids.empty() && contract.retrieval_metric_node_ids.empty() &&
         !contract.HasInferenceOutput()) {
         contract.executable = true;
@@ -226,10 +232,6 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         }
     }
 
-    if (contract.HasPairLoss()) {
-        AddBlocker(contract,
-                   "visual graph executor routing for pair metric-learning losses is not implemented");
-    }
     if (contract.HasInferenceOutput()) {
         AddBlocker(contract,
                    "visual graph/runtime routing for metric-learning outputs is not implemented");

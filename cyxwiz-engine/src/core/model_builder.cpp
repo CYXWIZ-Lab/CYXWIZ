@@ -1712,9 +1712,19 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             out.smooth = ResolveLossFloatParam(
                 config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
             break;
+        // The backend losses check the exact ranges (Triplet > 0, Cosine
+        // Embedding <= 1) on construction.
         case gui::NodeType::TripletLoss:
             out.margin = ResolveLossFloatParam(
                 config, "margin", 1.0f, 0.0f, "Triplet margin");
+            break;
+        case gui::NodeType::ContrastiveLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Contrastive margin");
+            break;
+        case gui::NodeType::CosineEmbeddingLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 0.0f, -1.0f, "Cosine Embedding margin");
             break;
         default:
             break;
@@ -1819,6 +1829,18 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Triplet loss "
                          "(stacked batch, margin={})", margin);
             return std::make_unique<StackedTripletLoss>(margin);
+        }
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss: {
+            // Over the Pair Dataset Builder's stacked [firsts; seconds]
+            // embeddings; mean over pairs.
+            const float margin = resolved.margin.value();
+            const bool contrastive = config.loss_type == gui::NodeType::ContrastiveLoss;
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} loss (stacked pairs, margin={})",
+                         contrastive ? "Contrastive" : "Cosine Embedding", margin);
+            return std::make_unique<StackedPairLoss>(
+                contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
+                margin);
         }
         default:
             // Training another objective than the graph's would be silent

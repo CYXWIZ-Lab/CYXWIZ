@@ -6,6 +6,14 @@
 
 namespace cyxwiz {
 
+// What a Pair / Triplet Dataset Builder makes of each batch (TOFIX140 A5;
+// MetricBatchSampler).
+enum class MetricSampling {
+    None,
+    Pairs,
+    Triplets,
+};
+
 enum class MetricLearningLabelConvention {
     ContrastiveZeroSimilarOneDissimilar,
     CosineOneSimilarNegativeOneDissimilar,

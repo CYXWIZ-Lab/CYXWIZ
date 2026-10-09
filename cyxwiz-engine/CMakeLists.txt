@@ -5634,27 +5634,27 @@ add_custom_target(copy_test_regularization_node_training_fixture
 add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
 add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
 
-# ===== Test: triplet metric learning vs PyTorch (TOFIX140 A5) =====
-set(CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/triplet_graph_pytorch.json")
-add_executable(test_triplet_graph_training
-    tests/test_triplet_graph_training.cpp
+# ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
+set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
+add_executable(test_metric_graph_training
+    tests/test_metric_graph_training.cpp
 )
-configure_training_executor_harness(test_triplet_graph_training)
-target_compile_definitions(test_triplet_graph_training PRIVATE
-    CYXWIZ_TRIPLET_GRAPH_FIXTURE="${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
+configure_training_executor_harness(test_metric_graph_training)
+target_compile_definitions(test_metric_graph_training PRIVATE
+    CYXWIZ_METRIC_GRAPH_FIXTURE="${CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE}"
 )
-add_custom_target(copy_test_triplet_graph_training_fixture
+add_custom_target(copy_test_metric_graph_training_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:test_triplet_graph_training>/computation_truth_fixtures"
+        "$<TARGET_FILE_DIR:test_metric_graph_training>/computation_truth_fixtures"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
-        "$<TARGET_FILE_DIR:test_triplet_graph_training>/computation_truth_fixtures/triplet_graph_pytorch.json"
-    SOURCES "${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
+        "${CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_metric_graph_training>/computation_truth_fixtures/metric_graph_pytorch.json"
+    SOURCES "${CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE}"
     VERBATIM
 )
-add_dependencies(test_triplet_graph_training copy_test_triplet_graph_training_fixture)
-add_test(NAME triplet_graph_pytorch_parity COMMAND test_triplet_graph_training)
+add_dependencies(test_metric_graph_training copy_test_metric_graph_training_fixture)
+add_test(NAME metric_graph_pytorch_parity COMMAND test_metric_graph_training)
 
 # ===== Test: Conv1D graphs vs PyTorch (TOFIX140) =====
 set(CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE

@@ -1092,22 +1092,12 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingWorkflowCapabilities() {
-    static constexpr const char* kDatasetReason =
-        "has metric-learning label-convention helpers, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
-    static constexpr const char* kLossReason =
-        "has backend metric-learning loss primitives, but GraphCompiler/TrainingExecutor do not route pair/triplet embeddings and labels through a training step";
     static constexpr const char* kMetricsReason =
         "has a focused metric helper, but no visual graph or TrainingExecutor owner computes and reports it from metric-learning batches";
     static constexpr const char* kOutputReason =
         "has inference response packaging helpers, but visual graph/runtime routing from the encoder to this output is not implemented";
 
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::PairDatasetBuilder, kDatasetReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::ContrastiveLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::CosineEmbeddingLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PairMetrics, kMetricsReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::RetrievalMetrics, kMetricsReason,
@@ -1310,6 +1300,10 @@ GetPipelineSupportedTrainingRoleCapabilities() {
         // [anchors; positives; negatives] embeddings of one model pass.
         {gui::NodeType::TripletLoss, PipelineTrainingSupportRole::Loss,
          "compiled into training loss configuration over the stacked triplet embeddings"},
+        {gui::NodeType::ContrastiveLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
+        {gui::NodeType::CosineEmbeddingLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
 
         {gui::NodeType::SGD, PipelineTrainingSupportRole::Optimizer,
          "compiled into training optimizer configuration"},
@@ -1328,6 +1322,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the training preprocessing configuration"},
         {gui::NodeType::OneHotEncode, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the training label preprocessing configuration"},
+        {gui::NodeType::PairDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch pairs by class id"},
         {gui::NodeType::TripletDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the training batcher: each batch becomes stacked in-batch triplets by class id"},
         {gui::NodeType::Resize, PipelineTrainingSupportRole::Preprocessing,

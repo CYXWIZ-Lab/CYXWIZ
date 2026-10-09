@@ -19,6 +19,11 @@ enum class ClassificationDecisionMode {
     // Triplet Loss over stacked [anchors; positives; negatives] embeddings:
     // a triplet is correct when d(anchor, positive) < d(anchor, negative).
     TripletOrder,
+    // Pair losses over stacked [firsts; seconds] embeddings and 1/0 similar
+    // labels: a pair is called similar when its distance is below
+    // (Contrastive) or its cosine above (Cosine Embedding) the pair threshold.
+    PairDistance,
+    PairCosine,
 };
 
 inline bool UsesScalarBinaryTargets(gui::NodeType loss_type) {
@@ -34,6 +39,12 @@ inline ClassificationDecisionMode ClassificationDecisionModeForLoss(
     gui::NodeType loss_type) {
     if (loss_type == gui::NodeType::TripletLoss) {
         return ClassificationDecisionMode::TripletOrder;
+    }
+    if (loss_type == gui::NodeType::ContrastiveLoss) {
+        return ClassificationDecisionMode::PairDistance;
+    }
+    if (loss_type == gui::NodeType::CosineEmbeddingLoss) {
+        return ClassificationDecisionMode::PairCosine;
     }
     if (loss_type == gui::NodeType::BCEWithLogits) {
         return ClassificationDecisionMode::BinaryLogit;
@@ -108,7 +119,8 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index = std::nullopt);
+    std::optional<int> ignore_index = std::nullopt,
+    float pair_threshold = 0.0f);
 
 ClassificationDecisionScalar BuildClassificationDecisionScalar(
     const Tensor& predictions,
@@ -116,7 +128,8 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index = std::nullopt);
+    std::optional<int> ignore_index = std::nullopt,
+    float pair_threshold = 0.0f);
 
 ClassificationDecisionCount ReadClassificationDecisionScalar(
     const ClassificationDecisionScalar& scalar,

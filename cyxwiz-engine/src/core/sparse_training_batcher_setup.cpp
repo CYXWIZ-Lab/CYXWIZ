@@ -16,7 +16,7 @@ namespace {
 
 bool RequiresClassIndexTargetsForSparse(
     const TrainingConfiguration& config) {
-    if (config.triplet_sampling) return true;
+    if (config.metric_sampling != MetricSampling::None) return true;
     if (!UsesClassIndexTargets(config.loss_type) ||
         config.preprocessing.has_onehot) {
         return false;

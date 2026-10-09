@@ -3350,17 +3350,18 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairDatasetBuilder, NodeCategory::Training, "Pair Dataset Builder", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "pair", "siamese"}, 0, false,
-        "Blocked metric-learning pair-batch contract",
-        "Preserves pair-column and label-convention settings for saved graphs. A production owner must materialize those columns as device-ready paired tensors before this node can execute.", "",
-        {{"Rows", PinType::Dataset, true, "Source rows with sample A/B columns and labels"}},
-        {{"Pair Batch", PinType::Dataset, true, "Typed PairBatch payload"}},
-        {{"sample_a_column", "string", "", "First sample column", {}, ""},
-         {"sample_b_column", "string", "", "Second sample column", {}, ""},
-         {"pair_label_column", "string", "", "Pair label column", {}, ""},
-         {"label_convention", "enum", "contrastive_zero_similar", "Label convention",
-          {"contrastive_zero_similar", "cosine_one_similar"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "siamese", "embedding"}, 0, false,
+        "Turns each batch of class-labelled rows into same-class and different-class pairs",
+        "For every row of a batch it picks a partner from the same batch, using the Data node's label column as "
+        "the class id: rows take a same-class partner and an other-class partner in turn (the other kind when "
+        "one is missing). The model then sees the stacked batch [firsts; seconds] and runs once over it, so one "
+        "encoder embeds both sides; the pair labels (similar or not) go to the loss. Picks depend on the "
+        "DataLoader seed, epoch, batch and row only, so runs replay. Needs a Contrastive or Cosine Embedding "
+        "Loss.", "",
+        {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
+        {{"Pairs", PinType::Tensor, true, "Stacked [firsts; seconds] rows for the encoder"}},
+        {},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
         {"metric", "learning", "triplet", "siamese", "embedding"}, 0, false,
@@ -3377,26 +3378,30 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "contrastive", "loss"}, 0, false,
-        "Blocked metric-learning contrastive-loss contract",
-        "Uses the saved-graph convention 0=similar and 1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Loss", PinType::Loss, true, "Contrastive loss"}},
-        {{"margin", "float", "1.0", "Distance margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "contrastive", "siamese", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Pulls same-class pairs together and pushes other pairs at least a margin apart",
+        "loss = mean over pairs of d^2 for a same-class pair and max(0, margin - d)^2 otherwise, d the Euclidean "
+        "distance between the two embeddings. Splits the stacked [firsts; seconds] embeddings from the Pair "
+        "Dataset Builder. Accuracy calls a pair similar when d < margin / 2.", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [2P, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "1.0", "Distance other-class pairs are pushed beyond", {}, "0.0-1000000.0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CosineEmbeddingLoss, NodeCategory::Training, "Cosine Embedding Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "cosine", "loss"}, 0, false,
-        "Blocked metric-learning cosine-loss contract",
-        "Uses the saved-graph convention 1=similar and -1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Loss", PinType::Loss, true, "Cosine embedding loss"}},
-        {{"margin", "float", "0.0", "Cosine margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "cosine", "siamese", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Turns same-class pairs to the same direction and other pairs below a cosine margin",
+        "loss = mean over pairs of 1 - cos(a, b) for a same-class pair and max(0, cos(a, b) - margin) otherwise "
+        "(torch.nn.functional.cosine_embedding_loss). Splits the stacked [firsts; seconds] embeddings from the "
+        "Pair Dataset Builder. Accuracy calls a pair similar when cos(a, b) > (1 + margin) / 2.", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [2P, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "0.0", "Cosine above which other-class pairs are penalised", {}, "-1.0-1.0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TripletLoss, NodeCategory::Training, "Triplet Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "triplet", "embedding", "criterion", "objective", "loss"}, 0, false,
@@ -3408,7 +3413,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Embeddings", PinType::Tensor, true, "Stacked [3T, D] embeddings from the encoder"},
          {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {{"margin", "float", "1.0", "How much further a negative must be than the positive", {}, "0.0-1000000.0",
+        {{"margin", "float", "1.0", "How much further a negative must be than the positive", {}, ">0",
           "Margin", "Loss"}},
         NodeImplementationStatus::Implemented, 0});
 

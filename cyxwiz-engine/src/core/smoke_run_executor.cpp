@@ -33,16 +33,20 @@ float ExtractLossScalar(const Tensor& t) {
 
 float Accuracy(const Tensor& predictions,
                const Tensor& targets,
-               ClassificationDecisionMode mode) {
+               ClassificationDecisionMode mode,
+               float pair_threshold) {
     const auto& shape = predictions.Shape();
     if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
         return 0.0f;
     }
 
-    if (mode == ClassificationDecisionMode::TripletOrder) {
-        // Stacked [anchors; positives; negatives]: shape[0] = 3 x triplets.
+    const bool pairs = mode == ClassificationDecisionMode::PairDistance ||
+                       mode == ClassificationDecisionMode::PairCosine;
+    if (mode == ClassificationDecisionMode::TripletOrder || pairs) {
+        // Stacked [anchors; positives; negatives] or [firsts; seconds].
         const auto count = CountClassificationDecisionScalars(
-            predictions, targets, shape[0] / 3, shape[1], mode);
+            predictions, targets, shape[0] / (pairs ? 2 : 3), shape[1], mode,
+            std::nullopt, pair_threshold);
         return count.total > 0
             ? static_cast<float>(count.correct) / static_cast<float>(count.total)
             : 0.0f;
@@ -172,8 +176,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     auto& registry = DataRegistry::Instance();
     const int batch_size = std::max(1, std::min(config.batch_size, 32));
-    // triplet_source outlives the TripletBatchSampler that wraps it (declared first, destroyed last).
-    std::unique_ptr<IBatcher> triplet_source;
+    // metric_source outlives the MetricBatchSampler that wraps it (declared first, destroyed last).
+    std::unique_ptr<IBatcher> metric_source;
     std::unique_ptr<IBatcher> batcher;
     std::string batcher_source = "legacy text";
 
@@ -324,7 +328,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         return result;
     }
 
-    if (config.triplet_sampling) {
+    if (config.metric_sampling != MetricSampling::None) {
         batcher->SetClassIndexLabelMode(true);
     } else if (UsesScalarBinaryTargets(config.loss_type)) {
         batcher->SetScalarLabelMode(true);
@@ -338,12 +342,12 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
         text_batcher->TryApplyBalancedClassWeights(config);
     }
-    if (config.triplet_sampling) {
-        // Same stacked triplet batches as Train (TOFIX140 A5).
+    if (config.metric_sampling != MetricSampling::None) {
+        // Same stacked pair / triplet batches as Train (TOFIX140 A5).
         auto source = std::move(batcher);
-        batcher = std::make_unique<TripletBatchSampler>(*source, static_cast<std::uint64_t>(
-                                                                     std::max(config.dataloader_seed, 0)));
-        triplet_source = std::move(source);
+        batcher = std::make_unique<MetricBatchSampler>(
+            *source, config.metric_sampling, static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
+        metric_source = std::move(source);
     }
     batcher->SetBatchInspectionEnabled(true);
 
@@ -439,7 +443,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         result.last_accuracy = Accuracy(
             predictions, batch.labels,
-            ClassificationDecisionModeForLoss(config.loss_type));
+            ClassificationDecisionModeForLoss(config.loss_type),
+            config.pair_decision_threshold);
 
         const auto shape_compatibility = CheckDebugPredictionTargetShapes(
             predictions.Shape(), batch.labels.Shape(), config.loss_type);
