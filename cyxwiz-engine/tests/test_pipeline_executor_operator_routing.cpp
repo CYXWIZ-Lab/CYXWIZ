@@ -2660,7 +2660,6 @@ int main(int argc, char** argv) {
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
-        {"VisualizeData", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},
@@ -2783,6 +2782,30 @@ int main(int argc, char** argv) {
                   " should use central fail-closed runtime reason: " +
                   fail_closed_executor.GetLastError());
         fail_closed_id += 2;
+    }
+
+    {
+        // TOFIX134 P2.3 (bbf6843f) retired VisualizeData for the Plot node:
+        // it has no runtime-capability entry and a pipeline using it fails.
+        Check(cyxwiz::ResolvePipelineFailClosedReason("VisualizeData") == nullptr,
+              "retired VisualizeData should have no fail-closed capability entry");
+        const std::string retired_json =
+            R"({"nodes":[)"
+            R"({"id":)" + std::to_string(fail_closed_id) +
+            R"(,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":)" + std::to_string(fail_closed_id + 1) +
+            R"(,"type":"VisualizeData","name":"VisualizeData","parameters":{}})"
+            R"(],"links":[{"start_node":)" + std::to_string(fail_closed_id) +
+            R"(,"end_node":)" + std::to_string(fail_closed_id + 1) + R"(}]})";
+        cyxwiz::PipelineExecutor retired_executor;
+        Check(!retired_executor.ExecutePipeline(retired_json),
+              "retired VisualizeData should fail closed in PipelineExecutor");
+        Check(retired_executor.GetLastError().find(
+                  "unsupported node type 'VisualizeData'") != std::string::npos,
+              "retired VisualizeData should be named as an unsupported node type: " +
+                  retired_executor.GetLastError());
     }
 
     struct SequenceVocabularyExecutableCase {

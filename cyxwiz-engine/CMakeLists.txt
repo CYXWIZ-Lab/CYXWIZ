@@ -2759,6 +2759,7 @@ endif()
 set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_test(NAME pipeline_executor_operator_routing COMMAND test_pipeline_executor_operator_routing)
 
 # ===== Test: Pipeline operator executor/materializer parity =====
 add_executable(test_pipeline_operator_materializer_parity
