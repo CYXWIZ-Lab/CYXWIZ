@@ -231,6 +231,37 @@ void TestRetrievalEffectiveKAndMRR() {
               "retrieval MRR should use first relevant rank when present");
 }
 
+// Two same-class candidates at exactly the same distance from a query: the
+// first relevant rank stays 1 whichever of them ArrayFire's min reports
+// (the ArrayFire path counted the other one as preceding). The 12 embeddings
+// are an untrained metric encoder's (TOFIX140 A5, metric_graph_pytorch.json
+// test_step); row 7 has rows 1 and 4 tied. Expected values from torch.
+void TestRetrievalTiedRelevantCandidates() {
+    const auto tied = FloatTensor({4, 1}, {0.0f, 1.0f, -1.0f, 10.0f});
+    const auto tied_ids = FloatTensor({4}, {1.0f, 1.0f, 1.0f, 2.0f});
+    const auto simple = cyxwiz::ComputeRetrievalMetrics(tied, tied_ids, 1);
+    // Rows 0-2: a same-class row first; row 3 has no same-class row.
+    CheckNear(simple.nearest_neighbor_class_agreement, 0.75, 1e-9,
+              "tied same-class candidates both count as nearest");
+    CheckNear(simple.mean_reciprocal_rank, 0.75, 1e-9,
+              "tied same-class candidates keep rank 1");
+
+    const auto embeddings = FloatTensor({12, 2}, {
+        -0.441503525f, -0.40581125f, 0.123165175f, 0.332084894f,
+        -0.214860216f, -0.567039073f, -0.426469713f, -0.316539168f,
+        -0.0192071665f, 0.250427395f, -0.19668746f, -0.568237543f,
+        -0.500527382f, -0.613338113f, 0.0519790202f, 0.2912561f,
+        -0.351335526f, -0.702403188f, -0.4854936f, -0.52406621f,
+        0.0493288562f, 0.126683652f, -0.265223473f, -0.444493771f,
+    });
+    const auto class_ids = FloatTensor({12}, {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2});
+    const auto metrics = cyxwiz::ComputeRetrievalMetrics(embeddings, class_ids, 2);
+    CheckNear(metrics.recall_at_k, 1.0, 1e-9, "tied embeddings: Recall@2");
+    CheckNear(metrics.mean_reciprocal_rank, 0.9583333333333334, 1e-6, "tied embeddings: MRR");
+    CheckNear(metrics.nearest_neighbor_class_agreement, 0.9166666666666666, 1e-6,
+              "tied embeddings: 1-NN agreement");
+}
+
 void TestMetricValidation() {
     bool rejected_bad_pair_shape = false;
     try {
@@ -531,6 +562,7 @@ int main() {
     TestCosineConventionPairDistanceMetrics();
     TestRetrievalMetrics();
     TestRetrievalEffectiveKAndMRR();
+    TestRetrievalTiedRelevantCandidates();
     TestMetricValidation();
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
     TestStrictAndCompatibleFallbackTruth();

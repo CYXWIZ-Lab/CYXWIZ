@@ -501,22 +501,30 @@ RetrievalMetricResult ComputeRetrievalArrayFire(const Tensor& embeddings,
     const af::array masked_distances =
         af::select(relevant, squared_distances, infinity);
 
-    af::array nearest_relevant_distance;
-    af::array nearest_relevant_index;
-    af::min(nearest_relevant_distance, nearest_relevant_index, masked_distances,
-            1);
+    const af::array nearest_relevant_distance = af::min(masked_distances, 1);
     const af::array candidate_indices =
         af::iota(af::dim4(1, dimension), af::dim4(1), u32);
     const af::array candidate_index_grid =
         af::tile(candidate_indices, count, 1U);
-    const af::array nearest_index_grid =
-        af::tile(nearest_relevant_index, 1U, count);
     const af::array nearest_distance_grid =
         af::tile(nearest_relevant_distance, 1U, count);
+    // The first relevant candidate in the native order (distance, then
+    // index) is the lowest index among the relevant ones at the nearest
+    // distance; af::min's index for tied values need not be that one.
+    const af::array nearest_relevant_index = af::min(
+        af::select(relevant && masked_distances == nearest_distance_grid,
+                   candidate_index_grid,
+                   af::constant(static_cast<unsigned>(dimension), dimension,
+                                dimension, u32)),
+        1);
+    const af::array nearest_index_grid =
+        af::tile(nearest_relevant_index, 1U, count);
+    // Only other-class candidates can come before the first relevant one.
     const af::array precedes_relevant =
-        ((squared_distances < nearest_distance_grid).as(u8) +
-         ((squared_distances == nearest_distance_grid).as(u8) *
-          (candidate_index_grid < nearest_index_grid).as(u8))) > 0;
+        (!relevant) &&
+        ((squared_distances < nearest_distance_grid) ||
+         ((squared_distances == nearest_distance_grid) &&
+          (candidate_index_grid < nearest_index_grid)));
     const af::array first_relevant_rank =
         af::sum(precedes_relevant.as(f32), 1) + 1.0f;
     const af::array has_relevant = af::sum(relevant.as(u32), 1) > 0;
