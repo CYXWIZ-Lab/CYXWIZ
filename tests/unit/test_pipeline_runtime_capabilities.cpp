@@ -57,24 +57,13 @@ TEST_CASE("Training capability registry exposes tested causal LM building blocks
         NodeType::CrossEntropyLoss));
 }
 
-TEST_CASE("Training capability registry keeps unsupported attention variants blocked",
-          "[pipeline][capabilities][language_model]") {
-    using cyxwiz::PipelineTrainingBackendSupportMode;
-    using cyxwiz::ResolvePipelineTrainingBackendSupport;
-    using gui::NodeType;
-
-    const NodeType unsupported_nodes[] = {
-        NodeType::LinearAttention
-    };
-
-    for (NodeType node_type : unsupported_nodes) {
-        const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-        REQUIRE(support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-        REQUIRE_FALSE(support.compile_supported);
-        REQUIRE_FALSE(support.training_supported);
-        REQUIRE(support.reason != nullptr);
-    }
+TEST_CASE("Linear Attention is a supported trainable model layer (TOFIX140 Group C)",
+          "[pipeline_runtime_capabilities][attention]") {
+    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::LinearAttention);
+    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
+    REQUIRE(support.compile_supported);
+    REQUIRE(support.training_supported);
+    REQUIRE_FALSE(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(gui::NodeType::LinearAttention));
 }
 
 TEST_CASE("Cross Attention is a supported trainable model layer (TOFIX140 Group C)",

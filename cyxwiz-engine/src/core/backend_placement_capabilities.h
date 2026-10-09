@@ -118,6 +118,7 @@ inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
 inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::LinearAttention:  // Tensor ops (BatchMatMul, Clip, Exp) only
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
         case gui::NodeType::DepthwiseConv2D:

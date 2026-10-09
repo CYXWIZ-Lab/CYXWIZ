@@ -731,19 +731,25 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::LinearAttention] = {
         "Linear Attention",
-        "Blocked compatibility node for a historical kernel-attention design.",
-        "No backend primitive or Studio compiler/model owner currently implements "
-        "the advertised linear-attention semantics.",
+        "Self-attention whose cost grows linearly with sequence length.",
+        "Replaces softmax(Q K^T) with a kernel feature map phi, so each head summarises "
+        "all keys and values once (phi(K)^T V) and every query reads that summary: "
+        "O(length x head_dim^2) work instead of O(length^2). "
+        "out_i = phi(q_i) S / (phi(q_i) . z + eps), with S = sum_j phi(k_j) v_j^T and "
+        "z = sum_j phi(k_j) (Katharopoulos et al. 2020).",
         {
-            {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"},
-            {"feature_map", "Historical kernel feature-map selection"},
-            {"eps", "Historical numerical-stability epsilon"},
-            {"causal", "Historical causal-attention intent"}
+            {"embed_dim", "Feature width of the input; must match the incoming sequence"},
+            {"num_heads", "Number of heads; embed_dim must divide evenly"},
+            {"feature_map", "elu = elu(x) + 1 (the paper's choice, always positive); relu = max(x, 0)"},
+            {"eps", "Added to each normaliser so a zero feature sum cannot divide by zero"},
+            {"causal", "Each position attends to itself and earlier positions only"},
+            {"use_bias", "Bias in the Q, K, V and output projections"}
         },
         {
-            "This node can be inspected in saved graphs but cannot compile or train",
-            "Code export must not replace it with ordinary quadratic attention"
+            "Use it after an Embedding (+ Positional Encoding) where Multi-Head Attention would be too large",
+            "Causal mode is computed as a masked length x length product: same result, quadratic cost",
+            "Not identical to softmax attention: it is a different, cheaper model, not an approximation of it",
+            "Code export does not support it yet; train it in Studio"
         },
         "Attention"
     };

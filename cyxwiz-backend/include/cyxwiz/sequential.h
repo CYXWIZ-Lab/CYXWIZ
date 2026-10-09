@@ -948,6 +948,52 @@ private:
 };
 
 /**
+ * @brief Linear (kernel) self-attention (Katharopoulos et al. 2020, TOFIX140 Group C).
+ *
+ * Input and output [batch, seq_len, embed_dim]. Per head, with learned
+ * projections Q, K, V and feature map phi (elu(x) + 1 or relu(x)):
+ *   out_i = phi(q_i) . sum_j phi(k_j) v_j^T / (phi(q_i) . sum_j phi(k_j) + eps)
+ * No softmax and no 1/sqrt(d) scale. Non-causal attention costs O(T d^2)
+ * (the key/value summary is built once); causal attention (j <= i) uses the
+ * masked T x T form, O(T^2 d), the same result. Parameters W_q, b_q, ..., W_o,
+ * b_o with weights [out, in] as torch.nn.Linear.
+ */
+class CYXWIZ_API LinearAttentionModule : public Module {
+public:
+    enum class FeatureMap { EluPlusOne, Relu };
+
+    LinearAttentionModule(size_t embed_dim, size_t num_heads, FeatureMap feature_map = FeatureMap::EluPlusOne,
+                          float eps = 1e-6f, bool causal = false, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    Tensor Project(const Tensor& rows, const std::string& name) const;
+    Tensor SplitHeads(const Tensor& rows) const;
+    Tensor JoinHeads(const Tensor& heads) const;
+
+    size_t embed_dim_;
+    size_t num_heads_;
+    size_t head_dim_;
+    FeatureMap feature_map_;
+    float eps_;
+    bool causal_;
+    bool use_bias_;
+    std::map<std::string, Tensor> params_;
+    std::map<std::string, Tensor> grads_;
+    // Forward cache (rows are [batch * seq_len, embed_dim]; heads [batch * heads, seq_len, head_dim]).
+    std::vector<size_t> input_shape_;
+    Tensor rows_, q_pre_, k_pre_, phi_q_, phi_k_, v_, summary_, key_sum_, weights_, mask_, out_heads_, den_,
+        context_;
+};
+
+/**
  * @brief Wrapper for ReLU activation
  */
 class CYXWIZ_API ReLUModule : public Module {

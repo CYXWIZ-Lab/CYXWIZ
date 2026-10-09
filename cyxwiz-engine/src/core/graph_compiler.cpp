@@ -5584,6 +5584,41 @@ TrainingConfiguration GraphCompiler::Compile(
             }
             CompiledLayer layer = ExtractLayerConfig(*node);
             layer.input_shape = current_shape;
+            if (node->type == gui::NodeType::LinearAttention) {
+                // [length, embed_dim] in and out (TOFIX140 Group C).
+                const int embed_dim = spatial::ParseIntParam(node->parameters, "embed_dim", 512);
+                const int heads = spatial::ParseIntParam(node->parameters, "num_heads", 8);
+                const auto feature_map = node->parameters.find("feature_map");
+                const auto eps = node->parameters.find("eps");
+                if (feature_map != node->parameters.end() && feature_map->second != "elu" &&
+                    feature_map->second != "relu") {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention feature_map must be elu or relu, got '" + feature_map->second + "'",
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                float eps_value = 1e-6f;
+                try {
+                    if (eps != node->parameters.end()) eps_value = std::stof(eps->second);
+                } catch (const std::exception&) {
+                    eps_value = -1.0f;
+                }
+                if (!std::isfinite(eps_value) || eps_value <= 0.0f) {
+                    AddIssue(config, IssueLevel::Error, "Linear Attention eps must be a positive number",
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                if (heads <= 0 || embed_dim <= 0 || embed_dim % heads != 0) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention embed_dim " + std::to_string(embed_dim) +
+                                 " must divide evenly into num_heads " + std::to_string(heads),
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                if (current_shape.size() != 2 || static_cast<int>(current_shape.back()) != embed_dim) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention needs a [length, " + std::to_string(embed_dim) +
+                                 "] sequence (embed_dim), got [" + ShapeListText(current_shape) + "]",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                }
+            }
 
             if (const auto reason =
                     ResolvePipelineUnsupportedSequentialModelConfigurationReason(
@@ -6682,6 +6717,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:

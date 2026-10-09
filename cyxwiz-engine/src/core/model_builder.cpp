@@ -611,6 +611,7 @@ bool BuildSequential(
                         nt == gui::NodeType::PositionalEncoding ||
                         nt == gui::NodeType::MultiHeadAttention ||
                         nt == gui::NodeType::CrossAttention ||
+                        nt == gui::NodeType::LinearAttention ||
                         nt == gui::NodeType::TransformerEncoder ||
                         nt == gui::NodeType::TransformerDecoder ||
                         nt == gui::NodeType::TimeDistributed) {
@@ -811,6 +812,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -852,6 +854,53 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::LinearAttention: {
+                // Kernel self-attention over [batch, length, embed_dim] (TOFIX140 Group C).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const std::string feature_map = param("feature_map", "elu");
+                const float eps = std::stof(param("eps", "1e-6"));
+                const std::string causal = param("causal", "false");
+                const std::string bias = param("use_bias", "true");
+                // The compiler's [length, width] sample, so a sequence fed
+                // straight from the data (not after an Embedding) is read right.
+                const auto& sample = layer_cfg.input_shape;
+                if (sample.size() == 2) {
+                    current_sequence_length = sample[0];
+                    current_input_size = sample[1];
+                }
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("LinearAttention embed_dim does not match the incoming feature width");
+                }
+                if (feature_map != "elu" && feature_map != "relu") {
+                    throw std::runtime_error("LinearAttention feature_map must be elu or relu");
+                }
+                model.Add<LinearAttentionModule>(
+                    embed_dim, heads,
+                    feature_map == "relu" ? LinearAttentionModule::FeatureMap::Relu
+                                          : LinearAttentionModule::FeatureMap::EluPlusOne,
+                    eps, causal == "true" || causal == "1", bias != "false" && bias != "0");
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] LinearAttention(embed_dim={}, heads={}, feature_map={}, causal={}) - "
+                                    "output [batch, {}, {}]",
+                                    i, embed_dim, heads, feature_map, causal, current_sequence_length, embed_dim);
+                current_input_size = next_is_sequence_layer ? embed_dim : current_sequence_length * embed_dim;
+                break;
+            }
+
             case gui::NodeType::MultiHeadAttention: {
                 const size_t embed_dim = current_input_size > 0
                     ? current_input_size
@@ -880,6 +929,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -953,6 +1003,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -1468,6 +1519,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }

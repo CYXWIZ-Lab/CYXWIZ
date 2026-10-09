@@ -327,6 +327,20 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.flops = ComputeAttentionFLOPs(seq_len, embed_dim, num_heads, batch_size);
                     break;
                 }
+                case gui::NodeType::LinearAttention: {
+                    int64_t embed_dim = GetIntParam(*node, "embed_dim", 512);
+                    int64_t num_heads = std::max<int64_t>(1, GetIntParam(*node, "num_heads", 8));
+                    int64_t seq_len = current_shape.size() >= 2 ? current_shape[0] : 1;
+                    const auto causal = node->parameters.find("causal");
+                    const bool is_causal = causal != node->parameters.end() && causal->second == "true";
+                    layer_analysis.parameters = ComputeAttentionParams(embed_dim, num_heads);
+                    // Four projections, then phi(K)^T V and phi(Q) S per head
+                    // (causal: the masked length x length products).
+                    const int64_t core = is_causal ? 4 * seq_len * seq_len * embed_dim
+                                                   : 4 * seq_len * embed_dim * (embed_dim / num_heads);
+                    layer_analysis.flops = (4 * 2 * seq_len * embed_dim * embed_dim + core) * batch_size;
+                    break;
+                }
                 case gui::NodeType::Embedding: {
                     int64_t vocab_size = GetIntParam(*node, "vocab_size", 10000);
                     int64_t embed_dim = GetIntParam(*node, "embed_dim", 256);
@@ -540,6 +554,7 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Embedding:
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
         case gui::NodeType::TensorAbs:
@@ -831,7 +846,8 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
             return {static_cast<size_t>(embed_dim)};
         }
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::CrossAttention: {
+        case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention: {
             // Output shape same as input for attention
             return input_shape;
         }

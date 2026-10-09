@@ -1713,28 +1713,8 @@ void CheckBlockedNormalizationFamilyContract(
           "canonical InstanceNorm eps should win when both saved keys exist");
 }
 
-void CheckBlockedAttentionFamilyContract(
+void CheckAttentionFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
-    const std::vector<gui::NodeType> types = {
-        gui::NodeType::LinearAttention,
-    };
-
-    for (const auto type : types) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr,
-              "attention metadata should exist: " + TypeId(type));
-        Check(meta->category == gui::NodeCategory::Attention &&
-                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unowned attention node must remain blocked: " + TypeId(type));
-        CheckSupportAxis(meta, "Training Backend",
-                         "unsupported_sequential_model_layer", false,
-                         TypeId(type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
-        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
-    }
-
     // Cross Attention trains (TOFIX140 Group C): Query over Key / Value.
     const auto* cross = metadata.GetMetadata(gui::NodeType::CrossAttention);
     Check(cross->status == cyxwiz::NodeImplementationStatus::Implemented && cross->badge.empty() &&
@@ -1755,26 +1735,26 @@ void CheckBlockedAttentionFamilyContract(
               ParameterMatches(cross, "use_bias", "bool", "true"),
           "Cross Attention settings: embed_dim, num_heads, dropout, use_bias");
 
+    // Linear Attention trains (TOFIX140 Group C): kernel self-attention.
     const auto* linear = metadata.GetMetadata(gui::NodeType::LinearAttention);
-    Check(linear->inputs.size() == 4 &&
-              linear->inputs[0].name == "Query" && linear->inputs[0].required &&
-              linear->inputs[1].name == "Key" && linear->inputs[1].required &&
-              linear->inputs[2].name == "Value" && linear->inputs[2].required &&
-              linear->inputs[3].name == "Mask" && !linear->inputs[3].required &&
-              linear->outputs.size() == 1 &&
-              linear->outputs[0].name == "Output" &&
-              linear->outputs[0].required,
-          "saved linear-attention pin order must remain compatible");
-    Check(linear->parameters.size() == 5 &&
+    Check(linear->status == cyxwiz::NodeImplementationStatus::Implemented && linear->badge.empty() &&
+              cyxwiz::CanAddNodeToGraph(*linear),
+          "Linear Attention is implemented and can be added");
+    CheckSupportAxis(linear, "Compile", "supported", true, TypeId(gui::NodeType::LinearAttention));
+    Check(linear->inputs.size() == 1 && linear->inputs[0].name == "Input" && linear->inputs[0].required &&
+              linear->outputs.size() == 1 && linear->outputs[0].name == "Output" && linear->outputs[0].required,
+          "Linear Attention: one sequence in, one out (self-attention)");
+    Check(linear->parameters.size() == 6 &&
               ParameterMatches(linear, "embed_dim", "int", "512") &&
               ParameterMatches(linear, "num_heads", "int", "8") &&
               ParameterMatches(linear, "feature_map", "enum", "elu") &&
               HasEnumValue(linear, "feature_map", "elu") &&
               HasEnumValue(linear, "feature_map", "relu") &&
-              HasEnumValue(linear, "feature_map", "favor+") &&
+              !HasEnumValue(linear, "feature_map", "favor+") &&
               ParameterMatches(linear, "eps", "float", "1e-6") &&
-              ParameterMatches(linear, "causal", "bool", "false"),
-          "saved linear-attention parameters must remain compatible");
+              ParameterMatches(linear, "causal", "bool", "false") &&
+              ParameterMatches(linear, "use_bias", "bool", "true"),
+          "Linear Attention settings: embed_dim, num_heads, feature_map (elu / relu), eps, causal, use_bias");
 }
 
 void CheckImplementedRecurrentConfigurationContract(
@@ -3469,7 +3449,7 @@ int main() {
     CheckConvolutionPoolingBlockedFamilyContract(metadata);
     CheckBlockedUpsamplingFamilyContract(metadata);
     CheckBlockedNormalizationFamilyContract(metadata);
-    CheckBlockedAttentionFamilyContract(metadata);
+    CheckAttentionFamilyContract(metadata);
     CheckImplementedRecurrentConfigurationContract(metadata);
     CheckDataValidatorReferenceContract(metadata);
     CheckDataValidatorOutputMigrationGuard();

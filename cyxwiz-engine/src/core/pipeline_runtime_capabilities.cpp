@@ -1080,9 +1080,6 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
         {gui::NodeType::ValueNetwork,
          "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::LinearAttention,
-         "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner",
-         PipelineBackendPrimitiveEvidence::Missing},
     };
     return capabilities;
 }
@@ -1149,6 +1146,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable two-input attention layer (Query over Key / Value) in the graph runtime"},
         {gui::NodeType::MultiHeadAttention, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable CPU-backed self-attention layer"},
+        {gui::NodeType::LinearAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable linear (kernel) self-attention layer built on tensor ops"},
         {gui::NodeType::LSTM, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable recurrent model layer"},
         {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,

@@ -2477,26 +2477,31 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LinearAttention, NodeCategory::Attention, "Linear Attention", ICON_FA_BULLSEYE,
-        {"attention", "linear_attention", "performer"}, 0, false,
-        "Blocked linear-attention compatibility node",
-        "Saved graphs retain the historical linear-attention sketch, but no "
-        "backend primitive or Studio training owner implements its advertised semantics.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor."},
-         {"Key", PinType::Tensor, true, "Legacy key tensor."},
-         {"Value", PinType::Tensor, true, "Legacy value tensor."},
-         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy linear-attention result; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+        {"attention", "linear_attention", "linear-attention", "kernel attention", "transformer"}, 0, false,
+        "Trainable self-attention whose cost grows linearly with sequence length",
+        "Self-attention without softmax (Katharopoulos et al. 2020): per head, "
+        "out_i = phi(q_i) . sum_j phi(k_j) v_j^T / (phi(q_i) . sum_j phi(k_j) + eps), with learned "
+        "projections W_q, W_k, W_v, W_o and phi = elu(x) + 1 or relu(x). Each head summarises keys and values "
+        "once, so the cost is O(length x head_dim^2) instead of O(length^2): use it for long sequences where "
+        "Multi-Head Attention runs out of memory. Causal attends to earlier positions only (computed as a "
+        "masked length x length product). Input and output are [batch, length, embed_dim]. Code export does "
+        "not support it yet.",
+        "",
+        {{"Input", PinType::Tensor, true, "Sequence [batch, length, embed_dim]."}},
+        {{"Output", PinType::Tensor, true, "Attention result [batch, length, embed_dim]."}},
+        {{"embed_dim", "int", "512", "Feature width of the input sequence", {}, "1-65536",
           "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"feature_map", "enum", "elu", "Legacy kernel feature-map sketch",
-          {"elu", "relu", "favor+"}, "", "Feature Map", "Approximation", true, false},
-         {"eps", "float", "1e-6", "Legacy numerical-stability epsilon", {}, "0.0-1.0",
-          "Epsilon", "Approximation", true, false},
-         {"causal", "bool", "false", "Legacy causal-attention flag", {}, "",
-          "Causal", "Attention", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"num_heads", "int", "8", "Number of heads; embed_dim must divide evenly", {}, "1-4096",
+          "Attention Heads", "Attention", true, false},
+         {"feature_map", "enum", "elu", "Kernel feature map phi: elu = elu(x) + 1 (always positive), relu = max(x, 0)",
+          {"elu", "relu"}, "", "Feature Map", "Attention", true, false},
+         {"eps", "float", "1e-6", "Added to each normaliser to avoid division by zero", {}, "0.0-1.0",
+          "Epsilon", "Advanced", false, true},
+         {"causal", "bool", "false", "Attend to the current and earlier positions only", {}, "",
+          "Causal", "Attention", false, false},
+         {"use_bias", "bool", "true", "Enable bias in the Q, K, V and output projections", {}, "",
+          "Use Bias", "Advanced", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
         {"maxpool", "pooling"}, 0, false,
