@@ -513,7 +513,7 @@ int main() {
     Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
           "failed to load implemented attention-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_cosine_scheduler", "CosineAnnealing").string()),
-          "failed to load scheduler template-node pattern");
+          "failed to load implemented scheduler-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
     Check(library.LoadPatternFromFile(
@@ -591,11 +591,13 @@ int main() {
 
     nodes.clear();
     links.clear();
-    Check(!library.InstantiatePatternWithCreator(
+    // Learning-rate schedulers are implemented since TOFIX140 A3 (db4ebe36).
+    Check(library.InstantiatePatternWithCreator(
               "guard_cosine_scheduler", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template CosineAnnealing pattern should be rejected");
-    Check(nodes.empty() && links.empty(), "scheduler template rejection should leave no partial graph");
-    Check(creator_calls == 5, "scheduler template rejection should not call node creator");
+          "implemented CosineAnnealing pattern should instantiate");
+    Check(creator_calls == 6, "CosineAnnealing pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::CosineAnnealing,
+          "CosineAnnealing pattern created wrong node type");
 
     nodes.clear();
     links.clear();
@@ -603,7 +605,7 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 5, "unknown rejection should not call node creator");
+    Check(creator_calls == 6, "unknown rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -611,7 +613,7 @@ int main() {
               "guard_data_boundary", {}, nodes, links, next_node_id,
               next_link_id, ImVec2(0, 0), creator),
           "creator data-boundary pattern should instantiate");
-    Check(creator_calls == 8,
+    Check(creator_calls == 9,
           "data-boundary pattern should call node creator for each node");
     Check(nodes.size() == 3 && links.size() == 2,
           "creator data-boundary pattern should skip stale legacy pin links");
@@ -661,7 +663,7 @@ int main() {
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 8, "Dense-encoded NER name rejection should not call node creator");
+    Check(creator_calls == 9, "Dense-encoded NER name rejection should not call node creator");
 
     Check(!library.InstantiatePattern(
               "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),

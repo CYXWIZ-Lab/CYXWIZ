@@ -3010,6 +3010,7 @@ endif()
 set_target_properties(test_pattern_template_guard PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_test(NAME pattern_template_guard COMMAND test_pattern_template_guard)
 
 # ===== Test: Graph Compiler Deferred Node Guard =====
 add_executable(test_graph_compiler_deferred_nodes
