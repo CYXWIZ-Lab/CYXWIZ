@@ -234,8 +234,8 @@ int main() {
                           {Pin(501, gui::PinType::Loss, "Loss", true)},
                           {});
 
-    // Reuse the graph fixture to qualify diagnostic spatial inference without
-    // promoting these nodes to an executable Studio training workflow.
+    // Reuse the graph fixture to qualify spatial shape inference and the
+    // compile-time diagnostics of the implemented spatial layers.
     {
         cyxwiz::GraphCompiler spatial_compiler;
         auto spatial_data = data;
@@ -252,9 +252,11 @@ int main() {
             spatial.parameters = {{key, "2"}, {"mode", "1"}};
             auto compiled = spatial_compiler.Compile(
                 {spatial_data, spatial, loss, optimizer}, spatial_links, true);
-            Check(!compiled.is_valid && HasIssueCode(compiled,
+            // Upsample and PixelShuffle train in Studio since TOFIX140 A1
+            // (c5433f95), so the spatial graph compiles.
+            Check(compiled.is_valid && !HasIssueCode(compiled,
                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
-                  "spatial geometry must not promote Studio training support");
+                  "implemented spatial layers must compile for Studio training");
             Check(compiled.layers.size() == 1 &&
                       compiled.layers[0].input_shape == std::vector<size_t>{2, 3, 8} &&
                       compiled.layers[0].output_shape == std::vector<size_t>{4, 6,
@@ -1628,8 +1630,15 @@ int main() {
     Check(config.metric_learning_graph.pair_score_output_node_ids.size() == 1 &&
               config.metric_learning_graph.pair_score_output_node_ids[0] == 42,
           "metric-learning contract should record pair-score output node");
-    Check(HasMetricLearningBlocker(config, "visual graph/runtime routing"),
-          "pair-score contract should report missing visual graph output routing");
+    // Pair Score Output is an implemented side node on the encoder output of
+    // a Pair / Triplet Dataset Builder graph since 1f89033e (TOFIX140 A5);
+    // without that training graph it is refused with that requirement.
+    Check(HasMetricLearningBlocker(
+              config, "metric-learning outputs need a model trained by a Pair or Triplet Dataset Builder"),
+          "pair-score contract should report the missing metric-learning training graph");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Error,
+                       "train it with a Pair or Triplet Dataset Builder and its loss"),
+          "Pair Score Output without a metric-learning model should name the training requirement");
 
     auto metric_side_output = Node(39,
                                    gui::NodeType::Output,
@@ -1861,7 +1870,12 @@ int main() {
                         Pin(1002, gui::PinType::Tensor, "Input 2", true)},
                        {Pin(1003, gui::PinType::Tensor, "Output", false)});
 
-    nodes = {data, abs, concat, loss, optimizer};
+    // Since 7f862079 (TOFIX140 A2) a branched graph gives Concatenate its real
+    // merged shape (inputs added along dim), so the source needs a known
+    // per-sample shape.
+    auto concat_data = data;
+    concat_data.parameters["shape"] = "[4]";
+    nodes = {concat_data, abs, concat, loss, optimizer};
     links = {
         Link(1, 1, 101, 8, 801),
         Link(2, 8, 802, 10, 1001),
@@ -1874,6 +1888,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "selected training path with backend-supported Concatenate should compile");
+    Check(!HasIssueCode(config, cyxwiz::errors::Compiler::TensorShapeMismatch),
+          "Concatenate of two [4] inputs along dim 1 should not report a shape mismatch");
     Check(!HasIssueText(config, "Runtime Concat"),
           "supported graph-runtime Concatenate should not be reported as deferred");
     Check(config.graph_op_node_ids.size() == 1,

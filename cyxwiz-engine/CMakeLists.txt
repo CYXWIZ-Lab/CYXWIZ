@@ -3046,6 +3046,7 @@ endif()
 set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_test(NAME graph_compiler_deferred_nodes COMMAND test_graph_compiler_deferred_nodes)
 
 # ===== Test: Remote job presentation (TOFIX118 P4 GUI) =====
 add_executable(test_remote_job_presentation
