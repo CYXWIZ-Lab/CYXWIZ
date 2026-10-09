@@ -437,7 +437,7 @@ struct TrainingConfiguration {
     std::vector<int> graph_op_node_ids;
 
     // Passive metric-learning graph contract. Populated when the selected
-    // training path contains Siamese / metric-learning nodes, but remains
+    // training path contains metric-learning nodes, but remains
     // executable=false until the graph executor and local inference routes are
     // implemented.
     MetricLearningGraphContract metric_learning_graph;

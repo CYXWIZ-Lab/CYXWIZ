@@ -1065,8 +1065,6 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::PairDatasetBuilder:
         case NodeType::TripletDatasetBuilder:
-        case NodeType::SharedEncoder:
-        case NodeType::SiameseBranch:
         case NodeType::ContrastiveLoss:
         case NodeType::CosineEmbeddingLoss:
         case NodeType::TripletLoss:

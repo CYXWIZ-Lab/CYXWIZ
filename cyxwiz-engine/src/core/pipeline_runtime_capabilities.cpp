@@ -1093,24 +1093,18 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingWorkflowCapabilities() {
     static constexpr const char* kDatasetReason =
-        "has a typed metric-learning batch helper, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
-    static constexpr const char* kSharedEncoderReason =
-        "has a shared-encoder helper, but visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented";
+        "has metric-learning label-convention helpers, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
     static constexpr const char* kLossReason =
-        "has backend metric-learning loss primitives, but GraphCompiler/TrainingExecutor do not route pair/triplet embeddings and labels through a shared-weight training step";
+        "has backend metric-learning loss primitives, but GraphCompiler/TrainingExecutor do not route pair/triplet embeddings and labels through a training step";
     static constexpr const char* kMetricsReason =
         "has a focused metric helper, but no visual graph or TrainingExecutor owner computes and reports it from metric-learning batches";
     static constexpr const char* kOutputReason =
-        "has inference response packaging helpers, but visual graph/runtime routing from a shared encoder to this output is not implemented";
+        "has inference response packaging helpers, but visual graph/runtime routing from the encoder to this output is not implemented";
 
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::PairDatasetBuilder, kDatasetReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::TripletDatasetBuilder, kDatasetReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::SharedEncoder, kSharedEncoderReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::SiameseBranch, kSharedEncoderReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::ContrastiveLoss, kLossReason,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},

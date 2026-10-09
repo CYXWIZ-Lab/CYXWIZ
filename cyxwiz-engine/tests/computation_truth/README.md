@@ -107,13 +107,12 @@ The broad tracking ticket is:
 - Verifies CosineEmbedding, Contrastive, and Euclidean/smoothed-cosine Triplet
   forward values and every embedding-branch gradient against generated
   PyTorch 2.10 fixtures across `none`/`mean`/`sum`, including zero vectors,
-  coincident embeddings, inactive margins, and exact label conventions. A
-  two-batch shared-Linear Contrastive-to-SGD sequence proves device-resident
-  gradient accumulation and parameter updates. Strict ArrayFire CPU and every
-  locally qualified CUDA/OpenCL route run with exact identity and zero native
-  fallback; forced failures separately prove strict rejection and compatible,
-  attributed native CPU execution. Incompatible oneAPI remains an explicit
-  device-selection skip rather than a global blocker.
+  coincident embeddings, inactive margins, and exact label conventions.
+  Strict ArrayFire CPU and every locally qualified CUDA/OpenCL route run with
+  exact identity and zero native fallback; forced failures separately prove
+  strict rejection and compatible, attributed native CPU execution.
+  Incompatible oneAPI remains an explicit device-selection skip rather than a
+  global blocker.
 - Verifies metric-learning pair-distance accuracy/means and retrieval
   Recall@k, mean reciprocal rank, and nearest-neighbor class agreement against
   generated PyTorch 2.10 vector-norm/cdist fixtures. Rank-2 and rank-3 cases

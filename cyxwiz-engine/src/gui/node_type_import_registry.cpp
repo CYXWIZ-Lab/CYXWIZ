@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 201> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 199> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -124,8 +124,6 @@ constexpr std::array<NodeTypeImportName, 201> kNodeTypeImportNames = {{
         {"SequenceTagOutput", NodeType::SequenceTagOutput},
         {"PairDatasetBuilder", NodeType::PairDatasetBuilder},
         {"TripletDatasetBuilder", NodeType::TripletDatasetBuilder},
-        {"SharedEncoder", NodeType::SharedEncoder},
-        {"SiameseBranch", NodeType::SiameseBranch},
         {"ContrastiveLoss", NodeType::ContrastiveLoss},
         {"CosineEmbeddingLoss", NodeType::CosineEmbeddingLoss},
         {"TripletLoss", NodeType::TripletLoss},

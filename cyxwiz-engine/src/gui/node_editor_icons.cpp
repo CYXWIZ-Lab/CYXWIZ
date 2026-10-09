@@ -1958,10 +1958,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_BOOK;
         case NodeType::PairDatasetBuilder:
         case NodeType::TripletDatasetBuilder:
-        case NodeType::SiameseBranch:
             return ICON_FA_CODE_BRANCH;
-        case NodeType::SharedEncoder:
-            return ICON_FA_SHARE_NODES;
         case NodeType::ContrastiveLoss:
         case NodeType::CosineEmbeddingLoss:
         case NodeType::TripletLoss:

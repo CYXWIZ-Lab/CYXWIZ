@@ -350,6 +350,13 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "or rebuild the graph with a Multi-Head Attention node";
                 return false;
             }
+            if (node_type == NodeType::SharedEncoder || node_type == NodeType::SiameseBranch) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is a " +
+                        (node_type == NodeType::SharedEncoder ? "Shared Encoder" : "Siamese Branch") +
+                        " node. Shared Encoder / Siamese Branch were retired: metric-learning losses run the "
+                        "model once over the stacked batch; connect the encoder layers straight to the loss";
+                return false;
+            }
 
             const int saved_node_id = node_json.at("id").get<int>();
             const std::string saved_node_name = node_json.at("name").get<std::string>();

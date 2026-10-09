@@ -3645,8 +3645,6 @@ int main() {
              "sample_a_column"},
             {gui::NodeType::TripletDatasetBuilder, "Triplet Dataset Builder",
              "anchor_column"},
-            {gui::NodeType::SharedEncoder, "Shared Encoder", "encoder_id"},
-            {gui::NodeType::SiameseBranch, "Siamese Branch", "branch"},
             {gui::NodeType::ContrastiveLoss, "Contrastive Loss", "margin"},
             {gui::NodeType::CosineEmbeddingLoss, "Cosine Embedding Loss",
              "margin"},
@@ -3709,10 +3707,6 @@ int main() {
                   metadata.GetMetadata(gui::NodeType::PairDatasetBuilder),
                   "label_convention", "enum", "contrastive_zero_similar"),
               "PairDatasetBuilder should preserve its label convention");
-        Check(ParameterMatches(
-                  metadata.GetMetadata(gui::NodeType::SharedEncoder),
-                  "encoder_id", "string", "shared_encoder"),
-              "SharedEncoder should preserve its legacy identity");
         Check(ParameterMatches(
                   metadata.GetMetadata(gui::NodeType::ContrastiveLoss),
                   "margin", "float", "1.0") &&
@@ -6189,6 +6183,10 @@ int main() {
           "retired Bidirectional (the recurrent layers' bidirectional setting replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::SelfAttention) == nullptr,
           "retired Self Attention (Multi-Head Attention replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::SharedEncoder) == nullptr &&
+              metadata.GetMetadata(gui::NodeType::SiameseBranch) == nullptr,
+          "retired Shared Encoder / Siamese Branch (metric-learning losses run the model once over the "
+          "stacked batch) are not registered");
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

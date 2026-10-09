@@ -1,7 +1,6 @@
 #include "../../src/core/execution_device_context.h"
 #include "../../src/core/materialization_memory_guard.h"
 #include "../../src/core/metric_learning_metrics.h"
-#include "../../src/core/metric_learning_training_step.h"
 #include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
 #include <cyxwiz/activation.h>
 #include <cyxwiz/cyxwiz.h>
@@ -991,72 +990,6 @@ void TestMetricLearningMetricParity(const json& cases) {
             tolerance,
             name + " retrieval nearest-neighbor agreement");
     }
-}
-
-void TestMetricPairLinearMultiBatchUpdateParity(const json& cases) {
-    const auto& test_case = cases.at("metric_pair_linear_multibatch_sgd_f32");
-    Check(test_case.value("operation", "") ==
-                  "PyTorch explicit contrastive + shared nn.Linear + optim.SGD" &&
-              test_case.value("dtype", "") == "float32" &&
-              test_case.value("loss_type", "") == "contrastive" &&
-              test_case.value("reduction", "") == "mean",
-          "metric pair multi-batch fixture metadata mismatch");
-    const auto tolerance = ReadTolerance(test_case);
-    auto model = std::make_unique<cyxwiz::SequentialModel>();
-    model->Add<cyxwiz::LinearModule>(2, 2, true);
-    cyxwiz::SharedEncoderRuntime runtime(
-        std::make_unique<cyxwiz::SequentialExecutableModel>(std::move(model)));
-    runtime.SetParameters({
-        {"layer0.weight", FloatTensorFromFixture(test_case.at("initial").at("weight"),
-                                                 "metric pair initial weight")},
-        {"layer0.bias",
-         FloatTensorFromFixture(test_case.at("initial").at("bias"), "metric pair initial bias")},
-    });
-    cyxwiz::SGDOptimizer optimizer(test_case.at("learning_rate").get<double>());
-    cyxwiz::PairMetricTrainingStepConfig config;
-    config.loss_kind = cyxwiz::MetricLearningPairLossKind::Contrastive;
-    config.margin = test_case.at("margin").get<float>();
-    config.reduction = cyxwiz::Reduction::Mean;
-    config.update_parameters = true;
-
-    size_t step_index = 0;
-    for (const auto& step : test_case.at("steps")) {
-        const std::string label = "metric pair multi-batch step " + std::to_string(step_index + 1);
-        cyxwiz::PairBatch batch;
-        batch.input_a = FloatTensorFromFixture(step.at("input_a"), label + " input_a");
-        batch.input_b = FloatTensorFromFixture(step.at("input_b"), label + " input_b");
-        batch.pair_label = FloatTensorFromFixture(step.at("labels"), label + " labels");
-        batch.size = batch.input_a.Shape()[0];
-
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
-        const size_t host_sync_count_before =
-            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
-        const auto result = cyxwiz::RunPairMetricTrainingStep(runtime, batch, config, &optimizer);
-        const auto parameters = runtime.GetParameters();
-        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
-              label + " attempted native CPU fallback");
-        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
-              label + " materialized a tensor during compute");
-
-        CheckTensor(result.embeddings.embedding_a, step.at("expected").at("embedding_a"), tolerance,
-                    label + " embedding_a");
-        CheckTensor(result.embeddings.embedding_b, step.at("expected").at("embedding_b"), tolerance,
-                    label + " embedding_b");
-        CheckTensor(result.loss, step.at("expected").at("loss"), tolerance, label + " loss");
-        CheckTensor(result.input_gradients.input_a, step.at("expected").at("grad_input_a"),
-                    tolerance, label + " input_a gradient");
-        CheckTensor(result.input_gradients.input_b, step.at("expected").at("grad_input_b"),
-                    tolerance, label + " input_b gradient");
-        CheckTensor(parameters.at("layer0.weight"), step.at("expected").at("updated_weight"),
-                    tolerance, label + " updated weight");
-        CheckTensor(parameters.at("layer0.bias"), step.at("expected").at("updated_bias"), tolerance,
-                    label + " updated bias");
-        ++step_index;
-        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
-              label + " optimizer step count mismatch");
-    }
-    Check(step_index == 2, "metric pair multi-batch fixture must contain two update steps");
 }
 
 void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
@@ -2348,7 +2281,6 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestOverlapLossParity(cases);
         TestMetricLearningLossParity(cases);
         TestMetricLearningMetricParity(cases);
-        TestMetricPairLinearMultiBatchUpdateParity(cases);
         TestOverlapLinearMultiBatchUpdateParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
@@ -2442,7 +2374,6 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestOverlapLossParity(cases);
             TestMetricLearningLossParity(cases);
             TestMetricLearningMetricParity(cases);
-            TestMetricPairLinearMultiBatchUpdateParity(cases);
             TestOverlapLinearMultiBatchUpdateParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);

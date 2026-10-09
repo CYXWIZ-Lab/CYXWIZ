@@ -3373,25 +3373,6 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"negative_column", "string", "", "Negative sample column", {}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
-    RegisterNode({NodeType::SharedEncoder, NodeCategory::Training, "Shared Encoder", ICON_FA_SHARE_NODES,
-        {"metric", "learning", "shared", "encoder", "siamese"}, 0, false,
-        "Blocked metric-learning shared-encoder contract",
-        "Declares one encoder identity for saved metric-learning graphs. Visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented.", "",
-        {{"Encoder", PinType::Tensor, true, "Encoder layer chain"}},
-        {{"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
-        {{"encoder_id", "string", "shared_encoder", "Shared encoder id", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
-    RegisterNode({NodeType::SiameseBranch, NodeCategory::Training, "Siamese Branch", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "branch", "siamese"}, 0, false,
-        "Blocked metric-learning encoder-branch contract",
-        "Preserves a branch role and shared-encoder reference for saved graphs. The visual runtime does not yet route branch tensors through shared parameters.", "",
-        {{"Input", PinType::Tensor, true, "Branch input"},
-         {"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
-        {{"Embedding", PinType::Tensor, true, "Branch embedding"}},
-        {{"branch", "enum", "a", "Branch role", {"a", "b", "anchor", "positive", "negative"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "contrastive", "loss"}, 0, false,
         "Blocked metric-learning contrastive-loss contract",

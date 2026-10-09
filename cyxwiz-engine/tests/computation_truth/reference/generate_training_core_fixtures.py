@@ -858,89 +858,6 @@ def metric_learning_metric_matrix() -> dict[str, list[dict[str, Any]]]:
     }
 
 
-def metric_pair_linear_multibatch_sgd_case() -> dict[str, Any]:
-    model = torch.nn.Linear(2, 2, bias=True)
-    with torch.no_grad():
-        model.weight.copy_(torch.tensor(
-            [[0.35, -0.20], [0.10, 0.45]], dtype=torch.float32
-        ))
-        model.bias.copy_(torch.tensor([0.05, -0.15], dtype=torch.float32))
-    initial = {
-        "weight": tensor_fixture(model.weight),
-        "bias": tensor_fixture(model.bias),
-    }
-    learning_rate = 0.04
-    margin = 1.25
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    definitions = [
-        {
-            "input_a": [[1.0, 0.0], [0.2, 0.8]],
-            "input_b": [[0.8, 0.1], [-0.4, 0.6]],
-            "labels": [0.0, 1.0],
-        },
-        {
-            "input_a": [[0.5, -0.3], [0.1, 0.9], [-0.7, 0.4]],
-            "input_b": [[-0.2, 0.6], [0.0, 0.7], [0.8, -0.1]],
-            "labels": [1.0, 0.0, 1.0],
-        },
-    ]
-    steps = []
-    for definition in definitions:
-        input_a = torch.tensor(
-            definition["input_a"], dtype=torch.float32, requires_grad=True
-        )
-        input_b = torch.tensor(
-            definition["input_b"], dtype=torch.float32, requires_grad=True
-        )
-        labels = torch.tensor(definition["labels"], dtype=torch.float32)
-        optimizer.zero_grad(set_to_none=True)
-        embedding_a = model(input_a)
-        embedding_b = model(input_b)
-        embedding_a.retain_grad()
-        embedding_b.retain_grad()
-        distances = torch.linalg.vector_norm(
-            embedding_a - embedding_b, dim=1
-        )
-        loss = (
-            (1.0 - labels) * distances.square() +
-            labels * torch.relu(margin - distances).square()
-        ).mean()
-        loss.backward()
-        step = {
-            "input_a": tensor_fixture(input_a),
-            "input_b": tensor_fixture(input_b),
-            "labels": tensor_fixture(labels),
-            "expected": {
-                "embedding_a": tensor_fixture(embedding_a),
-                "embedding_b": tensor_fixture(embedding_b),
-                "loss": tensor_fixture(loss.reshape(1)),
-                "grad_embedding_a": tensor_fixture(embedding_a.grad),
-                "grad_embedding_b": tensor_fixture(embedding_b.grad),
-                "grad_input_a": tensor_fixture(input_a.grad),
-                "grad_input_b": tensor_fixture(input_b.grad),
-                "grad_weight": tensor_fixture(model.weight.grad),
-                "grad_bias": tensor_fixture(model.bias.grad),
-            },
-        }
-        optimizer.step()
-        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
-        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
-        steps.append(step)
-    return {
-        "operation": (
-            "PyTorch explicit contrastive + shared nn.Linear + optim.SGD"
-        ),
-        "dtype": "float32",
-        "loss_type": "contrastive",
-        "reduction": "mean",
-        "margin": margin,
-        "learning_rate": learning_rate,
-        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
-        "initial": initial,
-        "steps": steps,
-    }
-
-
 def overlap_linear_multibatch_sgd_case() -> dict[str, Any]:
     model = torch.nn.Linear(3, 2, bias=True)
     with torch.no_grad():
@@ -3890,9 +3807,6 @@ def generate_fixture() -> dict[str, Any]:
             ),
             "metric_learning_metric_matrix_f32": (
                 metric_learning_metric_matrix()
-            ),
-            "metric_pair_linear_multibatch_sgd_f32": (
-                metric_pair_linear_multibatch_sgd_case()
             ),
             "overlap_linear_multibatch_sgd_f32": (
                 overlap_linear_multibatch_sgd_case()

@@ -1562,13 +1562,13 @@ int main() {
     Check(HasIssueText(config, "alternating optimizer"),
           "GAN/diffusion sketch should report missing training-step contract");
 
-    auto siamese_sketch = dense;
-    siamese_sketch.id = 38;
-    siamese_sketch.name = "SharedEncoder";
-    siamese_sketch.inputs = {Pin(3801, gui::PinType::Tensor, "Input", true)};
-    siamese_sketch.outputs = {Pin(3802, gui::PinType::Tensor, "Output", false)};
+    auto metric_sketch = dense;
+    metric_sketch.id = 38;
+    metric_sketch.name = "PairDatasetBuilder";
+    metric_sketch.inputs = {Pin(3801, gui::PinType::Tensor, "Input", true)};
+    metric_sketch.outputs = {Pin(3802, gui::PinType::Tensor, "Output", false)};
 
-    nodes = {data, siamese_sketch, loss, optimizer};
+    nodes = {data, metric_sketch, loss, optimizer};
     links = {
         Link(1, 1, 101, 38, 3801),
         Link(2, 38, 3802, 4, 401),
@@ -1579,25 +1579,25 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "selected metric-learning sketch should be invalid");
-    Check(HasIssueText(config, "sketches metric-learning/Siamese training") &&
-              HasIssueText(config, "SharedEncoder"),
+    Check(HasIssueText(config, "sketches metric-learning training") &&
+              HasIssueText(config, "PairDatasetBuilder"),
           "legacy Dense-name metric-learning sketch should report the matched "
           "compatibility marker and missing workflow owner");
     Check(HasIssueCode(config,
                        cyxwiz::errors::Compiler::UnsupportedTrainingNode),
           "metric-learning sketch should expose the unsupported-node code");
     Check(config.metric_learning_graph.detected,
-          "metric-learning contract should detect selected SharedEncoder sketch");
+          "metric-learning contract should detect selected PairDatasetBuilder sketch");
     Check(!config.metric_learning_graph.executable,
           "metric-learning graph contract should remain non-executable");
     Check(config.metric_learning_graph.kind ==
-              cyxwiz::MetricLearningGraphKind::None,
-          "lone SharedEncoder sketch should not infer a training kind");
-    Check(config.metric_learning_graph.shared_encoder_node_ids.size() == 1 &&
-              config.metric_learning_graph.shared_encoder_node_ids[0] == 38,
-          "metric-learning contract should record the shared encoder node");
-    Check(HasMetricLearningBlocker(config, "visual shared-encoder graph execution"),
-          "metric-learning contract should record shared-encoder execution blocker");
+              cyxwiz::MetricLearningGraphKind::PairTraining,
+          "PairDatasetBuilder sketch should infer the pair-training kind");
+    Check(config.metric_learning_graph.pair_dataset_builder_node_ids.size() == 1 &&
+              config.metric_learning_graph.pair_dataset_builder_node_ids[0] == 38,
+          "metric-learning contract should record the pair batch source sketch");
+    Check(HasMetricLearningBlocker(config, "visual metric-learning graph execution"),
+          "metric-learning contract should record the graph execution blocker");
 
     auto typed_pair_score_output = Node(
         42,
@@ -1636,14 +1636,14 @@ int main() {
     Check(HasMetricLearningBlocker(config, "visual graph/runtime routing"),
           "pair-score contract should report missing visual graph output routing");
 
-    auto siamese_side_output = Node(39,
-                                    gui::NodeType::Output,
-                                    "Siamese Side Output",
-                                    {Pin(3901, gui::PinType::Tensor, "Input", true)},
-                                    {});
+    auto metric_side_output = Node(39,
+                                   gui::NodeType::Output,
+                                   "Metric Side Output",
+                                   {Pin(3901, gui::PinType::Tensor, "Input", true)},
+                                   {});
 
-    nodes = {data, dense, loss, optimizer, siamese_sketch,
-             siamese_side_output};
+    nodes = {data, dense, loss, optimizer, metric_sketch,
+             metric_side_output};
     links = {
         Link(1, 1, 101, 2, 201),
         Link(2, 2, 202, 4, 401),
@@ -1656,7 +1656,7 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "side metric-learning sketch outside selected path should not block compile");
-    Check(!HasIssueText(config, "shared-weight graph contract"),
+    Check(!HasIssueText(config, "sketches metric-learning training"),
           "side metric-learning sketch should not be reported");
 
     auto triplet_dense = dense;

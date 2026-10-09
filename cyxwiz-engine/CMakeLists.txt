@@ -699,14 +699,9 @@ set(ENGINE_HEADERS
     src/core/bert_encoder_contract.h
     src/core/dataset_batcher.h
     src/core/metric_learning_batch.h
-    src/core/metric_learning_batcher.h
-    src/core/metric_learning_dataset_builder.h
     src/core/metric_learning_graph_contract.h
     src/core/metric_learning_inference_outputs.h
-    src/core/metric_learning_losses.h
     src/core/metric_learning_metrics.h
-    src/core/metric_learning_shared_encoder.h
-    src/core/metric_learning_training_step.h
     src/core/ner_sequence_builder.h
     src/core/sequence_arrow_batcher.h
     src/core/sequence_model_input.h
@@ -1771,31 +1766,6 @@ set_target_properties(test_metric_learning_batch_contracts PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: Metric-Learning Shared Encoder Contracts =====
-add_executable(test_metric_learning_shared_encoder_contracts
-    tests/test_metric_learning_shared_encoder_contracts.cpp
-    src/core/executable_model.cpp
-)
-
-target_include_directories(test_metric_learning_shared_encoder_contracts PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_metric_learning_shared_encoder_contracts PRIVATE
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_metric_learning_shared_encoder_contracts PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_metric_learning_shared_encoder_contracts PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
 # ===== Test: Metric-Learning Metrics =====
 add_executable(test_metric_learning_metrics
     tests/test_metric_learning_metrics.cpp
@@ -1871,30 +1841,6 @@ set_target_properties(test_metric_learning_inference_input PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: Metric-Learning Loss Contracts =====
-add_executable(test_metric_learning_losses
-    tests/test_metric_learning_losses.cpp
-)
-
-target_include_directories(test_metric_learning_losses PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_metric_learning_losses PRIVATE
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_metric_learning_losses PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_metric_learning_losses PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
 # ===== Test: ML Primitive CPU/GPU Coverage Matrix =====
 add_executable(test_ml_primitive_coverage_matrix
     tests/test_ml_primitive_coverage_matrix.cpp
@@ -1917,31 +1863,6 @@ if(WIN32)
 endif()
 
 set_target_properties(test_ml_primitive_coverage_matrix PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
-# ===== Test: Metric-Learning Training Step Contracts =====
-add_executable(test_metric_learning_training_step
-    tests/test_metric_learning_training_step.cpp
-    src/core/executable_model.cpp
-)
-
-target_include_directories(test_metric_learning_training_step PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_metric_learning_training_step PRIVATE
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_metric_learning_training_step PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_metric_learning_training_step PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -2024,7 +1945,6 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
-    src/core/executable_model.cpp
     src/core/metric_learning_metrics.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp

@@ -318,11 +318,17 @@ int main(int, char** argv) {
     }
 
     // Bidirectional and Self Attention are retired (LSTM/GRU/RNN's
-    // bidirectional setting and Multi-Head Attention replaced them): a saved
-    // graph with one fails to load with a message naming the replacement.
+    // bidirectional setting and Multi-Head Attention replaced them), as are
+    // Shared Encoder and Siamese Branch (metric-learning losses run the model
+    // once over the stacked batch): a saved graph with one fails to load with
+    // a message naming the replacement.
     for (const auto& [retired, name, replacement] :
          {std::tuple{gui::NodeType::Bidirectional, "Old bidirectional", "bidirectional = true"},
-          std::tuple{gui::NodeType::SelfAttention, "Old self attention", "Multi-Head Attention replaced"}}) {
+          std::tuple{gui::NodeType::SelfAttention, "Old self attention", "Multi-Head Attention replaced"},
+          std::tuple{gui::NodeType::SharedEncoder, "Old shared encoder",
+                     "connect the encoder layers straight to the loss"},
+          std::tuple{gui::NodeType::SiameseBranch, "Old siamese branch",
+                     "connect the encoder layers straight to the loss"}}) {
         const json saved = {
             {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},
                                     {"name", name}, {"parameters", json::object()}}})},

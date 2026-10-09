@@ -1838,12 +1838,6 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
         case gui::NodeType::TripletDatasetBuilder:
             matched_key = "TripletDatasetBuilder";
             return true;
-        case gui::NodeType::SharedEncoder:
-            matched_key = "SharedEncoder";
-            return true;
-        case gui::NodeType::SiameseBranch:
-            matched_key = "SiameseBranch";
-            return true;
         case gui::NodeType::ContrastiveLoss:
             matched_key = "ContrastiveLoss";
             return true;
@@ -1872,8 +1866,6 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
     const char* sketch_names[] = {
         "PairDatasetBuilder",
         "TripletDatasetBuilder",
-        "SharedEncoder",
-        "SiameseBranch",
         "ContrastiveLoss",
         "CosineEmbeddingLoss",
         "TripletLoss",
@@ -1892,9 +1884,7 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
 
     const auto& params = node.parameters;
     const char* enabled_keys[] = {
-        "metric_learning",
-        "shared_encoder",
-        "tied_weights"
+        "metric_learning"
     };
 
     for (const char* key : enabled_keys) {
@@ -3959,7 +3949,7 @@ void ValidateTrainingPathImplementationStatus(
                 msg << "Node '" << node.name << "' " << support.reason;
             } else {
                 msg << "Node '" << node.name
-                    << "' sketches metric-learning/Siamese training via '"
+                    << "' sketches metric-learning training via '"
                     << metric_learning_key
                     << "', but no typed visual graph or TrainingExecutor "
                        "owner is registered for the workflow.";

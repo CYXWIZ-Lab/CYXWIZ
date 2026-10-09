@@ -541,12 +541,17 @@ enum class NodeType {
     NERTagVocabulary,   // BIO tag vocabulary for sequence tagging
     SequenceTagOutput,  // Decode/export token-level tag predictions
 
-    // ===== Metric Learning / Siamese Contract Nodes =====
+    // ===== Metric Learning Contract Nodes =====
     // Appended to preserve existing serialized numeric NodeType ids.
     PairDatasetBuilder,     // Build aligned pair samples for metric learning
     TripletDatasetBuilder,  // Build anchor/positive/negative samples
-    SharedEncoder,          // Declare one shared encoder parameter set
-    SiameseBranch,          // Reference a shared encoder branch
+    SharedEncoder,          // Retired (metric-learning losses run the model
+                            // once over the stacked batch): the slot stays
+                            // so later ids do not move; a saved graph with
+                            // one fails to load.
+    SiameseBranch,          // Retired with Shared Encoder: the slot stays so
+                            // later ids do not move; a saved graph with one
+                            // fails to load.
     ContrastiveLoss,        // Contrastive pair loss contract
     CosineEmbeddingLoss,    // Cosine embedding pair loss contract
     TripletLoss,            // Triplet loss contract
