@@ -8,6 +8,7 @@
 #include "transformer_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
 #include "spatial_head_module.h"
+#include "stacked_metric_loss.h"
 #include "spatial_sequential_head.h"
 #include "sequence_conv_section.h"
 #include <spdlog/spdlog.h>
@@ -1711,6 +1712,10 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             out.smooth = ResolveLossFloatParam(
                 config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
             break;
+        case gui::NodeType::TripletLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Triplet margin");
+            break;
         default:
             break;
     }
@@ -1806,6 +1811,14 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                          "(reduction={}, smooth={})",
                          ReductionName(reduction), smooth);
             return std::make_unique<JaccardLoss>(reduction, smooth);
+        }
+        case gui::NodeType::TripletLoss: {
+            // Over the Triplet Dataset Builder's stacked [anchors; positives;
+            // negatives] embeddings; mean over triplets as torch.
+            const float margin = resolved.margin.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Triplet loss "
+                         "(stacked batch, margin={})", margin);
+            return std::make_unique<StackedTripletLoss>(margin);
         }
         default:
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Defaulting to CrossEntropy loss "

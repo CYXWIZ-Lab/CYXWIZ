@@ -8,6 +8,7 @@
 #include "debug_numerics.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
+#include "metric_learning_sampling.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
 #include "sparse_feature_dataset_batcher.h"
@@ -36,6 +37,15 @@ float Accuracy(const Tensor& predictions,
     const auto& shape = predictions.Shape();
     if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
         return 0.0f;
+    }
+
+    if (mode == ClassificationDecisionMode::TripletOrder) {
+        // Stacked [anchors; positives; negatives]: shape[0] = 3 x triplets.
+        const auto count = CountClassificationDecisionScalars(
+            predictions, targets, shape[0] / 3, shape[1], mode);
+        return count.total > 0
+            ? static_cast<float>(count.correct) / static_cast<float>(count.total)
+            : 0.0f;
     }
 
     const size_t batch_size = shape[0];
@@ -162,6 +172,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     auto& registry = DataRegistry::Instance();
     const int batch_size = std::max(1, std::min(config.batch_size, 32));
+    // triplet_source outlives the TripletBatchSampler that wraps it (declared first, destroyed last).
+    std::unique_ptr<IBatcher> triplet_source;
     std::unique_ptr<IBatcher> batcher;
     std::string batcher_source = "legacy text";
 
@@ -312,7 +324,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         return result;
     }
 
-    if (UsesScalarBinaryTargets(config.loss_type)) {
+    if (config.triplet_sampling) {
+        batcher->SetClassIndexLabelMode(true);
+    } else if (UsesScalarBinaryTargets(config.loss_type)) {
         batcher->SetScalarLabelMode(true);
     } else if (config.preprocessing.has_onehot &&
                config.preprocessing.num_classes > 0) {
@@ -323,6 +337,13 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
         text_batcher->TryApplyBalancedClassWeights(config);
+    }
+    if (config.triplet_sampling) {
+        // Same stacked triplet batches as Train (TOFIX140 A5).
+        auto source = std::move(batcher);
+        batcher = std::make_unique<TripletBatchSampler>(*source, static_cast<std::uint64_t>(
+                                                                     std::max(config.dataloader_seed, 0)));
+        triplet_source = std::move(source);
     }
     batcher->SetBatchInspectionEnabled(true);
 

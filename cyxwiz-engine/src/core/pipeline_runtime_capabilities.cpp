@@ -1104,13 +1104,9 @@ GetPipelineUnsupportedTrainingWorkflowCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::PairDatasetBuilder, kDatasetReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::TripletDatasetBuilder, kDatasetReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::ContrastiveLoss, kLossReason,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::CosineEmbeddingLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::TripletLoss, kLossReason,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PairMetrics, kMetricsReason,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
@@ -1310,6 +1306,10 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into training loss configuration"},
         {gui::NodeType::NLLLoss, PipelineTrainingSupportRole::Loss,
          "compiled into training loss configuration"},
+        // Metric learning (TOFIX140 A5): the loss splits the stacked
+        // [anchors; positives; negatives] embeddings of one model pass.
+        {gui::NodeType::TripletLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked triplet embeddings"},
 
         {gui::NodeType::SGD, PipelineTrainingSupportRole::Optimizer,
          "compiled into training optimizer configuration"},
@@ -1328,6 +1328,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the training preprocessing configuration"},
         {gui::NodeType::OneHotEncode, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the training label preprocessing configuration"},
+        {gui::NodeType::TripletDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch triplets by class id"},
         {gui::NodeType::Resize, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the image batcher's decode size and the model's [H,W,C] input shape"},
         {gui::NodeType::AudioInput, PipelineTrainingSupportRole::DataSource,

@@ -88,6 +88,8 @@ bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
 }
 
 bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
+    // The Triplet Dataset Builder groups rows by their class id.
+    if (config.triplet_sampling) return true;
     if (!UsesClassIndexTargets(config.loss_type) ||
         config.preprocessing.has_onehot) {
         return false;

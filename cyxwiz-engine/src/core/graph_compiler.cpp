@@ -807,7 +807,8 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::NLLLoss ||
            type == gui::NodeType::SoftDiceLoss ||
            type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss;
+           type == gui::NodeType::JaccardLoss ||
+           type == gui::NodeType::TripletLoss;
 }
 
 bool IsTrueParameter(const gui::MLNode& node, const char* key) {
@@ -1832,20 +1833,18 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
 bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
                                            std::string& matched_key) {
     switch (node.type) {
+        // The triplet nodes train (ExtractTripletSamplingConfiguration).
+        case gui::NodeType::TripletDatasetBuilder:
+        case gui::NodeType::TripletLoss:
+            return false;
         case gui::NodeType::PairDatasetBuilder:
             matched_key = "PairDatasetBuilder";
-            return true;
-        case gui::NodeType::TripletDatasetBuilder:
-            matched_key = "TripletDatasetBuilder";
             return true;
         case gui::NodeType::ContrastiveLoss:
             matched_key = "ContrastiveLoss";
             return true;
         case gui::NodeType::CosineEmbeddingLoss:
             matched_key = "CosineEmbeddingLoss";
-            return true;
-        case gui::NodeType::TripletLoss:
-            matched_key = "TripletLoss";
             return true;
         case gui::NodeType::PairMetrics:
             matched_key = "PairMetrics";
@@ -2686,6 +2685,72 @@ void ExtractRegularizationConfiguration(const std::vector<gui::MLNode>& nodes,
     config.regularization_l1 = static_cast<float>(lambda * l1_ratio);
     config.regularization_l2 = static_cast<float>(lambda * (1.0 - l1_ratio));
     config.regularization_node_id = node.id;
+}
+
+// Metric learning (TOFIX140 A5): a Triplet Dataset Builder on the training
+// path and a Triplet Loss come as a pair; together they set
+// config.triplet_sampling, which TrainingExecutor turns into a
+// TripletBatchSampler around every batcher.
+void ExtractTripletSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
+                                         const std::unordered_set<int>& training_path_ids,
+                                         const gui::MLNode* loss_node,
+                                         TrainingConfiguration& config) {
+    std::vector<const gui::MLNode*> builders;
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::TripletDatasetBuilder && training_path_ids.count(node.id) > 0) {
+            builders.push_back(&node);
+        }
+    }
+    const bool triplet_loss = loss_node && loss_node->type == gui::NodeType::TripletLoss;
+    if (builders.empty()) {
+        if (triplet_loss) {
+            AddIssue(config, IssueLevel::Error,
+                     "Triplet Loss '" + loss_node->name + "' needs a Triplet Dataset Builder between the Data node "
+                     "and the encoder: it scores stacked [anchors; positives; negatives] embeddings",
+                     loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+    const gui::MLNode& builder = *builders.front();
+    for (size_t i = 1; i < builders.size(); ++i) {
+        AddIssue(config, IssueLevel::Error,
+                 "The training path already has the Triplet Dataset Builder '" + builder.name + "'; remove '" +
+                     builders[i]->name + "'",
+                 builders[i]->id, builders[i]->name, errors::Compiler::InvalidConnectivity);
+    }
+    if (!triplet_loss) {
+        AddIssue(config, IssueLevel::Error,
+                 "Triplet Dataset Builder '" + builder.name + "' feeds the model stacked [anchors; positives; "
+                 "negatives] rows, which only a Triplet Loss scores: use a Triplet Loss",
+                 builder.id, builder.name, errors::Compiler::InvalidConnectivity);
+        return;
+    }
+    if (builders.size() > 1) return;
+
+    const auto it = loss_node->parameters.find("margin");
+    const std::string text = it == loss_node->parameters.end() || it->second.empty() ? "1.0" : it->second;
+    bool margin_ok = false;
+    try {
+        size_t used = 0;
+        const double margin = std::stod(text, &used);
+        margin_ok = used == text.size() && std::isfinite(margin) && margin >= 0.0 && margin <= 1.0e6;
+    } catch (const std::exception&) {
+    }
+    if (!margin_ok) {
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid Triplet Loss margin '" + text + "': must be a number from 0 to 1000000",
+                 loss_node->id, loss_node->name, errors::Compiler::InvalidParameter);
+        return;
+    }
+    if (config.target.value_kind != TargetValueKind::Categorical) {
+        AddIssue(config, IssueLevel::Error,
+                 "Triplet Loss reads the label column as class ids; the graph turns it into a non-categorical "
+                 "target",
+                 loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
+        return;
+    }
+    config.triplet_sampling = true;
+    config.triplet_builder_node_id = builder.id;
 }
 
 void ExtractOptimizerConfiguration(const gui::MLNode& node,
@@ -5561,6 +5626,7 @@ TrainingConfiguration GraphCompiler::Compile(
     }
     ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
     ExtractRegularizationConfiguration(nodes, links, loss_node, optimizer_node, config);
+    ExtractTripletSamplingConfiguration(nodes, training_path_ids, loss_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||
@@ -6617,6 +6683,8 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
+    // Metric learning: compiled by ExtractTripletSamplingConfiguration
+    {gui::NodeType::TripletDatasetBuilder, PreprocessingDomain::General,  nullptr},
     // Image (Phase 1)
     {gui::NodeType::Resize,             PreprocessingDomain::Image,       ExtractImageResize},
     {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       nullptr},
@@ -7199,21 +7267,6 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
         node_input_pins[node.id] = std::move(ids);
     }
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     // For each loss node, find its Targets input pin (the one tagged
     // PinType::Labels) and BFS backwards. If no ancestor output pin is
     // PinType::Labels, the targets stream isn't real labels — the user
@@ -7221,7 +7274,7 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
     // a random preprocessing tensor, etc.). That's the canonical "pin
     // is fooling user" case.
     for (const auto& node : nodes) {
-        if (!is_loss_node(node.type)) continue;
+        if (!IsLossNodeType(node.type)) continue;
 
         // Identify Targets pin. Every loss node above creates the
         // Targets input as PinType::Labels (see node_editor_nodes.cpp);
@@ -7336,21 +7389,6 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
         node_input_pins[node.id] = std::move(ids);
     }
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     // Build node_id → node* lookup so the BFS can check owning node
     // type without a linear search per visited pin.
     std::unordered_map<int, const gui::MLNode*> node_by_id;
@@ -7358,7 +7396,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     for (const auto& node : nodes) node_by_id[node.id] = &node;
 
     for (const auto& node : nodes) {
-        if (!is_loss_node(node.type)) continue;
+        if (!IsLossNodeType(node.type)) continue;
 
         // Predictions is the FIRST input on every loss node above —
         // it's PinType::Tensor. Match by name "Predictions" for older
@@ -7485,21 +7523,6 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                t == gui::NodeType::NAdam;
     };
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     for (const auto& node : nodes) {
         if (!is_optimizer(node.type)) continue;
 
@@ -7540,7 +7563,7 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                 auto node_it = node_by_id.find(owner_it->second);
                 if (node_it == node_by_id.end()) continue;
 
-                if (is_loss_node(node_it->second->type)) {
+                if (IsLossNodeType(node_it->second->type)) {
                     found_loss_node = true;
                     break;
                 }

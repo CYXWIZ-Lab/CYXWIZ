@@ -16,6 +16,9 @@ enum class ClassificationDecisionMode {
     MulticlassScores,
     BinaryProbability,
     BinaryLogit,
+    // Triplet Loss over stacked [anchors; positives; negatives] embeddings:
+    // a triplet is correct when d(anchor, positive) < d(anchor, negative).
+    TripletOrder,
 };
 
 inline bool UsesScalarBinaryTargets(gui::NodeType loss_type) {
@@ -29,6 +32,9 @@ inline bool UsesClassIndexTargets(gui::NodeType loss_type) {
 
 inline ClassificationDecisionMode ClassificationDecisionModeForLoss(
     gui::NodeType loss_type) {
+    if (loss_type == gui::NodeType::TripletLoss) {
+        return ClassificationDecisionMode::TripletOrder;
+    }
     if (loss_type == gui::NodeType::BCEWithLogits) {
         return ClassificationDecisionMode::BinaryLogit;
     }

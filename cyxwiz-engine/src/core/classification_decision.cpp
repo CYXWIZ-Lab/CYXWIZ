@@ -18,6 +18,59 @@ namespace cyxwiz {
 
 namespace {
 
+// predictions [3T, D]: rows 0..T-1 anchors, T..2T-1 positives, 2T..3T-1
+// negatives (squared distances order the same as distances).
+ClassificationDecisionScalar BuildTripletOrderScalar(
+    const Tensor& predictions,
+    size_t triplets) {
+    const auto& shape = predictions.Shape();
+    if (shape.size() != 2 || shape[0] != 3 * triplets ||
+        predictions.GetDataType() != DataType::Float32) {
+        return {};
+    }
+    const size_t width = shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array all = predictions.GetArrayRowMajor2D();
+        const double count = static_cast<double>(triplets);
+        const af::array a = all(af::seq(0.0, count - 1.0), af::span);
+        const af::array p = all(af::seq(count, 2.0 * count - 1.0), af::span);
+        const af::array n = all(af::seq(2.0 * count, 3.0 * count - 1.0), af::span);
+        const af::array d_ap = af::sum((a - p) * (a - p), 1);
+        const af::array d_an = af::sum((a - n) * (a - n), 1);
+        af::array correct = af::sum(af::flat((d_ap < d_an).as(f32)));
+        af::array counts = af::join(
+            0, correct, af::constant(static_cast<float>(triplets), 1));
+        counts.eval();
+        return {Tensor::FromSemanticArray(counts, {2})};
+    } catch (const af::exception& e) {
+        const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string context = BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext("predictions", predictions.Shape()));
+        ThrowIfArrayFireNativeCpuFallbackForbidden("TripletDecisionCount", reason, e.what(), context);
+        spdlog::warn("{}", BuildArrayFireBackendFallbackMessage(
+                               "TripletDecisionCount", reason,
+                               reason != BackendFallbackReason::CudaJitParamOverflow, e.what(), context));
+    }
+#endif
+    const float* values = predictions.ReadData<float>();
+    size_t correct = 0;
+    for (size_t t = 0; t < triplets; ++t) {
+        const float* a = values + t * width;
+        const float* p = values + (triplets + t) * width;
+        const float* n = values + (2 * triplets + t) * width;
+        double d_ap = 0.0;
+        double d_an = 0.0;
+        for (size_t j = 0; j < width; ++j) {
+            d_ap += static_cast<double>(a[j] - p[j]) * (a[j] - p[j]);
+            d_an += static_cast<double>(a[j] - n[j]) * (a[j] - n[j]);
+        }
+        if (d_ap < d_an) ++correct;
+    }
+    const float counts[] = {static_cast<float>(correct), static_cast<float>(triplets)};
+    return {Tensor({2}, counts, DataType::Float32)};
+}
+
 ClassificationDecisionCount CountClassificationDecisionsCpu(
     const Tensor& predictions,
     const Tensor& targets,
@@ -149,6 +202,9 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     std::optional<int> ignore_index) {
     if (batch_size == 0 || output_width == 0) {
         return {};
+    }
+    if (mode == ClassificationDecisionMode::TripletOrder) {
+        return BuildTripletOrderScalar(predictions, batch_size);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

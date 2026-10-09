@@ -71,6 +71,7 @@ struct ResolvedLossConfiguration {
     std::optional<float> beta;
     std::optional<float> gamma;
     std::optional<float> smooth;
+    std::optional<float> margin;
 };
 
 // Effective optimizer settings resolved by the same path that constructs the

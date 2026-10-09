@@ -1673,6 +1673,7 @@ add_executable(test_debug_executor
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/checkpoint_manifest.cpp
     src/core/checkpoint_payload_io.cpp
     src/core/sha256_digest.cpp
@@ -3398,6 +3399,7 @@ set_target_properties(test_text_loader_csv_preflight PROPERTIES
 add_executable(test_tensor_reshape_runtime_contract
     tests/test_tensor_reshape_runtime_contract.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3429,6 +3431,7 @@ set_target_properties(test_tensor_reshape_runtime_contract PROPERTIES
 add_executable(test_executable_model_wrapper
     tests/test_executable_model_wrapper.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3460,6 +3463,7 @@ set_target_properties(test_executable_model_wrapper PROPERTIES
 add_executable(test_graph_executable_model
     tests/test_graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3498,6 +3502,7 @@ add_executable(test_text_arrow_materializer
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3538,6 +3543,7 @@ add_executable(test_text_arrow_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3727,6 +3733,7 @@ add_executable(test_text_gui_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3873,6 +3880,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3930,6 +3938,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3987,6 +3996,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4043,6 +4053,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4100,6 +4111,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/extension_node_registry.cpp
     src/core/language_model_generation.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4170,6 +4182,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -4182,6 +4195,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4251,6 +4265,7 @@ add_executable(cyxwiz-graph-compile-check
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -4263,6 +4278,7 @@ add_executable(cyxwiz-graph-compile-check
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4333,6 +4349,7 @@ add_executable(test_compiled_node_presentation
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -4345,6 +4362,7 @@ add_executable(test_compiled_node_presentation
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4412,6 +4430,7 @@ add_executable(test_training_batcher_setup
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -5402,6 +5421,7 @@ add_executable(test_cnn_graph_training
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5414,6 +5434,7 @@ add_executable(test_cnn_graph_training
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -5491,6 +5512,7 @@ add_executable(test_branch_graph_training
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5503,6 +5525,7 @@ add_executable(test_branch_graph_training
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -5611,6 +5634,28 @@ add_custom_target(copy_test_regularization_node_training_fixture
 add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
 add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
 
+# ===== Test: triplet metric learning vs PyTorch (TOFIX140 A5) =====
+set(CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/triplet_graph_pytorch.json")
+add_executable(test_triplet_graph_training
+    tests/test_triplet_graph_training.cpp
+)
+configure_training_executor_harness(test_triplet_graph_training)
+target_compile_definitions(test_triplet_graph_training PRIVATE
+    CYXWIZ_TRIPLET_GRAPH_FIXTURE="${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_triplet_graph_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_triplet_graph_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_triplet_graph_training>/computation_truth_fixtures/triplet_graph_pytorch.json"
+    SOURCES "${CYXWIZ_TRIPLET_GRAPH_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_triplet_graph_training copy_test_triplet_graph_training_fixture)
+add_test(NAME triplet_graph_pytorch_parity COMMAND test_triplet_graph_training)
+
 # ===== Test: Conv1D graphs vs PyTorch (TOFIX140) =====
 set(CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/conv1d_graph_pytorch.json")
@@ -5678,6 +5723,7 @@ add_executable(test_cnn_image_training_smoke
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/metric_learning_sampling.cpp
     src/core/training_generation_preview.cpp
     src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
@@ -5690,6 +5736,7 @@ add_executable(test_cnn_image_training_smoke
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/stacked_metric_loss.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp

@@ -3643,12 +3643,9 @@ int main() {
         const MetricLearningMetadataCase cases[] = {
             {gui::NodeType::PairDatasetBuilder, "Pair Dataset Builder",
              "sample_a_column"},
-            {gui::NodeType::TripletDatasetBuilder, "Triplet Dataset Builder",
-             "anchor_column"},
             {gui::NodeType::ContrastiveLoss, "Contrastive Loss", "margin"},
             {gui::NodeType::CosineEmbeddingLoss, "Cosine Embedding Loss",
              "margin"},
-            {gui::NodeType::TripletLoss, "Triplet Loss", "margin"},
             {gui::NodeType::PairMetrics, "Pair Metrics", "threshold"},
             {gui::NodeType::RetrievalMetrics, "Retrieval Metrics", "k"},
             {gui::NodeType::EmbeddingOutput, "Embedding Output",
@@ -3728,6 +3725,31 @@ int main() {
         Check(HasOutputType(metadata.GetMetadata(gui::NodeType::PairScoreOutput),
                             "Pair Scores", gui::PinType::Dataset),
               "PairScoreOutput should expose pair score records");
+
+        // Triplet metric learning trains (TOFIX140 A5): the builder stacks
+        // in-batch triplets by class id and the loss splits them.
+        for (const auto type : {gui::NodeType::TripletDatasetBuilder,
+                                gui::NodeType::TripletLoss}) {
+            const auto* meta = metadata.GetMetadata(type);
+            Check(meta != nullptr &&
+                      meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                      meta->badge.empty() && cyxwiz::CanAddNodeToGraph(*meta),
+                  "triplet metric-learning nodes should be implemented and addable");
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+            Check(support.compile_supported && support.training_supported &&
+                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(type),
+                  "triplet metric-learning nodes should compile and train");
+        }
+        const auto* triplet_builder =
+            metadata.GetMetadata(gui::NodeType::TripletDatasetBuilder);
+        Check(triplet_builder->parameters.empty() &&
+                  HasInputType(triplet_builder, "Data", gui::PinType::Tensor) &&
+                  HasOutputType(triplet_builder, "Triplets", gui::PinType::Tensor),
+              "Triplet Dataset Builder takes the Data tensor and has no settings");
+        const auto* triplet_loss = metadata.GetMetadata(gui::NodeType::TripletLoss);
+        Check(HasInputType(triplet_loss, "Embeddings", gui::PinType::Tensor) &&
+                  HasInputType(triplet_loss, "Class IDs", gui::PinType::Labels),
+              "Triplet Loss takes the stacked embeddings and the class ids");
     }
 
     {

@@ -563,6 +563,11 @@ struct TrainingConfiguration {
     float regularization_l1 = 0.0f;
     float regularization_l2 = 0.0f;
     int regularization_node_id = -1;
+    // Triplet Dataset Builder + Triplet Loss (TOFIX140 A5): TrainingExecutor
+    // wraps every batcher in a TripletBatchSampler, so the model runs once over
+    // [anchors; positives; negatives] picked in-batch by class id.
+    bool triplet_sampling = false;
+    int triplet_builder_node_id = -1;
 
     // Validation
     bool is_valid = false;
@@ -643,6 +648,7 @@ struct TrainingConfiguration {
             case gui::NodeType::SoftDiceLoss: return "SoftDice";
             case gui::NodeType::TverskyLoss: return "Tversky";
             case gui::NodeType::JaccardLoss: return "Jaccard";
+            case gui::NodeType::TripletLoss: return "Triplet";
             default: return "CrossEntropy";
         }
     }

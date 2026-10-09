@@ -212,6 +212,7 @@ inline bool IsArrayFireTrainingLoss(gui::NodeType type) {
         case gui::NodeType::SmoothL1Loss:
         case gui::NodeType::HuberLoss:
         case gui::NodeType::NLLLoss:
+        case gui::NodeType::TripletLoss:
             return true;
         default:
             return false;

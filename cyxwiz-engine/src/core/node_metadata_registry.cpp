@@ -3363,15 +3363,18 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "triplet", "siamese"}, 0, false,
-        "Blocked metric-learning triplet-batch contract",
-        "Preserves anchor, positive, and negative column settings for saved graphs. A production owner must materialize those columns as device-ready triplet tensors before this node can execute.", "",
-        {{"Rows", PinType::Dataset, true, "Source rows with triplet sample columns"}},
-        {{"Triplet Batch", PinType::Dataset, true, "Typed TripletBatch payload"}},
-        {{"anchor_column", "string", "", "Anchor sample column", {}, ""},
-         {"positive_column", "string", "", "Positive sample column", {}, ""},
-         {"negative_column", "string", "", "Negative sample column", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "triplet", "siamese", "embedding"}, 0, false,
+        "Turns each batch of class-labelled rows into anchor, positive and negative rows",
+        "For every row of a batch it picks a positive from the other rows of the same class and a negative "
+        "from the rows of other classes, using the Data node's label column as the class id. The model then sees "
+        "the stacked batch [anchors; positives; negatives] and runs once over it, so one encoder (one set of "
+        "weights) embeds all three. Rows whose class has no other row in the batch are not anchors; a batch "
+        "with no triplet is skipped. Picks depend on the DataLoader seed, epoch, batch and row only, so runs "
+        "replay. Needs a Triplet Loss.", "",
+        {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
+        {{"Triplets", PinType::Tensor, true, "Stacked [anchors; positives; negatives] rows for the encoder"}},
+        {},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "contrastive", "loss"}, 0, false,
@@ -3396,15 +3399,18 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TripletLoss, NodeCategory::Training, "Triplet Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "triplet", "loss"}, 0, false,
-        "Blocked metric-learning triplet-loss contract",
-        "Preserves the margin for anchor, positive, and negative embeddings. A backend primitive exists, but the visual training path does not own the triplet/shared-encoder update.", "",
-        {{"Anchor", PinType::Tensor, true, "Anchor embedding"},
-         {"Positive", PinType::Tensor, true, "Positive embedding"},
-         {"Negative", PinType::Tensor, true, "Negative embedding"}},
-        {{"Loss", PinType::Loss, true, "Triplet loss"}},
-        {{"margin", "float", "1.0", "Triplet margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "triplet", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Pulls same-class embeddings together and pushes other classes at least a margin further away",
+        "loss = mean over triplets of max(0, d(a, p) - d(a, n) + margin), d the Euclidean distance "
+        "(torch.nn.functional.triplet_margin_loss, p = 2). Splits the stacked [anchors; positives; negatives] "
+        "embeddings from the Triplet Dataset Builder and returns their gradient stacked the same way. Accuracy "
+        "is the triplet accuracy: the share of triplets with d(a, p) < d(a, n).", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [3T, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "1.0", "How much further a negative must be than the positive", {}, "0.0-1000000.0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairMetrics, NodeCategory::Training, "Pair Metrics", ICON_FA_CHART_LINE,
         {"metric", "learning", "pair", "metrics"}, 0, false,

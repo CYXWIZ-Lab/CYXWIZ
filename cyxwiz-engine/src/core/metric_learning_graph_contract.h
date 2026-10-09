@@ -30,6 +30,9 @@ struct MetricLearningGraphContract {
     std::vector<int> embedding_output_node_ids;
     std::vector<int> pair_score_output_node_ids;
 
+    // A node matched by name or legacy column parameters rather than by type.
+    bool has_sketch_nodes = false;
+
     std::vector<std::string> blockers;
 
     bool HasPairLoss() const {
@@ -103,6 +106,13 @@ inline MetricLearningGraphKind InferMetricLearningGraphKind(
     return MetricLearningGraphKind::None;
 }
 
+inline size_t RecordedNodeCount(const MetricLearningGraphContract& contract) {
+    return contract.pair_dataset_builder_node_ids.size() + contract.triplet_dataset_builder_node_ids.size() +
+           contract.pair_loss_node_ids.size() + contract.triplet_loss_node_ids.size() +
+           contract.pair_metric_node_ids.size() + contract.retrieval_metric_node_ids.size() +
+           contract.embedding_output_node_ids.size() + contract.pair_score_output_node_ids.size();
+}
+
 inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
                                      gui::NodeType type,
                                      const std::string& name,
@@ -138,6 +148,7 @@ inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
             break;
     }
 
+    const size_t recorded_before = RecordedNodeCount(contract);
     if (name == "PairDatasetBuilder") {
         AddNodeId(contract.pair_dataset_builder_node_ids, node_id);
     } else if (name == "TripletDatasetBuilder") {
@@ -169,6 +180,7 @@ inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
         parameters.count("triplet_id_column") > 0) {
         AddNodeId(contract.triplet_dataset_builder_node_ids, node_id);
     }
+    if (RecordedNodeCount(contract) != recorded_before) contract.has_sketch_nodes = true;
 }
 
 inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
@@ -189,6 +201,17 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         return contract;
     }
 
+    // Triplet training (TOFIX140 A5): the typed builder and loss train
+    // through TripletBatchSampler and StackedTripletLoss.
+    if (contract.kind == MetricLearningGraphKind::TripletTraining && !contract.has_sketch_nodes &&
+        !contract.triplet_dataset_builder_node_ids.empty() && contract.HasTripletLoss() &&
+        contract.pair_dataset_builder_node_ids.empty() && !contract.HasPairLoss() &&
+        contract.pair_metric_node_ids.empty() && contract.retrieval_metric_node_ids.empty() &&
+        !contract.HasInferenceOutput()) {
+        contract.executable = true;
+        return contract;
+    }
+
     if (contract.HasPairLoss()) {
         if (contract.pair_dataset_builder_node_ids.empty()) {
             AddBlocker(contract,
@@ -203,9 +226,9 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
         }
     }
 
-    if (contract.HasPairLoss() || contract.HasTripletLoss()) {
+    if (contract.HasPairLoss()) {
         AddBlocker(contract,
-                   "visual graph executor routing for metric-learning losses is not implemented");
+                   "visual graph executor routing for pair metric-learning losses is not implemented");
     }
     if (contract.HasInferenceOutput()) {
         AddBlocker(contract,

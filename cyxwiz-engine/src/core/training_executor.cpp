@@ -6,6 +6,7 @@
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
+#include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
@@ -1094,6 +1095,8 @@ void TrainingExecutor::Train(
     BatcherPhase val_batcher_phase = BatcherPhase::Val;
     BatcherPhase test_batcher_phase = BatcherPhase::Test;
     ISequenceBatcher* active_sequence_batcher = nullptr;
+    // Triplet Dataset Builder (TOFIX140 A5): one sampler per distinct batcher.
+    std::vector<std::unique_ptr<TripletBatchSampler>> triplet_samplers;
 
     size_t num_train_samples = 0;
     size_t num_val_samples = 0;
@@ -1164,6 +1167,33 @@ void TrainingExecutor::Train(
         spdlog::error("TrainingExecutor: no batcher for this dataset mode");
         fail_run("unsupported_dataset_mode");
         return;
+    }
+
+    if (config_.triplet_sampling) {
+        // Table batchers hand out class-index labels; the image, audio and
+        // text batchers only one-hot to the model width (the embedding size).
+        if (mode_ != DatasetMode::Arrow && mode_ != DatasetMode::Parquet) {
+            fail_run("Triplet Dataset Builder trains on table datasets (Arrow or Parquet) in this version");
+            return;
+        }
+        // The epoch shuffle seed keys the training picks; a batcher never
+        // given one (validation, test) keeps this seed, so it scores the same
+        // triplets every epoch.
+        const auto seed = static_cast<std::uint64_t>(std::max(config_.dataloader_seed, 0));
+        const auto wrap = [&](IBatcher* source) -> IBatcher* {
+            if (!source) return nullptr;
+            triplet_samplers.push_back(std::make_unique<TripletBatchSampler>(*source, seed));
+            return triplet_samplers.back().get();
+        };
+        IBatcher* const train_source = active_train_ibatcher;
+        IBatcher* const val_source = active_val_ibatcher;
+        active_train_ibatcher = wrap(train_source);
+        // Keep the executor's aliasing: a validation or test batcher that is
+        // the training batcher stays the same object.
+        active_val_ibatcher = val_source == train_source ? active_train_ibatcher : wrap(val_source);
+        active_test_ibatcher = active_test_ibatcher == train_source ? active_train_ibatcher
+                               : active_test_ibatcher == val_source ? active_val_ibatcher
+                                                                    : wrap(active_test_ibatcher);
     }
 
     if (active_train_ibatcher) {

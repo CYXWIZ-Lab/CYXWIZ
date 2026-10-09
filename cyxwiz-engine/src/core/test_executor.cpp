@@ -216,6 +216,22 @@ void TestExecutor::Test(
     is_testing_.store(true);
     stop_requested_.store(false);
 
+    // TOFIX140 A5 step 3 gives metric learning its own test metrics; until
+    // then the per-sample class decisions below do not apply to embeddings.
+    if (config_.triplet_sampling) {
+        const std::string detail =
+            "the Test step does not evaluate Triplet Loss models yet; the "
+            "training run reports their triplet accuracy";
+        UpdateMetrics([&detail](TestingMetrics& m) {
+            m.is_testing = false;
+            m.is_complete = false;
+            m.status_message = "Testing failed: " + detail;
+        });
+        spdlog::error("TestExecutor: {}", detail);
+        is_testing_.store(false);
+        throw std::runtime_error(detail);
+    }
+
     if (config_.sequence_batch.enabled) {
         try {
             TestCausalSequence(batch_size, batch_cb, complete_cb);
