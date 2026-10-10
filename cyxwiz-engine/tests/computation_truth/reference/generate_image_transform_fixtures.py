@@ -130,6 +130,19 @@ def build() -> list[dict[str, Any]]:
 
     cases.append(case("grayscale", {"kind": "grayscale"}, {}, rgb, F.rgb_to_grayscale(rgb)))
 
+    # Advanced Augment erasing (Cutout / Random Erasing): F.erase on each sample's drawn box;
+    # a 0-sized box leaves the sample unchanged.
+    boxes = [(1, 2, 3, 4), (0, 0, 0, 0)]
+    cases.append(case("erase_boxes_value0", {"kind": "erase", "value": 0.0},
+                      {"top": [b[0] for b in boxes], "left": [b[1] for b in boxes],
+                       "box_height": [b[2] for b in boxes], "box_width": [b[3] for b in boxes]}, rgb,
+                      per_sample(rgb, lambda img, i: F.erase(img, *boxes[i], torch.tensor(0.0)) if boxes[i][2] else img)))
+    clipped = [(0, 5, 3, 2), (4, 0, 2, 3)]  # Cutout squares clipped at the image edge
+    cases.append(case("erase_clipped_value_half", {"kind": "erase", "value": 0.5},
+                      {"top": [b[0] for b in clipped], "left": [b[1] for b in clipped],
+                       "box_height": [b[2] for b in clipped], "box_width": [b[3] for b in clipped]}, gray,
+                      per_sample(gray, lambda img, i: F.erase(img, *clipped[i], torch.tensor(0.5)))))
+
     # Morphology with a flat square: max_pool2d's implicit -inf border ignores outside pixels
     # (kornia.morphology's geodesic border, OpenCV's default morphology border).
     def dilate(img: torch.Tensor, k: int) -> torch.Tensor:

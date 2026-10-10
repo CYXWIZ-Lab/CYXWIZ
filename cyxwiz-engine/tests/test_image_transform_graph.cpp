@@ -190,6 +190,21 @@ void CheckCompiler() {
               cifar.image_augmentation.ops[1].kind == ImageOpKind::Morphology &&
               cifar.image_augmentation.ops[1].morphology == cyxwiz::image::MorphologyOp::Close,
           "Random Crop padding 2, then Morphology close");
+    const auto erasing = Compile({
+        kResize,
+        {gui::NodeType::AdvancedAugment, "Erasing", {{"method", "random_erasing"}, {"probability", "0.7"},
+                                                     {"scale_max", "0.2"}, {"value", "0.5"}}},
+        kNormalize,
+    });
+    Check(erasing.is_valid, "Advanced Augment random_erasing compiles; errors:\n" + Errors(erasing));
+    Check(erasing.image_augmentation.ops.size() == 1 &&
+              erasing.image_augmentation.ops[0].kind == ImageOpKind::Erase &&
+              erasing.image_augmentation.ops[0].erase_method == cyxwiz::image::EraseMethod::RandomErasing &&
+              erasing.image_augmentation.ops[0].probability == 0.7f &&
+              erasing.image_augmentation.ops[0].scale_max == 0.2f && erasing.image_augmentation.ops[0].value == 0.5f,
+          "Advanced Augment settings reach the plan");
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Old method", {{"method", "Cutout"}}}},
+                 "Old method", "method must be cutout or random_erasing", "an unknown Advanced Augment method");
     CheckRefused({kResize, {gui::NodeType::MorphologyTransform, "Old blur", {{"operation", "blur"}}}},
                  "Old blur", "retired; use Image Gaussian Blur", "the retired Morphology 'blur' operation");
 

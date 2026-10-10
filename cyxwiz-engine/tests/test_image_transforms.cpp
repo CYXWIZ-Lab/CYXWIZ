@@ -58,7 +58,7 @@ ImageOp OpOf(const json& spec) {
         {"horizontal_flip", ImageOpKind::HorizontalFlip}, {"vertical_flip", ImageOpKind::VerticalFlip},
         {"rotate", ImageOpKind::Rotate},            {"color_jitter", ImageOpKind::ColorJitter},
         {"gaussian_blur", ImageOpKind::GaussianBlur}, {"grayscale", ImageOpKind::Grayscale},
-        {"morphology", ImageOpKind::Morphology},
+        {"morphology", ImageOpKind::Morphology},  {"erase", ImageOpKind::Erase},
     };
     static const std::map<std::string, cyxwiz::image::MorphologyOp> operations = {
         {"erode", cyxwiz::image::MorphologyOp::Erode},     {"dilate", cyxwiz::image::MorphologyOp::Dilate},
@@ -71,6 +71,7 @@ ImageOp OpOf(const json& spec) {
     op.height = spec.value("height", 0);
     op.width = spec.value("width", 0);
     op.padding = spec.value("padding", 0);
+    op.value = spec.value("value", 0.0f);
     if (spec.contains("operation")) op.morphology = operations.at(spec.at("operation").get<std::string>());
     op.kernel_size = spec.value("kernel_size", 5);
     op.sigma = spec.value("sigma", 1.0f);
@@ -84,6 +85,8 @@ ImageOpDraws DrawsOf(const json& spec) {
     ImageOpDraws draws;
     draws.top = spec.value("top", std::vector<int>{});
     draws.left = spec.value("left", std::vector<int>{});
+    draws.box_height = spec.value("box_height", std::vector<int>{});
+    draws.box_width = spec.value("box_width", std::vector<int>{});
     draws.apply = spec.value("apply", std::vector<int>{});
     draws.angle = spec.value("angle", std::vector<float>{});
     draws.factors = spec.value("factors", std::vector<std::vector<float>>{});
@@ -182,6 +185,35 @@ void CheckDraws() {
         Check(jitters.factors[i][3] >= -0.1f && jitters.factors[i][3] <= 0.1f, "hue shift in [-hue, hue]");
     }
 
+    const ImageShape big{40, 50, 3};
+    ImageOp erasing;
+    erasing.kind = ImageOpKind::Erase;
+    erasing.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
+    erasing.probability = 1.0f;
+    const auto erased = cyxwiz::image::DrawImageOp(erasing, big, 300, true, rng);
+    for (size_t i = 0; i < 300; ++i) {
+        const int h = erased.box_height[i], w = erased.box_width[i];
+        Check(h > 0 && w > 0 && h < 40 && w < 50, "Random Erasing boxes are inside and smaller than the image");
+        Check(erased.top[i] + h <= 40 && erased.left[i] + w <= 50, "Random Erasing boxes fit");
+        const double area = static_cast<double>(h) * w / (40.0 * 50.0);
+        Check(area > 0.01 && area < 0.36, "Random Erasing area follows scale (rounded): " + std::to_string(area));
+    }
+    ImageOp cutout = erasing;
+    cutout.erase_method = cyxwiz::image::EraseMethod::Cutout;
+    cutout.cutout_size = 16;
+    cutout.probability = 0.5f;
+    const auto cut = cyxwiz::image::DrawImageOp(cutout, big, 2000, true, rng);
+    int applied = 0;
+    for (size_t i = 0; i < 2000; ++i) {
+        Check(cut.box_height[i] <= 16 && cut.box_width[i] <= 16 && cut.top[i] + cut.box_height[i] <= 40 &&
+                  cut.left[i] + cut.box_width[i] <= 50,
+              "Cutout squares are at most cutout_size and clipped to the image");
+        applied += cut.box_height[i] > 0 ? 1 : 0;
+    }
+    Check(applied > 900 && applied < 1100, "Cutout follows its probability (" + std::to_string(applied) + ")");
+    Check(cyxwiz::image::DrawImageOp(cutout, big, 3, false, rng).box_height.empty(),
+          "erasing passes through outside training");
+
     std::mt19937 first(7), second(7);
     Check(cyxwiz::image::DrawImageOp(jitter, shape, 50, true, first).factors ==
               cyxwiz::image::DrawImageOp(jitter, shape, 50, true, second).factors,
@@ -206,6 +238,15 @@ void CheckRefusals() {
     crop.width = 7;
     crop.padding = 2;
     refused(crop, "larger than the 10 x 11 padded image", "a crop larger than the padded image");
+    ImageOp erase;
+    erase.kind = ImageOpKind::Erase;
+    erase.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
+    erase.scale_min = 0.5f;
+    erase.scale_max = 0.2f;
+    refused(erase, "scale_min <= scale_max", "a reversed erasing scale");
+    erase.scale_max = 0.6f;
+    erase.value = 2.0f;
+    refused(erase, "pixel value between 0 and 1", "an erasing value outside [0, 1]");
     ImageOp morphology;
     morphology.kind = ImageOpKind::Morphology;
     morphology.kernel_size = 2;

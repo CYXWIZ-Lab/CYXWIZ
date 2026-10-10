@@ -1,9 +1,9 @@
 # Image transforms
 
-Nine nodes change images on their way from the Data Input to the model:
+Ten nodes change images on their way from the Data Input to the model:
 **Center Crop**, **Random Crop**, **Horizontal Flip**, **Vertical Flip**,
-**Image Rotate**, **Color Jitter**, **Image Gaussian Blur**, **Grayscale** and
-**Morphology Transform**. They follow `torchvision.transforms` (morphology
+**Image Rotate**, **Color Jitter**, **Image Gaussian Blur**, **Grayscale**,
+**Morphology Transform** and **Advanced Augment**. They follow `torchvision.transforms` (morphology
 follows `kornia.morphology`): each one gives the same pixels as the reference
 function with the same settings.
 
@@ -34,6 +34,7 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 | Image Gaussian Blur | blurred | blurred |
 | Grayscale | one channel | one channel |
 | Morphology Transform | applied | applied |
+| Advanced Augment | patch erased with `probability` | unchanged |
 
 Random nodes make each training epoch see slightly different images, which
 reduces overfitting. Validation and test always see the same images, so their
@@ -53,6 +54,7 @@ Data Loader's seed, so a run repeats exactly with the same seed.
 | Image Gaussian Blur | `kernel_size` (5, odd), `sigma` (1.0) | Edges are reflected. `kernel_size / 2` must be smaller than both sides. |
 | Grayscale | none | `0.2989 R + 0.587 G + 0.114 B`. The model's input becomes `[H, W, 1]`. |
 | Morphology Transform | `operation` (open), `kernel_size` (3, odd) | Flat square kernel, pixels outside the image ignored. erode = local minimum, dilate = local maximum, open = dilate(erode), close = erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image. |
+| Advanced Augment | `method` (cutout / random_erasing), `probability` (0.5), `cutout_size` (16), `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value` (0) | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is. `value` is a pixel value, written before Normalize. |
 
 The **As compiled** card shows the input shape after the crops and Grayscale.
 
@@ -73,7 +75,7 @@ crop position, angle, jitter factors) are a few numbers drawn on the CPU.
 - Checked against torchvision: `image_transforms_torchvision_parity` compares
   every node with `torchvision.transforms.functional` on CUDA, OpenCL and the
   ArrayFire CPU backend, including 90-degree rotation on even sizes, bilinear
-  rotation, every Color Jitter order, one-channel images, padded Random Crop and
-  all seven morphology operations.
+  rotation, every Color Jitter order, one-channel images, padded Random Crop,
+  all seven morphology operations and erasing (clipped boxes, any value).
   `image_transform_graph_contract` checks the compiled shapes, the refusals, and
   that random nodes change training batches only.

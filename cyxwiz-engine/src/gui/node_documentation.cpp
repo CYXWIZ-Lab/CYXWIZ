@@ -294,6 +294,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ImageGaussianBlur:
         case NodeType::Grayscale:
         case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment:
             return "Data Pipeline";
 
         default:
@@ -1845,6 +1846,26 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "open removes small bright specks; close fills small dark holes",
             "gradient outlines shapes; tophat keeps small bright details"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::AdvancedAugment] = {
+        "Advanced Augment",
+        "Blanks out a random patch of training images so the model cannot rely on one region.",
+        "cutout: a cutout_size square centred at a random pixel, clipped at the edges (DeVries & Taylor). "
+        "random_erasing: a box of random area and aspect ratio (torchvision RandomErasing). "
+        "Validation and test pass through unchanged.",
+        {
+            {"method", "cutout or random_erasing"},
+            {"probability", "Chance that a training image is erased (0 to 1)"},
+            {"cutout_size", "cutout: side of the square in pixels"},
+            {"scale_min / scale_max", "random_erasing: box area as a fraction of the image"},
+            {"ratio_min / ratio_max", "random_erasing: box aspect ratio (height / width)"},
+            {"value", "Pixel value written into the box, 0 to 1 (before Normalize)"}
+        },
+        {
+            "CIFAR-10 recipe: Random Crop (padding 4) -> Horizontal Flip -> cutout 16",
         },
         "Data Pipeline"
     };

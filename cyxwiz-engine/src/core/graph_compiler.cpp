@@ -6985,6 +6985,27 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
             if (error.empty()) ParseIntParam(p, "kernel_size", 3, op.kernel_size, error);
             break;
         }
+        case gui::NodeType::AdvancedAugment: {
+            op.kind = ImageOpKind::Erase;
+            const auto it = p.find("method");
+            const std::string method = it == p.end() ? "cutout" : it->second;
+            if (method == "cutout") {
+                op.erase_method = cyxwiz::image::EraseMethod::Cutout;
+            } else if (method == "random_erasing") {
+                op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
+            } else {
+                error = "method must be cutout or random_erasing";
+            }
+            if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&
+                ParseFloatParam(p, "scale_min", 0.02f, op.scale_min, error) &&
+                ParseFloatParam(p, "scale_max", 0.33f, op.scale_max, error) &&
+                ParseFloatParam(p, "ratio_min", 0.3f, op.ratio_min, error) &&
+                ParseFloatParam(p, "ratio_max", 3.3f, op.ratio_max, error)) {
+                ParseFloatParam(p, "value", 0.0f, op.value, error);
+            }
+            break;
+        }
         default:
             return;
     }
@@ -7141,6 +7162,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
+    {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},

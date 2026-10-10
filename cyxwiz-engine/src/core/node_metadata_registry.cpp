@@ -1163,7 +1163,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", {"augmentation", "preset"}},
         {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
         {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
-        {NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", {"image", "augmentation"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };
 
@@ -1720,6 +1719,27 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"operation", "enum", "open", "Morphological operation",
           {"erode", "dilate", "open", "close", "gradient", "tophat", "blackhat"}, "", "Operation"},
          {"kernel_size", "int", "3", "Odd width of the square kernel", {}, ">0", "Kernel size"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "augmentation", "cutout", "random erasing", "occlusion"}, 0, false,
+        "Blank out a random patch of training images",
+        "cutout: with the given probability, a cutout_size square centred at a random pixel is set "
+        "to value, clipped at the edges (DeVries & Taylor 2017). random_erasing: a box covering "
+        "scale_min to scale_max of the image, aspect ratio ratio_min to ratio_max, is set to value "
+        "(torchvision RandomErasing; after ten misses the image is left as it is). value is a pixel "
+        "value in [0, 1], applied before Normalize. Validation and test images pass through unchanged.",
+        "Resize -> Random Crop -> Advanced Augment (cutout) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"method", "enum", "cutout", "Erasing method", {"cutout", "random_erasing"}, "", "Method"},
+         {"probability", "float", "0.5", "Chance that a training image is erased", {}, "0-1", "Probability"},
+         {"cutout_size", "int", "16", "cutout: side of the square in pixels", {}, ">0", "Cutout size"},
+         {"scale_min", "float", "0.02", "random_erasing: smallest box area, as a fraction of the image", {}, "0-1", "Scale min"},
+         {"scale_max", "float", "0.33", "random_erasing: largest box area, as a fraction of the image", {}, "0-1", "Scale max"},
+         {"ratio_min", "float", "0.3", "random_erasing: smallest aspect ratio (height / width)", {}, ">0", "Ratio min"},
+         {"ratio_max", "float", "3.3", "random_erasing: largest aspect ratio (height / width)", {}, ">0", "Ratio max"},
+         {"value", "float", "0.0", "Pixel value written into the box (0 = black)", {}, "0-1", "Value"}},
         NodeImplementationStatus::Implemented, 0});
 }
 

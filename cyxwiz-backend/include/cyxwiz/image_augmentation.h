@@ -28,6 +28,7 @@ enum class ImageOpKind {
     GaussianBlur,
     Grayscale,
     Morphology,
+    Erase,
 };
 
 enum class Interpolation { Nearest, Bilinear };
@@ -35,6 +36,11 @@ enum class Interpolation { Nearest, Bilinear };
 // Flat square structuring element; pixels outside the image are ignored
 // (kornia.morphology / torch max_pool2d borders).
 enum class MorphologyOp { Erode, Dilate, Open, Close, Gradient, TopHat, BlackHat };
+
+// Advanced Augment's erasing methods: Cutout (DeVries & Taylor 2017: a square
+// of cutout_size centred at a random pixel, clipped to the image) and Random
+// Erasing (torchvision RandomErasing: random area and aspect ratio).
+enum class EraseMethod { Cutout, RandomErasing };
 
 struct ImageShape {
     size_t height = 0;
@@ -59,6 +65,13 @@ struct ImageOp {
     int kernel_size = 5;          // gaussian blur and morphology, odd
     float sigma = 1.0f;
     MorphologyOp morphology = MorphologyOp::Erode;
+    EraseMethod erase_method = EraseMethod::Cutout;  // erase (probability above applies)
+    int cutout_size = 16;
+    float scale_min = 0.02f;      // random erasing: area fraction range
+    float scale_max = 0.33f;
+    float ratio_min = 0.3f;       // random erasing: aspect ratio (h / w) range
+    float ratio_max = 3.3f;
+    float value = 0.0f;           // erased pixel value in [0, 1]
 };
 
 // True for the nodes that draw random settings and run on Train batches only.
@@ -72,8 +85,10 @@ CYXWIZ_API ImageShape ImageShapeAfter(const ImageOp& op, const ImageShape& input
 
 // One batch's per-sample settings for one op. Unused fields stay empty.
 struct ImageOpDraws {
-    std::vector<int> top;                  // random crop, in the padded image
+    std::vector<int> top;                  // random crop (in the padded image), erase box
     std::vector<int> left;
+    std::vector<int> box_height;           // erase: box size, 0 = this sample is unchanged
+    std::vector<int> box_width;
     std::vector<int> apply;                // flips: 1 = flip this sample
     std::vector<float> angle;              // rotate, degrees (0 = unchanged)
     std::vector<std::vector<float>> factors;  // jitter: brightness, contrast, saturation, hue

@@ -744,6 +744,7 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::ImageGaussianBlur:
             case NodeType::Grayscale:
             case NodeType::MorphologyTransform:
+            case NodeType::AdvancedAugment:
                 return EffectiveNodeName(*node) +
                        ": code export does not include image transforms yet; train it in Studio";
             default:

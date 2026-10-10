@@ -41,6 +41,7 @@ const char* KindName(ImageOpKind kind) {
         case ImageOpKind::GaussianBlur: return "Image Gaussian Blur";
         case ImageOpKind::Grayscale: return "Grayscale";
         case ImageOpKind::Morphology: return "Morphology Transform";
+        case ImageOpKind::Erase: return "Advanced Augment";
     }
     return "image transform";
 }
@@ -336,6 +337,21 @@ af::array Morphology(const af::array& images, MorphologyOp operation, int kernel
     return images;
 }
 
+// Sets each sample's box [top, top + h) x [left, left + w) to value
+// (torchvision F.erase); a 0-sized box leaves the sample unchanged.
+af::array Erase(const af::array& images, const ImageOpDraws& draws, float value) {
+    const af::dim4 dims = images.dims();
+    const af::dim4 grid(dims[0], dims[1], 1, dims[3]);
+    const af::array rows = af::iota(af::dim4(dims[0], 1, 1, 1), af::dim4(1, dims[1], 1, dims[3]), f32);
+    const af::array cols = af::iota(af::dim4(1, dims[1], 1, 1), af::dim4(dims[0], 1, 1, dims[3]), f32);
+    const af::array top = PerSample(ToFloat(draws.top), grid);
+    const af::array left = PerSample(ToFloat(draws.left), grid);
+    const af::array inside = (rows >= top) && (rows < top + PerSample(ToFloat(draws.box_height), grid)) &&
+                             (cols >= left) && (cols < left + PerSample(ToFloat(draws.box_width), grid));
+    return af::select(af::tile(inside, 1, 1, static_cast<unsigned>(dims[2]), 1),
+                      af::constant(value, dims, images.type()), images);
+}
+
 af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const ImageShape& shape,
                         const af::array& images) {
     const af::dim4 dims = images.dims();
@@ -369,6 +385,9 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
             return shape.channels == 3 ? Luminance(images) : images;
         case ImageOpKind::Morphology:
             return Morphology(images, op.morphology, op.kernel_size);
+        case ImageOpKind::Erase:
+            if (draws.box_height.empty()) return images;
+            return Erase(images, draws, op.value);
     }
     return images;
 }
@@ -384,6 +403,7 @@ bool IsRandomImageOp(ImageOpKind kind) {
         case ImageOpKind::VerticalFlip:
         case ImageOpKind::Rotate:
         case ImageOpKind::ColorJitter:
+        case ImageOpKind::Erase:
             return true;
         default:
             return false;
@@ -452,6 +472,25 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
         case ImageOpKind::Morphology:
             if (op.kernel_size <= 0 || op.kernel_size % 2 == 0) {
                 return "Morphology Transform kernel_size must be a positive odd number";
+            }
+            return {};
+        case ImageOpKind::Erase:
+            if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
+                return "Advanced Augment probability must be between 0 and 1";
+            }
+            if (!(op.value >= 0.0f && op.value <= 1.0f)) {
+                return "Advanced Augment value is a pixel value between 0 and 1";
+            }
+            if (op.erase_method == EraseMethod::Cutout && op.cutout_size <= 0) {
+                return "Advanced Augment cutout_size must be a positive number of pixels";
+            }
+            if (op.erase_method == EraseMethod::RandomErasing &&
+                !(op.scale_min > 0.0f && op.scale_min <= op.scale_max && op.scale_max <= 1.0f)) {
+                return "Advanced Augment needs 0 < scale_min <= scale_max <= 1";
+            }
+            if (op.erase_method == EraseMethod::RandomErasing &&
+                !(op.ratio_min > 0.0f && op.ratio_min <= op.ratio_max)) {
+                return "Advanced Augment needs 0 < ratio_min <= ratio_max";
             }
             return {};
     }
@@ -530,6 +569,47 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 };
                 for (int step : order) {
                     if (active[step]) draws.order[i].push_back(step);
+                }
+            }
+            break;
+        }
+        case ImageOpKind::Erase: {
+            if (!training) break;
+            draws.top.assign(batch, 0);
+            draws.left.assign(batch, 0);
+            draws.box_height.assign(batch, 0);
+            draws.box_width.assign(batch, 0);
+            const int h = static_cast<int>(input.height), w = static_cast<int>(input.width);
+            for (size_t i = 0; i < batch; ++i) {
+                if (!(unit(rng) < op.probability)) continue;
+                if (op.erase_method == EraseMethod::Cutout) {
+                    // DeVries & Taylor: centre anywhere, square clipped to the image.
+                    const int cy = std::uniform_int_distribution<int>(0, h - 1)(rng);
+                    const int cx = std::uniform_int_distribution<int>(0, w - 1)(rng);
+                    const int half = op.cutout_size / 2;
+                    const int y1 = std::clamp(cy - half, 0, h), y2 = std::clamp(cy + half, 0, h);
+                    const int x1 = std::clamp(cx - half, 0, w), x2 = std::clamp(cx + half, 0, w);
+                    draws.top[i] = y1;
+                    draws.left[i] = x1;
+                    draws.box_height[i] = y2 - y1;
+                    draws.box_width[i] = x2 - x1;
+                    continue;
+                }
+                // torchvision RandomErasing.get_params: ten attempts, else unchanged.
+                const double area = static_cast<double>(h) * w;
+                const double log_min = std::log(op.ratio_min), log_max = std::log(op.ratio_max);
+                for (int attempt = 0; attempt < 10; ++attempt) {
+                    const double erase_area =
+                        area * std::uniform_real_distribution<double>(op.scale_min, op.scale_max)(rng);
+                    const double aspect = std::exp(std::uniform_real_distribution<double>(log_min, log_max)(rng));
+                    const int eh = RoundHalfEven(std::sqrt(erase_area * aspect));
+                    const int ew = RoundHalfEven(std::sqrt(erase_area / aspect));
+                    if (!(eh < h && ew < w)) continue;
+                    draws.top[i] = std::uniform_int_distribution<int>(0, h - eh)(rng);
+                    draws.left[i] = std::uniform_int_distribution<int>(0, w - ew)(rng);
+                    draws.box_height[i] = eh;
+                    draws.box_width[i] = ew;
+                    break;
                 }
             }
             break;
