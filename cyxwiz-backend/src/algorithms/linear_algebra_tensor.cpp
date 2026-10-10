@@ -4,12 +4,7 @@
 #endif
 
 #include "cyxwiz/linear_algebra.h"
-#include "arrayfire_backend_utils.h"
-#include "arrayfire_host_materialization.h"
-#include <spdlog/spdlog.h>
 #include <cmath>
-#include <cstdint>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -26,162 +21,6 @@
 #endif
 
 namespace cyxwiz {
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-static cyxwiz::DataType AfTypeToTensorType(af::dtype dtype) {
-    switch (dtype) {
-        case af::dtype::f32: return cyxwiz::DataType::Float32;
-        case af::dtype::f64: return cyxwiz::DataType::Float64;
-        case af::dtype::s32: return cyxwiz::DataType::Int32;
-        case af::dtype::s64: return cyxwiz::DataType::Int64;
-        case af::dtype::u8:  return cyxwiz::DataType::UInt8;
-        default: return cyxwiz::DataType::Float64;
-    }
-}
-
-static cyxwiz::Tensor AfArrayToTensorWithShape(const af::array& arr, const std::vector<size_t>& shape) {
-    cyxwiz::Tensor out(shape, AfTypeToTensorType(arr.type()));
-    if (out.NumBytes() > 0) {
-        af::array materialized = arr;
-        materialized.eval();
-        MaterializeArrayFireToHost(
-            materialized,
-            out.MutableData(),
-            ArrayFireHostSyncCategory::OutputMaterialization,
-            "LinearAlgebra::AfArrayToTensor",
-            "arrayfire_native");
-    }
-    return out;
-}
-
-static std::string BuildTensorContext(const char* tensor_name, const Tensor& tensor) {
-    return BuildTensorShapeContext(tensor_name, tensor.Shape());
-}
-
-static std::string BuildTensorContext(
-    const char* left_name,
-    const Tensor& left,
-    const char* right_name,
-    const Tensor& right)
-{
-    return BuildTensorContext(left_name, left) + "; " + BuildTensorContext(right_name, right);
-}
-
-static void LogLinearAlgebraTensorFallbackOnce(
-    const char* operation_name,
-    const char* error_message,
-    const std::string& tensor_context)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(tensor_context);
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        operation_name,
-        reason,
-        error_message,
-        context);
-    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        spdlog::warn("{}",
-            BuildArrayFireBackendFallbackMessage(
-                operation_name,
-                reason,
-                reason != BackendFallbackReason::CudaJitParamOverflow,
-                error_message,
-                context));
-    }
-}
-#endif
-
-static double TensorValueAsDouble(const Tensor& t, size_t idx) {
-    switch (t.GetDataType()) {
-        case DataType::Float64:
-            return static_cast<const double*>(t.ReadData())[idx];
-        case DataType::Float32:
-            return static_cast<double>(static_cast<const float*>(t.ReadData())[idx]);
-        case DataType::Int32:
-            return static_cast<double>(static_cast<const int32_t*>(t.ReadData())[idx]);
-        case DataType::Int64:
-            return static_cast<double>(static_cast<const int64_t*>(t.ReadData())[idx]);
-        case DataType::UInt8:
-            return static_cast<double>(static_cast<const uint8_t*>(t.ReadData())[idx]);
-        default:
-            return 0.0;
-    }
-}
-
-static std::vector<std::vector<double>> Tensor2DToMatrix(const Tensor& t) {
-    const auto& shape = t.Shape();
-    if (shape.size() != 2) {
-        return {};
-    }
-
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
-    std::vector<std::vector<double>> out(rows, std::vector<double>(cols));
-
-    if (rows == 0 || cols == 0) {
-        return out;
-    }
-
-    if (t.GetDataType() == DataType::Float64) {
-        const double* src = static_cast<const double*>(t.ReadData());
-        for (size_t r = 0; r < rows; ++r) {
-            std::memcpy(out[r].data(), src + r * cols, cols * sizeof(double));
-        }
-        return out;
-    }
-
-    for (size_t r = 0; r < rows; ++r) {
-        for (size_t c = 0; c < cols; ++c) {
-            out[r][c] = TensorValueAsDouble(t, r * cols + c);
-        }
-    }
-    return out;
-}
-
-static std::vector<std::vector<double>> TensorVectorOr2DToMatrix(const Tensor& t) {
-    const auto& shape = t.Shape();
-    if (shape.size() == 2) {
-        return Tensor2DToMatrix(t);
-    }
-    if (shape.size() == 1) {
-        const size_t n = shape[0];
-        std::vector<std::vector<double>> out(n, std::vector<double>(1));
-        for (size_t i = 0; i < n; ++i) {
-            out[i][0] = TensorValueAsDouble(t, i);
-        }
-        return out;
-    }
-    return {};
-}
-
-static Tensor MatrixToTensor(const std::vector<std::vector<double>>& mat, bool squeeze_single_col) {
-    if (mat.empty()) {
-        if (squeeze_single_col) {
-            return Tensor({0}, DataType::Float64);
-        }
-        return Tensor({0, 0}, DataType::Float64);
-    }
-
-    const size_t rows = mat.size();
-    const size_t cols = mat[0].size();
-
-    if (squeeze_single_col && cols == 1) {
-        Tensor out({rows}, DataType::Float64);
-        double* dst = static_cast<double*>(out.MutableData());
-        for (size_t r = 0; r < rows; ++r) {
-            dst[r] = mat[r][0];
-        }
-        return out;
-    }
-
-    Tensor out({rows, cols}, DataType::Float64);
-    double* dst = static_cast<double*>(out.MutableData());
-    for (size_t r = 0; r < rows; ++r) {
-        std::memcpy(dst + r * cols, mat[r].data(), cols * sizeof(double));
-    }
-    return out;
-}
-
 
 // ============================================================================
 // Tensor-First Operations
@@ -221,27 +60,13 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorMultiply",
-            e.what(),
-            BuildTensorContext("A", A, "B", B));
-    }
-#endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorMultiply");
-    auto A_mat = Tensor2DToMatrix(A);
-    auto B_mat = Tensor2DToMatrix(B);
-    auto cpu_result = Multiply(A_mat, B_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
+        result.error_message = std::string("LinearAlgebra::TensorMultiply failed on the ArrayFire device: ") + e.what();
         return result;
     }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
+#else
+    result.error_message = "LinearAlgebra::TensorMultiply runs on ArrayFire, and this build has no ArrayFire";
     return result;
+#endif
 }
 
 TensorResult LinearAlgebra::Transpose(const Tensor& A) {
@@ -253,42 +78,27 @@ TensorResult LinearAlgebra::Transpose(const Tensor& A) {
         return result;
     }
 
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
 
         af::array aT = af::transpose(aA);
         aT.eval();
-        result.tensor = AfArrayToTensorWithShape(aT, {cols, rows});
+        result.tensor = Tensor::FromArrayRowMajor2D(aT);
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorTranspose",
-            e.what(),
-            BuildTensorContext("A", A));
-    }
-#endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorTranspose");
-    auto A_mat = Tensor2DToMatrix(A);
-    auto cpu_result = Transpose(A_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
+        result.error_message = std::string("LinearAlgebra::TensorTranspose failed on the ArrayFire device: ") + e.what();
         return result;
     }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
+#else
+    result.error_message = "LinearAlgebra::TensorTranspose runs on ArrayFire, and this build has no ArrayFire";
     return result;
+#endif
 }
 
 TensorResult LinearAlgebra::Inverse(const Tensor& A) {
@@ -304,41 +114,27 @@ TensorResult LinearAlgebra::Inverse(const Tensor& A) {
         return result;
     }
 
-    const size_t n = shape[0];
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
 
         af::array aInv = af::inverse(aA);
         aInv.eval();
-        result.tensor = AfArrayToTensorWithShape(aInv, {n, n});
+        result.tensor = Tensor::FromArrayRowMajor2D(aInv);
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorInverse",
-            e.what(),
-            BuildTensorContext("A", A));
-    }
-#endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorInverse");
-    auto A_mat = Tensor2DToMatrix(A);
-    auto cpu_result = Inverse(A_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
+        result.error_message = std::string("LinearAlgebra::TensorInverse failed on the ArrayFire device: ") + e.what();
         return result;
     }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, false);
-    result.success = true;
+#else
+    result.error_message = "LinearAlgebra::TensorInverse runs on ArrayFire, and this build has no ArrayFire";
     return result;
+#endif
 }
 
 ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
@@ -352,7 +148,7 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
@@ -364,18 +160,13 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorFrobeniusNorm",
-            e.what(),
-            BuildTensorContext("A", A));
+        result.error_message = std::string("LinearAlgebra::TensorFrobeniusNorm failed on the ArrayFire device: ") + e.what();
+        return result;
     }
+#else
+    result.error_message = "LinearAlgebra::TensorFrobeniusNorm runs on ArrayFire, and this build has no ArrayFire";
+    return result;
 #endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorFrobeniusNorm");
-    auto A_mat = Tensor2DToMatrix(A);
-    return FrobeniusNorm(A_mat);
 }
 
 TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
@@ -400,7 +191,6 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
     const size_t n = shapeA[0];
     const bool b_was_vector = (shapeB.size() == 1);
     const size_t b_rows = b_was_vector ? shapeB[0] : shapeB[0];
-    const size_t b_cols = b_was_vector ? 1 : shapeB[1];
     if (b_rows != n) {
         result.error_message = "Dimensions mismatch: A rows must equal b rows";
         return result;
@@ -408,8 +198,8 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
-        af::array aB = b.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
+        af::array aB = b.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
@@ -425,34 +215,20 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
         if (b_was_vector) {
             af::array x_vec = af::moddims(x, static_cast<dim_t>(n));
             x_vec.eval();
-            result.tensor = AfArrayToTensorWithShape(x_vec, {n});
+            result.tensor = Tensor::FromSemanticArray(x_vec, {n});
         } else {
-            result.tensor = AfArrayToTensorWithShape(x, {n, b_cols});
+            result.tensor = Tensor::FromArrayRowMajor2D(x);
         }
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorSolve",
-            e.what(),
-            BuildTensorContext("A", A, "b", b));
-    }
-#endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorSolve");
-    auto A_mat = Tensor2DToMatrix(A);
-    auto b_mat = TensorVectorOr2DToMatrix(b);
-    auto cpu_result = Solve(A_mat, b_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
+        result.error_message = std::string("LinearAlgebra::TensorSolve failed on the ArrayFire device: ") + e.what();
         return result;
     }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, b_was_vector);
-    result.success = true;
+#else
+    result.error_message = "LinearAlgebra::TensorSolve runs on ArrayFire, and this build has no ArrayFire";
     return result;
+#endif
 }
 
 TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
@@ -474,7 +250,6 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
     const size_t colsA = shapeA[1];
     const bool b_was_vector = (shapeB.size() == 1);
     const size_t rowsB = b_was_vector ? shapeB[0] : shapeB[0];
-    const size_t colsB = b_was_vector ? 1 : shapeB[1];
     if (rowsA != rowsB) {
         result.error_message = "A and b must have same number of rows";
         return result;
@@ -482,8 +257,8 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array aA = A.GetArray();
-        af::array aB = b.GetArray();
+        af::array aA = A.GetArrayRowMajor2D();
+        af::array aB = b.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
             aA = aA.as(af::dtype::f64);
         }
@@ -499,34 +274,20 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
         if (b_was_vector) {
             af::array x_vec = af::moddims(x, static_cast<dim_t>(colsA));
             x_vec.eval();
-            result.tensor = AfArrayToTensorWithShape(x_vec, {colsA});
+            result.tensor = Tensor::FromSemanticArray(x_vec, {colsA});
         } else {
-            result.tensor = AfArrayToTensorWithShape(x, {colsA, colsB});
+            result.tensor = Tensor::FromArrayRowMajor2D(x);
         }
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        LogLinearAlgebraTensorFallbackOnce(
-            "LinearAlgebra::TensorLeastSquares",
-            e.what(),
-            BuildTensorContext("A", A, "b", b));
-    }
-#endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "LinearAlgebra::TensorLeastSquares");
-    auto A_mat = Tensor2DToMatrix(A);
-    auto b_mat = TensorVectorOr2DToMatrix(b);
-    auto cpu_result = LeastSquares(A_mat, b_mat);
-    if (!cpu_result.success) {
-        result.error_message = cpu_result.error_message;
+        result.error_message = std::string("LinearAlgebra::TensorLeastSquares failed on the ArrayFire device: ") + e.what();
         return result;
     }
-
-    result.tensor = MatrixToTensor(cpu_result.matrix, b_was_vector);
-    result.success = true;
+#else
+    result.error_message = "LinearAlgebra::TensorLeastSquares runs on ArrayFire, and this build has no ArrayFire";
     return result;
+#endif
 }
 
 

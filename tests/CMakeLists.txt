@@ -19,6 +19,7 @@ add_executable(cyxwiz-tests
     unit/test_tensor_broadcast_contract.cpp
     unit/test_tensor_factory_contract.cpp
     unit/test_tensor_linalg_contract.cpp
+    unit/test_linear_algebra_tensor.cpp
     unit/test_engine.cpp
     unit/test_c_api.cpp
     unit/test_activations.cpp
