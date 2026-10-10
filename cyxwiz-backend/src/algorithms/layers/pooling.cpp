@@ -95,11 +95,17 @@ Pool2DGeometry ValidatePoolBackwardInput(const Tensor& cached_input,
     return geometry;
 }
 
+#ifndef CYXWIZ_HAS_ARRAYFIRE
+[[noreturn]] void ThrowPoolingNeedsArrayFire(const char* layer) {
+    throw std::runtime_error(std::string(layer) + " runs on ArrayFire, and this build has no ArrayFire");
+}
+#endif
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+
 // torch's adaptive pooling bins: [floor(i*in/out), ceil((i+1)*in/out)).
 size_t AdaptiveBinStart(size_t i, size_t in, size_t out) { return (i * in) / out; }
 size_t AdaptiveBinEnd(size_t i, size_t in, size_t out) { return ((i + 1) * in + out - 1) / out; }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // The [out, in] matrix whose row i averages bin i: Y = P_h X P_w^T.
 af::array AdaptiveAverageMatrix(size_t in, size_t out) {
@@ -111,6 +117,13 @@ af::array AdaptiveAverageMatrix(size_t in, size_t out) {
         for (size_t j = start; j < end; ++j) values[i + out * j] = weight;  // column-major
     }
     return af::array(static_cast<dim_t>(out), static_cast<dim_t>(in), values.data());
+}
+
+// Global Max Pool and Adaptive Average Pool run on the device only (one
+// ArrayFire path; ArrayFire's CPU backend is the CPU): an ArrayFire error is
+// reported, not hidden behind a host loop.
+[[noreturn]] void ThrowPoolingDeviceError(const char* operation, const af::exception& error) {
+    throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
 
 void LogPoolingFallbackOnce(
@@ -818,72 +831,29 @@ Tensor GlobalMaxPool2DLayer::Forward(const Tensor& input) {
     const size_t in_w = shape[1];
     const size_t channels = shape[2];
     const size_t batch_size = shape[3];
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    bool use_native_cpu = false;
-    if (ShouldForceArrayFireBackendFallbackForTesting(
-            "GlobalMaxPool2DLayer::Forward")) {
-        LogPoolingFallbackOnce(
-            "GlobalMaxPool2DLayer::Forward",
-            "forced ArrayFire backend fallback test hook",
-            input,
-            "input");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const af::array positions = af::moddims(
-                TensorToAf(input),
-                af::dim4(static_cast<dim_t>(in_h * in_w),
-                         static_cast<dim_t>(channels),
-                         static_cast<dim_t>(batch_size)));
-            af::array output = af::moddims(
-                af::max(positions, 0),
-                af::dim4(static_cast<dim_t>(channels),
-                         static_cast<dim_t>(batch_size)));
-            output.eval();
-            Tensor result = Tensor::FromSemanticArray(
-                output, {channels, batch_size});
-            cached_input_ = input;
-            has_forward_ = true;
-            return result;
-        } catch (const af::exception& e) {
-            LogPoolingFallbackOnce(
-                "GlobalMaxPool2DLayer::Forward", e.what(), input, "input");
-        }
+    try {
+        const af::array positions = af::moddims(
+            TensorToAf(input),
+            af::dim4(static_cast<dim_t>(in_h * in_w),
+                     static_cast<dim_t>(channels),
+                     static_cast<dim_t>(batch_size)));
+        af::array output = af::moddims(
+            af::max(positions, 0),
+            af::dim4(static_cast<dim_t>(channels),
+                     static_cast<dim_t>(batch_size)));
+        output.eval();
+        Tensor result = Tensor::FromSemanticArray(output, {channels, batch_size});
+        cached_input_ = input;
+        has_forward_ = true;
+        return result;
+    } catch (const af::exception& e) {
+        ThrowPoolingDeviceError("GlobalMaxPool2DLayer::Forward", e);
     }
 #else
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("input", shape));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "GlobalMaxPool2DLayer::Forward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        context);
+    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
+    ThrowPoolingNeedsArrayFire("Global Max Pool");
 #endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "GlobalMaxPool2DLayer::Forward");
-
-    Tensor output({channels, batch_size}, DataType::Float32);
-    const float* input_data = input.ReadData<float>();
-    float* output_data = output.MutableData<float>();
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < channels; ++c) {
-            float best = -std::numeric_limits<float>::infinity();
-            for (size_t h = 0; h < in_h; ++h) {
-                for (size_t w = 0; w < in_w; ++w) {
-                    best = std::max(best, input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)]);
-                }
-            }
-            output_data[c * batch_size + b] = best;
-        }
-    }
-
-    cached_input_ = input;
-    has_forward_ = true;
-    return output;
 }
 
 Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
@@ -904,78 +874,34 @@ Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{channels, batch_size}) {
         throw std::runtime_error("GlobalMaxPool2D backward gradient shape mismatch");
     }
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    bool use_native_cpu = false;
-    if (ShouldForceArrayFireBackendFallbackForTesting(
-            "GlobalMaxPool2DLayer::Backward")) {
-        LogPoolingFallbackOnce(
-            "GlobalMaxPool2DLayer::Backward",
-            "forced ArrayFire backend fallback test hook",
-            grad_output,
-            "grad_output");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const dim_t count = static_cast<dim_t>(in_h * in_w);
-            const dim_t c_dim = static_cast<dim_t>(channels);
-            const dim_t n_dim = static_cast<dim_t>(batch_size);
-            const af::array positions = af::moddims(
-                TensorToAf(cached_input_), af::dim4(count, c_dim, n_dim));
-            af::array maxima;
-            af::array argmax;
-            af::max(maxima, argmax, positions, 0);  // the first maximum, as torch
-            // One-hot over the H*W positions at each channel's argmax.
-            const af::array iota = af::iota(af::dim4(count), af::dim4(1, c_dim, n_dim), u32);
-            const af::array mask =
-                (iota == af::tile(argmax, static_cast<unsigned>(count))).as(f32);
-            const af::array grad = af::moddims(
-                TensorToAf(grad_output), af::dim4(1, c_dim, n_dim));
-            af::array grad_input = af::moddims(
-                mask * af::tile(grad, static_cast<unsigned>(count)),
-                af::dim4(static_cast<dim_t>(in_h), static_cast<dim_t>(in_w), c_dim, n_dim));
-            grad_input.eval();
-            return Tensor::FromSemanticArray(grad_input, cached_input_.Shape());
-        } catch (const af::exception& e) {
-            LogPoolingFallbackOnce(
-                "GlobalMaxPool2DLayer::Backward", e.what(), grad_output,
-                "grad_output");
-        }
+    try {
+        const dim_t count = static_cast<dim_t>(in_h * in_w);
+        const dim_t c_dim = static_cast<dim_t>(channels);
+        const dim_t n_dim = static_cast<dim_t>(batch_size);
+        const af::array positions = af::moddims(
+            TensorToAf(cached_input_), af::dim4(count, c_dim, n_dim));
+        af::array maxima;
+        af::array argmax;
+        af::max(maxima, argmax, positions, 0);  // the first maximum, as torch
+        // One-hot over the H*W positions at each channel's argmax.
+        const af::array iota = af::iota(af::dim4(count), af::dim4(1, c_dim, n_dim), u32);
+        const af::array mask =
+            (iota == af::tile(argmax, static_cast<unsigned>(count))).as(f32);
+        const af::array grad = af::moddims(
+            TensorToAf(grad_output), af::dim4(1, c_dim, n_dim));
+        af::array grad_input = af::moddims(
+            mask * af::tile(grad, static_cast<unsigned>(count)),
+            af::dim4(static_cast<dim_t>(in_h), static_cast<dim_t>(in_w), c_dim, n_dim));
+        grad_input.eval();
+        return Tensor::FromSemanticArray(grad_input, cached_input_.Shape());
+    } catch (const af::exception& e) {
+        ThrowPoolingDeviceError("GlobalMaxPool2DLayer::Backward", e);
     }
 #else
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("grad_output", grad_output.Shape()));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "GlobalMaxPool2DLayer::Backward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        context);
+    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
+    ThrowPoolingNeedsArrayFire("Global Max Pool");
 #endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "GlobalMaxPool2DLayer::Backward");
-
-    Tensor grad_input(input_shape, DataType::Float32);
-    const float* input_data = cached_input_.ReadData<float>();
-    const float* grad_data = grad_output.ReadData<float>();
-    float* grad_input_data = grad_input.MutableData<float>();
-    std::fill(grad_input_data, grad_input_data + grad_input.NumElements(), 0.0f);
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t c = 0; c < channels; ++c) {
-            // The first maximum in torch's order: h, then w.
-            size_t best_index = Pool4DIndex(0, 0, c, b, in_w, channels, batch_size);
-            for (size_t h = 0; h < in_h; ++h) {
-                for (size_t w = 0; w < in_w; ++w) {
-                    const size_t index = Pool4DIndex(h, w, c, b, in_w, channels, batch_size);
-                    if (input_data[index] > input_data[best_index]) best_index = index;
-                }
-            }
-            grad_input_data[best_index] = grad_data[c * batch_size + b];
-        }
-    }
-    return grad_input;
 }
 
 // ============================================================================
@@ -1000,75 +926,26 @@ Tensor AdaptiveAvgPool2DLayer::Forward(const Tensor& input) {
     const size_t out_h = static_cast<size_t>(out_h_);
     const size_t out_w = static_cast<size_t>(out_w_);
     const std::vector<size_t> output_shape{out_h, out_w, channels, batch_size};
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    bool use_native_cpu = false;
-    if (ShouldForceArrayFireBackendFallbackForTesting(
-            "AdaptiveAvgPool2DLayer::Forward")) {
-        LogPoolingFallbackOnce(
-            "AdaptiveAvgPool2DLayer::Forward",
-            "forced ArrayFire backend fallback test hook",
-            input,
-            "input");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const unsigned c = static_cast<unsigned>(channels);
-            const unsigned n = static_cast<unsigned>(batch_size);
-            const af::array rows = af::tile(AdaptiveAverageMatrix(in_h, out_h), 1, 1, c, n);
-            const af::array cols_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_w, out_w)), 1, 1, c, n);
-            af::array output = af::matmul(af::matmul(rows, TensorToAf(input)), cols_t);
-            output.eval();
-            Tensor result = Tensor::FromSemanticArray(output, output_shape);
-            cached_input_ = input;
-            has_forward_ = true;
-            return result;
-        } catch (const af::exception& e) {
-            LogPoolingFallbackOnce(
-                "AdaptiveAvgPool2DLayer::Forward", e.what(), input, "input");
-        }
+    try {
+        // Y = P_h X P_w^T, the bin-averaging matrices batched over C and N.
+        const unsigned c = static_cast<unsigned>(channels);
+        const unsigned n = static_cast<unsigned>(batch_size);
+        const af::array rows = af::tile(AdaptiveAverageMatrix(in_h, out_h), 1, 1, c, n);
+        const af::array cols_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_w, out_w)), 1, 1, c, n);
+        af::array output = af::matmul(af::matmul(rows, TensorToAf(input)), cols_t);
+        output.eval();
+        Tensor result = Tensor::FromSemanticArray(output, output_shape);
+        cached_input_ = input;
+        has_forward_ = true;
+        return result;
+    } catch (const af::exception& e) {
+        ThrowPoolingDeviceError("AdaptiveAvgPool2DLayer::Forward", e);
     }
 #else
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("input", shape));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "AdaptiveAvgPool2DLayer::Forward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        context);
+    (void)in_h; (void)in_w; (void)channels; (void)batch_size; (void)output_shape;
+    ThrowPoolingNeedsArrayFire("Adaptive Average Pool");
 #endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "AdaptiveAvgPool2DLayer::Forward");
-
-    Tensor output(output_shape, DataType::Float32);
-    const float* input_data = input.ReadData<float>();
-    float* output_data = output.MutableData<float>();
-    for (size_t oh = 0; oh < out_h; ++oh) {
-        const size_t h0 = AdaptiveBinStart(oh, in_h, out_h);
-        const size_t h1 = AdaptiveBinEnd(oh, in_h, out_h);
-        for (size_t ow = 0; ow < out_w; ++ow) {
-            const size_t w0 = AdaptiveBinStart(ow, in_w, out_w);
-            const size_t w1 = AdaptiveBinEnd(ow, in_w, out_w);
-            const float scale = 1.0f / static_cast<float>((h1 - h0) * (w1 - w0));
-            for (size_t c = 0; c < channels; ++c) {
-                for (size_t b = 0; b < batch_size; ++b) {
-                    float sum = 0.0f;
-                    for (size_t h = h0; h < h1; ++h) {
-                        for (size_t w = w0; w < w1; ++w) {
-                            sum += input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)];
-                        }
-                    }
-                    output_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] = sum * scale;
-                }
-            }
-        }
-    }
-    cached_input_ = input;
-    has_forward_ = true;
-    return output;
 }
 
 Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
@@ -1091,72 +968,23 @@ Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, channels, batch_size}) {
         throw std::runtime_error("AdaptiveAvgPool2D backward gradient shape mismatch");
     }
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    bool use_native_cpu = false;
-    if (ShouldForceArrayFireBackendFallbackForTesting(
-            "AdaptiveAvgPool2DLayer::Backward")) {
-        LogPoolingFallbackOnce(
-            "AdaptiveAvgPool2DLayer::Backward",
-            "forced ArrayFire backend fallback test hook",
-            grad_output,
-            "grad_output");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const unsigned c = static_cast<unsigned>(channels);
-            const unsigned n = static_cast<unsigned>(batch_size);
-            // dX = P_h^T dY P_w
-            const af::array rows_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_h, out_h)), 1, 1, c, n);
-            const af::array cols = af::tile(AdaptiveAverageMatrix(in_w, out_w), 1, 1, c, n);
-            af::array grad_input = af::matmul(af::matmul(rows_t, TensorToAf(grad_output)), cols);
-            grad_input.eval();
-            return Tensor::FromSemanticArray(grad_input, input_shape);
-        } catch (const af::exception& e) {
-            LogPoolingFallbackOnce(
-                "AdaptiveAvgPool2DLayer::Backward", e.what(), grad_output,
-                "grad_output");
-        }
+    try {
+        // dX = P_h^T dY P_w
+        const unsigned c = static_cast<unsigned>(channels);
+        const unsigned n = static_cast<unsigned>(batch_size);
+        const af::array rows_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_h, out_h)), 1, 1, c, n);
+        const af::array cols = af::tile(AdaptiveAverageMatrix(in_w, out_w), 1, 1, c, n);
+        af::array grad_input = af::matmul(af::matmul(rows_t, TensorToAf(grad_output)), cols);
+        grad_input.eval();
+        return Tensor::FromSemanticArray(grad_input, input_shape);
+    } catch (const af::exception& e) {
+        ThrowPoolingDeviceError("AdaptiveAvgPool2DLayer::Backward", e);
     }
 #else
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("grad_output", grad_output.Shape()));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "AdaptiveAvgPool2DLayer::Backward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        context);
+    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
+    ThrowPoolingNeedsArrayFire("Adaptive Average Pool");
 #endif
-
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "AdaptiveAvgPool2DLayer::Backward");
-
-    Tensor grad_input(input_shape, DataType::Float32);
-    const float* grad_data = grad_output.ReadData<float>();
-    float* grad_input_data = grad_input.MutableData<float>();
-    std::fill(grad_input_data, grad_input_data + grad_input.NumElements(), 0.0f);
-    for (size_t oh = 0; oh < out_h; ++oh) {
-        const size_t h0 = AdaptiveBinStart(oh, in_h, out_h);
-        const size_t h1 = AdaptiveBinEnd(oh, in_h, out_h);
-        for (size_t ow = 0; ow < out_w; ++ow) {
-            const size_t w0 = AdaptiveBinStart(ow, in_w, out_w);
-            const size_t w1 = AdaptiveBinEnd(ow, in_w, out_w);
-            const float scale = 1.0f / static_cast<float>((h1 - h0) * (w1 - w0));
-            for (size_t c = 0; c < channels; ++c) {
-                for (size_t b = 0; b < batch_size; ++b) {
-                    const float g = grad_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] * scale;
-                    for (size_t h = h0; h < h1; ++h) {
-                        for (size_t w = w0; w < w1; ++w) {
-                            grad_input_data[Pool4DIndex(h, w, c, b, in_w, channels, batch_size)] += g;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return grad_input;
 }
 
 } // namespace cyxwiz

@@ -268,7 +268,9 @@ def build() -> list[dict[str, Any]]:
     # Depthwise Conv2d: groups = C, weights [C*M, 1, k, k] -> backend [k, k, 1, C*M]
     for name, c, m, k, s, p, size in [("depthwise_same_k3", 4, 1, 3, 1, 1, 8),
                                       ("depthwise_m2_k3_s2", 3, 2, 3, 2, 0, 9),
-                                      ("depthwise_image_32", 16, 1, 3, 1, 1, 32)]:
+                                      ("depthwise_image_32", 16, 1, 3, 1, 1, 32),
+                                      # padding >= kernel (torch allows it; ArrayFire's unwrap does not)
+                                      ("depthwise_pad_over_k2", 2, 2, 2, 1, 3, 6)]:
         x = torch.randn(2, c, size, size)
         w = torch.randn(c * m, 1, k, k) * 0.4
         b = torch.randn(c * m) * 0.1

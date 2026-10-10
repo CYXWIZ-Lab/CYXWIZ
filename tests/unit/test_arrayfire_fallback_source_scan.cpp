@@ -178,6 +178,12 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     if (WindowContains(lines, catch_index, "GPU check failed", 8)) {
         return true;
     }
+    // Device-only layers (one ArrayFire path, no host loop): the handler
+    // reports the error through a Throw...DeviceError helper instead of
+    // falling back (Conv3D, Depthwise Conv2D, Global Max / Adaptive Avg Pool).
+    if (WindowContains(lines, catch_index, "DeviceError(", 3)) {
+        return true;
+    }
     if (relative_path == "cyxwiz-backend/src/algorithms/optimizers/optimizer_utils.cpp" &&
         WindowContains(lines, catch_index, "s_use_gpu = false", 8)) {
         return true;

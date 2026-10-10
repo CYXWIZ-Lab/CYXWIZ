@@ -323,7 +323,8 @@ private:
  * torch's weight.flatten(1); `bias` is [F]. ArrayFire path: the column
  * matrix is one sparse gather (built once for the sample shape) times the
  * input, the convolution one matmul; backward is the transposed gather, so
- * nothing leaves the device. Native loops when ArrayFire is unavailable.
+ * nothing leaves the device. There is no second CPU implementation: the CPU
+ * is ArrayFire's CPU backend, and a build without ArrayFire refuses Conv3D.
  */
 class CYXWIZ_API Conv3DModule : public Module {
 public:
@@ -343,8 +344,6 @@ public:
 
 private:
     struct DeviceGather;
-    Tensor ForwardNative(const Tensor& input);
-    Tensor BackwardNative(const Tensor& grad_output);
 
     size_t depth_, height_, width_, in_channels_, filters_;
     int kernel_size_, stride_, padding_;
@@ -352,9 +351,6 @@ private:
     size_t out_depth_ = 0, out_height_ = 0, out_width_ = 0;
     size_t column_size_ = 0;  // C*k^3: one patch
     size_t patches_ = 0;      // D'*H'*W'
-    // For patch p and column k, the input element at gather_[p * column_size_ + k]
-    // (channel-major index within a sample), or -1 in the zero padding.
-    std::vector<long long> gather_;
     std::shared_ptr<DeviceGather> device_;
     Tensor weight_, bias_, grad_weight_, grad_bias_;
     Tensor input_;
