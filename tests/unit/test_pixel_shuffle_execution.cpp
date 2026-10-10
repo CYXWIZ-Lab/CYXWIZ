@@ -138,62 +138,6 @@ TEST_CASE("PixelShuffle composes with trainable modules and checkpoint state",
   REQUIRE_FALSE(error);
 }
 
-#ifndef NDEBUG
-TEST_CASE(
-    "PixelShuffle observed fallback honors strict and compatibility policies",
-    "[pixelshuffle][fallback]") {
-  BackendLane lane;
-  for (const bool inverse : {false, true}) {
-    for (const bool strict : {false, true}) {
-      CAPTURE(inverse, strict);
-      const char *operation = inverse ? "PixelShuffleLayer::Backward"
-                                      : "PixelShuffleLayer::Forward";
-      std::vector<float> values(48);
-      for (size_t i = 0; i < values.size(); ++i)
-        values[i] = static_cast<float>(i) - 20.0f;
-      const auto low = DeviceOnlyTensor({2, 3, 4, 2}, values);
-      PixelShuffleLayer layer(2);
-      const auto high = layer.Forward(low);
-      const auto expected = inverse ? low : high;
-      // Fresh input wrappers ensure compatibility readback remains observable.
-      const auto input = Tensor::FromSemanticArray(
-          inverse ? high.GetSemanticArray() : low.GetSemanticArray(),
-          inverse ? high.Shape() : low.Shape());
-      Tensor result;
-      ResetConvObservations();
-      {
-        ScopedEnvVar hook("CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK", operation);
-        ScopedArrayFireFallbackPolicy policy(
-            strict ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-                   : ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
-        ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        const auto run = [&] {
-          return inverse ? layer.Backward(input) : layer.Forward(input);
-        };
-        if (strict)
-          CHECK_THROWS_AS(run(), std::runtime_error);
-        else
-          result = run();
-      }
-      CHECK(conv_fallback_count == 1);
-      CHECK(last_conv_fallback.operation_name == operation);
-      CHECK(last_conv_fallback.fallback_forbidden == strict);
-      if (strict) {
-        CHECK(conv_host_sync_count == 0);
-        CHECK(conv_host_sync_bytes == 0);
-      } else {
-        CHECK(conv_host_sync_count == 1);
-        CHECK(conv_host_sync_bytes == 48 * sizeof(float));
-        CHECK(saw_conv_cpu_path);
-        const float *data = expected.ReadData<float>();
-        CheckValues(result, expected.Shape(),
-                    {data, data + expected.NumElements()});
-      }
-    }
-  }
-}
-#endif
 
 TEST_CASE("PixelShuffle fixed device-input baseline",
           "[.][pixelshuffle][benchmark]") {

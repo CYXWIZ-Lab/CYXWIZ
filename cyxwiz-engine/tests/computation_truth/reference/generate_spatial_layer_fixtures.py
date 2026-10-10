@@ -230,6 +230,20 @@ def build() -> list[dict[str, Any]]:
     cases.append(case(
         "pixel_shuffle_r2", "PixelShuffle", {"upscale_factor": 2},
         x, lambda t: functional.pixel_shuffle(t, 2), {}, {}))
+    # Image-sized decoder steps (reorder-heavy paths; CUDA kernels can fail at size)
+    x = torch.randn(2, 16, 16, 16)
+    cases.append(case(
+        "pixel_shuffle_image_16_r2", "PixelShuffle", {"upscale_factor": 2},
+        x, lambda t: functional.pixel_shuffle(t, 2), {}, {}))
+    x = torch.randn(2, 8, 16, 16)
+    cases.append(case(
+        "upsample_bilinear_image_16_x2", "Upsample", {"scale_factor": 2, "mode": 1},
+        x, lambda t: functional.interpolate(t, scale_factor=2, mode="bilinear", align_corners=False),
+        {}, {}))
+    x = torch.randn(2, 8, 16, 16)
+    cases.append(case(
+        "upsample_nearest_image_16_x3", "Upsample", {"scale_factor": 3, "mode": 0},
+        x, lambda t: functional.interpolate(t, scale_factor=3, mode="nearest"), {}, {}))
 
     # Global average pooling ends the spatial section: [N,C,H,W] -> [N,C] rows
     # (TOFIX140 A4b), torch adaptive_avg_pool2d(x, 1).flatten(1)

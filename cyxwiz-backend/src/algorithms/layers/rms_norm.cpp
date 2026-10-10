@@ -3,10 +3,11 @@
 // Backward (g = dy * gamma):
 //   dx     = inv_rms * (g - n * mean(g * n))
 //   dgamma = sum over rows of dy * n
+// On the ArrayFire device only: a device error is reported, not hidden behind
+// host loops; a build without ArrayFire refuses the layer.
 #include "cyxwiz/layers/normalization.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
-#include "../arrayfire_backend_utils.h"
 
 #include <cmath>
 #include <limits>
@@ -52,44 +53,16 @@ Tensor RMSNormLayer::Forward(const Tensor& input) {
     }
     const size_t rows = input.NumElements() / normalized_size_;
 
-    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire is not compiled into this backend";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ForwardArrayFire(input, rows);
     } catch (const af::exception& e) {
-        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        fallback_detail = e.what();
+        throw std::runtime_error(std::string("RMSNormLayer::Forward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    (void)rows;
+    throw std::runtime_error("RMSNorm runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "RMSNormLayer::Forward", fallback_reason, fallback_detail.c_str(),
-        BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", input.Shape())));
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "RMSNormLayer::Forward");
-
-    cached_input_ = input;
-    Tensor output(shape, DataType::Float32);
-    normalized_ = Tensor(shape, DataType::Float32);
-    inv_rms_ = Tensor({rows}, DataType::Float32);
-    const float* x = input.ReadData<float>();
-    const float* gamma = elementwise_affine_ ? gamma_.ReadData<float>() : nullptr;
-    float* y = output.MutableData<float>();
-    float* n = normalized_.MutableData<float>();
-    float* inv = inv_rms_.MutableData<float>();
-    const size_t d = normalized_size_;
-    for (size_t row = 0; row < rows; ++row) {
-        const size_t offset = row * d;
-        double mean_square = 0.0;
-        for (size_t i = 0; i < d; ++i) mean_square += static_cast<double>(x[offset + i]) * x[offset + i];
-        mean_square /= static_cast<double>(d);
-        inv[row] = static_cast<float>(1.0 / std::sqrt(mean_square + eps_));
-        for (size_t i = 0; i < d; ++i) {
-            n[offset + i] = x[offset + i] * inv[row];
-            y[offset + i] = elementwise_affine_ ? n[offset + i] * gamma[i] : n[offset + i];
-        }
-    }
-    return output;
 }
 
 Tensor RMSNormLayer::Backward(const Tensor& grad_output) {
@@ -102,49 +75,16 @@ Tensor RMSNormLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("RMSNorm backward cache shape mismatch");
     }
 
-    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire is not compiled into this backend";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BackwardArrayFire(grad_output, rows);
     } catch (const af::exception& e) {
-        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        fallback_detail = e.what();
+        throw std::runtime_error(std::string("RMSNormLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    (void)rows;
+    throw std::runtime_error("RMSNorm runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "RMSNormLayer::Backward", fallback_reason, fallback_detail.c_str(),
-        BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", grad_output.Shape())));
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "RMSNormLayer::Backward");
-
-    const size_t d = normalized_size_;
-    Tensor grad_input(grad_output.Shape(), DataType::Float32);
-    const float* dy = grad_output.ReadData<float>();
-    const float* n = normalized_.ReadData<float>();
-    const float* inv = inv_rms_.ReadData<float>();
-    const float* gamma = elementwise_affine_ ? gamma_.ReadData<float>() : nullptr;
-    float* dx = grad_input.MutableData<float>();
-    float* dgamma = nullptr;
-    if (elementwise_affine_) {
-        grad_gamma_ = Tensor::Zeros({d});
-        dgamma = grad_gamma_.MutableData<float>();
-    }
-    for (size_t row = 0; row < rows; ++row) {
-        const size_t offset = row * d;
-        double mean_gn = 0.0;
-        for (size_t i = 0; i < d; ++i) {
-            const float g = elementwise_affine_ ? dy[offset + i] * gamma[i] : dy[offset + i];
-            mean_gn += static_cast<double>(g) * n[offset + i];
-            if (dgamma) dgamma[i] += dy[offset + i] * n[offset + i];
-        }
-        mean_gn /= static_cast<double>(d);
-        for (size_t i = 0; i < d; ++i) {
-            const float g = elementwise_affine_ ? dy[offset + i] * gamma[i] : dy[offset + i];
-            dx[offset + i] = inv[row] * (g - n[offset + i] * static_cast<float>(mean_gn));
-        }
-    }
-    return grad_input;
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

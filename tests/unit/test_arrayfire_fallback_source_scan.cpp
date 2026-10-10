@@ -179,9 +179,10 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
         return true;
     }
     // Device-only layers (one ArrayFire path, no host loop): the handler
-    // reports the error through a Throw...DeviceError helper instead of
-    // falling back (Conv3D, Depthwise Conv2D, Global Max / Adaptive Avg Pool).
-    if (WindowContains(lines, catch_index, "DeviceError(", 3)) {
+    // reports the error ("... failed on the ArrayFire device: ...", directly
+    // or through a Throw...DeviceError helper) instead of falling back.
+    if (WindowContains(lines, catch_index, "DeviceError(", 3) ||
+        WindowContains(lines, catch_index, "failed on the ArrayFire device", 4)) {
         return true;
     }
     if (relative_path == "cyxwiz-backend/src/algorithms/optimizers/optimizer_utils.cpp" &&

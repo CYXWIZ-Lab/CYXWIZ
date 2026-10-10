@@ -1,4 +1,3 @@
-#include "../arrayfire_backend_utils.h"
 #include "cyxwiz/layers/upsampling.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
@@ -62,45 +61,12 @@ Geometry Validate(const Tensor &input, int factor, bool inverse) {
   return g;
 }
 
-// One native permutation owns both directions. It is reached only after the
-// shared policy has recorded/allowed fallback, including reduced native builds.
-Tensor Native(const Tensor &input, const Geometry &g, bool inverse,
-              const char *operation) {
-  const ScopedArrayFireHostSyncAttribution attribution(
-      ArrayFireHostSyncCategory::LayerCpuPath, operation);
-  Tensor result(inverse ? g.low : g.high, DataType::Float32);
-  const float *source = input.ReadData<float>();
-  float *target = result.MutableData<float>();
-  for (size_t h = 0; h < g.high[0]; ++h) {
-    for (size_t w = 0; w < g.high[1]; ++w) {
-      for (size_t c = 0; c < g.high[2]; ++c) {
-        const size_t ic = c * g.area + (h % g.factor) * g.factor + w % g.factor;
-        for (size_t n = 0; n < g.high[3]; ++n) {
-          const size_t low = Pool4DIndex(h / g.factor, w / g.factor, ic, n,
-                                         g.low[1], g.low[2], g.low[3]);
-          const size_t high =
-              Pool4DIndex(h, w, c, n, g.high[1], g.high[2], g.high[3]);
-          if (inverse)
-            target[low] = source[high];
-          else
-            target[high] = source[low];
-        }
-      }
-    }
-  }
-  return result;
-}
-
 Tensor Execute(const Tensor &input, int factor, bool inverse) {
   const Geometry g = Validate(input, factor, inverse);
   const char *operation =
       inverse ? "PixelShuffleLayer::Backward" : "PixelShuffleLayer::Forward";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-  if (ShouldForceArrayFireBackendFallbackForTesting(operation)) {
-    RecordLayerArrayFireFallback(operation,
-                                 "forced ArrayFire backend fallback test hook",
-                                 input, "tensor");
-  } else {
+  {
     try {
       const auto h = static_cast<dim_t>(g.low[0]);
       const auto w = static_cast<dim_t>(g.low[1]);
@@ -127,22 +93,16 @@ Tensor Execute(const Tensor &input, int factor, bool inverse) {
       values.eval();
       return Tensor::FromSemanticArray(values, shape);
     } catch (const af::exception &error) {
-      if (inverse) {
-        // Backward's Execute input is the gradient, whose shape cannot form
-        // the input-keyed observation; the forward pass records the key.
-        RecordLayerArrayFireFallback(operation, error.what(), input, "tensor");
-      } else {
-        RecordLayerArrayFireFallbackObservation(
-            operation, "PixelShuffle", error.what(), input, "tensor");
-      }
+      throw std::runtime_error(std::string(operation) +
+                               " failed on the ArrayFire device: " + error.what());
     }
   }
 #else
-  RecordLayerArrayFireFallback(
-      operation, BackendFallbackReason::BackendUnavailable,
-      "ArrayFire support is not compiled", input, "tensor");
+  (void)g;
+  (void)operation;
+  throw std::runtime_error(
+      "PixelShuffle runs on ArrayFire, and this build has no ArrayFire");
 #endif
-  return Native(input, g, inverse, operation);
 }
 } // namespace
 
