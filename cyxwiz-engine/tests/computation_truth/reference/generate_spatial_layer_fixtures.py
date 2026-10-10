@@ -150,6 +150,16 @@ def build() -> list[dict[str, Any]]:
         "avgpool2d_2_2", "AvgPool2D", {"pool_size": 2, "stride": 2, "padding": 0},
         x, lambda t: functional.avg_pool2d(t, kernel_size=2, stride=2), {}, {}))
 
+    # Image-sized, padded, overlapping pools (CUDA kernels can fail where small ones pass)
+    x = torch.randn(2, 16, 32, 32)
+    cases.append(case(
+        "maxpool2d_image_32_k3_p1", "MaxPool2D", {"pool_size": 3, "stride": 2, "padding": 1},
+        x, lambda t: functional.max_pool2d(t, kernel_size=3, stride=2, padding=1), {}, {}))
+    x = torch.randn(2, 8, 32, 32)
+    cases.append(case(
+        "avgpool2d_image_32_k3_p1", "AvgPool2D", {"pool_size": 3, "stride": 2, "padding": 1},
+        x, lambda t: functional.avg_pool2d(t, kernel_size=3, stride=2, padding=1), {}, {}))
+
     # ConvTranspose2d k3 s2 p1 op1: 4x4 -> 8x8
     x = torch.randn(2, 3, 4, 4)
     w = torch.randn(3, 2, 3, 3) * 0.3  # [Cin, Cout, kh, kw]
