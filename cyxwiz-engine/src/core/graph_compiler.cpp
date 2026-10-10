@@ -7035,12 +7035,20 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
                 ExtractImageBatchMix(node, method, config);
                 return;
             }
+            if (method == "randaugment") {
+                op.kind = ImageOpKind::RandAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                    ParseIntParam(p, "num_ops", 2, op.num_ops, error)) {
+                    ParseIntParam(p, "magnitude", 9, op.magnitude, error);
+                }
+                break;
+            }
             if (method == "cutout") {
                 op.erase_method = cyxwiz::image::EraseMethod::Cutout;
             } else if (method == "random_erasing") {
                 op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
             } else {
-                error = "method must be cutout, random_erasing, mixup or cutmix";
+                error = "method must be cutout, random_erasing, mixup, cutmix or randaugment";
             }
             if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
                 ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&

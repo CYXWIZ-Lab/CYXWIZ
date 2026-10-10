@@ -29,7 +29,22 @@ enum class ImageOpKind {
     Grayscale,
     Morphology,
     Erase,
+    RandAugment,
 };
+
+// torchvision.transforms.v2.RandAugment's 14 ops, in its order; each image
+// takes num_ops of them at random, signed ones with a random sign.
+enum class RandAugmentOp {
+    Identity, ShearX, ShearY, TranslateX, TranslateY, Rotate, Brightness, Color,
+    Contrast, Sharpness, Posterize, Solarize, AutoContrast, Equalize,
+};
+constexpr int kRandAugmentOps = 14;
+constexpr int kRandAugmentBins = 31;
+
+// The magnitude torchvision uses for op at bin `magnitude` (0..30), unsigned,
+// on an image of this height and width.
+CYXWIZ_API float RandAugmentMagnitude(RandAugmentOp op, int magnitude, size_t height, size_t width);
+CYXWIZ_API bool RandAugmentSigned(RandAugmentOp op);
 
 enum class Interpolation { Nearest, Bilinear };
 
@@ -72,6 +87,8 @@ struct ImageOp {
     float ratio_min = 0.3f;       // random erasing: aspect ratio (h / w) range
     float ratio_max = 3.3f;
     float value = 0.0f;           // erased pixel value in [0, 1]
+    int num_ops = 2;              // randaugment: ops per image
+    int magnitude = 9;            // randaugment: bin 0..30
 };
 
 // True for the nodes that draw random settings and run on Train batches only.
@@ -91,8 +108,10 @@ struct ImageOpDraws {
     std::vector<int> box_width;
     std::vector<int> apply;                // flips: 1 = flip this sample
     std::vector<float> angle;              // rotate, degrees (0 = unchanged)
-    std::vector<std::vector<float>> factors;  // jitter: brightness, contrast, saturation, hue
-    std::vector<std::vector<int>> order;      // jitter: application order of those four
+    std::vector<std::vector<float>> factors;  // jitter: brightness, contrast, saturation, hue;
+                                              // randaugment: each pick's signed magnitude
+    std::vector<std::vector<int>> order;      // jitter: application order of those four;
+                                              // randaugment: each pick's RandAugmentOp
 };
 
 // Draws the settings torchvision's random transform would draw, per sample.

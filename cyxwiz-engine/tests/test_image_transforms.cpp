@@ -59,6 +59,7 @@ ImageOp OpOf(const json& spec) {
         {"rotate", ImageOpKind::Rotate},            {"color_jitter", ImageOpKind::ColorJitter},
         {"gaussian_blur", ImageOpKind::GaussianBlur}, {"grayscale", ImageOpKind::Grayscale},
         {"morphology", ImageOpKind::Morphology},  {"erase", ImageOpKind::Erase},
+        {"randaugment", ImageOpKind::RandAugment},
     };
     static const std::map<std::string, cyxwiz::image::MorphologyOp> operations = {
         {"erode", cyxwiz::image::MorphologyOp::Erode},     {"dilate", cyxwiz::image::MorphologyOp::Dilate},
@@ -157,6 +158,54 @@ void CheckMixFixtures(const std::filesystem::path& path) {
         }
         std::cout << "  " << name << ": images and labels match torchvision" << std::endl;
     }
+}
+
+void CheckRandAugmentTable(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    const json fixture = json::parse(in);
+    for (const auto& [size, table] : fixture.at("randaugment_magnitudes").items()) {
+        const size_t x = size.find('x');
+        const size_t h = std::stoul(size.substr(0, x)), w = std::stoul(size.substr(x + 1));
+        for (int op = 0; op < cyxwiz::image::kRandAugmentOps; ++op) {
+            for (int bin = 0; bin < cyxwiz::image::kRandAugmentBins; ++bin) {
+                const float expected = table.at(op).at(bin).get<float>();
+                const float got = cyxwiz::image::RandAugmentMagnitude(
+                    static_cast<cyxwiz::image::RandAugmentOp>(op), bin, h, w);
+                Check(got == expected, "RandAugment magnitude op " + std::to_string(op) + " bin " +
+                                           std::to_string(bin) + " at " + size + " is " + std::to_string(got) +
+                                           ", torchvision " + std::to_string(expected));
+            }
+        }
+    }
+}
+
+void CheckRandAugmentDraws() {
+    const ImageShape shape{32, 40, 3};
+    std::mt19937 rng(21);
+    ImageOp op;
+    op.kind = ImageOpKind::RandAugment;
+    op.num_ops = 2;
+    op.magnitude = 9;
+    op.probability = 1.0f;
+    const auto draws = cyxwiz::image::DrawImageOp(op, shape, 7000, true, rng);
+    std::vector<int> counts(cyxwiz::image::kRandAugmentOps, 0);
+    int negative = 0, signed_picks = 0;
+    for (size_t i = 0; i < 7000; ++i) {
+        Check(draws.order[i].size() == 2 && draws.factors[i].size() == 2, "two picks per image");
+        for (size_t p = 0; p < 2; ++p) {
+            const auto chosen = static_cast<cyxwiz::image::RandAugmentOp>(draws.order[i][p]);
+            ++counts[static_cast<size_t>(draws.order[i][p])];
+            const float base = cyxwiz::image::RandAugmentMagnitude(chosen, 9, 32, 40);
+            Check(std::fabs(draws.factors[i][p]) == base, "a pick uses the op's magnitude at bin 9");
+            if (cyxwiz::image::RandAugmentSigned(chosen) && base != 0.0f) {
+                ++signed_picks;
+                negative += draws.factors[i][p] < 0.0f ? 1 : 0;
+            }
+        }
+    }
+    for (int c : counts) Check(c > 800 && c < 1200, "each of the 14 ops is picked about equally (" + std::to_string(c) + ")");
+    Check(std::fabs(static_cast<double>(negative) / signed_picks - 0.5) < 0.03, "signed ops flip sign half the time");
+    Check(cyxwiz::image::DrawImageOp(op, shape, 3, false, rng).order.empty(), "RandAugment passes through outside training");
 }
 
 void CheckMixDraws() {
@@ -324,6 +373,10 @@ void CheckRefusals() {
     erase.scale_max = 0.6f;
     erase.value = 2.0f;
     refused(erase, "pixel value between 0 and 1", "an erasing value outside [0, 1]");
+    ImageOp randaugment;
+    randaugment.kind = ImageOpKind::RandAugment;
+    randaugment.magnitude = 31;
+    refused(randaugment, "magnitude must be between 0 and 30", "a magnitude past the 31 bins");
     ImageOp morphology;
     morphology.kind = ImageOpKind::Morphology;
     morphology.kernel_size = 2;
@@ -396,6 +449,8 @@ int main(int, char** argv) {
     CheckMixFixtures(FixturePath(argv[0]));
     CheckDraws();
     CheckMixDraws();
+    CheckRandAugmentTable(FixturePath(argv[0]));
+    CheckRandAugmentDraws();
     CheckRefusals();
     CheckPlan();
     std::cout << "image transforms match torchvision (" << checks << " checks)\n";

@@ -1857,9 +1857,11 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "random_erasing: a box of random area and aspect ratio (torchvision RandomErasing). "
         "mixup / cutmix: the batch is mixed with itself rolled by one, one lambda from Beta(alpha, alpha), "
         "labels mixed the same way (torchvision v2 MixUp / CutMix); needs Cross Entropy. "
+        "randaugment: num_ops random ops out of 14 per image at strength magnitude (torchvision v2 RandAugment). "
         "Validation and test pass through unchanged.",
         {
-            {"method", "cutout, random_erasing, mixup or cutmix"},
+            {"method", "cutout, random_erasing, mixup, cutmix or randaugment"},
+            {"num_ops / magnitude", "randaugment: ops per image, and their strength bin 0 to 30"},
             {"probability", "Chance that a training image is erased, or a training batch mixed (0 to 1)"},
             {"alpha", "mixup / cutmix: Beta(alpha, alpha); 1.0 draws lambda uniformly"},
             {"cutout_size", "cutout: side of the square in pixels"},

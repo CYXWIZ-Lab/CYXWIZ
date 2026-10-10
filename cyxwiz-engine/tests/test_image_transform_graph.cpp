@@ -205,7 +205,7 @@ void CheckCompiler() {
               erasing.image_augmentation.ops[0].scale_max == 0.2f && erasing.image_augmentation.ops[0].value == 0.5f,
           "Advanced Augment settings reach the plan");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Old method", {{"method", "Cutout"}}}},
-                 "Old method", "method must be cutout, random_erasing, mixup or cutmix",
+                 "Old method", "method must be cutout, random_erasing, mixup, cutmix or randaugment",
                  "an unknown Advanced Augment method");
 
     const auto mixing = Compile({
@@ -219,6 +219,19 @@ void CheckCompiler() {
               mixing.image_augmentation.mix == cyxwiz::image::BatchMix::CutMix &&
               mixing.image_augmentation.mix_alpha == 0.4f && mixing.image_augmentation.mix_probability == 1.0f,
           "cutmix becomes the plan's batch mix, not a per-image op");
+    const auto rand = Compile({
+        kResize,
+        {gui::NodeType::AdvancedAugment, "RandAugment", {{"method", "randaugment"}, {"num_ops", "3"},
+                                                         {"magnitude", "12"}, {"probability", "1"}}},
+        kNormalize,
+    });
+    Check(rand.is_valid && rand.image_augmentation.ops.size() == 1 &&
+              rand.image_augmentation.ops[0].kind == ImageOpKind::RandAugment &&
+              rand.image_augmentation.ops[0].num_ops == 3 && rand.image_augmentation.ops[0].magnitude == 12,
+          "randaugment settings reach the plan");
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Too strong", {{"method", "randaugment"},
+                                                                           {"magnitude", "40"}}}},
+                 "Too strong", "magnitude must be between 0 and 30", "a magnitude past 30");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MixUp", {{"method", "mixup"}}},
                   {gui::NodeType::AdvancedAugment, "Second mix", {{"method", "cutmix"}}}},
                  "Second mix", "Only one mixup or cutmix per graph", "two batch mixes");

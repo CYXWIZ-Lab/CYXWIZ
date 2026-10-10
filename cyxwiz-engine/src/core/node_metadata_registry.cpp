@@ -1722,7 +1722,7 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,
-        {"image", "augmentation", "cutout", "random erasing", "occlusion"}, 0, false,
+        {"image", "augmentation", "cutout", "random erasing", "mixup", "cutmix", "randaugment"}, 0, false,
         "Erase patches of training images, or mix training images and their labels",
         "cutout: with the given probability, a cutout_size square centred at a random pixel is set "
         "to value, clipped at the edges (DeVries & Taylor 2017). random_erasing: a box covering "
@@ -1732,12 +1732,18 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         "with the given probability a whole batch is mixed with itself rolled by one, using one "
         "lambda from Beta(alpha, alpha): mixup blends the images, cutmix pastes a box of area "
         "1 - lambda; the one-hot labels are mixed the same way, so the loss must be Cross Entropy. "
-        "One mixup or cutmix per graph. Validation and test images pass through unchanged.",
+        "One mixup or cutmix per graph. randaugment (torchvision v2 RandAugment): with the given "
+        "probability each training image takes num_ops ops drawn from 14 (identity, shear x / y, "
+        "translate x / y, rotate, brightness, color, contrast, sharpness, posterize, solarize, "
+        "autocontrast, equalize) at bin magnitude of 31, signed ops with a random sign. Validation "
+        "and test images pass through unchanged.",
         "Resize -> Random Crop -> Advanced Augment (cutout) -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Images, same shape"}},
-        {{"method", "enum", "cutout", "Augmentation method", {"cutout", "random_erasing", "mixup", "cutmix"}, "", "Method"},
-         {"probability", "float", "0.5", "Chance that a training image is erased (cutout, random_erasing) or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
+        {{"method", "enum", "cutout", "Augmentation method", {"cutout", "random_erasing", "mixup", "cutmix", "randaugment"}, "", "Method"},
+         {"probability", "float", "0.5", "Chance that a training image is erased or augmented (cutout, random_erasing, randaugment) or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
+         {"num_ops", "int", "2", "randaugment: ops applied to each image", {}, "0-10", "Ops"},
+         {"magnitude", "int", "9", "randaugment: strength bin, 0 to 30", {}, "0-30", "Magnitude"},
          {"alpha", "float", "1.0", "mixup / cutmix: Beta(alpha, alpha) for the mixing weight", {}, ">0", "Alpha"},
          {"cutout_size", "int", "16", "cutout: side of the square in pixels", {}, ">0", "Cutout size"},
          {"scale_min", "float", "0.02", "random_erasing: smallest box area, as a fraction of the image", {}, "0-1", "Scale min"},

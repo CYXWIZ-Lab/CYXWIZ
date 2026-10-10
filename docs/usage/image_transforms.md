@@ -36,6 +36,7 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 | Morphology Transform | applied | applied |
 | Advanced Augment (cutout, random_erasing) | patch erased with `probability` | unchanged |
 | Advanced Augment (mixup, cutmix) | batch and labels mixed with `probability` | unchanged |
+| Advanced Augment (randaugment) | `num_ops` random ops per image with `probability` | unchanged |
 
 Random nodes make each training epoch see slightly different images, which
 reduces overfitting. Validation and test always see the same images, so their
@@ -55,7 +56,7 @@ Data Loader's seed, so a run repeats exactly with the same seed.
 | Image Gaussian Blur | `kernel_size` (5, odd), `sigma` (1.0) | Edges are reflected. `kernel_size / 2` must be smaller than both sides. |
 | Grayscale | none | `0.2989 R + 0.587 G + 0.114 B`. The model's input becomes `[H, W, 1]`. |
 | Morphology Transform | `operation` (open), `kernel_size` (3, odd) | Flat square kernel, pixels outside the image ignored. erode = local minimum, dilate = local maximum, open = dilate(erode), close = erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image. |
-| Advanced Augment | `method` (cutout / random_erasing / mixup / cutmix), `probability` (0.5), `alpha` (1.0), `cutout_size` (16), `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value` (0) | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is. `value` is a pixel value, written before Normalize. mixup / cutmix: see below. |
+| Advanced Augment | `method` (cutout / random_erasing / mixup / cutmix / randaugment), `probability` (0.5), `alpha` (1.0), `num_ops` (2), `magnitude` (9), `cutout_size` (16), `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value` (0) | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is. `value` is a pixel value, written before Normalize. mixup / cutmix and randaugment: see below. |
 
 ## MixUp and CutMix
 
@@ -75,6 +76,28 @@ as `torchvision.transforms.v2.MixUp` / `CutMix` do:
   graph. Validation and test are never mixed.
 - Training accuracy counts a mixed image as right when the model picks the
   class with the larger share of its label.
+
+## RandAugment
+
+Advanced Augment with `method` randaugment follows
+`torchvision.transforms.v2.RandAugment`. Each training image (with
+`probability`; set it to 1 for torchvision's behaviour) takes `num_ops` ops,
+each picked at random from 14:
+
+| Op | Strength at `magnitude` m (of 30) |
+| --- | --- |
+| Identity | none |
+| Shear X / Y | shear factor `0.3 m / 30`, either way, about the top-left corner |
+| Translate X / Y | `150 / 331` of the width / height `x m / 30` pixels, either way |
+| Rotate | `30 m / 30` degrees, either way |
+| Brightness / Color / Contrast / Sharpness | factor `1 +/- 0.9 m / 30` |
+| Posterize | keeps `8 - round(m / 7.5)` bits |
+| Solarize | inverts pixels at or above `1 - m / 30` |
+| AutoContrast | stretches each channel to 0..1 |
+| Equalize | equalizes each channel's histogram (as uint8, like torchvision) |
+
+The default `num_ops` 2 and `magnitude` 9 are torchvision's. Shear, translate
+and rotate use nearest sampling and fill with 0.
 
 The **As compiled** card shows the input shape after the crops and Grayscale.
 
@@ -98,6 +121,8 @@ crop position, angle, jitter factors) are a few numbers drawn on the CPU.
   rotation, every Color Jitter order, one-channel images, padded Random Crop,
   all seven morphology operations and erasing (clipped boxes, any value).
   MixUp and CutMix are compared with torchvision's own `v2.MixUp` / `v2.CutMix`
-  runs (images and labels) on the lambda and box they drew.
+  runs (images and labels) on the lambda and box they drew. Every RandAugment op
+  is compared through torchvision's own dispatcher with both signs, on three and
+  one channels, and the magnitude table matches torchvision's exactly.
   `image_transform_graph_contract` checks the compiled shapes, the refusals, and
   that random nodes change training batches only.

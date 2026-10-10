@@ -1,6 +1,7 @@
 #include "cyxwiz/image_augmentation.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -42,8 +43,34 @@ const char* KindName(ImageOpKind kind) {
         case ImageOpKind::Grayscale: return "Grayscale";
         case ImageOpKind::Morphology: return "Morphology Transform";
         case ImageOpKind::Erase: return "Advanced Augment";
+        case ImageOpKind::RandAugment: return "Advanced Augment";
     }
     return "image transform";
+}
+
+// torchvision _get_inverse_affine_matrix (inverted=True), in double.
+std::array<double, 6> InverseAffineMatrix(double center_x, double center_y, double angle_degrees,
+                                          double translate_x, double translate_y, double scale,
+                                          double shear_x_degrees, double shear_y_degrees) {
+    const double rot = angle_degrees * kPi / 180.0;
+    const double sx = shear_x_degrees * kPi / 180.0, sy = shear_y_degrees * kPi / 180.0;
+    const double a = std::cos(rot - sy) / std::cos(sy);
+    const double b = -std::cos(rot - sy) * std::tan(sx) / std::cos(sy) - std::sin(rot);
+    const double c = std::sin(rot - sy) / std::cos(sy);
+    const double d = -std::sin(rot - sy) * std::tan(sx) / std::cos(sy) + std::cos(rot);
+    std::array<double, 6> m = {d / scale, -b / scale, 0.0, -c / scale, a / scale, 0.0};
+    m[2] += m[0] * (-center_x - translate_x) + m[1] * (-center_y - translate_y);
+    m[5] += m[3] * (-center_x - translate_x) + m[4] * (-center_y - translate_y);
+    m[2] += center_x;
+    m[5] += center_y;
+    return m;
+}
+
+// torch.linspace(start, end, steps)[index] in float32.
+float LinspaceAt(float start, float end, int steps, int index) {
+    const float step = (end - start) / static_cast<float>(steps - 1);
+    return index < steps / 2 ? start + step * static_cast<float>(index)
+                             : end - step * static_cast<float>(steps - 1 - index);
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -116,31 +143,31 @@ af::array RoundHalfEven(const af::array& value) {
     return low + ((fraction > 0.5) || ((fraction == 0.5) && odd)).as(value.type());
 }
 
-// torchvision F.rotate: inverse affine about ((W-1)/2, (H-1)/2), grid_sample
-// with zero padding (align_corners=False), expand=False.
-af::array Rotate(const af::array& images, const std::vector<float>& degrees, Interpolation interpolation) {
+// torchvision's affine grid sampling with each sample's inverse matrix: in
+// float32, step for step, the matrix is scaled by (0.5 W, 0.5 H) and applied
+// to pixel centres relative to the middle (_affine_grid), then grid_sample
+// (zero padding, align_corners=False) unnormalises ((g + 1) * size - 1) / 2.
+// Half-pixel ties (90 degrees on an even side) round as torchvision's do.
+af::array AffineSample(const af::array& images, const std::vector<std::array<double, 6>>& matrices,
+                       Interpolation interpolation) {
     const dim_t h = images.dims(0), w = images.dims(1), n = images.dims(3);
     const af::dim4 grid(h, w, 1, n);
-    // torchvision's arithmetic in float32, step for step: the inverse matrix
-    // [cos, sin; -sin, cos] of -angle is scaled by (0.5 W, 0.5 H), applied to
-    // pixel centres relative to the middle, then grid_sample unnormalises
-    // ((g + 1) * size - 1) / 2. Half-pixel ties (90 degrees on an even side)
-    // then round the same way torchvision's do.
     const float half_w = 0.5f * static_cast<float>(w), half_h = 0.5f * static_cast<float>(h);
-    std::vector<float> ax(degrees.size()), bx(degrees.size()), ay(degrees.size()), by(degrees.size());
-    for (size_t i = 0; i < degrees.size(); ++i) {
-        const double theta = -degrees[i] * kPi / 180.0;
-        const float cosine = static_cast<float>(std::cos(theta));
-        const float sine = static_cast<float>(std::sin(theta));
-        ax[i] = cosine / half_w;
-        bx[i] = sine / half_w;
-        ay[i] = -sine / half_h;
-        by[i] = cosine / half_h;
+    std::vector<float> ax(matrices.size()), bx(matrices.size()), cx(matrices.size());
+    std::vector<float> ay(matrices.size()), by(matrices.size()), cy(matrices.size());
+    for (size_t i = 0; i < matrices.size(); ++i) {
+        const auto& m = matrices[i];
+        ax[i] = static_cast<float>(m[0]) / half_w;
+        bx[i] = static_cast<float>(m[1]) / half_w;
+        cx[i] = static_cast<float>(m[2]) / half_w;
+        ay[i] = static_cast<float>(m[3]) / half_h;
+        by[i] = static_cast<float>(m[4]) / half_h;
+        cy[i] = static_cast<float>(m[5]) / half_h;
     }
     const af::array x = af::iota(af::dim4(1, w, 1, 1), af::dim4(h, 1, 1, n), f32) - (half_w - 0.5f);
     const af::array y = af::iota(af::dim4(h, 1, 1, 1), af::dim4(1, w, 1, n), f32) - (half_h - 0.5f);
-    const af::array gx = x * PerSample(ax, grid) + y * PerSample(bx, grid);
-    const af::array gy = x * PerSample(ay, grid) + y * PerSample(by, grid);
+    const af::array gx = x * PerSample(ax, grid) + y * PerSample(bx, grid) + PerSample(cx, grid);
+    const af::array gy = x * PerSample(ay, grid) + y * PerSample(by, grid) + PerSample(cy, grid);
     const af::array sx = ((gx + 1.0f) * static_cast<float>(w) - 1.0f) / 2.0f;
     const af::array sy = ((gy + 1.0f) * static_cast<float>(h) - 1.0f) / 2.0f;
     if (interpolation == Interpolation::Nearest) {
@@ -154,6 +181,15 @@ af::array Rotate(const af::array& images, const std::vector<float>& degrees, Int
            GatherPixels(images, y0, x0 + 1) * weight((1 - wy) * wx) +
            GatherPixels(images, y0 + 1, x0) * weight(wy * (1 - wx)) +
            GatherPixels(images, y0 + 1, x0 + 1) * weight(wy * wx);
+}
+
+// torchvision F.rotate: the inverse affine of -angle about the image centre.
+af::array Rotate(const af::array& images, const std::vector<float>& degrees, Interpolation interpolation) {
+    std::vector<std::array<double, 6>> matrices(degrees.size());
+    for (size_t i = 0; i < degrees.size(); ++i) {
+        matrices[i] = InverseAffineMatrix(0.0, 0.0, -static_cast<double>(degrees[i]), 0.0, 0.0, 1.0, 0.0, 0.0);
+    }
+    return AffineSample(images, matrices, interpolation);
 }
 
 af::array Luminance(const af::array& images) {
@@ -337,6 +373,172 @@ af::array Morphology(const af::array& images, MorphologyOp operation, int kernel
     return images;
 }
 
+// torchvision adjust_sharpness: the interior blends towards the 3x3 smoothing
+// kernel [1 1 1; 1 5 1; 1 1 1] / 13 with weight 1 - factor; borders keep their
+// pixels; images 2 pixels or less on a side are unchanged.
+af::array AdjustSharpness(const af::array& images, const af::array& factor) {
+    const dim_t h = images.dims(0), w = images.dims(1);
+    if (h <= 2 || w <= 2) return images;
+    const af::seq inner_r(1, static_cast<double>(h) - 2), inner_c(1, static_cast<double>(w) - 2);
+    af::array window_sum = af::constant(0.0f, af::dim4(h - 2, w - 2, images.dims(2), images.dims(3)));
+    for (int dr = 0; dr < 3; ++dr) {
+        for (int dc = 0; dc < 3; ++dc) {
+            window_sum += images(af::seq(dr, static_cast<double>(h) - 3 + dr),
+                                 af::seq(dc, static_cast<double>(w) - 3 + dc), af::span, af::span);
+        }
+    }
+    const af::array center = images(inner_r, inner_c, af::span, af::span);
+    const af::array blurred = (window_sum + 4.0f * center) / 13.0f;
+    af::array out = images.copy();
+    out(inner_r, inner_c, af::span, af::span) =
+        center + (blurred - center) * (1.0f - factor(inner_r, inner_c, af::span, af::span));
+    return af::clamp(out, 0.0, 1.0);
+}
+
+// torchvision posterize on floats: floor(x * 2^bits) clamped, / 2^bits.
+af::array Posterize(const af::array& images, const af::array& levels) {
+    return af::clamp(af::floor(images * levels), 0.0f, levels - 1.0f) / levels;
+}
+
+af::array Solarize(const af::array& images, const af::array& threshold) {
+    return af::select(images >= threshold, 1.0f - images, images);
+}
+
+// torchvision autocontrast: each channel stretched from its min..max to 0..1
+// (unchanged where min == max).
+af::array AutoContrast(const af::array& images) {
+    const dim_t h = images.dims(0), w = images.dims(1), c = images.dims(2), n = images.dims(3);
+    const af::array flat = af::moddims(images, h * w, 1, c, n);
+    af::array low = (af::min)(flat, 0), high = (af::max)(flat, 0);
+    const af::array equal = high == low;
+    af::array scale = high - low;
+    low = af::select(equal, af::constant(0.0f, low.dims()), low);
+    scale = af::select(equal, af::constant(1.0f, scale.dims()), scale);
+    const auto spread = [h, w](const af::array& v) {
+        return af::tile(v, static_cast<unsigned>(h), static_cast<unsigned>(w), 1, 1);
+    };
+    return af::clamp((images - spread(low)) / spread(scale), 0.0, 1.0);
+}
+
+// torchvision equalize on floats: to uint8 as trunc(x * 255.999), a 256-bin
+// histogram per image and channel, the PIL step lookup, back to x / 255.
+af::array Equalize(const af::array& images) {
+    const dim_t h = images.dims(0), w = images.dims(1), c = images.dims(2), n = images.dims(3);
+    const dim_t pixels = h * w, slices = c * n;
+    const af::array bytes = af::floor(images * (255.0f + 1.0f - 1e-3f));
+    const af::array flat = af::moddims(bytes, pixels, slices);  // [pixels, slices]
+    const af::array slice = af::iota(af::dim4(1, slices), af::dim4(pixels, 1), f32) * 256.0f;
+    const af::array global = af::flat(flat + slice);
+    const af::array hist = af::moddims(
+        af::histogram(global, static_cast<unsigned>(256 * slices), 0.0, 256.0 * static_cast<double>(slices)).as(f32),
+        256, slices);
+    const af::array cum = af::accum(hist, 0);
+    const af::array total = cum(255, af::span);
+    // argmax of the cumulative histogram = the first bin where it reaches the total.
+    const af::array reached = (cum >= af::tile(total, 256, 1)).as(f32);
+    const af::array first = 256.0f - af::sum(reached, 0);
+    const af::array bins = af::iota(af::dim4(256, 1), af::dim4(1, slices), f32);
+    const af::array at_first = af::sum(hist * (bins == af::tile(first, 256, 1)).as(f32), 0);
+    const af::array step = af::floor((static_cast<float>(pixels) - at_first) / 255.0f);
+    const af::array divisor = (af::max)(step, 1.0f);
+    af::array lut = af::clamp(af::floor((cum + af::floor(step / 2.0f)) / af::tile(divisor, 256, 1)), 0.0, 255.0);
+    // lut[v] uses the cumulative count below v: shift by one, lut[0] = 0.
+    lut = af::join(0, af::constant(0.0f, af::dim4(1, slices)), lut(af::seq(0, 254), af::span));
+    const af::array equalized = af::moddims(
+        af::lookup(af::flat(lut), af::flat(flat + slice), 0), pixels, slices);
+    const af::array valid = af::tile(step != 0.0f, static_cast<unsigned>(pixels), 1);
+    return af::moddims(af::select(valid, equalized, flat), h, w, c, n) / 255.0f;
+}
+
+af::array RandAugmentStep(const af::array& images, const std::vector<int>& ops, const std::vector<float>& magnitudes,
+                          int op_index, Interpolation interpolation) {
+    const af::dim4 dims = images.dims();
+    const size_t n = ops.size();
+    const RandAugmentOp op = static_cast<RandAugmentOp>(op_index);
+    const auto per_sample = [&](float neutral, auto value_of) {
+        std::vector<float> values(n, neutral);
+        for (size_t i = 0; i < n; ++i) {
+            if (ops[i] == op_index) values[i] = value_of(magnitudes[i]);
+        }
+        return PerSample(values, dims);
+    };
+    const auto affine = [&](auto matrix_of) {
+        std::vector<std::array<double, 6>> matrices(n, std::array<double, 6>{1, 0, 0, 0, 1, 0});
+        for (size_t i = 0; i < n; ++i) {
+            if (ops[i] == op_index) matrices[i] = matrix_of(static_cast<double>(magnitudes[i]));
+        }
+        return AffineSample(images, matrices, interpolation);
+    };
+    const double w = static_cast<double>(dims[1]), h = static_cast<double>(dims[0]);
+    switch (op) {
+        case RandAugmentOp::Identity:
+            return images;
+        case RandAugmentOp::ShearX:  // centre [0, 0] = the top-left corner
+            return affine([&](double m) {
+                return InverseAffineMatrix(-0.5 * w, -0.5 * h, 0.0, 0.0, 0.0, 1.0, std::atan(m) * 180.0 / kPi, 0.0);
+            });
+        case RandAugmentOp::ShearY:
+            return affine([&](double m) {
+                return InverseAffineMatrix(-0.5 * w, -0.5 * h, 0.0, 0.0, 0.0, 1.0, 0.0, std::atan(m) * 180.0 / kPi);
+            });
+        case RandAugmentOp::TranslateX:
+            return affine([](double m) {
+                return InverseAffineMatrix(0.0, 0.0, 0.0, static_cast<double>(static_cast<int>(m)), 0.0, 1.0, 0.0, 0.0);
+            });
+        case RandAugmentOp::TranslateY:
+            return affine([](double m) {
+                return InverseAffineMatrix(0.0, 0.0, 0.0, 0.0, static_cast<double>(static_cast<int>(m)), 1.0, 0.0, 0.0);
+            });
+        case RandAugmentOp::Rotate:
+            return affine([](double m) { return InverseAffineMatrix(0.0, 0.0, -m, 0.0, 0.0, 1.0, 0.0, 0.0); });
+        case RandAugmentOp::Brightness:
+            return AdjustBrightness(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
+        case RandAugmentOp::Color:
+            return AdjustSaturation(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
+        case RandAugmentOp::Contrast:
+            return AdjustContrast(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
+        case RandAugmentOp::Sharpness:
+            return AdjustSharpness(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
+        case RandAugmentOp::Posterize:
+            return Posterize(images, per_sample(256.0f, [](float m) {
+                return static_cast<float>(1 << static_cast<int>(m));
+            }));
+        case RandAugmentOp::Solarize:
+            return Solarize(images, per_sample(2.0f, [](float m) { return m; }));
+        case RandAugmentOp::AutoContrast:
+            return AutoContrast(images);
+        case RandAugmentOp::Equalize:
+            return Equalize(images);
+    }
+    return images;
+}
+
+af::array RandAugment(af::array images, const ImageOpDraws& draws, Interpolation interpolation) {
+    const size_t n = draws.order.size();
+    const size_t steps = n == 0 ? 0 : draws.order.front().size();
+    const af::dim4 dims = images.dims();
+    for (size_t step = 0; step < steps; ++step) {
+        std::vector<int> ops(n);
+        std::vector<float> magnitudes(n);
+        for (size_t i = 0; i < n; ++i) {
+            ops[i] = draws.order[i][step];
+            magnitudes[i] = draws.factors[i][step];
+        }
+        for (int op = 1; op < kRandAugmentOps; ++op) {
+            std::vector<int> chosen(n);
+            bool any = false;
+            for (size_t i = 0; i < n; ++i) {
+                chosen[i] = ops[i] == op ? 1 : 0;
+                any = any || chosen[i];
+            }
+            if (!any) continue;
+            images = af::select(PerSampleMask(chosen, dims),
+                                RandAugmentStep(images, ops, magnitudes, op, interpolation), images);
+        }
+    }
+    return images;
+}
+
 // Sets each sample's box [top, top + h) x [left, left + w) to value
 // (torchvision F.erase); a 0-sized box leaves the sample unchanged.
 af::array Erase(const af::array& images, const ImageOpDraws& draws, float value) {
@@ -408,6 +610,9 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
         case ImageOpKind::Erase:
             if (draws.box_height.empty()) return images;
             return Erase(images, draws, op.value);
+        case ImageOpKind::RandAugment:
+            if (draws.order.empty()) return images;
+            return RandAugment(images, draws, op.interpolation);
     }
     return images;
 }
@@ -424,6 +629,7 @@ bool IsRandomImageOp(ImageOpKind kind) {
         case ImageOpKind::Rotate:
         case ImageOpKind::ColorJitter:
         case ImageOpKind::Erase:
+        case ImageOpKind::RandAugment:
             return true;
         default:
             return false;
@@ -492,6 +698,20 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
         case ImageOpKind::Morphology:
             if (op.kernel_size <= 0 || op.kernel_size % 2 == 0) {
                 return "Morphology Transform kernel_size must be a positive odd number";
+            }
+            return {};
+        case ImageOpKind::RandAugment:
+            if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
+                return "Advanced Augment probability must be between 0 and 1";
+            }
+            if (op.num_ops < 0 || op.num_ops > 10) {
+                return "Advanced Augment num_ops must be between 0 and 10";
+            }
+            if (op.magnitude < 0 || op.magnitude >= kRandAugmentBins) {
+                return "Advanced Augment magnitude must be between 0 and 30";
+            }
+            if (input.channels != 1 && input.channels != 3) {
+                return "RandAugment needs a 1- or 3-channel image";
             }
             return {};
         case ImageOpKind::Erase:
@@ -593,6 +813,23 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             }
             break;
         }
+        case ImageOpKind::RandAugment: {
+            if (!training) break;
+            draws.order.assign(batch, std::vector<int>(static_cast<size_t>(op.num_ops), 0));
+            draws.factors.assign(batch, std::vector<float>(static_cast<size_t>(op.num_ops), 0.0f));
+            for (size_t i = 0; i < batch; ++i) {
+                if (!(unit(rng) < op.probability)) continue;  // Identity picks
+                for (int pick = 0; pick < op.num_ops; ++pick) {
+                    const int id = std::uniform_int_distribution<int>(0, kRandAugmentOps - 1)(rng);
+                    const auto chosen = static_cast<RandAugmentOp>(id);
+                    float m = RandAugmentMagnitude(chosen, op.magnitude, input.height, input.width);
+                    if (RandAugmentSigned(chosen) && unit(rng) <= 0.5f) m = -m;
+                    draws.order[i][static_cast<size_t>(pick)] = id;
+                    draws.factors[i][static_cast<size_t>(pick)] = m;
+                }
+            }
+            break;
+        }
         case ImageOpKind::Erase: {
             if (!training) break;
             draws.top.assign(batch, 0);
@@ -650,6 +887,50 @@ Tensor ApplyImageOp(const ImageOp& op, const ImageOpDraws& draws, const ImageSha
     (void)rows;
     throw std::runtime_error("image transforms need the ArrayFire build");
 #endif
+}
+
+float RandAugmentMagnitude(RandAugmentOp op, int magnitude, size_t height, size_t width) {
+    const int bins = kRandAugmentBins;
+    switch (op) {
+        case RandAugmentOp::ShearX:
+        case RandAugmentOp::ShearY:
+            return LinspaceAt(0.0f, 0.3f, bins, magnitude);
+        case RandAugmentOp::TranslateX:
+            return LinspaceAt(0.0f, 150.0f / 331.0f * static_cast<float>(width), bins, magnitude);
+        case RandAugmentOp::TranslateY:
+            return LinspaceAt(0.0f, 150.0f / 331.0f * static_cast<float>(height), bins, magnitude);
+        case RandAugmentOp::Rotate:
+            return LinspaceAt(0.0f, 30.0f, bins, magnitude);
+        case RandAugmentOp::Brightness:
+        case RandAugmentOp::Color:
+        case RandAugmentOp::Contrast:
+        case RandAugmentOp::Sharpness:
+            return LinspaceAt(0.0f, 0.9f, bins, magnitude);
+        case RandAugmentOp::Posterize:  // 8 - round(m / ((bins - 1) / 4)) bits
+            return static_cast<float>(8 - static_cast<int>(std::nearbyint(
+                static_cast<float>(magnitude) / (static_cast<float>(bins - 1) / 4.0f))));
+        case RandAugmentOp::Solarize:
+            return LinspaceAt(1.0f, 0.0f, bins, magnitude);
+        default:
+            return 0.0f;
+    }
+}
+
+bool RandAugmentSigned(RandAugmentOp op) {
+    switch (op) {
+        case RandAugmentOp::ShearX:
+        case RandAugmentOp::ShearY:
+        case RandAugmentOp::TranslateX:
+        case RandAugmentOp::TranslateY:
+        case RandAugmentOp::Rotate:
+        case RandAugmentOp::Brightness:
+        case RandAugmentOp::Color:
+        case RandAugmentOp::Contrast:
+        case RandAugmentOp::Sharpness:
+            return true;
+        default:
+            return false;
+    }
 }
 
 BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability, const ImageShape& shape,

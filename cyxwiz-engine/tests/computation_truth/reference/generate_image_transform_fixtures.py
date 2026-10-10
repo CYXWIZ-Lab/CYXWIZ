@@ -84,6 +84,54 @@ def mix_cases() -> list[dict[str, Any]]:
     return cases
 
 
+RANDAUGMENT_OPS = ["Identity", "ShearX", "ShearY", "TranslateX", "TranslateY", "Rotate", "Brightness", "Color",
+                   "Contrast", "Sharpness", "Posterize", "Solarize", "AutoContrast", "Equalize"]
+
+
+def randaugment_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Each RandAugment op through torchvision v2's own dispatcher
+    (_apply_image_or_video_transform) with fixed signed magnitudes, plus a
+    two-pick sequence, plus its magnitude table."""
+    ra = v2.RandAugment()
+    images = batch(144, 2, 3, 9, 8)
+
+    def apply(img: torch.Tensor, ops: list[int], mags: list[float]) -> torch.Tensor:
+        for op, m in zip(ops, mags):
+            img = ra._apply_image_or_video_transform(img, RANDAUGMENT_OPS[op], m,
+                                                     interpolation=ra.interpolation, fill=ra._fill)
+        return img
+
+    def magnitude(op: int, bin_: int, h: int, w: int) -> float:
+        fn, _ = ra._AUGMENTATION_SPACE[RANDAUGMENT_OPS[op]]
+        values = fn(31, h, w)
+        return 0.0 if values is None else float(values[bin_])
+
+    cases = []
+    for op in range(1, 14):
+        mags = [magnitude(op, 9, 9, 8), magnitude(op, 20, 9, 8)]
+        if ra._AUGMENTATION_SPACE[RANDAUGMENT_OPS[op]][1]:
+            mags[1] = -mags[1]
+        order = [[op], [op]]
+        factors = [[mags[0]], [mags[1]]]
+        cases.append(case(f"randaugment_{RANDAUGMENT_OPS[op].lower()}", {"kind": "randaugment"},
+                          {"order": order, "factors": factors}, images,
+                          per_sample(images, lambda img, i: apply(img, order[i], factors[i]))))
+    gray = batch(145, 2, 1, 9, 8)
+    for op in (9, 12, 13):  # sharpness, autocontrast, equalize on one channel
+        order = [[op], [op]]
+        factors = [[magnitude(op, 9, 9, 8)], [magnitude(op, 25, 9, 8)]]
+        cases.append(case(f"randaugment_{RANDAUGMENT_OPS[op].lower()}_one_channel", {"kind": "randaugment"},
+                          {"order": order, "factors": factors}, gray,
+                          per_sample(gray, lambda img, i: apply(img, order[i], factors[i]))))
+    order = [[1, 13], [10, 5]]
+    factors = [[-magnitude(1, 12, 9, 8), 0.0], [magnitude(10, 9, 9, 8), magnitude(5, 9, 9, 8)]]
+    cases.append(case("randaugment_two_picks", {"kind": "randaugment"}, {"order": order, "factors": factors},
+                      images, per_sample(images, lambda img, i: apply(img, order[i], factors[i]))))
+    table = {f"{h}x{w}": [[magnitude(op, b, h, w) for b in range(31)] for op in range(14)]
+             for h, w in ((9, 8), (224, 224), (32, 40))}
+    return cases, table
+
+
 def build() -> list[dict[str, Any]]:
     rgb = batch(140, 2, 3, 6, 7)
     gray = batch(141, 2, 1, 6, 7)
@@ -159,6 +207,7 @@ def build() -> list[dict[str, Any]]:
                       gray, F.gaussian_blur(gray, [3, 3], [1.1, 1.1])))
 
     cases.append(case("grayscale", {"kind": "grayscale"}, {}, rgb, F.rgb_to_grayscale(rgb)))
+    cases.extend(randaugment_cases()[0])
 
     # Advanced Augment erasing (Cutout / Random Erasing): F.erase on each sample's drawn box;
     # a 0-sized box leaves the sample unchanged.
@@ -202,6 +251,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+    randaugment_table = randaugment_cases()[1]
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generator": "generate_image_transform_fixtures.py",
@@ -209,6 +259,7 @@ def main() -> None:
         "torchvision_version": torchvision.__version__,
         "cases": build(),
         "mix_cases": mix_cases(),
+        "randaugment_magnitudes": randaugment_table,
     }
     args.output.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {len(payload['cases'])} cases to {args.output}")
