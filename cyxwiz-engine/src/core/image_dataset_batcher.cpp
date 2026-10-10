@@ -95,10 +95,11 @@ void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
     for (size_t i = 0; i < dataset_->Size(); ++i) {
         if (!excluded.count(dataset_->GetItemSource(i))) kept.push_back(i);
     }
-    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images",
-                 dataset_->Size() - kept.size(), dataset_->Size());
+    const size_t left_out = dataset_->Size() - kept.size();
     Split(std::move(kept));
     Reset();
+    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images; split again: {} train / {} val",
+                 left_out, dataset_->Size(), train_indices_.size(), val_indices_.size());
 }
 
 Batch ImageDatasetBatcher::GetNextBatch() {
