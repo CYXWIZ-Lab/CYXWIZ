@@ -108,7 +108,8 @@ inline const char* LayerTypeName(gui::NodeType type) {
 
 inline bool IsRecurrentLayer(gui::NodeType type) {
     return type == gui::NodeType::GRU ||
-           type == gui::NodeType::LSTM;
+           type == gui::NodeType::LSTM ||
+           type == gui::NodeType::RNN;
 }
 
 inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
@@ -179,8 +180,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
 }
 
 inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
-    return type == gui::NodeType::RNN ||
-           type == gui::NodeType::LayerNorm ||
+    return type == gui::NodeType::LayerNorm ||
            type == gui::NodeType::MultiHeadAttention ||
            type == gui::NodeType::CrossAttention ||
            type == gui::NodeType::TransformerEncoder ||
@@ -318,27 +318,6 @@ inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
     placement.fallback_backend = "CPU";
     placement.status = BackendPlacementStatus::Cpu;
     placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
-    if (layer.type == gui::NodeType::RNN) {
-        // tofix68 Studio RNN wiring: the simple RNN's portable path is the
-        // native CPU reference layer (phase 3); there is no ArrayFire RNN
-        // path. The graph compiler upgrades this entry to a native-provider
-        // placement when a provider serves the run's device and the exact
-        // training tuple (provider 0.7.0 serves rnn_forward/rnn_backward).
-        placement.explanation =
-            "RNN is supported by ModelBuilder/SequentialModel through the "
-            "native CPU simple-RNN reference layer. There is no ArrayFire "
-            "RNN path; GPU training happens only through the native neural "
-            "provider on a CUDA/OpenCL-targeted run, otherwise training runs "
-            "on the CPU reference and this layer is not GPU-resident.";
-        placement.suggested_action =
-            "No correctness action needed. Select a CUDA or OpenCL device "
-            "served by the native neural provider for GPU recurrent training.";
-        StampDeclaredExecutionMode(
-            placement,
-            cyxwiz::DeclaredGpuExecutionMode(
-                cyxwiz::GpuOperationFamily::Recurrent));
-        return placement;
-    }
     placement.explanation =
         std::string(placement.node_type) +
         " is supported by ModelBuilder/SequentialModel, but the current "

@@ -785,9 +785,7 @@ private:
  *
  * Mirrors LSTMModule: Keras-style `return_sequences=false` reduction to
  * the last timestep with symmetric gradient re-expansion in Backward.
- * Batch-first only. bidirectional=true splits each level into a forward
- * and a time-reversed single-direction RNNLayer (each provider-routed on
- * its own) joined on the feature axis on the device.
+ * Batch-first only; bidirectional runs inside the layer, on the device.
  */
 class CYXWIZ_API RNNModule : public Module {
 public:
@@ -806,13 +804,10 @@ public:
     std::string GetName() const override;
 
 private:
+    // Same layout and key translation as LSTMModule.
     std::unique_ptr<RNNLayer> layer_;
-    std::vector<std::unique_ptr<RNNLayer>> forward_layers_;
-    std::vector<std::unique_ptr<RNNLayer>> reverse_layers_;
-    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool return_sequences_;
     std::string nonlinearity_;
     bool bidirectional_;

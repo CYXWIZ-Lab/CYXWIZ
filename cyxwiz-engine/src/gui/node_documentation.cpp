@@ -642,7 +642,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"dropout", "Must remain 0.0; use a separate Dropout node"}
         },
         {
-            "Bidirectional GRU currently uses the native CPU recurrent path",
             "Use the Output pin; the legacy Hidden pin is not routed separately"
         },
         "Recurrent"
@@ -651,10 +650,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::RNN] = {
         "Simple RNN",
         "Trainable simple (Elman) recurrent layer: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh).",
-        "Runs on the native CPU simple-RNN reference layer with tanh or relu "
-        "nonlinearity, or on the native neural provider (CUDA/OpenCL) when one "
-        "serves the run's device. dropout=0.0 only; bidirectional runs as "
-        "split forward/reverse branches.",
+        "Runs on the native neural provider (CUDA/OpenCL) when one serves the "
+        "run's device, else on ArrayFire (the CPU option is ArrayFire's CPU "
+        "backend), with tanh or relu nonlinearity. dropout=0.0 only; "
+        "bidirectional runs forward and reverse branches on the device.",
         {
             {"input_size", "Input feature size per timestep (auto-derived)"},
             {"hidden_size", "Number of hidden units"},

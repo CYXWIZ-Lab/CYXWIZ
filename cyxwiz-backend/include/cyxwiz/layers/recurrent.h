@@ -101,16 +101,22 @@ private:
     Tensor ForwardBidirectional(const Tensor& input);
 };
 
-// Vanilla (Elman) RNN: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh),
-// act in {tanh, relu}. Native CPU reference implementation (tofix68
-// phase 3); unidirectional, batch-first [batch, seq, features], returns
-// the full hidden sequence. Parameter naming follows the LSTM/GRU
-// convention: layer<N>_W_ih / W_hh / b_ih / b_hh (+ layer<N>_grad_*).
+// Vanilla (Elman) RNN on ArrayFire: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1}
+// + b_hh), act in {tanh, relu}. Batch-first [batch, seq, features], returns
+// the full hidden sequence. Same routing and bidirectional composition as
+// LSTMLayer (native provider for a unidirectional layer where one serves the
+// exact shape, else the ArrayFire recurrence). Keys layer{L}_W_ih ... (+
+// _reverse), gradients layer{L}_grad_W_ih ...; h_n is
+// [layers * directions, batch, hidden], index 2L level L forward, 2L + 1 its
+// reverse (unidirectional: index L).
 class CYXWIZ_API RNNLayer : public Layer {
 public:
     RNNLayer(int input_size, int hidden_size, int num_layers = 1,
              bool batch_first = true, bool bidirectional = false,
              const std::string& nonlinearity = "tanh");
+    ~RNNLayer() override;
+    RNNLayer(const RNNLayer&) = delete;
+    RNNLayer& operator=(const RNNLayer&) = delete;
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -124,13 +130,14 @@ public:
     int GetInputSize() const { return input_size_; }
     int GetHiddenSize() const { return hidden_size_; }
     int GetNumLayers() const { return num_layers_; }
+    bool IsBidirectional() const { return bidirectional_; }
     bool UsesTanh() const { return use_tanh_; }
 
 private:
     int input_size_;
     int hidden_size_;
     int num_layers_;
-    bool batch_first_;
+    bool bidirectional_;
     bool use_tanh_;
 
     std::vector<Tensor> W_ih_;
@@ -142,19 +149,28 @@ private:
     std::vector<Tensor> grad_b_ih_;
     std::vector<Tensor> grad_b_hh_;
 
-    Tensor h_n_;
+    // Bidirectional: one forward and one reverse child per level.
+    std::vector<std::unique_ptr<RNNLayer>> forward_levels_;
+    std::vector<std::unique_ptr<RNNLayer>> reverse_levels_;
+    std::vector<Tensor> dropout_masks_;  // always empty: RNN has no dropout
 
+    Tensor h_n_;
+    Tensor cached_input_;
+
+    // Device caches of the ArrayFire forward, per layer, seq-first.
     std::vector<Tensor> cached_inputs_;
     std::vector<Tensor> cached_hidden_states_;
 
-    // tofix68 (provider 0.7.0): when the native neural provider executed
-    // Forward, the CPU caches are empty and Backward uses the provider's
-    // self-contained recompute+BPTT op (mirror of LSTMLayer/GRULayer).
+    // When the native neural provider ran Forward, Backward uses the
+    // provider's self-contained recompute+BPTT op.
     bool provider_forward_used_ = false;
     bool provider_disabled_after_failure_ = false;
-    Tensor provider_input_cache_;
 
     void InitializeWeights();
+    bool TryProviderForward(const Tensor& input, Tensor& output);
+    bool TryProviderBackward(const Tensor& grad_output, Tensor& grad_input);
+    Tensor ForwardArrayFire(const Tensor& input);
+    Tensor BackwardArrayFire(const Tensor& grad_output);
 };
 
 // GRU on ArrayFire; same routing and bidirectional composition as

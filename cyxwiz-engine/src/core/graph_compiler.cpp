@@ -2157,47 +2157,6 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             case backend_placement::LayerCapabilityKind::CpuBackedModelLayer: {
                 auto placement =
                     backend_placement::BuildCpuBackedModelLayerPlacement(layer);
-                if (layer.type == gui::NodeType::RNN) {
-                    // tofix68 provider 0.7.0: the simple RNN trains on the
-                    // native neural provider when one serves the run's
-                    // device and the exact tuple; otherwise it stays on the
-                    // CPU reference (the placement built above).
-                    NeuralOpRequest provider_request;
-                    provider_request.target = CaptureCurrentNeuralDeviceTarget();
-                    provider_request.op = NeuralOp::RnnForward;
-                    provider_request.training = true;
-                    provider_request.dtype = DataType::Float32;
-                    provider_request.batch =
-                        static_cast<size_t>(std::max(1, config.batch_size));
-                    provider_request.seq = EstimateSequenceLength(layer);
-                    provider_request.input =
-                        layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-                    provider_request.hidden =
-                        ParseSizeParam(layer.parameters, "hidden_size", 128);
-                    const bool rnn_bidirectional =
-                        ParseBoolParam(layer.parameters, "bidirectional", false);
-                    // Split-path bidirectional: each branch runs as a
-                    // single-direction, single-layer tuple (first level).
-                    provider_request.layers = rnn_bidirectional
-                        ? 1
-                        : ParseSizeParam(layer.parameters, "num_layers", 1);
-                    provider_request.directions = 1;
-                    if (rnn_bidirectional) {
-                        placement.explanation +=
-                            " Bidirectional runs as split forward/reverse "
-                            "branches; the native provider verdict below "
-                            "applies per branch (first level).";
-                    }
-                    const auto nonlinearity =
-                        layer.parameters.find("nonlinearity");
-                    provider_request.activation =
-                        (nonlinearity != layer.parameters.end() &&
-                         nonlinearity->second == "relu")
-                            ? NeuralActivation::Relu
-                            : NeuralActivation::Tanh;
-                    backend_placement::ApplyNativeProviderPlacement(
-                        placement, provider_request);
-                }
                 config.backend_placements.push_back(placement);
                 continue;
             }
@@ -2235,7 +2194,7 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 break;
         }
 
-        // LSTM / GRU run on the device: the native provider op where it
+        // LSTM / GRU / RNN run on the device: the native provider op where it
         // serves the run's device and the exact tuple, else the ArrayFire
         // per-timestep plan (every backend, CUDA included; no CPU path).
         const size_t hidden_size =
@@ -2251,9 +2210,16 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
         NeuralOpRequest provider_request;
         provider_request.target = CaptureCurrentNeuralDeviceTarget();
-        provider_request.op = layer.type == gui::NodeType::GRU
-            ? NeuralOp::GruForward
-            : NeuralOp::LstmForward;
+        provider_request.op = layer.type == gui::NodeType::GRU   ? NeuralOp::GruForward
+                            : layer.type == gui::NodeType::RNN ? NeuralOp::RnnForward
+                                                               : NeuralOp::LstmForward;
+        if (layer.type == gui::NodeType::RNN) {
+            const auto nonlinearity = layer.parameters.find("nonlinearity");
+            provider_request.activation =
+                nonlinearity != layer.parameters.end() && nonlinearity->second == "relu"
+                    ? NeuralActivation::Relu
+                    : NeuralActivation::Tanh;
+        }
         provider_request.training = true;  // this is the training path
         provider_request.dtype = DataType::Float32;
         provider_request.batch = static_cast<size_t>(std::max(1, config.batch_size));
@@ -2261,10 +2227,10 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         provider_request.input =
             layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
         provider_request.hidden = hidden_size;
-        // Split-path bidirectional (LSTMModule/GRUModule): each direction and
-        // level runs as an independent single-direction, single-layer tuple,
-        // so that is what the provider is asked about (first level shown;
-        // deeper levels have input 2*hidden).
+        // Bidirectional layers run each direction and level as a
+        // single-direction, single-layer child, so that is what the provider
+        // is asked about (first level shown; deeper levels have input
+        // 2*hidden).
         provider_request.layers = bidirectional
             ? 1
             : ParseSizeParam(layer.parameters, "num_layers", 1);

@@ -1,5 +1,5 @@
-// LSTMModule / GRUModule and bidirectional LSTMLayer / GRULayer against
-// PyTorch nn.LSTM / nn.GRU (TOFIX140).
+// LSTMModule / GRUModule / RNNModule and bidirectional LSTMLayer / GRULayer /
+// RNNLayer against PyTorch nn.LSTM / nn.GRU / nn.RNN (TOFIX140).
 //
 // fixtures/recurrent_pytorch.json (generate_recurrent_fixtures.py): batch-first,
 // 1-2 layers, uni- and bidirectional, full sequence or last step, hidden up to 64.
@@ -64,8 +64,10 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const json& c) {
     const size_t in = c.at("input_size").get<size_t>(), hidden = c.at("hidden_size").get<size_t>();
     const size_t layers = c.at("num_layers").get<size_t>();
     const bool bi = c.at("bidirectional").get<bool>(), seq = c.at("return_sequences").get<bool>();
-    if (c.at("kind").get<std::string>() == "LSTM") return std::make_unique<cyxwiz::LSTMModule>(in, hidden, layers, bi, seq);
-    return std::make_unique<cyxwiz::GRUModule>(in, hidden, layers, bi, seq);
+    const std::string kind = c.at("kind").get<std::string>();
+    if (kind == "LSTM") return std::make_unique<cyxwiz::LSTMModule>(in, hidden, layers, bi, seq);
+    if (kind == "GRU") return std::make_unique<cyxwiz::GRUModule>(in, hidden, layers, bi, seq);
+    return std::make_unique<cyxwiz::RNNModule>(in, hidden, layers, seq, c.at("nonlinearity").get<std::string>(), bi);
 }
 
 // A bidirectional layer keys the module's layer{L}.forward.X as layer{L}_X
@@ -101,15 +103,17 @@ cyxwiz::Tensor ExpandLastStep(const cyxwiz::Tensor& last, size_t seq) {
     return cyxwiz::Tensor({shape[0], seq, shape[1]}, values.data(), cyxwiz::DataType::Float32);
 }
 
-// A bidirectional LSTMLayer / GRULayer (batch_first) directly against the
+// A bidirectional LSTMLayer / GRULayer / RNNLayer (batch_first) directly against the
 // fixture: output, dx and every forward and reverse gradient.
 void CheckBidirectionalLayer(const json& c, const std::string& name) {
     const int in = c.at("input_size").get<int>(), hidden = c.at("hidden_size").get<int>();
     const int layers = c.at("num_layers").get<int>();
-    const bool lstm = c.at("kind").get<std::string>() == "LSTM";
+    const std::string kind = c.at("kind").get<std::string>();
     std::unique_ptr<cyxwiz::Layer> layer;
-    if (lstm) layer = std::make_unique<cyxwiz::LSTMLayer>(in, hidden, layers, true, true, 0.0f);
-    else layer = std::make_unique<cyxwiz::GRULayer>(in, hidden, layers, true, true, 0.0f);
+    if (kind == "LSTM") layer = std::make_unique<cyxwiz::LSTMLayer>(in, hidden, layers, true, true, 0.0f);
+    else if (kind == "GRU") layer = std::make_unique<cyxwiz::GRULayer>(in, hidden, layers, true, true, 0.0f);
+    else layer = std::make_unique<cyxwiz::RNNLayer>(in, hidden, layers, true, true,
+                                                    c.at("nonlinearity").get<std::string>());
     std::map<std::string, cyxwiz::Tensor> parameters;
     for (const auto& [k, v] : c.at("parameters").items()) parameters[LayerKey(k, false)] = ReadTensor(v);
     layer->SetParameters(parameters);
@@ -185,13 +189,17 @@ int main(int, char** argv) {
     // Large shapes on the ArrayFire path: no reference, but every step must
     // stay on the device (CUDA once refused GRU and large LSTM for generated-
     // kernel parameter overflow) and stay finite.
-    for (const bool gru : {false, true}) {
+    const auto make = [](const std::string& kind, size_t in, size_t hidden, size_t layers, bool bi,
+                         bool seq) -> std::unique_ptr<cyxwiz::Module> {
+        if (kind == "LSTM") return std::make_unique<cyxwiz::LSTMModule>(in, hidden, layers, bi, seq);
+        if (kind == "GRU") return std::make_unique<cyxwiz::GRUModule>(in, hidden, layers, bi, seq);
+        return std::make_unique<cyxwiz::RNNModule>(in, hidden, layers, seq, "tanh", bi);
+    };
+    for (const std::string kind : {"LSTM", "GRU", "RNN"}) {
         for (const bool bi : {false, true}) {
             const size_t batch = 4, seq = 100, features = 32, hidden = 256;
-            std::unique_ptr<cyxwiz::Module> module;
-            if (gru) module = std::make_unique<cyxwiz::GRUModule>(features, hidden, 2, bi, true);
-            else module = std::make_unique<cyxwiz::LSTMModule>(features, hidden, 2, bi, true);
-            const std::string name = std::string(gru ? "GRU" : "LSTM") + (bi ? " bi" : "") + " h256 l2 s100 [ArrayFire]";
+            const auto module = make(kind, features, hidden, 2, bi, true);
+            const std::string name = kind + (bi ? " bi" : "") + " h256 l2 s100 [ArrayFire]";
             try {
                 const cyxwiz::Tensor x = cyxwiz::Tensor::Random({batch, seq, features}, cyxwiz::DataType::Float32);
                 const cyxwiz::Tensor y = module->Forward(x);
@@ -214,14 +222,15 @@ int main(int, char** argv) {
     // with the gradient of the same name, so 30 SGD steps on a fixed target
     // must at least halve the loss (it stalled when GetGradients returned the
     // weights themselves).
-    for (const bool gru : {false, true}) {
+    for (const std::string kind : {"LSTM", "GRU", "RNN"}) {
         for (const bool bi : {false, true}) {
-            const std::string name = std::string(gru ? "GRU" : "LSTM") + (bi ? " bi" : "") + " trains";
+            const std::string name = kind + (bi ? " bi" : "") + " trains";
             try {
                 cyxwiz::SequentialModel model;
-                if (gru) model.AddModule(std::make_unique<cyxwiz::GRUModule>(3, 8, 1, bi, false));
-                else model.AddModule(std::make_unique<cyxwiz::LSTMModule>(3, 8, 1, bi, false));
-                auto optimizer = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, 0.5);
+                model.AddModule(make(kind, 3, 8, 1, bi, false));
+                // A vanilla RNN overshoots at 0.5 (PyTorch nn.RNN diverges
+                // there too) and converges at 0.1.
+                auto optimizer = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, kind == "RNN" ? 0.1 : 0.5);
                 const cyxwiz::Tensor x = cyxwiz::Tensor::Random({4, 5, 3}, cyxwiz::DataType::Float32);
                 const size_t width = bi ? 16 : 8;
                 const cyxwiz::Tensor target = cyxwiz::Tensor::Random({4, width}, cyxwiz::DataType::Float32) * 0.5f;

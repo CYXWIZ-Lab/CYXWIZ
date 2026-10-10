@@ -1,6 +1,6 @@
-// Vanilla RNN CPU reference (tofix68 phase 3): shape contracts, a
-// hand-checkable fixture, and numerical gradient verification — this layer
-// is the parity oracle for the native provider's pilot kernel.
+// Vanilla RNN on ArrayFire (TOFIX140): shape contracts, a hand-checkable
+// fixture and numerical gradient verification. PyTorch parity lives in
+// computation_truth/test_computation_truth_recurrent.cpp.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -57,7 +57,7 @@ double LossOf(cyxwiz::RNNLayer& layer, const cyxwiz::Tensor& input) {
 TEST_CASE("RNNLayer validates its contract and shapes",
           "[rnn][recurrent]") {
     CHECK_THROWS_AS(cyxwiz::RNNLayer(0, 4), std::invalid_argument);
-    CHECK_THROWS_AS(cyxwiz::RNNLayer(4, 4, 1, true, true),
+    CHECK_THROWS_AS(cyxwiz::RNNLayer(4, 4, 1, false),
                     std::invalid_argument);
     CHECK_THROWS_AS(cyxwiz::RNNLayer(4, 4, 1, true, false, "gelu"),
                     std::invalid_argument);
@@ -66,7 +66,7 @@ TEST_CASE("RNNLayer validates its contract and shapes",
     const auto input = FilledTensor({2, 4, 3}, 0.5f, 0.0f);
     const auto output = layer.Forward(input);
     REQUIRE(output.Shape() == std::vector<size_t>{2, 4, 5});
-    CHECK(layer.GetHiddenState().Shape() == std::vector<size_t>{2, 5});
+    CHECK(layer.GetHiddenState().Shape() == std::vector<size_t>{1, 2, 5});
 
     const auto grad = layer.Backward(FilledTensor({2, 4, 5}, 0.1f, 1.0f));
     CHECK(grad.Shape() == std::vector<size_t>{2, 4, 3});
@@ -108,18 +108,18 @@ TEST_CASE("RNNLayer backward matches numerical gradients",
         constexpr float kEpsilon = 1e-3f;
         constexpr float kTolerance = 2e-2f;
 
-        // Input gradient, spot-checked across positions.
+        // Input gradient, spot-checked across positions. Each probe is a
+        // fresh clone: a host pointer goes stale once Forward moves the
+        // tensor to the device.
         {
-            auto probe = input.Clone();
-            float* data = probe.Data<float>();
             const float* analytic = analytic_input_grad.ReadData<float>();
-            for (size_t i = 0; i < probe.NumElements(); i += 7) {
-                const float original = data[i];
-                data[i] = original + kEpsilon;
-                const double loss_plus = LossOf(layer, probe);
-                data[i] = original - kEpsilon;
-                const double loss_minus = LossOf(layer, probe);
-                data[i] = original;
+            for (size_t i = 0; i < input.NumElements(); i += 7) {
+                auto plus = input.Clone();
+                auto minus = input.Clone();
+                plus.MutableData<float>()[i] += kEpsilon;
+                minus.MutableData<float>()[i] -= kEpsilon;
+                const double loss_plus = LossOf(layer, plus);
+                const double loss_minus = LossOf(layer, minus);
                 const float numeric = static_cast<float>(
                     (loss_plus - loss_minus) / (2.0 * kEpsilon));
                 INFO(nonlinearity << " input grad index " << i);
@@ -135,18 +135,17 @@ TEST_CASE("RNNLayer backward matches numerical gradients",
                 name.substr(0, 7) + "grad_" + name.substr(7));
             REQUIRE(grad_it != params.end());
             const float* analytic = grad_it->second.ReadData<float>();
-            auto mutable_params = params;
-            float* data = mutable_params.at(name).Data<float>();
+            const auto loss_with = [&](size_t i, float delta) {
+                auto probe = params;
+                probe.at(name) = tensor.Clone();
+                probe.at(name).MutableData<float>()[i] += delta;
+                layer.SetParameters(probe);
+                return LossOf(layer, input);
+            };
             for (size_t i = 0; i < grad_it->second.NumElements(); i += 5) {
-                const float original = data[i];
-                data[i] = original + kEpsilon;
-                layer.SetParameters(mutable_params);
-                const double loss_plus = LossOf(layer, input);
-                data[i] = original - kEpsilon;
-                layer.SetParameters(mutable_params);
-                const double loss_minus = LossOf(layer, input);
-                data[i] = original;
-                layer.SetParameters(mutable_params);
+                const double loss_plus = loss_with(i, kEpsilon);
+                const double loss_minus = loss_with(i, -kEpsilon);
+                layer.SetParameters(params);
                 const float numeric = static_cast<float>(
                     (loss_plus - loss_minus) / (2.0 * kEpsilon));
                 INFO(nonlinearity << " " << name << " index " << i);
@@ -184,16 +183,21 @@ TEST_CASE("RNNModule reduces to the last step and re-expands its gradient",
     }
     CHECK(full.GetName() == "RNN(4 -> 6, relu, seq)");
 
-    // Gradients are exposed through the recurrent "grad_*" convention.
+    // Gradients are keyed like their parameters (the optimizer pairs them
+    // by name), and parameters carry no gradient entries.
     const auto grads = last_step.GetGradients();
-    CHECK(grads.count("layer0_grad_W_ih") == 1);
-    CHECK(grads.count("layer0_grad_W_hh") == 1);
-    CHECK(grads.count("layer0_grad_b_ih") == 1);
-    CHECK(grads.count("layer0_grad_b_hh") == 1);
+    const auto module_params = last_step.GetParameters();
+    REQUIRE(grads.size() == 4);
+    REQUIRE(module_params.size() == 4);
+    for (const char* key : {"layer0_W_ih", "layer0_W_hh", "layer0_b_ih", "layer0_b_hh"}) {
+        REQUIRE(grads.count(key) == 1);
+        REQUIRE(module_params.count(key) == 1);
+        CHECK(grads.at(key).Shape() == module_params.at(key).Shape());
+    }
     CHECK(last_step.HasParameters());
 }
 
-TEST_CASE("RNNModule split bidirectional path concatenates branches and checks numerically",
+TEST_CASE("RNNModule bidirectional concatenates branches and checks numerically",
           "[rnn][sequential][bidirectional]") {
     const auto input = FilledTensor({2, 5, 3}, 0.4f, 0.3f);
     cyxwiz::RNNModule module(3, 4, 1, true, "tanh", /*bidirectional=*/true);

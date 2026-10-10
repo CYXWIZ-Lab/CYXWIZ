@@ -1013,7 +1013,7 @@ TEST_CASE("Stacked RNN layers route training through the provider with parity",
         for (const char* name : grad_names) {
             compare(routed.at(name), oracle.at(name), name);
         }
-        REQUIRE(actual_h.Shape() == std::vector<size_t>{3, 10});
+        REQUIRE(actual_h.Shape() == std::vector<size_t>{2, 3, 10});  // [layers, batch, hidden]
         compare(actual_h, expected_h, (tag + " h_n").c_str());
     }
 }

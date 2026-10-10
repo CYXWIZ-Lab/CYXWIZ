@@ -179,7 +179,7 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
 
 TEST_CASE("Recurrent ArrayFire exception handlers report the device error",
           "[arrayfire][fallback][taxonomy][source_scan]") {
-    // LSTM / GRU run only on ArrayFire (TOFIX140): there is no native CPU
+    // LSTM / GRU / RNN run only on ArrayFire (TOFIX140): there is no native CPU
     // recurrence to fall back to, so every ArrayFire handler in the
     // recurrent sources reports the error instead of falling back.
     const fs::path repo_root = FindRepoRoot();
@@ -189,6 +189,7 @@ TEST_CASE("Recurrent ArrayFire exception handlers report the device error",
           "cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp",
           "cyxwiz-backend/src/algorithms/layers/gru.cpp",
           "cyxwiz-backend/src/algorithms/layers/gru_backward.cpp",
+          "cyxwiz-backend/src/algorithms/layers/rnn.cpp",
           "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp"}) {
         std::ifstream in(repo_root / relative_path);
         REQUIRE(in.is_open());

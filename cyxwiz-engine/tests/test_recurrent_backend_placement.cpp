@@ -772,10 +772,8 @@ int main() {
     Check(gru_summary.cpu == 0, "GRU placement summary should have no CPU entries");
     Check(gru_summary.unknown == 0, "GRU placement summary should have no unknown entries");
 
-    // tofix68 Studio RNN wiring: the simple RNN compiles as a CPU-backed
-    // model layer (native CPU reference, no ArrayFire path) with the
-    // recurrent family's declared execution mode, and never as an
-    // unsupported/unclassified entry.
+    // The simple RNN is a recurrent device layer like LSTM / GRU (TOFIX140):
+    // provider op or ArrayFire per-timestep plan, never a CPU reference.
     auto rnn_config = CompileRecurrentGraph(gui::NodeType::RNN, 32, false);
     Check(rnn_config.is_valid, "RNN placement graph should compile");
     Check(rnn_config.backend_placements.size() == 3,
@@ -783,32 +781,31 @@ int main() {
     const auto* rnn_placement = FindPlacement(rnn_config, 4);
     Check(rnn_placement != nullptr, "RNN placement entry should reference node 4");
     Check(rnn_placement->node_type == "RNN", "RNN placement should name the layer");
-    Check(rnn_placement->status == cyxwiz::BackendPlacementStatus::Cpu &&
-              rnn_placement->expected_backend == "CPU",
-          "RNN should be placed on the CPU reference path");
-    Check(rnn_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
-          "RNN should use the CPU-backed model layer reason");
-    Check(rnn_placement->explanation.find("simple-RNN reference") !=
+    Check(rnn_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "RNN should be placed on the device");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::RNN).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::Recurrent,
+          "RNN should be classified as a recurrent layer");
+    Check(rnn_placement->explanation.find(cyxwiz::RecurrentStagedArrayFirePlanName) !=
               std::string::npos,
-          "RNN placement should explain the CPU reference path");
+          "RNN placement should name the staged ArrayFire plan");
     Check(rnn_placement->declared_execution_mode ==
               cyxwiz::GpuExecutionModeName(cyxwiz::DeclaredGpuExecutionMode(
                   cyxwiz::GpuOperationFamily::Recurrent)),
           "RNN should declare the recurrent family execution mode");
     const auto rnn_summary = rnn_config.SummarizeBackendPlacements();
-    Check(rnn_summary.cpu == 1 && rnn_summary.gpu == 2 && rnn_summary.unknown == 0,
-          "RNN placement summary should count RNN as CPU and the rest as GPU");
+    Check(rnn_summary.cpu == 0 && rnn_summary.gpu == 3 && rnn_summary.unknown == 0,
+          "RNN placement summary should count every layer as device");
 
     auto rnn_bidirectional_config =
         CompileRecurrentGraph(gui::NodeType::RNN, 32, true);
     Check(rnn_bidirectional_config.is_valid,
-          "bidirectional RNN compiles through the split path");
+          "bidirectional RNN compiles");
     const auto* rnn_bi_placement = FindPlacement(rnn_bidirectional_config, 4);
     Check(rnn_bi_placement != nullptr &&
               rnn_bi_placement->explanation.find("split forward/reverse") !=
                   std::string::npos,
-          "bidirectional RNN placement should disclose the split path");
+          "bidirectional RNN placement should disclose the per-branch provider verdict");
 
     cyxwiz::ExecutionDeviceContext cpu_context;
     cpu_context.requested_backend = "arrayfire_cpu";

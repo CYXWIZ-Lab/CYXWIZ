@@ -1,6 +1,6 @@
-"""PyTorch fixtures for LSTMModule / GRUModule (TOFIX140, recurrent layers on the device).
+"""PyTorch fixtures for LSTMModule / GRUModule / RNNModule (TOFIX140, recurrent layers on the device).
 
-torch.nn.LSTM / nn.GRU with batch_first=True, 1-2 layers, uni- and bidirectional, full
+torch.nn.LSTM / nn.GRU / nn.RNN (tanh and relu) with batch_first=True, 1-2 layers, uni- and bidirectional, full
 sequence or last step. Each case stores the input, the weights under CyxWiz's parameter keys,
 the output, a fixed upstream gradient, dL/dx and every weight / bias gradient.
 
@@ -30,10 +30,15 @@ def key(layer, name, bidirectional, reverse):
     return f"layer{layer}.{'reverse' if reverse else 'forward'}.{name}"
 
 
-def make_case(name, kind, input_size, hidden, layers, bidirectional, return_sequences, batch, seq, seed):
+def make_case(name, kind, input_size, hidden, layers, bidirectional, return_sequences, batch, seq, seed,
+              nonlinearity="tanh"):
     torch.manual_seed(seed)
-    cls = torch.nn.LSTM if kind == "LSTM" else torch.nn.GRU
-    net = cls(input_size, hidden, num_layers=layers, batch_first=True, bidirectional=bidirectional)
+    if kind == "RNN":
+        net = torch.nn.RNN(input_size, hidden, num_layers=layers, nonlinearity=nonlinearity, batch_first=True,
+                           bidirectional=bidirectional)
+    else:
+        cls = torch.nn.LSTM if kind == "LSTM" else torch.nn.GRU
+        net = cls(input_size, hidden, num_layers=layers, batch_first=True, bidirectional=bidirectional)
     with torch.no_grad():
         for p in net.parameters():
             p.uniform_(-0.4, 0.4)
@@ -52,7 +57,7 @@ def make_case(name, kind, input_size, hidden, layers, bidirectional, return_sequ
                 params[key(layer, ours, bidirectional, reverse)] = tensor_json(p)
                 grads[key(layer, ours, bidirectional, reverse)] = tensor_json(p.grad)
     return {
-        "name": name, "kind": kind, "input_size": input_size, "hidden_size": hidden, "num_layers": layers,
+        "name": name, "kind": kind, "nonlinearity": nonlinearity, "input_size": input_size, "hidden_size": hidden, "num_layers": layers,
         "bidirectional": bidirectional, "return_sequences": return_sequences,
         "input": tensor_json(x), "parameters": params, "output": tensor_json(y),
         "grad_output": tensor_json(grad), "grad_input": tensor_json(x.grad), "parameter_gradients": grads,
@@ -73,6 +78,15 @@ def main():
         ]:
             seed += 1
             cases.append(make_case(name, kind, in_size, hidden, layers, bi, rs, batch, seq, seed))
+    for name, in_size, hidden, layers, bi, rs, batch, seq, act in [
+        ("rnn_tanh_h8_l1_seq", 5, 8, 1, False, True, 3, 6, "tanh"),
+        ("rnn_relu_h16_l2_last", 6, 16, 2, False, False, 2, 7, "relu"),
+        ("rnn_tanh_bi_h8_l2_seq", 5, 8, 2, True, True, 3, 6, "tanh"),
+        ("rnn_relu_bi_h16_l1_last", 6, 16, 1, True, False, 2, 5, "relu"),
+        ("rnn_tanh_h64_l1_seq", 16, 64, 1, False, True, 4, 12, "tanh"),
+    ]:
+        seed += 1
+        cases.append(make_case(name, "RNN", in_size, hidden, layers, bi, rs, batch, seq, seed, act))
     OUT.write_text(json.dumps({"schema_version": 1, "torch_version": torch.__version__, "cases": cases}))
     print(f"wrote {OUT} ({len(cases)} cases, {OUT.stat().st_size // 1024} KB)")
 
