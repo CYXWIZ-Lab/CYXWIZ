@@ -5,6 +5,7 @@
 #include "cyxwiz/tensor.h"
 
 #include <map>
+#include <memory>
 #include <string>
 
 namespace cyxwiz {
@@ -40,6 +41,10 @@ private:
     int padding_;
     int dilation_;
     bool use_bias_;
+
+    // The sparse window gather for one input length, built on first use.
+    struct DeviceGather;
+    std::shared_ptr<DeviceGather> gather_;
 
     Tensor weights_;
     Tensor bias_;

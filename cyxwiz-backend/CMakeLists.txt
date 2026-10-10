@@ -177,7 +177,6 @@ set(BACKEND_SOURCES
     src/algorithms/layers/layer_norm_arrayfire.cpp
     src/algorithms/layers/rms_norm.cpp
     src/algorithms/layers/conv1d.cpp
-    src/algorithms/layers/conv1d_native.cpp
     src/algorithms/layers/conv2d.cpp
     src/algorithms/layers/depthwise_conv2d.cpp
     src/algorithms/layers/conv2d_native.cpp

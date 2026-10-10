@@ -76,7 +76,7 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const std::string& layer, const json&
     if (layer == "Conv1D")
         return std::make_unique<Conv1DModule>(static_cast<int>(channels_in), g.at("filters").get<int>(),
                                               g.at("kernel_size").get<int>(), g.at("stride").get<int>(),
-                                              g.at("padding").get<int>(), 1, true);
+                                              g.at("padding").get<int>(), g.value("dilation", 1), true);
     if (layer == "Conv2D")
         return std::make_unique<Conv2DModule>(static_cast<int>(channels_in), g.at("filters").get<int>(),
                                               g.at("kernel_size").get<int>(), g.at("stride").get<int>(),

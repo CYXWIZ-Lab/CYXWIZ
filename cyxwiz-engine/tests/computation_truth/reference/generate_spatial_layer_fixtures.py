@@ -243,6 +243,15 @@ def build() -> list[dict[str, Any]]:
         x, lambda t: functional.conv1d(t, w, b, stride=1, padding=1),
         {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, tolerance=(2e-4, 2e-4),
         sequence=True))
+    # Dilation and padding >= kernel (torch allows both; ArrayFire's unwrap does neither)
+    x = torch.randn(2, 3, 11)
+    w = torch.randn(4, 3, 3) * 0.3
+    b = torch.randn(4) * 0.1
+    cases.append(case(
+        "conv1d_dilated_pad_over_k", "Conv1D",
+        {"filters": 4, "kernel_size": 3, "stride": 2, "padding": 4, "dilation": 2},
+        x, lambda t: functional.conv1d(t, w, b, stride=2, padding=4, dilation=2),
+        {"weights": w, "bias": b}, {"weights": plain, "bias": plain}, sequence=True))
 
     # Global max pooling: [N,C,H,W] -> [N,C] rows; the gradient goes to the maximum
     x = torch.randn(2, 3, 5, 5)
