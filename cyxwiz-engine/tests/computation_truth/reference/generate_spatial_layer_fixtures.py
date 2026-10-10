@@ -159,6 +159,18 @@ def build() -> list[dict[str, Any]]:
         {"out_channels": 2, "kernel_size": 3, "stride": 2, "padding": 1, "output_padding": 1},
         x, lambda t: functional.conv_transpose2d(t, w, b, stride=2, padding=1, output_padding=1),
         {"weights": w, "bias": b}, {"weights": transpose_weight, "bias": plain}))
+    # padding >= kernel (ArrayFire's wrap refuses it) and an image-sized decoder step
+    for name, cin, cout, k, s_, p_, op, size in [("convtranspose2d_pad_over_k2", 2, 3, 2, 3, 2, 1, 5),
+                                                 ("convtranspose2d_image_16", 8, 4, 4, 2, 1, 0, 16)]:
+        x = torch.randn(2, cin, size, size)
+        w = torch.randn(cin, cout, k, k) * 0.2
+        b = torch.randn(cout) * 0.1
+        cases.append(case(
+            name, "ConvTranspose2D",
+            {"out_channels": cout, "kernel_size": k, "stride": s_, "padding": p_, "output_padding": op},
+            x, lambda t, w=w, b=b, s_=s_, p_=p_, op=op: functional.conv_transpose2d(
+                t, w, b, stride=s_, padding=p_, output_padding=op),
+            {"weights": w, "bias": b}, {"weights": transpose_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
 
     # GroupNorm 2 groups over 4 channels, affine
     x = torch.randn(2, 4, 5, 5)

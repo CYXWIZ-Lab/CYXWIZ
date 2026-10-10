@@ -150,6 +150,8 @@ int main(int, char** argv) {
         const size_t rank = input.Shape().size();
         const size_t channels_in = rank == 4 ? input.Shape()[2] : rank == 3 ? input.Shape()[1] : 0;
 
+        // A device error names the case instead of aborting the run unexplained.
+        try {
         auto module = MakeModule(layer, c.at("geometry"), channels_in);
         std::map<std::string, cyxwiz::Tensor> parameters;
         for (const auto& [key, value] : c.at("parameters").items()) parameters[key] = ReadTensor(value);
@@ -169,8 +171,11 @@ int main(int, char** argv) {
                 CheckTensor(it->second, expected, tol, name + " grad " + key);
             }
         }
-        std::cout << "  ok " << name << " (" << module->GetName() << ")\n";
+        std::cout << "  ok " << name << " (" << module->GetName() << ")" << std::endl;
         ++passed;
+        } catch (const std::exception& error) {
+            Check(false, name + ": " + error.what());
+        }
     }
     std::cout << "spatial layers match PyTorch: " << passed << " cases\n";
     return 0;

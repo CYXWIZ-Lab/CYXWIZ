@@ -258,134 +258,32 @@ TEST_CASE(
   CheckValues(layer.GetParameters().at("grad_bias"), {3}, {48, 48, 48});
 }
 
-void CheckFallback(bool forced, ArrayFireFallbackPolicy policy) {
+TEST_CASE("ConvTranspose2D runs padding wider than the kernel on the device",
+          "[conv_transpose][policy]") {
+  // One ArrayFire path (TOFIX140): the padding crop is folded into the
+  // device placement, so the strict policy sees no fallback and no host sync.
   BackendLane lane;
-  const bool strict =
-      policy == ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
-  const int padding = forced ? 0 : 1;
-  ConvTranspose2DLayer layer(1, 1, 1, 1, padding, 0, true);
+  ConvTranspose2DLayer layer(1, 1, 1, 1, 1, 0, true);  // padding 1 >= kernel 1
   layer.SetParameters({{"weights", DeviceOnlyTensor({1, 1, 1, 1}, {2})},
                        {"bias", DeviceOnlyTensor({1}, {.5f})}});
-  auto x =
-      DeviceOnlyTensor(forced ? std::vector<size_t>{1, 1, 1, 1}
-                              : std::vector<size_t>{3, 3, 1, 1},
-                       forced ? std::vector<float>{5}
-                              : std::vector<float>{1, 2, 3, 4, 5, 6, 7, 8, 9});
-  auto dy = DeviceOnlyOnes({1, 1, 1, 1});
-  for (bool backward : {false, true}) {
-    if (backward) {
-      ScopedArrayFireFallbackPolicy compatible(
-          ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-      (void)layer.Forward(x);
-    }
-    ResetConvObservations();
-    Tensor output;
-    {
-      ScopedEnvVar hook("CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK",
-                        forced ? (backward ? "ConvTranspose2DLayer::Backward"
-                                           : "ConvTranspose2DLayer::Forward")
-                               : "");
-      ScopedArrayFireFallbackPolicy scoped_policy(policy);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
-      ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-      const auto run = [&] {
-        return backward ? layer.Backward(dy) : layer.Forward(x);
-      };
-      if (strict)
-        CHECK_THROWS_AS(run(), std::runtime_error);
-      else
-        output = run();
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(last_conv_fallback.fallback_forbidden == strict);
-    CHECK(last_conv_fallback.operation_name ==
-          (backward ? "ConvTranspose2DLayer::Backward"
-                    : "ConvTranspose2DLayer::Forward"));
-    if (!forced)
-      CHECK(last_conv_fallback.reason_code == "unsupported_shape");
-    if (strict) {
-      CHECK(conv_host_sync_count == 0);
-      CHECK(conv_host_sync_bytes == 0);
-    } else {
-      CHECK(conv_host_sync_count > 0);
-      CHECK(conv_host_sync_bytes > 0);
-      CHECK(saw_conv_cpu_path);
-      if (backward) {
-        CheckValues(layer.GetParameters().at("grad_weights"), {1, 1, 1, 1},
-                    {5});
-        CheckValues(layer.GetParameters().at("grad_bias"), {1}, {1});
-        CheckValues(output, x.Shape(),
-                    forced ? std::vector<float>{2}
-                           : std::vector<float>{0, 0, 0, 0, 2, 0, 0, 0, 0});
-      } else
-        CheckValues(output, {1, 1, 1, 1}, {10.5f});
-    }
-  }
-}
-TEST_CASE("ConvTranspose2D declared padding fallback honors compatibility and "
-          "strict policy",
-          "[conv_transpose][fallback]") {
-  SECTION("compatible") {
-    CheckFallback(false, ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-  }
-  SECTION("strict") {
-    CheckFallback(false, ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-  }
-}
-#ifndef NDEBUG
-TEST_CASE(
-    "ConvTranspose2D native fallback matches device overlap and batch layout",
-    "[conv_transpose][fallback][layout]") {
-  BackendLane lane;
-  ConvTranspose2DLayer layer(2, 3, 3, 2, 1, 1, true);
-  std::vector<float> x(24), weights(54), dy(144);
-  for (size_t i = 0; i < x.size(); ++i)
-    x[i] = static_cast<float>(i % 5) * .25f;
-  for (size_t i = 0; i < weights.size(); ++i)
-    weights[i] = static_cast<float>(static_cast<int>(i % 7) - 3) * .125f;
-  for (size_t i = 0; i < dy.size(); ++i)
-    dy[i] = static_cast<float>(i % 3) * .25f;
-  layer.SetParameters({{"weights", Values({3, 3, 3, 2}, weights)},
-                       {"bias", Values({3}, {.25f, -.5f, .75f})}});
-  const auto input = Values({2, 3, 2, 2}, x);
-  const auto upstream = Values({4, 6, 3, 2}, dy);
-  std::vector<float> output, dx, dw, db;
+  const auto x = DeviceOnlyTensor({3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+  ResetConvObservations();
+  Tensor output, dx;
   {
     ScopedArrayFireFallbackPolicy strict(
         ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-    output = Read(layer.Forward(input));
-    dx = Read(layer.Backward(upstream));
-    dw = Read(layer.GetParameters().at("grad_weights"));
-    db = Read(layer.GetParameters().at("grad_bias"));
+    ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
+    ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
+    output = layer.Forward(x);
+    dx = layer.Backward(DeviceOnlyOnes({1, 1, 1, 1}));
+    output.GetSemanticArray().eval();
+    dx.GetSemanticArray().eval();
   }
-  ScopedArrayFireFallbackPolicy compatible(
-      ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-  ResetConvObservations();
-  ScopedArrayFireNativeCpuFallbackObserver observer(&CountConvFallback);
-  {
-    ScopedEnvVar hook("CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK",
-                      "ConvTranspose2DLayer::Forward");
-    CheckValues(layer.Forward(input), {4, 6, 3, 2}, output);
-  }
-  {
-    ScopedEnvVar hook("CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK",
-                      "ConvTranspose2DLayer::Backward");
-    CheckValues(layer.Backward(upstream), input.Shape(), dx);
-    CheckValues(layer.GetParameters().at("grad_weights"), {3, 3, 3, 2}, dw);
-    CheckValues(layer.GetParameters().at("grad_bias"), {3}, db);
-  }
-  CHECK(conv_fallback_count == 2);
+  CHECK(conv_fallback_count == 0);
+  CHECK(conv_host_sync_count == 0);
+  CheckValues(output, {1, 1, 1, 1}, {10.5f});  // centre 5 * 2 + 0.5
+  CheckValues(dx, x.Shape(), {0, 0, 0, 0, 2, 0, 0, 0, 0});
+  CheckValues(layer.GetParameters().at("grad_weights"), {1, 1, 1, 1}, {5});
+  CheckValues(layer.GetParameters().at("grad_bias"), {1}, {1});
 }
-
-TEST_CASE(
-    "ConvTranspose2D forced fallback honors compatibility and strict policy",
-    "[conv_transpose][fallback]") {
-  SECTION("compatible") {
-    CheckFallback(true, ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-  }
-  SECTION("strict") {
-    CheckFallback(true, ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-  }
-}
-#endif
 #endif

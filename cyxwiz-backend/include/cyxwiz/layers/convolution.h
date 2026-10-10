@@ -163,6 +163,10 @@ private:
     int output_padding_;
     bool use_bias_;
 
+    // The sparse patch placement for one input size, built on first use.
+    struct DeviceScatter;
+    std::shared_ptr<DeviceScatter> scatter_;
+
     Tensor weights_;
     Tensor bias_;
     Tensor grad_weights_;
