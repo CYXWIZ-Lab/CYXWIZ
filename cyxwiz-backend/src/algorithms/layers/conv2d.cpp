@@ -1,8 +1,11 @@
+// Conv2D on [H, W, C, N], on the device only: the NVIDIA provider op (im2col
+// + cuBLAS on ArrayFire's stream) where it serves, else ArrayFire's unwrap on
+// an explicitly zero-padded input (unwrap refuses padding >= kernel). An
+// ArrayFire error is reported, not hidden behind host loops; the CPU is
+// ArrayFire's CPU backend and a build without ArrayFire refuses the layer.
 #include "cyxwiz/layers/convolution.h"
 #include "cyxwiz/neural_provider.h"
 #include <spdlog/spdlog.h>
-#include "../arrayfire_backend_utils.h"
-#include "conv2d_native.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
 
@@ -116,32 +119,6 @@ std::vector<size_t> Conv2DOutputShape(const Conv2DGeometry& geometry,
     };
 }
 
-Conv2DNativeGeometry BuildNativeGeometry(
-    const Conv2DGeometry& geometry) {
-    return {
-        geometry.in_h,
-        geometry.in_w,
-        geometry.in_channels,
-        geometry.batch_size,
-        geometry.out_h,
-        geometry.out_w,
-    };
-}
-
-Conv2DNativeConfig BuildNativeConfig(int out_channels,
-                                     int kernel_size,
-                                     int stride,
-                                     int padding,
-                                     bool use_bias) {
-    return {
-        static_cast<size_t>(out_channels),
-        kernel_size,
-        stride,
-        padding,
-        use_bias,
-    };
-}
-
 Conv2DGeometry ValidateConv2DBackwardInput(const Tensor& cached_input,
                                            const Tensor& grad_output,
                                            int in_channels,
@@ -168,19 +145,29 @@ Conv2DGeometry ValidateConv2DBackwardInput(const Tensor& cached_input,
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
+[[noreturn]] void ThrowConv2DDeviceError(const char* operation, const af::exception& error) {
+    throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
+}
+
+af::array PadSpatial(const af::array& x, int padding) {
+    if (padding == 0) return x;
+    const dim_t p = padding;
+    return af::pad(x, af::dim4(p, p, 0, 0), af::dim4(p, p, 0, 0), AF_PAD_ZERO);
+}
+
 af::array Conv2DColumns(const af::array& input,
                         const Conv2DGeometry& geometry,
                         int kernel_size,
                         int stride,
                         int padding) {
     af::array patches = af::unwrap(
-        input,
+        PadSpatial(input, padding),
         kernel_size,
         kernel_size,
         stride,
         stride,
-        padding,
-        padding);
+        0,
+        0);
     patches = af::reorder(patches, 0, 2, 1, 3);
     return af::moddims(
         patches,
@@ -244,17 +231,7 @@ Conv2DLayer::Conv2DLayer(int in_channels,
             af::constant(0.0f, af::dim4(out_channels_)));
     }
 #else
-    weights_ = Tensor::Random(
-        {
-            static_cast<size_t>(kernel_size_),
-            static_cast<size_t>(kernel_size_),
-            static_cast<size_t>(in_channels_),
-            static_cast<size_t>(out_channels_),
-        });
-    if (use_bias_) {
-        bias_ = Tensor::Zeros(
-            {static_cast<size_t>(out_channels_)});
-    }
+    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
 #endif
 
     grad_weights_ = Tensor::Zeros(
@@ -294,93 +271,57 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
             return provided;
         }
     }
-    bool use_native_cpu = false;
-    if (padding_ >= kernel_size_) {
-        RecordLayerArrayFireFallback(
-            "Conv2DLayer::Forward",
-            BackendFallbackReason::UnsupportedShape,
-            "ArrayFire unwrap requires padding smaller than kernel size",
-            input,
-            "input");
-        use_native_cpu = true;
-    } else if (ShouldForceArrayFireBackendFallbackForTesting(
-                   "Conv2DLayer::Forward")) {
-        RecordLayerArrayFireFallback(
-            "Conv2DLayer::Forward",
-            "forced ArrayFire backend fallback test hook",
-            input,
-            "input");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const af::array columns = Conv2DColumns(
-                TensorToAf(input),
-                geometry,
-                kernel_size_,
-                stride_,
-                padding_);
-            const af::array filters = af::moddims(
-                TensorToAf(weights_),
-                static_cast<dim_t>(geometry.kernel_elements),
-                static_cast<dim_t>(out_channels_));
-            const af::array output_columns = af::matmulTN(filters, columns);
-            af::array output = af::reorder(
-                af::moddims(
-                    output_columns,
-                    static_cast<dim_t>(out_channels_),
+    try {
+        const af::array columns = Conv2DColumns(
+            TensorToAf(input),
+            geometry,
+            kernel_size_,
+            stride_,
+            padding_);
+        const af::array filters = af::moddims(
+            TensorToAf(weights_),
+            static_cast<dim_t>(geometry.kernel_elements),
+            static_cast<dim_t>(out_channels_));
+        const af::array output_columns = af::matmulTN(filters, columns);
+        af::array output = af::reorder(
+            af::moddims(
+                output_columns,
+                static_cast<dim_t>(out_channels_),
+                static_cast<dim_t>(geometry.out_h),
+                static_cast<dim_t>(geometry.out_w),
+                static_cast<dim_t>(geometry.batch_size)),
+            1,
+            2,
+            0,
+            3);
+        if (use_bias_) {
+            const af::array bias = af::moddims(
+                TensorToAf(bias_),
+                1,
+                1,
+                static_cast<dim_t>(out_channels_),
+                1);
+            output += af::tile(
+                bias,
+                af::dim4(
                     static_cast<dim_t>(geometry.out_h),
                     static_cast<dim_t>(geometry.out_w),
-                    static_cast<dim_t>(geometry.batch_size)),
-                1,
-                2,
-                0,
-                3);
-            if (use_bias_) {
-                const af::array bias = af::moddims(
-                    TensorToAf(bias_),
                     1,
-                    1,
-                    static_cast<dim_t>(out_channels_),
-                    1);
-                output += af::tile(
-                    bias,
-                    af::dim4(
-                        static_cast<dim_t>(geometry.out_h),
-                        static_cast<dim_t>(geometry.out_w),
-                        1,
-                        static_cast<dim_t>(geometry.batch_size)));
-            }
-            output.eval();
-
-            Tensor result = Tensor::FromSemanticArray(output, output_shape);
-            cached_input_ = input;
-            has_forward_ = true;
-            return result;
-        } catch (const af::exception& e) {
-            RecordLayerArrayFireFallbackObservation(
-                "Conv2DLayer::Forward", "Conv2D", e.what(), input, "input");
+                    static_cast<dim_t>(geometry.batch_size)));
         }
+        output.eval();
+
+        Tensor result = Tensor::FromSemanticArray(output, output_shape);
+        cached_input_ = input;
+        has_forward_ = true;
+        return result;
+    } catch (const af::exception& e) {
+        ThrowConv2DDeviceError("Conv2DLayer::Forward", e);
     }
 #else
-    RecordLayerArrayFireFallback(
-        "Conv2DLayer::Forward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        input,
-        "input");
+    (void)geometry; (void)output_shape;
+    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
 #endif
-
-    Tensor output = Conv2DForwardNative(
-        input,
-        weights_,
-        bias_,
-        BuildNativeGeometry(geometry),
-        BuildNativeConfig(
-            out_channels_, kernel_size_, stride_, padding_, use_bias_));
-    cached_input_ = input;
-    has_forward_ = true;
-    return output;
 }
 
 Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
@@ -405,118 +346,86 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
         Tensor provided;
         if (TryProviderBackward(grad_output, provided)) return provided;
     }
-    bool use_native_cpu = false;
-    if (padding_ >= kernel_size_) {
-        RecordLayerArrayFireFallback(
-            "Conv2DLayer::Backward",
-            BackendFallbackReason::UnsupportedShape,
-            "ArrayFire wrap requires padding smaller than kernel size",
-            grad_output,
-            "grad_output");
-        use_native_cpu = true;
-    } else if (ShouldForceArrayFireBackendFallbackForTesting(
-                   "Conv2DLayer::Backward")) {
-        RecordLayerArrayFireFallback(
-            "Conv2DLayer::Backward",
-            "forced ArrayFire backend fallback test hook",
-            grad_output,
-            "grad_output");
-        use_native_cpu = true;
-    }
-    if (!use_native_cpu) {
-        try {
-            const af::array columns = Conv2DColumns(
-                TensorToAf(cached_input_),
-                geometry,
-                kernel_size_,
-                stride_,
-                padding_);
-            const af::array grad_columns = Conv2DGradOutputColumns(
-                TensorToAf(grad_output), geometry, out_channels_);
-            const af::array filters = af::moddims(
-                TensorToAf(weights_),
-                static_cast<dim_t>(geometry.kernel_elements),
-                static_cast<dim_t>(out_channels_));
+    try {
+        const af::array columns = Conv2DColumns(
+            TensorToAf(cached_input_),
+            geometry,
+            kernel_size_,
+            stride_,
+            padding_);
+        const af::array grad_columns = Conv2DGradOutputColumns(
+            TensorToAf(grad_output), geometry, out_channels_);
+        const af::array filters = af::moddims(
+            TensorToAf(weights_),
+            static_cast<dim_t>(geometry.kernel_elements),
+            static_cast<dim_t>(out_channels_));
 
-            af::array grad_weight = af::moddims(
-                af::matmulNT(columns, grad_columns),
-                kernel_size_,
-                kernel_size_,
-                in_channels_,
-                out_channels_);
-            grad_weight.eval();
+        af::array grad_weight = af::moddims(
+            af::matmulNT(columns, grad_columns),
+            kernel_size_,
+            kernel_size_,
+            in_channels_,
+            out_channels_);
+        grad_weight.eval();
 
-            if (use_bias_) {
-                af::array grad_bias = af::sum(
-                    af::sum(af::sum(TensorToAf(grad_output), 0), 1), 3);
-                grad_bias = af::moddims(grad_bias, out_channels_);
-                grad_bias.eval();
-                grad_bias_ = Tensor::FromSemanticArray(
-                    grad_bias,
-                    {static_cast<size_t>(out_channels_)});
-            }
-
-            af::array grad_patches = af::reorder(
-                af::moddims(
-                    af::matmul(filters, grad_columns),
-                    static_cast<dim_t>(
-                        geometry.kernel_elements / geometry.in_channels),
-                    in_channels_,
-                    static_cast<dim_t>(geometry.patch_count),
-                    static_cast<dim_t>(geometry.batch_size)),
-                0,
-                2,
-                1,
-                3);
-            af::array grad_input = af::wrap(
-                grad_patches,
-                static_cast<dim_t>(geometry.in_h),
-                static_cast<dim_t>(geometry.in_w),
-                kernel_size_,
-                kernel_size_,
-                stride_,
-                stride_,
-                padding_,
-                padding_);
-            grad_input.eval();
-
-            grad_weights_ = Tensor::FromSemanticArray(
-                grad_weight,
-                {
-                    static_cast<size_t>(kernel_size_),
-                    static_cast<size_t>(kernel_size_),
-                    static_cast<size_t>(in_channels_),
-                    static_cast<size_t>(out_channels_),
-                });
-            return Tensor::FromSemanticArray(
-                grad_input, cached_input_.Shape());
-        } catch (const af::exception& e) {
-            RecordLayerArrayFireFallbackObservation(
-                "Conv2DLayer::Backward",
-                "Conv2D",
-                e.what(),
-                cached_input_,
-                "input");
+        if (use_bias_) {
+            af::array grad_bias = af::sum(
+                af::sum(af::sum(TensorToAf(grad_output), 0), 1), 3);
+            grad_bias = af::moddims(grad_bias, out_channels_);
+            grad_bias.eval();
+            grad_bias_ = Tensor::FromSemanticArray(
+                grad_bias,
+                {static_cast<size_t>(out_channels_)});
         }
+
+        af::array grad_patches = af::reorder(
+            af::moddims(
+                af::matmul(filters, grad_columns),
+                static_cast<dim_t>(
+                    geometry.kernel_elements / geometry.in_channels),
+                in_channels_,
+                static_cast<dim_t>(geometry.patch_count),
+                static_cast<dim_t>(geometry.batch_size)),
+            0,
+            2,
+            1,
+            3);
+        // Fold into the padded input, then drop the padding.
+        af::array grad_input = af::wrap(
+            grad_patches,
+            static_cast<dim_t>(geometry.in_h) + 2 * padding_,
+            static_cast<dim_t>(geometry.in_w) + 2 * padding_,
+            kernel_size_,
+            kernel_size_,
+            stride_,
+            stride_,
+            0,
+            0);
+        if (padding_ > 0) {
+            grad_input = grad_input(
+                af::seq(padding_, static_cast<double>(padding_ + geometry.in_h - 1)),
+                af::seq(padding_, static_cast<double>(padding_ + geometry.in_w - 1)),
+                af::span, af::span);
+        }
+        grad_input.eval();
+
+        grad_weights_ = Tensor::FromSemanticArray(
+            grad_weight,
+            {
+                static_cast<size_t>(kernel_size_),
+                static_cast<size_t>(kernel_size_),
+                static_cast<size_t>(in_channels_),
+                static_cast<size_t>(out_channels_),
+            });
+        return Tensor::FromSemanticArray(
+            grad_input, cached_input_.Shape());
+    } catch (const af::exception& e) {
+        ThrowConv2DDeviceError("Conv2DLayer::Backward", e);
     }
 #else
-    RecordLayerArrayFireFallback(
-        "Conv2DLayer::Backward",
-        BackendFallbackReason::BackendUnavailable,
-        "ArrayFire support is not compiled",
-        grad_output,
-        "grad_output");
+    (void)geometry;
+    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
 #endif
-
-    return Conv2DBackwardNative(
-        cached_input_,
-        grad_output,
-        weights_,
-        grad_weights_,
-        grad_bias_,
-        BuildNativeGeometry(geometry),
-        BuildNativeConfig(
-            out_channels_, kernel_size_, stride_, padding_, use_bias_));
 }
 
 std::map<std::string, Tensor> Conv2DLayer::GetParameters() {

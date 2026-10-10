@@ -380,10 +380,12 @@ TEST_CASE("Conv2D remains ArrayFire resident under strict fallback policy",
     }
 }
 
-TEST_CASE("Conv2D declares ArrayFire unsupported padding before fallback",
-          "[conv][conv2d][arrayfire][fallback][policy]") {
-    cyxwiz::Conv2DLayer compatible_layer(1, 1, 1, 1, 1, false);
-    compatible_layer.SetParameters({
+TEST_CASE("Conv2D runs padding wider than the kernel on the device",
+          "[conv][conv2d][arrayfire][policy]") {
+    // One ArrayFire path (TOFIX140): padding >= kernel is zero-padded on the
+    // device, so the strict policy sees no fallback and no host sync.
+    cyxwiz::Conv2DLayer layer(1, 1, 1, 1, 1, false);
+    layer.SetParameters({
         {"weights", DeviceOnlyTensor({1, 1, 1, 1}, {2.0f})},
     });
     const cyxwiz::Tensor input = DeviceOnlyTensor({1, 1, 1, 1}, {3.0f});
@@ -391,151 +393,23 @@ TEST_CASE("Conv2D declares ArrayFire unsupported padding before fallback",
     ResetConvObservations();
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
             &CountConvFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConvHostSync);
-        output = compatible_layer.Forward(input);
+        output = layer.Forward(input);
+        output.GetSemanticArray().eval();
     }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count >= 1);
-    CHECK(saw_conv_cpu_path);
-    CHECK(last_conv_fallback.operation_name == "Conv2DLayer::Forward");
-    CHECK(last_conv_fallback.reason_code == "unsupported_shape");
-    CHECK_FALSE(last_conv_fallback.fallback_forbidden);
+    CHECK(conv_fallback_count == 0);
+    CHECK(conv_host_sync_count == 0);
     CheckValues(
         output,
         {3, 3, 1, 1},
         {0.0f, 0.0f, 0.0f,
          0.0f, 6.0f, 0.0f,
          0.0f, 0.0f, 0.0f});
-
-    cyxwiz::Conv2DLayer strict_layer(1, 1, 1, 1, 1, false);
-    strict_layer.SetParameters({
-        {"weights", DeviceOnlyTensor({1, 1, 1, 1}, {2.0f})},
-    });
-    ResetConvObservations();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountConvHostSync);
-        CHECK_THROWS_AS(strict_layer.Forward(input), std::runtime_error);
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count == 0);
-    CHECK(last_conv_fallback.fallback_forbidden);
 }
 
-#ifndef NDEBUG
-
-TEST_CASE("Conv2D forced native fallback is compatible and attributed",
-          "[conv][conv2d][arrayfire][fallback]") {
-    constexpr const char* force_name =
-        "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
-    cyxwiz::Conv2DLayer layer(1, 1, 2, 1, 0, true);
-    ConfigureReferenceConvDeviceOnly(layer);
-    const cyxwiz::Tensor input = DeviceOnlyTensor(
-        {3, 3, 1, 1},
-        {1.0f, 2.0f, 3.0f,
-         4.0f, 5.0f, 6.0f,
-         7.0f, 8.0f, 9.0f});
-
-    ResetConvObservations();
-    cyxwiz::Tensor output;
-    {
-        const ScopedEnvVar force(force_name, "Conv2DLayer::Forward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountConvHostSync);
-        output = layer.Forward(input);
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count >= 1);
-    CHECK(saw_conv_cpu_path);
-    CHECK_FALSE(last_conv_fallback.fallback_forbidden);
-    CheckValues(
-        output,
-        {2, 2, 1, 1},
-        {37.5f, 47.5f, 67.5f, 77.5f});
-
-    ResetConvObservations();
-    cyxwiz::Tensor grad_input;
-    {
-        const ScopedEnvVar force(force_name, "Conv2DLayer::Backward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountConvHostSync);
-        grad_input = layer.Backward(DeviceOnlyOnes(output.Shape()));
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count >= 1);
-    CHECK(saw_conv_cpu_path);
-    CHECK_FALSE(last_conv_fallback.fallback_forbidden);
-    CheckValues(
-        grad_input,
-        {3, 3, 1, 1},
-        {1.0f, 3.0f, 2.0f,
-         4.0f, 10.0f, 6.0f,
-         3.0f, 7.0f, 4.0f});
-}
-
-TEST_CASE("Conv2D strict policy rejects forced fallback before host sync",
-          "[conv][conv2d][arrayfire][fallback][policy]") {
-    constexpr const char* force_name =
-        "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
-    const cyxwiz::Tensor input = DeviceOnlyTensor(
-        {3, 3, 1, 1}, std::vector<float>(9, 1.0f));
-
-    cyxwiz::Conv2DLayer forward_layer(1, 1, 2, 1, 0, true);
-    ConfigureReferenceConvDeviceOnly(forward_layer);
-    ResetConvObservations();
-    {
-        const ScopedEnvVar force(force_name, "Conv2DLayer::Forward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountConvHostSync);
-        CHECK_THROWS_AS(forward_layer.Forward(input), std::runtime_error);
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count == 0);
-    CHECK(last_conv_fallback.operation_name == "Conv2DLayer::Forward");
-    CHECK(last_conv_fallback.fallback_forbidden);
-
-    cyxwiz::Conv2DLayer backward_layer(1, 1, 2, 1, 0, true);
-    ConfigureReferenceConvDeviceOnly(backward_layer);
-    const cyxwiz::Tensor output = backward_layer.Forward(input);
-    ResetConvObservations();
-    {
-        const ScopedEnvVar force(force_name, "Conv2DLayer::Backward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountConvHostSync);
-        CHECK_THROWS_AS(
-            backward_layer.Backward(DeviceOnlyOnes(output.Shape())),
-            std::runtime_error);
-    }
-    CHECK(conv_fallback_count == 1);
-    CHECK(conv_host_sync_count == 0);
-    CHECK(last_conv_fallback.operation_name == "Conv2DLayer::Backward");
-    CHECK(last_conv_fallback.fallback_forbidden);
-}
-
-#endif
 #endif
