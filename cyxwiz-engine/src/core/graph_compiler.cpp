@@ -7018,8 +7018,9 @@ static void ExtractTextVectorizerShape(
 // --- The table ---
 
 static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
+    // Normalize works on every batcher (SetNormalization), tabular or image.
     // Tabular (existing, migrated from switch)
-    {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractImageNormalize},
+    {gui::NodeType::Normalize,          PreprocessingDomain::General,     ExtractImageNormalize},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
