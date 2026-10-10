@@ -295,6 +295,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
         case NodeType::AugmentationPreset:
+        case NodeType::QualityAnalyzer:
             return "Data Pipeline";
 
         default:
@@ -1873,6 +1874,27 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "CIFAR-10 recipe: Random Crop (padding 4) -> Horizontal Flip -> cutout 16",
             "Training accuracy compares with the larger share of a mixed label",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::QualityAnalyzer] = {
+        "Quality Analyzer",
+        "Leaves blurry, too dark or bright, low-contrast and near-duplicate images out of training.",
+        "Open the node and click Analyze: each image is measured once on the GPU at the Resize size. "
+        "Blur is the variance of the Laplacian (low = blurry), brightness the mean luminance (0 to 255), "
+        "contrast the luminance standard deviation / 255; near-duplicates share a difference hash within "
+        "4 bits and the first one stays. Training leaves the rejected files out and refuses to start "
+        "without a current analysis. Files are never deleted.",
+        {
+            {"Blur", "Reject images whose Laplacian variance is below this (at the Resize size)"},
+            {"Brightness", "Reject images darker or brighter than these mean luminances"},
+            {"Contrast", "Reject images whose luminance standard deviation / 255 is below this"},
+            {"Near-duplicates", "Reject later copies of an image, keeping the first"}
+        },
+        {
+            "Analyze again after adding images or changing the Resize size",
+            "Changing a check re-judges the saved measurements at once",
         },
         "Data Pipeline"
     };

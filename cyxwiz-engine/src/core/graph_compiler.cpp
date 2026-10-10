@@ -6285,6 +6285,34 @@ TrainingConfiguration GraphCompiler::Compile(
                          errors::Compiler::TensorShapeMismatch);
             }
 
+            // The Quality Analyzer's cached analysis must match these images
+            // at the Resize size; its verdict lists the files to leave out.
+            // An unloaded dataset is reported by the data checks instead.
+            if (config.image_quality_node_id >= 0 && has_resize &&
+                GraphDatasetIsKind(config.dataset_name, GraphDatasetKind::Image)) {
+                const gui::MLNode* quality = FindNodeById(config.image_quality_node_id, nodes);
+                const auto decoded = DecodedImageShape(config);
+                const auto verdict = quality
+                    ? GraphImageQuality(config.dataset_name, static_cast<int>(decoded.width),
+                                        static_cast<int>(decoded.height), quality->parameters)
+                    : std::nullopt;
+                const std::string quality_name = quality ? quality->name : std::string();
+                if (!verdict) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Quality Analyzer: this host cannot check the image analysis; train it in the Engine",
+                             config.image_quality_node_id, quality_name);
+                } else if (!verdict->error.empty()) {
+                    AddIssue(config, IssueLevel::Error, "Quality Analyzer: " + verdict->error,
+                             config.image_quality_node_id, quality_name);
+                } else {
+                    config.image_excluded_files = verdict->excluded;
+                    AddIssue(config, IssueLevel::Info,
+                             "Quality Analyzer leaves out " + std::to_string(verdict->rejected) + " of " +
+                                 std::to_string(verdict->total) + " images",
+                             config.image_quality_node_id, quality_name);
+                }
+            }
+
             // Check 4: Pipeline ordering — Normalize before Resize is
             // almost certainly wrong (normalization stats are scale-
             // dependent). Walk the TOPOLOGICAL order (from links), not
@@ -6954,6 +6982,22 @@ void ExtractImageBatchMix(const gui::MLNode& node, const std::string& method, Tr
     config.image_mix_node_id = node.id;
 }
 
+// Quality Analyzer: a dataset filter. The image checks below judge its cached
+// analysis once the dataset and the Resize size are known.
+void ExtractImageQuality(const gui::MLNode& node, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+#ifndef CYXWIZ_HAS_ARRAYFIRE
+    refuse("The Quality Analyzer measures images on ArrayFire, and this build has no ArrayFire");
+    return;
+#endif
+    if (config.image_quality_node_id >= 0) {
+        return refuse("Only one Quality Analyzer per graph");
+    }
+    config.image_quality_node_id = node.id;
+}
+
 // Augmentation Preset: the recipe's ops, appended as if the nodes were wired.
 void ExtractAugmentationPreset(const gui::MLNode& node, TrainingConfiguration& config) {
     using cyxwiz::image::ImageOp;
@@ -7268,6 +7312,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::QualityAnalyzer,    PreprocessingDomain::Image,       ExtractImageQuality},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},

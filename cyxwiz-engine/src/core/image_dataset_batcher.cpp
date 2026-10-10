@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace cyxwiz {
@@ -15,7 +16,7 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     bool shuffle,
     int num_workers,
     uint32_t seed)
-    : batch_size_(batch_size), shuffle_(shuffle),
+    : train_split_(train_split), seed_(seed), batch_size_(batch_size), shuffle_(shuffle),
       num_workers_(std::max(0, num_workers)),
       augmentation_rng_(seed ^ 0x9E3779B9u), rng_(seed)
 {
@@ -57,20 +58,9 @@ ImageDatasetBatcher::ImageDatasetBatcher(
         return;
     }
 
-    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
-    // full rationale). Sequential split was leaking class-imbalanced
-    // val sets that made the reported val metrics meaningless.
-    size_t total = dataset_->Size();
-    size_t train_count = static_cast<size_t>(total * train_split);
-    if (train_count == 0) train_count = total;
-    if (train_count > total) train_count = total;
-
-    std::vector<size_t> all_indices(total);
+    std::vector<size_t> all_indices(dataset_->Size());
     std::iota(all_indices.begin(), all_indices.end(), 0);
-    std::shuffle(all_indices.begin(), all_indices.end(), rng_);
-
-    train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
-    val_indices_.assign(all_indices.begin() + train_count, all_indices.end());
+    Split(std::move(all_indices));
 
     num_classes_ = entry.num_classes;
     if (num_classes_ == 0) {
@@ -81,6 +71,34 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     Reset();
     spdlog::info("ImageDatasetBatcher: {} train / {} val samples, {} classes, batch_size={}, num_workers={}",
                  train_indices_.size(), val_indices_.size(), num_classes_, batch_size_, num_workers_);
+}
+
+void ImageDatasetBatcher::Split(std::vector<size_t> indices) {
+    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
+    // full rationale). Sequential split was leaking class-imbalanced
+    // val sets that made the reported val metrics meaningless.
+    rng_.seed(seed_);
+    const size_t total = indices.size();
+    size_t train_count = static_cast<size_t>(total * train_split_);
+    if (train_count == 0) train_count = total;
+    if (train_count > total) train_count = total;
+    std::shuffle(indices.begin(), indices.end(), rng_);
+    train_indices_.assign(indices.begin(), indices.begin() + train_count);
+    val_indices_.assign(indices.begin() + train_count, indices.end());
+}
+
+void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
+    if (!dataset_ || files.empty()) return;
+    const std::unordered_set<std::string> excluded(files.begin(), files.end());
+    std::vector<size_t> kept;
+    kept.reserve(dataset_->Size());
+    for (size_t i = 0; i < dataset_->Size(); ++i) {
+        if (!excluded.count(dataset_->GetItemSource(i))) kept.push_back(i);
+    }
+    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images",
+                 dataset_->Size() - kept.size(), dataset_->Size());
+    Split(std::move(kept));
+    Reset();
 }
 
 Batch ImageDatasetBatcher::GetNextBatch() {

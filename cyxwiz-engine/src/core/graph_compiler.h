@@ -517,6 +517,10 @@ struct TrainingConfiguration {
     cyxwiz::image::ImageAugmentation image_augmentation;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
+    // The Quality Analyzer node and the files its analysis leaves out of
+    // training (the image batcher skips them; they stay on disk).
+    int image_quality_node_id = -1;
+    std::vector<std::string> image_excluded_files;
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when

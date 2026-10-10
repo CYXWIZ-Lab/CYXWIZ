@@ -748,6 +748,9 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::AugmentationPreset:
                 return EffectiveNodeName(*node) +
                        ": code export does not include image transforms yet; train it in Studio";
+            case NodeType::QualityAnalyzer:
+                return EffectiveNodeName(*node) +
+                       ": code export does not include the Quality Analyzer's filter yet; train it in Studio";
             default:
                 break;
         }

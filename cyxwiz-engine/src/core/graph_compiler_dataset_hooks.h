@@ -10,9 +10,11 @@
 
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -52,6 +54,15 @@ struct GraphTextDatasetInfo {
     int max_length = 0;
 };
 
+// A Quality Analyzer's verdict on an image dataset (TOFIX140): the files
+// training leaves out, or why there is no usable analysis.
+struct GraphImageQualityResult {
+    std::string error;  // empty when usable
+    size_t total = 0;
+    size_t rejected = 0;
+    std::vector<std::string> excluded;
+};
+
 struct GraphDatasetCatalog {
     std::function<std::shared_ptr<ArrowDataset>(const std::string& name)> arrow_dataset;
     std::function<std::shared_ptr<ParquetBackedDataset>(const std::string& name)> parquet_dataset;
@@ -63,6 +74,10 @@ struct GraphDatasetCatalog {
     // What backs a dataset (the Engine answers from its dataset catalog);
     // unset: the compiler works it out from the lookups above.
     std::function<DatasetStorageKind(const std::string& name)> storage_kind;
+    // The Quality Analyzer verdict for an image dataset decoded at width x
+    // height, judged with the node's parameters (image_quality_analysis.cpp).
+    std::function<GraphImageQualityResult(const std::string& name, int width, int height,
+                                          const std::map<std::string, std::string>& parameters)> image_quality;
 };
 
 void SetGraphDatasetCatalog(GraphDatasetCatalog catalog);
@@ -76,5 +91,8 @@ std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& n
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name);
 // The catalog's answer; nullopt when the installed catalog has no storage_kind.
 std::optional<DatasetStorageKind> GraphDatasetStorageKind(const std::string& name);
+// The catalog's verdict; nullopt when this host cannot judge image quality.
+std::optional<GraphImageQualityResult> GraphImageQuality(const std::string& name, int width, int height,
+                                                         const std::map<std::string, std::string>& parameters);
 
 }  // namespace cyxwiz

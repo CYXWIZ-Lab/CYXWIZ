@@ -6,6 +6,8 @@
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
+
+#include "../arrayfire_host_materialization.h"
 #endif
 
 namespace cyxwiz::image {
@@ -76,6 +78,12 @@ af::array HashBits(const af::array& luma) {
     return shrunk(af::seq(1, kHashCols - 1), af::span, af::span) > shrunk(af::seq(0, kHashCols - 2), af::span, af::span);
 }
 
+// The per-image results to the host: a few numbers per image.
+void ToHost(const af::array& values, void* destination, const char* what) {
+    MaterializeArrayFireToHost(values, destination, ArrayFireHostSyncCategory::MetricScalarReadback,
+                               std::string("MeasureImageQuality::") + what, "per_image");
+}
+
 #endif
 
 }  // namespace
@@ -101,11 +109,11 @@ std::vector<ImageQualityMetrics> MeasureImageQuality(const Tensor& rows, const I
     const af::array lap = af::moddims(Laplacian(luma), pixels, n);
 
     std::vector<float> blur(static_cast<size_t>(n)), mean(static_cast<size_t>(n)), spread(static_cast<size_t>(n));
-    af::var(lap, AF_VARIANCE_POPULATION, 0).host(blur.data());
-    af::mean(flat, 0).host(mean.data());
-    af::stdev(flat, AF_VARIANCE_POPULATION, 0).host(spread.data());
+    ToHost(af::var(lap, AF_VARIANCE_POPULATION, 0), blur.data(), "blur");
+    ToHost(af::mean(flat, 0), mean.data(), "brightness");
+    ToHost(af::stdev(flat, AF_VARIANCE_POPULATION, 0), spread.data(), "contrast");
     std::vector<char> bits(static_cast<size_t>(n) * 64);
-    HashBits(luma).as(b8).host(bits.data());
+    ToHost(HashBits(luma).as(b8), bits.data(), "hash");
 
     std::vector<ImageQualityMetrics> out(static_cast<size_t>(n));
     for (size_t i = 0; i < out.size(); ++i) {
@@ -154,7 +162,8 @@ std::vector<int64_t> FindNearDuplicates(const std::vector<uint64_t>& hashes, int
         const af::array hits = af::where((dots >= closest) && later);
         if (hits.elements() == 0) continue;
         std::vector<unsigned> index(static_cast<size_t>(hits.elements()));
-        hits.host(index.data());
+        MaterializeArrayFireToHost(hits, index.data(), ArrayFireHostSyncCategory::MetricScalarReadback,
+                                   "FindNearDuplicates", "pair_indices");
         for (unsigned k : index) {
             earlier[k / rows].push_back(static_cast<int64_t>(t0 + k % rows));
         }

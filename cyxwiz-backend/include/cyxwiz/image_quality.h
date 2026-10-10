@@ -63,7 +63,7 @@ enum ImageQualityReason : uint32_t {
 
 struct ImageQualityChecks {
     bool blur = true;
-    float blur_min = 400.0f;
+    float blur_min = 700.0f;
     bool brightness = true;
     float brightness_min = 50.0f;
     float brightness_max = 220.0f;

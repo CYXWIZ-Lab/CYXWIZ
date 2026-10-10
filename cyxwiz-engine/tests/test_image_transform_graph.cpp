@@ -5,17 +5,23 @@
 // and settings the transforms cannot honour. The batcher then runs the plan on
 // real image files: random transforms change Train batches only, Random Crop
 // centres outside training, and the batch keeps its [N, H, W, C] shape.
+// The Quality Analyzer: training refuses a missing, stale or unusable
+// analysis, and the batcher leaves the rejected files out.
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/image_dataset_batcher.h"
+#include "../src/core/image_quality_analysis.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -84,13 +90,14 @@ struct Step {
 
 // Data Input (images) -> steps... -> Conv2D -> ReLU -> Flatten -> Dense 2 -> Cross entropy -> Adam.
 cyxwiz::TrainingConfiguration Compile(const std::vector<Step>& steps,
-                                      gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss) {
+                                      gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss,
+                                      const std::string& dataset = "image_transform_graph") {
     gui::MLNode data;
     data.id = 1;
     data.type = gui::NodeType::DataInput;
     data.name = "Images";
     data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
-    data.parameters = {{"dataset_name", "image_transform_graph"}, {"file_category", "image"},
+    data.parameters = {{"dataset_name", dataset}, {"file_category", "image"},
                        {"folder_path", "images"}, {"image_layout", "0"}};
     std::vector<gui::MLNode> nodes = {data};
     int id = 2;
@@ -135,8 +142,9 @@ std::string Errors(const cyxwiz::TrainingConfiguration& config) {
 }
 
 void CheckRefused(const std::vector<Step>& steps, const std::string& node, const std::string& needle,
-                  const std::string& what, gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss) {
-    const auto config = Compile(steps, loss_type);
+                  const std::string& what, gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss,
+                  const std::string& dataset = "image_transform_graph") {
+    const auto config = Compile(steps, loss_type, dataset);
     bool found = false;
     for (const auto& issue : config.issues) {
         found = found || (issue.level == cyxwiz::IssueLevel::Error && issue.node_name == node &&
@@ -380,6 +388,136 @@ void CheckBatcher() {
     }
 }
 
+// A side x side 24-bit BMP; pixel(row, column) gives (r, g, b), top row first.
+void WriteBmp(const fs::path& path, int side, const std::function<std::array<int, 3>(int, int)>& pixel) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    Check(out.good(), "BMP fixture " + path.string());
+    const uint32_t row_bytes = static_cast<uint32_t>((side * 3 + 3) / 4 * 4), data = 54;
+    out.write("BM", 2);
+    WriteLe(out, data + row_bytes * side, 4);
+    WriteLe(out, 0, 4);
+    WriteLe(out, data, 4);
+    WriteLe(out, 40, 4);
+    WriteLe(out, static_cast<uint32_t>(side), 4);
+    WriteLe(out, static_cast<uint32_t>(side), 4);
+    WriteLe(out, 1, 2);
+    WriteLe(out, 24, 2);
+    for (int i = 0; i < 6; ++i) WriteLe(out, i == 1 ? row_bytes * side : (i < 4 && i > 1 ? 2835 : 0), 4);
+    for (int row = side - 1; row >= 0; --row) {  // BMP rows are stored bottom first
+        for (int column = 0; column < side; ++column) {
+            const auto rgb = pixel(row, column);
+            out.put(static_cast<char>(rgb[2]));
+            out.put(static_cast<char>(rgb[1]));
+            out.put(static_cast<char>(rgb[0]));
+        }
+        for (uint32_t pad = static_cast<uint32_t>(side) * 3; pad < row_bytes; ++pad) out.put(0);
+    }
+}
+
+// Sharp, textured scene number `seed`.
+std::array<int, 3> Texture(int seed, int row, int column) {
+    const uint32_t h = static_cast<uint32_t>(seed * 7919 + row * 131 + column * 31) * 2654435761u;
+    const int v = 30 + static_cast<int>((h >> 8) % 196);
+    return {v, (v * 3 + seed * 40) % 226 + 15, 255 - v};
+}
+
+void CheckQualityAnalyzer() {
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_quality_analyzer_graph";
+    fs::remove_all(root);
+    const int side = 16;
+    for (int i = 0; i < 3; ++i) {
+        WriteBmp(root / "a" / (std::to_string(i) + ".bmp"), side, [i](int r, int c) { return Texture(i, r, c); });
+        WriteBmp(root / "b" / (std::to_string(i) + ".bmp"), side, [i](int r, int c) { return Texture(10 + i, r, c); });
+    }
+    const fs::path flat = root / "b" / "flat.bmp";  // flat grey: blurry and low contrast
+    WriteBmp(flat, side, [](int, int) { return std::array<int, 3>{128, 128, 128}; });
+    const fs::path copy = root / "b" / "copy.bmp";  // a copy of a/0
+    WriteBmp(copy, side, [](int r, int c) { return Texture(0, r, c); });
+
+    cyxwiz::DataRegistry::ImageDatasetEntry entry;
+    entry.folder_path = root.string();
+    entry.layout = 0;
+    entry.num_images = 8;
+    entry.num_classes = 2;
+    entry.class_names = {"a", "b"};
+    cyxwiz::DataRegistry::Instance().RegisterImageDataset("quality_graph", entry);
+
+    const Step quality{gui::NodeType::QualityAnalyzer, "Quality", {}};
+    const Step resize16{gui::NodeType::Resize, "Resize 16", {{"width", "16"}, {"height", "16"}, {"mode", "exact"}}};
+    const auto ce = gui::NodeType::CrossEntropyLoss;
+
+    const std::string first_key = cyxwiz::ImageQualityKey(entry, side, side);
+    std::error_code ec;
+    fs::remove(cyxwiz::ImageQualityCacheDir() / (first_key + ".json"), ec);
+    CheckRefused({quality, resize16}, "Quality", "not analyzed yet", "training without an analysis", ce, "quality_graph");
+
+    const auto analysis = cyxwiz::AnalyzeImageQuality(entry, side, side, nullptr, nullptr);
+    Check(analysis && analysis->files.size() == 8 && analysis->key == first_key, "all 8 images measured");
+    std::string error;
+    Check(cyxwiz::SaveImageQualityAnalysis(*analysis, &error), "analysis saved: " + error);
+    const auto loaded = cyxwiz::LoadImageQualityAnalysis(first_key);
+    Check(loaded && loaded->metrics.size() == 8 && loaded->metrics[3].hash == analysis->metrics[3].hash,
+          "the saved analysis reads back");
+
+    // Defaults: the flat image fails blur and contrast, the copy is a duplicate.
+    const auto config = Compile({quality, resize16}, ce, "quality_graph");
+    Check(config.is_valid, "an analyzed dataset trains; errors:\n" + Errors(config));
+    std::vector<std::string> excluded = config.image_excluded_files;
+    std::sort(excluded.begin(), excluded.end());
+    std::vector<std::string> expected = {copy.string(), flat.string()};
+    std::sort(expected.begin(), expected.end());
+    Check(excluded == expected, "the flat image and the copy are left out (" + std::to_string(excluded.size()) + ")");
+    bool told = false;
+    for (const auto& issue : config.issues) {
+        told = told || issue.message.find("leaves out 2 of 8 images") != std::string::npos;
+    }
+    Check(told, "the compile says how many images are left out");
+
+    const auto verdict = cyxwiz::JudgeImageQualityAnalysis(*loaded, cyxwiz::image::ImageQualityChecks{});
+    Check(verdict.rejected == 2 && verdict.duplicates == 1 && verdict.multiple == 1 &&
+              verdict.class_total == std::vector<size_t>({3, 5}) &&
+              verdict.class_rejected == std::vector<size_t>({0, 2}),
+          "per reason and per class counts");
+
+    // A check turned off changes the verdict without a new analysis.
+    const auto lenient = Compile(
+        {{gui::NodeType::QualityAnalyzer, "Quality", {{"duplicate_check", "false"}}}, resize16}, ce, "quality_graph");
+    Check(lenient.is_valid && lenient.image_excluded_files == std::vector<std::string>({flat.string()}),
+          "duplicates off: only the flat image is left out");
+
+    CheckRefused({{gui::NodeType::QualityAnalyzer, "Quality", {{"brightness_min", "230"}}}, resize16}, "Quality",
+                 "darkest < brightest", "darkest above brightest", ce, "quality_graph");
+    CheckRefused({quality, {gui::NodeType::QualityAnalyzer, "Quality 2", {}}, resize16}, "Quality 2",
+                 "Only one Quality Analyzer", "a second Quality Analyzer", ce, "quality_graph");
+    CheckRefused({{gui::NodeType::QualityAnalyzer, "Quality",
+                   {{"blur_min", "1e9"}, {"brightness_check", "false"}, {"contrast_check", "false"}}},
+                  resize16},
+                 "Quality", "leave out all 8 images", "checks that leave nothing", ce, "quality_graph");
+
+    // Another Resize size, or another image: the analysis is stale.
+    const Step analyzed{gui::NodeType::QualityAnalyzer, "Quality", {{"analysis_key", first_key}}};
+    CheckRefused({analyzed, {gui::NodeType::Resize, "Resize 12", {{"width", "12"}, {"height", "12"}, {"mode", "exact"}}}},
+                 "Quality", "changed since the analysis", "a new Resize size", ce, "quality_graph");
+    WriteBmp(root / "a" / "new.bmp", side, [](int r, int c) { return Texture(99, r, c); });
+    CheckRefused({analyzed, resize16}, "Quality", "changed since the analysis", "an added image", ce, "quality_graph");
+    fs::remove(root / "a" / "new.bmp");
+    Check(Compile({analyzed, resize16}, ce, "quality_graph").is_valid, "removing it again matches the analysis");
+
+    // The batcher leaves the files out and splits the rest: 6 images, 3 + 3.
+    cyxwiz::ImagePreprocessingConfig resize;
+    resize.resize_mode = cyxwiz::ResizeMode::Exact;
+    resize.target_width = side;
+    resize.target_height = side;
+    cyxwiz::ImageDatasetBatcher batcher(entry, resize, 8, 0.5f, false, 0, 7);
+    Check(batcher.GetNumSamples() + batcher.GetNumValSamples() == 8, "8 images before the filter");
+    batcher.ExcludeFiles(config.image_excluded_files);
+    Check(batcher.GetNumSamples() == 3 && batcher.GetNumValSamples() == 3, "6 images after it, split 3 + 3");
+
+    fs::remove(cyxwiz::ImageQualityCacheDir() / (first_key + ".json"), ec);
+    cyxwiz::DataRegistry::Instance().UnregisterImageDataset("quality_graph");
+}
+
 }  // namespace
 
 int main() {
@@ -397,6 +535,7 @@ int main() {
 
     CheckCompiler();
     CheckBatcher();
+    CheckQualityAnalyzer();
     std::cout << "image transform graph contract passed (" << checks << " checks)\n";
     return 0;
 }

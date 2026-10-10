@@ -476,7 +476,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::Grayscale:
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
-        case NodeType::AugmentationPreset: {
+        case NodeType::AugmentationPreset:
+        case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -1965,44 +1966,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::QualityAnalyzer: {
-            NodePin images_in;
-            images_in.id = next_pin_id_++;
-            images_in.type = PinType::Dataset;
-            images_in.name = "Images";
-            images_in.is_input = true;
-            node.inputs.push_back(images_in);
-
-            NodePin passed_out;
-            passed_out.id = next_pin_id_++;
-            passed_out.type = PinType::Dataset;
-            passed_out.name = "Passed";
-            passed_out.is_input = false;
-            node.outputs.push_back(passed_out);
-
-            NodePin rejected_out;
-            rejected_out.id = next_pin_id_++;
-            rejected_out.type = PinType::Dataset;
-            rejected_out.name = "Rejected";
-            rejected_out.is_input = false;
-            node.outputs.push_back(rejected_out);
-
-            NodePin report_out;
-            report_out.id = next_pin_id_++;
-            report_out.type = PinType::Dataset;
-            report_out.name = "Report";
-            report_out.is_input = false;
-            node.outputs.push_back(report_out);
-
-            node.parameters["blur_threshold"] = "100.0";      // Laplacian variance threshold
-            node.parameters["brightness_min"] = "30";         // Min acceptable brightness
-            node.parameters["brightness_max"] = "220";        // Max acceptable brightness
-            node.parameters["contrast_threshold"] = "0.2";    // Min contrast (std dev)
-            node.parameters["noise_threshold"] = "50.0";      // Max noise level
-            node.parameters["duplicate_check"] = "true";      // Check for duplicates
-            node.parameters["aspect_ratio_tolerance"] = "0.1"; // Aspect ratio consistency
-            break;
-        }
 
         case NodeType::DataValidator: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);

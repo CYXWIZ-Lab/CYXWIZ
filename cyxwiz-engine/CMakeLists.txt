@@ -147,6 +147,7 @@ set(ENGINE_SOURCES
     src/core/datasets/custom_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/image_quality_analysis.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
@@ -275,7 +276,6 @@ set(ENGINE_SOURCES
     # Image utilities
     src/utils/image_enhancer.cpp
     src/utils/dataset_analyzer.cpp
-    src/utils/image_quality_analyzer.cpp
     src/utils/image_deduplicator.cpp
     src/utils/hdf5_browser.cpp
     # Dataset utilities (Phase 2)
@@ -5405,6 +5405,7 @@ set_target_properties(benchmark_conv2d_provider PROPERTIES
 add_executable(test_cnn_image_training_smoke
     tests/test_cnn_image_training_smoke.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/image_quality_analysis.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/preprocessing/image_transform.cpp
     src/core/image_utils.cpp
@@ -5456,6 +5457,7 @@ target_link_libraries(test_cnn_image_training_smoke PRIVATE ${OpenCV_LIBS})
 add_executable(test_image_transform_graph
     tests/test_image_transform_graph.cpp
     src/core/image_dataset_batcher.cpp
+    src/core/image_quality_analysis.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/image_utils.cpp
     src/core/data_registry_core.cpp

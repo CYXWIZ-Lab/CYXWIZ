@@ -746,6 +746,9 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         TypeId(gui::NodeType::TextTokenizer) + ".source_csv",
         TypeId(gui::NodeType::SignalScope) + ".window_size",
         TypeId(gui::NodeType::SignalScope) + ".auto_scale",
+        // The analysis the dialog last made; training judges the cached
+        // analysis for the current images (TOFIX140).
+        TypeId(gui::NodeType::QualityAnalyzer) + ".analysis_key",
     };
     Check(ui_only_parameters == expected_ui_only_parameters,
           "UI-only parameter exceptions changed without an ownership audit");

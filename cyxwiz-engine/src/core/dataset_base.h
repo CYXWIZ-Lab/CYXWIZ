@@ -53,6 +53,8 @@ public:
         return empty;
     }
     virtual const void* GetRawJSON() const { return nullptr; }
+    // The file a sample is read from, for file-backed datasets; empty otherwise.
+    virtual std::string GetItemSource(size_t index) const { (void)index; return {}; }
 
 protected:
     // Split indices - managed by base class

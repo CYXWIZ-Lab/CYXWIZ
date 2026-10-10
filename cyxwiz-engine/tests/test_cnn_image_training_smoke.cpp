@@ -5,15 +5,18 @@
 // D:/tmp/gui129/catdog_small, or argv[1]) and a TrainingExecutor - and the
 // loss per epoch is printed. Not a ctest entry: the images live outside the repo.
 //
-//   test_cnn_image_training_smoke [folder] [epochs] [augment|mixup]
+//   test_cnn_image_training_smoke [folder] [epochs] [augment|mixup|quality]
 //   augment: Resize 72 -> Random Crop 64 -> Horizontal Flip -> Color Jitter ->
 //   Normalize in front of the CNN (image transforms on the device, TOFIX140);
 //   mixup: the same with Advanced Augment mixup on every training batch.
+//   quality: a Quality Analyzer (default checks) in front of Resize 64: the
+//   images are analyzed on the device first and training leaves the rejects out.
 //   (CYXWIZ_TEST_ARRAYFIRE_BACKEND / CYXWIZ_OPENCL_TEST_DEVICE pick the device)
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/image_dataset_batcher.h"
+#include "../src/core/image_quality_analysis.h"
 #include "../src/core/training_executor.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "computation_truth/test_device_selection.h"
@@ -86,6 +89,7 @@ int main(int argc, char** argv) {
     const int epochs = argc > 2 ? std::atoi(argv[2]) : 8;
     const bool mixup = argc > 3 && std::string(argv[3]) == "mixup";
     const bool augment = mixup || (argc > 3 && std::string(argv[3]) == "augment");
+    const bool quality = argc > 3 && std::string(argv[3]) == "quality";
     if (!fs::is_directory(folder)) {
         std::cout << "image folder not found (" << folder.string() << "); skipped\n";
         return 0;
@@ -107,6 +111,26 @@ int main(int argc, char** argv) {
     }
     entry.num_classes = entry.class_names.size();
     Check(entry.num_classes == 2 && entry.num_images > 0, "two class folders with images");
+
+    if (quality) {
+        // What the Quality Analyzer dialog's Analyze does.
+        cyxwiz::DataRegistry::Instance().RegisterImageDataset("catdog_smoke", entry);
+        const auto analysis = cyxwiz::AnalyzeImageQuality(entry, 64, 64, nullptr, nullptr);
+        Check(analysis.has_value(), "the images are analyzed");
+        std::string error;
+        Check(cyxwiz::SaveImageQualityAnalysis(*analysis, &error), "analysis saved: " + error);
+        const auto verdict = cyxwiz::JudgeImageQualityAnalysis(*analysis, cyxwiz::image::ImageQualityChecks{});
+        std::cout << "quality: " << analysis->files.size() << " images in " << analysis->seconds << " s on "
+                  << analysis->device << "; " << verdict.rejected << " rejected (blurry " << verdict.blurry
+                  << ", low contrast " << verdict.low_contrast << ", dark " << verdict.dark << ", bright "
+                  << verdict.bright << ", duplicates " << verdict.duplicates << ", " << verdict.multiple
+                  << " fail more than one)";
+        for (size_t c = 0; c < analysis->class_names.size(); ++c) {
+            std::cout << "; " << analysis->class_names[c] << " " << verdict.class_rejected[c] << " / "
+                      << verdict.class_total[c];
+        }
+        std::cout << "\n";
+    }
 
     // The graph: the CNN of test_cnn_graph_training (the image batcher scales pixels).
     cyxwiz::GraphCompilerDatasetHooks hooks;
@@ -157,7 +181,13 @@ int main(int argc, char** argv) {
     nodes.push_back(adam);
     std::vector<gui::NodeLink> links;
     int link_id = 1;
-    links.push_back(Link(link_id++, 1, 102, 2, 201));
+    if (quality) {
+        nodes.push_back(Layer(3, gui::NodeType::QualityAnalyzer, "Quality"));
+        links.push_back(Link(link_id++, 1, 102, 3, 301));
+        links.push_back(Link(link_id++, 3, 302, 2, 201));
+    } else {
+        links.push_back(Link(link_id++, 1, 102, 2, 201));
+    }
     if (augment) {
         // Resize 72 -> Random Crop 64 -> Horizontal Flip -> Color Jitter -> Normalize -> Conv 16.
         nodes.push_back(Layer(20, gui::NodeType::RandomCrop, "Random Crop 64", {{"width", "64"}, {"height", "64"}}));
@@ -198,6 +228,12 @@ int main(int argc, char** argv) {
         config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
     batcher->SetImageTransforms(config.image_augmentation);
+    batcher->ExcludeFiles(config.image_excluded_files);
+    if (quality) {
+        Check(!config.image_excluded_files.empty(), "the compile hands the rejected files to the batcher");
+        std::cout << "quality: training on " << batcher->GetNumSamples() << " + " << batcher->GetNumValSamples()
+                  << " images\n";
+    }
     Check(batcher->GetNumSamples() > 0, "the batcher sees the images");
     if (config.preprocessing.has_normalization) {
         batcher->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);

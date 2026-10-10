@@ -40,11 +40,19 @@ public:
     // Normalize run on the ArrayFire device on each whole batch; random ones
     // and the mix on Train batches only.
     void SetImageTransforms(const image::ImageAugmentation& compiled);
+    // Leaves these files out (the Quality Analyzer's rejects) and splits the
+    // rest again, as if the dataset never had them.
+    void ExcludeFiles(const std::vector<std::string>& files);
 
     size_t GetNumValSamples() const { return val_indices_.size(); }
 
 private:
+    // Shuffled train/val split of these dataset indices.
+    void Split(std::vector<size_t> indices);
+
     std::shared_ptr<Dataset> dataset_;
+    float train_split_ = 0.8f;
+    uint32_t seed_ = 42;
 
     int batch_size_;
     bool shuffle_;

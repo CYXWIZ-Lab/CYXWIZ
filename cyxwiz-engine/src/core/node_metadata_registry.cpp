@@ -1152,7 +1152,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
         {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
         {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
-        {NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer", {"image", "quality"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
@@ -1762,6 +1761,35 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"ratio_max", "float", "3.3", "random_erasing: largest aspect ratio (height / width)", {}, ">0", "Ratio max"},
          {"value", "float", "0.0", "Pixel value written into the box (0 = black)", {}, "0-1", "Value"}},
         NodeImplementationStatus::Implemented, 0});
+
+    // Quality Analyzer (TOFIX140): a dataset filter. Its dialog measures the
+    // images once on the device; training leaves the rejected files out.
+    RegisterNode(WithPropertiesEditor({NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer",
+        ICON_FA_MAGNIFYING_GLASS_CHART,
+        {"image", "quality", "blur", "brightness", "contrast", "duplicate", "filter", "clean"}, 0, false,
+        "Leave blurry, too dark or bright, flat and near-duplicate images out of training",
+        "Open the node and click Analyze: every image is decoded at the Resize size, as the model "
+        "sees it, and measured once on the GPU. Blur is the variance of the Laplacian of the "
+        "luminance (low = blurry), brightness its mean (0 to 255), contrast its standard deviation "
+        "/ 255, and near-duplicates share a 64-bit difference hash within 4 bits (the first one "
+        "stays). The dialog shows what the checks leave out, with examples. Training leaves those "
+        "files out of every split and refuses to start without a current analysis (after the "
+        "images or the Resize size change, analyze again); changing a check needs no new analysis. "
+        "Files are never deleted.",
+        "Data Input (images) -> Quality Analyzer -> Resize 64 -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
+        {{"Output", PinType::Tensor, true, "The images that pass the checks"}},
+        {{"blur_check", "bool", "true", "Leave out blurry images", {}, "", "Blur", "Checks"},
+         {"blur_min", "float", "700", "Lowest Laplacian variance kept (at the Resize size)", {}, ">=0", "Reject blur below", "Checks"},
+         {"brightness_check", "bool", "true", "Leave out too dark or too bright images", {}, "", "Brightness", "Checks"},
+         {"brightness_min", "float", "50", "Darkest mean luminance kept, 0 to 255", {}, "0-255", "Reject darker than", "Checks"},
+         {"brightness_max", "float", "220", "Brightest mean luminance kept, 0 to 255", {}, "0-255", "Reject brighter than", "Checks"},
+         {"contrast_check", "bool", "true", "Leave out flat, low-contrast images", {}, "", "Contrast", "Checks"},
+         {"contrast_min", "float", "0.12", "Lowest luminance standard deviation / 255 kept", {}, "0-1", "Reject contrast below", "Checks"},
+         {"duplicate_check", "bool", "true", "Leave out near-duplicates, keeping the first", {}, "", "Near-duplicates", "Checks"},
+         {"analysis_key", "string", "", "The analysis this node last made", {}, "", "", "", false, false,
+          ParameterConsumption::UiOnly}},
+        NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 }
 
 // =============================================================================
