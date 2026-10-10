@@ -1160,7 +1160,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
         {NodeType::HuggingFaceDataset, NodeCategory::DataSources, "Hugging Face Dataset", {"huggingface", "dataset", "hub"}},
         {NodeType::KaggleDataset, NodeCategory::DataSources, "Kaggle Dataset", {"kaggle", "dataset"}},
-        {NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", {"augmentation", "preset"}},
         {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
         {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
@@ -1719,6 +1718,21 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"operation", "enum", "open", "Morphological operation",
           {"erode", "dilate", "open", "close", "gradient", "tophat", "blackhat"}, "", "Operation"},
          {"kernel_size", "int", "3", "Odd width of the square kernel", {}, ">0", "Kernel size"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "augmentation", "preset", "recipe", "cifar", "randaugment"}, 0, false,
+        "A standard training augmentation recipe in one node",
+        "The preset compiles into the image transform nodes it stands for, so it behaves exactly as "
+        "wiring them by hand: flip = Horizontal Flip (0.5); cifar = Random Crop of the image size with "
+        "padding 4, then Horizontal Flip (0.5); cifar_cutout = cifar, then Advanced Augment cutout 16 "
+        "on every image (DeVries & Taylor 2017); randaugment = Horizontal Flip (0.5), then RandAugment "
+        "(2 ops, magnitude 9) on every image. Training images only; validation and test pass through. "
+        "Normalize stays its own node after the preset.",
+        "Resize 32 -> Augmentation Preset (cifar) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"preset", "enum", "cifar", "Augmentation recipe", {"flip", "cifar", "cifar_cutout", "randaugment"}, "", "Preset"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,

@@ -514,7 +514,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::ImageGaussianBlur:
         case NodeType::Grayscale:
         case NodeType::MorphologyTransform:
-        case NodeType::AdvancedAugment: {
+        case NodeType::AdvancedAugment:
+        case NodeType::AugmentationPreset: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -2181,28 +2182,6 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
-        case NodeType::AugmentationPreset: {
-            // AugmentationPreset - Predefined augmentation pipelines
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["preset"] = "ImageNet";            // ImageNet, CIFAR, Medical, SelfSupervised, Custom
-            node.parameters["normalize"] = "true";             // Apply normalization
-            node.parameters["resize"] = "224,224";             // Target size (preset-specific default)
-            break;
-        }
-
         case NodeType::GeometricTransform: {
             // GeometricTransform - Geometric transforms (rotate, flip, crop, perspective)
             NodePin input_pin;

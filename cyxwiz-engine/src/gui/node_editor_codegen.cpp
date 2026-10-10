@@ -745,6 +745,7 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::Grayscale:
             case NodeType::MorphologyTransform:
             case NodeType::AdvancedAugment:
+            case NodeType::AugmentationPreset:
                 return EffectiveNodeName(*node) +
                        ": code export does not include image transforms yet; train it in Studio";
             default:

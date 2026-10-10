@@ -232,6 +232,21 @@ void CheckCompiler() {
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Too strong", {{"method", "randaugment"},
                                                                            {"magnitude", "40"}}}},
                  "Too strong", "magnitude must be between 0 and 30", "a magnitude past 30");
+    const auto preset = Compile({kResize, {gui::NodeType::AugmentationPreset, "CIFAR", {{"preset", "cifar_cutout"}}},
+                                 kNormalize});
+    const auto& preset_ops = preset.image_augmentation.ops;
+    Check(preset.is_valid && preset_ops.size() == 3 && preset_ops[0].kind == ImageOpKind::RandomCrop &&
+              preset_ops[0].height == 8 && preset_ops[0].width == 8 && preset_ops[0].padding == 4 &&
+              preset_ops[1].kind == ImageOpKind::HorizontalFlip && preset_ops[2].kind == ImageOpKind::Erase &&
+              preset_ops[2].cutout_size == 16 && preset_ops[2].probability == 1.0f,
+          "cifar_cutout expands to Random Crop 8 pad 4, Horizontal Flip, cutout 16");
+    Check(preset.input_shape == std::vector<size_t>({8, 8, 3}), "the cifar crop keeps the Resize size");
+    const auto rand_preset = Compile({kResize, {gui::NodeType::AugmentationPreset, "RA", {{"preset", "randaugment"}}}});
+    Check(rand_preset.is_valid && rand_preset.image_augmentation.ops.size() == 2 &&
+              rand_preset.image_augmentation.ops[1].kind == ImageOpKind::RandAugment,
+          "randaugment preset expands to Horizontal Flip, RandAugment");
+    CheckRefused({kResize, {gui::NodeType::AugmentationPreset, "ImageNet", {{"preset", "ImageNet"}}}},
+                 "ImageNet", "preset must be flip, cifar, cifar_cutout or randaugment", "an unknown preset");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MixUp", {{"method", "mixup"}}},
                   {gui::NodeType::AdvancedAugment, "Second mix", {{"method", "cutmix"}}}},
                  "Second mix", "Only one mixup or cutmix per graph", "two batch mixes");

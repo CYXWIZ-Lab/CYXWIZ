@@ -295,6 +295,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::Grayscale:
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
+        case NodeType::AugmentationPreset:
             return "Data Pipeline";
 
         default:
@@ -1846,6 +1847,22 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "open removes small bright specks; close fills small dark holes",
             "gradient outlines shapes; tophat keeps small bright details"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::AugmentationPreset] = {
+        "Augmentation Preset",
+        "A standard training augmentation recipe in one node; it compiles into the image transforms it stands for.",
+        "flip = Horizontal Flip. cifar = Random Crop (image size, padding 4) + Horizontal Flip. "
+        "cifar_cutout = cifar + cutout 16. randaugment = Horizontal Flip + RandAugment (2, 9). "
+        "Training only; Normalize stays its own node.",
+        {
+            {"preset", "flip, cifar, cifar_cutout or randaugment"}
+        },
+        {
+            "cifar suits small images (32 x 32); randaugment suits larger photos",
+            "Replace the preset with the single nodes to tune any step"
         },
         "Data Pipeline"
     };

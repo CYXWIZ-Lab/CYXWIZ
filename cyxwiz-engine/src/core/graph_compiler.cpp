@@ -6954,8 +6954,58 @@ void ExtractImageBatchMix(const gui::MLNode& node, const std::string& method, Tr
     config.image_mix_node_id = node.id;
 }
 
+// Augmentation Preset: the recipe's ops, appended as if the nodes were wired.
+void ExtractAugmentationPreset(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::image::ImageOp;
+    using cyxwiz::image::ImageOpKind;
+    const auto it = node.parameters.find("preset");
+    const std::string preset = it == node.parameters.end() ? "cifar" : it->second;
+    ImageOp flip;
+    flip.kind = ImageOpKind::HorizontalFlip;
+    flip.probability = 0.5f;
+    std::vector<ImageOp> ops;
+    if (preset == "flip") {
+        ops = {flip};
+    } else if (preset == "cifar" || preset == "cifar_cutout") {
+        const auto shape = CurrentImageShape(config);
+        ImageOp crop;
+        crop.kind = ImageOpKind::RandomCrop;
+        crop.height = static_cast<int>(shape.height);
+        crop.width = static_cast<int>(shape.width);
+        crop.padding = 4;
+        ops = {crop, flip};
+        if (preset == "cifar_cutout") {
+            ImageOp cutout;
+            cutout.kind = ImageOpKind::Erase;
+            cutout.erase_method = cyxwiz::image::EraseMethod::Cutout;
+            cutout.cutout_size = 16;
+            cutout.probability = 1.0f;
+            ops.push_back(cutout);
+        }
+    } else if (preset == "randaugment") {
+        ImageOp rand;
+        rand.kind = ImageOpKind::RandAugment;
+        rand.num_ops = 2;
+        rand.magnitude = 9;
+        rand.probability = 1.0f;
+        ops = {flip, rand};
+    } else {
+        AppendImageOp(node, flip, "preset must be flip, cifar, cifar_cutout or randaugment", config);
+        return;
+    }
+    for (const auto& op : ops) {
+        const size_t before = config.issues.size();
+        AppendImageOp(node, op, "", config);
+        if (config.issues.size() != before) return;  // the first refusal names the problem
+    }
+}
+
 static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration& config) {
     using cyxwiz::image::ImageOpKind;
+    if (node.type == gui::NodeType::AugmentationPreset) {
+        ExtractAugmentationPreset(node, config);
+        return;
+    }
     cyxwiz::image::ImageOp op;
     std::string error;
     const auto& p = node.parameters;
@@ -7217,6 +7267,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},

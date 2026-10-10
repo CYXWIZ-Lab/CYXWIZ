@@ -58,6 +58,21 @@ Data Loader's seed, so a run repeats exactly with the same seed.
 | Morphology Transform | `operation` (open), `kernel_size` (3, odd) | Flat square kernel, pixels outside the image ignored. erode = local minimum, dilate = local maximum, open = dilate(erode), close = erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image. |
 | Advanced Augment | `method` (cutout / random_erasing / mixup / cutmix / randaugment), `probability` (0.5), `alpha` (1.0), `num_ops` (2), `magnitude` (9), `cutout_size` (16), `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value` (0) | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is. `value` is a pixel value, written before Normalize. mixup / cutmix and randaugment: see below. |
 
+## Augmentation Preset
+
+**Augmentation Preset** is a standard recipe in one node. It compiles into the
+nodes it stands for, so it behaves exactly as wiring them by hand:
+
+| `preset` | Same as |
+| --- | --- |
+| flip | Horizontal Flip (0.5) |
+| cifar | Random Crop of the image size with `padding` 4, then Horizontal Flip (0.5) |
+| cifar_cutout | cifar, then Advanced Augment cutout 16 on every image |
+| randaugment | Horizontal Flip (0.5), then Advanced Augment randaugment (2 ops, magnitude 9) on every image |
+
+Put it between Resize and Normalize like the other nodes. To tune a step,
+replace the preset with the single nodes.
+
 ## MixUp and CutMix
 
 Advanced Augment with `method` mixup or cutmix mixes whole training batches,
