@@ -22,39 +22,17 @@ namespace cyxwiz {
 namespace {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-void LogAttentionInitializationFallbackOnce(
-    const char* error_message,
-    int embed_dim,
-    int num_heads) {
-    const BackendFallbackReason reason =
-        ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        "embed_dim=" + std::to_string(embed_dim) +
-        "; num_heads=" + std::to_string(num_heads));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "MultiHeadAttentionLayer::InitializeWeights",
-        reason,
-        error_message,
-        context);
-    if (!ShouldLogArrayFireBackendFallbackOnce(
-            "MultiHeadAttentionLayer::InitializeWeights", reason, context)) {
-        return;
-    }
-
-    std::string message =
-        "ArrayFire MultiHeadAttentionLayer::InitializeWeights failed (reason=" +
-        std::string(BackendFallbackReasonName(reason)) +
-        "); initializing weights on CPU.";
-    message += " Context: ";
-    message += context;
-    message += ".";
-    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
-        error_message != nullptr && error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    spdlog::warn("{}", message);
+// One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
+// reported, not hidden behind host loops; a build without ArrayFire refuses.
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+[[noreturn]] void ThrowAttentionDeviceError(const char* operation, const af::exception& error) {
+    throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
+#else
+[[noreturn]] void ThrowAttentionNeedsArrayFire() {
+    throw std::runtime_error("Multi-head attention runs on ArrayFire, and this build has no ArrayFire");
+}
+#endif
 #endif
 
 } // namespace
@@ -131,62 +109,13 @@ void MultiHeadAttentionLayer::InitializeWeights() {
 
         return;
     } catch (const af::exception& e) {
-        LogAttentionInitializationFallbackOnce(
-            e.what(),
-            embed_dim_,
-            num_heads_);
+        ThrowAttentionDeviceError("MultiHeadAttentionLayer::InitializeWeights", e);
     }
+#else
+    (void)kv_weight_shape;
+    (void)kv_bias_shape;
+    ThrowAttentionNeedsArrayFire();
 #endif
-
-    // CPU fallback
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "MultiHeadAttentionLayer::InitializeWeights");
-    std::mt19937& gen = NativeRandomEngine();  // model seed on the training worker
-    float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
-    std::uniform_real_distribution<float> dist(-limit, limit);
-
-    W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
-    W_k_ = Tensor(kv_weight_shape);
-    W_v_ = Tensor(kv_weight_shape);
-    W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
-
-    float* wq = W_q_.MutableData<float>();
-    float* wk = W_k_.MutableData<float>();
-    float* wv = W_v_.MutableData<float>();
-    float* wo = W_o_.MutableData<float>();
-
-    for (int i = 0; i < embed_dim_ * embed_dim_; i++) {
-        wq[i] = dist(gen);
-        wo[i] = dist(gen);
-    }
-    for (int i = 0; i < kv_dim * embed_dim_; i++) {
-        wk[i] = dist(gen);
-        wv[i] = dist(gen);
-    }
-
-    if (use_bias_) {
-        b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-        b_k_ = Tensor(kv_bias_shape);
-        b_v_ = Tensor(kv_bias_shape);
-        b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-        std::memset(b_q_.MutableData(), 0, embed_dim_ * sizeof(float));
-        std::memset(b_k_.MutableData(), 0, kv_dim * sizeof(float));
-        std::memset(b_v_.MutableData(), 0, kv_dim * sizeof(float));
-        std::memset(b_o_.MutableData(), 0, embed_dim_ * sizeof(float));
-    }
-
-    grad_W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
-    grad_W_k_ = Tensor(kv_weight_shape);
-    grad_W_v_ = Tensor(kv_weight_shape);
-    grad_W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
-
-    if (use_bias_) {
-        grad_b_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-        grad_b_k_ = Tensor(kv_bias_shape);
-        grad_b_v_ = Tensor(kv_bias_shape);
-        grad_b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-    }
 }
 
 Tensor MultiHeadAttentionLayer::Forward(const Tensor& input) {
@@ -337,170 +266,15 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         }
     }
 
-    const std::string fallback_context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("query", q_shape) + "; " +
-        BuildTensorShapeContext("key", k_shape) + "; " +
-        BuildTensorShapeContext("value", v_shape));
-    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire attention execution failed";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ForwardArrayFire(query, key, value, attn_mask);
     } catch (const af::exception& e) {
-        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        fallback_detail = e.what();
+        ThrowAttentionDeviceError("MultiHeadAttentionLayer::Forward", e);
     }
 #else
-    fallback_detail = "ArrayFire is not compiled into this backend";
+    ThrowAttentionNeedsArrayFire();
 #endif
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "MultiHeadAttentionLayer::Forward", fallback_reason,
-        fallback_detail.c_str(), fallback_context);
-    if (const char* option = ArrayFireOnlyOption()) {
-        throw std::runtime_error(
-            std::string(option) + " is implemented on the ArrayFire attention path only; "
-            "the native CPU fallback cannot run it (" + fallback_detail + ")");
-    }
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "MultiHeadAttentionLayer::Forward");
-
-    // Cache inputs only after compatibility policy authorizes native work.
-    cached_query_ = query;
-    cached_key_ = key;
-    cached_value_ = value;
-    cached_self_attention_ = (&query == &key && &key == &value);
-    cached_grad_key_ = Tensor();
-    cached_grad_value_ = Tensor();
-
-    const size_t batch_size = q_shape[0];
-    const size_t seq_len_q = q_shape[1];
-    const size_t seq_len_kv = k_shape[1];
-    const size_t embed_dim = static_cast<size_t>(embed_dim_);
-    const size_t num_heads = static_cast<size_t>(num_heads_);
-    const size_t head_dim = static_cast<size_t>(head_dim_);
-
-    cached_Q_ = Tensor({batch_size, seq_len_q, embed_dim}, DataType::Float32);
-    cached_K_ = Tensor({batch_size, seq_len_kv, embed_dim}, DataType::Float32);
-    cached_V_ = Tensor({batch_size, seq_len_kv, embed_dim}, DataType::Float32);
-    cached_attn_weights_ = Tensor({seq_len_q, seq_len_kv, batch_size, num_heads}, DataType::Float32);
-    cached_context_ = Tensor({batch_size, seq_len_q, embed_dim}, DataType::Float32);
-    cached_attention_dropout_ = training_ && dropout_ > 0.0f;
-    if (cached_attention_dropout_) {
-        dropout_mask_ = Tensor({seq_len_q, seq_len_kv, batch_size, num_heads}, DataType::Float32);
-    } else {
-        dropout_mask_ = Tensor();
-    }
-    Tensor output({batch_size, seq_len_q, embed_dim}, DataType::Float32);
-
-    const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
-        return (b * seq_len + s) * embed_dim + e;
-    };
-    const auto attn_index = [seq_len_kv, batch_size, num_heads](size_t q, size_t k, size_t b, size_t h) {
-        return ((q * seq_len_kv + k) * batch_size + b) * num_heads + h;
-    };
-    const auto project = [&](const Tensor& src, const Tensor& weights, const Tensor* bias,
-                             Tensor& dst, size_t seq_len) {
-        const float* src_data = src.ReadData<float>();
-        const float* weight_data = weights.ReadData<float>();
-        const float* bias_data = bias != nullptr ? bias->ReadData<float>() : nullptr;
-        float* dst_data = dst.MutableData<float>();
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t s = 0; s < seq_len; ++s) {
-                for (size_t out = 0; out < embed_dim; ++out) {
-                    float sum = bias_data != nullptr ? bias_data[out] : 0.0f;
-                    for (size_t in = 0; in < embed_dim; ++in) {
-                        sum += weight_data[out * embed_dim + in] * src_data[seq_index(b, s, in, seq_len)];
-                    }
-                    dst_data[seq_index(b, s, out, seq_len)] = sum;
-                }
-            }
-        }
-    };
-
-    project(query, W_q_, use_bias_ ? &b_q_ : nullptr, cached_Q_, seq_len_q);
-    project(key, W_k_, use_bias_ ? &b_k_ : nullptr, cached_K_, seq_len_kv);
-    project(value, W_v_, use_bias_ ? &b_v_ : nullptr, cached_V_, seq_len_kv);
-
-    const float* Q = cached_Q_.ReadData<float>();
-    const float* K = cached_K_.ReadData<float>();
-    const float* V = cached_V_.ReadData<float>();
-    const float* mask_data = attn_mask != nullptr ? attn_mask->ReadData<float>() : nullptr;
-    float* attn_data = cached_attn_weights_.MutableData<float>();
-    float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.MutableData<float>() : nullptr;
-    float* context_data = cached_context_.MutableData<float>();
-    std::mt19937& dropout_rng = NativeRandomEngine();
-    std::bernoulli_distribution keep_dist(1.0f - dropout_);
-    const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t h = 0; h < num_heads; ++h) {
-            const size_t head_offset = h * head_dim;
-            for (size_t q = 0; q < seq_len_q; ++q) {
-                float max_score = -std::numeric_limits<float>::infinity();
-                bool fully_blocked = mask_data != nullptr;
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    float score = mask_data != nullptr ? mask_data[q * seq_len_kv + k] : 0.0f;
-                    fully_blocked = fully_blocked &&
-                        score == -std::numeric_limits<float>::infinity();
-                    for (size_t d = 0; d < head_dim; ++d) {
-                        score += Q[seq_index(b, q, head_offset + d, seq_len_q)] *
-                                 K[seq_index(b, k, head_offset + d, seq_len_kv)] * scale_;
-                    }
-                    attn_data[attn_index(q, k, b, h)] = score;
-                    max_score = std::max(max_score, score);
-                }
-
-                // Match the ArrayFire zero-attention contract, including dropout.
-                float sum_exp = fully_blocked ? 1.0f : 0.0f;
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    const size_t index = attn_index(q, k, b, h);
-                    attn_data[index] = fully_blocked ? 0.0f : std::exp(attn_data[index] - max_score);
-                    sum_exp += attn_data[index];
-                }
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    attn_data[attn_index(q, k, b, h)] /= sum_exp;
-                    if (cached_attention_dropout_) {
-                        dropout_mask_data[attn_index(q, k, b, h)] =
-                            keep_dist(dropout_rng) ? 1.0f : 0.0f;
-                    }
-                }
-
-                for (size_t d = 0; d < head_dim; ++d) {
-                    float value_sum = 0.0f;
-                    for (size_t k = 0; k < seq_len_kv; ++k) {
-                        const size_t attention_index = attn_index(q, k, b, h);
-                        const float dropped_attention = cached_attention_dropout_
-                                                            ? attn_data[attention_index] *
-                                                                  dropout_mask_data[attention_index] *
-                                                                  dropout_scale
-                                                            : attn_data[attention_index];
-                        value_sum += dropped_attention *
-                                     V[seq_index(b, k, head_offset + d, seq_len_kv)];
-                    }
-                    context_data[seq_index(b, q, head_offset + d, seq_len_q)] = value_sum;
-                }
-            }
-        }
-    }
-
-    const float* context = cached_context_.ReadData<float>();
-    const float* wo = W_o_.ReadData<float>();
-    const float* bo = use_bias_ ? b_o_.ReadData<float>() : nullptr;
-    float* output_data = output.MutableData<float>();
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t q = 0; q < seq_len_q; ++q) {
-            for (size_t out = 0; out < embed_dim; ++out) {
-                float sum = bo != nullptr ? bo[out] : 0.0f;
-                for (size_t in = 0; in < embed_dim; ++in) {
-                    sum += wo[out * embed_dim + in] * context[seq_index(b, q, in, seq_len_q)];
-                }
-                output_data[seq_index(b, q, out, seq_len_q)] = sum;
-            }
-        }
-    }
-
-    return output;
 }
 
 Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
@@ -540,180 +314,15 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("MultiHeadAttention backward dropout mask shape mismatch");
     }
 
-    const std::string fallback_context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("grad_output", shape));
-    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire attention execution failed";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BackwardArrayFire(grad_output);
     } catch (const af::exception& e) {
-        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        fallback_detail = e.what();
+        ThrowAttentionDeviceError("MultiHeadAttentionLayer::Backward", e);
     }
 #else
-    fallback_detail = "ArrayFire is not compiled into this backend";
+    ThrowAttentionNeedsArrayFire();
 #endif
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "MultiHeadAttentionLayer::Backward", fallback_reason,
-        fallback_detail.c_str(), fallback_context);
-    if (const char* option = ArrayFireOnlyOption()) {
-        throw std::runtime_error(
-            std::string(option) + " is implemented on the ArrayFire attention path only; "
-            "the native CPU fallback cannot run it (" + fallback_detail + ")");
-    }
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        "MultiHeadAttentionLayer::Backward");
-
-    const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
-        return (b * seq_len + s) * embed_dim + e;
-    };
-    const auto attn_index = [seq_len_kv, batch_size, num_heads](size_t q, size_t k, size_t b, size_t h) {
-        return ((q * seq_len_kv + k) * batch_size + b) * num_heads + h;
-    };
-
-    Tensor grad_context(q_shape, DataType::Float32);
-    Tensor grad_Q(q_shape, DataType::Float32);
-    Tensor grad_K(kv_shape, DataType::Float32);
-    Tensor grad_V(kv_shape, DataType::Float32);
-    Tensor grad_query(q_shape, DataType::Float32);
-    Tensor grad_key(kv_shape, DataType::Float32);
-    Tensor grad_value(kv_shape, DataType::Float32);
-    grad_W_q_ = Tensor(weight_shape, DataType::Float32);
-    grad_W_k_ = Tensor(weight_shape, DataType::Float32);
-    grad_W_v_ = Tensor(weight_shape, DataType::Float32);
-    grad_W_o_ = Tensor(weight_shape, DataType::Float32);
-    if (use_bias_) {
-        grad_b_q_ = Tensor({embed_dim}, DataType::Float32);
-        grad_b_k_ = Tensor({embed_dim}, DataType::Float32);
-        grad_b_v_ = Tensor({embed_dim}, DataType::Float32);
-        grad_b_o_ = Tensor({embed_dim}, DataType::Float32);
-    }
-
-    const float* grad_out = grad_output.ReadData<float>();
-    const float* context = cached_context_.ReadData<float>();
-    const float* wo = W_o_.ReadData<float>();
-    float* grad_context_data = grad_context.MutableData<float>();
-    float* grad_W_o = grad_W_o_.MutableData<float>();
-    float* grad_b_o = use_bias_ ? grad_b_o_.MutableData<float>() : nullptr;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t q = 0; q < seq_len_q; ++q) {
-            for (size_t out = 0; out < embed_dim; ++out) {
-                const float grad = grad_out[seq_index(b, q, out, seq_len_q)];
-                if (use_bias_) {
-                    grad_b_o[out] += grad;
-                }
-                for (size_t in = 0; in < embed_dim; ++in) {
-                    grad_context_data[seq_index(b, q, in, seq_len_q)] += wo[out * embed_dim + in] * grad;
-                    grad_W_o[out * embed_dim + in] +=
-                        grad * context[seq_index(b, q, in, seq_len_q)];
-                }
-            }
-        }
-    }
-
-    const float* Q = cached_Q_.ReadData<float>();
-    const float* K = cached_K_.ReadData<float>();
-    const float* V = cached_V_.ReadData<float>();
-    const float* attn = cached_attn_weights_.ReadData<float>();
-    const float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.ReadData<float>() : nullptr;
-    float* grad_Q_data = grad_Q.MutableData<float>();
-    float* grad_K_data = grad_K.MutableData<float>();
-    float* grad_V_data = grad_V.MutableData<float>();
-    std::vector<float> grad_attn(seq_len_kv, 0.0f);
-    const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t h = 0; h < num_heads; ++h) {
-            const size_t head_offset = h * head_dim;
-            for (size_t q = 0; q < seq_len_q; ++q) {
-                std::fill(grad_attn.begin(), grad_attn.end(), 0.0f);
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    const size_t attention_index = attn_index(q, k, b, h);
-                    const float attention_multiplier = cached_attention_dropout_
-                                                           ? dropout_mask_data[attention_index] * dropout_scale
-                                                           : 1.0f;
-                    const float dropped_attention = attn[attention_index] * attention_multiplier;
-                    for (size_t d = 0; d < head_dim; ++d) {
-                        grad_V_data[seq_index(b, k, head_offset + d, seq_len_kv)] +=
-                            dropped_attention *
-                            grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)];
-                        grad_attn[k] +=
-                            grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)] *
-                            V[seq_index(b, k, head_offset + d, seq_len_kv)] *
-                            attention_multiplier;
-                    }
-                }
-
-                float softmax_dot = 0.0f;
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    softmax_dot += grad_attn[k] * attn[attn_index(q, k, b, h)];
-                }
-                for (size_t k = 0; k < seq_len_kv; ++k) {
-                    const float grad_score =
-                        attn[attn_index(q, k, b, h)] * (grad_attn[k] - softmax_dot) * scale_;
-                    for (size_t d = 0; d < head_dim; ++d) {
-                        grad_Q_data[seq_index(b, q, head_offset + d, seq_len_q)] +=
-                            grad_score * K[seq_index(b, k, head_offset + d, seq_len_kv)];
-                        grad_K_data[seq_index(b, k, head_offset + d, seq_len_kv)] +=
-                            grad_score * Q[seq_index(b, q, head_offset + d, seq_len_q)];
-                    }
-                }
-            }
-        }
-    }
-
-    const auto projection_backward = [&](const Tensor& input, const Tensor& weight,
-                                         const Tensor& grad_projected,
-                                         Tensor& grad_input, Tensor& grad_weight,
-                                         Tensor* grad_bias, size_t seq_len) {
-        const float* input_data = input.ReadData<float>();
-        const float* weight_data = weight.ReadData<float>();
-        const float* grad_proj_data = grad_projected.ReadData<float>();
-        float* grad_input_data = grad_input.MutableData<float>();
-        float* grad_weight_data = grad_weight.MutableData<float>();
-        float* grad_bias_data = grad_bias != nullptr ? grad_bias->MutableData<float>() : nullptr;
-
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t s = 0; s < seq_len; ++s) {
-                for (size_t out = 0; out < embed_dim; ++out) {
-                    const float grad = grad_proj_data[seq_index(b, s, out, seq_len)];
-                    if (grad_bias_data != nullptr) {
-                        grad_bias_data[out] += grad;
-                    }
-                    for (size_t in = 0; in < embed_dim; ++in) {
-                        grad_weight_data[out * embed_dim + in] +=
-                            grad * input_data[seq_index(b, s, in, seq_len)];
-                        grad_input_data[seq_index(b, s, in, seq_len)] +=
-                            weight_data[out * embed_dim + in] * grad;
-                    }
-                }
-            }
-        }
-    };
-
-    projection_backward(cached_query_, W_q_, grad_Q, grad_query, grad_W_q_,
-                        use_bias_ ? &grad_b_q_ : nullptr, seq_len_q);
-    projection_backward(cached_key_, W_k_, grad_K, grad_key, grad_W_k_,
-                        use_bias_ ? &grad_b_k_ : nullptr, seq_len_kv);
-    projection_backward(cached_value_, W_v_, grad_V, grad_value, grad_W_v_,
-                        use_bias_ ? &grad_b_v_ : nullptr, seq_len_kv);
-
-    cached_grad_key_ = grad_key;
-    cached_grad_value_ = grad_value;
-
-    if (cached_self_attention_) {
-        float* grad_query_data = grad_query.MutableData<float>();
-        const float* grad_key_data = grad_key.ReadData<float>();
-        const float* grad_value_data = grad_value.ReadData<float>();
-        for (size_t i = 0; i < grad_query.NumElements(); ++i) {
-            grad_query_data[i] += grad_key_data[i] + grad_value_data[i];
-        }
-    }
-
-    return grad_query;
 }
 
 std::map<std::string, Tensor> MultiHeadAttentionLayer::GetParameters() {

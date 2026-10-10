@@ -61,46 +61,17 @@ af::array SemanticGradientToTokenRows(const af::array& gradient,
 
 } // namespace
 
-static std::string BuildEmbeddingContext(const Tensor& tensor) {
-    return BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("input", tensor.Shape()));
+// One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
+// reported, not hidden behind host loops; a build without ArrayFire refuses.
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+[[noreturn]] static void ThrowEmbeddingDeviceError(const char* operation, const af::exception& error) {
+    throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-
-static void LogEmbeddingFallbackOnce(
-    const char* operation_name,
-    const Tensor& tensor,
-    size_t num_embeddings,
-    size_t embedding_dim,
-    const char* error_message)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildEmbeddingContext(tensor);
-    const std::string message = BuildArrayFireBackendFallbackMessage(
-        operation_name,
-        reason,
-        reason != BackendFallbackReason::CudaJitParamOverflow,
-        error_message,
-        context);
-    RecordBackendPlacementObservationForActiveDevice(
-        "Embedding",
-        CurrentArrayFireBackendName(),
-        "int32",
-        BuildEmbeddingPlacementShapeSignature(
-            num_embeddings, embedding_dim,
-            StripBatchDimensionForPlacementSignature(tensor.Shape()),
-            "int32"),
-        BackendFallbackReasonName(reason),
-        BackendPlacementObservationSource::RuntimeFallback,
-        message);
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        operation_name,
-        reason,
-        error_message,
-        context);
-    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        spdlog::warn("{}", message);
-    }
+#else
+[[noreturn]] static void ThrowEmbeddingNeedsArrayFire() {
+    throw std::runtime_error("Embedding runs on ArrayFire, and this build has no ArrayFire");
 }
+#endif
 
 #endif
 
@@ -174,30 +145,11 @@ void EmbeddingLayer::NormalizeEmbeddings() {
                 static_cast<size_t>(embedding_dim_)});
         return;
     } catch (const af::exception& e) {
-        LogEmbeddingFallbackOnce(
-            "EmbeddingLayer::NormalizeEmbeddings",
-            weight_,
-            static_cast<size_t>(num_embeddings_),
-            static_cast<size_t>(embedding_dim_),
-            e.what());
+        ThrowEmbeddingDeviceError("EmbeddingLayer::NormalizeEmbeddings", e);
     }
+#else
+    ThrowEmbeddingNeedsArrayFire();
 #endif
-
-    float* weights = weight_.MutableData<float>();
-    for (int row = 0; row < num_embeddings_; ++row) {
-        double squared_norm = 0.0;
-        for (int col = 0; col < embedding_dim_; ++col) {
-            const double value = weights[row * embedding_dim_ + col];
-            squared_norm += value * value;
-        }
-        const double norm = std::sqrt(squared_norm);
-        if (norm > static_cast<double>(max_norm_)) {
-            const float scale = static_cast<float>(max_norm_ / norm);
-            for (int col = 0; col < embedding_dim_; ++col) {
-                weights[row * embedding_dim_ + col] *= scale;
-            }
-        }
-    }
 }
 
 Tensor EmbeddingLayer::Forward(const Tensor& input) {
@@ -254,41 +206,11 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
                                   static_cast<size_t>(embedding_dim_)};
         return Tensor::FromSemanticArray(output, output_shape);
     } catch (const af::exception& e) {
-        LogEmbeddingFallbackOnce(
-            "EmbeddingLayer::Forward",
-            input,
-            static_cast<size_t>(num_embeddings_),
-            static_cast<size_t>(embedding_dim_),
-            e.what());
+        ThrowEmbeddingDeviceError("EmbeddingLayer::Forward", e);
     }
+#else
+    ThrowEmbeddingNeedsArrayFire();
 #endif
-
-    // CPU fallback
-    std::vector<size_t> out_shape;
-    if (shape.size() == 2) {
-        out_shape = {batch_size, sequence_length,
-                     static_cast<size_t>(embedding_dim_)};
-    } else {
-        out_shape = {sequence_length, static_cast<size_t>(embedding_dim_)};
-    }
-
-    Tensor output(out_shape, DataType::Float32);
-    float* out_data = output.MutableData<float>();
-    const float* weight_data = weight_.ReadData<float>();
-    const int32_t* indices = input.ReadData<int32_t>();
-
-    for (size_t i = 0; i < total_indices; ++i) {
-        int32_t idx = indices[i];
-        if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-            std::memcpy(out_data + i * embedding_dim_,
-                       weight_data + idx * embedding_dim_,
-                       embedding_dim_ * sizeof(float));
-        } else {
-            std::memset(out_data + i * embedding_dim_, 0, embedding_dim_ * sizeof(float));
-        }
-    }
-
-    return output;
 }
 
 Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
@@ -370,58 +292,11 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         // Return empty tensor (no gradient w.r.t. integer indices)
         return Tensor();
     } catch (const af::exception& e) {
-        LogEmbeddingFallbackOnce(
-            "EmbeddingLayer::Backward",
-            cached_indices_,
-            static_cast<size_t>(num_embeddings_),
-            static_cast<size_t>(embedding_dim_),
-            e.what());
+        ThrowEmbeddingDeviceError("EmbeddingLayer::Backward", e);
     }
+#else
+    ThrowEmbeddingNeedsArrayFire();
 #endif
-
-    // CPU fallback
-    const auto& shape = cached_indices_.Shape();
-    if (shape.size() != 1 && shape.size() != 2) {
-        throw std::runtime_error(
-            "EmbeddingLayer::Backward called before a valid Forward");
-    }
-    const size_t batch_size = shape.size() == 2 ? shape[0] : 1;
-    const size_t sequence_length = shape.size() == 2 ? shape[1] : shape[0];
-    const size_t total = batch_size * sequence_length;
-    const std::vector<size_t> expected_grad_shape = shape.size() == 2
-        ? std::vector<size_t>{batch_size, sequence_length,
-                              static_cast<size_t>(embedding_dim_)}
-        : std::vector<size_t>{sequence_length,
-                              static_cast<size_t>(embedding_dim_)};
-    if (grad_output.GetDataType() != DataType::Float32 ||
-        grad_output.Shape() != expected_grad_shape) {
-        throw std::invalid_argument(
-            "EmbeddingLayer::Backward: grad_output shape or dtype mismatch");
-    }
-
-    // Zero out gradient
-    grad_weight_ = Tensor::Zeros({static_cast<size_t>(num_embeddings_),
-                                   static_cast<size_t>(embedding_dim_)});
-    float* dw = grad_weight_.MutableData<float>();
-    const float* grad_data = grad_output.ReadData<float>();
-    const int32_t* indices = cached_indices_.ReadData<int32_t>();
-
-    // Scatter-add gradients
-    for (size_t i = 0; i < total; i++) {
-        int32_t idx = indices[i];
-        if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-            for (int j = 0; j < embedding_dim_; j++) {
-                dw[idx * embedding_dim_ + j] += grad_data[i * embedding_dim_ + j];
-            }
-        }
-    }
-    if (!pending_weight_gradient_.Shape().empty()) {
-        const float* pending = pending_weight_gradient_.ReadData<float>();
-        for (size_t i = 0; i < static_cast<size_t>(num_embeddings_) * embedding_dim_; ++i) dw[i] += pending[i];
-        pending_weight_gradient_ = Tensor();
-    }
-
-    return Tensor();
 }
 
 void EmbeddingLayer::AddPendingWeightGradient(const Tensor& gradient) {
@@ -483,20 +358,11 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
             weight_.SetFromSemanticArray(padded, shape);
             return;
         } catch (const af::exception& e) {
-            LogEmbeddingFallbackOnce("EmbeddingLayer::LoadPretrainedWeights", weights,
-                num_embeddings_, embedding_dim_, e.what());
+            ThrowEmbeddingDeviceError("EmbeddingLayer::LoadPretrainedWeights", e);
         }
 #else
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "EmbeddingLayer::LoadPretrainedWeights", BackendFallbackReason::UnsupportedOperation,
-            "ArrayFire is not compiled into this backend", BuildTensorShapeContext("weights", shape));
+        ThrowEmbeddingNeedsArrayFire();
 #endif
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::LayerCpuPath, "EmbeddingLayer::LoadPretrainedWeights");
-        float* data = weight_.MutableData<float>();
-        for (int i = 0; i < embedding_dim_; i++) {
-            data[padding_idx_ * embedding_dim_ + i] = 0.0f;
-        }
     }
 }
 

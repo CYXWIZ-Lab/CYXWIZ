@@ -528,40 +528,11 @@ Tensor PositionalEncodingModule::ForwardAt(const Tensor& input, size_t position_
         output.eval(); // Finish the lazy table/addition inside its fallback boundary.
         return Tensor::FromSemanticArray(output, shape);
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "PositionalEncodingModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+        throw std::runtime_error(std::string("PositionalEncodingModule::Forward failed on the ArrayFire device: ") + e.what());
     }
 #else
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "PositionalEncodingModule::Forward", BackendFallbackReason::UnsupportedOperation,
-        "ArrayFire is not compiled into this backend", BuildTensorShapeContext("input", shape));
+    throw std::runtime_error("PositionalEncodingModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "PositionalEncodingModule::Forward");
-
-    Tensor output(shape, DataType::Float32);
-    const float* src = input.ReadData<float>();
-    float* dst = output.MutableData<float>();
-    const size_t batch = shape[0];
-    const size_t seq_len = shape[1];
-
-    for (size_t b = 0; b < batch; ++b) {
-        for (size_t pos = 0; pos < seq_len; ++pos) {
-            for (size_t dim = 0; dim < d_model_; ++dim) {
-                const size_t offset = (b * seq_len + pos) * d_model_ + dim;
-                const double angle = static_cast<double>(pos + position_offset) /
-                    std::pow(10000.0, static_cast<double>(2 * (dim / 2)) /
-                                      static_cast<double>(d_model_));
-                const double encoded = (dim % 2 == 0)
-                    ? std::sin(angle)
-                    : std::cos(angle);
-                dst[offset] = src[offset] + static_cast<float>(encoded);
-            }
-        }
-    }
-
-    return output;
 }
 
 Tensor PositionalEncodingModule::Backward(const Tensor& grad_output) {
@@ -606,12 +577,11 @@ Tensor TiedOutputProjectionModule::Forward(const Tensor& input) {
         logits.eval();
         return Tensor::FromSemanticArray(logits, {shape[0], shape[1], vocab});
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "TiedOutputProjectionModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+        throw std::runtime_error(std::string("TiedOutputProjectionModule::Forward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    throw std::runtime_error("TiedOutputProjectionModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    throw std::runtime_error("TiedOutputProjection needs the ArrayFire path");
 }
 
 Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
@@ -639,12 +609,11 @@ Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
         embedding_.GetLayer().AddPendingWeightGradient(Tensor::FromSemanticArray(dweight, {vocab, width}));
         return Tensor::FromSemanticArray(dx, shape);
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "TiedOutputProjectionModule::Backward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", grad_output.Shape())));
+        throw std::runtime_error(std::string("TiedOutputProjectionModule::Backward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    throw std::runtime_error("TiedOutputProjectionModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    throw std::runtime_error("TiedOutputProjection needs the ArrayFire path");
 }
 
 std::map<std::string, Tensor> TiedOutputProjectionModule::GetParameters() {
@@ -691,19 +660,11 @@ LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_mode
         grad_weight_ = Tensor::Zeros(shape);
         return;
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule",
-            ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext("max_sequence_length=" + std::to_string(max_sequence_length_) +
-                                                 "; d_model=" + std::to_string(d_model_)));
+        throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule failed on the ArrayFire device: ") + e.what());
     }
+#else
+    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    std::mt19937 gen(std::random_device{}());
-    std::normal_distribution<float> normal(0.0f, 0.02f);
-    weight_ = Tensor(shape, DataType::Float32);
-    float* w = weight_.MutableData<float>();
-    for (size_t i = 0; i < max_sequence_length_ * d_model_; ++i) w[i] = normal(gen);
-    grad_weight_ = Tensor::Zeros(shape);
 }
 
 Tensor LearnedPositionalEmbeddingModule::Forward(const Tensor& input) {
@@ -735,24 +696,11 @@ Tensor LearnedPositionalEmbeddingModule::ForwardAt(const Tensor& input, size_t p
         output.eval();
         return Tensor::FromSemanticArray(output, shape);
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "LearnedPositionalEmbeddingModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+        throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::Forward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "LearnedPositionalEmbeddingModule::Forward");
-    Tensor output(shape, DataType::Float32);
-    const float* src = input.ReadData<float>();
-    const float* w = weight_.ReadData<float>();
-    float* dst = output.MutableData<float>();
-    for (size_t b = 0; b < shape[0]; ++b)
-        for (size_t p = 0; p < shape[1]; ++p)
-            for (size_t d = 0; d < d_model_; ++d) {
-                const size_t offset = (b * shape[1] + p) * d_model_ + d;
-                dst[offset] = src[offset] + w[(p + position_offset) * d_model_ + d];
-            }
-    return output;
 }
 
 Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
@@ -773,21 +721,11 @@ Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
         grad_weight_ = Tensor::FromSemanticArray(grad, weight_shape);
         return grad_output;
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "LearnedPositionalEmbeddingModule::Backward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", shape)));
+        throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::Backward failed on the ArrayFire device: ") + e.what());
     }
+#else
+    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "LearnedPositionalEmbeddingModule::Backward");
-    grad_weight_ = Tensor::Zeros(weight_shape);
-    float* g = grad_weight_.MutableData<float>();
-    const float* dy = grad_output.ReadData<float>();
-    for (size_t b = 0; b < shape[0]; ++b)
-        for (size_t p = 0; p < shape[1]; ++p)
-            for (size_t d = 0; d < d_model_; ++d)
-                g[p * d_model_ + d] += dy[(b * shape[1] + p) * d_model_ + d];
-    return grad_output;
 }
 
 std::map<std::string, Tensor> LearnedPositionalEmbeddingModule::GetParameters() {

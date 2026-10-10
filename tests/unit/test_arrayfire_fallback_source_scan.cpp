@@ -560,8 +560,6 @@ TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native co
     const std::vector<std::pair<std::string, std::string>> guarded_helpers = {
         {"cyxwiz-backend/src/algorithms/layers/layer_utils.cpp",
          "RecordLayerArrayFireFallback"},
-        {"cyxwiz-backend/src/algorithms/layers/multi_head_attention.cpp",
-         "LogAttentionInitializationFallbackOnce"},
         {"cyxwiz-backend/src/algorithms/linear_algebra_tensor.cpp",
          "LogLinearAlgebraTensorFallbackOnce"},
     };

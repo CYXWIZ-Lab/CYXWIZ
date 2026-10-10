@@ -130,15 +130,6 @@ private:
     bool cached_attention_dropout_ = false;
 
     void InitializeWeights();
-    // Name of the first enabled option the native CPU path cannot run, or null.
-    const char* ArrayFireOnlyOption() const {
-        if (rope_) return "Rotary position embedding";
-        if (qk_norm_) return "QK normalization";
-        if (alibi_) return "ALiBi";
-        if (logit_softcap_ > 0.0f) return "Attention logit soft-capping";
-        if (num_kv_heads_ != num_heads_) return "Grouped-query attention";
-        return nullptr;
-    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     Tensor ForwardArrayFire(const Tensor& query, const Tensor& key,
                             const Tensor& value, const Tensor* attn_mask);
