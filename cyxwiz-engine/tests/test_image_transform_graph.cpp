@@ -10,6 +10,7 @@
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
+#include "../src/core/graph_node_factory.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_quality_analysis.h"
 #include "../src/gui/loaders/data_loader.h"
@@ -513,6 +514,58 @@ void CheckQualityAnalyzer() {
     Check(batcher.GetNumSamples() + batcher.GetNumValSamples() == 8, "8 images before the filter");
     batcher.ExcludeFiles(config.image_excluded_files);
     Check(batcher.GetNumSamples() == 3 && batcher.GetNumValSamples() == 3, "6 images after it, split 3 + 3");
+
+    // As the canvas builds it: Data Input -> Quality Analyzer -> Data Split ->
+    // Data Loader -> Resize -> model, the Loader's labels into the loss. The
+    // filter keeps the Data Input as the Split's source.
+    {
+        int next_node = 1, next_pin = 1;
+        const auto make = [&](gui::NodeType type, const std::string& name) {
+            return gui::CreateGraphNode(type, name, next_node, next_pin);
+        };
+        auto data = make(gui::NodeType::DataInput, "Images");
+        data.parameters["dataset_name"] = "quality_graph";
+        data.parameters["file_category"] = "image";
+        data.parameters["folder_path"] = root.string();
+        data.parameters["image_layout"] = "0";
+        auto filter = make(gui::NodeType::QualityAnalyzer, "Quality");
+        auto split = make(gui::NodeType::DataSplit, "Split");
+        auto loader = make(gui::NodeType::DataLoader, "Loader");
+        auto size = make(gui::NodeType::Resize, "Resize 16");
+        size.parameters = {{"width", "16"}, {"height", "16"}, {"mode", "exact"}};
+        auto flatten = make(gui::NodeType::Flatten, "Flatten");
+        auto dense = make(gui::NodeType::Dense, "Dense 2");
+        dense.parameters["units"] = "2";
+        auto loss = make(gui::NodeType::CrossEntropyLoss, "Loss");
+        auto adam = make(gui::NodeType::Adam, "Adam");
+        Check(filter.inputs.size() == 1 && filter.inputs[0].type == gui::PinType::Dataset &&
+                  filter.outputs.size() == 1 && filter.outputs[0].type == gui::PinType::Dataset,
+              "the Quality Analyzer takes and passes on a Dataset");
+        std::vector<gui::NodeLink> wires;
+        int link_id = 1;
+        const auto wire = [&](const gui::MLNode& from, size_t out, const gui::MLNode& to, size_t in) {
+            wires.push_back(Link(link_id++, from.id, from.outputs.at(out).id, to.id, to.inputs.at(in).id));
+        };
+        wire(data, 0, filter, 0);
+        wire(filter, 0, split, 0);
+        wire(split, 0, loader, 0);
+        wire(loader, 0, size, 0);
+        wire(size, 0, flatten, 0);
+        wire(flatten, 0, dense, 0);
+        wire(dense, 0, loss, 0);
+        wire(loader, 1, loss, 1);
+        wire(loss, 0, adam, 0);
+        const auto wired = cyxwiz::GraphCompiler{}.Compile(
+            {data, filter, split, loader, size, flatten, dense, loss, adam}, wires, true);
+        std::string origin_errors;
+        for (const auto& issue : wired.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error && issue.message.find("originate") != std::string::npos)
+                origin_errors += issue.message + "\n";
+        }
+        Check(origin_errors.empty(), "the Split sees the Data Input through the filter:\n" + origin_errors);
+        Check(wired.image_excluded_files.size() == 2,
+              "the canvas graph leaves out the same 2 files; errors:\n" + Errors(wired));
+    }
 
     fs::remove(cyxwiz::ImageQualityCacheDir() / (first_key + ".json"), ec);
     cyxwiz::DataRegistry::Instance().UnregisterImageDataset("quality_graph");

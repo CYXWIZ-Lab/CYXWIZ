@@ -1776,9 +1776,9 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         "files out of every split and refuses to start without a current analysis (after the "
         "images or the Resize size change, analyze again); changing a check needs no new analysis. "
         "Files are never deleted.",
-        "Data Input (images) -> Quality Analyzer -> Resize 64 -> Conv2D",
-        {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
-        {{"Output", PinType::Tensor, true, "The images that pass the checks"}},
+        "Data Input (images) -> Quality Analyzer -> Data Split -> Data Loader -> Resize 64 -> Conv2D",
+        {{"Images", PinType::Dataset, true, "The image dataset from the Data Input"}},
+        {{"Images", PinType::Dataset, true, "The images that pass the checks; Data Split partitions them"}},
         {{"blur_check", "bool", "true", "Leave out blurry images", {}, "", "Blur", "Checks"},
          {"blur_min", "float", "700", "Lowest Laplacian variance kept (at the Resize size)", {}, ">=0", "Reject blur below", "Checks"},
          {"brightness_check", "bool", "true", "Leave out too dark or too bright images", {}, "", "Brightness", "Checks"},

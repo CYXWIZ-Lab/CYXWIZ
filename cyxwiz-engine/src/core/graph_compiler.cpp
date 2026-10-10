@@ -151,11 +151,16 @@ void CollectDatasetSourceOrigins(
         return;
     }
 
+    // The Quality Analyzer filters which files of the source train (the
+    // image batcher skips its rejects): the source stays the Data Input.
+    const bool training_filter = node->type == gui::NodeType::QualityAnalyzer;
     const auto runtime_support = ResolvePipelineRuntimeSupport(node->type);
-    if (runtime_support.mode != PipelineRuntimeSupportMode::OperatorBacked ||
-        runtime_support.implementation_owner !=
-            PipelineRuntimeImplementationOwner::PipelineOperatorFactory ||
-        !runtime_support.materializer_arrow_table_supported) {
+    const bool table_operator =
+        runtime_support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+        runtime_support.implementation_owner ==
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
+        runtime_support.materializer_arrow_table_supported;
+    if (!training_filter && !table_operator) {
         invalid_path = true;
         return;
     }

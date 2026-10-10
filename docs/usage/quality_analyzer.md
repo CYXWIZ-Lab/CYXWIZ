@@ -5,10 +5,14 @@ that are too dark or too bright, flat low-contrast ones, and near-duplicates.
 It is a filter on the dataset. The files stay on disk; training skips them.
 
 ```
-Data Input (images) -> Quality Analyzer -> Resize 64 -> ... -> Conv2D -> ...
+Data Input (images) -> Quality Analyzer -> Data Split -> Data Loader
+  -> Resize 64 -> ... -> Conv2D -> ...
 ```
 
-One Quality Analyzer per graph. It works on image Data Inputs (folders of
+Put it before **Data Split**: it decides which images exist for training,
+and the Split then shares out only the images that pass (a rejected image
+never lands in validation or test). Its pins carry the dataset, like the Data
+Input's. One Quality Analyzer per graph. It works on image Data Inputs (folders of
 image files, with class subfolders or a labels CSV).
 
 ## Using it
