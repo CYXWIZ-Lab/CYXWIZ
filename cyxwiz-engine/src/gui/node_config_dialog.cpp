@@ -1,4 +1,5 @@
 #include "node_config_dialog.h"
+#include "quality_analyzer_dialog.h"
 #include "node_editor.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
@@ -133,43 +134,13 @@ bool NodeConfigDialog::Render() {
     if (ImGui::Begin(title_.c_str(), &is_open_, flags)) {
         // Content area
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        float button_height = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
 
         // Main content (excluding button area)
-        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - button_height), false);
+        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - FooterHeight()), false);
         RenderContent();
         ImGui::EndChild();
 
-        ImGui::Separator();
-
-        // Bottom buttons (OK, Cancel, Apply)
-        float button_width = 80.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float total_width = button_width * 3 + spacing * 2;
-        ImGui::SetCursorPosX(avail.x - total_width);
-
-        // Grey out OK/Apply while a subclass reports it's busy (e.g. async
-        // data load in DataInputDialog). Cancel stays enabled so the user
-        // can always bail out.
-        bool busy = IsBusy();
-
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-            Apply();
-            should_close = true;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
-            Reset();
-            should_close = true;
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
-            Apply();
-        }
-        ImGui::EndDisabled();
+        RenderFooter(should_close);
     }
     ImGui::End();
 
@@ -178,6 +149,44 @@ bool NodeConfigDialog::Render() {
     }
 
     return is_open_;
+}
+
+float NodeConfigDialog::FooterHeight() const {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
+}
+
+void NodeConfigDialog::RenderFooter(bool& should_close) {
+    ImGui::Separator();
+
+    // Bottom buttons (OK, Cancel, Apply)
+    const float avail = ImGui::GetContentRegionAvail().x;
+    float button_width = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float total_width = button_width * 3 + spacing * 2;
+    ImGui::SetCursorPosX(avail - total_width);
+
+    // Grey out OK/Apply while a subclass reports it's busy (e.g. async
+    // data load in DataInputDialog). Cancel stays enabled so the user
+    // can always bail out.
+    bool busy = IsBusy();
+
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+        Apply();
+        should_close = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+        Reset();
+        should_close = true;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
+        Apply();
+    }
+    ImGui::EndDisabled();
 }
 
 bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const char* filter) {
@@ -1774,6 +1783,10 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
 
     RegisterDialog(NT::DataSplit, [](MLNode* node) {
         return std::make_unique<DataSplitDialog>(node);
+    });
+
+    RegisterDialog(NT::QualityAnalyzer, [](MLNode* node) {
+        return std::make_unique<QualityAnalyzerDialog>(node);
     });
 
     // Visualization framework — chart nodes live in their own TU

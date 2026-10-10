@@ -148,6 +148,7 @@ set(ENGINE_SOURCES
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
+    src/core/quality_analyzer_presentation.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
@@ -372,6 +373,7 @@ set(ENGINE_SOURCES
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/quality_analyzer_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
     src/gui/data_preview_table_renderer.cpp
@@ -5491,6 +5493,26 @@ set_target_properties(test_image_transform_graph PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME image_transform_graph_contract COMMAND test_image_transform_graph)
+
+# ===== Test: Quality Analyzer dialog view model (TOFIX140) =====
+add_executable(test_quality_analyzer_presentation
+    tests/test_quality_analyzer_presentation.cpp
+    src/core/quality_analyzer_presentation.cpp
+)
+target_link_libraries(test_quality_analyzer_presentation PRIVATE
+    cyxwiz-backend
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+target_include_directories(test_quality_analyzer_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_quality_analyzer_presentation PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_quality_analyzer_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME quality_analyzer_presentation COMMAND test_quality_analyzer_presentation)
 
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation

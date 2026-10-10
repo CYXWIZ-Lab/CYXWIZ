@@ -66,6 +66,10 @@ public:
 
 protected:
     virtual void RenderContent() = 0;
+    // The row under the content: OK / Cancel / Apply by default. A dialog
+    // with its own footer overrides both; should_close asks Render to close.
+    virtual float FooterHeight() const;
+    virtual void RenderFooter(bool& should_close);
     void RenderSettingsTab();
     void RenderAdvancedTab();
     void RenderPreviewTab();
