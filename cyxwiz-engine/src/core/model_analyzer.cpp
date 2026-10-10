@@ -180,7 +180,6 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::Output: return "Output";
         case gui::NodeType::DatasetInput: return "DatasetInput";
         case gui::NodeType::DataLoader: return "DataLoader";
-        case gui::NodeType::Augmentation: return "Augmentation";
         case gui::NodeType::DataSplit: return "DataSplit";
         case gui::NodeType::Normalize: return "Normalize";
         case gui::NodeType::OneHotEncode: return "OneHotEncode";

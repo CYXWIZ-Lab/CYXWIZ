@@ -88,7 +88,6 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
         case NodeType::OutlierDetector:
-        case NodeType::ImagePreprocessor:
         case NodeType::QualityAnalyzer:
         case NodeType::DataValidator:
             return NodeCategory::Preprocessing;
@@ -247,7 +246,6 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
         // Data Pipeline
         case NodeType::DatasetInput:
         case NodeType::DataLoader:
-        case NodeType::Augmentation:
         case NodeType::DataSplit:
         // Image Transform Nodes (Phase 1)
         case NodeType::Resize:
@@ -261,8 +259,6 @@ NodeCategory GetNodeCategoryForType(NodeType type) {
         case NodeType::Grayscale:
         // Phase 6: Advanced Augmentation Nodes (UI Consolidation)
         case NodeType::AugmentationPreset:
-        case NodeType::GeometricTransform:
-        case NodeType::ColorTransform:
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
             return NodeCategory::DataPipeline;
@@ -465,41 +461,6 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::DataLoader: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
-        case NodeType::Augmentation: {
-            // Augmentation node - transform pipeline
-            // Input: Data tensor
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Image (or tabular) tensor stream to apply augmentations "
-                "to. Augmentation runs train-only — eval/test passes are "
-                "pass-through, so the model sees the unperturbed data "
-                "for fair metrics.";
-            node.inputs.push_back(input_pin);
-
-            // Output: Augmented data
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Same shape as Input. The transforms parameter is a "
-                "csv pipeline (RandomFlip,Normalize,...) applied left "
-                "to right.";
-            node.outputs.push_back(output_pin);
-
-            // Parameters (transform pipeline)
-            node.parameters["transforms"] = "RandomFlip,Normalize";
-            node.parameters["flip_prob"] = "0.5";
-            node.parameters["normalize_mean"] = "0.0";
-            node.parameters["normalize_std"] = "1.0";
             break;
         }
 
@@ -2004,32 +1965,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::ImagePreprocessor: {
-            NodePin images_in;
-            images_in.id = next_pin_id_++;
-            images_in.type = PinType::Tensor;
-            images_in.name = "Images";
-            images_in.is_input = true;
-            node.inputs.push_back(images_in);
-
-            NodePin processed_out;
-            processed_out.id = next_pin_id_++;
-            processed_out.type = PinType::Tensor;
-            processed_out.name = "Processed";
-            processed_out.is_input = false;
-            node.outputs.push_back(processed_out);
-
-            node.parameters["resize_mode"] = "aspect_fit";  // exact, aspect_fit, aspect_fill, center
-            node.parameters["target_width"] = "224";
-            node.parameters["target_height"] = "224";
-            node.parameters["normalize"] = "true";
-            node.parameters["mean"] = "0.485,0.456,0.406";  // ImageNet mean
-            node.parameters["std"] = "0.229,0.224,0.225";   // ImageNet std
-            node.parameters["interpolation"] = "bilinear";  // nearest, bilinear, bicubic
-            node.parameters["padding_mode"] = "reflect";    // constant, reflect, replicate
-            break;
-        }
-
         case NodeType::QualityAnalyzer: {
             NodePin images_in;
             images_in.id = next_pin_id_++;
@@ -2182,54 +2117,6 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
-        case NodeType::GeometricTransform: {
-            // GeometricTransform - Geometric transforms (rotate, flip, crop, perspective)
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["transform"] = "rotate";           // rotate, flip_h, flip_v, crop, perspective, affine
-            node.parameters["angle_range"] = "-30,30";         // Rotation angle range (degrees)
-            node.parameters["flip_prob"] = "0.5";              // Probability for flip transforms
-            node.parameters["crop_scale"] = "0.8,1.0";         // Random crop scale range
-            node.parameters["perspective_distortion"] = "0.2"; // Perspective distortion scale
-            break;
-        }
-
-        case NodeType::ColorTransform: {
-            // ColorTransform - Color space transforms
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["brightness_range"] = "0.8,1.2";   // Brightness multiplier range
-            node.parameters["contrast_range"] = "0.8,1.2";     // Contrast multiplier range
-            node.parameters["saturation_range"] = "0.8,1.2";   // Saturation multiplier range
-            node.parameters["hue_range"] = "-0.1,0.1";         // Hue shift range
-            node.parameters["gamma_range"] = "0.8,1.2";        // Gamma correction range
-            break;
-        }
-
         // ===== Phase 4: Signal Processing Nodes =====
         case NodeType::FFTNode:
         case NodeType::FilterDesigner:

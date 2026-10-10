@@ -1573,7 +1573,6 @@ bool BuildSequential(
             // Skip non-layer nodes (preprocessing, loss functions, optimizers)
             case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
-            case gui::NodeType::Augmentation:
             case gui::NodeType::DataSplit:
             case gui::NodeType::Normalize:
             case gui::NodeType::OneHotEncode:

@@ -50,7 +50,6 @@ gui::NodeCategory CategoryOf(const gui::MLNode& node) {
 // training. Inspection nodes (SampleRows, DescribeStats...) do not change the
 // training data and pass.
 bool NeedsPreparation(const gui::MLNode& node) {
-    if (node.type == gui::NodeType::Augmentation) return true;
     if (ResolvePipelineRuntimeSupport(node.type).mode == PipelineRuntimeSupportMode::OperatorBacked) return true;
     switch (CategoryOf(node)) {
     case gui::NodeCategory::DataTransform:

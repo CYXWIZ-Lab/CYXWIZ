@@ -378,7 +378,12 @@ int main(int, char** argv) {
           std::tuple{gui::NodeType::SharedEncoder, "Old shared encoder",
                      "connect the encoder layers straight to the loss"},
           std::tuple{gui::NodeType::SiameseBranch, "Old siamese branch",
-                     "connect the encoder layers straight to the loss"}}) {
+                     "connect the encoder layers straight to the loss"},
+          // TOFIX140 image transforms: the bundle nodes the single transforms replaced.
+          std::tuple{gui::NodeType::Augmentation, "Old augmentation", "Augmentation Preset replaced"},
+          std::tuple{gui::NodeType::GeometricTransform, "Old geometric", "Random Crop, Image Rotate"},
+          std::tuple{gui::NodeType::ColorTransform, "Old color", "Color Jitter replaced"},
+          std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"}}) {
         const json saved = {
             {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},
                                     {"name", name}, {"parameters", json::object()}}})},

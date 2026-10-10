@@ -1132,7 +1132,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
         {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
-        {NodeType::Augmentation, NodeCategory::Preprocessing, "Augmentation", {"augmentation", "transform"}},
         {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
         {NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", {"workflow", "subgraph"}},
         {NodeType::DNNClassify, NodeCategory::DNN, "DNN Classify", {"dnn", "classification"}},
@@ -1153,15 +1152,12 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
         {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
         {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
-        {NodeType::ImagePreprocessor, NodeCategory::Preprocessing, "Image Preprocessor", {"image", "preprocess"}},
         {NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer", {"image", "quality"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
         {NodeType::HuggingFaceDataset, NodeCategory::DataSources, "Hugging Face Dataset", {"huggingface", "dataset", "hub"}},
         {NodeType::KaggleDataset, NodeCategory::DataSources, "Kaggle Dataset", {"kaggle", "dataset"}},
-        {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
-        {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };
 

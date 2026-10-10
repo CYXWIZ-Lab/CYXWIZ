@@ -218,7 +218,8 @@ enum class NodeType {
     // ===== Data Pipeline Nodes =====
     DatasetInput,       // Load dataset from DataRegistry
     DataLoader,         // Batch iterator with shuffle/drop_last
-    Augmentation,       // Transform pipeline for data augmentation
+    Augmentation,  // Retired (the image transform nodes and Augmentation Preset replaced it): the slot stays so later ids
+                   // do not move; a saved graph with one fails to load.
     DataSplit,          // Train/val/test splitter
     TensorReshape,      // Retired (the Reshape node replaced it): the slot stays
                         // so later ids do not move; a saved graph with one
@@ -416,7 +417,8 @@ enum class NodeType {
 
     // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
     OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
-    ImagePreprocessor,  // Image resize, crop, normalize pipeline
+    ImagePreprocessor,  // Retired (Resize and Normalize replaced it): the slot stays so later ids
+                        // do not move; a saved graph with one fails to load.
     QualityAnalyzer,    // Image quality filtering (blur, brightness, contrast)
     DataValidator,      // Schema validation and data quality checks
 
@@ -429,8 +431,10 @@ enum class NodeType {
 
     // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
     AugmentationPreset, // Predefined augmentation pipelines (ImageNet, CIFAR, Medical, Self-Supervised)
-    GeometricTransform, // Geometric transforms (rotate, flip, crop, perspective, affine)
-    ColorTransform,     // Color transforms (brightness, contrast, saturation, hue, gamma)
+    GeometricTransform,  // Retired (Random Crop, Image Rotate and the flips replaced it): the slot stays so later ids
+                         // do not move; a saved graph with one fails to load.
+    ColorTransform,  // Retired (Color Jitter replaced it): the slot stays so later ids
+                     // do not move; a saved graph with one fails to load.
     MorphologyTransform,// Morphological operations (dilate, erode, blur, sharpen, edge)
     AdvancedAugment,    // Advanced augmentation (Cutout, MixUp, CutMix, RandAugment, AutoAugment)
 

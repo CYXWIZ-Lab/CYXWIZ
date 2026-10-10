@@ -1987,13 +1987,6 @@ void NodeEditor::RenderNodes() {
                 }
                 break;
             }
-            case NodeType::Augmentation: {
-                auto it = node.parameters.find("transforms");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Transforms: %s", it->second.c_str());
-                }
-                break;
-            }
             case NodeType::DataSplit: {
                 auto train_it = node.parameters.find("train_ratio");
                 auto val_it = node.parameters.find("val_ratio");

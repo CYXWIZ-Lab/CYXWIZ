@@ -2728,7 +2728,6 @@ int main(int argc, char** argv) {
         {"WaveletTransform", false},
         {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
-        {"ImagePreprocessor", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
         {"TSVFile", false},

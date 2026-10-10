@@ -436,8 +436,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(0, 188, 212, 255);
         case NodeType::DataLoader:
             return IM_COL32(0, 172, 193, 255);
-        case NodeType::Augmentation:
-            return IM_COL32(0, 151, 167, 255);
         case NodeType::DataSplit:
             return IM_COL32(38, 198, 218, 255);
         case NodeType::Normalize:
@@ -648,7 +646,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
 
         // ===== Advanced Preprocessing Nodes - Amber =====
         case NodeType::OutlierDetector:
-        case NodeType::ImagePreprocessor:
         case NodeType::QualityAnalyzer:
         case NodeType::DataValidator:
             return IM_COL32(255, 193, 7, 255);
@@ -663,8 +660,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
 
         // ===== Advanced Augmentation Nodes - Light Purple =====
         case NodeType::AugmentationPreset:
-        case NodeType::GeometricTransform:
-        case NodeType::ColorTransform:
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
             return IM_COL32(179, 136, 255, 255);

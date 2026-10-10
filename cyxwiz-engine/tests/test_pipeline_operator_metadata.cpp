@@ -5248,7 +5248,6 @@ int main() {
         gui::NodeType::WaveletTransform,
         gui::NodeType::WordEmbeddings,
         gui::NodeType::NamedEntityRecognizer,
-        gui::NodeType::ImagePreprocessor,
         gui::NodeType::ImageFolderDataset,
         gui::NodeType::AugmentationPreset,
         gui::NodeType::TSVFile,

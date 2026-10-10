@@ -298,17 +298,6 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             break;
         }
 
-        case NodeType::Augmentation: {
-            properties_rows::Rows rows("##rows");
-            if (!rows.ok) break;
-            edited |= TextRow(node, "transforms", "Transforms", "RandomFlip,Normalize");
-            properties_rows::Note("Comma-separated list");
-            edited |= SliderRow(node, "flip_prob", "Flip probability", 0.5f, 0.0f, 1.0f);
-            edited |= TextRow(node, "normalize_mean", "Normalize mean", "0.0");
-            edited |= TextRow(node, "normalize_std", "Normalize std", "1.0");
-            break;
-        }
-
         // ========== Activation Functions ==========
         case NodeType::ReLU:
             Formula("ReLU activation", "f(x) = max(0, x)");

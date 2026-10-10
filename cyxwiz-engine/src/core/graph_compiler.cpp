@@ -7268,7 +7268,6 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
-    {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},

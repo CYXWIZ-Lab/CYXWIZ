@@ -280,7 +280,6 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         // Data Pipeline
         case NodeType::DatasetInput:
         case NodeType::DataLoader:
-        case NodeType::Augmentation:
         case NodeType::DataSplit:
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
@@ -1661,21 +1660,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Training shuffle/balancing applies to Train only",
             "Validation and Test are resolved from the partition manifest, not separate canvas branches"
-        },
-        "Data Pipeline"
-    };
-
-    docs_[NodeType::Augmentation] = {
-        "Augmentation",
-        "Applies data augmentation transforms. Increases effective "
-        "dataset size through variations.",
-        "Applied during training, disabled during inference.",
-        {
-            {"transforms", "List of transforms to apply"}
-        },
-        {
-            "Use for images: flip, rotate, color jitter",
-            "Reduces overfitting significantly"
         },
         "Data Pipeline"
     };

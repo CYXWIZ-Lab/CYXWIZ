@@ -344,6 +344,24 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "remove it from the file or use LSTM/GRU/RNN with bidirectional = true";
                 return false;
             }
+            // TOFIX140 image transforms: the bundle nodes were retired for the
+            // single transforms; a saved one is refused with what replaced it.
+            if (node_type == NodeType::Augmentation || node_type == NodeType::GeometricTransform ||
+                node_type == NodeType::ColorTransform || node_type == NodeType::ImagePreprocessor) {
+                const char* replaced =
+                    node_type == NodeType::Augmentation
+                        ? "an Augmentation node, which the image transform nodes (Random Crop, flips, Image Rotate, "
+                          "Color Jitter...) and Augmentation Preset replaced"
+                    : node_type == NodeType::GeometricTransform
+                        ? "a Geometric Transform node, which Random Crop, Image Rotate and Horizontal / Vertical Flip "
+                          "replaced"
+                    : node_type == NodeType::ColorTransform
+                        ? "a Color Transform node, which Color Jitter replaced"
+                        : "an Image Preprocessor node, which Resize and Normalize replaced";
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is " + replaced +
+                        ": remove it from the file or rebuild that step with those nodes";
+                return false;
+            }
             if (node_type == NodeType::SelfAttention) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) +
                         "' is a Self Attention node, which Multi-Head Attention replaced: remove it from the file "
