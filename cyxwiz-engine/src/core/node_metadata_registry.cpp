@@ -1163,7 +1163,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", {"augmentation", "preset"}},
         {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
         {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
-        {NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", {"image", "morphology"}},
         {NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", {"image", "augmentation"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };
@@ -1620,14 +1619,16 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
     RegisterNode({NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", ICON_FA_SHUFFLE,
         {"image", "crop", "augmentation", "random"}, 0, false,
         "Crop height x width at a random place in every training image",
-        "Each training image is cropped at its own random position (torchvision RandomCrop). "
+        "Each training image is cropped at its own random position (torchvision RandomCrop); "
+        "padding first adds a zero border on every side, so the crop may cover some of it. "
         "Validation and test take the centre crop of the same size, so the model's input shape "
         "is [height, width, C] in every phase.",
         "Resize 72 -> Random Crop 64 -> Horizontal Flip -> Normalize",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
-        {{"width", "int", "224", "Crop width in pixels, at most the image width", {}, ">0", "Width", "Output shape", true},
-         {"height", "int", "224", "Crop height in pixels, at most the image height", {}, ">0", "Height", "Output shape", true}},
+        {{"width", "int", "224", "Crop width in pixels, at most the padded image width", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Crop height in pixels, at most the padded image height", {}, ">0", "Height", "Output shape", true},
+         {"padding", "int", "0", "Zero border added on every side before cropping (CIFAR recipe: 4)", {}, ">=0", "Padding"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", ICON_FA_ARROWS_LEFT_RIGHT,
@@ -1704,6 +1705,21 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Images [H, W, 1]"}},
         {},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", ICON_FA_BRUSH,
+        {"image", "morphology", "erode", "dilate", "open", "close", "tophat"}, 0, false,
+        "Erode, dilate, open or close every image with a square kernel",
+        "Grey-level morphology with a flat kernel_size x kernel_size square, pixels outside the "
+        "image ignored (kornia.morphology, OpenCV's default border), in training, validation and "
+        "test. erode = local minimum, dilate = local maximum, open = dilate(erode), close = "
+        "erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image.",
+        "Resize -> Morphology Transform (open) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"operation", "enum", "open", "Morphological operation",
+          {"erode", "dilate", "open", "close", "gradient", "tophat", "blackhat"}, "", "Operation"},
+         {"kernel_size", "int", "3", "Odd width of the square kernel", {}, ">0", "Kernel size"}},
         NodeImplementationStatus::Implemented, 0});
 }
 

@@ -6921,7 +6921,10 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
         case gui::NodeType::CenterCrop:
         case gui::NodeType::RandomCrop:
             op.kind = node.type == gui::NodeType::CenterCrop ? ImageOpKind::CenterCrop : ImageOpKind::RandomCrop;
-            if (ParseIntParam(p, "width", 224, op.width, error)) ParseIntParam(p, "height", 224, op.height, error);
+            if (ParseIntParam(p, "width", 224, op.width, error) && ParseIntParam(p, "height", 224, op.height, error) &&
+                node.type == gui::NodeType::RandomCrop) {
+                ParseIntParam(p, "padding", 0, op.padding, error);
+            }
             break;
         case gui::NodeType::HorizontalFlip:
         case gui::NodeType::VerticalFlip:
@@ -6960,6 +6963,28 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
         case gui::NodeType::Grayscale:
             op.kind = ImageOpKind::Grayscale;
             break;
+        case gui::NodeType::MorphologyTransform: {
+            op.kind = ImageOpKind::Morphology;
+            op.kernel_size = 3;
+            using cyxwiz::image::MorphologyOp;
+            static const std::map<std::string, MorphologyOp> operations = {
+                {"erode", MorphologyOp::Erode},       {"dilate", MorphologyOp::Dilate},
+                {"open", MorphologyOp::Open},         {"close", MorphologyOp::Close},
+                {"gradient", MorphologyOp::Gradient}, {"tophat", MorphologyOp::TopHat},
+                {"blackhat", MorphologyOp::BlackHat},
+            };
+            const auto it = p.find("operation");
+            const std::string operation = it == p.end() ? "open" : it->second;
+            if (const auto found = operations.find(operation); found != operations.end()) {
+                op.morphology = found->second;
+            } else if (operation == "blur") {
+                error = "Morphology operation 'blur' is retired; use Image Gaussian Blur";
+            } else {
+                error = "operation must be erode, dilate, open, close, gradient, tophat or blackhat";
+            }
+            if (error.empty()) ParseIntParam(p, "kernel_size", 3, op.kernel_size, error);
+            break;
+        }
         default:
             return;
     }
@@ -7115,6 +7140,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},

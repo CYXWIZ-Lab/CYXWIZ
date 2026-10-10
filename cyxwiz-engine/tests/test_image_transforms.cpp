@@ -58,11 +58,20 @@ ImageOp OpOf(const json& spec) {
         {"horizontal_flip", ImageOpKind::HorizontalFlip}, {"vertical_flip", ImageOpKind::VerticalFlip},
         {"rotate", ImageOpKind::Rotate},            {"color_jitter", ImageOpKind::ColorJitter},
         {"gaussian_blur", ImageOpKind::GaussianBlur}, {"grayscale", ImageOpKind::Grayscale},
+        {"morphology", ImageOpKind::Morphology},
+    };
+    static const std::map<std::string, cyxwiz::image::MorphologyOp> operations = {
+        {"erode", cyxwiz::image::MorphologyOp::Erode},     {"dilate", cyxwiz::image::MorphologyOp::Dilate},
+        {"open", cyxwiz::image::MorphologyOp::Open},       {"close", cyxwiz::image::MorphologyOp::Close},
+        {"gradient", cyxwiz::image::MorphologyOp::Gradient}, {"tophat", cyxwiz::image::MorphologyOp::TopHat},
+        {"blackhat", cyxwiz::image::MorphologyOp::BlackHat},
     };
     ImageOp op;
     op.kind = kinds.at(spec.at("kind").get<std::string>());
     op.height = spec.value("height", 0);
     op.width = spec.value("width", 0);
+    op.padding = spec.value("padding", 0);
+    if (spec.contains("operation")) op.morphology = operations.at(spec.at("operation").get<std::string>());
     op.kernel_size = spec.value("kernel_size", 5);
     op.sigma = spec.value("sigma", 1.0f);
     if (spec.value("interpolation", std::string("nearest")) == "bilinear") {
@@ -130,6 +139,20 @@ void CheckDraws() {
     Check(eval.top == std::vector<int>({1, 1, 1}) && eval.left == std::vector<int>({1, 1, 1}),
           "Random Crop centres outside training (torchvision center_crop offsets)");
 
+    ImageOp padded = crop;
+    padded.height = 6;
+    padded.width = 7;
+    padded.padding = 2;
+    const auto padded_train = cyxwiz::image::DrawImageOp(padded, shape, 200, true, rng);
+    for (size_t i = 0; i < 200; ++i) {
+        Check(padded_train.top[i] >= 0 && padded_train.top[i] <= 4 && padded_train.left[i] >= 0 &&
+                  padded_train.left[i] <= 4,
+              "padded Random Crop positions stay inside the padded image");
+    }
+    const auto padded_eval = cyxwiz::image::DrawImageOp(padded, shape, 1, false, rng);
+    Check(padded_eval.top == std::vector<int>({2}) && padded_eval.left == std::vector<int>({2}),
+          "padded Random Crop of the full size is the unchanged image outside training");
+
     ImageOp flip;
     flip.kind = ImageOpKind::HorizontalFlip;
     flip.probability = 0.25f;
@@ -178,6 +201,15 @@ void CheckRefusals() {
     refused(crop, "larger than the 6 x 7 image", "a crop taller than the image");
     crop.height = 0;
     refused(crop, "positive width and height", "a zero crop");
+    crop.kind = ImageOpKind::RandomCrop;
+    crop.height = 11;
+    crop.width = 7;
+    crop.padding = 2;
+    refused(crop, "larger than the 10 x 11 padded image", "a crop larger than the padded image");
+    ImageOp morphology;
+    morphology.kind = ImageOpKind::Morphology;
+    morphology.kernel_size = 2;
+    refused(morphology, "positive odd", "an even morphology kernel");
     ImageOp blur;
     blur.kind = ImageOpKind::GaussianBlur;
     blur.kernel_size = 4;

@@ -71,6 +71,13 @@ def build() -> list[dict[str, Any]]:
                       {"top": tops, "left": lefts}, rgb,
                       per_sample(rgb, lambda img, i: F.crop(img, tops[i], lefts[i], 4, 5))))
 
+    # torchvision RandomCrop(padding=2): zero border, then the crop at (top, left) of the padded image.
+    ptops, plefts = [0, 4], [3, 1]
+    padded = F.pad(rgb, [2, 2, 2, 2], fill=0)
+    cases.append(case("random_crop_padding", {"kind": "random_crop", "height": 6, "width": 7, "padding": 2},
+                      {"top": ptops, "left": plefts}, rgb,
+                      per_sample(padded, lambda img, i: F.crop(img, ptops[i], plefts[i], 6, 7))))
+
     apply = [1, 0]
     cases.append(case("horizontal_flip", {"kind": "horizontal_flip"}, {"apply": apply}, rgb,
                       per_sample(rgb, lambda img, i: F.hflip(img) if apply[i] else img)))
@@ -122,6 +129,29 @@ def build() -> list[dict[str, Any]]:
                       gray, F.gaussian_blur(gray, [3, 3], [1.1, 1.1])))
 
     cases.append(case("grayscale", {"kind": "grayscale"}, {}, rgb, F.rgb_to_grayscale(rgb)))
+
+    # Morphology with a flat square: max_pool2d's implicit -inf border ignores outside pixels
+    # (kornia.morphology's geodesic border, OpenCV's default morphology border).
+    def dilate(img: torch.Tensor, k: int) -> torch.Tensor:
+        return torch.nn.functional.max_pool2d(img, k, stride=1, padding=k // 2)
+
+    def erode(img: torch.Tensor, k: int) -> torch.Tensor:
+        return -dilate(-img, k)
+
+    morph = {
+        "erode": lambda x, k: erode(x, k),
+        "dilate": lambda x, k: dilate(x, k),
+        "open": lambda x, k: dilate(erode(x, k), k),
+        "close": lambda x, k: erode(dilate(x, k), k),
+        "gradient": lambda x, k: dilate(x, k) - erode(x, k),
+        "tophat": lambda x, k: x - dilate(erode(x, k), k),
+        "blackhat": lambda x, k: erode(dilate(x, k), k) - x,
+    }
+    for operation, fn in morph.items():
+        cases.append(case(f"morphology_{operation}", {"kind": "morphology", "operation": operation, "kernel_size": 3},
+                          {}, rgb, fn(rgb, 3)))
+    cases.append(case("morphology_erode_k5_one_channel",
+                      {"kind": "morphology", "operation": "erode", "kernel_size": 5}, {}, gray, erode(gray, 5)))
     return cases
 
 

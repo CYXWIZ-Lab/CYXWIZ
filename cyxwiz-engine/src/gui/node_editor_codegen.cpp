@@ -743,6 +743,7 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::ColorJitter:
             case NodeType::ImageGaussianBlur:
             case NodeType::Grayscale:
+            case NodeType::MorphologyTransform:
                 return EffectiveNodeName(*node) +
                        ": code export does not include image transforms yet; train it in Studio";
             default:

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -39,6 +40,7 @@ const char* KindName(ImageOpKind kind) {
         case ImageOpKind::ColorJitter: return "Color Jitter";
         case ImageOpKind::GaussianBlur: return "Image Gaussian Blur";
         case ImageOpKind::Grayscale: return "Grayscale";
+        case ImageOpKind::Morphology: return "Morphology Transform";
     }
     return "image transform";
 }
@@ -62,6 +64,11 @@ std::vector<float> ToFloat(const std::vector<int>& values) {
     std::vector<float> out(values.size());
     std::transform(values.begin(), values.end(), out.begin(), [](int v) { return static_cast<float>(v); });
     return out;
+}
+
+std::vector<int> Shifted(std::vector<int> values, int by) {
+    for (int& v : values) v += by;
+    return values;
 }
 
 // A per-sample value [1, 1, 1, N] repeated over [H, W, C, N].
@@ -282,6 +289,53 @@ af::array GaussianBlur(const af::array& images, int kernel_size, float sigma) {
     return af::reorder(along_w, 1, 0, 2, 3);
 }
 
+// Max over a (2r+1)-wide window along one axis (0 = H, 1 = W); pixels
+// outside the image are ignored, as torch max_pool2d's implicit padding.
+af::array WindowMax(const af::array& images, int radius, int axis) {
+    if (radius == 0) return images;
+    af::dim4 dims = images.dims();
+    const dim_t size = dims[axis];
+    af::dim4 padded_dims = dims;
+    padded_dims[axis] = size + 2 * radius;
+    af::array padded = af::constant(-std::numeric_limits<float>::infinity(), padded_dims, images.type());
+    const af::seq inner(radius, radius + static_cast<double>(size) - 1);
+    if (axis == 0) {
+        padded(inner, af::span, af::span, af::span) = images;
+    } else {
+        padded(af::span, inner, af::span, af::span) = images;
+    }
+    af::array out;
+    for (int d = 0; d <= 2 * radius; ++d) {
+        const af::seq window(d, d + static_cast<double>(size) - 1);
+        const af::array slice = axis == 0 ? padded(window, af::span, af::span, af::span)
+                                          : padded(af::span, window, af::span, af::span);
+        out = d == 0 ? slice : (af::max)(out, slice);
+    }
+    return out;
+}
+
+af::array Dilate(const af::array& images, int kernel_size) {
+    const int radius = kernel_size / 2;
+    return WindowMax(WindowMax(images, radius, 0), radius, 1);
+}
+
+af::array Erode(const af::array& images, int kernel_size) {
+    return -Dilate(-images, kernel_size);
+}
+
+af::array Morphology(const af::array& images, MorphologyOp operation, int kernel_size) {
+    switch (operation) {
+        case MorphologyOp::Erode: return Erode(images, kernel_size);
+        case MorphologyOp::Dilate: return Dilate(images, kernel_size);
+        case MorphologyOp::Open: return Dilate(Erode(images, kernel_size), kernel_size);
+        case MorphologyOp::Close: return Erode(Dilate(images, kernel_size), kernel_size);
+        case MorphologyOp::Gradient: return Dilate(images, kernel_size) - Erode(images, kernel_size);
+        case MorphologyOp::TopHat: return images - Dilate(Erode(images, kernel_size), kernel_size);
+        case MorphologyOp::BlackHat: return Erode(Dilate(images, kernel_size), kernel_size) - images;
+    }
+    return images;
+}
+
 af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const ImageShape& shape,
                         const af::array& images) {
     const af::dim4 dims = images.dims();
@@ -296,7 +350,8 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
             if (draws.top.size() != static_cast<size_t>(dims[3])) {
                 throw std::invalid_argument("Random Crop needs one position per sample");
             }
-            return Crop(images, draws.top, draws.left, op.height, op.width);
+            return Crop(images, Shifted(draws.top, -op.padding), Shifted(draws.left, -op.padding),
+                        op.height, op.width);
         case ImageOpKind::HorizontalFlip:
         case ImageOpKind::VerticalFlip:
             if (draws.apply.empty()) return images;
@@ -312,6 +367,8 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
             return GaussianBlur(images, op.kernel_size, op.sigma);
         case ImageOpKind::Grayscale:
             return shape.channels == 3 ? Luminance(images) : images;
+        case ImageOpKind::Morphology:
+            return Morphology(images, op.morphology, op.kernel_size);
     }
     return images;
 }
@@ -337,16 +394,22 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
     std::ostringstream reason;
     switch (op.kind) {
         case ImageOpKind::CenterCrop:
-        case ImageOpKind::RandomCrop:
+        case ImageOpKind::RandomCrop: {
             if (op.height <= 0 || op.width <= 0) {
                 return std::string(KindName(op.kind)) + " needs a positive width and height";
             }
-            if (static_cast<size_t>(op.height) > input.height || static_cast<size_t>(op.width) > input.width) {
+            if (op.padding < 0 || (op.kind == ImageOpKind::CenterCrop && op.padding != 0)) {
+                return std::string(KindName(op.kind)) + " padding must be 0 or more";
+            }
+            const size_t padded_h = input.height + 2 * static_cast<size_t>(op.padding);
+            const size_t padded_w = input.width + 2 * static_cast<size_t>(op.padding);
+            if (static_cast<size_t>(op.height) > padded_h || static_cast<size_t>(op.width) > padded_w) {
                 return std::string(KindName(op.kind)) + " " + ShapeText(op.height, op.width) +
-                       " (height x width) is larger than the " + ShapeText(input.height, input.width) +
-                       " image; use a smaller crop or a larger Resize";
+                       " (height x width) is larger than the " + ShapeText(padded_h, padded_w) +
+                       (op.padding > 0 ? " padded image" : " image") + "; use a smaller crop or a larger Resize";
             }
             return {};
+        }
         case ImageOpKind::HorizontalFlip:
         case ImageOpKind::VerticalFlip:
         case ImageOpKind::Rotate:
@@ -386,6 +449,11 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
                 return "Grayscale needs a 1- or 3-channel image";
             }
             return {};
+        case ImageOpKind::Morphology:
+            if (op.kernel_size <= 0 || op.kernel_size % 2 == 0) {
+                return "Morphology Transform kernel_size must be a positive odd number";
+            }
+            return {};
     }
     return {};
 }
@@ -412,14 +480,16 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             draws.top.resize(batch);
             draws.left.resize(batch);
             for (size_t i = 0; i < batch; ++i) {
+                const size_t padded_h = input.height + 2 * static_cast<size_t>(op.padding);
+                const size_t padded_w = input.width + 2 * static_cast<size_t>(op.padding);
                 if (training) {
                     draws.top[i] = std::uniform_int_distribution<int>(
-                        0, static_cast<int>(input.height) - op.height)(rng);
+                        0, static_cast<int>(padded_h) - op.height)(rng);
                     draws.left[i] = std::uniform_int_distribution<int>(
-                        0, static_cast<int>(input.width) - op.width)(rng);
+                        0, static_cast<int>(padded_w) - op.width)(rng);
                 } else {
-                    draws.top[i] = CenterOffset(input.height, op.height);
-                    draws.left[i] = CenterOffset(input.width, op.width);
+                    draws.top[i] = CenterOffset(padded_h, op.height);
+                    draws.left[i] = CenterOffset(padded_w, op.width);
                 }
             }
             break;

@@ -293,6 +293,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ColorJitter:
         case NodeType::ImageGaussianBlur:
         case NodeType::Grayscale:
+        case NodeType::MorphologyTransform:
             return "Data Pipeline";
 
         default:
@@ -1737,11 +1738,13 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Validation and test take the centre crop of the same size, so the input shape stays "
         "[height, width, C] in every phase.",
         {
-            {"width", "Crop width in pixels, at most the image width"},
-            {"height", "Crop height in pixels, at most the image height"}
+            {"width", "Crop width in pixels, at most the padded image width"},
+            {"height", "Crop height in pixels, at most the padded image height"},
+            {"padding", "Zero border added on every side first (0 = none)"}
         },
         {
             "Resize a little larger than the crop (e.g. 72 -> 64) so crops differ",
+            "CIFAR recipe: Random Crop 32 with padding 4 on 32 x 32 images",
             "Teaches the model that position does not decide the class"
         },
         "Data Pipeline"
@@ -1827,6 +1830,21 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {},
         {
             "A third of the input size when colour does not matter",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::MorphologyTransform] = {
+        "Morphology Transform",
+        "Grey-level erosion, dilation, opening, closing and their differences with a flat square kernel.",
+        "Pixels outside the image are ignored (kornia.morphology). Runs in training, validation and test.",
+        {
+            {"operation", "erode, dilate, open, close, gradient, tophat or blackhat"},
+            {"kernel_size", "Odd width of the square kernel"}
+        },
+        {
+            "open removes small bright specks; close fills small dark holes",
+            "gradient outlines shapes; tophat keeps small bright details"
         },
         "Data Pipeline"
     };

@@ -178,6 +178,21 @@ void CheckCompiler() {
     Check(!config.layers.empty() && config.layers.front().input_shape == std::vector<size_t>({6, 6, 1}),
           "the first Conv2D sees [6, 6, 1]");
 
+    const auto cifar = Compile({
+        kResize,
+        {gui::NodeType::RandomCrop, "Random Crop 8 pad 2", {{"width", "8"}, {"height", "8"}, {"padding", "2"}}},
+        {gui::NodeType::MorphologyTransform, "Close", {{"operation", "close"}, {"kernel_size", "3"}}},
+        kNormalize,
+    });
+    Check(cifar.is_valid, "padded Random Crop and Morphology compile; errors:\n" + Errors(cifar));
+    Check(cifar.input_shape == std::vector<size_t>({8, 8, 3}), "a full-size padded crop keeps [8, 8, 3]");
+    Check(cifar.image_augmentation.ops.size() == 2 && cifar.image_augmentation.ops[0].padding == 2 &&
+              cifar.image_augmentation.ops[1].kind == ImageOpKind::Morphology &&
+              cifar.image_augmentation.ops[1].morphology == cyxwiz::image::MorphologyOp::Close,
+          "Random Crop padding 2, then Morphology close");
+    CheckRefused({kResize, {gui::NodeType::MorphologyTransform, "Old blur", {{"operation", "blur"}}}},
+                 "Old blur", "retired; use Image Gaussian Blur", "the retired Morphology 'blur' operation");
+
     CheckRefused({kResize, {gui::NodeType::CenterCrop, "Crop 10", {{"width", "10"}, {"height", "10"}}}},
                  "Crop 10", "larger than the 8 x 8 image", "a crop larger than the Resize size");
     CheckRefused({kResize, kNormalize, {gui::NodeType::HorizontalFlip, "Late flip", {}}},

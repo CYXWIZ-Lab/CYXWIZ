@@ -512,7 +512,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::ImageRotate:
         case NodeType::ColorJitter:
         case NodeType::ImageGaussianBlur:
-        case NodeType::Grayscale: {
+        case NodeType::Grayscale:
+        case NodeType::MorphologyTransform: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -2246,29 +2247,6 @@ MLNode CreateGraphNode(NodeType type,
             node.parameters["saturation_range"] = "0.8,1.2";   // Saturation multiplier range
             node.parameters["hue_range"] = "-0.1,0.1";         // Hue shift range
             node.parameters["gamma_range"] = "0.8,1.2";        // Gamma correction range
-            break;
-        }
-
-        case NodeType::MorphologyTransform: {
-            // MorphologyTransform - Morphological operations
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["operation"] = "blur";             // blur, sharpen, dilate, erode, edge
-            node.parameters["kernel_size"] = "3";              // Kernel size for morphological ops
-            node.parameters["sigma"] = "1.0";                  // Sigma for Gaussian blur
-            node.parameters["strength"] = "1.0";               // Effect strength
             break;
         }
 

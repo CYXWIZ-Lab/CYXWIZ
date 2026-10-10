@@ -27,9 +27,14 @@ enum class ImageOpKind {
     ColorJitter,
     GaussianBlur,
     Grayscale,
+    Morphology,
 };
 
 enum class Interpolation { Nearest, Bilinear };
+
+// Flat square structuring element; pixels outside the image are ignored
+// (kornia.morphology / torch max_pool2d borders).
+enum class MorphologyOp { Erode, Dilate, Open, Close, Gradient, TopHat, BlackHat };
 
 struct ImageShape {
     size_t height = 0;
@@ -43,6 +48,7 @@ struct ImageOp {
     ImageOpKind kind = ImageOpKind::HorizontalFlip;
     int height = 0;               // crops
     int width = 0;
+    int padding = 0;              // random crop: zero border added first (torchvision padding)
     float probability = 0.5f;     // flips, rotate
     float max_angle = 15.0f;      // rotate: angle drawn in [-max_angle, max_angle] degrees
     Interpolation interpolation = Interpolation::Nearest;
@@ -50,8 +56,9 @@ struct ImageOp {
     float contrast = 0.0f;
     float saturation = 0.0f;
     float hue = 0.0f;             // shift in [-hue, hue], hue <= 0.5
-    int kernel_size = 5;          // gaussian blur, odd
+    int kernel_size = 5;          // gaussian blur and morphology, odd
     float sigma = 1.0f;
+    MorphologyOp morphology = MorphologyOp::Erode;
 };
 
 // True for the nodes that draw random settings and run on Train batches only.
@@ -65,7 +72,7 @@ CYXWIZ_API ImageShape ImageShapeAfter(const ImageOp& op, const ImageShape& input
 
 // One batch's per-sample settings for one op. Unused fields stay empty.
 struct ImageOpDraws {
-    std::vector<int> top;                  // random crop
+    std::vector<int> top;                  // random crop, in the padded image
     std::vector<int> left;
     std::vector<int> apply;                // flips: 1 = flip this sample
     std::vector<float> angle;              // rotate, degrees (0 = unchanged)
