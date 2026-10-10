@@ -43,11 +43,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
         {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
         {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
-        {"cyxwiz-backend/src/algorithms/layers/gru.cpp", 20, "compatibility_compute", "GRU layer (reviewed 2026-09-23: provider handoff now returns final states as Tensors, no host copy loop)"},
-        {"cyxwiz-backend/src/algorithms/layers/gru_backward.cpp", 7, "compatibility_compute", "GRU backward"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm.cpp", 35, "compatibility_compute", "LSTM layer (reviewed 2026-09-23: provider handoff now returns final states as Tensors, no host copy loop)"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp", 11, "compatibility_compute", "LSTM backward"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.cpp", 26, "compatibility_compute", "LSTM direction kernels"},
         {"cyxwiz-backend/src/algorithms/layers/normalization.cpp", 26, "compatibility_compute", "normalization layers"},
         {"cyxwiz-backend/src/algorithms/layers/rnn.cpp", 8, "compatibility_compute", "vanilla RNN CPU reference layer (tofix68 phase 3 parity oracle)"},
         {"cyxwiz-backend/src/algorithms/providers/nvidia_cublas_provider.cpp", 8, "transport_boundary", "NVIDIA neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0: rnn/lstm/gru forward outputs + optional stacked final states, lstm/gru backward dx and per-layer weight/bias gradients; explicit v1 boundary copies)"},
@@ -55,7 +50,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 9, "compatibility_compute", "feed-forward modules"},
         {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},
-        {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 11, "compatibility_compute", "recurrent modules"},
         {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
         {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 3, "compatibility_compute", "sequence metrics"},
         {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},
@@ -96,10 +90,6 @@ bool IsAllowedRawFallbackHit(const RawFallbackHit& hit) {
     }
     if (hit.path == "cyxwiz-backend/src/algorithms/layers/linear.cpp" &&
         hit.line.find("LinearLayer: GPU check failed") != std::string::npos) {
-        return true;
-    }
-    if (hit.path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
-        hit.line.find("native CPU recurrent path") != std::string::npos) {
         return true;
     }
     return false;
@@ -159,9 +149,7 @@ bool UsesSharedFallbackPolicy(
            WindowContains(lines, catch_index,
                           "ClassifyArrayFireBackendFallbackReason") ||
            WindowContains(lines, catch_index,
-                          "BuildArrayFireBackendFallbackMessage") ||
-           WindowContains(lines, catch_index,
-                          "BuildRecurrentFormalParameterOverflowFallbackMessage");
+                          "BuildArrayFireBackendFallbackMessage");
 }
 
 bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
@@ -187,15 +175,6 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     }
     if (relative_path == "cyxwiz-backend/src/algorithms/optimizers/optimizer_utils.cpp" &&
         WindowContains(lines, catch_index, "s_use_gpu = false", 8)) {
-        return true;
-    }
-    if (relative_path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
-        WindowContains(lines, catch_index, "return true", 8)) {
-        return true;
-    }
-    if (relative_path == "cyxwiz-backend/src/algorithms/layers/gru.cpp" &&
-        WindowContains(lines, catch_index,
-                       "Disabled legacy AF reference path", 12)) {
         return true;
     }
     return false;
@@ -476,11 +455,18 @@ TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor ac
         "cyxwiz-backend/src/algorithms/activations/sigmoid.cpp",
         "cyxwiz-backend/src/algorithms/activations/tanh.cpp",
         "cyxwiz-backend/src/algorithms/layers/dense.cpp",
+        "cyxwiz-backend/src/algorithms/layers/gru.cpp",
+        "cyxwiz-backend/src/algorithms/layers/gru_backward.cpp",
+        "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp",
         "cyxwiz-backend/src/algorithms/layers/pixel_shuffle.cpp",
         "cyxwiz-backend/src/algorithms/layers/upsampling.cpp",
         "cyxwiz-backend/src/algorithms/layers/multi_head_attention_arrayfire.cpp",
         "cyxwiz-backend/src/algorithms/layers/layer_norm_arrayfire.cpp",
         "cyxwiz-backend/src/algorithms/layers/transformer_layers.cpp",
+        "cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp",
         "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp",
         "cyxwiz-backend/src/algorithms/optimizers/adam_family.cpp",
         "cyxwiz-engine/src/core/classification_decision.cpp",

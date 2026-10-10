@@ -3,6 +3,7 @@
 #include <cyxwiz/backend_fallback_reason.h>
 #include <cyxwiz/backend_placement_observation.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -176,31 +177,39 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
           BackendFallbackReasonName(BackendFallbackReason::GpuOutOfMemory));
 }
 
-TEST_CASE("Recurrent ArrayFire exception handlers enforce the strict "
-          "fallback policy gate",
+TEST_CASE("Recurrent ArrayFire exception handlers report the device error",
           "[arrayfire][fallback][taxonomy][source_scan]") {
-    // tofix67 slice 5: forbid_native_cpu_fallback runs must fail closed on
-    // the recurrent path instead of silently training on CPU. The catch
-    // blocks in both recurrent layers must route through the shared gate.
+    // LSTM / GRU run only on ArrayFire (TOFIX140): there is no native CPU
+    // recurrence to fall back to, so every ArrayFire handler in the
+    // recurrent sources reports the error instead of falling back.
     const fs::path repo_root = FindRepoRoot();
     for (const char* relative_path :
          {"cyxwiz-backend/src/algorithms/layers/lstm.cpp",
-          "cyxwiz-backend/src/algorithms/layers/gru.cpp"}) {
+          "cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp",
+          "cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp",
+          "cyxwiz-backend/src/algorithms/layers/gru.cpp",
+          "cyxwiz-backend/src/algorithms/layers/gru_backward.cpp",
+          "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp"}) {
         std::ifstream in(repo_root / relative_path);
         REQUIRE(in.is_open());
-        std::string line;
-        bool has_gate = false;
-        while (std::getline(in, line)) {
-            if (line.find("ThrowIfArrayFireNativeCpuFallbackForbidden") !=
-                std::string::npos) {
-                has_gate = true;
-                break;
+        std::vector<std::string> lines;
+        for (std::string line; std::getline(in, line);) lines.push_back(line);
+        size_t handlers = 0;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            INFO(relative_path << ":" << (i + 1));
+            CHECK(lines[i].find("ThrowIfArrayFireNativeCpuFallbackForbidden") ==
+                  std::string::npos);
+            if (lines[i].find("catch (const af::exception") == std::string::npos) continue;
+            ++handlers;
+            bool reports = false;
+            for (size_t j = i; j < std::min(lines.size(), i + 4); ++j) {
+                reports = reports ||
+                          lines[j].find("failed on the ArrayFire device") != std::string::npos;
             }
+            CHECK(reports);
         }
-        INFO(relative_path
-             << " must call ThrowIfArrayFireNativeCpuFallbackForbidden in "
-                "its ArrayFire fallback handler");
-        CHECK(has_gate);
+        INFO(relative_path << " must keep its ArrayFire handlers");
+        CHECK(handlers > 0);
     }
 }
 

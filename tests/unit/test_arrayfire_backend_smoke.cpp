@@ -7,6 +7,7 @@
 #include <cyxwiz/layers/dense.h>
 #include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/losses/classification.h>
+#include <cyxwiz/neural_provider.h>
 #include <cyxwiz/tensor.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -24,10 +25,15 @@
 namespace {
 
 size_t g_cross_entropy_host_sync_count = 0;
+size_t g_recurrent_host_sync_count = 0;
 
 void CountCrossEntropyHostSync(
     const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_cross_entropy_host_sync_count;
+}
+
+void CountRecurrentHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
+    ++g_recurrent_host_sync_count;
 }
 
 bool ShapeEquals(const cyxwiz::Tensor& tensor, std::vector<size_t> expected) {
@@ -148,5 +154,43 @@ TEST_CASE("Weighted smoothed CrossEntropy keeps device logits resident",
     REQUIRE(ShapeEquals(loss_value, {1}));
     REQUIRE(ShapeEquals(grad, {2, 3}));
     REQUIRE(std::isfinite(loss_value.ReadData<float>()[0]));
+}
+
+TEST_CASE("Recurrent layers keep forward and backward on the device",
+          "[arrayfire][backend_smoke][recurrent][residency]") {
+    // The ArrayFire recurrence (providers hidden), uni- and bidirectional,
+    // stacked: no host read between the device input and the device dx.
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+    struct RestoreProviders {
+        ~RestoreProviders() { cyxwiz::SetNeuralProvidersDisabledForTesting(false); }
+    } restore_providers;
+    std::vector<float> values(2 * 3 * 4);
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = 0.1f * static_cast<float>(i % 7) - 0.3f;
+    }
+    const cyxwiz::Tensor host_input({2, 3, 4}, values.data(), cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor input = cyxwiz::Tensor::FromSemanticArray(
+        host_input.GetSemanticArray(), host_input.Shape());
+    for (const bool bidirectional : {false, true}) {
+        const size_t features = bidirectional ? 10 : 5;
+        const cyxwiz::Tensor grad = cyxwiz::Tensor::FromSemanticArray(
+            af::constant(0.5f, af::dim4(2, 3, static_cast<dim_t>(features))), {2, 3, features});
+        cyxwiz::LSTMLayer lstm(4, 5, 2, true, bidirectional, 0.0f);
+        cyxwiz::GRULayer gru(4, 5, 2, true, bidirectional, 0.0f);
+        cyxwiz::Tensor lstm_dx;
+        cyxwiz::Tensor gru_dx;
+        g_recurrent_host_sync_count = 0;
+        {
+            const cyxwiz::ScopedArrayFireHostSyncObserver observer(&CountRecurrentHostSync);
+            lstm.Forward(input);
+            lstm_dx = lstm.Backward(grad);
+            gru.Forward(input);
+            gru_dx = gru.Backward(grad);
+        }
+        INFO("bidirectional=" << bidirectional);
+        REQUIRE(g_recurrent_host_sync_count == 0);
+        REQUIRE(ShapeEquals(lstm_dx, {2, 3, 4}));
+        REQUIRE(ShapeEquals(gru_dx, {2, 3, 4}));
+    }
 }
 #endif

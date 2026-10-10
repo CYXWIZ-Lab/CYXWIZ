@@ -1,4 +1,5 @@
-// LSTMModule / GRUModule against PyTorch nn.LSTM / nn.GRU (TOFIX140).
+// LSTMModule / GRUModule and bidirectional LSTMLayer / GRULayer against
+// PyTorch nn.LSTM / nn.GRU (TOFIX140).
 //
 // fixtures/recurrent_pytorch.json (generate_recurrent_fixtures.py): batch-first,
 // 1-2 layers, uni- and bidirectional, full sequence or last step, hidden up to 64.
@@ -8,7 +9,9 @@
 // the providers off (the ArrayFire path).
 #include "test_device_selection.h"
 
+#include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/optimizers/optimizer_base.h>
 #include <cyxwiz/sequential.h>
 
 #include <nlohmann/json.hpp>
@@ -65,12 +68,65 @@ std::unique_ptr<cyxwiz::Module> MakeModule(const json& c) {
     return std::make_unique<cyxwiz::GRUModule>(in, hidden, layers, bi, seq);
 }
 
-// Unidirectional modules report gradients as layer{L}_grad_X; split
-// bidirectional ones under the parameter key itself.
-std::string GradientKey(const std::string& parameter_key, bool bidirectional) {
-    if (bidirectional) return parameter_key;
-    const size_t underscore = parameter_key.find('_');
-    return parameter_key.substr(0, underscore + 1) + "grad_" + parameter_key.substr(underscore + 1);
+// A bidirectional layer keys the module's layer{L}.forward.X as layer{L}_X
+// and layer{L}.reverse.X as layer{L}_X_reverse (gradients: layer{L}_grad_X
+// and layer{L}_grad_X_reverse).
+std::string LayerKey(const std::string& module_key, bool gradient) {
+    const size_t dot1 = module_key.find('.'), dot2 = module_key.find('.', dot1 + 1);
+    const bool reverse = module_key.substr(dot1 + 1, dot2 - dot1 - 1) == "reverse";
+    return module_key.substr(0, dot1) + (gradient ? "_grad_" : "_") + module_key.substr(dot2 + 1) +
+           (reverse ? "_reverse" : "");
+}
+
+// The fixture's last-step data as full-sequence data for a layer, which
+// always returns the whole sequence: the layer output's last step is the
+// module output, and the last-step gradient expands with zeros elsewhere.
+cyxwiz::Tensor LastStep(const cyxwiz::Tensor& sequence) {
+    const auto& shape = sequence.Shape();
+    std::vector<float> values(shape[0] * shape[2]);
+    const float* data = sequence.ReadData<float>();
+    for (size_t b = 0; b < shape[0]; ++b)
+        for (size_t f = 0; f < shape[2]; ++f)
+            values[b * shape[2] + f] = data[(b * shape[1] + shape[1] - 1) * shape[2] + f];
+    return cyxwiz::Tensor({shape[0], shape[2]}, values.data(), cyxwiz::DataType::Float32);
+}
+
+cyxwiz::Tensor ExpandLastStep(const cyxwiz::Tensor& last, size_t seq) {
+    const auto& shape = last.Shape();
+    std::vector<float> values(shape[0] * seq * shape[1], 0.0f);
+    const float* data = last.ReadData<float>();
+    for (size_t b = 0; b < shape[0]; ++b)
+        for (size_t f = 0; f < shape[1]; ++f)
+            values[(b * seq + seq - 1) * shape[1] + f] = data[b * shape[1] + f];
+    return cyxwiz::Tensor({shape[0], seq, shape[1]}, values.data(), cyxwiz::DataType::Float32);
+}
+
+// A bidirectional LSTMLayer / GRULayer (batch_first) directly against the
+// fixture: output, dx and every forward and reverse gradient.
+void CheckBidirectionalLayer(const json& c, const std::string& name) {
+    const int in = c.at("input_size").get<int>(), hidden = c.at("hidden_size").get<int>();
+    const int layers = c.at("num_layers").get<int>();
+    const bool lstm = c.at("kind").get<std::string>() == "LSTM";
+    std::unique_ptr<cyxwiz::Layer> layer;
+    if (lstm) layer = std::make_unique<cyxwiz::LSTMLayer>(in, hidden, layers, true, true, 0.0f);
+    else layer = std::make_unique<cyxwiz::GRULayer>(in, hidden, layers, true, true, 0.0f);
+    std::map<std::string, cyxwiz::Tensor> parameters;
+    for (const auto& [k, v] : c.at("parameters").items()) parameters[LayerKey(k, false)] = ReadTensor(v);
+    layer->SetParameters(parameters);
+
+    const cyxwiz::Tensor input = ReadTensor(c.at("input"));
+    const bool seq = c.at("return_sequences").get<bool>();
+    const cyxwiz::Tensor output = layer->Forward(input);
+    CheckTensor(seq ? output : LastStep(output), c.at("output"), name + " output");
+    const cyxwiz::Tensor grad_output = ReadTensor(c.at("grad_output"));
+    CheckTensor(layer->Backward(seq ? grad_output : ExpandLastStep(grad_output, input.Shape()[1])),
+                c.at("grad_input"), name + " dx");
+    const auto all = layer->GetParameters();
+    for (const auto& [k, expected] : c.at("parameter_gradients").items()) {
+        const auto it = all.find(LayerKey(k, true));
+        Check(it != all.end(), name + ": no gradient " + LayerKey(k, true));
+        CheckTensor(it->second, expected, name + " d" + k);
+    }
 }
 
 std::filesystem::path FixturePath(const char* argv0) {
@@ -87,7 +143,7 @@ int main(int, char** argv) {
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the recurrent fixture");
     const json fixture = json::parse(in);
-    size_t passed = 0;
+    size_t passed = 0, layer_passed = 0;
     for (const bool providers : {true, false}) {
     cyxwiz::SetNeuralProvidersDisabledForTesting(!providers);
     for (const auto& c : fixture.at("cases")) {
@@ -100,11 +156,11 @@ int main(int, char** argv) {
 
             CheckTensor(module->Forward(ReadTensor(c.at("input"))), c.at("output"), name + " output");
             CheckTensor(module->Backward(ReadTensor(c.at("grad_output"))), c.at("grad_input"), name + " dx");
+            // Gradients come keyed like the parameters they belong to.
             const auto gradients = module->GetGradients();
-            const bool bi = c.at("bidirectional").get<bool>();
             for (const auto& [k, expected] : c.at("parameter_gradients").items()) {
-                const auto it = gradients.find(GradientKey(k, bi));
-                Check(it != gradients.end(), name + ": no gradient " + GradientKey(k, bi));
+                const auto it = gradients.find(k);
+                Check(it != gradients.end(), name + ": no gradient " + k);
                 CheckTensor(it->second, expected, name + " d" + k);
             }
             std::cout << "  ok " << name << " (" << module->GetName() << ")" << std::endl;
@@ -113,8 +169,80 @@ int main(int, char** argv) {
             Check(false, name + ": " + error.what());
         }
     }
+    for (const auto& c : fixture.at("cases")) {
+        if (!c.at("bidirectional").get<bool>()) continue;
+        const std::string name = c.at("name").get<std::string>() + " layer" + (providers ? "" : " [ArrayFire]");
+        try {
+            CheckBidirectionalLayer(c, name);
+            std::cout << "  ok " << name << std::endl;
+            ++layer_passed;
+        } catch (const std::exception& error) {
+            Check(false, name + ": " + error.what());
+        }
+    }
+    }
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+    // Large shapes on the ArrayFire path: no reference, but every step must
+    // stay on the device (CUDA once refused GRU and large LSTM for generated-
+    // kernel parameter overflow) and stay finite.
+    for (const bool gru : {false, true}) {
+        for (const bool bi : {false, true}) {
+            const size_t batch = 4, seq = 100, features = 32, hidden = 256;
+            std::unique_ptr<cyxwiz::Module> module;
+            if (gru) module = std::make_unique<cyxwiz::GRUModule>(features, hidden, 2, bi, true);
+            else module = std::make_unique<cyxwiz::LSTMModule>(features, hidden, 2, bi, true);
+            const std::string name = std::string(gru ? "GRU" : "LSTM") + (bi ? " bi" : "") + " h256 l2 s100 [ArrayFire]";
+            try {
+                const cyxwiz::Tensor x = cyxwiz::Tensor::Random({batch, seq, features}, cyxwiz::DataType::Float32);
+                const cyxwiz::Tensor y = module->Forward(x);
+                const cyxwiz::Tensor dx = module->Backward(cyxwiz::Tensor::Ones(y.Shape(), cyxwiz::DataType::Float32));
+                for (const cyxwiz::Tensor* t : {&y, &dx}) {
+                    const float* data = t->ReadData<float>();
+                    for (size_t i = 0; i < t->NumElements(); ++i) Check(std::isfinite(data[i]), name + ": not finite");
+                }
+                std::cout << "  ok " << name << std::endl;
+            } catch (const std::exception& error) {
+                Check(false, name + ": " + error.what());
+            }
+        }
     }
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     std::cout << "recurrent modules match PyTorch: " << passed << " cases" << std::endl;
+    std::cout << "bidirectional recurrent layers match PyTorch: " << layer_passed << " cases" << std::endl;
+
+    // Training through SequentialModel: the optimizer pairs each parameter
+    // with the gradient of the same name, so 30 SGD steps on a fixed target
+    // must at least halve the loss (it stalled when GetGradients returned the
+    // weights themselves).
+    for (const bool gru : {false, true}) {
+        for (const bool bi : {false, true}) {
+            const std::string name = std::string(gru ? "GRU" : "LSTM") + (bi ? " bi" : "") + " trains";
+            try {
+                cyxwiz::SequentialModel model;
+                if (gru) model.AddModule(std::make_unique<cyxwiz::GRUModule>(3, 8, 1, bi, false));
+                else model.AddModule(std::make_unique<cyxwiz::LSTMModule>(3, 8, 1, bi, false));
+                auto optimizer = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, 0.5);
+                const cyxwiz::Tensor x = cyxwiz::Tensor::Random({4, 5, 3}, cyxwiz::DataType::Float32);
+                const size_t width = bi ? 16 : 8;
+                const cyxwiz::Tensor target = cyxwiz::Tensor::Random({4, width}, cyxwiz::DataType::Float32) * 0.5f;
+                double first = 0.0, last = 0.0;
+                for (int step = 0; step < 30; ++step) {
+                    const cyxwiz::Tensor y = model.Forward(x);
+                    const cyxwiz::Tensor diff = y - target;
+                    const float* d = diff.ReadData<float>();
+                    double loss = 0.0;
+                    for (size_t i = 0; i < diff.NumElements(); ++i) loss += 0.5 * d[i] * d[i];
+                    if (step == 0) first = loss;
+                    last = loss;
+                    model.Backward(diff);
+                    model.UpdateParameters(optimizer.get());
+                }
+                Check(last < 0.5 * first, name + ": loss " + std::to_string(first) + " -> " + std::to_string(last));
+                std::cout << "  ok " << name << " (loss " << first << " -> " << last << ")" << std::endl;
+            } catch (const std::exception& error) {
+                Check(false, name + ": " + error.what());
+            }
+        }
+    }
     return 0;
 }

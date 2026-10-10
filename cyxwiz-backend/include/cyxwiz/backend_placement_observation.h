@@ -2,7 +2,6 @@
 
 #include "api_export.h"
 #include "backend_fallback_reason.h"
-#include "recurrent_cuda_placement.h"
 
 #include <string>
 #include <vector>
@@ -64,19 +63,8 @@ enum class BackendPlacementProbeOutcome {
     Inconclusive,
 };
 
-struct BackendPlacementProbeResult {
-    BackendPlacementProbeOutcome outcome = BackendPlacementProbeOutcome::Inconclusive;
-    std::string reason_code;
-    std::string detail;
-    bool has_observation = false;
-    BackendPlacementObservation observation;
-};
-
 CYXWIZ_API const char* BackendPlacementProbeOutcomeName(
     BackendPlacementProbeOutcome outcome);
-
-CYXWIZ_API std::string BuildRecurrentCudaPlacementShapeSignature(
-    const RecurrentCudaPlacementRequest& request);
 
 CYXWIZ_API std::string BuildDensePlacementShapeSignature(
     const std::vector<size_t>& input_shape,
@@ -164,28 +152,6 @@ CYXWIZ_API bool TryGetBackendPlacementObservationForActiveDevice(
     const std::string& backend,
     const std::string& dtype,
     const std::string& shape_signature,
-    BackendPlacementObservation& observation);
-
-CYXWIZ_API void RecordRecurrentCudaPlacementObservation(
-    const RecurrentCudaPlacementRequest& request,
-    const std::string& reason_code,
-    const std::string& source,
-    const std::string& detail);
-
-CYXWIZ_API void RecordRecurrentCudaPreflightProbeFailure(
-    const RecurrentCudaPlacementRequest& request,
-    const std::string& reason_code,
-    const std::string& detail);
-
-CYXWIZ_API bool TryRunRecurrentCudaPreflightProbe(
-    const RecurrentCudaPlacementRequest& request,
-    BackendPlacementObservation& failure_observation);
-
-CYXWIZ_API BackendPlacementProbeResult RunRecurrentCudaPreflightProbe(
-    const RecurrentCudaPlacementRequest& request);
-
-CYXWIZ_API bool TryGetRecurrentCudaPlacementObservation(
-    const RecurrentCudaPlacementRequest& request,
     BackendPlacementObservation& observation);
 
 CYXWIZ_API std::vector<BackendPlacementObservation>

@@ -8,7 +8,6 @@
 #include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/sequential.h>
-#include <cyxwiz/recurrent_cuda_placement.h>
 #include <cyxwiz/tensor.h>
 
 #ifndef NOMINMAX
@@ -16,6 +15,7 @@
 #endif
 #include <arrayfire.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -99,7 +99,7 @@ TEST_CASE("NVIDIA provider rnn_forward matches the CPU reference layer",
     }
 }
 
-TEST_CASE("NVIDIA provider lstm_forward matches the native CPU LSTM",
+TEST_CASE("NVIDIA provider lstm_forward matches the ArrayFire LSTM",
           "[gpu_execution][neural_provider][parity]") {
     auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
 
@@ -121,22 +121,18 @@ TEST_CASE("NVIDIA provider lstm_forward matches the native CPU LSTM",
         return;
     }
 
-    // The oracle is the native CPU LSTM (forced past the ArrayFire path)
-    // — the same reference the staged plan is parity-gated against. The
-    // warm-up Forward matters: the native path lazily reinitializes
-    // weights on first use, so parameters are captured only afterwards.
+    // The oracle is the ArrayFire LSTM with the providers hidden (the
+    // recurrence the PyTorch fixtures gate).
     cyxwiz::LSTMLayer reference(static_cast<int>(request.input),
                                 static_cast<int>(request.hidden));
     const auto input = FilledTensor(
         {request.batch, request.seq, request.input}, 0.6f, 0.4f);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     reference.Forward(input);  // warm-up: settles weight storage
     auto params = reference.GetParameters();
     reference.ResetState();
     const auto expected = reference.Forward(input);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
     cyxwiz::Tensor actual(
@@ -170,7 +166,7 @@ TEST_CASE("NVIDIA provider lstm_forward matches the native CPU LSTM",
     CHECK_FALSE(provider->QueryCapability(tanh_request).supported);
 }
 
-TEST_CASE("NVIDIA provider lstm_backward matches the native CPU BPTT",
+TEST_CASE("NVIDIA provider lstm_backward matches the ArrayFire BPTT",
           "[gpu_execution][neural_provider][parity]") {
     auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
 
@@ -200,13 +196,11 @@ TEST_CASE("NVIDIA provider lstm_backward matches the native CPU BPTT",
         {request.batch, request.seq, request.hidden}, 0.3f, 1.3f);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     reference.Forward(input);  // warm-up: settles weight storage
     auto params = reference.GetParameters();
     reference.ResetState();
     reference.Forward(input);
     const auto expected_dx = reference.Backward(upstream);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     const auto grads = reference.GetParameters();
 
@@ -304,9 +298,8 @@ TEST_CASE("LSTMLayer routes training through the provider with parity",
     const auto input = FilledTensor({4, 9, 5}, 0.5f, 0.2f);
     const auto upstream = FilledTensor({4, 9, 12}, 0.25f, 1.1f);
 
-    // Oracle: same layer, providers hidden, forced-native path.
+    // Oracle: same layer, providers hidden (the ArrayFire path).
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     layer.Forward(input);  // settles weights
     layer.ResetState();
     const auto expected = layer.Forward(input);
@@ -314,7 +307,6 @@ TEST_CASE("LSTMLayer routes training through the provider with parity",
     const auto expected_c_n = layer.GetCellState();
     const auto expected_dx = layer.Backward(upstream);
     const auto oracle_grads = layer.GetParameters();
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
     // Routed: identical weights, provider active — the layer must pick
@@ -425,7 +417,7 @@ TEST_CASE("NVIDIA provider refuses out-of-contract rnn_forward tuples",
 
 // ---------------------------------------------------------------- GRU (P3)
 
-TEST_CASE("NVIDIA provider gru_forward matches the CPU GRU reference",
+TEST_CASE("NVIDIA provider gru_forward matches the ArrayFire GRU",
           "[gpu_execution][neural_provider][parity][gru]") {
     auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
     cyxwiz::NeuralOpRequest request;
@@ -456,11 +448,9 @@ TEST_CASE("NVIDIA provider gru_forward matches the CPU GRU reference",
         {request.batch, request.seq, request.input}, 0.5f, 0.7f);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     reference.Forward(input);  // warm-up: settles weight storage
     reference.ResetState();
     const auto expected = reference.Forward(input);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     const auto params = reference.GetParameters();
 
@@ -504,7 +494,7 @@ TEST_CASE("NVIDIA provider gru_forward matches the CPU GRU reference",
           cyxwiz::BackendFallbackReason::NvidiaProviderUnsupportedContract);
 }
 
-TEST_CASE("NVIDIA provider gru_backward matches the CPU GRU BPTT reference",
+TEST_CASE("NVIDIA provider gru_backward matches the ArrayFire GRU BPTT",
           "[gpu_execution][neural_provider][parity][gru]") {
     auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
     cyxwiz::NeuralOpRequest request;
@@ -533,13 +523,11 @@ TEST_CASE("NVIDIA provider gru_backward matches the CPU GRU BPTT reference",
         {request.batch, request.seq, request.hidden}, 0.3f, 1.3f);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     reference.Forward(input);  // warm-up: settles weight storage
     auto params = reference.GetParameters();
     reference.ResetState();
     reference.Forward(input);
     const auto expected_dx = reference.Backward(upstream);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     const auto grads = reference.GetParameters();
 
@@ -647,13 +635,11 @@ TEST_CASE("GRULayer routes training through the provider with parity",
     const auto upstream = FilledTensor({4, 9, 12}, 0.25f, 1.1f);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     layer.Forward(input);  // settles weights
     layer.ResetState();
     const auto expected = layer.Forward(input);
     const auto expected_dx = layer.Backward(upstream);
     const auto oracle_grads = layer.GetParameters();
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
     layer.ResetState();
@@ -840,14 +826,12 @@ TEST_CASE("Stacked LSTM and GRU layers route training through the provider with 
     {
         cyxwiz::LSTMLayer layer(5, 10, 3);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         layer.Forward(input);  // settles weights
         const auto expected = layer.Forward(input);
         const auto expected_h_n = layer.GetHiddenState();
         const auto expected_c_n = layer.GetCellState();
         const auto expected_dx = layer.Backward(upstream);
         const auto oracle = layer.GetParameters();
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
         const auto actual = layer.Forward(input);
@@ -868,13 +852,11 @@ TEST_CASE("Stacked LSTM and GRU layers route training through the provider with 
     {
         cyxwiz::GRULayer layer(5, 10, 3);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         layer.Forward(input);  // settles weights
         const auto expected = layer.Forward(input);
         const auto expected_h_n = layer.GetHiddenState();
         const auto expected_dx = layer.Backward(upstream);
         const auto oracle = layer.GetParameters();
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
         const auto actual = layer.Forward(input);
@@ -1083,12 +1065,10 @@ TEST_CASE("Split bidirectional LSTMModule routes both branches through the provi
                               /*return_sequences=*/true);
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     module.Forward(input);  // settles weights
     const auto expected = module.Forward(input);
     const auto expected_dx = module.Backward(upstream);
     const auto oracle = module.GetGradients();
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
 
     const auto actual = module.Forward(input);

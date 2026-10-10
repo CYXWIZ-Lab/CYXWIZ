@@ -2235,164 +2235,48 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 break;
         }
 
+        // LSTM / GRU run on the device: the native provider op where it
+        // serves the run's device and the exact tuple, else the ArrayFire
+        // per-timestep plan (every backend, CUDA included; no CPU path).
         const size_t hidden_size =
             ParseSizeParam(layer.parameters, "hidden_size", 128);
         const bool bidirectional =
             ParseBoolParam(layer.parameters, "bidirectional", false);
-        const bool return_sequences =
-            ParseBoolParam(layer.parameters, "return_sequences", false);
-        const size_t num_layers =
-            ParseSizeParam(layer.parameters, "num_layers", 1);
-        const size_t seq_len = EstimateSequenceLength(layer);
-        const size_t input_size =
-            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-
-        RecurrentCudaPlacementRequest request;
-        request.kind = layer.type == gui::NodeType::GRU
-            ? RecurrentLayerKind::GRU
-            : RecurrentLayerKind::LSTM;
-        request.batch_size = static_cast<size_t>(std::max(1, config.batch_size));
-        request.seq_len = seq_len;
-        request.input_size = input_size;
-        request.hidden_size = hidden_size;
-        request.num_layers = num_layers;
-        request.bidirectional = bidirectional;
-        request.return_sequences = return_sequences;
-
-        const auto decision = EvaluateRecurrentCudaPlacement(request);
-        BackendPlacementObservation cached_observation;
-        bool has_cached_observation =
-            decision.should_attempt_arrayfire_cuda &&
-            TryGetRecurrentCudaPlacementObservation(request, cached_observation);
-        if (decision.should_attempt_arrayfire_cuda && !has_cached_observation) {
-            has_cached_observation =
-                TryRunRecurrentCudaPreflightProbe(request, cached_observation);
-        }
-        const bool cached_cuda_overflow =
-            has_cached_observation &&
-            cached_observation.reason_code ==
-                BackendPlacementObservationReason::CudaJitParamOverflow;
-        const bool cached_failure_observation = has_cached_observation;
-        BackendPlacementEntry placement;
-        placement.node_id = layer.node_id;
-        placement.node_name = layer.name;
-        placement.node_type = decision.layer_name;
-        placement.requested_backend = "auto";
-        placement.expected_backend =
-            cached_failure_observation ? "CPU" : decision.expected_backend;
-        placement.fallback_backend = decision.fallback_backend;
-        placement.status = cached_failure_observation
-            ? BackendPlacementStatus::Cpu
-            : (decision.should_attempt_arrayfire_cuda
-                   ? BackendPlacementStatus::Gpu
-                   : BackendPlacementStatus::Cpu);
-        placement.reason_code = cached_failure_observation
-            ? (cached_cuda_overflow
-                   ? RecurrentCudaPlacementReason::CudaJitParamOverflowRisk
-                   : cached_observation.reason_code)
-            : decision.reason_code;
-        if (cached_failure_observation) {
-            placement.observation_source = cached_observation.source;
-            placement.observation_device = cached_observation.device;
-            placement.observation_dtype = cached_observation.dtype;
-            placement.observation_shape_signature =
-                cached_observation.shape_signature;
-            placement.observation_detail = cached_observation.detail;
-            placement.observation_timestamp = cached_observation.timestamp;
-            placement.observation_probe_outcome =
-                cached_observation.probe_outcome;
-            placement.observation_probe_scope =
-                cached_observation.probe_scope;
-        }
-        const std::string observation_source_label =
-            cached_observation.source ==
-                    BackendPlacementObservationSource::PreflightProbe
-                ? "preflight probe observation"
-                : cached_observation.source ==
-                          BackendPlacementObservationSource::RuntimeFallback
-                      ? "runtime fallback observation"
-                      : "runtime/probe observation";
-        placement.explanation = cached_failure_observation
-            ? (cached_cuda_overflow
-                   ? decision.layer_name +
-                         " recurrent step is expected to run on CPU because a previous " +
-                         observation_source_label + " for this exact "
-                         "backend/device/dtype/shape reported CUDA generated-kernel "
-                         "formal-parameter overflow (reason=" +
-                         cached_observation.reason_code +
-                         ", source=" + cached_observation.source +
-                         "). This is separate from VRAM capacity. Device: " +
-                         cached_observation.device + ". Shape signature: " +
-                         cached_observation.shape_signature + "."
-                   : decision.layer_name +
-                         " recurrent step is expected to run on CPU because a previous " +
-                         observation_source_label + " for this exact "
-                         "backend/device/dtype/shape reported a backend failure "
-                         "(reason=" + cached_observation.reason_code +
-                         ", source=" + cached_observation.source +
-                         "). Device: " + cached_observation.device +
-                         ". Shape signature: " +
-                         cached_observation.shape_signature + ".")
-            : (decision.should_attempt_arrayfire_cuda
-                   ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
-                   : decision.reason);
-        placement.suggested_action = cached_failure_observation
-            ? "Training can continue. Use CPU for this recurrent shape until "
-              "a fused/native CUDA recurrent kernel or exact successful "
-              "backend probe proves the shape safe on this device."
-            : (decision.should_attempt_arrayfire_cuda
-                   ? "No action needed."
-                   : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.");
+        BackendPlacementEntry placement =
+            backend_placement::BuildArrayFireTensorPlacement(layer);
+        placement.explanation += std::string(" Staged plan: ") +
+                                 RecurrentStagedArrayFirePlanName + ".";
         backend_placement::StampDeclaredExecutionMode(
             placement,
             DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
-        placement.explanation += std::string(" Staged plan: ") +
-                                 RecurrentStagedArrayFirePlanName + ".";
-        {
-            NeuralOpRequest provider_request;
-            provider_request.target = CaptureCurrentNeuralDeviceTarget();
-            provider_request.op = layer.type == gui::NodeType::GRU
-                ? NeuralOp::GruForward
-                : NeuralOp::LstmForward;
-            provider_request.training = true;  // this is the training path
-            provider_request.dtype = DataType::Float32;
-            provider_request.batch = request.batch_size;
-            provider_request.seq = request.seq_len;
-            provider_request.input = request.input_size;
-            provider_request.hidden = request.hidden_size;
-            // Split-path bidirectional (LSTMModule/GRUModule): each
-            // direction and level runs as an independent single-direction,
-            // single-layer tuple, so that is what the provider is asked
-            // about (first level shown; deeper levels have input 2*hidden).
-            provider_request.layers =
-                request.bidirectional ? 1 : request.num_layers;
-            provider_request.directions = 1;
-            if (request.bidirectional) {
-                placement.explanation +=
-                    " Bidirectional runs as split forward/reverse branches; "
-                    "the native provider verdict below applies per branch "
-                    "(first level).";
-            }
-            backend_placement::ApplyNativeProviderPlacement(
-                placement, provider_request);
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = layer.type == gui::NodeType::GRU
+            ? NeuralOp::GruForward
+            : NeuralOp::LstmForward;
+        provider_request.training = true;  // this is the training path
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = static_cast<size_t>(std::max(1, config.batch_size));
+        provider_request.seq = EstimateSequenceLength(layer);
+        provider_request.input =
+            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
+        provider_request.hidden = hidden_size;
+        // Split-path bidirectional (LSTMModule/GRUModule): each direction and
+        // level runs as an independent single-direction, single-layer tuple,
+        // so that is what the provider is asked about (first level shown;
+        // deeper levels have input 2*hidden).
+        provider_request.layers = bidirectional
+            ? 1
+            : ParseSizeParam(layer.parameters, "num_layers", 1);
+        provider_request.directions = 1;
+        if (bidirectional) {
+            placement.explanation +=
+                " Bidirectional runs as split forward/reverse branches; "
+                "the native provider verdict below applies per branch "
+                "(first level).";
         }
+        backend_placement::ApplyNativeProviderPlacement(placement, provider_request);
         config.backend_placements.push_back(placement);
-
-        if (decision.should_attempt_arrayfire_cuda &&
-            !cached_failure_observation) {
-            continue;
-        }
-
-        const std::string issue_name =
-            decision.layer_name + " hidden_size=" + std::to_string(hidden_size);
-        std::ostringstream msg;
-        msg << decision.layer_name << " layer is valid, but "
-            << placement.explanation
-            << " Reason code: " << placement.reason_code << ". "
-            << "Runtime will use the same placement policy instead of "
-            << "repeatedly attempting CUDA and falling back every batch.";
-        AddIssue(config, IssueLevel::Warning, msg.str(),
-                 layer.node_id, issue_name);
     }
 
     for (const int graph_op_node_id : config.graph_op_node_ids) {

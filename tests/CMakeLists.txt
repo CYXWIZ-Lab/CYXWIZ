@@ -27,7 +27,6 @@ add_executable(cyxwiz-tests
     unit/test_backend_fallback_reason_taxonomy_scan.cpp
     unit/test_gpu_execution_contracts.cpp
     unit/test_gpu_execution_modes.cpp
-    unit/test_recurrent_staged_plan_parity.cpp
     unit/test_placement_observation_key_alignment.cpp
     unit/test_neural_provider_registry.cpp
     unit/test_nvidia_provider_rnn_parity.cpp

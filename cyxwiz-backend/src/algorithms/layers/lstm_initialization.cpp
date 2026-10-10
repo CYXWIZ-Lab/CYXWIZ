@@ -1,7 +1,9 @@
 #include "cyxwiz/layers/recurrent.h"
-#include "layer_arrayfire_utils.h"
+#include "layer_recurrent_utils.h"
 
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -13,13 +15,29 @@ LSTMLayer::LSTMLayer(int input_size, int hidden_size, int num_layers,
                      bool batch_first, bool bidirectional, float dropout)
     : input_size_(input_size), hidden_size_(hidden_size), num_layers_(num_layers),
       batch_first_(batch_first), bidirectional_(bidirectional), dropout_(dropout) {
-
+    if (input_size <= 0 || hidden_size <= 0 || num_layers <= 0) {
+        throw std::invalid_argument("LSTMLayer needs positive input_size, hidden_size and num_layers");
+    }
+    if (!(dropout >= 0.0f && dropout < 1.0f)) {
+        throw std::invalid_argument("LSTMLayer dropout must be in [0, 1)");
+    }
+    if (bidirectional_) {
+        for (int level = 0; level < num_layers_; ++level) {
+            const int level_input = level == 0 ? input_size_ : 2 * hidden_size_;
+            forward_levels_.push_back(std::make_unique<LSTMLayer>(
+                level_input, hidden_size_, 1, batch_first_, false, 0.0f));
+            reverse_levels_.push_back(std::make_unique<LSTMLayer>(
+                level_input, hidden_size_, 1, batch_first_, false, 0.0f));
+        }
+        return;
+    }
     InitializeWeights();
 }
 
-void LSTMLayer::InitializeWeights() {
-    int num_directions = bidirectional_ ? 2 : 1;
+LSTMLayer::~LSTMLayer() = default;
 
+void LSTMLayer::InitializeWeights() {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
     W_ih_.resize(num_layers_);
     W_hh_.resize(num_layers_);
     b_ih_.resize(num_layers_);
@@ -28,88 +46,38 @@ void LSTMLayer::InitializeWeights() {
     grad_W_hh_.resize(num_layers_);
     grad_b_ih_.resize(num_layers_);
     grad_b_hh_.resize(num_layers_);
-
-    if (bidirectional_) {
-        W_ih_reverse_.resize(num_layers_);
-        W_hh_reverse_.resize(num_layers_);
-        b_ih_reverse_.resize(num_layers_);
-        b_hh_reverse_.resize(num_layers_);
-        grad_W_ih_reverse_.resize(num_layers_);
-        grad_W_hh_reverse_.resize(num_layers_);
-        grad_b_ih_reverse_.resize(num_layers_);
-        grad_b_hh_reverse_.resize(num_layers_);
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    for (int layer = 0; layer < num_layers_; layer++) {
-        // Input size for this layer
-        int layer_input_size = (layer == 0) ? input_size_ : hidden_size_ * num_directions;
-        int gate_size = 4 * hidden_size_;
-
-        // Xavier initialization for input-hidden weights
-        float limit_ih = std::sqrt(6.0f / (layer_input_size + hidden_size_));
-        af::array w_ih = af::randu(af::dim4(gate_size, layer_input_size), af::dtype::f32) * 2.0f * limit_ih - limit_ih;
-        W_ih_[layer] = AfToTensor(w_ih);
-
-        // Xavier initialization for hidden-hidden weights
-        float limit_hh = std::sqrt(6.0f / (hidden_size_ + hidden_size_));
-        af::array w_hh = af::randu(af::dim4(gate_size, hidden_size_), af::dtype::f32) * 2.0f * limit_hh - limit_hh;
-        W_hh_[layer] = AfToTensor(w_hh);
-
-        // Initialize biases to zero (with forget gate bias = 1 for better gradient flow)
-        af::array b_ih = af::constant(0.0f, af::dim4(gate_size));
-        af::array b_hh = af::constant(0.0f, af::dim4(gate_size));
-        // Set forget gate bias to 1
-        b_ih(af::seq(hidden_size_, 2 * hidden_size_ - 1)) = 1.0f;
-        b_ih_[layer] = AfToTensor(b_ih);
-        b_hh_[layer] = AfToTensor(b_hh);
-
-        // Initialize gradient accumulators
-        grad_W_ih_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(layer_input_size)});
-        grad_W_hh_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(hidden_size_)});
-        grad_b_ih_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-        grad_b_hh_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-
-        if (bidirectional_) {
-            af::array w_ih_r = af::randu(af::dim4(gate_size, layer_input_size), af::dtype::f32) * 2.0f * limit_ih - limit_ih;
-            af::array w_hh_r = af::randu(af::dim4(gate_size, hidden_size_), af::dtype::f32) * 2.0f * limit_hh - limit_hh;
-            af::array b_ih_r = af::constant(0.0f, af::dim4(gate_size));
-            af::array b_hh_r = af::constant(0.0f, af::dim4(gate_size));
-            b_ih_r(af::seq(hidden_size_, 2 * hidden_size_ - 1)) = 1.0f;
-
-            W_ih_reverse_[layer] = AfToTensor(w_ih_r);
-            W_hh_reverse_[layer] = AfToTensor(w_hh_r);
-            b_ih_reverse_[layer] = AfToTensor(b_ih_r);
-            b_hh_reverse_[layer] = AfToTensor(b_hh_r);
-
-            grad_W_ih_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(layer_input_size)});
-            grad_W_hh_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(hidden_size_)});
-            grad_b_ih_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-            grad_b_hh_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
+    try {
+        const size_t gates = static_cast<size_t>(4 * hidden_size_);
+        const size_t hidden = static_cast<size_t>(hidden_size_);
+        for (int layer = 0; layer < num_layers_; ++layer) {
+            const size_t in = static_cast<size_t>(layer == 0 ? input_size_ : hidden_size_);
+            // Xavier-uniform weights; zero biases with forget-gate bias 1.
+            const float limit_ih = std::sqrt(6.0f / static_cast<float>(in + hidden));
+            const float limit_hh = std::sqrt(6.0f / static_cast<float>(2 * hidden));
+            const af::array w_ih =
+                af::randu(af::dim4(static_cast<dim_t>(gates), static_cast<dim_t>(in)), f32) *
+                    (2.0f * limit_ih) - limit_ih;
+            const af::array w_hh =
+                af::randu(af::dim4(static_cast<dim_t>(gates), static_cast<dim_t>(hidden)), f32) *
+                    (2.0f * limit_hh) - limit_hh;
+            af::array b_ih = af::constant(0.0f, af::dim4(static_cast<dim_t>(gates)));
+            b_ih(af::seq(hidden_size_, 2 * hidden_size_ - 1)) = 1.0f;
+            W_ih_[layer] = Tensor::FromSemanticArray(w_ih, {gates, in});
+            W_hh_[layer] = Tensor::FromSemanticArray(w_hh, {gates, hidden});
+            b_ih_[layer] = Tensor::FromSemanticArray(b_ih, {gates});
+            b_hh_[layer] = Tensor::FromSemanticArray(
+                af::constant(0.0f, af::dim4(static_cast<dim_t>(gates))), {gates});
+            grad_W_ih_[layer] = Tensor::Zeros({gates, in});
+            grad_W_hh_[layer] = Tensor::Zeros({gates, hidden});
+            grad_b_ih_[layer] = Tensor::Zeros({gates});
+            grad_b_hh_[layer] = Tensor::Zeros({gates});
         }
+    } catch (const af::exception& e) {
+        throw std::runtime_error(
+            std::string("LSTMLayer weight initialization failed on the ArrayFire device: ") + e.what());
     }
 #else
-    // CPU fallback initialization
-    for (int layer = 0; layer < num_layers_; layer++) {
-        int layer_input_size = (layer == 0) ? input_size_ : hidden_size_ * num_directions;
-        int gate_size = 4 * hidden_size_;
-
-        W_ih_[layer] = Tensor::Random({static_cast<size_t>(gate_size), static_cast<size_t>(layer_input_size)});
-        W_hh_[layer] = Tensor::Random({static_cast<size_t>(gate_size), static_cast<size_t>(hidden_size_)});
-        b_ih_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-        b_hh_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-        grad_W_ih_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(layer_input_size)});
-        grad_W_hh_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size), static_cast<size_t>(hidden_size_)});
-        grad_b_ih_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-        grad_b_hh_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-
-        if (bidirectional_) {
-            W_ih_reverse_[layer] = Tensor::Random({static_cast<size_t>(gate_size), static_cast<size_t>(layer_input_size)});
-            W_hh_reverse_[layer] = Tensor::Random({static_cast<size_t>(gate_size), static_cast<size_t>(hidden_size_)});
-            b_ih_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-            b_hh_reverse_[layer] = Tensor::Zeros({static_cast<size_t>(gate_size)});
-        }
-    }
+    recurrent_detail::ThrowWithoutArrayFire("LSTMLayer");
 #endif
 }
 

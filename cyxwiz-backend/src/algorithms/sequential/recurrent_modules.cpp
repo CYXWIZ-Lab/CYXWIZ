@@ -1,637 +1,210 @@
-﻿#include <cyxwiz/sequential.h>
+#include <cyxwiz/sequential.h>
+
+#include "../layers/layer_recurrent_utils.h"
+
 #include <spdlog/spdlog.h>
-#include <algorithm>
+
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace cyxwiz {
-// ============================================================================
-// LSTMModule Implementation
-// ============================================================================
-//
-// Wraps cyxwiz::LSTMLayer with two classification-friendly behaviors:
-//   1. Keras-style `return_sequences=false` reduction — slices out the
-//      last timestep of the full LSTM output so a Dense head can sit
-//      directly after the LSTM without an intervening Flatten.
-//   2. Symmetric last-step gradient re-expansion in Backward, zeroing
-//      all non-terminal steps.
-//
-// When `return_sequences=true`, the wrapper is a pure passthrough to
-// LSTMLayer and output retains the `[batch, seq_len, hidden*dirs]`
-// shape — needed for stacked LSTMs and seq-to-seq heads.
 
-// Shared helpers (defined below with GRUModule).
-static Tensor ReverseSequenceTensor(const Tensor& input, bool batch_first);
-static Tensor ConcatFeatureTensor(const Tensor& left, const Tensor& right);
-static Tensor SliceFeatureTensor(const Tensor& input, size_t offset, size_t width);
-static std::string NormalizeGRULayerKey(const std::string& key);
-static std::string MakeGRUBranchKey(size_t layer_idx, const std::string& branch,
-                                    const std::string& normalized_key);
+namespace {
+
+using recurrent_detail::ExpandLastTimeStep;
+using recurrent_detail::JoinFeatures;
+using recurrent_detail::LastTimeStep;
+using recurrent_detail::ReverseTime;
+using recurrent_detail::SliceFeatures;
+
+// A bidirectional layer's "layer{L}_X" / "layer{L}_X_reverse" key as the
+// module's "layer{L}.forward.X" / "layer{L}.reverse.X".
+std::string ToModuleKey(const std::string& layer_key) {
+    static const std::string kReverse = "_reverse";
+    const size_t underscore = layer_key.find('_');
+    std::string name = layer_key.substr(underscore + 1);
+    const bool reverse = name.size() > kReverse.size() &&
+                         name.compare(name.size() - kReverse.size(), kReverse.size(), kReverse) == 0;
+    if (reverse) name.resize(name.size() - kReverse.size());
+    return layer_key.substr(0, underscore) + (reverse ? ".reverse." : ".forward.") + name;
+}
+
+// Inverse of ToModuleKey; empty for keys that are not "layer{L}.{branch}.X".
+std::string ToLayerKey(const std::string& module_key) {
+    const size_t dot1 = module_key.find('.');
+    const size_t dot2 = dot1 == std::string::npos ? std::string::npos : module_key.find('.', dot1 + 1);
+    if (module_key.rfind("layer", 0) != 0 || dot2 == std::string::npos || dot2 + 1 >= module_key.size()) {
+        return {};
+    }
+    const std::string branch = module_key.substr(dot1 + 1, dot2 - dot1 - 1);
+    if (branch != "forward" && branch != "reverse") return {};
+    return module_key.substr(0, dot1) + "_" + module_key.substr(dot2 + 1) +
+           (branch == "reverse" ? "_reverse" : "");
+}
+
+// Trainable parameters of a recurrent layer under the module's keys.
+template <typename LayerT>
+std::map<std::string, Tensor> ModuleParameters(LayerT& layer, bool bidirectional) {
+    std::map<std::string, Tensor> params;
+    for (const auto& [key, tensor] : layer.GetParameters()) {
+        if (key.find("_grad_") != std::string::npos) continue;
+        params[bidirectional ? ToModuleKey(key) : key] = tensor;
+    }
+    return params;
+}
+
+// Gradients keyed like the parameters they belong to (the optimizer pairs
+// them by name): the layer's "layer{L}_grad_X" becomes "layer{L}_X".
+template <typename LayerT>
+std::map<std::string, Tensor> ModuleGradients(LayerT& layer, bool bidirectional) {
+    std::map<std::string, Tensor> grads;
+    for (const auto& [key, tensor] : layer.GetParameters()) {
+        const size_t at = key.find("_grad_");
+        if (at == std::string::npos) continue;
+        const std::string parameter_key = key.substr(0, at + 1) + key.substr(at + 6);
+        grads[bidirectional ? ToModuleKey(parameter_key) : parameter_key] = tensor;
+    }
+    return grads;
+}
+
+template <typename LayerT>
+void SetModuleParameters(LayerT& layer, const std::map<std::string, Tensor>& params, bool bidirectional) {
+    if (!bidirectional) {
+        layer.SetParameters(params);
+        return;
+    }
+    std::map<std::string, Tensor> layer_params;
+    for (const auto& [key, tensor] : params) {
+        const std::string layer_key = ToLayerKey(key);
+        if (!layer_key.empty()) layer_params[layer_key] = tensor;
+    }
+    layer.SetParameters(layer_params);
+}
+
+// Keras-style return_sequences=false: the last time step of the full
+// [batch, seq, features] output, sliced on the device.
+Tensor ReduceSequence(const Tensor& full_output, bool return_sequences, std::vector<size_t>& full_shape) {
+    full_shape = full_output.Shape();
+    return return_sequences ? full_output : LastTimeStep(full_output);
+}
+
+// Backward of ReduceSequence: the last-step gradient re-expanded to the
+// full sequence (zeros at every earlier step), on the device.
+Tensor ExpandSequenceGradient(const Tensor& grad_output, bool return_sequences,
+                              const std::vector<size_t>& full_shape, const char* module) {
+    if (return_sequences) return grad_output;
+    if (full_shape.size() != 3) {
+        throw std::runtime_error(std::string(module) + "::Backward needs a Forward first");
+    }
+    return ExpandLastTimeStep(grad_output, full_shape[1]);
+}
+
+std::string NormalizeChildKey(const std::string& key) {
+    std::string normalized = key;
+    if (normalized.rfind("layer0_", 0) == 0) normalized.erase(0, 7);
+    if (normalized.rfind("grad_", 0) == 0) normalized.erase(0, 5);
+    return normalized;
+}
+
+std::string MakeBranchKey(size_t layer_idx, const std::string& branch, const std::string& normalized_key) {
+    return "layer" + std::to_string(layer_idx) + "." + branch + "." + normalized_key;
+}
+
+}  // namespace
+
+// ============================================================================
+// LSTMModule / GRUModule: a batch-first LSTMLayer / GRULayer (bidirectional
+// on the device inside the layer) plus the return_sequences=false reduction.
+// ============================================================================
 
 LSTMModule::LSTMModule(size_t input_size, size_t hidden_size,
                        size_t num_layers, bool bidirectional,
                        bool return_sequences)
-    : input_size_(input_size)
+    : layer_(std::make_unique<LSTMLayer>(static_cast<int>(input_size), static_cast<int>(hidden_size),
+                                         static_cast<int>(num_layers), /*batch_first=*/true,
+                                         bidirectional, /*dropout=*/0.0f))
+    , input_size_(input_size)
     , hidden_size_(hidden_size)
-    , num_layers_(num_layers)
     , bidirectional_(bidirectional)
-    , return_sequences_(return_sequences)
-{
-    if (bidirectional_) {
-        // Split path: one forward + one reverse single-direction LSTMLayer
-        // per level; level l>0 consumes the concatenated [.., 2*hidden].
-        split_bidirectional_path_ = true;
-        forward_layers_.reserve(num_layers_);
-        reverse_layers_.reserve(num_layers_);
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            const int layer_input_size = (layer == 0)
-                ? static_cast<int>(input_size)
-                : static_cast<int>(hidden_size * 2);
-            forward_layers_.push_back(std::make_unique<LSTMLayer>(
-                layer_input_size, static_cast<int>(hidden_size),
-                /*num_layers=*/1, /*batch_first=*/true,
-                /*bidirectional=*/false, /*dropout=*/0.0f));
-            reverse_layers_.push_back(std::make_unique<LSTMLayer>(
-                layer_input_size, static_cast<int>(hidden_size),
-                /*num_layers=*/1, /*batch_first=*/true,
-                /*bidirectional=*/false, /*dropout=*/0.0f));
-        }
-        spdlog::debug("[LSTMModule] Using split bidirectional LSTM path "
-                     "({} layer pairs); each branch is placed independently.",
-                     num_layers_);
-    } else {
-        layer_ = std::make_unique<LSTMLayer>(
-            static_cast<int>(input_size),
-            static_cast<int>(hidden_size),
-            static_cast<int>(num_layers),
-            /*batch_first=*/true,
-            bidirectional,
-            /*dropout=*/0.0f);
-    }
-}
+    , return_sequences_(return_sequences) {}
 
 Tensor LSTMModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-    Tensor full_output;
-    if (split_bidirectional_path_) {
-        Tensor layer_input = input;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            Tensor forward_output = forward_layers_[layer]->Forward(layer_input);
-            Tensor reverse_input = ReverseSequenceTensor(layer_input, /*batch_first=*/true);
-            Tensor reverse_output = reverse_layers_[layer]->Forward(reverse_input);
-            reverse_output = ReverseSequenceTensor(reverse_output, /*batch_first=*/true);
-            layer_input = ConcatFeatureTensor(forward_output, reverse_output);
-        }
-        full_output = layer_input;
-    } else {
-        // LSTMLayer returns the full sequence output:
-        //   [batch, seq_len, hidden_size * num_directions]
-        full_output = layer_->Forward(input);
-    }
-    last_full_output_shape_ = full_output.Shape();
-
-    if (return_sequences_) {
-        return full_output;
-    }
-
-    // Defensive: if the output isn't 3D for some reason, bail out and
-    // pass through. Should never happen under normal use, but we'd
-    // rather forward a weird tensor than crash on the slice.
-    if (last_full_output_shape_.size() != 3) {
-        spdlog::warn("LSTMModule: expected 3D output [batch, seq, hidden_dirs] "
-                     "but got {}D — passing full output through",
-                     last_full_output_shape_.size());
-        return full_output;
-    }
-
-    const size_t batch = last_full_output_shape_[0];
-    const size_t seq_len = last_full_output_shape_[1];
-    const size_t hd = last_full_output_shape_[2];
-
-    // Slice out the last timestep: out[:, seq_len-1, :] -> [batch, hd].
-    Tensor last({batch, hd}, DataType::Float32);
-    const float* src = full_output.ReadData<float>();
-    float* dst = last.MutableData<float>();
-    for (size_t b = 0; b < batch; ++b) {
-        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
-        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
-    }
-    return last;
+    return ReduceSequence(layer_->Forward(input), return_sequences_, last_full_output_shape_);
 }
 
 Tensor LSTMModule::Backward(const Tensor& grad_output) {
-    Tensor upstream = grad_output;
-    if (!return_sequences_) {
-        // Last-step mode: re-expand [batch, hidden*dirs] to the full
-        // [batch, seq_len, hidden*dirs] shape with zeros everywhere except
-        // the terminal step.
-        if (last_full_output_shape_.size() != 3) {
-            spdlog::warn("LSTMModule::Backward called without a 3D shape cache "
-                         "— falling back to direct grad passthrough");
-            return split_bidirectional_path_
-                ? Tensor::Zeros(input_cache_.Shape())
-                : layer_->Backward(grad_output);
-        }
-        const size_t batch = last_full_output_shape_[0];
-        const size_t seq_len = last_full_output_shape_[1];
-        const size_t hd = last_full_output_shape_[2];
-
-        Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
-        const float* src = grad_output.ReadData<float>();
-        float* dst = expanded.MutableData<float>();
-        for (size_t b = 0; b < batch; ++b) {
-            float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
-            std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
-        }
-        upstream = expanded;
-    }
-
-    if (split_bidirectional_path_) {
-        if (upstream.Shape().size() != 3) {
-            spdlog::warn("LSTMModule::Backward expected 3D upstream gradient "
-                         "for split bidirectional path");
-            return Tensor::Zeros(input_cache_.Shape());
-        }
-        Tensor layer_grad = upstream;
-        for (int layer = static_cast<int>(num_layers_) - 1; layer >= 0; --layer) {
-            const size_t total_features = layer_grad.Shape()[2];
-            const size_t half_features = total_features / 2;
-            Tensor forward_grad = SliceFeatureTensor(layer_grad, 0, half_features);
-            Tensor reverse_grad = SliceFeatureTensor(layer_grad, half_features, half_features);
-
-            Tensor dx_forward = forward_layers_[static_cast<size_t>(layer)]->Backward(forward_grad);
-            Tensor dx_reverse = reverse_layers_[static_cast<size_t>(layer)]->Backward(
-                ReverseSequenceTensor(reverse_grad, /*batch_first=*/true));
-            dx_reverse = ReverseSequenceTensor(dx_reverse, /*batch_first=*/true);
-
-            layer_grad = dx_forward + dx_reverse;
-        }
-        return layer_grad;
-    }
-
-    return layer_->Backward(upstream);
+    return layer_->Backward(
+        ExpandSequenceGradient(grad_output, return_sequences_, last_full_output_shape_, "LSTMModule"));
 }
 
 std::map<std::string, Tensor> LSTMModule::GetParameters() {
-    if (split_bidirectional_path_) {
-        std::map<std::string, Tensor> params;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            auto forward_params = forward_layers_[layer]->GetParameters();
-            auto reverse_params = reverse_layers_[layer]->GetParameters();
-            for (const auto& [key, tensor] : forward_params) {
-                if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "forward", NormalizeGRULayerKey(key))] = tensor;
-            }
-            for (const auto& [key, tensor] : reverse_params) {
-                if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "reverse", NormalizeGRULayerKey(key))] = tensor;
-            }
-        }
-        return params;
-    }
-    return layer_->GetParameters();
+    return ModuleParameters(*layer_, bidirectional_);
 }
 
 void LSTMModule::SetParameters(const std::map<std::string, Tensor>& params) {
-    if (split_bidirectional_path_) {
-        std::vector<std::map<std::string, Tensor>> forward_params(num_layers_);
-        std::vector<std::map<std::string, Tensor>> reverse_params(num_layers_);
-        for (const auto& [key, tensor] : params) {
-            if (key.rfind("layer", 0) != 0) continue;
-            const size_t dot1 = key.find('.');
-            const size_t dot2 = key.find('.', dot1 == std::string::npos ? 0 : dot1 + 1);
-            if (dot1 == std::string::npos || dot2 == std::string::npos) continue;
-            const size_t layer_idx = static_cast<size_t>(std::stoul(key.substr(5, dot1 - 5)));
-            if (layer_idx >= num_layers_) continue;
-            const std::string branch = key.substr(dot1 + 1, dot2 - dot1 - 1);
-            const std::string base_key = key.substr(dot2 + 1);
-            if (base_key.empty()) continue;
-            const std::string child_key = "layer0_" + base_key;
-            if (branch == "forward") {
-                forward_params[layer_idx][child_key] = tensor;
-            } else if (branch == "reverse") {
-                reverse_params[layer_idx][child_key] = tensor;
-            }
-        }
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            forward_layers_[layer]->SetParameters(forward_params[layer]);
-            reverse_layers_[layer]->SetParameters(reverse_params[layer]);
-        }
-        return;
-    }
-    layer_->SetParameters(params);
+    SetModuleParameters(*layer_, params, bidirectional_);
 }
 
 std::map<std::string, Tensor> LSTMModule::GetGradients() {
-    auto build_gradient_map = [](const std::map<std::string, Tensor>& params,
-                                 const std::string& prefix) {
-        std::map<std::string, Tensor> grads;
-        for (const auto& [key, value] : params) {
-            if (key.find("grad_") == std::string::npos) continue;
-            grads[prefix + NormalizeGRULayerKey(key)] = value;
-        }
-        return grads;
-    };
-    if (split_bidirectional_path_) {
-        std::map<std::string, Tensor> grads;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            auto forward_grads = build_gradient_map(forward_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "forward", ""));
-            auto reverse_grads = build_gradient_map(reverse_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "reverse", ""));
-            grads.insert(forward_grads.begin(), forward_grads.end());
-            grads.insert(reverse_grads.begin(), reverse_grads.end());
-        }
-        return grads;
-    }
-    // LSTMLayer writes gradients into its parameter map keyed "grad_*";
-    // the SequentialModel training step reads them through GetParameters.
-    return layer_->GetParameters();
+    return ModuleGradients(*layer_, bidirectional_);
 }
 
 std::string LSTMModule::GetName() const {
     const int dirs = bidirectional_ ? 2 : 1;
-    const std::string prefix = split_bidirectional_path_ ? "Bi" : "";
-    return prefix + "LSTM(" + std::to_string(input_size_) + " -> " +
-           std::to_string(hidden_size_ * dirs) +
-           (return_sequences_ ? ", seq" : ", last") + ")";
-}
-
-// ============================================================================
-// GRUModule Implementation — direct mirror of LSTMModule. The slice and
-// re-expand logic for return_sequences=false is identical because
-// GRULayer matches LSTMLayer's [batch, seq, hidden*dirs] full-output
-// contract.
-// ============================================================================
-
-static Tensor ReverseSequenceTensor(const Tensor& input, bool batch_first) {
-    const auto& shape = input.Shape();
-    if (shape.size() != 3) {
-        return input.Clone();
-    }
-
-    const size_t batch = batch_first ? shape[0] : shape[1];
-    const size_t seq_len = batch_first ? shape[1] : shape[0];
-    const size_t features = shape[2];
-
-    Tensor output = Tensor::Zeros(shape, input.GetDataType());
-    const float* src = input.Data<float>();
-    float* dst = output.Data<float>();
-
-    for (size_t b = 0; b < batch; ++b) {
-        for (size_t t = 0; t < seq_len; ++t) {
-            const size_t src_t = seq_len - 1 - t;
-            const float* src_step = batch_first
-                ? src + b * seq_len * features + src_t * features
-                : src + src_t * batch * features + b * features;
-            float* dst_step = batch_first
-                ? dst + b * seq_len * features + t * features
-                : dst + t * batch * features + b * features;
-            std::memcpy(dst_step, src_step, features * sizeof(float));
-        }
-    }
-
-    return output;
-}
-
-static Tensor ConcatFeatureTensor(const Tensor& left, const Tensor& right) {
-    const auto& lshape = left.Shape();
-    const auto& rshape = right.Shape();
-    if (lshape.size() != 3 || rshape.size() != 3) {
-        return left.Clone();
-    }
-
-    const size_t batch = lshape[0];
-    const size_t seq_len = lshape[1];
-    const size_t left_features = lshape[2];
-    const size_t right_features = rshape[2];
-
-    Tensor output = Tensor::Zeros({batch, seq_len, left_features + right_features},
-                                  left.GetDataType());
-    const float* lsrc = left.Data<float>();
-    const float* rsrc = right.Data<float>();
-    float* dst = output.Data<float>();
-
-    for (size_t b = 0; b < batch; ++b) {
-        for (size_t t = 0; t < seq_len; ++t) {
-            float* dst_step = dst + b * seq_len * (left_features + right_features)
-                             + t * (left_features + right_features);
-            const float* lstep = lsrc + b * seq_len * left_features + t * left_features;
-            const float* rstep = rsrc + b * seq_len * right_features + t * right_features;
-            std::memcpy(dst_step, lstep, left_features * sizeof(float));
-            std::memcpy(dst_step + left_features, rstep, right_features * sizeof(float));
-        }
-    }
-
-    return output;
-}
-
-static Tensor SliceFeatureTensor(const Tensor& input, size_t offset, size_t width) {
-    const auto& shape = input.Shape();
-    if (shape.size() != 3) {
-        return input.Clone();
-    }
-
-    const size_t batch = shape[0];
-    const size_t seq_len = shape[1];
-    const size_t features = shape[2];
-    if (offset + width > features) {
-        return input.Clone();
-    }
-
-    Tensor output = Tensor::Zeros({batch, seq_len, width}, input.GetDataType());
-    const float* src = input.Data<float>();
-    float* dst = output.Data<float>();
-
-    for (size_t b = 0; b < batch; ++b) {
-        for (size_t t = 0; t < seq_len; ++t) {
-            const float* src_step = src + b * seq_len * features + t * features + offset;
-            float* dst_step = dst + b * seq_len * width + t * width;
-            std::memcpy(dst_step, src_step, width * sizeof(float));
-        }
-    }
-
-    return output;
-}
-
-static std::string NormalizeGRULayerKey(const std::string& key) {
-    std::string normalized = key;
-    if (normalized.rfind("layer0_", 0) == 0) {
-        normalized.erase(0, 7);
-    }
-    if (normalized.rfind("grad_", 0) == 0) {
-        normalized.erase(0, 5);
-    }
-    return normalized;
-}
-
-static std::string MakeGRUBranchKey(size_t layer_idx, const std::string& branch,
-                                    const std::string& normalized_key) {
-    return "layer" + std::to_string(layer_idx) + "." + branch + "." + normalized_key;
+    return std::string(bidirectional_ ? "Bi" : "") + "LSTM(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_ * dirs) + (return_sequences_ ? ", seq" : ", last") + ")";
 }
 
 GRUModule::GRUModule(size_t input_size, size_t hidden_size,
                      size_t num_layers, bool bidirectional,
                      bool return_sequences)
-    : input_size_(input_size)
+    : layer_(std::make_unique<GRULayer>(static_cast<int>(input_size), static_cast<int>(hidden_size),
+                                        static_cast<int>(num_layers), /*batch_first=*/true,
+                                        bidirectional, /*dropout=*/0.0f))
+    , input_size_(input_size)
     , hidden_size_(hidden_size)
-    , num_layers_(num_layers)
     , bidirectional_(bidirectional)
-    , return_sequences_(return_sequences)
-{
-    if (bidirectional_) {
-        split_bidirectional_path_ = true;
-        forward_layers_.reserve(num_layers_);
-        reverse_layers_.reserve(num_layers_);
-
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            const int layer_input_size = (layer == 0)
-                ? static_cast<int>(input_size)
-                : static_cast<int>(hidden_size * 2);
-            forward_layers_.push_back(std::make_unique<GRULayer>(
-                layer_input_size,
-                static_cast<int>(hidden_size),
-                /*num_layers=*/1,
-                /*batch_first=*/true,
-                /*bidirectional=*/false,
-                /*dropout=*/0.0f));
-            reverse_layers_.push_back(std::make_unique<GRULayer>(
-                layer_input_size,
-                static_cast<int>(hidden_size),
-                /*num_layers=*/1,
-                /*batch_first=*/true,
-                /*bidirectional=*/false,
-                /*dropout=*/0.0f));
-        }
-
-        spdlog::info("[GRUModule] Using split bidirectional GRU path "
-                     "({} layer pairs). GPU placement for this split path "
-                     "remains disabled until the single-direction ArrayFire "
-                     "GRU path has dedicated correctness and timeout coverage.",
-                     num_layers_);
-    } else {
-        layer_ = std::make_unique<GRULayer>(
-            static_cast<int>(input_size),
-            static_cast<int>(hidden_size),
-            static_cast<int>(num_layers),
-            /*batch_first=*/true,
-            bidirectional,
-            /*dropout=*/0.0f);
-    }
-}
+    , return_sequences_(return_sequences) {}
 
 Tensor GRUModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-    Tensor full_output;
-    if (split_bidirectional_path_) {
-        Tensor layer_input = input;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            Tensor forward_output = forward_layers_[layer]->Forward(layer_input);
-            Tensor reverse_input = ReverseSequenceTensor(layer_input, /*batch_first=*/true);
-            Tensor reverse_output = reverse_layers_[layer]->Forward(reverse_input);
-            reverse_output = ReverseSequenceTensor(reverse_output, /*batch_first=*/true);
-            layer_input = ConcatFeatureTensor(forward_output, reverse_output);
-        }
-        full_output = layer_input;
-    } else {
-        full_output = layer_->Forward(input);
-    }
-    last_full_output_shape_ = full_output.Shape();
-
-    if (return_sequences_) {
-        return full_output;
-    }
-
-    if (last_full_output_shape_.size() != 3) {
-        spdlog::warn("GRUModule: expected 3D output [batch, seq, hidden_dirs] "
-                     "but got {}D — passing full output through",
-                     last_full_output_shape_.size());
-        return full_output;
-    }
-
-    const size_t batch = last_full_output_shape_[0];
-    const size_t seq_len = last_full_output_shape_[1];
-    const size_t hd = last_full_output_shape_[2];
-
-    Tensor last({batch, hd}, DataType::Float32);
-    const float* src = full_output.Data<float>();
-    float* dst = static_cast<float*>(last.Data());
-    for (size_t b = 0; b < batch; ++b) {
-        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
-        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
-    }
-    return last;
+    return ReduceSequence(layer_->Forward(input), return_sequences_, last_full_output_shape_);
 }
 
 Tensor GRUModule::Backward(const Tensor& grad_output) {
-    Tensor upstream = grad_output;
-    if (!return_sequences_) {
-        if (last_full_output_shape_.size() != 3) {
-            spdlog::warn("GRUModule::Backward called without a 3D shape cache "
-                         "- falling back to direct grad passthrough");
-            return split_bidirectional_path_
-                ? Tensor::Zeros(input_cache_.Shape())
-                : layer_->Backward(grad_output);
-        }
-
-        const size_t batch = last_full_output_shape_[0];
-        const size_t seq_len = last_full_output_shape_[1];
-        const size_t hd = last_full_output_shape_[2];
-
-        Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
-        const float* src = grad_output.Data<float>();
-        float* dst = static_cast<float*>(expanded.Data());
-        for (size_t b = 0; b < batch; ++b) {
-            float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
-            std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
-        }
-        upstream = expanded;
-    }
-
-    if (split_bidirectional_path_) {
-        if (upstream.Shape().size() != 3) {
-            spdlog::warn("GRUModule::Backward expected 3D upstream gradient "
-                         "for split bidirectional path");
-            return Tensor::Zeros(input_cache_.Shape());
-        }
-
-        Tensor layer_grad = upstream;
-        for (int layer = static_cast<int>(num_layers_) - 1; layer >= 0; --layer) {
-            const size_t total_features = layer_grad.Shape()[2];
-            const size_t half_features = total_features / 2;
-            Tensor forward_grad = SliceFeatureTensor(layer_grad, 0, half_features);
-            Tensor reverse_grad = SliceFeatureTensor(layer_grad, half_features, half_features);
-
-            Tensor dx_forward = forward_layers_[static_cast<size_t>(layer)]->Backward(forward_grad);
-            Tensor dx_reverse = reverse_layers_[static_cast<size_t>(layer)]->Backward(
-                ReverseSequenceTensor(reverse_grad, /*batch_first=*/true));
-            dx_reverse = ReverseSequenceTensor(dx_reverse, /*batch_first=*/true);
-
-            layer_grad = dx_forward + dx_reverse;
-        }
-
-        return layer_grad;
-    }
-
-    return layer_->Backward(upstream);
+    return layer_->Backward(
+        ExpandSequenceGradient(grad_output, return_sequences_, last_full_output_shape_, "GRUModule"));
 }
 
 std::map<std::string, Tensor> GRUModule::GetParameters() {
-    if (split_bidirectional_path_) {
-        std::map<std::string, Tensor> params;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            auto forward_params = forward_layers_[layer]->GetParameters();
-            auto reverse_params = reverse_layers_[layer]->GetParameters();
-            for (const auto& [key, tensor] : forward_params) {
-                if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "forward", NormalizeGRULayerKey(key))] = tensor;
-            }
-            for (const auto& [key, tensor] : reverse_params) {
-                if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "reverse", NormalizeGRULayerKey(key))] = tensor;
-            }
-        }
-        return params;
-    }
-    return layer_->GetParameters();
+    return ModuleParameters(*layer_, bidirectional_);
 }
 
 void GRUModule::SetParameters(const std::map<std::string, Tensor>& params) {
-    if (split_bidirectional_path_) {
-        std::vector<std::map<std::string, Tensor>> forward_params(num_layers_);
-        std::vector<std::map<std::string, Tensor>> reverse_params(num_layers_);
-        for (const auto& [key, tensor] : params) {
-            if (key.rfind("layer", 0) != 0) {
-                continue;
-            }
-            const size_t dot1 = key.find('.');
-            const size_t dot2 = key.find('.', dot1 == std::string::npos ? 0 : dot1 + 1);
-            if (dot1 == std::string::npos || dot2 == std::string::npos) {
-                continue;
-            }
-
-            const size_t layer_idx = static_cast<size_t>(std::stoul(key.substr(5, dot1 - 5)));
-            if (layer_idx >= num_layers_) {
-                continue;
-            }
-
-            const std::string branch = key.substr(dot1 + 1, dot2 - dot1 - 1);
-            const std::string base_key = key.substr(dot2 + 1);
-            if (base_key.empty()) {
-                continue;
-            }
-            const std::string child_key = "layer0_" + base_key;
-            if (branch == "forward") {
-                forward_params[layer_idx][child_key] = tensor;
-            } else if (branch == "reverse") {
-                reverse_params[layer_idx][child_key] = tensor;
-            }
-        }
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            forward_layers_[layer]->SetParameters(forward_params[layer]);
-            reverse_layers_[layer]->SetParameters(reverse_params[layer]);
-        }
-        return;
-    }
-    layer_->SetParameters(params);
+    SetModuleParameters(*layer_, params, bidirectional_);
 }
 
 std::map<std::string, Tensor> GRUModule::GetGradients() {
-    auto build_gradient_map = [](const std::map<std::string, Tensor>& params,
-                                 const std::string& prefix) {
-        std::map<std::string, Tensor> grads;
-        for (const auto& [key, value] : params) {
-            if (key.find("grad_") == std::string::npos) continue;
-            const std::string base = NormalizeGRULayerKey(key);
-            grads[prefix + base] = value;
-        }
-        return grads;
-    };
-
-    if (split_bidirectional_path_) {
-        std::map<std::string, Tensor> grads;
-        for (size_t layer = 0; layer < num_layers_; ++layer) {
-            auto forward_grads = build_gradient_map(forward_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "forward", ""));
-            auto reverse_grads = build_gradient_map(reverse_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "reverse", ""));
-            grads.insert(forward_grads.begin(), forward_grads.end());
-            grads.insert(reverse_grads.begin(), reverse_grads.end());
-        }
-        return grads;
-    }
-    // Same convention as LSTMModule - GRULayer writes "grad_*" keys
-    // into its parameters map and the SequentialModel optimizer step
-    // reads them via GetParameters().
-    return layer_->GetParameters();
+    return ModuleGradients(*layer_, bidirectional_);
 }
 
 std::string GRUModule::GetName() const {
     const int dirs = bidirectional_ ? 2 : 1;
-    const std::string prefix = split_bidirectional_path_ ? "Bi" : "";
-    return prefix + std::string("GRU(") + std::to_string(input_size_) + " -> " +
-           std::to_string(hidden_size_ * dirs) +
-           (return_sequences_ ? ", seq" : ", last") + ")";
+    return std::string(bidirectional_ ? "Bi" : "") + "GRU(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_ * dirs) + (return_sequences_ ? ", seq" : ", last") + ")";
 }
 
 void GRUModule::SetTraining(bool training) {
     Module::SetTraining(training);
-    if (layer_) layer_->SetTraining(training);
-    for (auto& layer : forward_layers_) {
-        layer->SetTraining(training);
-    }
-    for (auto& layer : reverse_layers_) {
-        layer->SetTraining(training);
-    }
+    layer_->SetTraining(training);
 }
 
 
 // ============================================================================
 // RNNModule Implementation — mirror of LSTMModule over the vanilla RNN
-// reference layer (tofix68 phase 3). Host access goes through
-// ReadData/MutableData so the legacy Data-access inventory is unchanged.
+// reference layer (tofix68 phase 3). Bidirectional splits each level into a
+// forward and a time-reversed RNNLayer; the flip / join / slice and the
+// last-step reduction run on the device.
 // ============================================================================
 
 RNNModule::RNNModule(size_t input_size, size_t hidden_size,
@@ -674,92 +247,40 @@ RNNModule::RNNModule(size_t input_size, size_t hidden_size,
 }
 
 Tensor RNNModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
     Tensor full_output;
     if (split_bidirectional_path_) {
         Tensor layer_input = input;
         for (size_t layer = 0; layer < num_layers_; ++layer) {
-            Tensor forward_output = forward_layers_[layer]->Forward(layer_input);
-            Tensor reverse_input = ReverseSequenceTensor(layer_input, /*batch_first=*/true);
-            Tensor reverse_output = reverse_layers_[layer]->Forward(reverse_input);
-            reverse_output = ReverseSequenceTensor(reverse_output, /*batch_first=*/true);
-            layer_input = ConcatFeatureTensor(forward_output, reverse_output);
+            const Tensor forward_output = forward_layers_[layer]->Forward(layer_input);
+            const Tensor reverse_output = ReverseTime(
+                reverse_layers_[layer]->Forward(ReverseTime(layer_input, /*batch_first=*/true)),
+                /*batch_first=*/true);
+            layer_input = JoinFeatures(forward_output, reverse_output);
         }
         full_output = layer_input;
     } else {
         full_output = layer_->Forward(input);
     }
-    last_full_output_shape_ = full_output.Shape();
-
-    if (return_sequences_) {
-        return full_output;
-    }
-    if (last_full_output_shape_.size() != 3) {
-        spdlog::warn("RNNModule: expected 3D output [batch, seq, hidden] "
-                     "but got {}D — passing full output through",
-                     last_full_output_shape_.size());
-        return full_output;
-    }
-
-    const size_t batch = last_full_output_shape_[0];
-    const size_t seq_len = last_full_output_shape_[1];
-    const size_t hd = last_full_output_shape_[2];
-
-    Tensor last({batch, hd}, DataType::Float32);
-    const float* src = full_output.ReadData<float>();
-    float* dst = last.MutableData<float>();
-    for (size_t b = 0; b < batch; ++b) {
-        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
-        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
-    }
-    return last;
+    return ReduceSequence(full_output, return_sequences_, last_full_output_shape_);
 }
 
 Tensor RNNModule::Backward(const Tensor& grad_output) {
-    Tensor upstream = grad_output;
-    if (!return_sequences_) {
-        if (last_full_output_shape_.size() != 3) {
-            spdlog::warn("RNNModule::Backward called without a 3D shape cache "
-                         "— falling back to direct grad passthrough");
-            return split_bidirectional_path_
-                ? Tensor::Zeros(input_cache_.Shape())
-                : layer_->Backward(grad_output);
-        }
-        const size_t batch = last_full_output_shape_[0];
-        const size_t seq_len = last_full_output_shape_[1];
-        const size_t hd = last_full_output_shape_[2];
-
-        Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
-        const float* src = grad_output.ReadData<float>();
-        float* dst = expanded.MutableData<float>();
-        for (size_t b = 0; b < batch; ++b) {
-            float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
-            std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
-        }
-        upstream = expanded;
+    const Tensor upstream =
+        ExpandSequenceGradient(grad_output, return_sequences_, last_full_output_shape_, "RNNModule");
+    if (!split_bidirectional_path_) {
+        return layer_->Backward(upstream);
     }
-
-    if (split_bidirectional_path_) {
-        if (upstream.Shape().size() != 3) {
-            spdlog::warn("RNNModule::Backward expected 3D upstream gradient "
-                         "for split bidirectional path");
-            return Tensor::Zeros(input_cache_.Shape());
-        }
-        Tensor layer_grad = upstream;
-        for (int layer = static_cast<int>(num_layers_) - 1; layer >= 0; --layer) {
-            const size_t total_features = layer_grad.Shape()[2];
-            const size_t half_features = total_features / 2;
-            Tensor forward_grad = SliceFeatureTensor(layer_grad, 0, half_features);
-            Tensor reverse_grad = SliceFeatureTensor(layer_grad, half_features, half_features);
-            Tensor dx_forward = forward_layers_[static_cast<size_t>(layer)]->Backward(forward_grad);
-            Tensor dx_reverse = reverse_layers_[static_cast<size_t>(layer)]->Backward(
-                ReverseSequenceTensor(reverse_grad, /*batch_first=*/true));
-            dx_reverse = ReverseSequenceTensor(dx_reverse, /*batch_first=*/true);
-            layer_grad = dx_forward + dx_reverse;
-        }
-        return layer_grad;
+    Tensor layer_grad = upstream;
+    for (int layer = static_cast<int>(num_layers_) - 1; layer >= 0; --layer) {
+        const Tensor dx_forward = forward_layers_[static_cast<size_t>(layer)]->Backward(
+            SliceFeatures(layer_grad, 0, hidden_size_));
+        const Tensor dx_reverse = ReverseTime(
+            reverse_layers_[static_cast<size_t>(layer)]->Backward(
+                ReverseTime(SliceFeatures(layer_grad, hidden_size_, hidden_size_), /*batch_first=*/true)),
+            /*batch_first=*/true);
+        layer_grad = dx_forward + dx_reverse;
     }
-    return layer_->Backward(upstream);
+    return layer_grad;
 }
 
 std::map<std::string, Tensor> RNNModule::GetParameters() {
@@ -768,11 +289,11 @@ std::map<std::string, Tensor> RNNModule::GetParameters() {
         for (size_t layer = 0; layer < num_layers_; ++layer) {
             for (const auto& [key, tensor] : forward_layers_[layer]->GetParameters()) {
                 if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "forward", NormalizeGRULayerKey(key))] = tensor;
+                params[MakeBranchKey(layer, "forward", NormalizeChildKey(key))] = tensor;
             }
             for (const auto& [key, tensor] : reverse_layers_[layer]->GetParameters()) {
                 if (key.find("grad_") != std::string::npos) continue;
-                params[MakeGRUBranchKey(layer, "reverse", NormalizeGRULayerKey(key))] = tensor;
+                params[MakeBranchKey(layer, "reverse", NormalizeChildKey(key))] = tensor;
             }
         }
         return params;
@@ -816,7 +337,7 @@ std::map<std::string, Tensor> RNNModule::GetGradients() {
         std::map<std::string, Tensor> grads;
         for (const auto& [key, value] : params) {
             if (key.find("grad_") == std::string::npos) continue;
-            grads[prefix + NormalizeGRULayerKey(key)] = value;
+            grads[prefix + NormalizeChildKey(key)] = value;
         }
         return grads;
     };
@@ -824,17 +345,16 @@ std::map<std::string, Tensor> RNNModule::GetGradients() {
         std::map<std::string, Tensor> grads;
         for (size_t layer = 0; layer < num_layers_; ++layer) {
             auto forward_grads = build_gradient_map(forward_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "forward", ""));
+                                                     MakeBranchKey(layer, "forward", ""));
             auto reverse_grads = build_gradient_map(reverse_layers_[layer]->GetParameters(),
-                                                     MakeGRUBranchKey(layer, "reverse", ""));
+                                                     MakeBranchKey(layer, "reverse", ""));
             grads.insert(forward_grads.begin(), forward_grads.end());
             grads.insert(reverse_grads.begin(), reverse_grads.end());
         }
         return grads;
     }
-    // Same convention as LSTM/GRU: RNNLayer writes "grad_*" keys into its
-    // parameter map and the SequentialModel optimizer step reads them
-    // through GetParameters().
+    // RNNLayer writes "grad_*" keys into its parameter map and the
+    // SequentialModel optimizer step reads them through GetParameters().
     return layer_->GetParameters();
 }
 
@@ -847,5 +367,3 @@ std::string RNNModule::GetName() const {
 }
 
 } // namespace cyxwiz
-
-

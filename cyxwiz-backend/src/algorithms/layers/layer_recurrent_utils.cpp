@@ -1,204 +1,206 @@
 #include "layer_recurrent_utils.h"
 
-#include <atomic>
-
-namespace cyxwiz {
-
-namespace {
-std::atomic<bool> g_force_native_recurrent_forward_for_testing{false};
-} // namespace
-
-void SetForceNativeRecurrentForwardForTesting(bool force) {
-    g_force_native_recurrent_forward_for_testing.store(force);
-}
-
-namespace recurrent_utils_detail {
-bool IsNativeRecurrentForwardForcedForTesting() {
-    return g_force_native_recurrent_forward_for_testing.load();
-}
-} // namespace recurrent_utils_detail
-
-} // namespace cyxwiz
+#include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-
-#include "cyxwiz/backend_placement_observation.h"
-#include "cyxwiz/debug_hooks.h"
-
-#include <algorithm>
-#include <atomic>
-
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
-
-#ifdef max
-#undef max
-#endif
-#ifdef min
-#undef min
 #endif
 
-namespace cyxwiz {
+namespace cyxwiz::recurrent_detail {
+
+void ThrowWithoutArrayFire(const char* layer) {
+    throw std::runtime_error(std::string(layer) +
+                             " runs on ArrayFire, and this build has no ArrayFire");
+}
 
 namespace {
 
-std::atomic<bool> g_disable_lstm_arrayfire_cuda_after_failure{false};
-std::atomic<bool> g_disable_gru_arrayfire_cuda_after_failure{false};
-
-std::atomic<bool>& RecurrentFailureDisableFlag(RecurrentLayerKind kind) {
-    return kind == RecurrentLayerKind::LSTM
-        ? g_disable_lstm_arrayfire_cuda_after_failure
-        : g_disable_gru_arrayfire_cuda_after_failure;
-}
-
-} // namespace
-
-std::string BuildRecurrentFormalParameterOverflowFallbackMessage(
-    const char* layer_name) {
-    return std::string("ArrayFire ") + layer_name +
-           " hit CUDA generated-kernel formal-parameter overflow "
-           "(reason=" +
-           BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
-           "); falling back to native CPU recurrent path. This is separate "
-           "from VRAM capacity.";
-}
-
-void DisableArrayFireCudaRecurrentAfterFailure(
-    RecurrentLayerKind kind,
-    const char* layer_name,
-    size_t batch_size,
-    size_t seq_len,
-    size_t input_size,
-    int hidden_size,
-    int num_layers,
-    bool bidirectional,
-    const char* error_message) {
-    const bool is_param_overflow =
-        IsCudaJitFormalParameterOverflow(error_message);
-    const BackendFallbackReason reason = is_param_overflow
-        ? BackendFallbackReason::CudaJitParamOverflow
-        : ClassifyArrayFireBackendFallbackReason(error_message);
-
-    RecurrentCudaPlacementRequest request;
-    request.kind = kind;
-    request.batch_size = batch_size;
-    request.seq_len = seq_len;
-    request.input_size = input_size;
-    request.hidden_size = static_cast<size_t>(std::max(1, hidden_size));
-    request.num_layers = static_cast<size_t>(std::max(1, num_layers));
-    request.bidirectional = bidirectional;
-    request.return_sequences = false;
-
-    // Record evidence for EVERY failure class, not only param overflow —
-    // the compiler routes around any known-unsafe recurrent key
-    // (tofix67 slice 6). Only overflow flips the process-wide disable
-    // latch; other reasons may be transient device conditions.
-    RecordRecurrentCudaPlacementObservation(
-        request,
-        BackendFallbackReasonName(reason),
-        BackendPlacementObservationSource::RuntimeFallback,
-        is_param_overflow
-            ? std::string(layer_name) +
-                  " runtime ArrayFire CUDA forward failed with "
-                  "generated-kernel formal-parameter overflow. This "
-                  "observation should make future compiler preflight route "
-                  "the same recurrent shape to CPU before training starts."
-            : std::string(layer_name) +
-                  " runtime ArrayFire CUDA forward failed (reason=" +
-                  BackendFallbackReasonName(reason) +
-                  "). This observation should make future compiler "
-                  "preflight route the same recurrent shape to CPU before "
-                  "training starts.");
-
-    if (!is_param_overflow) {
-        return;
-    }
-
-    auto& disabled = RecurrentFailureDisableFlag(kind);
-    if (!disabled.exchange(true)) {
-        const std::string disable_message =
-            std::string(layer_name) +
-            " ArrayFire CUDA recurrent path hit CUDA generated-kernel "
-            "formal-parameter overflow (reason=" +
-            BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
-            "). Disabling this recurrent CUDA path "
-            "for the rest of the process and using the native CPU recurrent "
-            "path directly for later batches. This is separate from VRAM "
-            "capacity.";
-        BackendDebugHooks::EmitDebugEvent(layer_name, disable_message);
-        spdlog::warn("{}", disable_message);
+void RequireRank3(const Tensor& tensor, const char* operation) {
+    if (tensor.Shape().size() != 3) {
+        throw std::invalid_argument(std::string(operation) + " expects a rank-3 sequence tensor");
     }
 }
 
-bool ShouldUseArrayFireRecurrentForward(
-    RecurrentLayerKind kind,
-    size_t batch_size,
-    size_t seq_len,
-    size_t input_size,
-    int hidden_size,
-    int num_layers,
-    bool bidirectional) {
-    if (recurrent_utils_detail::IsNativeRecurrentForwardForcedForTesting()) {
-        return false;
-    }
+}  // namespace
+
+Tensor ReverseTime(const Tensor& sequence, bool batch_first) {
+    RequireRank3(sequence, "ReverseTime");
+#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        if (af::getActiveBackend() != AF_BACKEND_CUDA) {
-            return true;
-        }
-    } catch (const af::exception&) {
-        return true;
+        return Tensor::FromSemanticArray(af::flip(sequence.GetSemanticArray(), batch_first ? 1 : 0),
+                                         sequence.Shape());
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent time reversal failed on the ArrayFire device: ") +
+                                 e.what());
     }
-
-    auto& disabled_after_failure = RecurrentFailureDisableFlag(kind);
-    if (disabled_after_failure.load()) {
-        static std::atomic<bool> warned_disabled_lstm{false};
-        static std::atomic<bool> warned_disabled_gru{false};
-        std::atomic<bool>& warned =
-            kind == RecurrentLayerKind::LSTM ? warned_disabled_lstm : warned_disabled_gru;
-        if (!warned.exchange(true)) {
-            spdlog::warn(
-                "CUDA recurrent placement: ArrayFire {} forward is disabled "
-                "after a previous CUDA generated-kernel formal-parameter "
-                "overflow; runtime is using the native CPU recurrent path "
-                "directly for this process.",
-                RecurrentKindName(kind));
-        }
-        return false;
-    }
-
-    RecurrentCudaPlacementRequest request;
-    request.kind = kind;
-    request.batch_size = batch_size;
-    request.seq_len = seq_len;
-    request.input_size = input_size;
-    request.hidden_size = static_cast<size_t>(std::max(1, hidden_size));
-    request.num_layers = static_cast<size_t>(std::max(1, num_layers));
-    request.bidirectional = bidirectional;
-    request.return_sequences = false;
-
-    const auto decision = EvaluateRecurrentCudaPlacement(request);
-    if (decision.should_attempt_arrayfire_cuda) {
-        return true;
-    }
-
-    static std::atomic<bool> warned_lstm{false};
-    static std::atomic<bool> warned_gru{false};
-    std::atomic<bool>& warned =
-        kind == RecurrentLayerKind::LSTM ? warned_lstm : warned_gru;
-    if (!warned.exchange(true)) {
-        const std::string reason =
-            "CUDA recurrent preflight: skipping ArrayFire " +
-            decision.layer_name + " forward. " + decision.reason +
-            " Runtime is using the native CPU recurrent path directly to avoid "
-            "repeated failed GPU compiles. To keep this layer on GPU, reduce "
-            "hidden_size/sequence length/bidirectionality, or replace this "
-            "path with a fused native recurrent CUDA kernel.";
-        BackendDebugHooks::EmitDebugEvent(decision.layer_name + "Layer", reason);
-        spdlog::warn("{}", reason);
-    }
-    return false;
+#else
+    (void)batch_first;
+    ThrowWithoutArrayFire("Recurrent time reversal");
+#endif
 }
 
-} // namespace cyxwiz
-
+Tensor JoinFeatures(const Tensor& first, const Tensor& second) {
+    RequireRank3(first, "JoinFeatures");
+    RequireRank3(second, "JoinFeatures");
+    if (first.Shape()[0] != second.Shape()[0] || first.Shape()[1] != second.Shape()[1]) {
+        throw std::invalid_argument("JoinFeatures: sequences differ outside the feature axis");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        return Tensor::FromSemanticArray(
+            af::join(2, first.GetSemanticArray(), second.GetSemanticArray()),
+            {first.Shape()[0], first.Shape()[1], first.Shape()[2] + second.Shape()[2]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent feature join failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent feature join");
 #endif
+}
+
+Tensor SliceFeatures(const Tensor& sequence, size_t offset, size_t width) {
+    RequireRank3(sequence, "SliceFeatures");
+    const auto& shape = sequence.Shape();
+    if (width == 0 || offset + width > shape[2]) {
+        throw std::invalid_argument("SliceFeatures: feature range is outside the sequence");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array sliced = sequence.GetSemanticArray()(
+            af::span, af::span,
+            af::seq(static_cast<double>(offset), static_cast<double>(offset + width - 1)));
+        return Tensor::FromSemanticArray(af::moddims(sliced, af::dim4(static_cast<dim_t>(shape[0]),
+                                                                     static_cast<dim_t>(shape[1]),
+                                                                     static_cast<dim_t>(width))),
+                                         {shape[0], shape[1], width});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent feature slice failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent feature slice");
+#endif
+}
+
+Tensor LastTimeStep(const Tensor& sequence) {
+    RequireRank3(sequence, "LastTimeStep");
+    const auto& shape = sequence.Shape();
+    if (shape[1] == 0) {
+        throw std::invalid_argument("LastTimeStep: the sequence has no time steps");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array last =
+            sequence.GetSemanticArray()(af::span, static_cast<int>(shape[1] - 1), af::span);
+        return Tensor::FromSemanticArray(
+            af::moddims(last, af::dim4(static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[2]))),
+            {shape[0], shape[2]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent last-step slice failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent last-step slice");
+#endif
+}
+
+Tensor ExpandLastTimeStep(const Tensor& last_step_gradient, size_t seq_len) {
+    const auto& shape = last_step_gradient.Shape();
+    if (shape.size() != 2 || seq_len == 0) {
+        throw std::invalid_argument("ExpandLastTimeStep expects a [batch, features] gradient");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const dim_t batch = static_cast<dim_t>(shape[0]);
+        const dim_t features = static_cast<dim_t>(shape[1]);
+        const af::array last = af::moddims(last_step_gradient.GetSemanticArray(),
+                                           af::dim4(batch, 1, features));
+        af::array expanded = last;
+        if (seq_len > 1) {
+            expanded = af::join(1, af::constant(0.0f, af::dim4(batch, static_cast<dim_t>(seq_len - 1),
+                                                               features)),
+                                last);
+        }
+        return Tensor::FromSemanticArray(expanded, {shape[0], seq_len, shape[1]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(
+            std::string("Recurrent last-step gradient expansion failed on the ArrayFire device: ") +
+            e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent last-step gradient expansion");
+#endif
+}
+
+Tensor MakeDropoutMask(const std::vector<size_t>& shape, float dropout) {
+    if (!(dropout > 0.0f && dropout < 1.0f) || shape.size() != 3) {
+        throw std::invalid_argument("MakeDropoutMask expects 0 < dropout < 1 and a rank-3 shape");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array keep =
+            (af::randu(af::dim4(static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
+                                static_cast<dim_t>(shape[2])),
+                       f32) >= dropout)
+                .as(f32);
+        return Tensor::FromSemanticArray(keep / (1.0f - dropout), shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent dropout mask failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent dropout");
+#endif
+}
+
+Tensor StateAt(const Tensor& states, size_t index, const char* what) {
+    const auto& shape = states.Shape();
+    if (shape.size() != 3 || index >= shape[0]) {
+        throw std::invalid_argument(std::string(what) +
+                                    " must be [layers * directions, batch, hidden]");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array state = states.GetSemanticArray()(static_cast<int>(index), af::span, af::span);
+        return Tensor::FromSemanticArray(
+            af::moddims(state, af::dim4(1, static_cast<dim_t>(shape[1]), static_cast<dim_t>(shape[2]))),
+            {1, shape[1], shape[2]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent state slice failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent state slice");
+#endif
+}
+
+Tensor StackStates(const std::vector<Tensor>& states) {
+    if (states.empty()) {
+        throw std::invalid_argument("StackStates needs at least one state");
+    }
+    const auto& shape = states.front().Shape();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        size_t count = 0;
+        af::array stacked;
+        for (const Tensor& state : states) {
+            if (state.Shape().size() != 3 || state.Shape()[1] != shape[1] ||
+                state.Shape()[2] != shape[2]) {
+                throw std::invalid_argument("StackStates: states differ in batch or hidden size");
+            }
+            const af::array values = state.GetSemanticArray();
+            stacked = count == 0 ? values : af::join(0, stacked, values);
+            count += state.Shape()[0];
+        }
+        return Tensor::FromSemanticArray(stacked, {count, shape[1], shape[2]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("Recurrent state stacking failed on the ArrayFire device: ") +
+                                 e.what());
+    }
+#else
+    ThrowWithoutArrayFire("Recurrent state stacking");
+#endif
+}
+
+}  // namespace cyxwiz::recurrent_detail

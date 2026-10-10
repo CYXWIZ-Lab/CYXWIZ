@@ -1,12 +1,9 @@
 #include "cyxwiz/layers/recurrent.h"
-#include "cyxwiz/backend_placement_observation.h"
-#include "cyxwiz/debug_hooks.h"
 #include "cyxwiz/neural_provider.h"
-#include "cyxwiz/recurrent_cuda_placement.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
 
-#include <atomic>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -15,185 +12,144 @@
 namespace cyxwiz {
 
 Tensor GRULayer::Backward(const Tensor& grad_output) {
-    // tofix68 P3: when Forward ran through the native provider, the
-    // CPU/AF caches are empty by design; gradients come from the
-    // provider's self-contained recompute+BPTT op. On provider failure,
-    // record evidence, disable the provider for this layer instance, and
-    // recompute Forward through the conventional paths so the CPU BPTT
-    // below has its caches (mirror of LSTMLayer::Backward, P2).
+    if (bidirectional_) {
+        return recurrent_detail::BidirectionalBackward(
+            forward_levels_, reverse_levels_, grad_output, batch_first_,
+            static_cast<size_t>(hidden_size_), dropout_masks_);
+    }
     if (provider_forward_used_) {
         provider_forward_used_ = false;
-        const auto& in_shape = cached_input_.Shape();
-        NeuralOpRequest provider_request;
-        provider_request.target = CaptureCurrentNeuralDeviceTarget();
-        provider_request.op = NeuralOp::GruBackward;
-        provider_request.training = true;
-        provider_request.dtype = DataType::Float32;
-        provider_request.batch = in_shape[0];
-        provider_request.seq = in_shape[1];
-        provider_request.input = in_shape[2];
-        provider_request.hidden = static_cast<size_t>(hidden_size_);
-        provider_request.layers = static_cast<size_t>(num_layers_);
-        if (auto provider = NeuralProviderRegistry::Instance()
-                                .FindSupporting(provider_request)) {
-            const size_t gate_width =
-                static_cast<size_t>(3 * hidden_size_);
-            const size_t hidden = static_cast<size_t>(hidden_size_);
-            Tensor grad_input(in_shape);
-            NeuralOpBuffers buffers;
-            buffers.inputs = {&cached_input_, &grad_output};
-            buffers.outputs = {&grad_input};
-            for (size_t l = 0; l < static_cast<size_t>(num_layers_); ++l) {
-                const size_t in = l == 0 ? in_shape[2] : hidden;
-                grad_W_ih_[l] = Tensor::Zeros({gate_width, in});
-                grad_W_hh_[l] = Tensor::Zeros({gate_width, hidden});
-                grad_b_ih_[l] = Tensor::Zeros({gate_width});
-                grad_b_hh_[l] = Tensor::Zeros({gate_width});
-                buffers.weights.push_back(&W_ih_[l]);
-                buffers.weights.push_back(&W_hh_[l]);
-                buffers.weights.push_back(&b_ih_[l]);
-                buffers.weights.push_back(&b_hh_[l]);
-                buffers.gradients.push_back(&grad_W_ih_[l]);
-                buffers.gradients.push_back(&grad_W_hh_[l]);
-                buffers.gradients.push_back(&grad_b_ih_[l]);
-                buffers.gradients.push_back(&grad_b_hh_[l]);
-            }
-            const auto status =
-                provider->Execute(provider_request, buffers);
-            if (status.ok) {
-                return grad_input;
-            }
-            RecurrentCudaPlacementRequest evidence_request;
-            evidence_request.kind = RecurrentLayerKind::GRU;
-            evidence_request.batch_size = in_shape[0];
-            evidence_request.seq_len = in_shape[1];
-            evidence_request.input_size = in_shape[2];
-            evidence_request.hidden_size =
-                static_cast<size_t>(hidden_size_);
-            RecordRecurrentCudaPlacementObservation(
-                evidence_request,
-                BackendFallbackReasonName(status.reason),
-                BackendPlacementObservationSource::RuntimeFallback,
-                "native provider gru_backward failed: " + status.detail);
-            spdlog::warn(
-                "GRULayer::Backward: native provider failed (reason={}), "
-                "recomputing through the conventional path: {}",
-                BackendFallbackReasonName(status.reason), status.detail);
+        Tensor grad_input;
+        if (TryProviderBackward(grad_output, grad_input)) {
+            return grad_input;
         }
-        // Recompute Forward with the provider disabled so the CPU BPTT
-        // below has valid caches for THIS input.
+        // The provider forward left no device caches: run the ArrayFire
+        // forward for this input and stay off the provider for this layer.
         provider_disabled_after_failure_ = true;
-        Forward(cached_input_);
+        ForwardArrayFire(cached_input_, false);
     }
+    return BackwardArrayFire(grad_output);
+}
 
-    // Empty caches mean Forward was never called; return zeros sized by
-    // the input we last saw so upstream grad flow is dimension-safe
-    // rather than throwing. Mirror of LSTMLayer::Backward's guard.
-    if (cached_inputs_.empty() || cached_gates_.empty() ||
-        cached_hidden_states_.empty()) {
-        static std::atomic<bool> warned_once{false};
-        if (!warned_once.exchange(true)) {
-            spdlog::warn("GRULayer::Backward: caches empty (Forward not run?) "
-                         "— returning zero gradients. This warning fires once.");
-        }
-        if (cached_input_.NumElements() > 0) {
-            return Tensor::Zeros(cached_input_.Shape());
-        }
-        return Tensor::Zeros(grad_output.Shape());
+bool GRULayer::TryProviderBackward(const Tensor& grad_output, Tensor& grad_input) {
+    const auto& in_shape = cached_input_.Shape();
+    NeuralOpRequest provider_request;
+    provider_request.target = CaptureCurrentNeuralDeviceTarget();
+    provider_request.op = NeuralOp::GruBackward;
+    provider_request.training = true;
+    provider_request.dtype = DataType::Float32;
+    provider_request.batch = in_shape[0];
+    provider_request.seq = in_shape[1];
+    provider_request.input = in_shape[2];
+    provider_request.hidden = static_cast<size_t>(hidden_size_);
+    provider_request.layers = static_cast<size_t>(num_layers_);
+    auto provider = NeuralProviderRegistry::Instance().FindSupporting(provider_request);
+    if (!provider) {
+        return false;
     }
+    const size_t gate_width = static_cast<size_t>(3 * hidden_size_);
+    const size_t hidden = static_cast<size_t>(hidden_size_);
+    Tensor result(in_shape);
+    NeuralOpBuffers buffers;
+    buffers.inputs = {&cached_input_, &grad_output};
+    buffers.outputs = {&result};
+    for (size_t l = 0; l < static_cast<size_t>(num_layers_); ++l) {
+        const size_t in = l == 0 ? in_shape[2] : hidden;
+        grad_W_ih_[l] = Tensor::Zeros({gate_width, in});
+        grad_W_hh_[l] = Tensor::Zeros({gate_width, hidden});
+        grad_b_ih_[l] = Tensor::Zeros({gate_width});
+        grad_b_hh_[l] = Tensor::Zeros({gate_width});
+        buffers.weights.push_back(&W_ih_[l]);
+        buffers.weights.push_back(&W_hh_[l]);
+        buffers.weights.push_back(&b_ih_[l]);
+        buffers.weights.push_back(&b_hh_[l]);
+        buffers.gradients.push_back(&grad_W_ih_[l]);
+        buffers.gradients.push_back(&grad_W_hh_[l]);
+        buffers.gradients.push_back(&grad_b_ih_[l]);
+        buffers.gradients.push_back(&grad_b_hh_[l]);
+    }
+    const auto status = provider->Execute(provider_request, buffers);
+    if (!status.ok) {
+        spdlog::warn("GRULayer::Backward: native provider failed (reason={}), "
+                     "recomputing on the ArrayFire recurrence: {}",
+                     BackendFallbackReasonName(status.reason), status.detail);
+        return false;
+    }
+    grad_input = result;
+    return true;
+}
 
+// GRU BPTT. Per step, with dh = upstream + carry from t + 1:
+//   dn = dh (1 - z), dz = dh (h_prev - n), carry dh z
+//   dn_pre = dn (1 - n^2), dr = dn_pre hn, d_hn = dn_pre r
+//   dgates_x = [dr r(1-r) | dz z(1-z) | dn_pre]   (x-side projections)
+//   dgates_h = [dr r(1-r) | dz z(1-z) | d_hn  ]   (h-side; the n slot differs)
+Tensor GRULayer::BackwardArrayFire(const Tensor& grad_output) {
+    if (cached_inputs_.size() != static_cast<size_t>(num_layers_)) {
+        throw std::runtime_error("GRULayer::Backward needs a Forward first");
+    }
+    const auto& top_h = cached_hidden_states_.back().Shape();  // [seq + 1, batch, H]
+    const size_t seq = top_h[0] - 1;
+    const size_t batch = top_h[1];
+    const size_t hidden = static_cast<size_t>(hidden_size_);
+    const std::vector<size_t> expected_grad = batch_first_ ? std::vector<size_t>{batch, seq, hidden}
+                                                           : std::vector<size_t>{seq, batch, hidden};
+    if (grad_output.Shape() != expected_grad) {
+        throw std::invalid_argument("GRULayer::Backward gradient does not match the Forward output shape");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!bidirectional_) try {
-        af::array upstream = TensorToAf3DRowMajor(grad_output);
-        if (batch_first_) {
-            upstream = af::reorder(upstream, 1, 0, 2);
-        }
-
-        const auto& input_shape = cached_input_.Shape();
-        size_t batch_size, seq_len, input_dim;
-        if (batch_first_) {
-            batch_size = input_shape[0];
-            seq_len = input_shape[1];
-            input_dim = input_shape[2];
-        } else {
-            seq_len = input_shape[0];
-            batch_size = input_shape[1];
-            input_dim = input_shape[2];
-        }
-
+    try {
+        const int seq_i = CheckedIntDim(seq, "seq_len");
+        const int batch_i = CheckedIntDim(batch, "batch_size");
         const int H = hidden_size_;
         const int G = 3 * H;
 
-        if (static_cast<int>(grad_W_ih_.size()) < num_layers_) grad_W_ih_.resize(num_layers_);
-        if (static_cast<int>(grad_W_hh_.size()) < num_layers_) grad_W_hh_.resize(num_layers_);
-        if (static_cast<int>(grad_b_ih_.size()) < num_layers_) grad_b_ih_.resize(num_layers_);
-        if (static_cast<int>(grad_b_hh_.size()) < num_layers_) grad_b_hh_.resize(num_layers_);
-
-        af::array layer_grad = upstream;
+        af::array layer_grad = grad_output.GetSemanticArray();
+        if (batch_first_) {
+            layer_grad = af::reorder(layer_grad, 1, 0, 2);
+        }
 
         for (int layer = num_layers_ - 1; layer >= 0; --layer) {
-            const size_t layer_input_size = (layer == 0)
-                ? input_dim : static_cast<size_t>(H);
+            const af::array W_ih = W_ih_[layer].GetSemanticArray();
+            const af::array W_hh = W_hh_[layer].GetSemanticArray();
+            const af::array input_cache = cached_inputs_[layer].GetSemanticArray();
+            const af::array gate_cache = cached_gates_[layer].GetSemanticArray();
+            const af::array h_cache = cached_hidden_states_[layer].GetSemanticArray();
+            const size_t in = cached_inputs_[layer].Shape()[2];
+            const int in_i = CheckedIntDim(in, "layer_input_size");
 
-            af::array W_ih = TensorToAf(W_ih_[layer]);
-            af::array W_hh = TensorToAf(W_hh_[layer]);
-            af::array input_cache = TensorToAf3DRowMajor(cached_inputs_[layer]);
-            af::array gate_cache = TensorToAf3DRowMajor(cached_gates_[layer]);
-            af::array h_cache = TensorToAf3DRowMajor(cached_hidden_states_[layer]);
-
-            af::array dW_ih = af::constant(0.0f, af::dim4(G, static_cast<dim_t>(layer_input_size)));
-            af::array dW_hh = af::constant(0.0f, af::dim4(G, static_cast<dim_t>(H)));
+            af::array dW_ih = af::constant(0.0f, af::dim4(G, in_i));
+            af::array dW_hh = af::constant(0.0f, af::dim4(G, H));
             af::array db_ih = af::constant(0.0f, af::dim4(G));
             af::array db_hh = af::constant(0.0f, af::dim4(G));
-            af::array d_layer_input = af::constant(
-                0.0f, af::dim4(seq_len, batch_size, static_cast<dim_t>(layer_input_size)));
-            af::array dh_next = af::constant(0.0f, af::dim4(batch_size, H));
-            af::array ones = af::constant(1.0f, af::dim4(batch_size, H));
-            const int batch_i = CheckedIntDim(static_cast<size_t>(batch_size), "batch_size");
-            const int layer_input_i = CheckedIntDim(layer_input_size, "layer_input_size");
-            const int hidden_i = CheckedIntDim(static_cast<size_t>(H), "hidden_size");
+            af::array d_layer_input = af::constant(0.0f, af::dim4(seq_i, batch_i, in_i));
+            af::array dh_next = af::constant(0.0f, af::dim4(batch_i, H));
 
-            for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
-                const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
-                af::array x_t = af::moddims(input_cache(t_idx, af::span, af::span),
-                                            af::dim4(batch_i, layer_input_i));
-                af::array gates_t = af::moddims(gate_cache(t_idx, af::span, af::span),
-                                                af::dim4(batch_i, 4 * hidden_i));
-                af::array h_prev = af::moddims(h_cache(t_idx, af::span, af::span),
-                                               af::dim4(batch_i, hidden_i));
-                af::array dh = af::moddims(layer_grad(t_idx, af::span, af::span),
-                                           af::dim4(batch_i, hidden_i));
-                dh = dh + dh_next;
+            for (int t = seq_i - 1; t >= 0; --t) {
+                const af::array x_t = af::moddims(input_cache(t, af::span, af::span), af::dim4(batch_i, in_i));
+                const af::array gates_t = af::moddims(gate_cache(t, af::span, af::span), af::dim4(batch_i, 4 * H));
+                const af::array h_prev = af::moddims(h_cache(t, af::span, af::span), af::dim4(batch_i, H));
+                const af::array dh =
+                    af::moddims(layer_grad(t, af::span, af::span), af::dim4(batch_i, H)) + dh_next;
 
-                af::array r = gates_t(af::span, af::seq(0, H - 1));
-                af::array z = gates_t(af::span, af::seq(H, 2 * H - 1));
-                af::array n = gates_t(af::span, af::seq(2 * H, 3 * H - 1));
-                af::array hn_pre = gates_t(af::span, af::seq(3 * H, 4 * H - 1));
+                const af::array r = gates_t(af::span, af::seq(0, H - 1));
+                const af::array z = gates_t(af::span, af::seq(H, 2 * H - 1));
+                const af::array n = gates_t(af::span, af::seq(2 * H, 3 * H - 1));
+                const af::array hn_pre = gates_t(af::span, af::seq(3 * H, 4 * H - 1));
 
-                af::array dn = dh * (ones - z);
-                af::array dz = dh * (h_prev - n);
-                af::array dh_prev_direct = dh * z;
-
-                af::array dn_pre = dn * (ones - n * n);
-                af::array dr = dn_pre * hn_pre;
-                af::array d_hn_pre = dn_pre * r;
-
-                af::array d_r_pre = dr * r * (ones - r);
-                af::array d_z_pre = dz * z * (ones - z);
-
-                af::array dgates_x = af::join(1, d_r_pre, d_z_pre, dn_pre);
-                af::array dgates_h = af::join(1, d_r_pre, d_z_pre, d_hn_pre);
+                const af::array dn_pre = dh * (1.0f - z) * (1.0f - n * n);
+                const af::array d_r_pre = dn_pre * hn_pre * r * (1.0f - r);
+                const af::array d_z_pre = dh * (h_prev - n) * z * (1.0f - z);
+                const af::array dgates_x = af::join(1, d_r_pre, d_z_pre, dn_pre);
+                const af::array dgates_h = af::join(1, d_r_pre, d_z_pre, dn_pre * r);
 
                 dW_ih = dW_ih + af::matmul(af::transpose(dgates_x), x_t);
                 dW_hh = dW_hh + af::matmul(af::transpose(dgates_h), h_prev);
                 db_ih = db_ih + af::moddims(af::sum(dgates_x, 0), af::dim4(G));
                 db_hh = db_hh + af::moddims(af::sum(dgates_h, 0), af::dim4(G));
-
-                af::array dx_t = af::matmul(dgates_x, W_ih);
-                d_layer_input(t_idx, af::span, af::span) =
-                    af::moddims(dx_t, af::dim4(1, batch_i, layer_input_i));
-
-                dh_next = dh_prev_direct + af::matmul(dgates_h, W_hh);
+                d_layer_input(t, af::span, af::span) =
+                    af::moddims(af::matmul(dgates_x, W_ih), af::dim4(1, batch_i, in_i));
+                dh_next = dh * z + af::matmul(dgates_h, W_hh);
                 dW_ih.eval();
                 dW_hh.eval();
                 db_ih.eval();
@@ -202,16 +158,17 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
                 dh_next.eval();
             }
 
-            dW_ih.eval();
-            dW_hh.eval();
-            db_ih.eval();
-            db_hh.eval();
-            d_layer_input.eval();
-            grad_W_ih_[layer] = AfToTensor(dW_ih);
-            grad_W_hh_[layer] = AfToTensor(dW_hh);
-            grad_b_ih_[layer] = AfToTensor(db_ih);
-            grad_b_hh_[layer] = AfToTensor(db_hh);
+            const size_t gates_size = static_cast<size_t>(G);
+            grad_W_ih_[layer] = Tensor::FromSemanticArray(dW_ih, {gates_size, in});
+            grad_W_hh_[layer] = Tensor::FromSemanticArray(dW_hh, {gates_size, hidden});
+            grad_b_ih_[layer] = Tensor::FromSemanticArray(db_ih, {gates_size});
+            grad_b_hh_[layer] = Tensor::FromSemanticArray(db_hh, {gates_size});
 
+            // The layer below fed this one through its dropout mask.
+            if (layer > 0 && static_cast<size_t>(layer - 1) < dropout_masks_.size()) {
+                d_layer_input = d_layer_input * dropout_masks_[static_cast<size_t>(layer - 1)].GetSemanticArray();
+            }
+            d_layer_input.eval();
             layer_grad = d_layer_input;
         }
 
@@ -219,258 +176,14 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
             layer_grad = af::reorder(layer_grad, 1, 0, 2);
         }
         layer_grad.eval();
-
-        return AfToTensor3DRowMajor(layer_grad);
+        return Tensor::FromSemanticArray(layer_grad, cached_input_.Shape());
     } catch (const af::exception& e) {
-        const BackendFallbackReason reason =
-            ClassifyArrayFireBackendFallbackReason(e.what());
-        const std::string context = BuildArrayFireBackendFallbackContext(
-            BuildTensorShapeContext("grad_output", grad_output.Shape()));
-        if (reason == BackendFallbackReason::CudaJitParamOverflow) {
-            const auto& input_shape = cached_input_.Shape();
-            RecurrentCudaPlacementRequest request;
-            request.kind = RecurrentLayerKind::GRU;
-            request.batch_size = batch_first_ ? input_shape[0] : input_shape[1];
-            request.seq_len = batch_first_ ? input_shape[1] : input_shape[0];
-            request.input_size = input_shape.size() >= 3 ? input_shape[2] : 0;
-            request.hidden_size =
-                static_cast<size_t>(hidden_size_ > 0 ? hidden_size_ : 1);
-            request.num_layers =
-                static_cast<size_t>(num_layers_ > 0 ? num_layers_ : 1);
-            request.bidirectional = bidirectional_;
-            request.return_sequences = false;
-            RecordRecurrentCudaPlacementObservation(
-                request,
-                BackendFallbackReasonName(reason),
-                BackendPlacementObservationSource::RuntimeFallback,
-                "GRULayer::Backward runtime ArrayFire CUDA failed with "
-                "generated-kernel formal-parameter overflow. Future compiler "
-                "preflight should route the same recurrent shape to CPU.");
-        }
-        if (ShouldLogArrayFireBackendFallbackOnce("GRULayer::Backward", reason, context)) {
-            const std::string fallback_message =
-                BuildArrayFireBackendFallbackMessage(
-                    "GRULayer::Backward",
-                    reason,
-                    reason != BackendFallbackReason::CudaJitParamOverflow,
-                    e.what(),
-                    context);
-            BackendDebugHooks::EmitDebugEvent(
-                "GRULayer::Backward",
-                fallback_message +
-                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-            spdlog::warn("{}", fallback_message);
-        }
+        throw std::runtime_error(std::string("GRULayer::Backward failed on the ArrayFire device: ") +
+                                 e.what());
     }
+#else
+    recurrent_detail::ThrowWithoutArrayFire("GRULayer");
 #endif
-
-    // CPU BPTT for GRU. Reads the row-major caches populated by CPU Forward:
-    //   cached_inputs_[L]          [seq_len, batch, layer_input_size]
-    //   cached_gates_[L]           [seq_len, batch, 4 * H]
-    //                              layout per (t, b):
-    //                                [0..H)   r post-sigmoid
-    //                                [H..2H)  z post-sigmoid
-    //                                [2H..3H) n post-tanh
-    //                                [3H..4H) hn_pre   (= b_hh_n + W_hh_n @ h_prev)
-    //   cached_hidden_states_[L]   [seq_len + 1, batch, H]   (idx 0 = h_0)
-    //
-    // GRU forward equations:
-    //     r       = sigmoid(x_proj_r + h_proj_r)
-    //     z       = sigmoid(x_proj_z + h_proj_z)
-    //     n       = tanh(x_proj_n + r * hn_pre)        // hn_pre = h_proj_n
-    //     h_new   = (1 - z) * n + z * h_prev
-    //
-    // BPTT — per timestep, given dh_total = dL/dh_new + dh carry from t+1:
-    //     dn       = dh_total * (1 - z)
-    //     dz       = dh_total * (h_prev - n)
-    //     dh_prev_direct = dh_total * z
-    //
-    //     dn_pre   = dn * (1 - n*n)                    // tanh'
-    //     d_x_proj_n = dn_pre
-    //     dr       = dn_pre * hn_pre                   // through r * hn_pre
-    //     d_hn_pre = dn_pre * r                        // through r * hn_pre
-    //
-    //     d_r_pre  = dr * r * (1 - r)                  // sigmoid'
-    //     d_z_pre  = dz * z * (1 - z)
-    //
-    //     dgates_x = [d_r_pre | d_z_pre | d_x_proj_n]  // x-side projections
-    //     dgates_h = [d_r_pre | d_z_pre | d_hn_pre  ]  // h-side projections
-    //                                                  // (n-slot differs!)
-    //
-    //     dW_ih += outer(dgates_x, x);   db_ih += dgates_x
-    //     dW_hh += outer(dgates_h, h_prev); db_hh += dgates_h
-    //     dx     = dgates_x @ W_ih
-    //     dh_prev = dh_prev_direct + dgates_h @ W_hh
-    //
-    // Note: dgates_x and dgates_h DIFFER in the n-slot. The legacy AF
-    // backward used the same dgates for both sides which is wrong for GRU
-    // (and additionally zeroed the r-slot, so reset gate weights never
-    // updated). This implementation handles both correctly.
-
-    const auto& input_shape = cached_input_.Shape();
-    size_t batch_size, seq_len, input_dim;
-    if (batch_first_) {
-        batch_size = input_shape[0];
-        seq_len    = input_shape[1];
-        input_dim  = input_shape[2];
-    } else {
-        seq_len    = input_shape[0];
-        batch_size = input_shape[1];
-        input_dim  = input_shape[2];
-    }
-
-    const int H = hidden_size_;
-    const int G = 3 * H;
-
-    if (static_cast<int>(grad_W_ih_.size()) < num_layers_) grad_W_ih_.resize(num_layers_);
-    if (static_cast<int>(grad_W_hh_.size()) < num_layers_) grad_W_hh_.resize(num_layers_);
-    if (static_cast<int>(grad_b_ih_.size()) < num_layers_) grad_b_ih_.resize(num_layers_);
-    if (static_cast<int>(grad_b_hh_.size()) < num_layers_) grad_b_hh_.resize(num_layers_);
-
-    // Convert grad_output (in user's batch_first/seq_first layout) into a
-    // canonical [seq_len, batch, H] row-major scratch buffer for the
-    // top-layer gradient.
-    const float* dout = grad_output.Data<float>();
-    std::vector<float> layer_grad(seq_len * batch_size * H, 0.0f);
-    for (size_t t = 0; t < seq_len; ++t) {
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (int i = 0; i < H; ++i) {
-                float g = batch_first_
-                    ? dout[b * seq_len * H + t * H + i]
-                    : dout[t * batch_size * H + b * H + i];
-                layer_grad[t * batch_size * H + b * H + i] = g;
-            }
-        }
-    }
-
-    std::vector<float> d_layer_input;
-
-    for (int layer = num_layers_ - 1; layer >= 0; --layer) {
-        const size_t layer_input_size = (layer == 0)
-            ? input_dim : static_cast<size_t>(H);
-
-        const float* W_ih = W_ih_[layer].Data<float>();       // [3H, input_size]
-        const float* W_hh = W_hh_[layer].Data<float>();       // [3H, H]
-        const float* in_cache = cached_inputs_[layer].Data<float>();
-        const float* gate_cache = cached_gates_[layer].Data<float>();  // 4H per (t,b)
-        const float* h_cache = cached_hidden_states_[layer].Data<float>();
-
-        std::vector<float> dW_ih(G * layer_input_size, 0.0f);
-        std::vector<float> dW_hh(G * H, 0.0f);
-        std::vector<float> db_ih(G, 0.0f);
-        std::vector<float> db_hh(G, 0.0f);
-
-        d_layer_input.assign(seq_len * batch_size * layer_input_size, 0.0f);
-
-        for (size_t b = 0; b < batch_size; ++b) {
-            std::vector<float> dh_next(H, 0.0f);
-
-            for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
-                const size_t gate_off = t * batch_size * (4 * H) + b * (4 * H);
-                const size_t h_prev_off = t * batch_size * H + b * H;        // cache idx t
-                const size_t in_off = t * batch_size * layer_input_size + b * layer_input_size;
-                const size_t lg_off = t * batch_size * H + b * H;
-
-                std::vector<float> dgates_x(G, 0.0f);
-                std::vector<float> dgates_h(G, 0.0f);
-
-                for (int i = 0; i < H; ++i) {
-                    const float r       = gate_cache[gate_off + i];
-                    const float z       = gate_cache[gate_off + H + i];
-                    const float n       = gate_cache[gate_off + 2 * H + i];
-                    const float hn_pre  = gate_cache[gate_off + 3 * H + i];
-                    const float h_prev  = h_cache[h_prev_off + i];
-
-                    const float dh_total = layer_grad[lg_off + i] + dh_next[i];
-
-                    const float dn = dh_total * (1.0f - z);
-                    const float dz = dh_total * (h_prev - n);
-                    const float dh_prev_direct = dh_total * z;
-
-                    const float dn_pre = dn * (1.0f - n * n);
-                    const float d_x_proj_n = dn_pre;
-                    const float dr = dn_pre * hn_pre;
-                    const float d_hn_pre = dn_pre * r;
-
-                    const float d_r_pre = dr * r * (1.0f - r);
-                    const float d_z_pre = dz * z * (1.0f - z);
-
-                    dgates_x[i]            = d_r_pre;
-                    dgates_x[H + i]        = d_z_pre;
-                    dgates_x[2 * H + i]    = d_x_proj_n;
-
-                    dgates_h[i]            = d_r_pre;
-                    dgates_h[H + i]        = d_z_pre;
-                    dgates_h[2 * H + i]    = d_hn_pre;
-
-                    // Stash the direct (non-gate) carry; gate-side carry
-                    // gets added below from dgates_h @ W_hh.
-                    dh_next[i] = dh_prev_direct;
-                }
-
-                // Weight + bias accumulation.
-                //   dW_ih [G, layer_input_size] += outer(dgates_x, x_t)
-                //   dW_hh [G, H]                 += outer(dgates_h, h_prev)
-                for (int g = 0; g < G; ++g) {
-                    const float dgx = dgates_x[g];
-                    const float dgh = dgates_h[g];
-                    db_ih[g] += dgx;
-                    db_hh[g] += dgh;
-                    for (size_t k = 0; k < layer_input_size; ++k) {
-                        dW_ih[g * layer_input_size + k] += dgx * in_cache[in_off + k];
-                    }
-                    for (int k = 0; k < H; ++k) {
-                        dW_hh[g * H + k] += dgh * h_cache[h_prev_off + k];
-                    }
-                }
-
-                // dx_t = dgates_x @ W_ih   (shape [layer_input_size])
-                for (size_t k = 0; k < layer_input_size; ++k) {
-                    float s = 0.0f;
-                    for (int g = 0; g < G; ++g) {
-                        s += dgates_x[g] * W_ih[g * layer_input_size + k];
-                    }
-                    d_layer_input[in_off + k] = s;
-                }
-
-                // dh_prev (carries to t-1) = dh_prev_direct + dgates_h @ W_hh
-                for (int k = 0; k < H; ++k) {
-                    float s = 0.0f;
-                    for (int g = 0; g < G; ++g) {
-                        s += dgates_h[g] * W_hh[g * H + k];
-                    }
-                    dh_next[k] += s;
-                }
-            }
-        }
-
-        grad_W_ih_[layer] = Tensor({static_cast<size_t>(G), layer_input_size},
-                                   dW_ih.data());
-        grad_W_hh_[layer] = Tensor({static_cast<size_t>(G), static_cast<size_t>(H)},
-                                   dW_hh.data());
-        grad_b_ih_[layer] = Tensor({static_cast<size_t>(G)}, db_ih.data());
-        grad_b_hh_[layer] = Tensor({static_cast<size_t>(G)}, db_hh.data());
-
-        if (layer > 0) {
-            layer_grad = d_layer_input;
-        }
-    }
-
-    Tensor dx = Tensor::Zeros(cached_input_.Shape());
-    float* dx_data = dx.Data<float>();
-    for (size_t t = 0; t < seq_len; ++t) {
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t k = 0; k < input_dim; ++k) {
-                const float v = d_layer_input[t * batch_size * input_dim + b * input_dim + k];
-                if (batch_first_) {
-                    dx_data[b * seq_len * input_dim + t * input_dim + k] = v;
-                } else {
-                    dx_data[t * batch_size * input_dim + b * input_dim + k] = v;
-                }
-            }
-        }
-    }
-    return dx;
 }
 
 } // namespace cyxwiz

@@ -727,18 +727,13 @@ public:
     std::string GetName() const override;
 
 private:
+    // Batch-first LSTMLayer; a bidirectional one builds its forward and
+    // reverse directions on the device. Its layer{L}_X / layer{L}_X_reverse
+    // keys appear here as layer{L}.forward.X / layer{L}.reverse.X (saved
+    // models depend on these names); unidirectional keys pass through.
     std::unique_ptr<LSTMLayer> layer_;
-    // Split bidirectional path (2026-09-23, mirror of GRUModule): each level
-    // runs an independent forward and a time-reversed LSTMLayer whose
-    // outputs are concatenated, so bidirectional training uses the proven
-    // single-direction backward on both branches and each branch routes to
-    // the native neural provider on its own.
-    std::vector<std::unique_ptr<LSTMLayer>> forward_layers_;
-    std::vector<std::unique_ptr<LSTMLayer>> reverse_layers_;
-    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool bidirectional_;
     bool return_sequences_;
     // Cached full LSTM output shape [batch, seq_len, hidden*dirs] so
@@ -776,15 +771,12 @@ public:
     std::string GetName() const override;
 
 private:
+    // Same layout and key translation as LSTMModule.
     std::unique_ptr<GRULayer> layer_;
-    std::vector<std::unique_ptr<GRULayer>> forward_layers_;
-    std::vector<std::unique_ptr<GRULayer>> reverse_layers_;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool bidirectional_;
     bool return_sequences_;
-    bool split_bidirectional_path_ = false;
     std::vector<size_t> last_full_output_shape_;
 };
 
@@ -793,9 +785,9 @@ private:
  *
  * Mirrors LSTMModule: Keras-style `return_sequences=false` reduction to
  * the last timestep with symmetric gradient re-expansion in Backward.
- * Batch-first only. bidirectional=true uses the same split
- * forward/reverse path as LSTMModule/GRUModule (each branch a
- * single-direction RNNLayer, provider-routed on its own).
+ * Batch-first only. bidirectional=true splits each level into a forward
+ * and a time-reversed single-direction RNNLayer (each provider-routed on
+ * its own) joined on the feature axis on the device.
  */
 class CYXWIZ_API RNNModule : public Module {
 public:

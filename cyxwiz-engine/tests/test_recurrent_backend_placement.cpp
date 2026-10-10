@@ -396,49 +396,6 @@ int main() {
               "timeout",
           "timeout probe outcome name should expose a stable string");
     cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-    cyxwiz::RecurrentCudaPlacementRequest timeout_lstm_probe;
-    timeout_lstm_probe.kind = cyxwiz::RecurrentLayerKind::LSTM;
-    timeout_lstm_probe.batch_size = 16;
-    timeout_lstm_probe.seq_len = 8;
-    timeout_lstm_probe.input_size = 4;
-    timeout_lstm_probe.hidden_size = 4;
-    timeout_lstm_probe.deep_preflight = true;
-    timeout_lstm_probe.preflight_timeout_ms = 0;
-    cyxwiz::BackendPlacementObservation timeout_observation;
-    Check(cyxwiz::TryRunRecurrentCudaPreflightProbe(
-              timeout_lstm_probe,
-              timeout_observation),
-          "zero-budget preflight timeout should surface through legacy wrapper");
-    Check(timeout_observation.reason_code ==
-              cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout,
-          "zero-budget preflight timeout should record timeout reason");
-    Check(timeout_observation.source ==
-              cyxwiz::BackendPlacementObservationSource::PreflightProbe,
-          "zero-budget preflight timeout should record preflight source");
-    Check(timeout_observation.probe_outcome == "timeout",
-          "zero-budget preflight timeout should record timeout outcome");
-    Check(timeout_observation.probe_scope ==
-              cyxwiz::BackendPlacementProbeScope::DeepPreflight,
-          "zero-budget deep preflight should record deep preflight scope");
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-    cyxwiz::RecurrentCudaPlacementRequest unsupported_bidirectional_gru_probe;
-    unsupported_bidirectional_gru_probe.kind = cyxwiz::RecurrentLayerKind::GRU;
-    unsupported_bidirectional_gru_probe.batch_size = 16;
-    unsupported_bidirectional_gru_probe.seq_len = 8;
-    unsupported_bidirectional_gru_probe.input_size = 4;
-    unsupported_bidirectional_gru_probe.hidden_size = 4;
-    unsupported_bidirectional_gru_probe.bidirectional = true;
-    const auto gru_probe_result = cyxwiz::RunRecurrentCudaPreflightProbe(
-        unsupported_bidirectional_gru_probe);
-    Check(gru_probe_result.outcome ==
-              cyxwiz::BackendPlacementProbeOutcome::Unsupported,
-          "bidirectional GRU preflight should remain unsupported");
-    Check(gru_probe_result.reason_code ==
-              cyxwiz::BackendPlacementObservationReason::UnsupportedShape,
-          "unsupported GRU preflight should use a structured reason");
-    Check(!gru_probe_result.has_observation,
-          "unsupported GRU preflight should not create a failure observation");
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
         "Dense",
         "cuda",
@@ -811,8 +768,8 @@ int main() {
           "GRU graph should produce placement entries for Embedding, GRU, Dense");
     const auto gru_summary = gru_config.SummarizeBackendPlacements();
     Check(gru_summary.total == 3, "GRU placement summary should count all entries");
-    Check(gru_summary.gpu == 2, "GRU placement summary should count Embedding and Dense as GPU");
-    Check(gru_summary.cpu == 1, "GRU placement summary should count GRU as CPU");
+    Check(gru_summary.gpu == 3, "GRU placement summary should count every layer as device");
+    Check(gru_summary.cpu == 0, "GRU placement summary should have no CPU entries");
     Check(gru_summary.unknown == 0, "GRU placement summary should have no unknown entries");
 
     // tofix68 Studio RNN wiring: the simple RNN compiles as a CPU-backed
@@ -869,11 +826,10 @@ int main() {
     Check(gru_cpu_plan.compiler_fingerprint ==
               gru_config.compiler_placement_fingerprint,
           "executable plan should retain the compiler capability identity");
-    Check(!gru_cpu_plan.IsStrictlyExecutable(),
-          "strict preflight should reject the compiler-known native CPU GRU path");
-    Check(gru_cpu_plan.StrictBlockerSummary().find("GRU") !=
+    Check(gru_cpu_plan.StrictBlockerSummary().find("GRU") ==
               std::string::npos,
-          "strict preflight blocker should identify the GRU stage");
+          "strict preflight should accept the device GRU stage: " +
+              gru_cpu_plan.StrictBlockerSummary());
 
     cyxwiz::TrainingConfiguration dense_config;
     cyxwiz::CompiledLayer dense_layer;
@@ -1019,17 +975,13 @@ int main() {
     const auto* gru_placement = FindPlacement(gru_config, 4);
     Check(gru_placement != nullptr, "GRU placement entry should reference node 4");
     Check(gru_placement->node_type == "GRU", "GRU placement should name the layer");
-    Check(gru_placement->expected_backend == "CPU",
-          "GRU should be conservatively placed on CPU");
-    Check(gru_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "GRU placement status should be cpu");
+    Check(gru_placement->expected_backend == "ArrayFire active backend",
+          "GRU should run on the active ArrayFire device");
+    Check(gru_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "GRU placement status should be gpu");
     Check(gru_placement->reason_code ==
-              cyxwiz::RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired,
-          "GRU placement should use the shared reason code");
-    Check(gru_placement->explanation.find("batch_size=64") != std::string::npos,
-          "GRU placement explanation should include compiled batch size");
-    Check(gru_placement->explanation.find("seq_len=64") != std::string::npos,
-          "GRU placement explanation should include inferred sequence length");
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "GRU placement should use the ArrayFire tensor reason code");
     Check(gru_placement->declared_execution_mode == "staged_arrayfire",
           "recurrent placement should carry the declared staged_arrayfire "
           "execution mode");
@@ -1049,10 +1001,6 @@ int main() {
               "verdict when a provider is registered");
     }
 #endif
-    Check(HasWarningText(
-              gru_config,
-              cyxwiz::RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired),
-          "GRU CPU placement should surface as a compiler warning");
 
     const auto* gru_dense_placement = FindPlacement(gru_config, 5);
     Check(gru_dense_placement != nullptr,
@@ -1074,138 +1022,13 @@ int main() {
     const auto* lstm_placement = FindPlacement(lstm_config, 4);
     Check(lstm_placement != nullptr, "LSTM placement entry should reference node 4");
     Check(lstm_placement->node_type == "LSTM", "LSTM placement should name the layer");
-    Check(lstm_placement->expected_backend == "ArrayFire CUDA",
-          "small single-direction LSTM should remain GPU-eligible");
+    Check(lstm_placement->expected_backend == "ArrayFire active backend",
+          "LSTM should run on the active ArrayFire device");
     Check(lstm_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "LSTM placement status should be gpu");
     Check(lstm_placement->reason_code ==
-              cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator,
-          "LSTM placement should use the shared allow reason code");
-    Check(!HasWarningText(
-              lstm_config,
-              cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator),
-          "GPU-eligible LSTM placement should not create a warning");
-
-    cyxwiz::RecurrentCudaPlacementRequest observed_lstm;
-    observed_lstm.kind = cyxwiz::RecurrentLayerKind::LSTM;
-    observed_lstm.batch_size = 64;
-    observed_lstm.seq_len = 64;
-    observed_lstm.input_size = 64;
-    observed_lstm.hidden_size = 8;
-    observed_lstm.num_layers = 1;
-    observed_lstm.bidirectional = false;
-    observed_lstm.return_sequences = false;
-    cyxwiz::RecordRecurrentCudaPlacementObservation(
-        observed_lstm,
-        cyxwiz::BackendPlacementObservationReason::CudaJitParamOverflow,
-        cyxwiz::BackendPlacementObservationSource::Test,
-        "test observation");
-    cyxwiz::BackendPlacementObservation direct_observation;
-    Check(cyxwiz::TryGetBackendPlacementObservation(
-              "LSTM",
-              "cuda",
-              cyxwiz::CurrentBackendPlacementDeviceSignature(),
-              "float32",
-              cyxwiz::BuildRecurrentCudaPlacementShapeSignature(observed_lstm),
-              direct_observation),
-          "recurrent observation should be keyed by active device signature");
-    Check(!cyxwiz::TryGetBackendPlacementObservation(
-              "LSTM",
-              "cuda",
-              "different-device",
-              "float32",
-              cyxwiz::BuildRecurrentCudaPlacementShapeSignature(observed_lstm),
-              direct_observation),
-          "recurrent observation should not match a different device signature");
-
-    auto cached_lstm_config =
-        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
-    const auto* cached_lstm_placement =
-        FindPlacement(cached_lstm_config, 4);
-    Check(cached_lstm_placement != nullptr,
-          "cached LSTM placement entry should reference node 4");
-    Check(cached_lstm_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "cached CUDA overflow should route previously GPU-eligible LSTM to CPU");
-    Check(cached_lstm_placement->reason_code ==
-              cyxwiz::RecurrentCudaPlacementReason::CudaJitParamOverflowRisk,
-          "cached CUDA overflow should use compiler placement overflow reason");
-    Check(cached_lstm_placement->explanation.find(
-              "previous runtime/probe observation") != std::string::npos,
-          "test-source LSTM placement should explain generic cache feedback");
-    Check(cached_lstm_placement->explanation.find("source=test") !=
-              std::string::npos,
-          "cached LSTM placement should include observation source");
-    Check(cached_lstm_placement->explanation.find("Device:") !=
-              std::string::npos,
-          "cached LSTM placement should include observation device");
-    Check(cached_lstm_placement->explanation.find("separate from VRAM") !=
-              std::string::npos,
-          "cached LSTM placement should distinguish kernel overflow from VRAM");
-    Check(cached_lstm_placement->observation_source ==
-              cyxwiz::BackendPlacementObservationSource::Test,
-          "cached LSTM placement should carry observation source metadata");
-    Check(cached_lstm_placement->observation_shape_signature.find("kind=LSTM") !=
-              std::string::npos,
-          "cached LSTM placement should carry observation shape metadata");
-    Check(HasWarningText(
-              cached_lstm_config,
-              cyxwiz::RecurrentCudaPlacementReason::CudaJitParamOverflowRisk),
-          "cached CUDA overflow should surface as a compiler warning");
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-
-    cyxwiz::RecordRecurrentCudaPreflightProbeFailure(
-        observed_lstm,
-        cyxwiz::BackendPlacementObservationReason::CudaJitParamOverflow,
-        "simulated probe observation");
-    auto probed_lstm_config =
-        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
-    const auto* probed_lstm_placement =
-        FindPlacement(probed_lstm_config, 4);
-    Check(probed_lstm_placement != nullptr,
-          "preflight-probed LSTM placement entry should reference node 4");
-    Check(probed_lstm_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "preflight probe observation should route GPU-eligible LSTM to CPU");
-    Check(probed_lstm_placement->explanation.find("source=preflight_probe") !=
-              std::string::npos,
-          "preflight probe observation source should be visible");
-    Check(probed_lstm_placement->explanation.find(
-              "previous preflight probe observation") != std::string::npos,
-          "preflight probe placement should use source-specific wording");
-    Check(HasWarningText(probed_lstm_config, "source=preflight_probe"),
-          "preflight probe observation should surface through compiler warnings");
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-
-    cyxwiz::RecordRecurrentCudaPreflightProbeFailure(
-        observed_lstm,
-        cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout,
-        "simulated recurrent preflight timeout");
-    auto timeout_lstm_config =
-        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
-    const auto* timeout_lstm_placement =
-        FindPlacement(timeout_lstm_config, 4);
-    Check(timeout_lstm_placement != nullptr,
-          "timeout LSTM placement entry should reference node 4");
-    Check(timeout_lstm_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "timeout preflight observation should route GPU-eligible LSTM to CPU");
-    Check(timeout_lstm_placement->reason_code ==
-              cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout,
-          "timeout preflight placement should preserve timeout reason");
-    Check(timeout_lstm_placement->observation_source ==
-              cyxwiz::BackendPlacementObservationSource::PreflightProbe,
-          "timeout preflight placement should carry source metadata");
-    Check(timeout_lstm_placement->observation_detail.find("timeout") !=
-              std::string::npos,
-          "timeout preflight placement should carry detail metadata");
-    Check(timeout_lstm_placement->observation_probe_outcome == "timeout",
-          "timeout preflight placement should carry timeout outcome metadata");
-    Check(timeout_lstm_placement->observation_probe_scope ==
-              cyxwiz::BackendPlacementProbeScope::NormalCompile,
-          "timeout preflight placement should carry normal compile scope metadata");
-    Check(HasWarningText(
-              timeout_lstm_config,
-              cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout),
-          "timeout preflight observation should surface as compiler warning");
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "LSTM placement should use the ArrayFire tensor reason code");
 
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
         "Dense",

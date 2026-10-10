@@ -5,11 +5,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "algorithms/layers/layer_recurrent_utils.h"
+#include "algorithms/arrayfire_backend_utils.h"
 #include "algorithms/layers/layer_utils.h"
 
 #include <cyxwiz/backend_placement_observation.h>
-#include <cyxwiz/recurrent_cuda_placement.h>
 #include <cyxwiz/tensor.h>
 
 #include <string>
@@ -100,41 +99,3 @@ TEST_CASE("Layer fallback observations land under the compiler's lookup key",
 
     ClearBackendPlacementObservationCacheForTesting();
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-TEST_CASE("Recurrent runtime failures record evidence for every reason class",
-          "[gpu_execution][taxonomy][placement]") {
-    using namespace cyxwiz;
-
-    ClearBackendPlacementObservationCacheForTesting();
-
-    // A non-overflow failure (device OOM) must still become evidence the
-    // compiler can route around, even though it does not flip the
-    // process-wide disable latch.
-    DisableArrayFireCudaRecurrentAfterFailure(
-        RecurrentLayerKind::LSTM,
-        "LSTMLayer::Forward",
-        /*batch_size=*/4, /*seq_len=*/8, /*input_size=*/16,
-        /*hidden_size=*/32, /*num_layers=*/1, /*bidirectional=*/false,
-        "ArrayFire error: device out of memory");
-
-    RecurrentCudaPlacementRequest request;
-    request.kind = RecurrentLayerKind::LSTM;
-    request.batch_size = 4;
-    request.seq_len = 8;
-    request.input_size = 16;
-    request.hidden_size = 32;
-    request.num_layers = 1;
-    request.bidirectional = false;
-    request.return_sequences = false;
-
-    BackendPlacementObservation observation;
-    REQUIRE(TryGetRecurrentCudaPlacementObservation(request, observation));
-    CHECK(observation.reason_code ==
-          BackendPlacementObservationReason::GpuOutOfMemory);
-    CHECK(observation.source ==
-          BackendPlacementObservationSource::RuntimeFallback);
-
-    ClearBackendPlacementObservationCacheForTesting();
-}
-#endif

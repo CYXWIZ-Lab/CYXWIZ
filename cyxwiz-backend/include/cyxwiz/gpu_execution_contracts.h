@@ -142,8 +142,8 @@ struct GpuExecutionEvidence {
     // Empty for runtime fallbacks (which carry a reason, not a probe
     // verdict); set for probe/policy evaluations.
     std::optional<GpuExecutionOutcome> outcome;
-    // A BackendFallbackReasonName string, or a placement-policy reason code
-    // (e.g. RecurrentCudaPlacementReason). Kept as a string for fidelity
+    // A BackendFallbackReasonName string, or a placement-policy reason code.
+    // Kept as a string for fidelity
     // with persisted records.
     std::string reason_code;
     std::string detail;
