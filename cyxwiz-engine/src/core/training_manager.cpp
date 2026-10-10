@@ -673,33 +673,25 @@ bool TrainingManager::StartTrainingImage(
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
-    // Build the ImageDatasetBatcher with the image preprocessing config
-    // extracted from the graph's Resize / Normalize / Augmentation nodes.
+    // Build the ImageDatasetBatcher from the graph's Resize size and its
+    // image transforms (run on the device, then Normalize).
     auto batcher = std::make_unique<ImageDatasetBatcher>(
         image_entry, config.image_preprocessing,
         batch_size, config.train_ratio, config.shuffle, config.num_workers,
         static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
+    batcher->SetImageTransforms(config.image_augmentation.ops);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");
         return false;
     }
 
-    // Update input_size from the target dimensions. The batcher flattens
-    // images to [H*W*C] per sample by default.
-    int tw = config.image_preprocessing.target_width > 0
-        ? config.image_preprocessing.target_width : 224;
-    int th = config.image_preprocessing.target_height > 0
-        ? config.image_preprocessing.target_height : 224;
-    int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
-    config.input_size = static_cast<size_t>(tw * th * ch);
-    // The [H,W,C] sample the spatial layers (Conv2D...) unpack the rows into;
-    // the compiler sets the same (ApplyImageInputShape).
-    config.input_shape = {static_cast<size_t>(th), static_cast<size_t>(tw), static_cast<size_t>(ch)};
-
-    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}, seed={}",
-                 batcher->GetNumSamples(), config.input_size, tw, th, ch,
+    // The compiler set input_shape [H, W, C] from the same Resize size and
+    // transforms (ApplyImageInputShape), so the model and the batches agree.
+    spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms, "
+                 "num_workers={}, seed={}",
+                 batcher->GetNumSamples(), config.input_size, config.image_augmentation.ops.size(),
                  config.num_workers, config.dataloader_seed);
 
     // Set up normalization / one-hot from the compiled graph config

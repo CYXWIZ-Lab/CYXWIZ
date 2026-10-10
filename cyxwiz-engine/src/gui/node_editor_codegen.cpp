@@ -734,6 +734,20 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             return EffectiveNodeName(*node) +
                    ": code export does not support Conv3D (volume rows) yet; train it in Studio";
         }
+        switch (node->type) {
+            case NodeType::CenterCrop:
+            case NodeType::RandomCrop:
+            case NodeType::HorizontalFlip:
+            case NodeType::VerticalFlip:
+            case NodeType::ImageRotate:
+            case NodeType::ColorJitter:
+            case NodeType::ImageGaussianBlur:
+            case NodeType::Grayscale:
+                return EffectiveNodeName(*node) +
+                       ": code export does not include image transforms yet; train it in Studio";
+            default:
+                break;
+        }
     }
     return std::nullopt;
 }

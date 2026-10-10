@@ -1134,14 +1134,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
         {NodeType::Augmentation, NodeCategory::Preprocessing, "Augmentation", {"augmentation", "transform"}},
         {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
-        {NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", {"image", "crop"}},
-        {NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", {"image", "crop", "augmentation"}},
-        {NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", {"image", "flip", "augmentation"}},
-        {NodeType::VerticalFlip, NodeCategory::Preprocessing, "Vertical Flip", {"image", "flip", "augmentation"}},
-        {NodeType::ImageRotate, NodeCategory::Preprocessing, "Image Rotate", {"image", "rotate", "augmentation"}},
-        {NodeType::ColorJitter, NodeCategory::Preprocessing, "Color Jitter", {"image", "color", "augmentation"}},
-        {NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", {"image", "blur"}},
-        {NodeType::Grayscale, NodeCategory::Preprocessing, "Grayscale", {"image", "grayscale"}},
         {NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", {"workflow", "subgraph"}},
         {NodeType::DNNClassify, NodeCategory::DNN, "DNN Classify", {"dnn", "classification"}},
         {NodeType::DNNPoseEstimate, NodeCategory::DNN, "DNN Pose Estimate", {"dnn", "pose"}},
@@ -1608,6 +1600,110 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"width", "int", "224", "Positive output width in pixels", {}, ">0", "Width", "Output shape", true},
          {"height", "int", "224", "Positive output height in pixels", {}, ">0", "Height", "Output shape", true},
          {"mode", "enum", "exact", "Aspect-ratio and crop policy", {"exact", "fit", "fill", "center"}, "", "Mode", "Resize policy"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    // Image transforms (TOFIX140): torchvision.transforms semantics, run by the
+    // image batcher on the whole batch on the ArrayFire device, between Resize
+    // and Normalize. Random nodes change training batches only.
+    RegisterNode({NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", ICON_FA_EXPAND,
+        {"image", "crop", "center"}, 0, false,
+        "Crop the middle height x width of every image",
+        "Keeps the centre of each image (torchvision CenterCrop), in training, validation and test. "
+        "The model's input shape becomes [height, width, C]. The crop must fit the image.",
+        "Resize 256 -> Center Crop 224 -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
+        {{"width", "int", "224", "Crop width in pixels, at most the image width", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Crop height in pixels, at most the image height", {}, ">0", "Height", "Output shape", true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", ICON_FA_SHUFFLE,
+        {"image", "crop", "augmentation", "random"}, 0, false,
+        "Crop height x width at a random place in every training image",
+        "Each training image is cropped at its own random position (torchvision RandomCrop). "
+        "Validation and test take the centre crop of the same size, so the model's input shape "
+        "is [height, width, C] in every phase.",
+        "Resize 72 -> Random Crop 64 -> Horizontal Flip -> Normalize",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
+        {{"width", "int", "224", "Crop width in pixels, at most the image width", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Crop height in pixels, at most the image height", {}, ">0", "Height", "Output shape", true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", ICON_FA_ARROWS_LEFT_RIGHT,
+        {"image", "flip", "mirror", "augmentation"}, 0, false,
+        "Mirror training images left to right at random",
+        "Each training image is flipped left to right with the given probability (torchvision "
+        "RandomHorizontalFlip). Validation and test images pass through unchanged.",
+        "Resize -> Horizontal Flip -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"probability", "float", "0.5", "Chance that a training image is flipped", {}, "0-1", "Probability"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::VerticalFlip, NodeCategory::Preprocessing, "Vertical Flip", ICON_FA_ROTATE,
+        {"image", "flip", "augmentation"}, 0, false,
+        "Flip training images top to bottom at random",
+        "Each training image is flipped top to bottom with the given probability (torchvision "
+        "RandomVerticalFlip). Validation and test images pass through unchanged. Suits images "
+        "with no natural up (satellite, microscopy), not photos.",
+        "Resize -> Vertical Flip -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"probability", "float", "0.5", "Chance that a training image is flipped", {}, "0-1", "Probability"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageRotate, NodeCategory::Preprocessing, "Image Rotate", ICON_FA_ROTATE_RIGHT,
+        {"image", "rotate", "rotation", "augmentation"}, 0, false,
+        "Rotate training images by a random angle",
+        "With the given probability, each training image is rotated about its centre by an angle "
+        "drawn from [-max_angle, max_angle] degrees (torchvision RandomRotation): same size, "
+        "corners outside the image become 0. Validation and test images pass through unchanged.",
+        "Resize -> Image Rotate -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"max_angle", "float", "15.0", "Largest rotation in degrees, either way", {}, "0-180", "Max angle"},
+         {"probability", "float", "0.5", "Chance that a training image is rotated", {}, "0-1", "Probability"},
+         {"interpolation", "enum", "nearest", "Pixel sampling", {"nearest", "bilinear"}, "", "Interpolation"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ColorJitter, NodeCategory::Preprocessing, "Color Jitter", ICON_FA_PALETTE,
+        {"image", "color", "brightness", "contrast", "saturation", "hue", "augmentation"}, 0, false,
+        "Vary brightness, contrast, saturation and hue of training images",
+        "Each training image gets its own factors, applied in a random order (torchvision "
+        "ColorJitter): brightness, contrast and saturation factors from [max(0, 1 - v), 1 + v], "
+        "a hue shift from [-hue, hue]. 0 turns an adjustment off. Saturation and hue leave "
+        "one-channel images unchanged. Validation and test images pass through unchanged.",
+        "Resize -> Color Jitter -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"brightness", "float", "0.2", "Brightness spread, 0 or more", {}, ">=0", "Brightness"},
+         {"contrast", "float", "0.2", "Contrast spread, 0 or more", {}, ">=0", "Contrast"},
+         {"saturation", "float", "0.2", "Saturation spread, 0 or more", {}, ">=0", "Saturation"},
+         {"hue", "float", "0.1", "Hue shift, 0 to 0.5", {}, "0-0.5", "Hue"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", ICON_FA_BRUSH,
+        {"image", "blur", "gaussian", "smooth"}, 0, false,
+        "Smooth every image with a Gaussian kernel",
+        "Blurs each image with a kernel_size x kernel_size Gaussian of the given sigma, edges "
+        "reflected (torchvision gaussian_blur), in training, validation and test.",
+        "Resize -> Image Gaussian Blur -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"kernel_size", "int", "5", "Odd kernel width; kernel_size / 2 must be below both image sides", {}, ">0", "Kernel size"},
+         {"sigma", "float", "1.0", "Gaussian standard deviation in pixels", {}, ">0", "Sigma"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Grayscale, NodeCategory::Preprocessing, "Grayscale", ICON_FA_IMAGE,
+        {"image", "grayscale", "gray", "luminance"}, 0, false,
+        "Turn every image into one luminance channel",
+        "Each pixel becomes 0.2989 R + 0.587 G + 0.114 B (torchvision Grayscale), in training, "
+        "validation and test. The model's input shape becomes [H, W, 1].",
+        "Resize -> Grayscale -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [H, W, 1]"}},
+        {},
         NodeImplementationStatus::Implemented, 0});
 }
 

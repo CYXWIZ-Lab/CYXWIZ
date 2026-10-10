@@ -11,6 +11,7 @@
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
 #include "../preprocessing/preprocessing_config.h"
+#include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>
 #include <cyxwiz/optimizer.h>
@@ -511,6 +512,10 @@ struct TrainingConfiguration {
     // preprocessing_domain == Image.
     ImagePreprocessingConfig image_preprocessing;
 
+    // The image transform nodes between Resize and Normalize, in graph
+    // order: run by the image batcher on the device (Normalize after them).
+    cyxwiz::image::ImageAugmentation image_augmentation;
+
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when
     // preprocessing_domain == Audio. When has_feature_node is false,
@@ -714,6 +719,10 @@ inline bool UsesContinuousTargetMetrics(
  * Takes the node graph from NodeEditor and produces a TrainingConfiguration
  * that can be used by TrainingExecutor to run actual training.
  */
+// The [H, W, 3] image the image batcher decodes: the Resize target, or
+// 224 x 224 without one. The image transforms start from this shape.
+cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config);
+
 class GraphCompiler {
 public:
     GraphCompiler() = default;

@@ -503,126 +503,17 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        // ===== Image Transform Nodes (Phase 1) =====
-        // All share the same pin layout: one Tensor in, one Tensor out.
-        // Parameters vary per transform type. Random* / *Flip / Rotate /
-        // Jitter / Blur are train-only (eval/test pass-through); Resize /
-        // CenterCrop / Grayscale always run.
-        case NodeType::Resize: {
-            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-        case NodeType::CenterCrop: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Must be at "
-                             "least width × height in spatial size.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Center crop of shape [batch, channels, height, width].";
-            node.outputs.push_back(out);
-            node.parameters["width"] = "224";
-            node.parameters["height"] = "224";
-            break;
-        }
-        case NodeType::RandomCrop: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only — "
-                             "eval/test pass through unchanged.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Random crop of shape [batch, channels, height, width]. "
-                              "Position is resampled per batch.";
-            node.outputs.push_back(out);
-            node.parameters["width"] = "224";
-            node.parameters["height"] = "224";
-            break;
-        }
-        case NodeType::HorizontalFlip: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample independently flipped left↔right with "
-                              "the configured probability.";
-            node.outputs.push_back(out);
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::VerticalFlip: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample independently flipped top↔bottom with "
-                              "the configured probability. Avoid for natural "
-                              "imagery where 'up' is meaningful.";
-            node.outputs.push_back(out);
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::ImageRotate: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample rotated by an angle uniformly sampled "
-                              "in [-max_angle, +max_angle] degrees.";
-            node.outputs.push_back(out);
-            node.parameters["max_angle"] = "15.0";
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::ColorJitter: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Color image tensor [batch, 3, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Per-sample random adjustments to brightness, "
-                              "contrast, saturation, and hue within the "
-                              "configured ranges.";
-            node.outputs.push_back(out);
-            node.parameters["brightness"] = "0.2";
-            node.parameters["contrast"] = "0.2";
-            node.parameters["saturation"] = "0.2";
-            node.parameters["hue"] = "0.1";
-            break;
-        }
-        case NodeType::ImageGaussianBlur: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Gaussian-blurred image with the configured "
-                              "kernel_size and sigma. Same shape as Input.";
-            node.outputs.push_back(out);
-            node.parameters["kernel_size"] = "5";
-            node.parameters["sigma"] = "1.0";
-            break;
-        }
+        // ===== Image transforms (TOFIX140): pins and settings from the registry =====
+        case NodeType::Resize:
+        case NodeType::CenterCrop:
+        case NodeType::RandomCrop:
+        case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip:
+        case NodeType::ImageRotate:
+        case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur:
         case NodeType::Grayscale: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Color image tensor [batch, 3, H, W].";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Single-channel grayscale [batch, 1, H, W] using "
-                              "the standard luminosity weighting.";
-            node.outputs.push_back(out);
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

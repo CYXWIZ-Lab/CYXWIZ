@@ -56,6 +56,12 @@ std::string ShapeListText(const std::vector<size_t>& shape) {
 }
 }  // namespace
 
+cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config) {
+    const auto& image = config.image_preprocessing;
+    return {image.target_height > 0 ? static_cast<size_t>(image.target_height) : 224,
+            image.target_width > 0 ? static_cast<size_t>(image.target_width) : 224, 3};
+}
+
 
 namespace {
 // Local helpers for issue collection. Kept in an anonymous namespace so
@@ -2056,19 +2062,16 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
 }
 
 // An image Data Input feeds [H, W, C] samples: the Resize node's target (or
-// the batcher's 224x224 default), 1 channel when grayscale. The same numbers
-// TrainingManager uses when it builds the ImageDatasetBatcher, so the As
-// compiled card's shapes are the training shapes (TOFIX140 A1).
+// the batcher's 224x224 default) with three channels, then the shape the image
+// transforms leave (crops, Grayscale). The image batcher uses the same plan,
+// so the As compiled card's shapes are the training shapes (TOFIX140 A1).
 void ApplyImageInputShape(TrainingConfiguration& config) {
     if (config.preprocessing_domain != PreprocessingDomain::Image) {
         return;
     }
-    const auto& image = config.image_preprocessing;
-    const size_t width = image.target_width > 0 ? static_cast<size_t>(image.target_width) : 224;
-    const size_t height = image.target_height > 0 ? static_cast<size_t>(image.target_height) : 224;
-    const size_t channels = image.convert_to_grayscale ? 1 : 3;
-    config.input_shape = {height, width, channels};
-    config.input_size = height * width * channels;
+    const auto shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    config.input_shape = {shape.height, shape.width, shape.channels};
+    config.input_size = shape.Size();
 }
 
 void ApplyTextInputShape(TrainingConfiguration& config) {
@@ -6214,9 +6217,9 @@ TrainingConfiguration GraphCompiler::Compile(
             // Estimate total model memory (weights + gradients + optimizer)
             // and warn if it's likely to exceed reasonable GPU memory.
             if (has_resize && config.image_preprocessing.target_width > 0) {
-                size_t img_features = static_cast<size_t>(
-                    config.image_preprocessing.target_width) *
-                    config.image_preprocessing.target_height * 3;
+                // The model's input after the image transforms (crops, Grayscale).
+                const auto image_shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+                size_t img_features = image_shape.Size();
                 size_t total_params = 0;
                 size_t prev_size = img_features;
                 for (const auto& layer : config.layers) {
@@ -6241,8 +6244,8 @@ TrainingConfiguration GraphCompiler::Compile(
                         << std::setprecision(0) << est_mb << " MB ("
                         << total_params << " parameters, batch_size="
                         << config.batch_size << ", input="
-                        << config.image_preprocessing.target_width << "x"
-                        << config.image_preprocessing.target_height << "x3)";
+                        << image_shape.width << "x" << image_shape.height << "x"
+                        << image_shape.channels << ")";
 
                 // Real GPU usage is ~3-5x the raw parameter estimate due to
                 // CUDA context (~300 MB), forward/backward activations,
@@ -6839,6 +6842,13 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 // --- Image extractors (Phase 1) ---
 
 static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
+    if (!config.image_augmentation.ops.empty()) {
+        AddIssue(config, IssueLevel::Error,
+                 "Resize must come before the image transforms: the batcher decodes every image at "
+                 "the Resize size first",
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return;  // the transforms were checked against the earlier size
+    }
     config.image_preprocessing.resize_mode = ResizeMode::Exact;
     if (node.parameters.count("width"))
         config.image_preprocessing.target_width = std::stoi(node.parameters.at("width"));
@@ -6858,18 +6868,8 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
 }
 
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
-    // Domain-aware Normalize: when upstream is image data, populate
-    // both the legacy GraphPreprocessingConfig (for backward-compat
-    // with the tabular training path) and the image-specific config.
-    // The image batcher reads image_preprocessing; the tabular batcher
-    // reads config.preprocessing. Both work.
-    if (config.preprocessing_domain == PreprocessingDomain::Image) {
-        config.image_preprocessing.enable_denoise = false;  // not related but clear the field
-        // Image normalize is handled by the ImageTransformPipeline;
-        // the legacy fields are also set so existing tabular code paths
-        // don't break if they run accidentally.
-    }
-    // Always populate the legacy tabular fields (backward-compat).
+    // Every batcher takes these through SetNormalization; the image batcher
+    // applies them on the device after the image transforms.
     config.preprocessing.has_normalization = true;
     if (node.parameters.count("mean"))
         config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
@@ -6877,17 +6877,93 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
         config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
 }
 
-static void ExtractGrayscale(const gui::MLNode& /*node*/, TrainingConfiguration& config) {
-    config.image_preprocessing.convert_to_grayscale = true;
+// --- Image transforms (TOFIX140): appended in graph order, run by the image
+// batcher on the device after Resize and before Normalize. ---
+
+// The [H, W, C] image the next transform receives: the Resize size with three
+// channels, after the transforms already compiled.
+cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
+    return config.image_augmentation.ShapeAfter(DecodedImageShape(config));
 }
 
-static void ExtractImageGaussianBlur(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.image_preprocessing.blur_config.enabled = true;
-    config.image_preprocessing.blur_config.type = BlurType::Gaussian;
-    if (node.parameters.count("kernel_size"))
-        config.image_preprocessing.blur_config.kernel_size = std::stoi(node.parameters.at("kernel_size"));
-    if (node.parameters.count("sigma"))
-        config.image_preprocessing.blur_config.sigma = std::stof(node.parameters.at("sigma"));
+void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
+                   const std::string& parse_error, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name,
+                 errors::Compiler::TensorShapeMismatch);
+    };
+#ifndef CYXWIZ_HAS_ARRAYFIRE
+    refuse("Image transforms run on ArrayFire, and this build has no ArrayFire");
+    return;
+#endif
+    if (!parse_error.empty()) {
+        refuse(parse_error);
+        return;
+    }
+    if (config.preprocessing.has_normalization) {
+        refuse("Image transforms work on [0, 1] pixels: put this node between Resize and Normalize");
+        return;
+    }
+    const std::string reason = cyxwiz::image::ValidateImageOp(op, CurrentImageShape(config));
+    if (!reason.empty()) {
+        refuse(reason);
+        return;
+    }
+    config.image_augmentation.ops.push_back(op);
+}
+
+static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::image::ImageOpKind;
+    cyxwiz::image::ImageOp op;
+    std::string error;
+    const auto& p = node.parameters;
+    switch (node.type) {
+        case gui::NodeType::CenterCrop:
+        case gui::NodeType::RandomCrop:
+            op.kind = node.type == gui::NodeType::CenterCrop ? ImageOpKind::CenterCrop : ImageOpKind::RandomCrop;
+            if (ParseIntParam(p, "width", 224, op.width, error)) ParseIntParam(p, "height", 224, op.height, error);
+            break;
+        case gui::NodeType::HorizontalFlip:
+        case gui::NodeType::VerticalFlip:
+            op.kind = node.type == gui::NodeType::HorizontalFlip ? ImageOpKind::HorizontalFlip
+                                                                 : ImageOpKind::VerticalFlip;
+            ParseFloatParam(p, "probability", 0.5f, op.probability, error);
+            break;
+        case gui::NodeType::ImageRotate: {
+            op.kind = ImageOpKind::Rotate;
+            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error)) {
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error);
+            }
+            const auto it = p.find("interpolation");
+            const std::string interpolation = it == p.end() ? "nearest" : it->second;
+            if (interpolation == "bilinear") {
+                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
+            } else if (interpolation != "nearest" && error.empty()) {
+                error = "interpolation must be nearest or bilinear";
+            }
+            break;
+        }
+        case gui::NodeType::ColorJitter:
+            op.kind = ImageOpKind::ColorJitter;
+            if (ParseFloatParam(p, "brightness", 0.2f, op.brightness, error) &&
+                ParseFloatParam(p, "contrast", 0.2f, op.contrast, error) &&
+                ParseFloatParam(p, "saturation", 0.2f, op.saturation, error)) {
+                ParseFloatParam(p, "hue", 0.1f, op.hue, error);
+            }
+            break;
+        case gui::NodeType::ImageGaussianBlur:
+            op.kind = ImageOpKind::GaussianBlur;
+            if (ParseIntParam(p, "kernel_size", 5, op.kernel_size, error)) {
+                ParseFloatParam(p, "sigma", 1.0f, op.sigma, error);
+            }
+            break;
+        case gui::NodeType::Grayscale:
+            op.kind = ImageOpKind::Grayscale;
+            break;
+        default:
+            return;
+    }
+    AppendImageOp(node, op, error, config);
 }
 
 // --- Audio extractors (Phase 2.1) ---
@@ -7031,14 +7107,14 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TripletDatasetBuilder, PreprocessingDomain::General,  nullptr},
     // Image (Phase 1)
     {gui::NodeType::Resize,             PreprocessingDomain::Image,       ExtractImageResize},
-    {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::RandomCrop,         PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::HorizontalFlip,     PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::VerticalFlip,       PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ImageRotate,        PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageGaussianBlur},
-    {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractGrayscale},
+    {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomCrop,         PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::HorizontalFlip,     PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::VerticalFlip,       PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ImageRotate,        PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},

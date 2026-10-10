@@ -5421,6 +5421,44 @@ set_target_properties(test_cnn_image_training_smoke PROPERTIES
 target_include_directories(test_cnn_image_training_smoke PRIVATE ${OpenCV_INCLUDE_DIRS} ${Stb_INCLUDE_DIR})
 target_link_libraries(test_cnn_image_training_smoke PRIVATE ${OpenCV_LIBS})
 
+# ===== Test: image transform nodes in a training graph (TOFIX140) =====
+add_executable(test_image_transform_graph
+    tests/test_image_transform_graph.cpp
+    src/core/image_dataset_batcher.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/image_utils.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_link_libraries(test_image_transform_graph PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+    ${OpenCV_LIBS}
+)
+target_include_directories(test_image_transform_graph PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${Stb_INCLUDE_DIR}
+)
+if(WIN32)
+    target_compile_definitions(test_image_transform_graph PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_transform_graph PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_transform_graph_contract COMMAND test_image_transform_graph)
+
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp

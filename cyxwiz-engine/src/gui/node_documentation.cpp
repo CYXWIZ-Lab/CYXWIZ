@@ -284,6 +284,15 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::DataSplit:
         case NodeType::Normalize:
         case NodeType::OneHotEncode:
+        case NodeType::Resize:
+        case NodeType::CenterCrop:
+        case NodeType::RandomCrop:
+        case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip:
+        case NodeType::ImageRotate:
+        case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur:
+        case NodeType::Grayscale:
             return "Data Pipeline";
 
         default:
@@ -1701,6 +1710,123 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "ImageNet mean/std for pre-trained models",
             "Compute on training set for custom data"
+        },
+        "Data Pipeline"
+    };
+
+    // Image transforms (TOFIX140): between Resize and Normalize, run by the
+    // image batcher on the ArrayFire device; torchvision semantics.
+    docs_[NodeType::CenterCrop] = {
+        "Center Crop",
+        "Keeps the middle height x width of every image (torchvision CenterCrop).",
+        "Runs in training, validation and test. The model's input becomes [height, width, C].",
+        {
+            {"width", "Crop width in pixels, at most the image width"},
+            {"height", "Crop height in pixels, at most the image height"}
+        },
+        {
+            "Classic pipeline: Resize 256 -> Center Crop 224",
+            "Place between Resize and Normalize"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::RandomCrop] = {
+        "Random Crop",
+        "Crops each training image at its own random position (torchvision RandomCrop).",
+        "Validation and test take the centre crop of the same size, so the input shape stays "
+        "[height, width, C] in every phase.",
+        {
+            {"width", "Crop width in pixels, at most the image width"},
+            {"height", "Crop height in pixels, at most the image height"}
+        },
+        {
+            "Resize a little larger than the crop (e.g. 72 -> 64) so crops differ",
+            "Teaches the model that position does not decide the class"
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::HorizontalFlip] = {
+        "Horizontal Flip",
+        "Mirrors training images left to right with the given probability (torchvision RandomHorizontalFlip).",
+        "Validation and test images pass through unchanged.",
+        {
+            {"probability", "Chance that a training image is flipped (0 to 1)"}
+        },
+        {
+            "Safe for most photos; avoid for text or digits where left and right differ",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::VerticalFlip] = {
+        "Vertical Flip",
+        "Flips training images top to bottom with the given probability (torchvision RandomVerticalFlip).",
+        "Validation and test images pass through unchanged.",
+        {
+            {"probability", "Chance that a training image is flipped (0 to 1)"}
+        },
+        {
+            "For images with no natural up: satellite, microscopy, textures",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageRotate] = {
+        "Image Rotate",
+        "Rotates training images about their centre by a random angle (torchvision RandomRotation).",
+        "With the given probability the angle is drawn from [-max_angle, max_angle] degrees; the size "
+        "stays the same and corners outside the image become 0. Validation and test pass through.",
+        {
+            {"max_angle", "Largest rotation in degrees, either way (0 to 180)"},
+            {"probability", "Chance that a training image is rotated (0 to 1)"},
+            {"interpolation", "nearest (torchvision's default) or bilinear"}
+        },
+        {
+            "Small angles (10-20 degrees) suit photos; large ones suit rotation-free subjects",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ColorJitter] = {
+        "Color Jitter",
+        "Varies brightness, contrast, saturation and hue of each training image (torchvision ColorJitter).",
+        "Each image gets its own factors, applied in a random order: brightness, contrast and "
+        "saturation from [max(0, 1 - v), 1 + v], hue shifted by [-hue, hue]. Validation and test pass through.",
+        {
+            {"brightness", "Brightness spread (0 turns it off)"},
+            {"contrast", "Contrast spread (0 turns it off)"},
+            {"saturation", "Saturation spread (0 turns it off; no effect on one channel)"},
+            {"hue", "Hue shift, 0 to 0.5 (0 turns it off; no effect on one channel)"}
+        },
+        {
+            "Helps models that must cope with different lighting and cameras",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageGaussianBlur] = {
+        "Image Gaussian Blur",
+        "Smooths every image with a Gaussian kernel, edges reflected (torchvision gaussian_blur).",
+        "Runs in training, validation and test; the shape stays the same.",
+        {
+            {"kernel_size", "Odd kernel width; kernel_size / 2 must be below both image sides"},
+            {"sigma", "Gaussian standard deviation in pixels"}
+        },
+        {
+            "Removes fine noise; large kernels also remove detail the model may need",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::Grayscale] = {
+        "Grayscale",
+        "Turns every image into one luminance channel: 0.2989 R + 0.587 G + 0.114 B (torchvision Grayscale).",
+        "Runs in training, validation and test. The model's input becomes [H, W, 1].",
+        {},
+        {
+            "A third of the input size when colour does not matter",
         },
         "Data Pipeline"
     };

@@ -5,7 +5,9 @@
 // D:/tmp/gui129/catdog_small, or argv[1]) and a TrainingExecutor - and the
 // loss per epoch is printed. Not a ctest entry: the images live outside the repo.
 //
-//   test_cnn_image_training_smoke [folder] [epochs]
+//   test_cnn_image_training_smoke [folder] [epochs] [augment]
+//   augment: Resize 72 -> Random Crop 64 -> Horizontal Flip -> Color Jitter ->
+//   Normalize in front of the CNN (image transforms on the device, TOFIX140).
 //   (CYXWIZ_TEST_ARRAYFIRE_BACKEND / CYXWIZ_OPENCL_TEST_DEVICE pick the device)
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
@@ -81,6 +83,7 @@ int main(int argc, char** argv) {
     namespace fs = std::filesystem;
     const fs::path folder = argc > 1 ? fs::path(argv[1]) : fs::path("D:/tmp/gui129/catdog_small");
     const int epochs = argc > 2 ? std::atoi(argv[2]) : 8;
+    const bool augment = argc > 3 && std::string(argv[3]) == "augment";
     if (!fs::is_directory(folder)) {
         std::cout << "image folder not found (" << folder.string() << "); skipped\n";
         return 0;
@@ -125,7 +128,8 @@ int main(int argc, char** argv) {
                        {"folder_path", folder.string()}, {"image_layout", "0"}};
     std::vector<gui::MLNode> nodes = {
         data,
-        Layer(2, gui::NodeType::Resize, "Resize 64", {{"width", "64"}, {"height", "64"}, {"mode", "exact"}}),
+        augment ? Layer(2, gui::NodeType::Resize, "Resize 72", {{"width", "72"}, {"height", "72"}, {"mode", "exact"}})
+                : Layer(2, gui::NodeType::Resize, "Resize 64", {{"width", "64"}, {"height", "64"}, {"mode", "exact"}}),
         Layer(4, gui::NodeType::Conv2D, "Conv 16", {{"filters", "16"}, {"kernel_size", "3"}, {"padding", "same"}}),
         Layer(5, gui::NodeType::ReLU, "ReLU"),
         Layer(6, gui::NodeType::MaxPool2D, "Pool", {{"pool_size", "2"}, {"stride", "2"}}),
@@ -152,7 +156,19 @@ int main(int argc, char** argv) {
     std::vector<gui::NodeLink> links;
     int link_id = 1;
     links.push_back(Link(link_id++, 1, 102, 2, 201));
-    links.push_back(Link(link_id++, 2, 202, 4, 401));
+    if (augment) {
+        // Resize 72 -> Random Crop 64 -> Horizontal Flip -> Color Jitter -> Normalize -> Conv 16.
+        nodes.push_back(Layer(20, gui::NodeType::RandomCrop, "Random Crop 64", {{"width", "64"}, {"height", "64"}}));
+        nodes.push_back(Layer(21, gui::NodeType::HorizontalFlip, "Flip", {{"probability", "0.5"}}));
+        nodes.push_back(Layer(22, gui::NodeType::ColorJitter, "Jitter", {{"brightness", "0.2"}, {"contrast", "0.2"},
+                                                                         {"saturation", "0.2"}, {"hue", "0.05"}}));
+        nodes.push_back(Layer(23, gui::NodeType::Normalize, "Normalize", {{"mean", "0.5"}, {"std", "0.5"}}));
+        links.push_back(Link(link_id++, 2, 202, 20, 2001));
+        for (int id = 20; id < 23; ++id) links.push_back(Link(link_id++, id, id * 100 + 2, id + 1, (id + 1) * 100 + 1));
+        links.push_back(Link(link_id++, 23, 2302, 4, 401));
+    } else {
+        links.push_back(Link(link_id++, 2, 202, 4, 401));
+    }
     for (int id = 4; id < 11; ++id) links.push_back(Link(link_id++, id, id * 100 + 2, id + 1, (id + 1) * 100 + 1));
     links.push_back(Link(link_id++, 11, 1102, 12, 1201));
     links.push_back(Link(link_id++, 1, 103, 12, 1202));
@@ -164,6 +180,11 @@ int main(int argc, char** argv) {
             std::cerr << "  error: " << issue.node_name << ": " << issue.message << "\n";
     }
     Check(config.is_valid, "the CNN graph compiles");
+    if (augment) {
+        Check(config.image_augmentation.ops.size() == 3 &&
+                  config.input_shape == std::vector<size_t>({64, 64, 3}),
+              "three image transforms; the CNN sees 64 x 64 crops");
+    }
     config.epochs = epochs;
     config.batch_size = 32;
 
@@ -172,6 +193,7 @@ int main(int argc, char** argv) {
         entry, config.image_preprocessing, config.batch_size, config.train_ratio, config.shuffle,
         config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
+    batcher->SetImageTransforms(config.image_augmentation.ops);
     Check(batcher->GetNumSamples() > 0, "the batcher sees the images");
     if (config.preprocessing.has_normalization) {
         batcher->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
