@@ -5179,6 +5179,62 @@ add_custom_target(copy_test_linear_attention_training_fixture
 add_dependencies(test_linear_attention_training copy_test_linear_attention_training_fixture)
 add_test(NAME linear_attention_pytorch_parity COMMAND test_linear_attention_training)
 
+set(CYXWIZ_CONV3D_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/conv3d_pytorch.json"
+)
+add_executable(test_conv3d_training
+    tests/test_conv3d_training.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_link_libraries(test_conv3d_training PRIVATE cyxwiz-training-core)
+
+target_include_directories(test_conv3d_training PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_conv3d_training PRIVATE
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_conv3d_training PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_CONV3D_FIXTURE="${CYXWIZ_CONV3D_PYTORCH_FIXTURE}"
+    )
+else()
+    target_compile_definitions(test_conv3d_training PRIVATE
+        CYXWIZ_CONV3D_FIXTURE="${CYXWIZ_CONV3D_PYTORCH_FIXTURE}"
+    )
+endif()
+
+set_target_properties(test_conv3d_training PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_custom_target(copy_test_conv3d_training_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_conv3d_training>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_CONV3D_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_conv3d_training>/computation_truth_fixtures/conv3d_pytorch.json"
+    SOURCES "${CYXWIZ_CONV3D_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_conv3d_training copy_test_conv3d_training_fixture)
+add_test(NAME conv3d_pytorch_parity COMMAND test_conv3d_training)
+
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
@@ -5797,6 +5853,7 @@ cyxwiz_enable_pch(test_cnn_graph_training)
 cyxwiz_enable_pch(test_branch_graph_training)
 cyxwiz_enable_pch(test_cross_attention_graph_training)
 cyxwiz_enable_pch(test_linear_attention_training)
+cyxwiz_enable_pch(test_conv3d_training)
 cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_pipeline_materializer_cache)
 cyxwiz_enable_pch(test_engine_node_parity)

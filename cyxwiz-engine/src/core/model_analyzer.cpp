@@ -279,8 +279,19 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.flops = 2 * in_channels * kernel_size * filters * out_length * batch_size;
                     break;
                 }
-                case gui::NodeType::Conv2D:
                 case gui::NodeType::Conv3D: {
+                    // [D, H, W, C] -> [D', H', W', filters]: filters x (C x k^3) weights + bias
+                    const int64_t in_channels = current_shape.size() == 4 ? current_shape[3] : 1;
+                    const int64_t filters = GetIntParam(*node, "filters", 32);
+                    const int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
+                    const int64_t column = in_channels * kernel_size * kernel_size * kernel_size;
+                    const int64_t patches = output_shape.size() == 4
+                        ? static_cast<int64_t>(output_shape[0] * output_shape[1] * output_shape[2]) : 1;
+                    layer_analysis.parameters = filters * column + filters;
+                    layer_analysis.flops = 2 * column * filters * patches * batch_size;
+                    break;
+                }
+                case gui::NodeType::Conv2D: {
                     int64_t in_channels = current_shape.size() >= 3 ? current_shape[2] : 1;
                     int64_t filters = GetIntParam(*node, "filters", 32);
                     int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
@@ -787,6 +798,13 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::Conv1D: {
             try {
                 return spatial::Conv1DSampleShapeAfter(node.parameters, input_shape);
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
+        }
+        case gui::NodeType::Conv3D: {
+            try {
+                return spatial::Conv3DSampleShapeAfter(node.parameters, input_shape);
             } catch (const std::invalid_argument&) {
                 return {};
             }

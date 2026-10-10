@@ -121,6 +121,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::LinearAttention:  // Tensor ops (BatchMatMul, Clip, Exp) only
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:  // sparse gather + matmul
         case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:

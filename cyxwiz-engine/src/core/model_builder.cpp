@@ -1269,6 +1269,38 @@ bool BuildSequential(
                 break;
             }
 
+            // Conv3D on [D,H,W,C] volume rows (TOFIX140 Group C): the
+            // compiler's shape walk gives the sample; rows stay rows, so the
+            // Flatten that ends the section is a plain one.
+            case gui::NodeType::Conv3D: {
+                const auto& in_shape = layer_cfg.input_shape;
+                if (in_shape.size() != 4) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             " needs its [D, H, W, C] input sample");
+                }
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[3]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) + ": " +
+                                             error.what());
+                }
+                auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
+                                                           static_cast<size_t>(g.channels_out), g.kernel,
+                                                           g.stride, g.padding, true);
+                const auto out_shape = conv->OutputSample();
+                if (out_shape != layer_cfg.output_shape) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             ": the backend's output sample differs from the compiled shape");
+                }
+                model.AddModule(std::move(conv));
+                current_input_size = out_shape[0] * out_shape[1] * out_shape[2] * out_shape[3];
+                CYXWIZ_BUILDER_INFO("  [{}] Conv3D({} -> {}, k={}, s={}, p={}) [{}x{}x{}] -> [{}x{}x{}]", i,
+                                    in_shape[3], g.channels_out, g.kernel, g.stride, g.padding, in_shape[0],
+                                    in_shape[1], in_shape[2], out_shape[0], out_shape[1], out_shape[2]);
+                break;
+            }
+
             case gui::NodeType::Conv1D: {
                 if (!sequence_section || i >= sequence_section->input_shapes.size() ||
                     sequence_section->input_shapes[i].size() != 2) {

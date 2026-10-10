@@ -1071,9 +1071,6 @@ GetPipelineFloatParameterRuntimeCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::Conv3D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
@@ -1122,6 +1119,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as an ArrayFire pooling layer"},
         {gui::NodeType::Conv1D, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable ArrayFire 1-D convolution on [L,C,N] sequences (input rows or after an Embedding)"},
+        {gui::NodeType::Conv3D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 3-D convolution on [D,H,W,C] volume rows (TOFIX140 Group C)"},
         {gui::NodeType::AdaptiveAvgPool, PipelineTrainingSupportRole::ModelLayer,
          "compiled as an ArrayFire adaptive average pool inside the spatial section"},
         {gui::NodeType::GlobalMaxPool, PipelineTrainingSupportRole::ModelLayer,

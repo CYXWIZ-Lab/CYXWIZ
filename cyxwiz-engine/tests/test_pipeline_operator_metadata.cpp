@@ -1547,11 +1547,8 @@ void CheckConv2DReferenceContract(
           "Conv2D must not advertise an unexecuted inline activation");
 }
 
-void CheckConvolutionPoolingBlockedFamilyContract(
+void CheckConvolutionPoolingFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
-    const std::initializer_list<gui::NodeType> family = {
-        gui::NodeType::Conv3D,
-    };
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::MaxPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AvgPool2D);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalAvgPool);
@@ -1559,26 +1556,7 @@ void CheckConvolutionPoolingBlockedFamilyContract(
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::GlobalMaxPool);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::AdaptiveAvgPool);
     CheckSpatialLayerImplementedContract(metadata, gui::NodeType::DepthwiseConv2D);
-    for (const auto type : family) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr,
-              "convolution/pooling metadata should exist: " + TypeId(type));
-        Check(meta->status == cyxwiz::NodeImplementationStatus::Template &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unowned convolution/pooling node must remain blocked: " +
-                  TypeId(type));
-        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
-                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
-                  HasOutputType(meta, "Output", gui::PinType::Tensor),
-              "blocked convolution/pooling pins should remain inspectable: " +
-                  TypeId(type));
-        CheckSupportAxis(meta, "Training Backend",
-                         "unsupported_sequential_model_layer", false,
-                         TypeId(type));
-        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
-        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
-    }
+    CheckSpatialLayerImplementedContract(metadata, gui::NodeType::Conv3D);
 
     for (const auto type : {gui::NodeType::Conv1D,
                             gui::NodeType::Conv3D}) {
@@ -3446,7 +3424,7 @@ int main() {
     CheckSimulationNodeFamilyContract(metadata);
     CheckDataInputDialogReferenceContract(metadata);
     CheckConv2DReferenceContract(metadata);
-    CheckConvolutionPoolingBlockedFamilyContract(metadata);
+    CheckConvolutionPoolingFamilyContract(metadata);
     CheckBlockedUpsamplingFamilyContract(metadata);
     CheckBlockedNormalizationFamilyContract(metadata);
     CheckAttentionFamilyContract(metadata);

@@ -730,6 +730,10 @@ NodeEditor::FindUnsupportedSequentialLayerError(
                    ": code export does not support Linear Attention yet (frameworks have no built-in layer for it); "
                    "train it in Studio";
         }
+        if (node->type == NodeType::Conv3D) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not support Conv3D (volume rows) yet; train it in Studio";
+        }
     }
     return std::nullopt;
 }

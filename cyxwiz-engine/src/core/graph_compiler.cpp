@@ -5668,6 +5668,26 @@ TrainingConfiguration GraphCompiler::Compile(
                     AddIssue(config, IssueLevel::Error, error.what(), node->id, node->name,
                              errors::Compiler::TensorShapeMismatch);
                 }
+            } else if (node->type == gui::NodeType::Conv3D) {
+                // [D, H, W, C] volume rows (TOFIX140 Group C): the Data Input's
+                // shape, or a Conv3D output (spatial_layer_shapes.h).
+                layer.output_shape.clear();
+                if (current_shape.size() != 4) {
+                    AddIssue(config, IssueLevel::Error,
+                             node->name + " needs a [D, H, W, C] volume and gets " +
+                                 (current_shape.empty() ? std::string("no shape yet")
+                                                        : "[" + ShapeListText(current_shape) + "]") +
+                                 ": set the Data Input's shape to [D, H, W, C] and make Conv3D the first "
+                                 "model layer, or put it after another Conv3D",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                } else {
+                    try {
+                        layer.output_shape = spatial::Conv3DSampleShapeAfter(layer.parameters, current_shape);
+                    } catch (const std::invalid_argument& error) {
+                        AddIssue(config, IssueLevel::Error, error.what(), node->id, node->name,
+                                 errors::Compiler::TensorShapeMismatch);
+                    }
+                }
             } else if (spatial::IsSpatialLayer(node->type)) {
                 // The one spatial rule (spatial_layer_shapes.h): the same
                 // formulas feed the model builder and the training ingress.
@@ -6377,6 +6397,44 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (!config.HasErrors()) {
+        // The volume section (TOFIX140 Group C): Conv3D runs on [D,H,W,C]
+        // volume rows from the model input to the Flatten that hands each
+        // sample to Dense; only Conv3D, activations and Dropout run inside it.
+        bool in_volume = false;
+        bool rows_untouched = true;  // only activations / Dropout so far
+        for (size_t i = 0; i < config.layers.size() && !config.HasErrors(); ++i) {
+            const auto& layer = config.layers[i];
+            if (layer.type == gui::NodeType::Output) continue;
+            if (layer.type == gui::NodeType::Conv3D) {
+                if (!in_volume && !rows_untouched) {
+                    AddIssue(config, IssueLevel::Error,
+                             layer.name + " runs on the model's [D, H, W, C] input rows: make it the first "
+                             "model layer or put it after another Conv3D",
+                             layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+                }
+                in_volume = true;
+                continue;
+            }
+            if (spatial::IsShapePreservingLayer(layer.type)) continue;
+            rows_untouched = false;
+            if (!in_volume) continue;
+            if (layer.type == gui::NodeType::Flatten) {
+                in_volume = false;
+                continue;
+            }
+            AddIssue(config, IssueLevel::Error,
+                     layer.name + " cannot take Conv3D's [D, H, W, C] volume: only Conv3D, activations and "
+                     "Dropout run on volumes, so end the section with Flatten before it",
+                     layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+        }
+        if (in_volume && !config.HasErrors()) {
+            AddIssue(config, IssueLevel::Error,
+                     "End the Conv3D section with Flatten before Dense and the loss",
+                     config.layers.back().node_id, config.layers.back().name,
+                     errors::Compiler::TensorShapeMismatch);
+        }
+    }
+    if (!config.HasErrors()) {
         // A global pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
         for (size_t i = 0; i < config.layers.size(); ++i) {
             const auto& layer = config.layers[i];
@@ -6680,6 +6738,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dense:
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:
         case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
@@ -7068,6 +7127,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:
         case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
@@ -7228,6 +7288,14 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             // spatial_layer_shapes.h; the compile loop reports the reasons.
             try {
                 output_shape = spatial::SampleShapeAfter(layer.type, layer.parameters, input_shape);
+            } catch (const std::exception&) {
+                output_shape = input_shape;
+            }
+            break;
+
+        case gui::NodeType::Conv3D:
+            try {
+                output_shape = spatial::Conv3DSampleShapeAfter(layer.parameters, input_shape);
             } catch (const std::exception&) {
                 output_shape = input_shape;
             }

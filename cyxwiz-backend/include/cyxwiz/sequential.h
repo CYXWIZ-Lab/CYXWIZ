@@ -315,6 +315,53 @@ private:
 };
 
 /**
+ * @brief 3-D convolution on rows (TOFIX140 Group C), torch.nn.Conv3d.
+ *
+ * Rows [N, C*D*H*W] in torch's channel-major order (x.view(N, C, D, H, W))
+ * -> rows [N, F*D'*H'*W'] (torch Conv3d(...)(x).flatten(1)), with
+ * D' = (D + 2p - k) / s + 1 (and H', W' alike). `weight` is [F, C*k*k*k],
+ * torch's weight.flatten(1); `bias` is [F]. ArrayFire path: the column
+ * matrix is one sparse gather (built once for the sample shape) times the
+ * input, the convolution one matmul; backward is the transposed gather, so
+ * nothing leaves the device. Native loops when ArrayFire is unavailable.
+ */
+class CYXWIZ_API Conv3DModule : public Module {
+public:
+    Conv3DModule(size_t depth, size_t height, size_t width, size_t in_channels, size_t filters,
+                 int kernel_size, int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+    // The [D', H', W', F] sample each output row holds.
+    std::vector<size_t> OutputSample() const { return {out_depth_, out_height_, out_width_, filters_}; }
+
+private:
+    struct DeviceGather;
+    Tensor ForwardNative(const Tensor& input);
+    Tensor BackwardNative(const Tensor& grad_output);
+
+    size_t depth_, height_, width_, in_channels_, filters_;
+    int kernel_size_, stride_, padding_;
+    bool use_bias_;
+    size_t out_depth_ = 0, out_height_ = 0, out_width_ = 0;
+    size_t column_size_ = 0;  // C*k^3: one patch
+    size_t patches_ = 0;      // D'*H'*W'
+    // For patch p and column k, the input element at gather_[p * column_size_ + k]
+    // (channel-major index within a sample), or -1 in the zero padding.
+    std::vector<long long> gather_;
+    std::shared_ptr<DeviceGather> device_;
+    Tensor weight_, bias_, grad_weight_, grad_bias_;
+    Tensor input_;
+    bool has_forward_ = false;
+};
+
+/**
  * @brief Parameter-free SequentialModel adapter for Upsample2DLayer.
  *
  * Nearest/bilinear execution is ArrayFire-first with observed native fallback.

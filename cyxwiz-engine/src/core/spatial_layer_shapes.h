@@ -117,6 +117,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
     switch (type) {
         case gui::NodeType::Conv2D:
         case gui::NodeType::Conv1D:
+        case gui::NodeType::Conv3D:
             g.channels_out = ParseIntParam(params, "filters", 32);
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
@@ -163,7 +164,8 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
     if (type == gui::NodeType::ConvTranspose2D && (g.output_padding < 0 || g.output_padding >= g.stride))
         throw std::invalid_argument("output_padding must be smaller than the stride");
     if (g.channels_out < 0) throw std::invalid_argument("the channel count cannot be negative");
-    if (type == gui::NodeType::Conv1D && g.channels_out == 0) throw std::invalid_argument("filters must be positive");
+    if ((type == gui::NodeType::Conv1D || type == gui::NodeType::Conv3D) && g.channels_out == 0)
+        throw std::invalid_argument("filters must be positive");
     return g;
 }
 
@@ -179,6 +181,25 @@ inline std::vector<size_t> Conv1DSampleShapeAfter(const Params& params, const st
         throw std::invalid_argument("kernel " + std::to_string(g.kernel) + " does not fit a length-" +
                                     std::to_string(length) + " sequence");
     return {static_cast<size_t>(out), static_cast<size_t>(g.channels_out)};
+}
+
+// Conv3D on a [D, H, W, C] volume sample (TOFIX140 Group C): torch Conv3d on
+// [N, C, D, H, W] gives each axis X' = floor((X + 2p - k) / s) + 1 with
+// `filters` channels. The compiler's shape walk and ModelBuilder read this rule.
+inline std::vector<size_t> Conv3DSampleShapeAfter(const Params& params, const std::vector<size_t>& in) {
+    if (in.size() != 4) throw std::invalid_argument("Conv3D needs a [D, H, W, C] volume sample");
+    const Geometry g = ResolveGeometry(gui::NodeType::Conv3D, params, in[3]);
+    std::vector<size_t> out(4);
+    for (size_t axis = 0; axis < 3; ++axis) {
+        const long extent = static_cast<long>(in[axis]);
+        if (extent + 2 * g.padding < g.kernel)
+            throw std::invalid_argument("kernel " + std::to_string(g.kernel) + " does not fit a " +
+                                        std::to_string(in[0]) + "x" + std::to_string(in[1]) + "x" +
+                                        std::to_string(in[2]) + " volume");
+        out[axis] = static_cast<size_t>((extent + 2 * g.padding - g.kernel) / g.stride + 1);
+    }
+    out[3] = static_cast<size_t>(g.channels_out);
+    return out;
 }
 
 // The [H,W,C] sample a spatial or shape-preserving layer produces from

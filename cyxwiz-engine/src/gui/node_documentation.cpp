@@ -376,18 +376,22 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::Conv3D] = {
         "Conv3D",
-        "3D convolution layer for volumetric data. Used for video processing (time as 3rd dimension) "
-        "or 3D medical imaging like CT/MRI scans.",
-        "Input shape: (batch, channels, depth, height, width).",
+        "3D convolution for volumes: CT or MRI scans, voxel grids, short clips with time as depth. "
+        "Slides a cubic kernel through depth, height and width.",
+        "[D,H,W,C] -> [D',H',W',filters], as torch.nn.Conv3d(C, filters, k, stride, padding): each axis "
+        "X' = (X + 2p - k) / s + 1. Set the Data Input's shape to [D, H, W, C]; each row holds the volume "
+        "channel by channel (torch x.view(N, C, D, H, W)). First model layer or after another Conv3D; "
+        "end the section with Flatten before Dense.",
         {
             {"filters", "Number of output channels"},
-            {"kernel_size", "3D kernel size (d, h, w)"},
-            {"stride", "Step size in each dimension"},
-            {"padding", "Zero-padding for each dimension"}
+            {"kernel_size", "Cubic kernel size (3 means 3x3x3)"},
+            {"stride", "Step size on every axis"},
+            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"}
         },
         {
-            "Very memory intensive - start with small batch sizes",
-            "Consider (1, 3, 3) kernels to reduce computation"
+            "A k x k x k kernel has C x k^3 weights per filter: start with few filters",
+            "Use stride 2 to shrink the volume before Flatten, which keeps the Dense head small",
+            "Code export does not cover Conv3D yet; train it in Studio"
         },
         "Convolutional"
     };

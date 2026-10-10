@@ -2106,24 +2106,28 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
-        {"conv", "convolution", "3d", "volume"}, 0, false,
-        "Blocked 3D convolution design node retained for graph compatibility",
-        "No backend Conv3D layer, GraphCompiler extraction, ModelBuilder module, "
-        "or SequentialModel execution path currently owns this node.",
-        "",
+        {"conv", "convolution", "3d", "volume", "voxel", "video"}, 0, false,
+        "3D convolution over a volume sample [D, H, W, C]",
+        "Slides filters x kernel x kernel x kernel windows over each [D, H, W, C] volume (CT or MRI "
+        "scans, voxel grids, short clips with time as depth); the output has 'filters' channels and, "
+        "with padding 'same' at stride 1, the same depth, height and width (PyTorch Conv3d rules). "
+        "Make it the first model layer, after a Data Input whose shape is [D, H, W, C] (each row holds "
+        "the volume channel by channel, torch x.view(N, C, D, H, W)), or after another Conv3D. Put an "
+        "activation node after it and end with Flatten before Dense. Runs on ArrayFire.",
+        "Data Input (shape [D, H, W, C]) -> Conv3D -> ReLU -> Conv3D -> ReLU -> Flatten -> Dense -> Output",
         {{"Input", PinType::Tensor, true,
-          "Legacy volume feature-map input; no executable Engine layout contract exists yet."}},
+          "Volume [D, H, W, C] per sample (the Data Input's shape, or a Conv3D output)."}},
         {{"Output", PinType::Tensor, true,
-          "Convolved volume; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Convolved volume [D', H', W', filters]."}},
+        {{"filters", "int", "32", "Number of output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy cubic-kernel size", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Cubic kernel depth, height and width", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Step between kernel applications on each axis", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
         "Depthwise Conv2D", ICON_FA_BORDER_ALL,
