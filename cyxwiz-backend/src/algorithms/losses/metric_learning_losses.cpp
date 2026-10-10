@@ -35,13 +35,6 @@ constexpr float kCosineEmbeddingEpsilon = 1.0e-12f;
 constexpr float kTripletEuclideanEpsilon = 1.0e-6f;
 constexpr float kTripletCosineEpsilon = 1.0e-8f;
 
-template <typename CpuFunction>
-auto RunNativeCpuMetricLoss(const char* operation_name, CpuFunction&& compute)
-    -> decltype(compute()) {
-    const ScopedArrayFireHostSyncAttribution attribution(ArrayFireHostSyncCategory::LossCpuPath,
-                                                         operation_name);
-    return compute();
-}
 
 void ValidateCosineMargin(float margin) {
     if (!std::isfinite(margin) || margin < -1.0f || margin > 1.0f) {
@@ -130,289 +123,11 @@ EmbeddingPairShape ValidateTripletInputs(const Tensor& anchor, const Tensor& pos
     return shape;
 }
 
-Tensor CpuCosineEmbeddingForward(const Tensor& x1,
-                                 const Tensor& x2,
-                                 const Tensor& labels,
-                                 float margin,
-                                 Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels);
-    const float* label_data = ValidateCosineEmbeddingLabelValues(labels, shape.batch);
-    const float* a = x1.ReadData<float>();
-    const float* b = x2.ReadData<float>();
 
-    std::vector<float> losses(shape.batch, 0.0f);
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        float dot = 0.0f;
-        float norm1_sq = 0.0f;
-        float norm2_sq = 0.0f;
-        for (size_t d = 0; d < shape.dim; ++d) {
-            dot += a[base + d] * b[base + d];
-            norm1_sq += a[base + d] * a[base + d];
-            norm2_sq += b[base + d] * b[base + d];
-        }
-        const float norm_product = std::sqrt(norm1_sq + kCosineEmbeddingEpsilon) * std::sqrt(norm2_sq + kCosineEmbeddingEpsilon);
-        const float cos_sim = dot / norm_product;
-        losses[batch] = label_data[batch] == 1.0f ? 1.0f - cos_sim
-                                                 : std::max(cos_sim - margin, 0.0f);
-    }
-    return ApplyClassReduction(losses, shape.batch, reduction);
-}
 
-Tensor CpuCosineEmbeddingBackward(const Tensor& x1,
-                                  const Tensor& x2,
-                                  const Tensor& labels,
-                                  float margin,
-                                  Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels);
-    const float* label_data = ValidateCosineEmbeddingLabelValues(labels, shape.batch);
-    const float* a = x1.ReadData<float>();
-    const float* b = x2.ReadData<float>();
 
-    Tensor grad(x1.Shape(), DataType::Float32);
-    float* out = grad.MutableData<float>();
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        float dot = 0.0f;
-        float norm1_sq = 0.0f;
-        float norm2_sq = 0.0f;
-        for (size_t d = 0; d < shape.dim; ++d) {
-            dot += a[base + d] * b[base + d];
-            norm1_sq += a[base + d] * a[base + d];
-            norm2_sq += b[base + d] * b[base + d];
-        }
 
-        const float safe_norm1_sq = norm1_sq + kCosineEmbeddingEpsilon;
-        const float safe_norm2_sq = norm2_sq + kCosineEmbeddingEpsilon;
-        const float norm1 = std::sqrt(safe_norm1_sq);
-        const float norm2 = std::sqrt(safe_norm2_sq);
-        const float norm_product = norm1 * norm2;
-        const float cos_sim = dot / norm_product;
-        const float scale = label_data[batch] == 1.0f ? -1.0f
-                          : (cos_sim > margin ? 1.0f : 0.0f);
-        const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
-                                          ? 1.0f / static_cast<float>(shape.batch)
-                                          : 1.0f;
 
-        for (size_t d = 0; d < shape.dim; ++d) {
-            const float grad_cos = b[base + d] / norm_product -
-                                   cos_sim * a[base + d] / safe_norm1_sq;
-            out[base + d] = scale * reduction_scale * grad_cos;
-        }
-    }
-    return grad;
-}
-
-Tensor CpuTripletForward(const Tensor& anchor,
-                         const Tensor& positive,
-                         const Tensor& negative,
-                         TripletLoss::DistanceType distance_type,
-                         float margin,
-                         Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateTripletInputs(anchor, positive, negative);
-
-    const float* a = anchor.ReadData<float>();
-    const float* p = positive.ReadData<float>();
-    const float* n = negative.ReadData<float>();
-    std::vector<float> dist_ap(shape.batch, 0.0f);
-    std::vector<float> dist_an(shape.batch, 0.0f);
-    std::vector<float> losses(shape.batch, 0.0f);
-
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        if (distance_type == TripletLoss::DistanceType::Euclidean) {
-            float sum_ap = 0.0f;
-            float sum_an = 0.0f;
-            for (size_t d = 0; d < shape.dim; ++d) {
-                const float diff_ap = a[base + d] - p[base + d] + kTripletEuclideanEpsilon;
-                const float diff_an = a[base + d] - n[base + d] + kTripletEuclideanEpsilon;
-                sum_ap += diff_ap * diff_ap;
-                sum_an += diff_an * diff_an;
-            }
-            dist_ap[batch] = std::sqrt(sum_ap);
-            dist_an[batch] = std::sqrt(sum_an);
-        } else {
-            float dot_ap = 0.0f;
-            float dot_an = 0.0f;
-            float norm_a_sq = 0.0f;
-            float norm_p_sq = 0.0f;
-            float norm_n_sq = 0.0f;
-            for (size_t d = 0; d < shape.dim; ++d) {
-                dot_ap += a[base + d] * p[base + d];
-                dot_an += a[base + d] * n[base + d];
-                norm_a_sq += a[base + d] * a[base + d];
-                norm_p_sq += p[base + d] * p[base + d];
-                norm_n_sq += n[base + d] * n[base + d];
-            }
-            const float norm_a = std::sqrt(norm_a_sq + kTripletCosineEpsilon);
-            dist_ap[batch] = 1.0f - dot_ap / (norm_a * std::sqrt(norm_p_sq + kTripletCosineEpsilon));
-            dist_an[batch] = 1.0f - dot_an / (norm_a * std::sqrt(norm_n_sq + kTripletCosineEpsilon));
-        }
-        losses[batch] = std::max(dist_ap[batch] - dist_an[batch] + margin, 0.0f);
-    }
-    return ApplyClassReduction(losses, shape.batch, reduction);
-}
-
-TripletLossGradients CpuTripletBackwardAll(const Tensor& anchor,
-                          const Tensor& positive,
-                          const Tensor& negative,
-                          TripletLoss::DistanceType distance_type,
-                          float margin,
-                          Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateTripletInputs(anchor, positive, negative);
-
-    TripletLossGradients gradients{Tensor(anchor.Shape(), DataType::Float32),
-                                   Tensor(anchor.Shape(), DataType::Float32),
-                                   Tensor(anchor.Shape(), DataType::Float32)};
-    float* grad_anchor = gradients.anchor.MutableData<float>();
-    float* grad_positive = gradients.positive.MutableData<float>();
-    float* grad_negative = gradients.negative.MutableData<float>();
-    const float* a = anchor.ReadData<float>();
-    const float* p = positive.ReadData<float>();
-    const float* n = negative.ReadData<float>();
-    const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
-                                      ? 1.0f / static_cast<float>(shape.batch)
-                                      : 1.0f;
-
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        if (distance_type == TripletLoss::DistanceType::Euclidean) {
-            float dist_ap_sq = 0.0f;
-            float dist_an_sq = 0.0f;
-            for (size_t d = 0; d < shape.dim; ++d) {
-                const float diff_ap = a[base + d] - p[base + d] + kTripletEuclideanEpsilon;
-                const float diff_an = a[base + d] - n[base + d] + kTripletEuclideanEpsilon;
-                dist_ap_sq += diff_ap * diff_ap;
-                dist_an_sq += diff_an * diff_an;
-            }
-            const float dist_ap = std::sqrt(dist_ap_sq);
-            const float dist_an = std::sqrt(dist_an_sq);
-            if (dist_ap - dist_an + margin <= 0.0f) {
-                continue;
-            }
-            for (size_t d = 0; d < shape.dim; ++d) {
-                const float diff_ap = a[base + d] - p[base + d] + kTripletEuclideanEpsilon;
-                const float diff_an = a[base + d] - n[base + d] + kTripletEuclideanEpsilon;
-                const float grad_ap = diff_ap / dist_ap;
-                const float grad_an = diff_an / dist_an;
-                grad_anchor[base + d] = (grad_ap - grad_an) * reduction_scale;
-                grad_positive[base + d] = -grad_ap * reduction_scale;
-                grad_negative[base + d] = grad_an * reduction_scale;
-            }
-        } else {
-            float dot_ap = 0.0f;
-            float dot_an = 0.0f;
-            float norm_a_sq = 0.0f;
-            float norm_p_sq = 0.0f;
-            float norm_n_sq = 0.0f;
-            for (size_t d = 0; d < shape.dim; ++d) {
-                dot_ap += a[base + d] * p[base + d];
-                dot_an += a[base + d] * n[base + d];
-                norm_a_sq += a[base + d] * a[base + d];
-                norm_p_sq += p[base + d] * p[base + d];
-                norm_n_sq += n[base + d] * n[base + d];
-            }
-            const float safe_a_sq = norm_a_sq + kTripletCosineEpsilon;
-            const float safe_p_sq = norm_p_sq + kTripletCosineEpsilon;
-            const float safe_n_sq = norm_n_sq + kTripletCosineEpsilon;
-            const float norm_a = std::sqrt(safe_a_sq);
-            const float norm_p = std::sqrt(safe_p_sq);
-            const float norm_n = std::sqrt(safe_n_sq);
-            const float norm_ap = norm_a * norm_p;
-            const float norm_an = norm_a * norm_n;
-            const float cos_ap = dot_ap / norm_ap;
-            const float cos_an = dot_an / norm_an;
-            const float dist_ap = 1.0f - cos_ap;
-            const float dist_an = 1.0f - cos_an;
-            if (dist_ap - dist_an + margin <= 0.0f) {
-                continue;
-            }
-            for (size_t d = 0; d < shape.dim; ++d) {
-                const float grad_cos_ap_a =
-                    p[base + d] / norm_ap - cos_ap * a[base + d] / safe_a_sq;
-                const float grad_cos_an_a =
-                    n[base + d] / norm_an - cos_an * a[base + d] / safe_a_sq;
-                const float grad_cos_ap_p =
-                    a[base + d] / norm_ap - cos_ap * p[base + d] / safe_p_sq;
-                const float grad_cos_an_n =
-                    a[base + d] / norm_an - cos_an * n[base + d] / safe_n_sq;
-                grad_anchor[base + d] = (grad_cos_an_a - grad_cos_ap_a) * reduction_scale;
-                grad_positive[base + d] = -grad_cos_ap_p * reduction_scale;
-                grad_negative[base + d] = grad_cos_an_n * reduction_scale;
-            }
-        }
-    }
-
-    return gradients;
-}
-
-Tensor CpuContrastiveForward(const Tensor& x1,
-                             const Tensor& x2,
-                             const Tensor& labels,
-                             float margin,
-                             Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels);
-    const float* label_data = ValidateContrastiveLabelValues(labels, shape.batch);
-    const float* a = x1.ReadData<float>();
-    const float* b = x2.ReadData<float>();
-    std::vector<float> distances(shape.batch, 0.0f);
-    std::vector<float> losses(shape.batch, 0.0f);
-
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        float distance_sq = 0.0f;
-        for (size_t d = 0; d < shape.dim; ++d) {
-            const float diff = a[base + d] - b[base + d];
-            distance_sq += diff * diff;
-        }
-
-        distances[batch] = std::sqrt(distance_sq);
-        const float margin_diff = std::max(margin - distances[batch], 0.0f);
-        losses[batch] = label_data[batch] == 1.0f ? margin_diff * margin_diff
-                            : distance_sq;
-    }
-    return ApplyClassReduction(losses, shape.batch, reduction);
-}
-
-Tensor CpuContrastiveBackward(const Tensor& x1,
-                              const Tensor& x2,
-                              const Tensor& labels,
-                              float margin,
-                              Reduction reduction) {
-    const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels);
-    const float* label_data = ValidateContrastiveLabelValues(labels, shape.batch);
-
-    Tensor grad(x1.Shape(), DataType::Float32);
-    float* out = grad.MutableData<float>();
-    const float* a = x1.ReadData<float>();
-    const float* b = x2.ReadData<float>();
-    const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
-                                      ? 1.0f / static_cast<float>(shape.batch)
-                                      : 1.0f;
-
-    for (size_t batch = 0; batch < shape.batch; ++batch) {
-        const size_t base = batch * shape.dim;
-        float distance_sq = 0.0f;
-        for (size_t d = 0; d < shape.dim; ++d) {
-            const float diff = a[base + d] - b[base + d];
-            distance_sq += diff * diff;
-        }
-        const float distance = std::sqrt(distance_sq);
-        const bool dissimilar = label_data[batch] == 1.0f;
-        const bool active_dissimilar = dissimilar && distance < margin;
-        const float safe_distance = std::max(distance, 1e-8f);
-        const float dissimilar_scale = active_dissimilar
-                                           ? -2.0f * (margin - distance) / safe_distance
-                                           : 0.0f;
-        const float scale = dissimilar ? dissimilar_scale : 2.0f;
-
-        for (size_t d = 0; d < shape.dim; ++d) {
-            out[base + d] = scale * (a[base + d] - b[base + d]) * reduction_scale;
-        }
-    }
-
-    return grad;
-}
 
 } // namespace
 
@@ -454,9 +169,8 @@ Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "CosineEmbeddingLoss::Forward";
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
+    try {
         {
             const ScopedArrayFireHostSyncAttribution validation(
                 ArrayFireHostSyncCategory::LossInputValidation, kOperation);
@@ -484,21 +198,19 @@ Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), x1, x2, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(kOperation, [&] {
-        return CpuCosineEmbeddingForward(x1, x2, labels_, margin_, reduction_);
-    });
 }
 
 Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "CosineEmbeddingLoss::Backward";
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
+    try {
         {
             const ScopedArrayFireHostSyncAttribution validation(
                 ArrayFireHostSyncCategory::LossInputValidation, kOperation);
@@ -546,12 +258,11 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(grad, x1.Shape());
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), x1, x2, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(kOperation, [&] {
-        return CpuCosineEmbeddingBackward(x1, x2, labels_, margin_, reduction_);
-    });
 }
 
 // ============================================================================
@@ -562,10 +273,8 @@ Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
     constexpr const char* kOperation = "TripletLoss::Forward";
     ValidateTripletInputs(anchor, positive, negative_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu =
-        PrepareLossNativeCpuFallback(kOperation, anchor, positive, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(anchor, positive, kOperation);
+    try {
         af::array a = TensorToAf(anchor);
         af::array p = TensorToAf(positive);
         af::array n = TensorToAf(negative_);
@@ -595,12 +304,11 @@ Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), anchor, positive, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(kOperation, [&] {
-        return CpuTripletForward(anchor, positive, negative_, distance_type_, margin_, reduction_);
-    });
 }
 
 Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
@@ -611,10 +319,8 @@ TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor
     constexpr const char* kOperation = "TripletLoss::Backward";
     const EmbeddingPairShape shape = ValidateTripletInputs(anchor, positive, negative_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu =
-        PrepareLossNativeCpuFallback(kOperation, anchor, positive, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(anchor, positive, kOperation);
+    try {
         af::array a = TensorToAf(anchor);
         af::array p = TensorToAf(positive);
         af::array n = TensorToAf(negative_);
@@ -681,12 +387,11 @@ TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor
                                         AfToTensor(grad_positive, positive.Shape()),
                                         AfToTensor(grad_negative, negative_.Shape())};
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), anchor, positive, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(kOperation, [&] {
-        return CpuTripletBackwardAll(anchor, positive, negative_, distance_type_, margin_, reduction_);
-    });
 }
 
 // ============================================================================
@@ -697,9 +402,8 @@ Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "ContrastiveLoss::Forward";
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
+    try {
         {
             const ScopedArrayFireHostSyncAttribution validation(
                 ArrayFireHostSyncCategory::LossInputValidation, kOperation);
@@ -724,20 +428,19 @@ Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), x1, x2, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(
-        kOperation, [&] { return CpuContrastiveForward(x1, x2, labels_, margin_, reduction_); });
 }
 
 Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "ContrastiveLoss::Backward";
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
-    if (!use_native_cpu)
-        try {
+    loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
+    try {
         {
             const ScopedArrayFireHostSyncAttribution validation(
                 ArrayFireHostSyncCategory::LossInputValidation, kOperation);
@@ -787,12 +490,11 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(grad, x1.Shape());
     } catch (const af::exception& e) {
-        LogArrayFireLossFallbackOnce(kOperation, e.what(), x1, x2, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuMetricLoss(
-        kOperation, [&] { return CpuContrastiveBackward(x1, x2, labels_, margin_, reduction_);
-});
 }
 
 } // namespace cyxwiz

@@ -13,13 +13,6 @@ namespace cyxwiz {
 
 namespace {
 
-template <typename CpuFunction>
-Tensor RunNativeCpuLoss(const char* operation_name, CpuFunction&& compute) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LossCpuPath,
-        operation_name);
-    return compute();
-}
 
 void ValidateSmoothL1Delta(float delta) {
     if (!std::isfinite(delta) || delta < 0.0f) {
@@ -49,10 +42,9 @@ HuberLoss::HuberLoss(float delta, Reduction reduction)
 
 Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "MSELoss::Forward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -64,21 +56,18 @@ Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
 
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuMSEForward(predictions, targets, reduction_);
-    });
 }
 
 Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "MSELoss::Backward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -94,21 +83,18 @@ Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuMSEBackward(predictions, targets, reduction_);
-    });
 }
 
 Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "L1Loss::Forward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -118,21 +104,18 @@ Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
 
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuL1Forward(predictions, targets, reduction_);
-    });
 }
 
 Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "L1Loss::Backward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -148,21 +131,18 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
 
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuL1Backward(predictions, targets, reduction_);
-    });
 }
 
 Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "SmoothL1Loss::Forward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -186,22 +166,18 @@ Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
 
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuSmoothL1Forward(
-            predictions, targets, delta_, reduction_);
-    });
 }
 
 Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "SmoothL1Loss::Backward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
 
@@ -230,22 +206,18 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
 
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuSmoothL1Backward(
-            predictions, targets, delta_, reduction_);
-    });
 }
 
 Tensor HuberLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "HuberLoss::Forward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
         af::array diff = pred - target;
@@ -261,22 +233,18 @@ Tensor HuberLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         loss = loss_detail::ApplyReduction(loss, reduction_);
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuHuberForward(
-            predictions, targets, delta_, reduction_);
-    });
 }
 
 Tensor HuberLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "HuberLoss::Backward";
-    const bool use_native_cpu = loss_detail::PrepareLossNativeCpuFallback(
-        kOperation, predictions, targets, reduction_);
+    loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!use_native_cpu) try {
+    try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
         af::array diff = pred - target;
@@ -294,14 +262,11 @@ Tensor HuberLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         }
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
-        loss_detail::LogArrayFireLossFallbackOnce(
-            kOperation, e.what(), predictions, targets, reduction_);
+        loss_detail::ThrowLossDeviceError(kOperation, e);
     }
+#else
+    loss_detail::ThrowLossNeedsArrayFire(kOperation);
 #endif
-    return RunNativeCpuLoss(kOperation, [&] {
-        return loss_detail::CpuHuberBackward(
-            predictions, targets, delta_, reduction_);
-    });
 }
 
 } // namespace cyxwiz

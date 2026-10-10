@@ -15,78 +15,12 @@ namespace loss_detail {
 
 void ValidateFloat32Pair(const Tensor& predictions, const Tensor& targets, const char* name);
 
-Tensor ApplyCpuReduction(const std::vector<size_t>& input_shape,
-                         const std::vector<float>& values,
-                         Reduction reduction);
-Tensor ApplyClassReduction(const std::vector<float>& per_sample,
-                           size_t batch,
-                           Reduction reduction);
-
-Tensor CpuMSEForward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
-Tensor CpuMSEBackward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
-Tensor CpuL1Forward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
-Tensor CpuL1Backward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
-Tensor CpuSmoothL1Forward(const Tensor& predictions,
-                          const Tensor& targets,
-                          float delta,
-                          Reduction reduction);
-Tensor CpuSmoothL1Backward(const Tensor& predictions,
-                           const Tensor& targets,
-                           float delta,
-                           Reduction reduction);
-Tensor CpuHuberForward(const Tensor& predictions,
-                       const Tensor& targets,
-                       float delta,
-                       Reduction reduction);
-Tensor CpuHuberBackward(const Tensor& predictions,
-                        const Tensor& targets,
-                        float delta,
-                        Reduction reduction);
-Tensor CpuBCEForward(const Tensor& predictions,
-                     const Tensor& targets,
-                     Reduction reduction);
-Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
-float CpuSigmoidValue(float x);
-Tensor CpuBCEWithLogitsForward(const Tensor& predictions,
-                               const Tensor& targets,
-                               Reduction reduction,
-                               float pos_weight = 1.0f);
-Tensor CpuBCEWithLogitsBackward(const Tensor& predictions,
-                                const Tensor& targets,
-                                Reduction reduction,
-                                float pos_weight = 1.0f);
-Tensor CpuKLDivForward(const Tensor& predictions,
-                       const Tensor& targets,
-                       bool log_target,
-                       Reduction reduction);
-Tensor CpuKLDivBackward(const Tensor& predictions,
-                        const Tensor& targets,
-                        bool log_target,
-                        Reduction reduction);
-
-bool PrepareLossNativeCpuFallback(
-    const char* operation_name,
-    const Tensor& predictions,
-    const Tensor& targets,
-    Reduction reduction);
-void LogArrayFireLossFallbackOnce(
-    const char* operation_name,
-    const char* error_message,
-    const Tensor& tensor,
-    const char* tensor_name);
-void LogArrayFireLossFallbackOnce(
-    const char* operation_name,
-    const char* error_message,
-    const Tensor& predictions,
-    const Tensor& targets,
-    Reduction reduction);
-void LogArrayFireLossFallbackOnce(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    const char* error_message,
-    const Tensor& predictions,
-    const Tensor& targets,
-    Reduction reduction);
+// One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
+// reported, not hidden behind host loops; a build without ArrayFire refuses.
+[[noreturn]] void ThrowLossNeedsArrayFire(const char* operation_name);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+[[noreturn]] void ThrowLossDeviceError(const char* operation_name, const af::exception& error);
+#endif
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array TensorToAf(const Tensor& t);

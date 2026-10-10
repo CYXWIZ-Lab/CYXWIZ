@@ -22,8 +22,6 @@
 
 namespace {
 
-constexpr const char* kForceFallbackEnv =
-    "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
 std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>* g_loss_fallback_events =
     nullptr;
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
@@ -40,38 +38,6 @@ void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
         g_loss_host_sync_events->push_back(event);
     }
 }
-
-void SetLossFallbackEnv(const char* value) {
-#ifdef _WIN32
-    _putenv_s(kForceFallbackEnv, value);
-#else
-    setenv(kForceFallbackEnv, value, 1);
-#endif
-}
-
-class ScopedLossFallbackEnv {
-public:
-    explicit ScopedLossFallbackEnv(const char* value) {
-        const char* previous = std::getenv(kForceFallbackEnv);
-        if (previous != nullptr) {
-            had_previous_ = true;
-            previous_ = previous;
-        }
-        SetLossFallbackEnv(value);
-    }
-
-    ~ScopedLossFallbackEnv() {
-        if (had_previous_) {
-            SetLossFallbackEnv(previous_.c_str());
-        } else {
-            SetLossFallbackEnv("");
-        }
-    }
-
-private:
-    bool had_previous_ = false;
-    std::string previous_;
-};
 
 class ScopedLossEventCapture {
 public:
@@ -90,78 +56,6 @@ public:
 
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
 using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
-
-void RequireLossFallbackContract(
-    const LossFactory& factory,
-    const std::string& operation_name,
-    bool forward,
-    const std::function<cyxwiz::Tensor()>& make_predictions,
-    const std::function<cyxwiz::Tensor()>& make_targets) {
-    const auto invoke = [forward](cyxwiz::Loss& loss,
-                                  const cyxwiz::Tensor& predictions,
-                                  const cyxwiz::Tensor& targets) {
-        return forward ? loss.Forward(predictions, targets)
-                       : loss.Backward(predictions, targets);
-    };
-
-    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> strict_fallback_events;
-    std::vector<cyxwiz::ArrayFireHostSyncEvent> strict_host_sync_events;
-    {
-        const ScopedLossEventCapture capture(
-            strict_fallback_events, strict_host_sync_events);
-        const ScopedLossFallbackEnv forced(operation_name.c_str());
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CaptureLossFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
-            &CaptureLossHostSync);
-        auto loss = factory();
-        const auto predictions = make_predictions();
-        const auto targets = make_targets();
-        REQUIRE_THROWS_AS(invoke(*loss, predictions, targets), std::runtime_error);
-    }
-    REQUIRE(strict_fallback_events.size() == 1);
-    REQUIRE(strict_fallback_events.front().fallback_forbidden);
-    REQUIRE(strict_host_sync_events.empty());
-
-    auto arrayfire_loss = factory();
-    const auto arrayfire_result = invoke(
-        *arrayfire_loss, make_predictions(), make_targets());
-
-    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
-    std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
-    cyxwiz::Tensor native_result;
-    {
-        const ScopedLossEventCapture capture(fallback_events, host_sync_events);
-        const ScopedLossFallbackEnv forced(operation_name.c_str());
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CaptureLossFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
-            &CaptureLossHostSync);
-        auto loss = factory();
-        native_result = invoke(*loss, make_predictions(), make_targets());
-    }
-
-    REQUIRE(fallback_events.size() == 1);
-    REQUIRE(fallback_events.front().operation_name == operation_name);
-    REQUIRE(fallback_events.front().reason_code == "gpu_backend_exception");
-    REQUIRE_FALSE(fallback_events.front().fallback_forbidden);
-    REQUIRE_FALSE(host_sync_events.empty());
-    for (const auto& event : host_sync_events) {
-        REQUIRE(event.attribution_category == "loss_cpu_path");
-        REQUIRE(event.attribution_operation == operation_name);
-    }
-
-    REQUIRE(native_result.Shape() == arrayfire_result.Shape());
-    const float* expected = arrayfire_result.ReadData<float>();
-    const float* actual = native_result.ReadData<float>();
-    for (size_t index = 0; index < native_result.NumElements(); ++index) {
-        REQUIRE(actual[index] == Catch::Approx(expected[index]).margin(1.0e-6f));
-    }
-}
 #endif
 
 } // namespace
@@ -279,45 +173,6 @@ TEST_CASE("SmoothL1 beta zero is exactly L1", "[loss][regression]") {
     }
 }
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
-TEST_CASE("Regression losses declare strict and compatible fallback truth",
-          "[loss][regression][arrayfire][fallback]") {
-    const auto make_predictions = [] {
-        const float values[] = {
-            -2.5f, -0.5f, 0.0f, 0.75f, 3.0f, 1.0f};
-        return cyxwiz::Tensor(af::array(2, 3, values));
-    };
-    const auto make_targets = [] {
-        const float values[] = {
-            0.0f, -1.0f, 0.0f, 0.25f, 0.0f, -2.0f};
-        return cyxwiz::Tensor(af::array(2, 3, values));
-    };
-    const std::vector<std::pair<LossFactory, std::string>> losses = {
-        {[] { return std::make_unique<cyxwiz::MSELoss>(cyxwiz::Reduction::None); },
-         "MSELoss"},
-        {[] { return std::make_unique<cyxwiz::L1Loss>(cyxwiz::Reduction::None); },
-         "L1Loss"},
-        {[] { return std::make_unique<cyxwiz::SmoothL1Loss>(
-                   0.5f, cyxwiz::Reduction::None); },
-         "SmoothL1Loss"},
-        {[] { return std::make_unique<cyxwiz::HuberLoss>(
-                   2.0f, cyxwiz::Reduction::None); },
-         "HuberLoss"},
-    };
-    for (const auto& [factory, name] : losses) {
-        DYNAMIC_SECTION(name << " forward") {
-            RequireLossFallbackContract(
-                factory, name + "::Forward", true,
-                make_predictions, make_targets);
-        }
-        DYNAMIC_SECTION(name << " backward") {
-            RequireLossFallbackContract(
-                factory, name + "::Backward", false,
-                make_predictions, make_targets);
-        }
-    }
-}
-#endif
 
 TEST_CASE("Binary losses compute forward reductions", "[loss]") {
     float probability_values[] = {0.8f, 0.2f};
@@ -414,46 +269,6 @@ TEST_CASE("Probability losses validate shape and dtype before compute",
         kl_div.Backward(predictions, integer_targets), std::runtime_error);
 }
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
-TEST_CASE("Probability losses declare strict and compatible fallback truth",
-          "[loss][probability][arrayfire][fallback]") {
-    const auto make_device_tensor = [](const std::vector<float>& values) {
-        const cyxwiz::Tensor host(
-            {2, 2}, values.data(), cyxwiz::DataType::Float32);
-        return cyxwiz::Tensor::FromSemanticArray(
-            host.GetSemanticArray(), host.Shape());
-    };
-    const auto make_predictions = [make_device_tensor] {
-        return make_device_tensor({0.8f, 0.2f, 0.4f, 0.9f});
-    };
-    const auto make_targets = [make_device_tensor] {
-        return make_device_tensor({0.7f, 0.3f, 0.2f, 0.8f});
-    };
-    const std::vector<std::pair<LossFactory, std::string>> losses = {
-        {[] { return std::make_unique<cyxwiz::BCELoss>(
-                   cyxwiz::Reduction::None); },
-         "BCELoss"},
-        {[] { return std::make_unique<cyxwiz::BCEWithLogitsLoss>(
-                   cyxwiz::Reduction::None, 2.0f); },
-         "BCEWithLogitsLoss"},
-        {[] { return std::make_unique<cyxwiz::KLDivLoss>(
-                   cyxwiz::Reduction::None, false); },
-         "KLDivLoss"},
-    };
-    for (const auto& [factory, name] : losses) {
-        DYNAMIC_SECTION(name << " forward") {
-            RequireLossFallbackContract(
-                factory, name + "::Forward", true,
-                make_predictions, make_targets);
-        }
-        DYNAMIC_SECTION(name << " backward") {
-            RequireLossFallbackContract(
-                factory, name + "::Backward", false,
-                make_predictions, make_targets);
-        }
-    }
-}
-#endif
 
 TEST_CASE("BCE follows PyTorch boundary loss and gradient bounds",
           "[loss][probability]") {
@@ -931,46 +746,6 @@ TEST_CASE("Overlap losses validate shape dtype and emptiness before compute",
         std::runtime_error);
 }
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
-TEST_CASE("Overlap losses declare strict and compatible fallback truth",
-          "[loss][overlap][arrayfire][fallback]") {
-    const auto make_device_tensor = [](const std::vector<float>& values) {
-        const cyxwiz::Tensor host(
-            {2, 2}, values.data(), cyxwiz::DataType::Float32);
-        return cyxwiz::Tensor::FromSemanticArray(
-            host.GetSemanticArray(), host.Shape());
-    };
-    const auto make_predictions = [make_device_tensor] {
-        return make_device_tensor({0.8f, 0.2f, 0.4f, 0.9f});
-    };
-    const auto make_targets = [make_device_tensor] {
-        return make_device_tensor({1.0f, 0.0f, 0.0f, 1.0f});
-    };
-    const std::vector<std::pair<LossFactory, std::string>> losses = {
-        {[] { return std::make_unique<cyxwiz::SoftDiceLoss>(
-                   cyxwiz::Reduction::None, 1.0f); },
-         "SoftDiceLoss"},
-        {[] { return std::make_unique<cyxwiz::TverskyLoss>(
-                   cyxwiz::Reduction::None, 0.3f, 0.7f, 1.0f); },
-         "TverskyLoss"},
-        {[] { return std::make_unique<cyxwiz::JaccardLoss>(
-                   cyxwiz::Reduction::None, 1.0f); },
-         "JaccardLoss"},
-    };
-    for (const auto& [factory, name] : losses) {
-        DYNAMIC_SECTION(name << " forward") {
-            RequireLossFallbackContract(
-                factory, name + "::Forward", true,
-                make_predictions, make_targets);
-        }
-        DYNAMIC_SECTION(name << " backward") {
-            RequireLossFallbackContract(
-                factory, name + "::Backward", false,
-                make_predictions, make_targets);
-        }
-    }
-}
-#endif
 
 TEST_CASE("SoftDiceLoss computes forward and backward values",
           "[loss][overlap]") {
@@ -1402,53 +1177,6 @@ TEST_CASE("Metric-learning backward recomputes from supplied tensors", "[loss][m
 }
 
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
-TEST_CASE("Metric-learning losses declare strict and compatible fallback truth",
-          "[loss][metric-learning][arrayfire][fallback]") {
-    const auto make_device_tensor = [](const std::vector<size_t>& shape,
-                                       const std::vector<float>& values) {
-        const cyxwiz::Tensor host(shape, values.data(), cyxwiz::DataType::Float32);
-        return cyxwiz::Tensor::FromSemanticArray(host.GetSemanticArray(), host.Shape());
-    };
-    const auto make_first = [make_device_tensor] {
-        return make_device_tensor({2, 2}, {1.0f, 0.0f, 0.2f, 0.8f});
-    };
-    const auto make_second = [make_device_tensor] {
-        return make_device_tensor({2, 2}, {0.0f, 1.0f, 0.7f, 0.1f});
-    };
-    const std::vector<std::pair<LossFactory, std::string>> losses = {
-        {[make_device_tensor] {
-             auto loss =
-                  std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
-             loss->SetLabels(make_device_tensor({2}, {1.0f, -1.0f}));
-             return loss;
-         },
-         "CosineEmbeddingLoss"},
-        {[make_device_tensor] {
-             auto loss = std::make_unique<cyxwiz::TripletLoss>(
-                 1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean, cyxwiz::Reduction::None);
-             loss->SetNegative(
-                 make_device_tensor({2, 2}, {-0.5f, 0.3f, 0.9f, 0.2f}));
-             return loss;
-         },
-         "TripletLoss"},
-        {[make_device_tensor] {
-             auto loss = std::make_unique<cyxwiz::ContrastiveLoss>(1.5f, cyxwiz::Reduction::None);
-             loss->SetLabels(make_device_tensor({2}, {0.0f, 1.0f}));
-             return loss;
-         },
-         "ContrastiveLoss"},
-    };
-    for (const auto& [factory, name] : losses) {
-        DYNAMIC_SECTION(name << " forward") {
-            RequireLossFallbackContract(factory, name + "::Forward", true, make_first, make_second);
-        }
-        DYNAMIC_SECTION(name << " backward") {
-            RequireLossFallbackContract(factory, name + "::Backward", false, make_first,
-                                        make_second);
-        }
-    }
-}
-
 TEST_CASE("Metric-learning device label validation is explicitly attributed",
           "[loss][metric-learning][arrayfire][residency]") {
     const auto make_device_tensor = [](const std::vector<size_t>& shape,
