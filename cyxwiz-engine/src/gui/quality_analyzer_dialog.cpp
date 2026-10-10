@@ -515,12 +515,12 @@ void QualityAnalyzerDialog::RenderHistograms() {
                                 ui::ToU32(h.cut[b] ? t.warning : t.text_faint), 1.0f);
         }
         ImGui::Dummy(ImVec2(width, kHistogramHeight));
+        // Inside a group, SameLine positions count from the group's left edge.
         ImGui::PushStyleColor(ImGuiCol_Text, t.text_faint);
-        const float start = ImGui::GetCursorPosX();
         ImGui::TextUnformatted(h.low.c_str());
-        ImGui::SameLine(start + (width - ImGui::CalcTextSize(h.cut_label.c_str()).x) * 0.5f);
+        ImGui::SameLine((width - ImGui::CalcTextSize(h.cut_label.c_str()).x) * 0.5f);
         ImGui::TextUnformatted(h.cut_label.c_str());
-        ImGui::SameLine(start + width - ImGui::CalcTextSize(h.high.c_str()).x);
+        ImGui::SameLine(width - ImGui::CalcTextSize(h.high.c_str()).x);
         ImGui::TextUnformatted(h.high.c_str());
         ImGui::PopStyleColor();
         ImGui::EndGroup();
