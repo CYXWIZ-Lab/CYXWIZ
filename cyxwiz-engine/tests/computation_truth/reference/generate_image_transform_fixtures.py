@@ -20,6 +20,7 @@ from typing import Any, Callable
 import torch
 import torchvision
 import torchvision.transforms.functional as F
+import torchvision.transforms.v2 as v2
 from torchvision.transforms import InterpolationMode
 
 SCHEMA_VERSION = 1
@@ -52,6 +53,35 @@ def per_sample(images: torch.Tensor, fn: Callable[[torch.Tensor, int], torch.Ten
 def case(name: str, op: dict[str, Any], draws: dict[str, Any], images: torch.Tensor,
          out: torch.Tensor) -> dict[str, Any]:
     return {"name": name, "op": op, "draws": draws, "input": rows(images), "expected": rows(out)}
+
+
+def mix_cases() -> list[dict[str, Any]]:
+    """torchvision.transforms.v2 MixUp / CutMix run for real; the lambda and box
+    they drew are recorded so the Engine can replay the same mix."""
+    images = batch(143, 4, 3, 6, 7)
+    labels = torch.tensor([0, 2, 1, 2])
+    cases = []
+    for method, transform, seed in (("mixup", v2.MixUp(alpha=1.0, num_classes=3), 7),
+                                    ("cutmix", v2.CutMix(alpha=1.0, num_classes=3), 11),
+                                    ("cutmix", v2.CutMix(alpha=0.4, num_classes=3), 23)):
+        torch.manual_seed(seed)
+        params = transform.make_params([images])
+        torch.manual_seed(seed)
+        mixed, mixed_labels = transform(images, labels)
+        draws: dict[str, Any] = {}
+        if method == "mixup":
+            draws["lambda"] = params["lam"]
+        else:
+            x1, y1, x2, y2 = params["box"]
+            draws.update({"lambda": params["lam_adjusted"], "top": y1, "left": x1,
+                          "height": y2 - y1, "width": x2 - x1})
+        cases.append({
+            "name": f"{method}_seed{seed}", "op": {"kind": "mix", "method": method}, "draws": draws,
+            "input": rows(images), "expected": rows(mixed),
+            "labels": {"shape": [4, 3], "values": torch.nn.functional.one_hot(labels, 3).float().reshape(-1).tolist()},
+            "expected_labels": {"shape": [4, 3], "values": mixed_labels.reshape(-1).tolist()},
+        })
+    return cases
 
 
 def build() -> list[dict[str, Any]]:
@@ -178,6 +208,7 @@ def main() -> None:
         "torch_version": torch.__version__,
         "torchvision_version": torchvision.__version__,
         "cases": build(),
+        "mix_cases": mix_cases(),
     }
     args.output.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {len(payload['cases'])} cases to {args.output}")

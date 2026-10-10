@@ -680,7 +680,7 @@ bool TrainingManager::StartTrainingImage(
         batch_size, config.train_ratio, config.shuffle, config.num_workers,
         static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
-    batcher->SetImageTransforms(config.image_augmentation.ops);
+    batcher->SetImageTransforms(config.image_augmentation);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");

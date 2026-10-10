@@ -36,9 +36,10 @@ public:
     void SetFlatten(bool flatten) override;
     void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
     void SetPhase(BatcherPhase phase) override;
-    // The compiled image transforms (TOFIX140). They and Normalize run on the
-    // ArrayFire device on each whole batch; random ones on Train batches only.
-    void SetImageTransforms(const std::vector<image::ImageOp>& ops);
+    // The compiled image transforms and batch mix (TOFIX140). They and
+    // Normalize run on the ArrayFire device on each whole batch; random ones
+    // and the mix on Train batches only.
+    void SetImageTransforms(const image::ImageAugmentation& compiled);
 
     size_t GetNumValSamples() const { return val_indices_.size(); }
 

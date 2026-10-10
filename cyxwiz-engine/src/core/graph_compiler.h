@@ -515,6 +515,8 @@ struct TrainingConfiguration {
     // The image transform nodes between Resize and Normalize, in graph
     // order: run by the image batcher on the device (Normalize after them).
     cyxwiz::image::ImageAugmentation image_augmentation;
+    // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
+    int image_mix_node_id = -1;
 
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when

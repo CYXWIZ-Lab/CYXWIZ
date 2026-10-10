@@ -1852,13 +1852,16 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::AdvancedAugment] = {
         "Advanced Augment",
-        "Blanks out a random patch of training images so the model cannot rely on one region.",
+        "Erases a random patch of training images, or mixes training images and their labels.",
         "cutout: a cutout_size square centred at a random pixel, clipped at the edges (DeVries & Taylor). "
         "random_erasing: a box of random area and aspect ratio (torchvision RandomErasing). "
+        "mixup / cutmix: the batch is mixed with itself rolled by one, one lambda from Beta(alpha, alpha), "
+        "labels mixed the same way (torchvision v2 MixUp / CutMix); needs Cross Entropy. "
         "Validation and test pass through unchanged.",
         {
-            {"method", "cutout or random_erasing"},
-            {"probability", "Chance that a training image is erased (0 to 1)"},
+            {"method", "cutout, random_erasing, mixup or cutmix"},
+            {"probability", "Chance that a training image is erased, or a training batch mixed (0 to 1)"},
+            {"alpha", "mixup / cutmix: Beta(alpha, alpha); 1.0 draws lambda uniformly"},
             {"cutout_size", "cutout: side of the square in pixels"},
             {"scale_min / scale_max", "random_erasing: box area as a fraction of the image"},
             {"ratio_min / ratio_max", "random_erasing: box aspect ratio (height / width)"},
@@ -1866,6 +1869,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         },
         {
             "CIFAR-10 recipe: Random Crop (padding 4) -> Horizontal Flip -> cutout 16",
+            "Training accuracy compares with the larger share of a mixed label",
         },
         "Data Pipeline"
     };

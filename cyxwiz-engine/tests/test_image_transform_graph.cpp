@@ -83,7 +83,8 @@ struct Step {
 };
 
 // Data Input (images) -> steps... -> Conv2D -> ReLU -> Flatten -> Dense 2 -> Cross entropy -> Adam.
-cyxwiz::TrainingConfiguration Compile(const std::vector<Step>& steps) {
+cyxwiz::TrainingConfiguration Compile(const std::vector<Step>& steps,
+                                      gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss) {
     gui::MLNode data;
     data.id = 1;
     data.type = gui::NodeType::DataInput;
@@ -101,8 +102,8 @@ cyxwiz::TrainingConfiguration Compile(const std::vector<Step>& steps) {
     const int last_layer = id - 1;
     gui::MLNode loss;
     loss.id = id++;
-    loss.type = gui::NodeType::CrossEntropyLoss;
-    loss.name = "Cross entropy";
+    loss.type = loss_type;
+    loss.name = "Loss";
     loss.inputs = {Pin(loss.id * 100 + 1, gui::PinType::Tensor, "Predictions", true),
                    Pin(loss.id * 100 + 2, gui::PinType::Labels, "Targets", true)};
     loss.outputs = {Pin(loss.id * 100 + 3, gui::PinType::Loss, "Loss", false)};
@@ -134,8 +135,8 @@ std::string Errors(const cyxwiz::TrainingConfiguration& config) {
 }
 
 void CheckRefused(const std::vector<Step>& steps, const std::string& node, const std::string& needle,
-                  const std::string& what) {
-    const auto config = Compile(steps);
+                  const std::string& what, gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss) {
+    const auto config = Compile(steps, loss_type);
     bool found = false;
     for (const auto& issue : config.issues) {
         found = found || (issue.level == cyxwiz::IssueLevel::Error && issue.node_name == node &&
@@ -204,7 +205,27 @@ void CheckCompiler() {
               erasing.image_augmentation.ops[0].scale_max == 0.2f && erasing.image_augmentation.ops[0].value == 0.5f,
           "Advanced Augment settings reach the plan");
     CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Old method", {{"method", "Cutout"}}}},
-                 "Old method", "method must be cutout or random_erasing", "an unknown Advanced Augment method");
+                 "Old method", "method must be cutout, random_erasing, mixup or cutmix",
+                 "an unknown Advanced Augment method");
+
+    const auto mixing = Compile({
+        kResize,
+        {gui::NodeType::HorizontalFlip, "Flip", {}},
+        {gui::NodeType::AdvancedAugment, "CutMix", {{"method", "cutmix"}, {"alpha", "0.4"}, {"probability", "1"}}},
+        kNormalize,
+    });
+    Check(mixing.is_valid, "cutmix with Cross Entropy compiles; errors:\n" + Errors(mixing));
+    Check(mixing.image_augmentation.ops.size() == 1 &&
+              mixing.image_augmentation.mix == cyxwiz::image::BatchMix::CutMix &&
+              mixing.image_augmentation.mix_alpha == 0.4f && mixing.image_augmentation.mix_probability == 1.0f,
+          "cutmix becomes the plan's batch mix, not a per-image op");
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MixUp", {{"method", "mixup"}}},
+                  {gui::NodeType::AdvancedAugment, "Second mix", {{"method", "cutmix"}}}},
+                 "Second mix", "Only one mixup or cutmix per graph", "two batch mixes");
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "MixUp MSE", {{"method", "mixup"}}}},
+                 "MixUp MSE", "use Cross Entropy", "mixup without Cross Entropy", gui::NodeType::MSELoss);
+    CheckRefused({kResize, {gui::NodeType::AdvancedAugment, "Alpha 0", {{"method", "mixup"}, {"alpha", "0"}}}},
+                 "Alpha 0", "alpha must be greater than 0", "alpha 0");
     CheckRefused({kResize, {gui::NodeType::MorphologyTransform, "Old blur", {{"operation", "blur"}}}},
                  "Old blur", "retired; use Image Gaussian Blur", "the retired Morphology 'blur' operation");
 
@@ -279,7 +300,9 @@ void CheckBatcher() {
     crop.height = 2;
     crop.width = 2;
     cyxwiz::ImageDatasetBatcher batcher(entry, resize, 2, 0.5f, false, 0, 11);
-    batcher.SetImageTransforms({flip, crop});
+    cyxwiz::image::ImageAugmentation flip_crop;
+    flip_crop.ops = {flip, crop};
+    batcher.SetImageTransforms(flip_crop);
 
     batcher.SetPhase(cyxwiz::BatcherPhase::Val);
     batcher.Reset();
@@ -297,6 +320,30 @@ void CheckBatcher() {
     batcher.SetPhase(cyxwiz::BatcherPhase::Train);
     batcher.Reset();
     const auto train = batcher.GetNextBatch();
+
+    // MixUp on every Train batch: one-hot labels come out mixed (rows still sum
+    // to 1), validation labels stay one-hot.
+    cyxwiz::image::ImageAugmentation mixup;
+    mixup.mix = cyxwiz::image::BatchMix::MixUp;
+    mixup.mix_probability = 1.0f;
+    cyxwiz::ImageDatasetBatcher mixing(entry, resize, 2, 0.5f, false, 0, 11);
+    mixing.SetOneHotEncoding(2);
+    mixing.SetImageTransforms(mixup);
+    mixing.SetPhase(cyxwiz::BatcherPhase::Val);
+    mixing.Reset();
+    const auto plain = mixing.GetNextBatch();
+    const float* plain_labels = plain.labels.ReadData<float>();
+    Check(plain_labels[0] + plain_labels[1] == 1.0f && (plain_labels[0] == 0.0f || plain_labels[0] == 1.0f),
+          "validation labels stay one-hot");
+    mixing.SetPhase(cyxwiz::BatcherPhase::Train);
+    mixing.Reset();
+    const auto mixed = mixing.GetNextBatch();
+    Check(mixed.labels.Shape() == std::vector<size_t>({2, 2}), "mixed labels keep [N, C]");
+    const float* mixed_labels = mixed.labels.ReadData<float>();
+    for (size_t s = 0; s < 2; ++s) {
+        Check(std::fabs(mixed_labels[2 * s] + mixed_labels[2 * s + 1] - 1.0f) < 1e-5f,
+              "mixed label rows still sum to 1");
+    }
     Check(train.size == 2, "training batch has two images");
     const float* t = train.data.ReadData<float>();
     for (size_t s = 0; s < 2; ++s) {

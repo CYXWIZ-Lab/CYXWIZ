@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
 #include "training_randomness.h"
@@ -6274,6 +6275,16 @@ TrainingConfiguration GraphCompiler::Compile(
                 }
             }
 
+            // mixup / cutmix mix the one-hot labels, which only Cross Entropy takes.
+            if (config.image_mix_node_id >= 0 &&
+                (!config.preprocessing.has_onehot || UsesScalarBinaryTargets(config.loss_type))) {
+                const gui::MLNode* mix_node = FindNodeById(config.image_mix_node_id, nodes);
+                AddIssue(config, IssueLevel::Error,
+                         "mixup and cutmix mix the one-hot labels too: use Cross Entropy as the loss",
+                         config.image_mix_node_id, mix_node ? mix_node->name : std::string(),
+                         errors::Compiler::TensorShapeMismatch);
+            }
+
             // Check 4: Pipeline ordering — Normalize before Resize is
             // almost certainly wrong (normalization stats are scale-
             // dependent). Walk the TOPOLOGICAL order (from links), not
@@ -6912,6 +6923,37 @@ void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
     config.image_augmentation.ops.push_back(op);
 }
 
+// mixup / cutmix mix whole training batches and their one-hot labels; the
+// loss check (Cross Entropy) runs with the image checks once the loss is known.
+void ExtractImageBatchMix(const gui::MLNode& node, const std::string& method, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+#ifndef CYXWIZ_HAS_ARRAYFIRE
+    refuse("Image transforms run on ArrayFire, and this build has no ArrayFire");
+    return;
+#endif
+    float alpha = 1.0f, probability = 0.5f;
+    std::string error;
+    if (ParseFloatParam(node.parameters, "alpha", 1.0f, alpha, error)) {
+        ParseFloatParam(node.parameters, "probability", 0.5f, probability, error);
+    }
+    if (!error.empty()) return refuse(error);
+    if (config.preprocessing.has_normalization) {
+        return refuse("Image transforms work on [0, 1] pixels: put this node between Resize and Normalize");
+    }
+    if (!(alpha > 0.0f)) return refuse("alpha must be greater than 0");
+    if (!(probability >= 0.0f && probability <= 1.0f)) return refuse("probability must be between 0 and 1");
+    if (config.image_augmentation.mix != cyxwiz::image::BatchMix::None) {
+        return refuse("Only one mixup or cutmix per graph: each training batch is mixed once");
+    }
+    config.image_augmentation.mix =
+        method == "mixup" ? cyxwiz::image::BatchMix::MixUp : cyxwiz::image::BatchMix::CutMix;
+    config.image_augmentation.mix_alpha = alpha;
+    config.image_augmentation.mix_probability = probability;
+    config.image_mix_node_id = node.id;
+}
+
 static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration& config) {
     using cyxwiz::image::ImageOpKind;
     cyxwiz::image::ImageOp op;
@@ -6989,12 +7031,16 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
             op.kind = ImageOpKind::Erase;
             const auto it = p.find("method");
             const std::string method = it == p.end() ? "cutout" : it->second;
+            if (method == "mixup" || method == "cutmix") {
+                ExtractImageBatchMix(node, method, config);
+                return;
+            }
             if (method == "cutout") {
                 op.erase_method = cyxwiz::image::EraseMethod::Cutout;
             } else if (method == "random_erasing") {
                 op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
             } else {
-                error = "method must be cutout or random_erasing";
+                error = "method must be cutout, random_erasing, mixup or cutmix";
             }
             if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
                 ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&

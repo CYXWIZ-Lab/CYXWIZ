@@ -352,6 +352,26 @@ af::array Erase(const af::array& images, const ImageOpDraws& draws, float value)
                       af::constant(value, dims, images.type()), images);
 }
 
+// torchvision v2: mixed = rolled * (1 - lambda) + batch * lambda (MixUp), or
+// the box pasted from the batch rolled by one (CutMix); roll(1, 0) means
+// sample i takes sample i - 1, so sample 0 takes the last one.
+af::array MixImages(BatchMix method, const BatchMixDraw& draw, const af::array& images) {
+    const af::array rolled = af::shift(images, 0, 0, 0, 1);
+    if (method == BatchMix::MixUp) {
+        return rolled * (1.0f - draw.lambda) + images * draw.lambda;
+    }
+    af::array mixed = images.copy();
+    if (draw.height > 0 && draw.width > 0) {
+        const af::seq rows(draw.top, draw.top + draw.height - 1), cols(draw.left, draw.left + draw.width - 1);
+        mixed(rows, cols, af::span, af::span) = rolled(rows, cols, af::span, af::span);
+    }
+    return mixed;
+}
+
+af::array MixLabels(const BatchMixDraw& draw, const af::array& targets) {  // [N, C]
+    return af::shift(targets, 1) * (1.0f - draw.lambda) + targets * draw.lambda;
+}
+
 af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const ImageShape& shape,
                         const af::array& images) {
     const af::dim4 dims = images.dims();
@@ -632,6 +652,52 @@ Tensor ApplyImageOp(const ImageOp& op, const ImageOpDraws& draws, const ImageSha
 #endif
 }
 
+BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability, const ImageShape& shape,
+                          std::mt19937& rng) {
+    BatchMixDraw draw;
+    if (method == BatchMix::None || !(std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) < probability)) {
+        return draw;
+    }
+    std::gamma_distribution<double> gamma(alpha, 1.0);
+    const double x = gamma(rng), y = gamma(rng);
+    const double lambda = x + y > 0.0 ? x / (x + y) : 0.5;  // Beta(alpha, alpha)
+    draw.apply = true;
+    draw.lambda = static_cast<float>(lambda);
+    if (method == BatchMix::CutMix) {
+        // torchvision v2 CutMix: centre anywhere, half sides r * size with
+        // r = 0.5 sqrt(1 - lambda), clipped; lambda becomes 1 - box area.
+        const int h = static_cast<int>(shape.height), w = static_cast<int>(shape.width);
+        const int rx = std::uniform_int_distribution<int>(0, w - 1)(rng);
+        const int ry = std::uniform_int_distribution<int>(0, h - 1)(rng);
+        const double r = 0.5 * std::sqrt(1.0 - lambda);
+        const int half_w = static_cast<int>(r * w), half_h = static_cast<int>(r * h);
+        const int x1 = (std::max)(rx - half_w, 0), y1 = (std::max)(ry - half_h, 0);
+        const int x2 = (std::min)(rx + half_w, w), y2 = (std::min)(ry + half_h, h);
+        draw.top = y1;
+        draw.left = x1;
+        draw.height = y2 - y1;
+        draw.width = x2 - x1;
+        draw.lambda = static_cast<float>(1.0 - static_cast<double>(draw.height) * draw.width / (static_cast<double>(w) * h));
+    }
+    return draw;
+}
+
+void ApplyBatchMix(BatchMix method, const BatchMixDraw& draw, const ImageShape& shape, Tensor& rows,
+                   Tensor& labels) {
+    if (!draw.apply || method == BatchMix::None) return;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const af::array images = RowsToImages(rows.GetArrayRowMajor2D(), shape);
+    rows = Tensor::FromArrayRowMajor2D(ImagesToRows(MixImages(method, draw, images)));
+    const af::array targets = labels.GetArrayRowMajor2D();
+    labels = Tensor::FromArrayRowMajor2D(MixLabels(draw, targets));
+#else
+    (void)shape;
+    (void)rows;
+    (void)labels;
+    throw std::runtime_error("image transforms need the ArrayFire build");
+#endif
+}
+
 ImageShape ImageAugmentation::ShapeAfter(const ImageShape& input) const {
     ImageShape shape = input;
     for (const auto& op : ops) shape = ImageShapeAfter(op, shape);
@@ -639,7 +705,7 @@ ImageShape ImageAugmentation::ShapeAfter(const ImageShape& input) const {
 }
 
 Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, bool training,
-                                std::mt19937& rng) const {
+                                std::mt19937& rng, Tensor* labels) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array images = RowsToImages(rows.GetArrayRowMajor2D(), input);
     const size_t batch = static_cast<size_t>(images.dims(3));
@@ -648,6 +714,13 @@ Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, boo
         const ImageShape next = ImageShapeAfter(op, shape);
         images = ApplyOnDevice(op, DrawImageOp(op, shape, batch, training, rng), shape, images);
         shape = next;
+    }
+    if (training && labels != nullptr && mix != BatchMix::None) {
+        const BatchMixDraw draw = DrawBatchMix(mix, mix_alpha, mix_probability, shape, rng);
+        if (draw.apply) {
+            images = MixImages(mix, draw, images);
+            *labels = Tensor::FromArrayRowMajor2D(MixLabels(draw, labels->GetArrayRowMajor2D()));
+        }
     }
     if (normalize) {
         images = (images - mean) / std_dev;
@@ -658,6 +731,7 @@ Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, boo
     (void)input;
     (void)training;
     (void)rng;
+    (void)labels;
     throw std::runtime_error("image transforms need the ArrayFire build");
 #endif
 }

@@ -106,19 +106,42 @@ CYXWIZ_API ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input,
 CYXWIZ_API Tensor ApplyImageOp(const ImageOp& op, const ImageOpDraws& draws,
                                const ImageShape& input, const Tensor& rows);
 
+// Batch mixing (torchvision.transforms.v2 MixUp / CutMix): one lambda per
+// batch from Beta(alpha, alpha); each image is mixed with the batch rolled by
+// one, and the one-hot labels the same way. Training batches only.
+enum class BatchMix { None, MixUp, CutMix };
+
+struct BatchMixDraw {
+    bool apply = false;
+    float lambda = 1.0f;          // weight of each sample's own image and label
+    int top = 0, left = 0;        // CutMix box pasted from the rolled batch
+    int height = 0, width = 0;
+};
+
+CYXWIZ_API BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability,
+                                     const ImageShape& shape, std::mt19937& rng);
+
+// Mixes rows [N, shape.Size()] and one-hot labels [N, C] on the device.
+CYXWIZ_API void ApplyBatchMix(BatchMix method, const BatchMixDraw& draw, const ImageShape& shape,
+                              Tensor& rows, Tensor& labels);
+
 // The ordered transforms between Resize and the model, then Normalize.
 struct CYXWIZ_API ImageAugmentation {
     std::vector<ImageOp> ops;
+    BatchMix mix = BatchMix::None;
+    float mix_alpha = 1.0f;
+    float mix_probability = 1.0f;
     bool normalize = false;
     float mean = 0.0f;
     float std_dev = 1.0f;
 
-    bool Empty() const { return ops.empty() && !normalize; }
+    bool Empty() const { return ops.empty() && mix == BatchMix::None && !normalize; }
     ImageShape ShapeAfter(const ImageShape& input) const;
-    // Uploads the rows once, runs every op and Normalize on the device, and
-    // returns rows [N, ShapeAfter(input).Size()] resident on the device.
+    // Uploads the rows once, runs every op, the batch mix (training, when
+    // labels are given) and Normalize on the device, and returns rows
+    // [N, ShapeAfter(input).Size()] resident on the device.
     Tensor Apply(const Tensor& rows, const ImageShape& input, bool training,
-                 std::mt19937& rng) const;
+                 std::mt19937& rng, Tensor* labels = nullptr) const;
 };
 
 }  // namespace cyxwiz::image

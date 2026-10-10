@@ -123,6 +123,83 @@ void CheckFixtures(const std::filesystem::path& path) {
     }
 }
 
+cyxwiz::Tensor MatrixOf(const json& m) {
+    const auto shape = m.at("shape").get<std::vector<size_t>>();
+    const auto values = m.at("values").get<std::vector<float>>();
+    return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Float32);
+}
+
+void CheckMixFixtures(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    const json fixture = json::parse(in);
+    for (const auto& item : fixture.at("mix_cases")) {
+        const std::string name = item.at("name").get<std::string>();
+        const auto method = item.at("op").at("method").get<std::string>() == "mixup"
+            ? cyxwiz::image::BatchMix::MixUp : cyxwiz::image::BatchMix::CutMix;
+        const json& d = item.at("draws");
+        cyxwiz::image::BatchMixDraw draw;
+        draw.apply = true;
+        draw.lambda = d.at("lambda").get<float>();
+        draw.top = d.value("top", 0);
+        draw.left = d.value("left", 0);
+        draw.height = d.value("height", 0);
+        draw.width = d.value("width", 0);
+        cyxwiz::Tensor rows = RowsOf(item.at("input"));
+        cyxwiz::Tensor labels = MatrixOf(item.at("labels"));
+        cyxwiz::image::ApplyBatchMix(method, draw, ShapeOf(item.at("input")), rows, labels);
+        CheckRows(rows, item.at("expected"), 2e-6f, name + " images");
+        const auto expected = item.at("expected_labels").at("values").get<std::vector<float>>();
+        const float* got = labels.ReadData<float>();
+        for (size_t i = 0; i < expected.size(); ++i) {
+            Check(std::fabs(got[i] - expected[i]) < 1e-6f, name + ": label " + std::to_string(i) + " is " +
+                                                               std::to_string(got[i]) + ", torchvision " +
+                                                               std::to_string(expected[i]));
+        }
+        std::cout << "  " << name << ": images and labels match torchvision" << std::endl;
+    }
+}
+
+void CheckMixDraws() {
+    const ImageShape shape{32, 40, 3};
+    std::mt19937 rng(5);
+    double sum = 0.0;
+    for (int i = 0; i < 4000; ++i) {
+        const auto draw = cyxwiz::image::DrawBatchMix(cyxwiz::image::BatchMix::MixUp, 1.0f, 1.0f, shape, rng);
+        Check(draw.apply && draw.lambda >= 0.0f && draw.lambda <= 1.0f, "MixUp lambda is in [0, 1]");
+        sum += draw.lambda;
+    }
+    Check(std::fabs(sum / 4000.0 - 0.5) < 0.03, "MixUp lambda from Beta(1, 1) averages 0.5");
+    for (int i = 0; i < 500; ++i) {
+        const auto draw = cyxwiz::image::DrawBatchMix(cyxwiz::image::BatchMix::CutMix, 1.0f, 1.0f, shape, rng);
+        Check(draw.top + draw.height <= 32 && draw.left + draw.width <= 40, "CutMix boxes fit the image");
+        Check(std::fabs(draw.lambda - (1.0f - static_cast<float>(draw.height * draw.width) / (32.0f * 40.0f))) < 1e-6f,
+              "CutMix lambda is one minus the pasted area");
+    }
+    int applied = 0;
+    for (int i = 0; i < 2000; ++i) {
+        applied += cyxwiz::image::DrawBatchMix(cyxwiz::image::BatchMix::MixUp, 1.0f, 0.3f, shape, rng).apply ? 1 : 0;
+    }
+    Check(applied > 520 && applied < 680, "a batch is mixed with mix_probability (" + std::to_string(applied) + ")");
+
+    // In a plan: training mixes images and labels, validation leaves both.
+    cyxwiz::image::ImageAugmentation plan;
+    plan.mix = cyxwiz::image::BatchMix::MixUp;
+    const ImageShape tiny{2, 2, 1};
+    const float pixels[] = {0, 0, 0, 0, 1, 1, 1, 1};
+    const float onehot[] = {1, 0, 0, 1};
+    const cyxwiz::Tensor rows({2, 4}, pixels, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor val_labels({2, 2}, onehot, cyxwiz::DataType::Float32);
+    std::mt19937 plan_rng(9);
+    const auto val = plan.Apply(rows, tiny, false, plan_rng, &val_labels);
+    Check(val.ReadData<float>()[0] == 0.0f && val_labels.ReadData<float>()[0] == 1.0f,
+          "validation batches are not mixed");
+    cyxwiz::Tensor train_labels({2, 2}, onehot, cyxwiz::DataType::Float32);
+    const auto train = plan.Apply(rows, tiny, true, plan_rng, &train_labels);
+    const float lambda = train_labels.ReadData<float>()[0];
+    Check(lambda > 0.0f && lambda < 1.0f && std::fabs(train.ReadData<float>()[0] - (1.0f - lambda)) < 1e-6f,
+          "training mixes image and label with the same lambda");
+}
+
 void CheckDraws() {
     const ImageShape shape{6, 7, 3};
     std::mt19937 rng(140);
@@ -316,7 +393,9 @@ int main(int, char** argv) {
     // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu: the same ArrayFire code on each backend.
     Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested device");
     CheckFixtures(FixturePath(argv[0]));
+    CheckMixFixtures(FixturePath(argv[0]));
     CheckDraws();
+    CheckMixDraws();
     CheckRefusals();
     CheckPlan();
     std::cout << "image transforms match torchvision (" << checks << " checks)\n";

@@ -147,24 +147,25 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         }
     }
 
-    // One upload, then the transforms and Normalize on the device; the batch
-    // stays there for the model.
-    Tensor rows({actual_size, sample_dim}, batch_data.data(), DataType::Float32);
-    if (!augmentation_.Empty()) {
-        rows = augmentation_.Apply(rows, decoded_shape_, current_phase_ == BatcherPhase::Train,
-                                   augmentation_rng_);
-    }
-    batch.data = flatten_
-        ? rows
-        : rows.Reshape({actual_size, sample_shape_.height, sample_shape_.width, sample_shape_.channels});
-
-    if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
+    const bool onehot = !scalar_label_mode_ && do_onehot_ && num_classes_ > 0;
+    if (onehot) {
         batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);
     } else if (scalar_label_mode_) {
         batch.labels = Tensor({actual_size, 1}, batch_labels.data(), DataType::Float32);
     } else {
         batch.labels = Tensor({actual_size}, batch_labels.data(), DataType::Float32);
     }
+
+    // One upload, then the transforms, the batch mix (one-hot labels mixed
+    // alongside) and Normalize on the device; the batch stays there for the model.
+    Tensor rows({actual_size, sample_dim}, batch_data.data(), DataType::Float32);
+    if (!augmentation_.Empty()) {
+        rows = augmentation_.Apply(rows, decoded_shape_, current_phase_ == BatcherPhase::Train,
+                                   augmentation_rng_, onehot ? &batch.labels : nullptr);
+    }
+    batch.data = flatten_
+        ? rows
+        : rows.Reshape({actual_size, sample_shape_.height, sample_shape_.width, sample_shape_.channels});
 
     batch.size = actual_size;
     current_idx_ += actual_size;
@@ -216,8 +217,11 @@ void ImageDatasetBatcher::SetNormalization(float mean, float std_dev) {
     augmentation_.std_dev = (std_dev > 0.0f) ? std_dev : 1.0f;
 }
 
-void ImageDatasetBatcher::SetImageTransforms(const std::vector<image::ImageOp>& ops) {
-    augmentation_.ops = ops;
+void ImageDatasetBatcher::SetImageTransforms(const image::ImageAugmentation& compiled) {
+    augmentation_.ops = compiled.ops;
+    augmentation_.mix = compiled.mix;
+    augmentation_.mix_alpha = compiled.mix_alpha;
+    augmentation_.mix_probability = compiled.mix_probability;
     sample_shape_ = augmentation_.ShapeAfter(decoded_shape_);
 }
 

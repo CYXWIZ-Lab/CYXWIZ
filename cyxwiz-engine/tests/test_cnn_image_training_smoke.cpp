@@ -5,9 +5,10 @@
 // D:/tmp/gui129/catdog_small, or argv[1]) and a TrainingExecutor - and the
 // loss per epoch is printed. Not a ctest entry: the images live outside the repo.
 //
-//   test_cnn_image_training_smoke [folder] [epochs] [augment]
+//   test_cnn_image_training_smoke [folder] [epochs] [augment|mixup]
 //   augment: Resize 72 -> Random Crop 64 -> Horizontal Flip -> Color Jitter ->
-//   Normalize in front of the CNN (image transforms on the device, TOFIX140).
+//   Normalize in front of the CNN (image transforms on the device, TOFIX140);
+//   mixup: the same with Advanced Augment mixup on every training batch.
 //   (CYXWIZ_TEST_ARRAYFIRE_BACKEND / CYXWIZ_OPENCL_TEST_DEVICE pick the device)
 #include "../src/core/data_registry.h"
 #include "../src/core/graph_compiler.h"
@@ -83,7 +84,8 @@ int main(int argc, char** argv) {
     namespace fs = std::filesystem;
     const fs::path folder = argc > 1 ? fs::path(argv[1]) : fs::path("D:/tmp/gui129/catdog_small");
     const int epochs = argc > 2 ? std::atoi(argv[2]) : 8;
-    const bool augment = argc > 3 && std::string(argv[3]) == "augment";
+    const bool mixup = argc > 3 && std::string(argv[3]) == "mixup";
+    const bool augment = mixup || (argc > 3 && std::string(argv[3]) == "augment");
     if (!fs::is_directory(folder)) {
         std::cout << "image folder not found (" << folder.string() << "); skipped\n";
         return 0;
@@ -162,10 +164,12 @@ int main(int argc, char** argv) {
         nodes.push_back(Layer(21, gui::NodeType::HorizontalFlip, "Flip", {{"probability", "0.5"}}));
         nodes.push_back(Layer(22, gui::NodeType::ColorJitter, "Jitter", {{"brightness", "0.2"}, {"contrast", "0.2"},
                                                                          {"saturation", "0.2"}, {"hue", "0.05"}}));
-        nodes.push_back(Layer(23, gui::NodeType::Normalize, "Normalize", {{"mean", "0.5"}, {"std", "0.5"}}));
+        nodes.push_back(Layer(23, gui::NodeType::AdvancedAugment, "Mix",
+                              {{"method", mixup ? "mixup" : "cutout"}, {"probability", mixup ? "1" : "0"}}));
+        nodes.push_back(Layer(24, gui::NodeType::Normalize, "Normalize", {{"mean", "0.5"}, {"std", "0.5"}}));
         links.push_back(Link(link_id++, 2, 202, 20, 2001));
-        for (int id = 20; id < 23; ++id) links.push_back(Link(link_id++, id, id * 100 + 2, id + 1, (id + 1) * 100 + 1));
-        links.push_back(Link(link_id++, 23, 2302, 4, 401));
+        for (int id = 20; id < 24; ++id) links.push_back(Link(link_id++, id, id * 100 + 2, id + 1, (id + 1) * 100 + 1));
+        links.push_back(Link(link_id++, 24, 2402, 4, 401));
     } else {
         links.push_back(Link(link_id++, 2, 202, 4, 401));
     }
@@ -181,7 +185,7 @@ int main(int argc, char** argv) {
     }
     Check(config.is_valid, "the CNN graph compiles");
     if (augment) {
-        Check(config.image_augmentation.ops.size() == 3 &&
+        Check(config.image_augmentation.ops.size() == (mixup ? 3u : 4u) &&
                   config.input_shape == std::vector<size_t>({64, 64, 3}),
               "three image transforms; the CNN sees 64 x 64 crops");
     }
@@ -193,7 +197,7 @@ int main(int argc, char** argv) {
         entry, config.image_preprocessing, config.batch_size, config.train_ratio, config.shuffle,
         config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
-    batcher->SetImageTransforms(config.image_augmentation.ops);
+    batcher->SetImageTransforms(config.image_augmentation);
     Check(batcher->GetNumSamples() > 0, "the batcher sees the images");
     if (config.preprocessing.has_normalization) {
         batcher->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);

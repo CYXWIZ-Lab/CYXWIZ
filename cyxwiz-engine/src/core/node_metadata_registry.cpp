@@ -1723,17 +1723,22 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
 
     RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,
         {"image", "augmentation", "cutout", "random erasing", "occlusion"}, 0, false,
-        "Blank out a random patch of training images",
+        "Erase patches of training images, or mix training images and their labels",
         "cutout: with the given probability, a cutout_size square centred at a random pixel is set "
         "to value, clipped at the edges (DeVries & Taylor 2017). random_erasing: a box covering "
         "scale_min to scale_max of the image, aspect ratio ratio_min to ratio_max, is set to value "
-        "(torchvision RandomErasing; after ten misses the image is left as it is). value is a pixel "
-        "value in [0, 1], applied before Normalize. Validation and test images pass through unchanged.",
+        "(torchvision RandomErasing; after ten misses the image is left as it is); value is a pixel "
+        "value in [0, 1], applied before Normalize. mixup / cutmix (torchvision v2 MixUp / CutMix): "
+        "with the given probability a whole batch is mixed with itself rolled by one, using one "
+        "lambda from Beta(alpha, alpha): mixup blends the images, cutmix pastes a box of area "
+        "1 - lambda; the one-hot labels are mixed the same way, so the loss must be Cross Entropy. "
+        "One mixup or cutmix per graph. Validation and test images pass through unchanged.",
         "Resize -> Random Crop -> Advanced Augment (cutout) -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Images, same shape"}},
-        {{"method", "enum", "cutout", "Erasing method", {"cutout", "random_erasing"}, "", "Method"},
-         {"probability", "float", "0.5", "Chance that a training image is erased", {}, "0-1", "Probability"},
+        {{"method", "enum", "cutout", "Augmentation method", {"cutout", "random_erasing", "mixup", "cutmix"}, "", "Method"},
+         {"probability", "float", "0.5", "Chance that a training image is erased (cutout, random_erasing) or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
+         {"alpha", "float", "1.0", "mixup / cutmix: Beta(alpha, alpha) for the mixing weight", {}, ">0", "Alpha"},
          {"cutout_size", "int", "16", "cutout: side of the square in pixels", {}, ">0", "Cutout size"},
          {"scale_min", "float", "0.02", "random_erasing: smallest box area, as a fraction of the image", {}, "0-1", "Scale min"},
          {"scale_max", "float", "0.33", "random_erasing: largest box area, as a fraction of the image", {}, "0-1", "Scale max"},
