@@ -44,7 +44,8 @@ ImageDatasetBatcher::ImageDatasetBatcher(
         spdlog::info("ImageDatasetBatcher: created ImageCSVDataset {}x{}, {} samples",
                      target_width_, target_height_, csv_ds->Size());
     } else {
-        auto folder_ds = std::make_shared<ImageFolderDataset>(entry.folder_path);
+        auto folder_ds = std::make_shared<ImageFolderDataset>(
+            entry.folder_path, target_width_, target_height_);
         dataset_ = folder_ds;
         spdlog::info("ImageDatasetBatcher: created ImageFolderDataset {}x{}, {} samples",
                      target_width_, target_height_, folder_ds->Size());

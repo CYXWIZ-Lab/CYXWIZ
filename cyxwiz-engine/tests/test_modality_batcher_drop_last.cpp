@@ -1,6 +1,7 @@
 #include "../src/core/audio_dataset_batcher.h"
 #include "../src/core/image_dataset_batcher.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -32,7 +33,9 @@ void WriteLe32(std::ofstream& out, uint32_t value) {
     out.put(static_cast<char>((value >> 24) & 0xff));
 }
 
-void WriteBmp24(const fs::path& path, uint8_t red, uint8_t green, uint8_t blue) {
+// two_tone: the second row is the inverse colour, so the image is not uniform.
+void WriteBmp24(const fs::path& path, uint8_t red, uint8_t green, uint8_t blue,
+                bool two_tone = false) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
     Check(out.good(), "failed to create BMP fixture " + path.string());
@@ -61,10 +64,11 @@ void WriteBmp24(const fs::path& path, uint8_t red, uint8_t green, uint8_t blue) 
     WriteLe32(out, 0);
 
     for (uint32_t row = 0; row < height; ++row) {
+        const bool inverse = two_tone && row == 1;
         for (uint32_t column = 0; column < width; ++column) {
-            out.put(static_cast<char>(blue));
-            out.put(static_cast<char>(green));
-            out.put(static_cast<char>(red));
+            out.put(static_cast<char>(inverse ? 255 - blue : blue));
+            out.put(static_cast<char>(inverse ? 255 - green : green));
+            out.put(static_cast<char>(inverse ? 255 - red : red));
         }
         out.put(0);
         out.put(0);
@@ -214,6 +218,31 @@ void TestImageBatcher(const fs::path& root) {
     CheckMatchingPayloads(CollectEpochPayload(first_seeded),
                           CollectEpochPayload(second_seeded),
                           "ImageDatasetBatcher");
+
+    // Each sample is the whole image decoded at the Resize size: a class
+    // subfolder dataset used to decode at its 224x224 default, and the batcher
+    // then kept only the top-left 2x2 corner, one colour of a two-tone image.
+    const auto two_tone_root = root / "two_tone";
+    WriteBmp24(two_tone_root / "class_a" / "t0.bmp", 255, 0, 0, true);
+    WriteBmp24(two_tone_root / "class_b" / "t1.bmp", 0, 255, 0, true);
+    cyxwiz::DataRegistry::ImageDatasetEntry two_tone;
+    two_tone.folder_path = two_tone_root.string();
+    two_tone.layout = 0;
+    two_tone.num_images = 2;
+    two_tone.num_classes = 2;
+    cyxwiz::ImageDatasetBatcher whole_images(
+        two_tone, preprocessing, 2, 1.0f, false, 0, 17);
+    const auto batch = whole_images.GetNextBatch();
+    Check(batch.size == 2, "ImageDatasetBatcher should emit both two-tone images");
+    const float* pixels = batch.data.ReadData<float>();
+    for (size_t i = 0; i < batch.size; ++i) {
+        const float* sample = pixels + i * 2 * 2 * 3;
+        const float* bottom_right = sample + 3 * 3;
+        float difference = 0.0f;
+        for (int c = 0; c < 3; ++c) difference += std::abs(sample[c] - bottom_right[c]);
+        Check(difference > 1.5f,
+              "ImageDatasetBatcher should keep both rows of a 2x2 image at Resize 2x2");
+    }
 }
 
 void TestAudioBatcher(const fs::path& root) {
