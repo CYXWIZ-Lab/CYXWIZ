@@ -4970,6 +4970,41 @@ set_target_properties(test_computation_truth_spatial_layers PROPERTIES
 )
 add_test(NAME spatial_layers_pytorch_parity COMMAND test_computation_truth_spatial_layers)
 
+# ===== Test: LSTM / GRU modules against PyTorch (TOFIX140 recurrent on the device) =====
+set(CYXWIZ_RECURRENT_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/recurrent_pytorch.json"
+)
+add_executable(test_computation_truth_recurrent
+    tests/computation_truth/test_computation_truth_recurrent.cpp
+)
+target_include_directories(test_computation_truth_recurrent PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_recurrent PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_recurrent PRIVATE
+    CYXWIZ_RECURRENT_FIXTURE="${CYXWIZ_RECURRENT_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_recurrent_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_recurrent>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_RECURRENT_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_recurrent>/computation_truth_fixtures/recurrent_pytorch.json"
+    SOURCES "${CYXWIZ_RECURRENT_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_recurrent copy_test_computation_truth_recurrent_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_recurrent PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_recurrent PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME recurrent_pytorch_parity COMMAND test_computation_truth_recurrent)
+
 # ===== Test: a CNN graph compiles, builds and runs (TOFIX140 A1) =====
 add_executable(test_cnn_graph_training
     tests/test_cnn_graph_training.cpp
