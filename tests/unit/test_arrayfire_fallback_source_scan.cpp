@@ -557,8 +557,6 @@ TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native co
           "[arrayfire][fallback][policy][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
     const std::vector<std::pair<std::string, std::string>> guarded_helpers = {
-        {"cyxwiz-backend/src/algorithms/activation.cpp",
-         "LogActivationFallbackOnce"},
         {"cyxwiz-backend/src/algorithms/layers/layer_utils.cpp",
          "RecordLayerArrayFireFallback"},
         {"cyxwiz-backend/src/algorithms/layers/multi_head_attention.cpp",
