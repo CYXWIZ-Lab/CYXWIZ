@@ -1,0 +1,251 @@
+{
+ "id": "conv3d_volume_shapes",
+ "name": "Conv3D volume shapes",
+ "description": "Classify a noisy ball, rod or plate in 8x8x8 volumes with two Conv3D layers (Data Input shape [8, 8, 8, 1], rows channel by channel); about 90% validation accuracy after 15 epochs.",
+ "category": "Computer Vision",
+ "tags": [
+  "conv3d",
+  "volume",
+  "3d",
+  "voxel"
+ ],
+ "parameters": [],
+ "template": {
+  "nodes": [
+   {
+    "id": "in",
+    "type": "DataInput",
+    "name": "Volume shapes",
+    "pos": [
+     0,
+     0
+    ],
+    "params": {
+     "file_path": "examples/datasets/volume_shapes.csv",
+     "file_category": "tabular",
+     "label_column": "shape",
+     "shape": "[8, 8, 8, 1]"
+    }
+   },
+   {
+    "id": "split",
+    "type": "DataSplit",
+    "name": "Split 80 / 10 / 10",
+    "pos": [
+     260,
+     0
+    ],
+    "params": {
+     "train_ratio": "0.8",
+     "val_ratio": "0.1",
+     "test_ratio": "0.1",
+     "stratified": "true",
+     "seed": "42"
+    }
+   },
+   {
+    "id": "loader",
+    "type": "DataLoader",
+    "name": "Loader",
+    "pos": [
+     520,
+     0
+    ],
+    "params": {
+     "batch_size": "32",
+     "epochs": "15",
+     "shuffle": "true",
+     "seed": "42"
+    }
+   },
+   {
+    "id": "c1",
+    "type": "Conv3D",
+    "name": "Conv3D (8, 3x3x3)",
+    "pos": [
+     780,
+     0
+    ],
+    "params": {
+     "filters": "8",
+     "kernel_size": "3",
+     "stride": "1",
+     "padding": "same"
+    }
+   },
+   {
+    "id": "r1",
+    "type": "ReLU",
+    "name": "ReLU",
+    "pos": [
+     1040,
+     0
+    ],
+    "params": {}
+   },
+   {
+    "id": "c2",
+    "type": "Conv3D",
+    "name": "Conv3D (16, stride 2)",
+    "pos": [
+     0,
+     240
+    ],
+    "params": {
+     "filters": "16",
+     "kernel_size": "3",
+     "stride": "2",
+     "padding": "valid"
+    }
+   },
+   {
+    "id": "r2",
+    "type": "ReLU",
+    "name": "ReLU 2",
+    "pos": [
+     260,
+     240
+    ],
+    "params": {}
+   },
+   {
+    "id": "flat",
+    "type": "Flatten",
+    "name": "Flatten",
+    "pos": [
+     520,
+     240
+    ],
+    "params": {}
+   },
+   {
+    "id": "d1",
+    "type": "Dense",
+    "name": "Dense (32)",
+    "pos": [
+     780,
+     240
+    ],
+    "params": {
+     "units": "32"
+    }
+   },
+   {
+    "id": "r3",
+    "type": "ReLU",
+    "name": "ReLU 3",
+    "pos": [
+     1040,
+     240
+    ],
+    "params": {}
+   },
+   {
+    "id": "d2",
+    "type": "Dense",
+    "name": "Dense (3 shapes)",
+    "pos": [
+     0,
+     480
+    ],
+    "params": {
+     "units": "3"
+    }
+   },
+   {
+    "id": "loss",
+    "type": "CrossEntropyLoss",
+    "name": "Cross Entropy",
+    "pos": [
+     260,
+     480
+    ],
+    "params": {}
+   },
+   {
+    "id": "adam",
+    "type": "Adam",
+    "name": "Adam",
+    "pos": [
+     520,
+     480
+    ],
+    "params": {
+     "learning_rate": "0.003"
+    }
+   },
+   {
+    "id": "out",
+    "type": "Output",
+    "name": "Output",
+    "pos": [
+     780,
+     480
+    ],
+    "params": {
+     "num_classes": "3"
+    }
+   }
+  ],
+  "links": [
+   {
+    "from": "in",
+    "to": "split"
+   },
+   {
+    "from": "split",
+    "to": "loader"
+   },
+   {
+    "from": "loader",
+    "to": "c1"
+   },
+   {
+    "from": "c1",
+    "to": "r1"
+   },
+   {
+    "from": "r1",
+    "to": "c2"
+   },
+   {
+    "from": "c2",
+    "to": "r2"
+   },
+   {
+    "from": "r2",
+    "to": "flat"
+   },
+   {
+    "from": "flat",
+    "to": "d1"
+   },
+   {
+    "from": "d1",
+    "to": "r3"
+   },
+   {
+    "from": "r3",
+    "to": "d2"
+   },
+   {
+    "from": "d2",
+    "to": "loss"
+   },
+   {
+    "from": "loader",
+    "to": "loss",
+    "from_pin": 1,
+    "to_pin": 1
+   },
+   {
+    "from": "loss",
+    "to": "adam"
+   },
+   {
+    "from": "adam",
+    "to": "out"
+   }
+  ]
+ }
+}
