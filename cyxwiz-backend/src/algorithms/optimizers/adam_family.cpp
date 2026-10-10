@@ -167,7 +167,6 @@ AdamOptimizer::AdamOptimizer(double learning_rate, double beta1, double beta2, d
         learning_rate, beta1_, beta2_, epsilon_, "Adam");
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -218,8 +217,6 @@ void AdamOptimizer::StepImpl(
     const float lr = static_cast<float>(learning_rate_);
     const float eps = static_cast<float>(epsilon_);
     const float base_wd = static_cast<float>(weight_decay);
-    const bool arrayfire_available =
-        optimizer_detail::OptimizerArrayFireAvailable();
 
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
@@ -230,11 +227,7 @@ void AdamOptimizer::StepImpl(
         if (grad_it == gradients.end()) continue;
 
         const Tensor& grad = grad_it->second;
-        size_t num_elements = param.NumElements();
 
-        const bool use_native_cpu =
-            optimizer_detail::PrepareOptimizerNativeCpuFallback(
-                operation_name, name, param, arrayfire_available);
 
         // Initialize state only after fallback policy authorizes work.
         if (m_.find(name) == m_.end()) {
@@ -250,76 +243,46 @@ void AdamOptimizer::StepImpl(
             1.0f - static_cast<float>(std::pow(b2, parameter_step));
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (!use_native_cpu) {
-            try {
-                af::array param_gpu = param.GetSemanticArray();
-                af::array grad_gpu = grad.GetSemanticArray();
-                af::array m_gpu = m_[name].GetSemanticArray();
-                af::array v_gpu = v_[name].GetSemanticArray();
+        try {
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array m_gpu = m_[name].GetSemanticArray();
+            af::array v_gpu = v_[name].GetSemanticArray();
 
-                if (wd > 0.0f) {
-                    param_gpu = param_gpu * (1.0f - lr * wd);
-                    param_gpu.eval();
-                }
-
-                // Update biased first moment estimate: m = b1 * m + (1 - b1) * grad
-                m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
-                m_gpu.eval();
-
-                // Update biased second moment estimate: v = b2 * v + (1 - b2) * grad^2
-                v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
-                v_gpu.eval();
-
-                // Compute bias-corrected estimates
-                af::array m_hat = m_gpu / bias_correction1;
-                m_hat.eval();
-                af::array v_hat = v_gpu / bias_correction2;
-                v_hat.eval();
-
-                // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
-                param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
-                param_gpu.eval();
-
-                param.SetFromSemanticArray(param_gpu, param.Shape());
-                m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
-                v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
-                parameter_steps_[name] = parameter_step;
-                continue;
-            } catch (const af::exception& e) {
-                optimizer_detail::LogOptimizerFallbackOnce(
-                    operation_name, name, param, e.what());
-            }
-        }
-#endif
-
-        // CPU fallback
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath,
-            operation_name);
-        float* param_data = param.MutableData<float>();
-        const float* grad_data = grad.ReadData<float>();
-        float* m_data = m_[name].MutableData<float>();
-        float* v_data = v_[name].MutableData<float>();
-
-        for (size_t i = 0; i < num_elements; ++i) {
             if (wd > 0.0f) {
-                param_data[i] *= (1.0f - lr * wd);
+                param_gpu = param_gpu * (1.0f - lr * wd);
+                param_gpu.eval();
             }
-            // Update biased first moment estimate
-            m_data[i] = b1 * m_data[i] + (1.0f - b1) * grad_data[i];
 
-            // Update biased second raw moment estimate
-            v_data[i] = b2 * v_data[i] +
-                        (1.0f - b2) * grad_data[i] * grad_data[i];
+            // Update biased first moment estimate: m = b1 * m + (1 - b1) * grad
+            m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+            m_gpu.eval();
+
+            // Update biased second moment estimate: v = b2 * v + (1 - b2) * grad^2
+            v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+            v_gpu.eval();
 
             // Compute bias-corrected estimates
-            float m_hat = m_data[i] / bias_correction1;
-            float v_hat = v_data[i] / bias_correction2;
+            af::array m_hat = m_gpu / bias_correction1;
+            m_hat.eval();
+            af::array v_hat = v_gpu / bias_correction2;
+            v_hat.eval();
 
-            // Update parameters
-            param_data[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
+            // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
+            param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
+            param_gpu.eval();
+
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
+            v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
+            parameter_steps_[name] = parameter_step;
+            continue;
+        } catch (const af::exception& e) {
+            optimizer_detail::ThrowOptimizerDeviceError(operation_name, e);
         }
-        parameter_steps_[name] = parameter_step;
+#else
+        optimizer_detail::ThrowOptimizerNeedsArrayFire(operation_name);
+#endif
     }
     ++step_count_;
 }
@@ -524,7 +487,6 @@ NAdamOptimizer::NAdamOptimizer(double learning_rate, double beta1, double beta2,
         learning_rate, beta1_, beta2_, epsilon_, "NAdam");
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -569,8 +531,6 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
     const float b2 = static_cast<float>(beta2_);
     const float lr = static_cast<float>(learning_rate_);
     const float eps = static_cast<float>(epsilon_);
-    const bool arrayfire_available =
-        optimizer_detail::OptimizerArrayFireAvailable();
 
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
@@ -580,11 +540,7 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         if (grad_it == gradients.end()) continue;
 
         const Tensor& grad = grad_it->second;
-        size_t num_elements = param.NumElements();
 
-        const bool use_native_cpu =
-            optimizer_detail::PrepareOptimizerNativeCpuFallback(
-                kOperation, name, param, arrayfire_available);
 
         // Initialize state only after fallback policy authorizes work.
         if (m_.find(name) == m_.end()) {
@@ -607,66 +563,42 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         const float mu_product_next = mu_product * mu_next;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (!use_native_cpu) {
-            try {
-                af::array param_gpu = param.GetSemanticArray();
-                af::array grad_gpu = grad.GetSemanticArray();
-                af::array m_gpu = m_[name].GetSemanticArray();
-                af::array v_gpu = v_[name].GetSemanticArray();
+        try {
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array m_gpu = m_[name].GetSemanticArray();
+            af::array v_gpu = v_[name].GetSemanticArray();
 
-                // Update moments
-                m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
-                m_gpu.eval();
-                v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
-                v_gpu.eval();
+            // Update moments
+            m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+            m_gpu.eval();
+            v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+            v_gpu.eval();
 
-                af::array denominator =
-                    af::sqrt(v_gpu / bias_correction2) + eps;
-                denominator.eval();
-                af::array m_nesterov =
-                    ((1.0f - mu) / (1.0f - mu_product)) * grad_gpu +
-                    (mu_next / (1.0f - mu_product_next)) * m_gpu;
-                m_nesterov.eval();
+            af::array denominator =
+                af::sqrt(v_gpu / bias_correction2) + eps;
+            denominator.eval();
+            af::array m_nesterov =
+                ((1.0f - mu) / (1.0f - mu_product)) * grad_gpu +
+                (mu_next / (1.0f - mu_product_next)) * m_gpu;
+            m_nesterov.eval();
 
-                // Update parameters
-                param_gpu = param_gpu - lr * m_nesterov / denominator;
-                param_gpu.eval();
+            // Update parameters
+            param_gpu = param_gpu - lr * m_nesterov / denominator;
+            param_gpu.eval();
 
-                param.SetFromSemanticArray(param_gpu, param.Shape());
-                m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
-                v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
-                parameter_steps_[name] = parameter_step;
-                mu_products_[name] = mu_product;
-                continue;
-            } catch (const af::exception& e) {
-                optimizer_detail::LogOptimizerFallbackOnce(
-                    "NAdamOptimizer::Step", name, param, e.what());
-            }
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
+            v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
+            parameter_steps_[name] = parameter_step;
+            mu_products_[name] = mu_product;
+            continue;
+        } catch (const af::exception& e) {
+            optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
+#else
+        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
 #endif
-
-        // CPU fallback
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath,
-            kOperation);
-        float* param_data = param.MutableData<float>();
-        const float* grad_data = grad.ReadData<float>();
-        float* m_data = m_[name].MutableData<float>();
-        float* v_data = v_[name].MutableData<float>();
-
-        for (size_t i = 0; i < num_elements; ++i) {
-            m_data[i] = b1 * m_data[i] + (1.0f - b1) * grad_data[i];
-            v_data[i] = b2 * v_data[i] +
-                        (1.0f - b2) * grad_data[i] * grad_data[i];
-            const float denominator =
-                std::sqrt(v_data[i] / bias_correction2) + eps;
-            const float m_nesterov =
-                ((1.0f - mu) / (1.0f - mu_product)) * grad_data[i] +
-                (mu_next / (1.0f - mu_product_next)) * m_data[i];
-            param_data[i] -= lr * m_nesterov / denominator;
-        }
-        parameter_steps_[name] = parameter_step;
-        mu_products_[name] = mu_product;
     }
     ++step_count_;
 }

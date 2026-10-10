@@ -1,9 +1,7 @@
 #include "optimizer_utils.h"
 
-#include "../arrayfire_backend_utils.h"
 #include "cyxwiz/tensor.h"
 
-#include <spdlog/spdlog.h>
 #include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -13,76 +11,15 @@
 namespace cyxwiz {
 namespace optimizer_detail {
 
-bool OptimizerArrayFireAvailable() {
-    return IsCurrentArrayFireBackendAvailable();
+void ThrowOptimizerNeedsArrayFire(const char* operation_name) {
+    throw std::runtime_error(std::string(operation_name) + " runs on ArrayFire, and this build has no ArrayFire");
 }
 
-bool PrepareOptimizerNativeCpuFallback(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    bool arrayfire_available) {
-    if (ShouldForceArrayFireBackendFallbackForTesting(operation_name)) {
-        LogOptimizerFallbackOnce(
-            operation_name,
-            parameter_name,
-            parameter,
-            BackendFallbackReason::GpuBackendException,
-            "forced ArrayFire backend fallback test hook");
-        return true;
-    }
-    if (!arrayfire_available) {
-        LogOptimizerFallbackOnce(
-            operation_name,
-            parameter_name,
-            parameter,
-            BackendFallbackReason::BackendUnavailable,
-            "ArrayFire backend unavailable");
-        return true;
-    }
-    return false;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void ThrowOptimizerDeviceError(const char* operation_name, const af::exception& error) {
+    throw std::runtime_error(std::string(operation_name) + " failed on the ArrayFire device: " + error.what());
 }
-
-void LogOptimizerFallbackOnce(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    const char* error_message) {
-    const BackendFallbackReason reason =
-        ClassifyArrayFireBackendFallbackReason(error_message);
-    LogOptimizerFallbackOnce(
-        operation_name,
-        parameter_name,
-        parameter,
-        reason,
-        error_message);
-}
-
-void LogOptimizerFallbackOnce(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    BackendFallbackReason reason,
-    const char* error_message) {
-    const std::string tensor_name =
-        parameter_name.empty() ? "parameter" : parameter_name;
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext(tensor_name.c_str(), parameter.Shape()));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        operation_name,
-        reason,
-        error_message,
-        context);
-    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        spdlog::warn("{}",
-            BuildArrayFireBackendFallbackMessage(
-                operation_name,
-                reason,
-                reason != BackendFallbackReason::CudaJitParamOverflow,
-                error_message,
-                context));
-    }
-}
+#endif
 
 void ValidateOptimizerStepTensors(
     const char* operation_name,

@@ -30,7 +30,6 @@ SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
     }
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -52,8 +51,6 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
     }
 
-    const bool arrayfire_available =
-        optimizer_detail::OptimizerArrayFireAvailable();
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
         Tensor& param = param_pair.second;
@@ -62,78 +59,47 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         if (grad_it == gradients.end()) continue;
 
         const Tensor& grad = grad_it->second;
-        size_t num_elements = param.NumElements();
 
-        const bool use_native_cpu =
-            optimizer_detail::PrepareOptimizerNativeCpuFallback(
-                kOperation, name, param, arrayfire_available);
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (!use_native_cpu) {
-            try {
-                const std::vector<size_t> parameter_shape = param.Shape();
-                af::array param_gpu = param.GetSemanticArray();
-                af::array grad_gpu = grad.GetSemanticArray();
+        try {
+            const std::vector<size_t> parameter_shape = param.Shape();
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
 
-                if (momentum_ > 0.0) {
-                    // Initialize velocity if needed
-                    if (velocity_.find(name) == velocity_.end()) {
-                        velocity_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
-                    }
-
-                    const std::vector<size_t> velocity_shape =
-                        velocity_[name].Shape();
-                    af::array v_gpu = velocity_[name].GetSemanticArray();
-
-                    // v = momentum * v + grad
-                    v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
-                    // param = param - lr * v
-                    param_gpu = param_gpu - static_cast<float>(learning_rate_) * v_gpu;
-                    v_gpu.eval();
-                    param_gpu.eval();
-
-                    velocity_[name].SetFromSemanticArray(
-                        v_gpu, velocity_shape);
-                } else {
-                    // Simple SGD: param = param - lr * grad
-                    param_gpu = param_gpu - static_cast<float>(learning_rate_) * grad_gpu;
-                    param_gpu.eval();
+            if (momentum_ > 0.0) {
+                // Initialize velocity if needed
+                if (velocity_.find(name) == velocity_.end()) {
+                    velocity_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
                 }
 
-                param.SetFromSemanticArray(param_gpu, parameter_shape);
-                continue;
-            } catch (const af::exception& e) {
-                optimizer_detail::LogOptimizerFallbackOnce(
-                    kOperation, name, param, e.what());
-            }
-        }
-#endif
+                const std::vector<size_t> velocity_shape =
+                    velocity_[name].Shape();
+                af::array v_gpu = velocity_[name].GetSemanticArray();
 
-        // CPU fallback
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath,
-            kOperation);
-        float* param_data = param.MutableData<float>();
-        const float* grad_data = grad.ReadData<float>();
-        if (momentum_ > 0.0) {
-            if (velocity_.find(name) == velocity_.end()) {
-                velocity_[name] =
-                    Tensor::Zeros(param.Shape(), DataType::Float32);
+                // v = momentum * v + grad
+                v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
+                // param = param - lr * v
+                param_gpu = param_gpu - static_cast<float>(learning_rate_) * v_gpu;
+                v_gpu.eval();
+                param_gpu.eval();
+
+                velocity_[name].SetFromSemanticArray(
+                    v_gpu, velocity_shape);
+            } else {
+                // Simple SGD: param = param - lr * grad
+                param_gpu = param_gpu - static_cast<float>(learning_rate_) * grad_gpu;
+                param_gpu.eval();
             }
-            float* velocity_data = velocity_.at(name).MutableData<float>();
-            for (size_t i = 0; i < num_elements; i++) {
-                velocity_data[i] =
-                    static_cast<float>(momentum_) * velocity_data[i] +
-                    grad_data[i];
-                param_data[i] -= static_cast<float>(learning_rate_) *
-                                 velocity_data[i];
-            }
-        } else {
-            for (size_t i = 0; i < num_elements; i++) {
-                param_data[i] -= static_cast<float>(learning_rate_) *
-                                 grad_data[i];
-            }
+
+            param.SetFromSemanticArray(param_gpu, parameter_shape);
+            continue;
+        } catch (const af::exception& e) {
+            optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
+#else
+        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
+#endif
     }
 
     step_count_++;

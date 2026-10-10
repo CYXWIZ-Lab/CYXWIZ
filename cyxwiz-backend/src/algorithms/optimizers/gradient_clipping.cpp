@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace cyxwiz {
 
@@ -29,22 +30,12 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
                                    "ClipGradientsByGlobalNorm::Norm", "scalar", "gradient_norm_readback");
         squared = host;
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "ClipGradientsByGlobalNorm", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext("gradients"));
-        squared = -1.0;
+        throw std::runtime_error(std::string("ClipGradientsByGlobalNorm failed on the ArrayFire device: ") +
+                                 e.what());
     }
-    if (squared < 0.0)
+#else
+    throw std::runtime_error("Gradient clipping runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    {
-        squared = 0.0;
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath, "ClipGradientsByGlobalNorm");
-        for (const auto& [name, grad] : gradients) {
-            const float* data = grad.ReadData<float>();
-            for (size_t i = 0; i < grad.NumElements(); ++i) squared += static_cast<double>(data[i]) * data[i];
-        }
-    }
     const float norm = static_cast<float>(std::sqrt(squared));
     if (!std::isfinite(norm)) {
         throw std::runtime_error("Gradient norm is not finite; the step cannot be clipped safely");

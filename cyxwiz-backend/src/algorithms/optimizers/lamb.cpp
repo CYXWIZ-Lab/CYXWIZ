@@ -82,7 +82,6 @@ LAMBOptimizer::LAMBOptimizer(double learning_rate, double beta1, double beta2,
     ValidateNonNegativeFinite(weight_decay_, "weight decay");
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -120,8 +119,6 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
         1.0f - static_cast<float>(std::pow(b1, next_step));
     float bias_correction2 =
         1.0f - static_cast<float>(std::pow(b2, next_step));
-    const bool arrayfire_available =
-        optimizer_detail::OptimizerArrayFireAvailable();
 
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
@@ -131,11 +128,7 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
         if (grad_it == gradients.end()) continue;
 
         const Tensor& grad = grad_it->second;
-        size_t num_elements = param.NumElements();
 
-        const bool use_native_cpu =
-            optimizer_detail::PrepareOptimizerNativeCpuFallback(
-                kOperation, name, param, arrayfire_available);
 
         // Initialize moments only after fallback policy authorizes work.
         if (m_.find(name) == m_.end()) {
@@ -144,96 +137,57 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (!use_native_cpu) {
-            try {
-                af::array param_gpu = param.GetSemanticArray();
-                af::array grad_gpu = grad.GetSemanticArray();
-                af::array m_gpu = m_[name].GetSemanticArray();
-                af::array v_gpu = v_[name].GetSemanticArray();
+        try {
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array m_gpu = m_[name].GetSemanticArray();
+            af::array v_gpu = v_[name].GetSemanticArray();
 
-                // Update moments (same as Adam)
-                m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
-                m_gpu.eval();
-                v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
-                v_gpu.eval();
+            // Update moments (same as Adam)
+            m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+            m_gpu.eval();
+            v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+            v_gpu.eval();
 
-                // Bias-corrected estimates
-                af::array m_hat = m_gpu / bias_correction1;
-                m_hat.eval();
-                af::array v_hat = v_gpu / bias_correction2;
-                v_hat.eval();
+            // Bias-corrected estimates
+            af::array m_hat = m_gpu / bias_correction1;
+            m_hat.eval();
+            af::array v_hat = v_gpu / bias_correction2;
+            v_hat.eval();
 
-                // Adam update direction: m_hat / (sqrt(v_hat) + eps)
-                af::array adam_update = m_hat / (af::sqrt(v_hat) + eps);
-                adam_update.eval();
+            // Adam update direction: m_hat / (sqrt(v_hat) + eps)
+            af::array adam_update = m_hat / (af::sqrt(v_hat) + eps);
+            adam_update.eval();
 
-                // Add weight decay to update (LAMB uses decoupled weight decay)
-                if (wd > 0) {
-                    adam_update = adam_update + wd * param_gpu;
-                    adam_update.eval();
-                }
-
-                // Compute trust ratio (layer-wise scaling)
-                float weight_norm = static_cast<float>(af::norm(param_gpu));
-                float update_norm = static_cast<float>(af::norm(adam_update));
-
-                float trust_ratio = 1.0f;
-                if (weight_norm > 0 && update_norm > 0) {
-                    trust_ratio = weight_norm / update_norm;
-                }
-
-                // Apply scaled update
-                param_gpu = param_gpu - lr * trust_ratio * adam_update;
-                param_gpu.eval();
-
-                param.SetFromSemanticArray(param_gpu, param.Shape());
-                m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
-                v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
-                continue;
-            } catch (const af::exception& e) {
-                optimizer_detail::LogOptimizerFallbackOnce(
-                    kOperation, name, param, e.what());
-            }
-        }
-#endif
-
-        // CPU fallback
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath,
-            kOperation);
-        float* param_data = param.MutableData<float>();
-        const float* grad_data = grad.ReadData<float>();
-        float* m_data = m_[name].MutableData<float>();
-        float* v_data = v_[name].MutableData<float>();
-
-        // First compute moments and Adam update, then compute layer norms.
-        std::vector<float> adam_update(num_elements);
-        float weight_norm_sq = 0.0f;
-        float update_norm_sq = 0.0f;
-
-        for (size_t i = 0; i < num_elements; ++i) {
-            m_data[i] = b1 * m_data[i] + (1.0f - b1) * grad_data[i];
-            v_data[i] = b2 * v_data[i] + (1.0f - b2) * grad_data[i] * grad_data[i];
-
-            float m_hat = m_data[i] / bias_correction1;
-            float v_hat = v_data[i] / bias_correction2;
-            adam_update[i] = m_hat / (std::sqrt(v_hat) + eps);
+            // Add weight decay to update (LAMB uses decoupled weight decay)
             if (wd > 0) {
-                adam_update[i] += wd * param_data[i];
+                adam_update = adam_update + wd * param_gpu;
+                adam_update.eval();
             }
-            weight_norm_sq += param_data[i] * param_data[i];
-            update_norm_sq += adam_update[i] * adam_update[i];
-        }
 
-        float weight_norm = std::sqrt(weight_norm_sq);
-        float update_norm = std::sqrt(update_norm_sq);
-        float trust_ratio = 1.0f;
-        if (weight_norm > 0 && update_norm > 0) {
-            trust_ratio = weight_norm / update_norm;
+            // Compute trust ratio (layer-wise scaling)
+            float weight_norm = static_cast<float>(af::norm(param_gpu));
+            float update_norm = static_cast<float>(af::norm(adam_update));
+
+            float trust_ratio = 1.0f;
+            if (weight_norm > 0 && update_norm > 0) {
+                trust_ratio = weight_norm / update_norm;
+            }
+
+            // Apply scaled update
+            param_gpu = param_gpu - lr * trust_ratio * adam_update;
+            param_gpu.eval();
+
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
+            v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
+            continue;
+        } catch (const af::exception& e) {
+            optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-        for (size_t i = 0; i < num_elements; ++i) {
-            param_data[i] -= lr * trust_ratio * adam_update[i];
-        }
+#else
+        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
+#endif
     }
     step_count_ = next_step;
 }

@@ -2,30 +2,22 @@
 
 #include <string>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
 namespace cyxwiz {
 
-enum class BackendFallbackReason;
 class Tensor;
 
 namespace optimizer_detail {
 
-bool OptimizerArrayFireAvailable();
-bool PrepareOptimizerNativeCpuFallback(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    bool arrayfire_available);
-void LogOptimizerFallbackOnce(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    const char* error_message);
-void LogOptimizerFallbackOnce(
-    const char* operation_name,
-    const std::string& parameter_name,
-    const Tensor& parameter,
-    BackendFallbackReason reason,
-    const char* error_message);
+// One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
+// reported, not hidden behind host loops; a build without ArrayFire refuses.
+[[noreturn]] void ThrowOptimizerNeedsArrayFire(const char* operation_name);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+[[noreturn]] void ThrowOptimizerDeviceError(const char* operation_name, const af::exception& error);
+#endif
 void ValidateOptimizerStepTensors(
     const char* operation_name,
     const std::string& parameter_name,
