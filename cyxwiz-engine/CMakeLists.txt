@@ -5266,6 +5266,37 @@ add_custom_target(copy_test_image_transforms_fixture
 add_dependencies(test_image_transforms copy_test_image_transforms_fixture)
 add_test(NAME image_transforms_torchvision_parity COMMAND test_image_transforms)
 
+set(CYXWIZ_IMAGE_QUALITY_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/image_quality_opencv.json"
+)
+add_executable(test_image_quality
+    tests/test_image_quality.cpp
+)
+target_link_libraries(test_image_quality PRIVATE
+    cyxwiz-backend
+    nlohmann_json::nlohmann_json
+)
+target_compile_definitions(test_image_quality PRIVATE
+    CYXWIZ_IMAGE_QUALITY_FIXTURE="${CYXWIZ_IMAGE_QUALITY_FIXTURE}"
+)
+if(WIN32)
+    target_compile_definitions(test_image_quality PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_image_quality PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_custom_target(copy_test_image_quality_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_image_quality>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_IMAGE_QUALITY_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_image_quality>/computation_truth_fixtures/image_quality_opencv.json"
+    SOURCES "${CYXWIZ_IMAGE_QUALITY_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_image_quality copy_test_image_quality_fixture)
+add_test(NAME image_quality_opencv_parity COMMAND test_image_quality)
+
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
