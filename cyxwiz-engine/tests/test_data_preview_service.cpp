@@ -135,6 +135,24 @@ void TestPreviewSourceContract() {
         restored["file_type"] = "unknown";
         Check(!MatchesAppliedTabularPreview(restored, source), "unknown format must fail closed");
     }
+    {
+        // Apply stores a source inside the project project-relative; the
+        // reopened dialog holds the resolved path. They are the same source.
+        const fs::path project_root = fs::temp_directory_path() / "cyxwiz_preview_project";
+        const TabularPreviewSource source{
+            (project_root / "data" / "preview.csv").lexically_normal().string(),
+            1, true, ",", '.', "", 0, 0};
+        const std::map<std::string, std::string> applied{
+            {"file_path", "data/preview.csv"}, {"file_type", "csv"},
+            {"has_header", "true"}, {"delimiter", ","},
+            {"decimal_point", "."}, {"missing_value_tokens", ""},
+            {"skip_rows", "0"}, {"max_rows", "0"}};
+        Check(MatchesAppliedTabularPreview(applied, source, project_root.string()),
+              "project-relative applied path must match the resolved dialog path");
+        Check(!MatchesAppliedTabularPreview(applied, source,
+                  (project_root / "other").string()),
+              "a different project root must not match");
+    }
     const TabularPreviewSource parquet{"preview.parquet", 4, true, ",", '.', "", 0, 0};
     Check(!MatchesAppliedTabularPreview({}, parquet), "unapplied source cannot reuse registered preview");
     for (const auto& [extension, type] :

@@ -21,9 +21,12 @@ struct TabularPreviewSource {
     int max_rows = 0;
 };
 
+// The applied file_path may be stored project-relative; it is resolved
+// against project_root before it is compared with the dialog's path.
 bool MatchesAppliedTabularPreview(
     const std::map<std::string, std::string>& parameters,
-    const TabularPreviewSource& source);
+    const TabularPreviewSource& source,
+    const std::string& project_root = {});
 
 bool IsDelimitedPreviewSource(const std::string& path, int detected_type);
 

@@ -1,6 +1,7 @@
 #include "data_input_preview.h"
 #include "data_input_capabilities.h"
 #include "../core/data_input_parameters.h"
+#include "../core/project_data_path.h"
 #include "loaders/text_csv_preflight.h"
 #include <algorithm>
 #include <fstream>
@@ -16,7 +17,8 @@ bool IsDelimitedPreviewSource(const std::string& path, int detected_type) {
 
 bool MatchesAppliedTabularPreview(
     const std::map<std::string, std::string>& parameters,
-    const TabularPreviewSource& source) {
+    const TabularPreviewSource& source,
+    const std::string& project_root) {
     std::string format;
     std::string error;
     if (!cyxwiz::ResolveDataInputFormatAliases(parameters, format, error)) {
@@ -33,7 +35,9 @@ bool MatchesAppliedTabularPreview(
         const auto it = parameters.find(key);
         return it != parameters.end() && it->second == value;
     };
-    return matches("file_path", source.path) &&
+    const auto path_it = parameters.find("file_path");
+    return path_it != parameters.end() &&
+        cyxwiz::ResolveProjectDataPath(path_it->second, project_root) == source.path &&
         matches("has_header", source.has_header ? "true" : "false") &&
         matches("delimiter", source.delimiter) &&
         matches("decimal_point", std::string(1, source.decimal_point)) &&

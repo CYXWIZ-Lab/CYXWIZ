@@ -10,6 +10,7 @@
 #include "../core/data_preview_service.h"
 #include "../core/data_registry.h"
 #include "../core/file_dialogs.h"
+#include "../core/project_manager.h"
 
 #include <cstring>
 #include <string>
@@ -176,7 +177,8 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
 
     if (!data_input::MatchesAppliedTabularPreview(node_->parameters, {
             file_path_, detected_type_, has_header_, custom_delimiter_,
-            decimal_point_, missing_value_tokens_, skip_rows_, max_rows_})) {
+            decimal_point_, missing_value_tokens_, skip_rows_, max_rows_},
+            cyxwiz::ProjectManager::Instance().GetProjectRoot())) {
         return false;
     }
 
