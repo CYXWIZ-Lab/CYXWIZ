@@ -5235,6 +5235,37 @@ add_custom_target(copy_test_conv3d_training_fixture
 add_dependencies(test_conv3d_training copy_test_conv3d_training_fixture)
 add_test(NAME conv3d_pytorch_parity COMMAND test_conv3d_training)
 
+set(CYXWIZ_IMAGE_TRANSFORMS_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/image_transforms_torchvision.json"
+)
+add_executable(test_image_transforms
+    tests/test_image_transforms.cpp
+)
+target_link_libraries(test_image_transforms PRIVATE
+    cyxwiz-backend
+    nlohmann_json::nlohmann_json
+)
+target_compile_definitions(test_image_transforms PRIVATE
+    CYXWIZ_IMAGE_TRANSFORMS_FIXTURE="${CYXWIZ_IMAGE_TRANSFORMS_FIXTURE}"
+)
+if(WIN32)
+    target_compile_definitions(test_image_transforms PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_image_transforms PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_custom_target(copy_test_image_transforms_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_image_transforms>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_IMAGE_TRANSFORMS_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_image_transforms>/computation_truth_fixtures/image_transforms_torchvision.json"
+    SOURCES "${CYXWIZ_IMAGE_TRANSFORMS_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_image_transforms copy_test_image_transforms_fixture)
+add_test(NAME image_transforms_torchvision_parity COMMAND test_image_transforms)
+
 # ===== Test: scheduler nodes vs PyTorch (TOFIX140 A3) =====
 set(CYXWIZ_SCHEDULER_NODE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/scheduler_node_pytorch.json")
