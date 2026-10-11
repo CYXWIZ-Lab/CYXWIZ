@@ -97,7 +97,6 @@ TEST_CASE("ArrayFire GPU decision follows active backend across device switches"
     cpu.SetActive();
     REQUIRE(cpu.IsActive());
     REQUIRE(cyxwiz::IsCurrentArrayFireBackendAvailable());
-    REQUIRE_FALSE(cyxwiz::IsCurrentArrayFireBackendGpu());
 
     const auto devices = cyxwiz::Device::GetAvailableDevices();
     for (const auto& info : devices) {
@@ -110,11 +109,9 @@ TEST_CASE("ArrayFire GPU decision follows active backend across device switches"
         accelerator.SetActive();
         REQUIRE(accelerator.IsActive());
         REQUIRE(cyxwiz::IsCurrentArrayFireBackendAvailable());
-        REQUIRE(cyxwiz::IsCurrentArrayFireBackendGpu());
 
         cpu.SetActive();
         REQUIRE(cpu.IsActive());
-        REQUIRE_FALSE(cyxwiz::IsCurrentArrayFireBackendGpu());
     }
 }
 

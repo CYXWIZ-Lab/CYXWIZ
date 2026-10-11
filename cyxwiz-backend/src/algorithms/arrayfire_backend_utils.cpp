@@ -215,12 +215,6 @@ const char* ArrayFireHostSyncCategoryName(
             return "layout_conversion";
         case ArrayFireHostSyncCategory::DebugSampleDump:
             return "debug_sample_dump";
-        case ArrayFireHostSyncCategory::LayerCpuPath:
-            return "layer_cpu_path";
-        case ArrayFireHostSyncCategory::OptimizerCpuPath:
-            return "optimizer_cpu_path";
-        case ArrayFireHostSyncCategory::LossCpuPath:
-            return "loss_cpu_path";
         case ArrayFireHostSyncCategory::LossInputValidation:
             return "loss_input_validation";
         case ArrayFireHostSyncCategory::MetricCpuPath:
@@ -231,8 +225,6 @@ const char* ArrayFireHostSyncCategoryName(
             return "provider_host_staging";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
-        case ArrayFireHostSyncCategory::AlgorithmCpuPath:
-            return "algorithm_cpu_path";
         case ArrayFireHostSyncCategory::OutputMaterialization:
             return "output_materialization";
         case ArrayFireHostSyncCategory::Unknown:
@@ -378,19 +370,6 @@ std::string CurrentArrayFireBackendName() {
     }
 #else
     return "unavailable";
-#endif
-}
-
-bool IsCurrentArrayFireBackendGpu() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        const af::Backend backend = af::getActiveBackend();
-        return backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL;
-    } catch (...) {
-        return false;
-    }
-#else
-    return false;
 #endif
 }
 

@@ -33,13 +33,10 @@ void CheckValues(const cyxwiz::Tensor& actual,
 
 size_t pooling_host_sync_count = 0;
 size_t pooling_fallback_count = 0;
-bool saw_pooling_cpu_path = false;
 cyxwiz::ArrayFireNativeCpuFallbackEvent last_pooling_fallback;
 
-void CountPoolingHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
+void CountPoolingHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++pooling_host_sync_count;
-    saw_pooling_cpu_path |=
-        event.attribution_category == "layer_cpu_path";
 }
 
 void CountPoolingFallback(
@@ -51,7 +48,6 @@ void CountPoolingFallback(
 void ResetPoolingObservations() {
     pooling_host_sync_count = 0;
     pooling_fallback_count = 0;
-    saw_pooling_cpu_path = false;
     last_pooling_fallback = {};
 }
 

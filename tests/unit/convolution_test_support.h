@@ -28,13 +28,11 @@ inline void CheckValues(const cyxwiz::Tensor &actual,
 inline size_t conv_host_sync_count = 0;
 inline uint64_t conv_host_sync_bytes = 0;
 inline size_t conv_fallback_count = 0;
-inline bool saw_conv_cpu_path = false;
 inline cyxwiz::ArrayFireNativeCpuFallbackEvent last_conv_fallback;
 
 inline void CountConvHostSync(const cyxwiz::ArrayFireHostSyncEvent &event) {
   ++conv_host_sync_count;
   conv_host_sync_bytes += event.bytes;
-  saw_conv_cpu_path |= event.attribution_category == "layer_cpu_path";
 }
 
 inline void
@@ -47,7 +45,6 @@ inline void ResetConvObservations() {
   conv_host_sync_count = 0;
   conv_host_sync_bytes = 0;
   conv_fallback_count = 0;
-  saw_conv_cpu_path = false;
   last_conv_fallback = {};
 }
 

@@ -123,9 +123,6 @@ TEST_CASE("Production ArrayFire host calls stay behind attributed owners",
 TEST_CASE("Shared ArrayFire host boundary reports complete attribution",
           "[arrayfire][host_sync][materialization]") {
     CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
-              cyxwiz::ArrayFireHostSyncCategory::AlgorithmCpuPath)) ==
-          "algorithm_cpu_path");
-    CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
               cyxwiz::ArrayFireHostSyncCategory::OutputMaterialization)) ==
           "output_materialization");
     CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(

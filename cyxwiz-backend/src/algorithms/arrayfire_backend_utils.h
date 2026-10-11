@@ -57,12 +57,8 @@ enum class ArrayFireHostSyncCategory {
     MetricScalarReadback,
     LayoutConversion,
     DebugSampleDump,
-    LayerCpuPath,
-    OptimizerCpuPath,
     CheckpointOutput,
-    AlgorithmCpuPath,
     OutputMaterialization,
-    LossCpuPath,
     LossInputValidation,
     MetricCpuPath,
     MetricInputValidation,
@@ -187,7 +183,6 @@ CYXWIZ_API std::string BuildTensorShapeContext(
     const std::vector<size_t>& shape);
 CYXWIZ_API std::string CurrentArrayFireBackendName();
 CYXWIZ_API bool IsCurrentArrayFireBackendAvailable();
-CYXWIZ_API bool IsCurrentArrayFireBackendGpu();
 CYXWIZ_API std::string BuildArrayFireBackendFallbackContext(
     const std::string& shape_or_node_context,
     const std::string& backend_name = CurrentArrayFireBackendName());
