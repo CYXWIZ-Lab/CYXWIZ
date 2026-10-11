@@ -68,16 +68,45 @@ struct CYXWIZ_API RobustScaleOptions {
     bool with_scaling = true;
 };
 
+// scikit-learn StandardScaler options.
+struct CYXWIZ_API StandardizeOptions {
+    bool with_mean = true;  // subtract the mean
+    bool with_std = true;   // divide by the population std (a zero std divides by 1)
+};
+
+// Rows flagged as outliers in one column (FindOutliers).
+struct CYXWIZ_API OutlierFlags {
+    std::vector<unsigned char> is_outlier;  // one flag per value
+    size_t count = 0;
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API DataTransform {
 public:
     // ========== Normalization (Min-Max Scaling) ==========
     // x_scaled = (x - min) / (max - min) * (range_max - range_min) + range_min
+    // (scikit-learn MinMaxScaler: a constant column maps to range_min).
     static TransformResult Normalize(const std::vector<std::vector<double>>& data,
                                      double range_min = 0.0, double range_max = 1.0);
 
     // ========== Standardization (Z-Score) ==========
-    // z = (x - mean) / std, population std (scikit-learn StandardScaler)
-    static TransformResult Standardize(const std::vector<std::vector<double>>& data);
+    // z = (x - mean) / std, population std (scikit-learn StandardScaler). Params per
+    // column: col<i>_mean (the centre used) and col<i>_std (the scale used).
+    static TransformResult Standardize(const std::vector<std::vector<double>>& data,
+                                       const StandardizeOptions& options = {});
+
+    // (x - center) / scale per column with given values (re-applying a fitted
+    // scaler); one center and one scale per column, scales non-zero.
+    static TransformResult ScaleColumns(const std::vector<std::vector<double>>& data,
+                                        const std::vector<double>& centers,
+                                        const std::vector<double>& scales);
+
+    // ========== Outliers ==========
+    // "iqr": outside [q1 - t * IQR, q3 + t * IQR] (linear quartiles); "zscore":
+    // |x - mean| / std > t (population std, scipy.stats.zscore; none when the std
+    // is 0).
+    static OutlierFlags FindOutliers(const std::vector<double>& data, const std::string& method, double threshold);
 
     // ========== Log Transforms ==========
     // base "natural", "log10" or "log2"; log1p takes log(1 + x)

@@ -89,7 +89,29 @@ void RunCase(const json& c, const std::string& name) {
         const double low = c.value("range_min", 0.0), high = c.value("range_max", 1.0);
         return CheckColumns(DataTransform::Normalize(inputs, low, high), c.at("outputs"), name);
     }
-    if (op == "standardize") return CheckColumns(DataTransform::Standardize(inputs), c.at("outputs"), name);
+    if (op == "standardize") {
+        cyxwiz::StandardizeOptions options;
+        options.with_mean = c.value("with_mean", true);
+        options.with_std = c.value("with_std", true);
+        return CheckColumns(DataTransform::Standardize(inputs, options), c.at("outputs"), name);
+    }
+    if (op == "scale_columns") {
+        return CheckColumns(DataTransform::ScaleColumns(inputs, c.at("centers").get<std::vector<double>>(),
+                                                        c.at("scales").get<std::vector<double>>()),
+                            c.at("outputs"), name);
+    }
+    if (op == "outliers") {
+        const auto result = DataTransform::FindOutliers(x, c.at("method").get<std::string>(), c.at("threshold").get<double>());
+        Check(result.success, name + ": " + result.error_message);
+        const auto flags = c.at("flags").get<std::vector<int>>();
+        Check(result.is_outlier.size() == flags.size(), name + ": flag count");
+        size_t count = 0;
+        for (size_t i = 0; i < flags.size(); ++i) {
+            Check(result.is_outlier[i] == flags[i], name + ": flag " + std::to_string(i));
+            count += static_cast<size_t>(flags[i]);
+        }
+        return Check(result.count == count, name + ": outlier count");
+    }
     if (op == "robust_scale") {
         cyxwiz::RobustScaleOptions options;
         options.quantile_min = c.value("quantile_min", 25.0);
@@ -148,8 +170,6 @@ void RunCase(const json& c, const std::string& name) {
         CheckValue(test.p_value, c.at("p_value").get<double>(), name + " p");
         return Check(test.is_normal == (test.p_value > 0.05), name + ": is_normal");
     }
-    if (op == "refuse_normalize") return CheckRefused(DataTransform::Normalize(inputs).error_message, c, name);
-    if (op == "refuse_standardize") return CheckRefused(DataTransform::Standardize(inputs).error_message, c, name);
     if (op == "refuse_boxcox") {
         CheckRefused(DataTransform::BoxCoxColumn(x, 0.5, false).error_message, c, name);
         CheckRefused(DataTransform::FindOptimalLambda(x).error_message, c, name + " search");

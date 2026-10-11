@@ -39,7 +39,7 @@ namespace {
 
 using Columns = std::vector<std::vector<double>>;
 
-constexpr double kDegenerate = 1e-10;  // zero range / variance / IQR / max-abs
+constexpr double kDegenerate = 1e-10;  // zero variance for the lambda search
 
 template <typename Result>
 Result Fail(Result result, std::string message) {
@@ -100,6 +100,11 @@ af::array ExactQuantiles(const af::array& sorted, int size) {
     const af::array b = af::lookup(sorted, upper.as(u32));
     const af::array diff = b - a;
     return af::select(t >= 0.5, b - diff * (1.0 - t), a + diff * t);
+}
+
+// scikit-learn's _handle_zeros_in_scale: a scale below 10 eps divides by 1.
+double ZeroSafeScale(double scale) {
+    return scale < 10.0 * std::numeric_limits<double>::epsilon() ? 1.0 : scale;
 }
 
 double PopulationStd(const af::array& x) {
@@ -441,15 +446,11 @@ NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double
 TransformResult DataTransform::Normalize(const Columns& data, double range_min, double range_max) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::Normalize",
-        [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
             const double low = af::min<double>(x), high = af::max<double>(x);
-            if (high - low < kDegenerate) {
-                refusal = "Data has zero range (constant values)";
-                return {};
-            }
             params[prefix + "min"] = low;
             params[prefix + "max"] = high;
-            return (x - low) / (high - low) * (range_max - range_min) + range_min;
+            return (x - low) / ZeroSafeScale(high - low) * (range_max - range_min) + range_min;
         });
     if (result.success) {
         result.params["range_min"] = range_min;
@@ -463,25 +464,95 @@ TransformResult DataTransform::Normalize(const Columns& data, double range_min, 
 #endif
 }
 
-TransformResult DataTransform::Standardize(const Columns& data) {
+TransformResult DataTransform::Standardize(const Columns& data, const StandardizeOptions& options) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "standardize", "DataTransform::Standardize",
-        [](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
-            const double mean = af::mean<double>(x);
-            const double std_dev = PopulationStd(x);
-            if (std_dev < kDegenerate) {
-                refusal = "Data has zero variance (constant values)";
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
+            const double mean = options.with_mean ? af::mean<double>(x) : 0.0;
+            const double scale = options.with_std ? ZeroSafeScale(PopulationStd(x)) : 1.0;
+            if (!std::isfinite(mean) || !std::isfinite(scale)) {
+                refusal = "Data has missing or non-finite values";
                 return {};
             }
             params[prefix + "mean"] = mean;
-            params[prefix + "std"] = std_dev;
-            return (x - mean) / std_dev;
+            params[prefix + "std"] = scale;
+            return (x - mean) / scale;
         });
 #else
     TransformResult result;
     result.method = "standardize";
     return Fail(result, NoArrayFire("DataTransform::Standardize"));
 #endif
+}
+
+TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vector<double>& centers,
+                                            const std::vector<double>& scales) {
+    if (centers.size() != data.size() || scales.size() != data.size()) {
+        TransformResult result;
+        result.method = "scale_columns";
+        return Fail(result, "Need one center and one scale per column");
+    }
+    for (double scale : scales) {
+        if (!std::isfinite(scale) || scale == 0.0) {
+            TransformResult result;
+            result.method = "scale_columns";
+            return Fail(result, "Scales must be finite and non-zero");
+        }
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    size_t column = 0;
+    return TransformEachColumn(data, "scale_columns", "DataTransform::ScaleColumns",
+        [&](const af::array& x, const std::string&, auto&, std::string&) -> af::array {
+            const size_t i = column++;
+            return (x - centers[i]) / scales[i];
+        });
+#else
+    TransformResult result;
+    result.method = "scale_columns";
+    return Fail(result, NoArrayFire("DataTransform::ScaleColumns"));
+#endif
+}
+
+OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const std::string& method, double threshold) {
+    OutlierFlags result;
+    if (method != "iqr" && method != "zscore") {
+        result.error_message = "Unknown outlier method '" + method + "' (iqr or zscore)";
+        return result;
+    }
+    if (!(threshold > 0.0)) {
+        result.error_message = "Threshold must be positive";
+        return result;
+    }
+    if (data.empty()) {
+        result.success = true;
+        return result;
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array x = HostValuesToDevice(data);
+        af::array flags;
+        if (method == "iqr") {
+            const std::vector<double> q = PercentilesAt(af::sort(x), {0.25, 0.75}, "DataTransform::FindOutliers");
+            const double spread = q[1] - q[0];
+            flags = x < q[0] - threshold * spread || x > q[1] + threshold * spread;
+        } else {
+            const double std_dev = PopulationStd(x);
+            flags = std_dev > 0.0 ? af::abs(x - af::mean<double>(x)) / std_dev > threshold
+                                  : af::constant(0, x.dims(), b8);
+        }
+        const std::vector<double> values = DeviceToHostValues(flags.as(x.type()), "DataTransform::FindOutliers");
+        result.is_outlier.resize(values.size());
+        for (size_t i = 0; i < values.size(); ++i) result.is_outlier[i] = values[i] != 0.0 ? 1 : 0;
+        result.count = static_cast<size_t>(af::count<double>(flags));
+        result.success = true;
+    } catch (const af::exception& e) {
+        result = OutlierFlags{};
+        result.error_message = DeviceError("DataTransform::FindOutliers", e);
+    }
+#else
+    result.error_message = NoArrayFire("DataTransform::FindOutliers");
+#endif
+    return result;
 }
 
 TransformResult DataTransform::LogTransform(const Columns& data, const std::string& base, bool use_log1p) {
@@ -542,12 +613,8 @@ TransformResult DataTransform::RobustScale(const Columns& data, const RobustScal
 TransformResult DataTransform::MaxAbsScale(const Columns& data) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "maxabs_scale", "DataTransform::MaxAbsScale",
-        [](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
-            const double max_abs = af::max<double>(af::abs(x));
-            if (max_abs < kDegenerate) {
-                refusal = "Data is all zeros";
-                return {};
-            }
+        [](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const double max_abs = ZeroSafeScale(af::max<double>(af::abs(x)));
             params[prefix + "maxabs"] = max_abs;
             return x / max_abs;
         });

@@ -206,6 +206,24 @@ def main():
     add("normalize", "range", cols, range_min=-2.0, range_max=3.0,
         outputs=[vec((c - c.min()) / (c.max() - c.min()) * 5.0 - 2.0) for c in cols])
     add("standardize", "columns", cols, outputs=[vec((c - c.mean()) / c.std(unbiased=False)) for c in cols])
+    add("standardize", "no_mean", cols, with_mean=False, outputs=[vec(c / c.std(unbiased=False)) for c in cols])
+    add("standardize", "no_std", cols, with_std=False, outputs=[vec(c - c.mean()) for c in cols])
+    constant = torch.full((10,), 3.0)
+    # scikit-learn's _handle_zeros_in_scale: a zero scale divides by 1.
+    add("standardize", "constant", [constant], outputs=[vec(constant - 3.0)])
+    add("normalize", "constant", [constant], range_min=-1.0, range_max=2.0, outputs=[vec(torch.full((10,), -1.0))])
+    add("maxabs_scale", "zeros", [torch.zeros(6)], outputs=[vec(torch.zeros(6))])
+    centers, scales = [1.5, -2.0, 0.25], [2.0, 0.5, 4.0]
+    add("scale_columns", "given", cols, centers=centers, scales=scales,
+        outputs=[vec((c - m) / d) for c, m, d in zip(cols, centers, scales)])
+    for label, x, method, t in [("iqr_skewed", skewed, "iqr", 1.5), ("iqr_ties", ties, "iqr", 1.0),
+                                ("zscore_normal", normal, "zscore", 2.0), ("zscore_skewed", skewed, "zscore", 2.5)]:
+        if method == "iqr":
+            q = percentile(x, torch.tensor([0.25, 0.75]))
+            flags = (x < q[0] - t * (q[1] - q[0])) | (x > q[1] + t * (q[1] - q[0]))
+        else:
+            flags = (x - x.mean()).abs() / x.std(unbiased=False) > t
+        add("outliers", label, [x], method=method, threshold=t, flags=[int(f) for f in flags.tolist()])
     def robust(c, q_min=25.0, q_max=75.0, center=True, scale=True):
         """scikit-learn RobustScaler; a spread below 10 eps scales by 1 (_handle_zeros_in_scale)."""
         mid = percentile(c, torch.tensor(0.5)) if center else 0.0
@@ -259,8 +277,6 @@ def main():
         add("normaltest", label, [x], statistic=k2, p_value=p)
 
     # Refusals: the message must contain the given text.
-    add("refuse_normalize", "constant", [torch.full((10,), 3.0)], message="zero range")
-    add("refuse_standardize", "constant", [torch.full((10,), 3.0)], message="zero variance")
     add("refuse_boxcox", "non_positive", [small], message="strictly positive")
     add("refuse_log", "non_positive", [small], message="non-positive")
     add("refuse_log1p", "minus_one", [torch.tensor([0.5, -1.0, 2.0])], message="<= -1")
