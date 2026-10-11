@@ -206,9 +206,20 @@ def main():
     add("normalize", "range", cols, range_min=-2.0, range_max=3.0,
         outputs=[vec((c - c.min()) / (c.max() - c.min()) * 5.0 - 2.0) for c in cols])
     add("standardize", "columns", cols, outputs=[vec((c - c.mean()) / c.std(unbiased=False)) for c in cols])
-    add("robust_scale", "columns", cols, outputs=[
-        vec((c - percentile(c, torch.tensor(0.5))) /
-            (percentile(c, torch.tensor(0.75)) - percentile(c, torch.tensor(0.25)))) for c in cols])
+    def robust(c, q_min=25.0, q_max=75.0, center=True, scale=True):
+        """scikit-learn RobustScaler; a spread below 10 eps scales by 1 (_handle_zeros_in_scale)."""
+        mid = percentile(c, torch.tensor(0.5)) if center else 0.0
+        spread = float(percentile(c, torch.tensor(q_max / 100)) - percentile(c, torch.tensor(q_min / 100)))
+        return vec((c - mid) / (spread if scale and spread >= 10 * 2.220446049250313e-16 else 1.0))
+
+    add("robust_scale", "columns", cols, outputs=[robust(c) for c in cols])
+    constant = torch.full((12,), 4.0)
+    for label, options in [("q10_q90", dict(q_min=10.0, q_max=90.0)), ("no_centering", dict(center=False)),
+                           ("no_scaling", dict(scale=False))]:
+        add("robust_scale", label, cols, quantile_min=options.get("q_min", 25.0), quantile_max=options.get("q_max", 75.0),
+            with_centering=options.get("center", True), with_scaling=options.get("scale", True),
+            outputs=[robust(c, **options) for c in cols])
+    add("robust_scale", "constant_column", [constant, cols[0]], outputs=[robust(constant), robust(cols[0])])
     add("maxabs_scale", "columns", cols, outputs=[vec(c / c.abs().max()) for c in cols])
 
     for base, divisor in [("natural", 1.0), ("log10", math.log(10.0)), ("log2", math.log(2.0))]:

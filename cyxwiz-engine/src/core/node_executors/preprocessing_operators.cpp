@@ -6,6 +6,7 @@
 #include "text_column_utils.h"
 #include "ts_column_utils.h"
 
+#include <cyxwiz/data_transform.h>
 #include <cyxwiz/stats_utils.h>
 
 #include <arrow/api.h>
@@ -754,6 +755,12 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.15, 0, static_cast<uint64_t>(resolved.size()),
                    estimated_bytes);
 
+    // One implementation with the scaling tools, on the selected device.
+    RobustScaleOptions options;
+    options.quantile_min = quantile_min_;
+    options.quantile_max = quantile_max_;
+    options.with_centering = with_centering_;
+    options.with_scaling = with_scaling_;
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
@@ -767,15 +774,11 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
-
-        const double center = with_centering_ ? stats::Median(data) : 0.0;
-        const double q_low = stats::Percentile(data, quantile_min_ / 100.0);
-        const double q_high = stats::Percentile(data, quantile_max_ / 100.0);
-        const double iqr = q_high - q_low;
-        const double scale = (with_scaling_ && iqr != 0.0) ? iqr : 1.0;
-
-        for (auto& v : data) v = (v - center) / scale;
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, data));
+        TransformResult scaled = DataTransform::RobustScale({std::move(data)}, options);
+        if (!scaled.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + scaled.error_message);
+        }
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
         transformed++;
     }
 

@@ -4,8 +4,9 @@
 #include "materialization_memory_preflight.h"
 #include "ts_column_utils.h"
 
+#include <cyxwiz/data_transform.h>
 #include <spdlog/spdlog.h>
-#include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 
@@ -105,12 +106,15 @@ LogTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    static_cast<uint64_t>(values.size()),
                    static_cast<uint64_t>(values.size()),
                     preflight_estimate.estimated_peak_bytes);
-    for (size_t i = 0; i < values.size(); ++i) {
-        if ((i & 1023) == 0) {
-            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        }
-        values[i] = std::log1p(values[i]);
+    // One implementation with the Log Transform tool, on the selected device.
+    const TransformResult transformed = DataTransform::LogTransform(
+        {std::vector<double>(values.begin(), values.end())}, "natural", /*use_log1p=*/true);
+    if (!transformed.success) {
+        return arrow::Status::Invalid("LogTransform: column '" + value_col_ + "': " + transformed.error_message);
     }
+    std::transform(transformed.transformed_data[0].begin(), transformed.transformed_data[0].end(), values.begin(),
+                   [](double v) { return static_cast<float>(v); });
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     ReportProgress(progress_callback_, "write_output",
                    "Writing transformed column", 0.90f,

@@ -512,19 +512,25 @@ TransformResult DataTransform::LogTransform(const Columns& data, const std::stri
     return result;
 }
 
-TransformResult DataTransform::RobustScale(const Columns& data) {
+TransformResult DataTransform::RobustScale(const Columns& data, const RobustScaleOptions& options) {
+    if (!(options.quantile_min >= 0.0 && options.quantile_min < options.quantile_max && options.quantile_max <= 100.0)) {
+        TransformResult result;
+        result.method = "robust_scale";
+        return Fail(result, "Quantiles must satisfy 0 <= quantile_min < quantile_max <= 100");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "robust_scale", "DataTransform::RobustScale",
-        [](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
-            const std::vector<double> q = PercentilesAt(af::sort(x), {0.25, 0.5, 0.75}, "DataTransform::RobustScale");
-            const double iqr = q[2] - q[0];
-            if (iqr < kDegenerate) {
-                refusal = "Data has zero IQR";
-                return {};
-            }
-            params[prefix + "median"] = q[1];
-            params[prefix + "iqr"] = iqr;
-            return (x - q[1]) / iqr;
+        [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
+            const std::vector<double> q = PercentilesAt(
+                af::sort(x), {options.quantile_min / 100.0, 0.5, options.quantile_max / 100.0}, "DataTransform::RobustScale");
+            const double center = options.with_centering ? q[1] : 0.0;
+            // scikit-learn's _handle_zeros_in_scale: a spread below 10 eps scales by 1.
+            const double spread = q[2] - q[0];
+            const double scale =
+                options.with_scaling && spread >= 10.0 * std::numeric_limits<double>::epsilon() ? spread : 1.0;
+            params[prefix + "median"] = center;
+            params[prefix + "iqr"] = scale;
+            return (x - center) / scale;
         });
 #else
     TransformResult result;

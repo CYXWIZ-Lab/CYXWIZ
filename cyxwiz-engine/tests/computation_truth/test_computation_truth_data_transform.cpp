@@ -90,7 +90,14 @@ void RunCase(const json& c, const std::string& name) {
         return CheckColumns(DataTransform::Normalize(inputs, low, high), c.at("outputs"), name);
     }
     if (op == "standardize") return CheckColumns(DataTransform::Standardize(inputs), c.at("outputs"), name);
-    if (op == "robust_scale") return CheckColumns(DataTransform::RobustScale(inputs), c.at("outputs"), name);
+    if (op == "robust_scale") {
+        cyxwiz::RobustScaleOptions options;
+        options.quantile_min = c.value("quantile_min", 25.0);
+        options.quantile_max = c.value("quantile_max", 75.0);
+        options.with_centering = c.value("with_centering", true);
+        options.with_scaling = c.value("with_scaling", true);
+        return CheckColumns(DataTransform::RobustScale(inputs, options), c.at("outputs"), name);
+    }
     if (op == "maxabs_scale") return CheckColumns(DataTransform::MaxAbsScale(inputs), c.at("outputs"), name);
     if (op == "log") {
         return CheckColumns(DataTransform::LogTransform(inputs, c.at("base").get<std::string>(),

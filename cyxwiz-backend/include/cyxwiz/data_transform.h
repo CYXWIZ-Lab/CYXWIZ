@@ -59,6 +59,15 @@ struct CYXWIZ_API NormalityTestResult {
     std::string error_message;
 };
 
+// scikit-learn RobustScaler options: centre on the median, scale by the spread
+// between two percentiles (a zero spread scales by 1).
+struct CYXWIZ_API RobustScaleOptions {
+    double quantile_min = 25.0;  // percent, 0 <= quantile_min < quantile_max <= 100
+    double quantile_max = 75.0;
+    bool with_centering = true;
+    bool with_scaling = true;
+};
+
 class CYXWIZ_API DataTransform {
 public:
     // ========== Normalization (Min-Max Scaling) ==========
@@ -100,8 +109,11 @@ public:
                                                           int n_steps = 100);
 
     // ========== Robust Scaling ==========
-    // x_scaled = (x - median) / IQR (scikit-learn RobustScaler)
-    static TransformResult RobustScale(const std::vector<std::vector<double>>& data);
+    // x_scaled = (x - median) / (q_max - q_min) (scikit-learn RobustScaler). Params per
+    // column: col<i>_median (the centre used, 0 without centering) and col<i>_iqr (the
+    // scale used, 1 without scaling or for a zero spread).
+    static TransformResult RobustScale(const std::vector<std::vector<double>>& data,
+                                       const RobustScaleOptions& options = {});
 
     // ========== Max Abs Scaling ==========
     // x_scaled = x / max(|x|)
