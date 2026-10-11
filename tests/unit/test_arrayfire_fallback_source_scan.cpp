@@ -45,8 +45,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/providers/nvidia_cublas_provider.cpp", 8, "transport_boundary", "NVIDIA neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0: rnn/lstm/gru forward outputs + optional stacked final states, lstm/gru backward dx and per-layer weight/bias gradients; explicit v1 boundary copies)"},
         {"cyxwiz-backend/src/algorithms/providers/opencl_cell_provider.cpp", 8, "transport_boundary", "OpenCL neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0 mirror of the NVIDIA provider: forward outputs + optional stacked final states, backward dx and per-layer gradients)"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
-        {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 9, "compatibility_compute", "feed-forward modules"},
-        {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
         {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 2, "transport_boundary", "BIO span matching reads tag ids"},
         {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},
         {"cyxwiz-engine/src/core/test_executor.cpp", 3, "compatibility_compute", "test evaluation"},

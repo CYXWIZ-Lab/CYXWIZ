@@ -318,51 +318,21 @@ std::vector<Tensor> RunLinalgBackward(const CompiledGraphNode& node,
         if (inputs[0]->Shape().size() == 2) {
             const auto& shape = inputs[0]->Shape();
             const size_t batch = shape[0];
-            const size_t features = shape[1];
             if (grad_output.NumElements() != batch) {
                 throw std::runtime_error("GraphExecutableModel TensorDot backward 2D requires one gradient per batch row");
             }
-            Tensor left_grad(shape, inputs[0]->GetDataType());
-            Tensor right_grad(shape, inputs[1]->GetDataType());
-            switch (inputs[0]->GetDataType()) {
-                case DataType::Float32: {
-                    const float* left = inputs[0]->Data<float>();
-                    const float* right = inputs[1]->Data<float>();
-                    float* left_out = left_grad.Data<float>();
-                    float* right_out = right_grad.Data<float>();
-                    for (size_t row = 0; row < batch; ++row) {
-                        const float scale = grad_output.At(row);
-                        for (size_t col = 0; col < features; ++col) {
-                            const size_t idx = row * features + col;
-                            left_out[idx] = right[idx] * scale;
-                            right_out[idx] = left[idx] * scale;
-                        }
-                    }
-                    return {std::move(left_grad), std::move(right_grad)};
-                }
-                case DataType::Float64: {
-                    const double* left = inputs[0]->Data<double>();
-                    const double* right = inputs[1]->Data<double>();
-                    double* left_out = left_grad.Data<double>();
-                    double* right_out = right_grad.Data<double>();
-                    for (size_t row = 0; row < batch; ++row) {
-                        const double scale = static_cast<double>(grad_output.At(row));
-                        for (size_t col = 0; col < features; ++col) {
-                            const size_t idx = row * features + col;
-                            left_out[idx] = right[idx] * scale;
-                            right_out[idx] = left[idx] * scale;
-                        }
-                    }
-                    return {std::move(left_grad), std::move(right_grad)};
-                }
-                default:
-                    throw std::runtime_error("GraphExecutableModel TensorDot 2D backward supports only floating tensors");
+            const DataType dtype = inputs[0]->GetDataType();
+            if (dtype != DataType::Float32 && dtype != DataType::Float64) {
+                throw std::runtime_error("GraphExecutableModel TensorDot 2D backward supports only floating tensors");
             }
+            // Each row's gradient scales that row of the other input (device broadcast).
+            const Tensor scale = grad_output.Reshape({batch, 1});
+            return {*inputs[1] * scale, *inputs[0] * scale};
         }
         if (grad_output.NumElements() != 1) {
             throw std::runtime_error("GraphExecutableModel TensorDot backward requires scalar gradient");
         }
-        const float scale = grad_output.At(0);
+        const Tensor scale = grad_output.Reshape({1});
         return {*inputs[1] * scale, *inputs[0] * scale};
     }
 

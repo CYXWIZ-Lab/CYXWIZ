@@ -180,15 +180,13 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
             NormalizeEmbeddings();
         }
 
-        // Token ids are host ingress for the current batcher contract. The
-        // lookup table, gathered vectors, and gradients remain on ArrayFire.
-        const int32_t* indices_ptr = input.ReadData<int32_t>();
         af::array w = weight_.GetSemanticArray();
         // One gather for all tokens (TOFIX118 P8: the per-token loop issued a
         // device copy per token - 69 of ~280 ms per Berean step). Padding and
-        // out-of-range ids give zero rows, as before.
-        const af::array ids(af::dim4(CheckedIntDim(total_indices, "embedding token count")),
-                            indices_ptr);
+        // out-of-range ids give zero rows, as before. Ids are read where they
+        // live (a host batch uploads once; device ids stay put).
+        (void)CheckedIntDim(total_indices, "embedding token count");
+        const af::array ids = input.GetRowMajorFlatArray();
         const af::array valid = (ids >= 0) && (ids < num_embeddings_) && (ids != padding_idx_);
         const af::array safe_ids = af::select(valid, ids, 0.0);
         af::array output_flat = af::lookup(w, safe_ids, 0);
@@ -240,8 +238,7 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
                 "EmbeddingLayer::Backward: grad_output shape or dtype mismatch");
         }
 
-        const int32_t* indices_ptr = cached_indices_.ReadData<int32_t>();
-
+        (void)total_indices;
         // Initialize gradient accumulator
         af::array dw = af::constant(0.0f, af::dim4(num_embeddings_, embedding_dim_));
 
@@ -250,25 +247,15 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
             sequence_length,
             static_cast<size_t>(embedding_dim_));
 
-        // Scatter-add token rows into the table in one pass: keep valid
-        // tokens, sort by id, sum rows per id (sumByKey), assign once. The
-        // previous per-token loop issued one device update per token.
-        std::vector<int32_t> keys;
-        std::vector<uint32_t> rows;
-        keys.reserve(total_indices);
-        rows.reserve(total_indices);
-        for (size_t i = 0; i < total_indices; ++i) {
-            const int32_t idx = indices_ptr[i];
-            if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-                keys.push_back(idx);
-                rows.push_back(static_cast<uint32_t>(CheckedIntDim(i, "embedding grad index")));
-            }
-        }
-        if (!keys.empty()) {
-            const af::array key_array(static_cast<dim_t>(keys.size()), keys.data());
-            const af::array row_array(static_cast<dim_t>(rows.size()), rows.data());
+        // Scatter-add token rows into the table in one pass, on the device:
+        // keep valid tokens, sort by id, sum rows per id (sumByKey), assign once.
+        const af::array ids = cached_indices_.GetRowMajorFlatArray();
+        const af::array valid = (ids >= 0) && (ids < num_embeddings_) && (ids != padding_idx_);
+        const af::array row_array = af::where(valid);
+        if (row_array.elements() > 0) {
+            const af::array key_array = ids(row_array);
             const af::array token_rows = af::lookup(grad, row_array, 0);
-            if (keys.size() == 1) {
+            if (row_array.elements() == 1) {
                 // sumByKey needs a key vector; one token is a direct row write.
                 dw(key_array, af::span) = token_rows;
             } else {

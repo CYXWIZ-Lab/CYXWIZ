@@ -207,56 +207,41 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
         total *= d;
     }
 
-    Tensor int_input(shape, DataType::Int32);
-    int32_t* dst = int_input.MutableData<int32_t>();
-    const int32_t vocab_max = static_cast<int32_t>(num_embeddings_) - 1;
-    const float* float_ids = input.GetDataType() == DataType::Float32
-        ? input.ReadData<float>() : nullptr;
-    const int32_t* int32_ids = input.GetDataType() == DataType::Int32
-        ? input.ReadData<int32_t>() : nullptr;
-    const int64_t* int64_ids = input.GetDataType() == DataType::Int64
-        ? input.ReadData<int64_t>() : nullptr;
-    for (size_t i = 0; i < total; ++i) {
-        int32_t idx = 0;
-        switch (input.GetDataType()) {
-            case DataType::Float32: {
-                const float value = float_ids[i];
-                if (!std::isfinite(value) || std::trunc(value) != value ||
-                    value < 0.0f || value > static_cast<float>(vocab_max)) {
-                    throw std::runtime_error(
-                        "EmbeddingModule: Float32 token ids must be finite exact integers in vocabulary range");
-                }
-                idx = static_cast<int32_t>(value);
-                break;
-            }
-            case DataType::Int32:
-                idx = int32_ids[i];
-                break;
-            case DataType::Int64: {
-                const int64_t value = int64_ids[i];
-                if (value < 0 || value > static_cast<int64_t>(vocab_max)) {
-                    throw std::runtime_error(
-                        "EmbeddingModule: Int64 token id " +
-                        std::to_string(value) +
-                        " is outside vocabulary range [0, " +
-                        std::to_string(num_embeddings_) + ") at position " +
-                        std::to_string(i));
-                }
-                idx = static_cast<int32_t>(value);
-                break;
-            }
-            default:
-                throw std::runtime_error(
-                    "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
-        }
-        if (idx < 0 || idx > vocab_max) {
-            throw std::runtime_error(
-                "EmbeddingModule: token id is outside vocabulary range");
-        }
-        dst[i] = idx;
+    const DataType dtype = input.GetDataType();
+    if (dtype != DataType::Float32 && dtype != DataType::Int32 && dtype != DataType::Int64) {
+        throw std::runtime_error(
+            "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
     }
-
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    Tensor int_input;
+    try {
+        // Ids are checked on the device: finite exact integers within the
+        // vocabulary. One scalar comes back; the offending id is looked up
+        // only when the check fails.
+        const af::array ids = input.GetRowMajorFlatArray();
+        const double vocab_max = static_cast<double>(num_embeddings_) - 1.0;
+        af::array invalid = (ids < 0.0) || (ids > vocab_max);
+        if (dtype == DataType::Float32) {
+            invalid = invalid || af::isNaN(ids) || af::isInf(ids) || (af::trunc(ids) != ids);
+        }
+        const af::array first_bad = af::where(af::flat(invalid));
+        if (first_bad.elements() > 0) {
+            const Tensor position = Tensor::FromRowMajorFlatArray(first_bad(0), {1});
+            const unsigned at = position.ReadData<unsigned>()[0];
+            const Tensor value = Tensor::FromRowMajorFlatArray(ids(at).as(f64), {1});
+            throw std::runtime_error(
+                "EmbeddingModule: token id " + std::to_string(value.ReadData<double>()[0]) +
+                " at position " + std::to_string(at) + " is not an integer in the vocabulary range [0, " +
+                std::to_string(num_embeddings_) + ")");
+        }
+        int_input = Tensor::FromRowMajorFlatArray(ids.as(s32), shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("EmbeddingModule::Forward failed on the ArrayFire device: ") + e.what());
+    }
     return layer_->Forward(int_input);
+#else
+    throw std::runtime_error("EmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
+#endif
 }
 
 Tensor EmbeddingModule::Backward(const Tensor& grad_output) {
@@ -295,20 +280,6 @@ std::string EmbeddingModule::GetName() const {
 // ============================================================================
 
 namespace {
-
-int64_t ReadIdAt(const Tensor& tensor, size_t index) {
-    switch (tensor.GetDataType()) {
-        case DataType::Float32:
-            return static_cast<int64_t>(tensor.Data<float>()[index]);
-        case DataType::Int32:
-            return static_cast<int64_t>(tensor.Data<int32_t>()[index]);
-        case DataType::Int64:
-            return tensor.Data<int64_t>()[index];
-        default:
-            throw std::runtime_error(
-                "SequenceFeatureFusionModule: ids must be Float32, Int32, or Int64");
-    }
-}
 
 std::map<std::string, Tensor> FilterPrefixedParams(
     const std::map<std::string, Tensor>& params,
@@ -364,17 +335,9 @@ Tensor SequenceFeatureFusionModule::Forward(const Tensor& input) {
 
     const size_t batch = input_shape_[0];
     const size_t seq_len = input_shape_[1];
-    const size_t token_count = batch * seq_len;
-    std::vector<int64_t> word_ids(token_count, 0);
-    std::vector<int64_t> pos_ids(token_count, 0);
-
-    for (size_t i = 0; i < token_count; ++i) {
-        word_ids[i] = ReadIdAt(input, i * 2);
-        pos_ids[i] = ReadIdAt(input, i * 2 + 1);
-    }
-
-    Tensor word_tensor({batch, seq_len}, word_ids.data(), DataType::Int64);
-    Tensor pos_tensor({batch, seq_len}, pos_ids.data(), DataType::Int64);
+    // Column 0 holds word ids, column 1 POS ids; EmbeddingModule checks them.
+    const Tensor word_tensor = input.Slice(2, 0, 1).Reshape({batch, seq_len});
+    const Tensor pos_tensor = input.Slice(2, 1, 2).Reshape({batch, seq_len});
     Tensor word_emb = word_embedding_.Forward(word_tensor);
     Tensor pos_emb = pos_embedding_.Forward(pos_tensor);
 
@@ -389,23 +352,7 @@ Tensor SequenceFeatureFusionModule::Forward(const Tensor& input) {
             "SequenceFeatureFusionModule: embedding output shape mismatch");
     }
 
-    Tensor output({batch, seq_len, fused_embedding_dim_}, DataType::Float32);
-    const float* word_data = word_emb.Data<float>();
-    const float* pos_data = pos_emb.Data<float>();
-    float* dst = output.Data<float>();
-    for (size_t token = 0; token < token_count; ++token) {
-        const size_t out_base = token * fused_embedding_dim_;
-        const size_t word_base = token * word_embedding_dim_;
-        const size_t pos_base = token * pos_embedding_dim_;
-        for (size_t dim = 0; dim < word_embedding_dim_; ++dim) {
-            dst[out_base + dim] = word_data[word_base + dim];
-        }
-        for (size_t dim = 0; dim < pos_embedding_dim_; ++dim) {
-            dst[out_base + word_embedding_dim_ + dim] =
-                pos_data[pos_base + dim];
-        }
-    }
-    return output;
+    return Tensor::Cat({word_emb, pos_emb}, 2);
 }
 
 Tensor SequenceFeatureFusionModule::Backward(const Tensor& grad_output) {
@@ -422,27 +369,10 @@ Tensor SequenceFeatureFusionModule::Backward(const Tensor& grad_output) {
             "SequenceFeatureFusionModule: grad_output shape mismatch");
     }
 
-    const size_t batch = input_shape_[0];
-    const size_t seq_len = input_shape_[1];
-    const size_t token_count = batch * seq_len;
-    Tensor word_grad({batch, seq_len, word_embedding_dim_}, DataType::Float32);
-    Tensor pos_grad({batch, seq_len, pos_embedding_dim_}, DataType::Float32);
-
-    const float* src = grad_output.Data<float>();
-    float* word_dst = word_grad.Data<float>();
-    float* pos_dst = pos_grad.Data<float>();
-    for (size_t token = 0; token < token_count; ++token) {
-        const size_t in_base = token * fused_embedding_dim_;
-        const size_t word_base = token * word_embedding_dim_;
-        const size_t pos_base = token * pos_embedding_dim_;
-        for (size_t dim = 0; dim < word_embedding_dim_; ++dim) {
-            word_dst[word_base + dim] = src[in_base + dim];
-        }
-        for (size_t dim = 0; dim < pos_embedding_dim_; ++dim) {
-            pos_dst[pos_base + dim] =
-                src[in_base + word_embedding_dim_ + dim];
-        }
-    }
+    const int word = static_cast<int>(word_embedding_dim_);
+    const int fused = static_cast<int>(fused_embedding_dim_);
+    const Tensor word_grad = grad_output.Slice(2, 0, word);
+    const Tensor pos_grad = grad_output.Slice(2, word, fused);
 
     word_embedding_.Backward(word_grad);
     pos_embedding_.Backward(pos_grad);
