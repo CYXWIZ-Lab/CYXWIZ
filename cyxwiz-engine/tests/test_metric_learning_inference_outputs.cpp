@@ -353,8 +353,9 @@ void TestDeviceOutputMaterializationAttribution() {
             left, right, cyxwiz::PairScoreMode::EuclideanDistance);
     }
     g_host_sync_events = nullptr;
-    Check(events.size() == 2,
-          "pair output should materialize exactly two embedding tensors");
+    // Distances are computed on the device and downloaded once (TOFIX140).
+    Check(events.size() == 1,
+          "pair output should download one score vector");
     for (const auto& event : events) {
         Check(event.attribution_category == "output_materialization" &&
                   event.attribution_operation ==

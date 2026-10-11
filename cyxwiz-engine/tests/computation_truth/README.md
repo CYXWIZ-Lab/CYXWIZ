@@ -120,8 +120,8 @@ The broad tracking ticket is:
   Distance, decision, aggregation, and ranking remain ArrayFire-resident on
   strict CPU and every locally qualified CUDA/OpenCL route; only one pair-label
   validation scalar and the bounded result scalars cross to host with exact
-  attribution. Forced failures prove strict rejection before host access and
-  compatible `metric_cpu_path` execution. Inference JSON materialization is a
+  attribution. There is no CPU path: a device failure is reported as an error.
+  Inference JSON materialization is a
   separate, explicitly attributed output boundary.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:

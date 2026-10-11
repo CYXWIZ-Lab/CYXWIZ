@@ -191,47 +191,6 @@ inline EmbeddingOutputResponse BuildEmbeddingOutputResponse(
     return response;
 }
 
-inline double CosineSimilarityRow(const Tensor& left,
-                                  const Tensor& right,
-                                  size_t row,
-                                  size_t dim) {
-    const float* left_data = left.ReadData<float>();
-    const float* right_data = right.ReadData<float>();
-    const size_t offset = row * dim;
-    double dot = 0.0;
-    double left_norm = 0.0;
-    double right_norm = 0.0;
-    for (size_t i = 0; i < dim; ++i) {
-        const double left_value = static_cast<double>(left_data[offset + i]);
-        const double right_value = static_cast<double>(right_data[offset + i]);
-        dot += left_value * right_value;
-        left_norm += left_value * left_value;
-        right_norm += right_value * right_value;
-    }
-    if (left_norm == 0.0 || right_norm == 0.0) {
-        throw std::invalid_argument(
-            "PairScoreOutput cosine similarity requires non-zero embeddings");
-    }
-    return dot / (std::sqrt(left_norm) * std::sqrt(right_norm));
-}
-
-inline double ScoreFromDistance(PairScoreMode mode,
-                                double distance,
-                                const Tensor& embedding_a,
-                                const Tensor& embedding_b,
-                                size_t row,
-                                size_t dim) {
-    switch (mode) {
-        case PairScoreMode::EuclideanDistance:
-            return distance;
-        case PairScoreMode::NegativeEuclideanDistance:
-            return -distance;
-        case PairScoreMode::CosineSimilarity:
-            return CosineSimilarityRow(embedding_a, embedding_b, row, dim);
-    }
-    return distance;
-}
-
 inline PairScoreOutputResponse BuildPairScoreOutputResponse(
     const Tensor& embedding_a,
     const Tensor& embedding_b,
@@ -270,17 +229,27 @@ inline PairScoreOutputResponse BuildPairScoreOutputResponse(
             "PairScoreOutput class IDs must both be [batch] or [batch, 1]");
     }
 
-    const size_t dim = FlattenedEmbeddingDim(embedding_a);
+    // Distances (and cosines) on the device, downloaded once.
+    const PairRowScores scores = ComputePairRowScores(
+        embedding_a, embedding_b, mode == PairScoreMode::CosineSimilarity);
     PairScoreOutputResponse response;
     response.mode = mode;
     response.records.reserve(pair_count);
 
     for (size_t row = 0; row < pair_count; ++row) {
         PairScoreRecord record;
-        record.distance =
-            EuclideanDistanceRow(embedding_a, embedding_b, row, dim);
-        record.score = ScoreFromDistance(
-            mode, record.distance, embedding_a, embedding_b, row, dim);
+        record.distance = scores.distances[row];
+        switch (mode) {
+            case PairScoreMode::EuclideanDistance:
+                record.score = record.distance;
+                break;
+            case PairScoreMode::NegativeEuclideanDistance:
+                record.score = -record.distance;
+                break;
+            case PairScoreMode::CosineSimilarity:
+                record.score = scores.cosines[row];
+                break;
+        }
         if (has_sample_ids) {
             record.has_sample_ids = true;
             record.sample_id_a = MetadataIdAt(sample_id_a, row);

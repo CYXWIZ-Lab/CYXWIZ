@@ -199,8 +199,6 @@ const char* ArrayFireHostSyncCategoryName(
             return "debug_sample_dump";
         case ArrayFireHostSyncCategory::LossInputValidation:
             return "loss_input_validation";
-        case ArrayFireHostSyncCategory::MetricCpuPath:
-            return "metric_cpu_path";
         case ArrayFireHostSyncCategory::MetricInputValidation:
             return "metric_input_validation";
         case ArrayFireHostSyncCategory::ProviderHostStaging:

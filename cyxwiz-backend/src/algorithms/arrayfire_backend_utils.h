@@ -53,7 +53,6 @@ enum class ArrayFireHostSyncCategory {
     CheckpointOutput,
     OutputMaterialization,
     LossInputValidation,
-    MetricCpuPath,
     MetricInputValidation,
     // Provider tenants that cannot share ArrayFire's device memory (oneAPI)
     // stage inputs through host memory.
