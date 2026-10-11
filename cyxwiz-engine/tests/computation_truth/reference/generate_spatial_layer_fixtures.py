@@ -325,6 +325,34 @@ def build() -> list[dict[str, Any]]:
             x, lambda t, w=w, b=b, s=s, p=p, c=c: functional.conv2d(t, w, b, stride=s, padding=p, groups=c),
             {"weights": w, "bias": b}, {"weights": conv_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
 
+
+    # TOFIX140 F2 (GroupNorm / InstanceNorm2D moved onto ArrayFire): the grouped
+    # reshape at its edges. Appended so earlier cases keep their random draws.
+    x = torch.randn(3, 6, 4, 7)
+    cases.append(case(
+        "groupnorm_g1_c6_noaffine", "GroupNorm", {"num_groups": 1, "eps": 1e-5, "affine": False},
+        x, lambda t: functional.group_norm(t, 1, eps=1e-5), {}, {}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(2, 6, 3, 5)
+    gamma = torch.randn(6) * 0.5 + 1.0
+    beta = torch.randn(6) * 0.2
+    cases.append(case(
+        "groupnorm_g6_c6_affine", "GroupNorm", {"num_groups": 6, "eps": 1e-3, "affine": True},
+        x, lambda t: functional.group_norm(t, 6, gamma, beta, eps=1e-3),
+        {"gamma": gamma, "beta": beta}, {"gamma": plain, "beta": plain}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(2, 4, 3, 6) * 3.0 + 1.5
+    gamma = torch.randn(4) * 0.5 + 1.0
+    beta = torch.randn(4) * 0.2
+    cases.append(case(
+        "instancenorm_c4_affine", "InstanceNorm", {"eps": 1e-5, "affine": True},
+        x, lambda t: functional.instance_norm(t, weight=gamma, bias=beta, eps=1e-5),
+        {"gamma": gamma, "beta": beta}, {"gamma": plain, "beta": plain}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(2, 6, 16, 16)
+    gamma = torch.randn(6) * 0.5 + 1.0
+    beta = torch.randn(6) * 0.2
+    cases.append(case(
+        "groupnorm_g3_c6_16x16", "GroupNorm", {"num_groups": 3, "eps": 1e-5, "affine": True},
+        x, lambda t: functional.group_norm(t, 3, gamma, beta, eps=1e-5),
+        {"gamma": gamma, "beta": beta}, {"gamma": plain, "beta": plain}, tolerance=(2e-4, 2e-4)))
     return cases
 
 
