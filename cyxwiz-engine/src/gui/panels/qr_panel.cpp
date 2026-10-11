@@ -1,5 +1,6 @@
 #include "qr_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -125,11 +126,12 @@ void QRPanel::RenderLoadingIndicator() {
 }
 
 void QRPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -158,6 +160,7 @@ void QRPanel::RenderResults() {
 }
 
 void QRPanel::RenderMatrixQ() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Q Matrix (%zu x %zu) - Orthogonal:", result_.Q.size(),
                 result_.Q.empty() ? 0 : result_.Q[0].size());
     ImGui::Spacing();
@@ -198,9 +201,9 @@ void QRPanel::RenderMatrixQ() {
 
     // Check orthogonality
     if (q_orthogonal_) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Q is orthogonal (Q^T * Q = I)");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Q is orthogonal (Q^T * Q = I)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Q orthogonality check failed");
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Q orthogonality check failed");
     }
 }
 
@@ -251,13 +254,14 @@ void QRPanel::RenderMatrixR() {
 }
 
 void QRPanel::RenderVerification() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Verification: A = Q * R");
     ImGui::Spacing();
 
     const MatrixResult& qr_product = qr_product_;
 
     if (!qr_product.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not verify: %s", qr_product.error_message.c_str());
+        ImGui::TextColored(t.error, "Could not verify: %s", qr_product.error_message.c_str());
         return;
     }
 
@@ -300,9 +304,9 @@ void QRPanel::RenderVerification() {
 
     ImGui::Spacing();
     if (max_error < 1e-6) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Verified: max error = %.2e", max_error);
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Verified: max error = %.2e", max_error);
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
     }
 }
 

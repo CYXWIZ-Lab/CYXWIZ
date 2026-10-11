@@ -1,5 +1,6 @@
 #include "cholesky_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -75,6 +76,7 @@ void CholeskyPanel::RenderToolbar() {
 }
 
 void CholeskyPanel::RenderMatrixInput() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix A");
     ImGui::Separator();
 
@@ -108,15 +110,15 @@ void CholeskyPanel::RenderMatrixInput() {
     const bool is_pos_def = input_positive_definite_;
 
     if (is_symmetric) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Symmetric");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Symmetric");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Not symmetric");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Not symmetric");
     }
     ImGui::SameLine();
     if (is_pos_def) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Pos. Def.");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Pos. Def.");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Not pos. def.");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Not pos. def.");
     }
 
     ImGui::Spacing();
@@ -169,11 +171,12 @@ void CholeskyPanel::RenderLoadingIndicator() {
 }
 
 void CholeskyPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -186,9 +189,9 @@ void CholeskyPanel::RenderResults() {
 
     // Status
     if (result_.is_positive_definite) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Matrix is positive definite");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Matrix is positive definite");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Matrix is NOT positive definite");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Matrix is NOT positive definite");
     }
 
     ImGui::Spacing();
@@ -252,6 +255,7 @@ void CholeskyPanel::RenderMatrixL() {
 }
 
 void CholeskyPanel::RenderVerification() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Verification: A = L * L^T");
     ImGui::Spacing();
 
@@ -262,7 +266,7 @@ void CholeskyPanel::RenderVerification() {
 
     const MatrixResult& LLt = reconstruction_;
     if (!LLt.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not compute L * L^T");
+        ImGui::TextColored(t.error, "Could not compute L * L^T");
         return;
     }
 
@@ -305,9 +309,9 @@ void CholeskyPanel::RenderVerification() {
 
     ImGui::Spacing();
     if (max_error < 1e-6) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Verified: max error = %.2e", max_error);
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Verified: max error = %.2e", max_error);
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
     }
 }
 

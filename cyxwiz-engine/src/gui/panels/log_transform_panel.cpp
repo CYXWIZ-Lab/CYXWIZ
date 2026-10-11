@@ -1,5 +1,6 @@
 #include "log_transform_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -14,6 +15,7 @@ LogTransformPanel::LogTransformPanel() : Panel("Log Transform", true) {}
 void LogTransformPanel::Render() {
     if (!visible_) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_LINE) + " Log Transform###LogTransformPanel").c_str(), &visible_)) {
@@ -48,7 +50,7 @@ void LogTransformPanel::Render() {
 
             if (!can_transform_) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                ImGui::TextColored(t.caution,
                     "Warning: Some columns have non-positive values.");
                 ImGui::TextWrapped("Enable 'Use log1p' or check your data.");
             }
@@ -126,6 +128,7 @@ void LogTransformPanel::RenderSettings() {
 void LogTransformPanel::RenderPreview() {
     if (!transform_result_.success || original_stats_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Before/After Distribution:");
     ImGui::Spacing();
 
@@ -160,7 +163,7 @@ void LogTransformPanel::RenderPreview() {
 
             if (ImPlot::BeginPlot("##LogHist", ImVec2(ImGui::GetContentRegionAvail().x, 200))) {
                 ImPlot::SetupAxes("Log Value", "Count");
-                ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.6f, 0.2f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
                 ImPlot::PlotHistogram("Log Transform", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
                 ImPlot::EndPlot();
             }
@@ -194,10 +197,10 @@ void LogTransformPanel::RenderPreview() {
             ImGui::TableNextColumn();
             ImGui::Text("%s", column_names_[transformed_columns_[trans_idx]].c_str());
             ImGui::TableNextColumn();
-            ImVec4 color1 = std::abs(orig_skew) > 1 ? ImVec4(1, 0.5f, 0, 1) : ImVec4(0, 0.8f, 0, 1);
+            ImVec4 color1 = std::abs(orig_skew) > 1 ? t.caution : t.success;
             ImGui::TextColored(color1, "%.3f", orig_skew);
             ImGui::TableNextColumn();
-            ImVec4 color2 = std::abs(trans_skew) > 1 ? ImVec4(1, 0.5f, 0, 1) : ImVec4(0, 0.8f, 0, 1);
+            ImVec4 color2 = std::abs(trans_skew) > 1 ? t.caution : t.success;
             ImGui::TextColored(color2, "%.3f", trans_skew);
         }
 

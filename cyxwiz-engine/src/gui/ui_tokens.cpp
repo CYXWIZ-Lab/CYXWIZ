@@ -18,6 +18,42 @@ unsigned int ToU32(const ImVec4& colour) {
     return ImGui::ColorConvertFloat4ToU32(colour);
 }
 
+namespace {
+
+ImVec4 ScaleAt(const ImVec4* stops, int count, float v) {
+    v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    const float at = v * static_cast<float>(count - 1);
+    const int lo = at >= static_cast<float>(count - 1) ? count - 2 : static_cast<int>(at);
+    return Mix(stops[lo], stops[lo + 1], at - static_cast<float>(lo));
+}
+
+}  // namespace
+
+ImVec4 SeriesColour(const Tokens& t, size_t index) {
+    const ImVec4 base = t.series[index % Tokens::kSeriesCount];
+    const size_t round = (index / Tokens::kSeriesCount) % 3;
+    return round == 0 ? base : WithAlpha(Mix(base, t.bg_window, 0.3f * static_cast<float>(round)), 1.0f);
+}
+
+ImVec4 SequentialAt(const Tokens& t, float v) {
+    return ScaleAt(t.scale_sequential, 4, v);
+}
+
+ImVec4 DivergingAt(const Tokens& t, float v) {
+    return ScaleAt(t.scale_diverging, 3, (v + 1.0f) * 0.5f);
+}
+
+ImVec4 ReadableOn(const Tokens& t, const ImVec4& background) {
+    // The theme's bright text or the window colour, whichever contrasts
+    // more with the fill (mid-tone fills fail a plain light/dark split).
+    const auto contrast = [&](const ImVec4& c) {
+        const float a = appearance::Luminance(c.x, c.y, c.z);
+        const float b = appearance::Luminance(background.x, background.y, background.z);
+        return (a > b ? a + 0.05f : b + 0.05f) / (a > b ? b + 0.05f : a + 0.05f);
+    };
+    return contrast(t.text_bright) >= contrast(t.bg_window) ? t.text_bright : t.bg_window;
+}
+
 Tokens BuildTokens(const ImGuiStyle& style) {
     Tokens t;
     t.bg_window = WithAlpha(style.Colors[ImGuiCol_WindowBg], 1.0f);

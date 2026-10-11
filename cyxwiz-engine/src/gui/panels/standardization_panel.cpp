@@ -1,5 +1,6 @@
 #include "standardization_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -111,6 +112,7 @@ void StandardizationPanel::RenderSettings() {
 void StandardizationPanel::RenderPreview() {
     if (!transform_result_.success || original_stats_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Before/After Distribution Comparison:");
     ImGui::Spacing();
 
@@ -145,7 +147,7 @@ void StandardizationPanel::RenderPreview() {
 
             if (ImPlot::BeginPlot("##StandardizedHist", ImVec2(ImGui::GetContentRegionAvail().x, 200))) {
                 ImPlot::SetupAxes("Z-Score", "Count");
-                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
                 ImPlot::PlotHistogram("Standardized", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
                 ImPlot::EndPlot();
             }
@@ -202,6 +204,7 @@ void StandardizationPanel::RenderPreview() {
 void StandardizationPanel::RenderResults() {
     if (!transform_result_.success) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_TABLE " Transformed Data Preview");
     ImGui::Spacing();
 
@@ -228,7 +231,7 @@ void StandardizationPanel::RenderResults() {
                 if (row >= static_cast<int>(values.size())) continue;
                 double z = values[row];
                 if (std::abs(z) > 3.0) {
-                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%.4f", z);
+                    ImGui::TextColored(t.error, "%.4f", z);
                 } else {
                     ImGui::Text("%.4f", z);
                 }

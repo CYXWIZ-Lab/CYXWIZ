@@ -2,6 +2,7 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -10,30 +11,6 @@
 #include <algorithm>
 
 namespace cyxwiz {
-
-// Cluster colors (distinct colors for up to 20 clusters)
-const ImU32 KMeansPanel::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),   // Blue
-    IM_COL32(255, 127, 14, 255),   // Orange
-    IM_COL32(44, 160, 44, 255),    // Green
-    IM_COL32(214, 39, 40, 255),    // Red
-    IM_COL32(148, 103, 189, 255),  // Purple
-    IM_COL32(140, 86, 75, 255),    // Brown
-    IM_COL32(227, 119, 194, 255),  // Pink
-    IM_COL32(127, 127, 127, 255),  // Gray
-    IM_COL32(188, 189, 34, 255),   // Olive
-    IM_COL32(23, 190, 207, 255),   // Cyan
-    IM_COL32(174, 199, 232, 255),  // Light Blue
-    IM_COL32(255, 187, 120, 255),  // Light Orange
-    IM_COL32(152, 223, 138, 255),  // Light Green
-    IM_COL32(255, 152, 150, 255),  // Light Red
-    IM_COL32(197, 176, 213, 255),  // Light Purple
-    IM_COL32(196, 156, 148, 255),  // Light Brown
-    IM_COL32(247, 182, 210, 255),  // Light Pink
-    IM_COL32(199, 199, 199, 255),  // Light Gray
-    IM_COL32(219, 219, 141, 255),  // Light Olive
-    IM_COL32(158, 218, 229, 255),  // Light Cyan
-};
 
 KMeansPanel::KMeansPanel() : Panel("K-Means Clustering", true) {
 }
@@ -307,6 +284,8 @@ void KMeansPanel::RenderScatterPlot() {
         y_idx = (std::min)(1, static_cast<int>(input_data_[0].size()) - 1);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##ScatterPlot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes(column_names_[x_axis_column_].c_str(),
                          column_names_[y_axis_column_].c_str());
@@ -326,7 +305,7 @@ void KMeansPanel::RenderScatterPlot() {
             }
 
             if (!x_data.empty()) {
-                ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+                ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
 
                 std::string label = "Cluster " + std::to_string(k);
@@ -346,7 +325,7 @@ void KMeansPanel::RenderScatterPlot() {
                 }
             }
 
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ImVec4(0, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, t.text_bright, 2);
             ImPlot::PlotScatter("Centroids", cx.data(), cy.data(), static_cast<int>(cx.size()));
         }
 
@@ -365,6 +344,8 @@ void KMeansPanel::RenderCentroidsTable() {
         }
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Cluster Centroids:");
     ImGui::Spacing();
 
@@ -382,7 +363,7 @@ void KMeansPanel::RenderCentroidsTable() {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+            ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
             ImGui::TextColored(color, "%d", k);
 
             for (size_t f = 0; f < result_.centroids[k].size() && f < feature_names.size(); ++f) {

@@ -1,5 +1,6 @@
 #include "pr_curve_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -93,6 +94,8 @@ void PRCurvePanel::RenderDataSelector() {
 void PRCurvePanel::RenderPRCurve() {
     if (!pr_result_.success) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Precision-Recall Curve (AP = %.4f)", pr_result_.average_precision);
     ImGui::Spacing();
 
@@ -102,11 +105,11 @@ void PRCurvePanel::RenderPRCurve() {
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1);
 
         // PR curve
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("PR", pr_result_.recall.data(), pr_result_.precision.data(), static_cast<int>(pr_result_.recall.size()));
 
         // Shade area under curve
-        ImPlot::SetNextFillStyle(ImVec4(0.0f, 0.5f, 1.0f, 0.2f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
         ImPlot::PlotShaded("AP Area", pr_result_.recall.data(), pr_result_.precision.data(), static_cast<int>(pr_result_.recall.size()), 0);
 
         // Iso-F1 curves
@@ -120,7 +123,7 @@ void PRCurvePanel::RenderPRCurve() {
                 }
             }
             if (!iso_r.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.7f, 0.7f, 0.7f, 0.5f), 1.0f);
+                ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f), 1.0f);
                 char label[32];
                 snprintf(label, sizeof(label), "F1=%.1f", f1_val);
                 ImPlot::PlotLine(label, iso_r.data(), iso_p.data(), static_cast<int>(iso_r.size()));
@@ -133,6 +136,8 @@ void PRCurvePanel::RenderPRCurve() {
 
 void PRCurvePanel::RenderF1Curve() {
     if (!pr_result_.success || f1_scores_.empty()) return;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text("F1 Score vs Threshold");
     ImGui::Spacing();
@@ -180,11 +185,11 @@ void PRCurvePanel::RenderF1Curve() {
             sorted_f1[i] = plot_f1[order[i]];
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.8f, 0.2f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("F1", sorted_t.data(), sorted_f1.data(), static_cast<int>(sorted_t.size()));
 
         // Mark best point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
         ImPlot::PlotScatter("Best", &best_threshold, &best_f1, 1);
 
         ImPlot::EndPlot();
@@ -202,20 +207,21 @@ void PRCurvePanel::RenderMetrics() {
     ImGui::Spacing();
 
     // AP interpretation
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation;
     ImVec4 color;
     if (pr_result_.average_precision >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+        color = t.success;
     } else if (pr_result_.average_precision >= 0.7) {
         interpretation = "Good";
-        color = ImVec4(0.6f, 0.8f, 0.0f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (pr_result_.average_precision >= 0.5) {
         interpretation = "Fair";
-        color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+        color = t.warning;
     } else {
         interpretation = "Poor";
-        color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        color = t.error;
     }
 
     ImGui::TextColored(color, "Interpretation: %s", interpretation);

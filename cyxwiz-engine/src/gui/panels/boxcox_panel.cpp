@@ -1,5 +1,6 @@
 #include "boxcox_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -15,6 +16,7 @@ BoxCoxPanel::BoxCoxPanel() : Panel("Box-Cox Transform", true) {}
 void BoxCoxPanel::Render() {
     if (!visible_) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(850, 650), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_WAND_MAGIC_SPARKLES) + " Box-Cox Transform###BoxCoxPanel").c_str(), &visible_)) {
@@ -59,7 +61,7 @@ void BoxCoxPanel::Render() {
 
             if (!can_transform_) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                ImGui::TextColored(t.caution,
                     "Warning: Data contains non-positive values.");
                 ImGui::TextWrapped("Box-Cox requires strictly positive data. Try Yeo-Johnson instead.");
             }
@@ -144,6 +146,7 @@ void BoxCoxPanel::RenderLambdaPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Log-Likelihood Profile:");
     ImGui::Spacing();
 
@@ -152,14 +155,14 @@ void BoxCoxPanel::RenderLambdaPlot() {
     if (ImPlot::BeginPlot("##LambdaProfile", ImVec2(-1, 250))) {
         ImPlot::SetupAxes("Lambda", "Log-Likelihood");
 
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("Profile",
                         lambda_result_.lambdas_tested.data(),
                         lambda_result_.log_likelihoods.data(),
                         static_cast<int>(lambda_result_.lambdas_tested.size()));
 
         // Mark optimal point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1, 0, 0, 1), 2);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
         ImPlot::PlotScatter("Optimal", &lambda_result_.optimal_lambda, &lambda_result_.best_log_likelihood, 1);
 
         ImPlot::EndPlot();
@@ -195,7 +198,7 @@ void BoxCoxPanel::RenderLambdaPlot() {
 
             if (ImPlot::BeginPlot("##TransHist", ImVec2(ImGui::GetContentRegionAvail().x, 180))) {
                 ImPlot::SetupAxes("Transformed", "Count");
-                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.8f, 0.4f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
                 ImPlot::PlotHistogram("Box-Cox", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
                 ImPlot::EndPlot();
             }

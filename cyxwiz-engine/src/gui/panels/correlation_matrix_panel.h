@@ -17,7 +17,7 @@ class DataTable;
  * CorrelationMatrixPanel - Correlation heatmap visualization
  *
  * Features:
- * - Interactive heatmap with RdBu colormap
+ * - Interactive heatmap on the theme's diverging scale
  * - Hover tooltips with exact values
  * - Column selection/filtering
  * - Export to CSV/image
@@ -53,9 +53,6 @@ private:
 
     // Export
     void ExportToCSV(const std::string& filepath);
-
-    // Color mapping: -1 to +1 -> RdBu colormap
-    ImVec4 CorrelationToColor(double corr) const;
 
     bool visible_ = false;
 

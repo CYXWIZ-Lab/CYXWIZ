@@ -3,6 +3,7 @@
 #include "../../core/data_analyzer.h"
 #include <cyxwiz/sequential.h>
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -65,11 +66,12 @@ void FeatureImportancePanel::RenderDataSelector() {
     ImGui::Spacing();
 
     // Model status
+    const ui::Tokens& t = ui::CurrentTokens();
     if (has_model_) {
-        ImGui::TextColored(ImVec4(0.5f, 1, 0.5f, 1), ICON_FA_CHECK " Model loaded (%zu layers)",
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Model loaded (%zu layers)",
                           model_->Size());
     } else {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), ICON_FA_TIMES " No model loaded");
+        ImGui::TextColored(t.error, ICON_FA_TIMES " No model loaded");
         ImGui::TextDisabled("Call SetModel() with a trained SequentialModel");
     }
 
@@ -222,7 +224,7 @@ void FeatureImportancePanel::RenderImportanceChart() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", result_.error_message.c_str());
         return;
     }
 
@@ -277,8 +279,10 @@ void FeatureImportancePanel::RenderImportanceChart() {
 void FeatureImportancePanel::RenderRankingTable() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(t.error, "Error: %s", result_.error_message.c_str());
         return;
     }
 
@@ -306,11 +310,11 @@ void FeatureImportancePanel::RenderRankingTable() {
             float importance = static_cast<float>(result_.importances[idx]);
             ImVec4 color;
             if (importance >= 0.7f) {
-                color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green - high
+                color = t.success;  // high
             } else if (importance >= 0.3f) {
-                color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);  // Yellow - medium
+                color = t.warning;  // medium
             } else {
-                color = ImVec4(0.8f, 0.4f, 0.2f, 1.0f);  // Orange - low
+                color = t.caution;  // low
             }
 
             ImGui::TableNextColumn();

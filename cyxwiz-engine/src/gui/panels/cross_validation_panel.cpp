@@ -1,5 +1,6 @@
 #include "cross_validation_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -122,6 +123,8 @@ void CrossValidationPanel::RenderCVSettings() {
 void CrossValidationPanel::RenderResults() {
     if (fold_splits_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text(ICON_FA_CHART_BAR " Cross-Validation Summary");
     ImGui::Separator();
     ImGui::Spacing();
@@ -148,11 +151,11 @@ void CrossValidationPanel::RenderResults() {
         ImPlot::SetupAxes("Fold", "Samples");
         ImPlot::SetupAxisLimits(ImAxis_X1, 0.5, n_folds_ + 0.5);
 
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.5f, 0.8f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("Train", train_positions.data(), train_sizes.data(),
                          n_folds_, 0.4);
 
-        ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.3f, 0.2f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[4], 0.8f));
         ImPlot::PlotBars("Validation", val_positions.data(), val_sizes.data(),
                          n_folds_, 0.4);
 

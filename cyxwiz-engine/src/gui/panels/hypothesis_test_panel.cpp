@@ -1,6 +1,7 @@
 #include "hypothesis_test_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -353,6 +354,10 @@ void HypothesisTestPanel::RenderResults() {
 }
 
 void HypothesisTestPanel::RenderPValueVisualization() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImVec4 very_significant = t.success;
+    const ImVec4 significant = ui::Mix(t.success, t.text_dim, 0.35f);
+
     ImGui::Text("P-Value Interpretation:");
 
     float p = static_cast<float>(result_.p_value);
@@ -367,45 +372,46 @@ void HypothesisTestPanel::RenderPValueVisualization() {
 
     // Very significant (p < 0.01)
     draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x + bar_width * 0.01f, y + 20),
-                             IM_COL32(0, 150, 0, 255));
+                             ui::ToU32(very_significant));
     // Significant (0.01 <= p < 0.05)
     draw_list->AddRectFilled(ImVec2(x + bar_width * 0.01f, y), ImVec2(x + bar_width * 0.05f, y + 20),
-                             IM_COL32(100, 200, 100, 255));
+                             ui::ToU32(significant));
     // Marginally significant (0.05 <= p < 0.10)
     draw_list->AddRectFilled(ImVec2(x + bar_width * 0.05f, y), ImVec2(x + bar_width * 0.10f, y + 20),
-                             IM_COL32(255, 200, 100, 255));
+                             ui::ToU32(t.warning));
     // Not significant (p >= 0.10)
     draw_list->AddRectFilled(ImVec2(x + bar_width * 0.10f, y), ImVec2(x + bar_width, y + 20),
-                             IM_COL32(200, 100, 100, 255));
+                             ui::ToU32(t.error));
 
     // Alpha line
     float alpha_x = x + bar_width * alpha_;
     draw_list->AddLine(ImVec2(alpha_x, y - 5), ImVec2(alpha_x, y + 25),
-                       IM_COL32(255, 255, 255, 255), 2.0f);
+                       ui::ToU32(t.text_bright), 2.0f);
 
     // P-value marker
     float p_x = x + bar_width * std::min(p, 1.0f);
     draw_list->AddTriangleFilled(ImVec2(p_x, y + 25), ImVec2(p_x - 5, y + 32), ImVec2(p_x + 5, y + 32),
-                                  IM_COL32(255, 255, 0, 255));
+                                  ui::ToU32(t.accent_text));
 
     ImGui::Dummy(ImVec2(bar_width, 40));
 
     // Labels
     ImGui::SameLine();
     ImGui::BeginGroup();
-    ImGui::TextColored(ImVec4(0, 0.6f, 0, 1), "p<0.01");
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1), "p<0.05");
+    ImGui::TextColored(very_significant, "p<0.01");
+    ImGui::TextColored(significant, "p<0.05");
     ImGui::EndGroup();
 }
 
 void HypothesisTestPanel::RenderDecision() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (result_.reject_null) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::Text("%s REJECT H0", ICON_FA_CIRCLE_CHECK);
         ImGui::PopStyleColor();
         ImGui::TextWrapped("The result is statistically significant at alpha = %.2f", alpha_);
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::Text("%s FAIL TO REJECT H0", ICON_FA_CIRCLE_XMARK);
         ImGui::PopStyleColor();
         ImGui::TextWrapped("The result is not statistically significant at alpha = %.2f", alpha_);
@@ -438,10 +444,11 @@ void HypothesisTestPanel::RenderEffectSizeInterpretation() {
         else if (d >= 0.2) interpretation = "Small";
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SameLine();
-    ImGui::TextColored(d >= 0.5 ? ImVec4(0.2f, 0.8f, 0.2f, 1) :
-                       d >= 0.2 ? ImVec4(1.0f, 0.8f, 0.2f, 1) :
-                                  ImVec4(0.6f, 0.6f, 0.6f, 1),
+    ImGui::TextColored(d >= 0.5 ? t.success :
+                       d >= 0.2 ? t.warning :
+                                  t.text_dim,
                        "%s (%.3f)", interpretation, result_.effect_size);
 }
 

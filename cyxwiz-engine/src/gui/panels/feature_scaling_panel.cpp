@@ -1,5 +1,6 @@
 #include "feature_scaling_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -170,6 +171,7 @@ void FeatureScalingPanel::RenderMethodTabs() {
 }
 
 void FeatureScalingPanel::RenderMinMaxTab() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::TextWrapped("Scale features to a given range.");
     ImGui::Spacing();
     ImGui::Text("Output Range:");
@@ -177,7 +179,7 @@ void FeatureScalingPanel::RenderMinMaxTab() {
     ImGui::SliderFloat("Max##mm", &minmax_range_max_, -10.0f, 10.0f, "%.2f");
 
     if (minmax_range_min_ >= minmax_range_max_) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Min must be < Max");
+        ImGui::TextColored(t.caution, "Min must be < Max");
     }
 }
 
@@ -224,6 +226,7 @@ void FeatureScalingPanel::RenderQuantileTab() {
 void FeatureScalingPanel::RenderPreview() {
     if (!transform_result_.success || original_stats_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Scaling Results:");
     ImGui::Spacing();
 
@@ -298,7 +301,7 @@ void FeatureScalingPanel::RenderPreview() {
 
         if (ImPlot::BeginPlot("##ScaledDistrib", ImVec2(ImGui::GetContentRegionAvail().x, 180))) {
             ImPlot::SetupAxes("Scaled Value", "Count");
-            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.7f, 0.3f, 0.7f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
             ImPlot::PlotHistogram("Scaled", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
             ImPlot::EndPlot();
         }
@@ -311,6 +314,7 @@ void FeatureScalingPanel::RenderComparison() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Method Comparison (first column):");
     ImGui::Spacing();
 
@@ -352,7 +356,7 @@ void FeatureScalingPanel::RenderComparison() {
             auto it = method_results_.find(methods[m]);
             if (it != method_results_.end() && it->second.success && !it->second.transformed_data.empty()) {
                 const auto& data = it->second.transformed_data[0];
-                ImPlot::SetNextFillStyle(ImVec4(0.2f + m * 0.15f, 0.7f - m * 0.1f, 0.3f + m * 0.1f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(ui::SeriesColour(t, static_cast<size_t>(m)), 0.7f));
                 ImPlot::PlotHistogram(method_names[m], data.data(), static_cast<int>(data.size()), 20);
             }
             ImPlot::EndPlot();

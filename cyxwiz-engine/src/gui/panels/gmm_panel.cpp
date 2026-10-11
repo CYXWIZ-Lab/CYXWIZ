@@ -2,6 +2,7 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -10,19 +11,6 @@
 #include <algorithm>
 
 namespace cyxwiz {
-
-const ImU32 GMMPanel::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),  IM_COL32(255, 127, 14, 255),
-    IM_COL32(44, 160, 44, 255),   IM_COL32(214, 39, 40, 255),
-    IM_COL32(148, 103, 189, 255), IM_COL32(140, 86, 75, 255),
-    IM_COL32(227, 119, 194, 255), IM_COL32(127, 127, 127, 255),
-    IM_COL32(188, 189, 34, 255),  IM_COL32(23, 190, 207, 255),
-    IM_COL32(174, 199, 232, 255), IM_COL32(255, 187, 120, 255),
-    IM_COL32(152, 223, 138, 255), IM_COL32(255, 152, 150, 255),
-    IM_COL32(197, 176, 213, 255), IM_COL32(196, 156, 148, 255),
-    IM_COL32(247, 182, 210, 255), IM_COL32(199, 199, 199, 255),
-    IM_COL32(219, 219, 141, 255), IM_COL32(158, 218, 229, 255),
-};
 
 GMMPanel::GMMPanel() : Panel("GMM Clustering", true) {}
 
@@ -236,6 +224,8 @@ void GMMPanel::RenderScatterPlot() {
         if (selected_col_indices[i] == y_axis_column_) y_idx = static_cast<int>(i);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##ScatterPlot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes(column_names_[x_axis_column_].c_str(), column_names_[y_axis_column_].c_str());
 
@@ -249,7 +239,7 @@ void GMMPanel::RenderScatterPlot() {
                 }
             }
             if (!x_data.empty()) {
-                ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+                ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
                 ImPlot::PlotScatter(("Component " + std::to_string(k)).c_str(), x_data.data(), y_data.data(), static_cast<int>(x_data.size()));
             }
@@ -264,7 +254,7 @@ void GMMPanel::RenderScatterPlot() {
                     my.push_back(mean[y_idx]);
                 }
             }
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ImVec4(0, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, t.text_bright, 2);
             ImPlot::PlotScatter("Means", mx.data(), my.data(), static_cast<int>(mx.size()));
         }
 
@@ -280,6 +270,8 @@ void GMMPanel::RenderComponentInfo() {
         if (selected_columns_[i]) feature_names.push_back(column_names_[i]);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Component Means:");
     ImGui::Spacing();
 
@@ -294,7 +286,7 @@ void GMMPanel::RenderComponentInfo() {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+            ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
             ImGui::TextColored(color, "%d", k);
 
             ImGui::TableNextColumn();

@@ -1,6 +1,7 @@
 #include "regression_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -216,21 +217,22 @@ void RegressionPanel::RenderModelSummary() {
 
     // R-squared interpretation
     ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation = "Poor";
-    ImVec4 color = ImVec4(0.8f, 0.4f, 0.4f, 1.0f);
+    ImVec4 color = t.error;
 
     if (result_.r_squared >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        color = t.success;
     } else if (result_.r_squared >= 0.7) {
         interpretation = "Good";
-        color = ImVec4(0.4f, 0.7f, 0.4f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (result_.r_squared >= 0.5) {
         interpretation = "Moderate";
-        color = ImVec4(0.8f, 0.7f, 0.2f, 1.0f);
+        color = t.warning;
     } else if (result_.r_squared >= 0.3) {
         interpretation = "Weak";
-        color = ImVec4(0.8f, 0.5f, 0.2f, 1.0f);
+        color = t.caution;
     }
 
     ImGui::TextColored(color, "Model fit: %s (R^2 = %.1f%%)", interpretation, result_.r_squared * 100);
@@ -238,6 +240,8 @@ void RegressionPanel::RenderModelSummary() {
 
 void RegressionPanel::RenderCoefficientsTable() {
     std::lock_guard<std::mutex> lock(result_mutex_);
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Spacing();
     ImGui::Text("%s Coefficients", ICON_FA_TABLE);
@@ -276,13 +280,13 @@ void RegressionPanel::RenderCoefficientsTable() {
             if (i < result_.p_values.size()) {
                 double p = result_.p_values[i];
                 if (p < 0.001) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "< 0.001 ***");
+                    ImGui::TextColored(t.success, "< 0.001 ***");
                 } else if (p < 0.01) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.3f, 1.0f), "%.4f **", p);
+                    ImGui::TextColored(ui::Mix(t.success, t.text_dim, 0.35f), "%.4f **", p);
                 } else if (p < 0.05) {
-                    ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.3f, 1.0f), "%.4f *", p);
+                    ImGui::TextColored(ui::Mix(t.success, t.text_dim, 0.6f), "%.4f *", p);
                 } else if (p < 0.1) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f), "%.4f .", p);
+                    ImGui::TextColored(t.text_dim, "%.4f .", p);
                 } else {
                     ImGui::Text("%.4f", p);
                 }
@@ -323,6 +327,8 @@ void RegressionPanel::RenderScatterPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("Scatter Plot with Regression Line", ImVec2(-1, 400))) {
         std::string x_label = x_column_ >= 0 && x_column_ < static_cast<int>(numeric_columns_.size())
             ? numeric_columns_[x_column_] : "X";
@@ -361,7 +367,7 @@ void RegressionPanel::RenderScatterPlot() {
                 y_curve.push_back(y);
             }
 
-            ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+            ImPlot::SetNextLineStyle(t.series[2], 2);
             ImPlot::PlotLine("Fit", x_curve.data(), y_curve.data(), static_cast<int>(x_curve.size()));
         }
 
@@ -377,6 +383,8 @@ void RegressionPanel::RenderResidualsPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     // Residuals vs Fitted
     if (ImPlot::BeginPlot("Residuals vs Fitted", ImVec2(-1, 250))) {
         ImPlot::SetupAxes("Fitted Values", "Residuals");
@@ -389,7 +397,7 @@ void RegressionPanel::RenderResidualsPlot() {
         double x_max = *std::max_element(result_.predicted.begin(), result_.predicted.end());
         double zero_x[] = {x_min, x_max};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 1), 1);
+        ImPlot::SetNextLineStyle(t.series[2], 1);
         ImPlot::PlotLine("##Zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();

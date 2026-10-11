@@ -84,10 +84,6 @@ private:
     std::atomic<int> progress_total_{0};
     std::atomic<double> progress_inertia_{0.0};
     std::string status_message_;
-
-    // Visualization colors
-    static constexpr int MAX_CLUSTERS = 20;
-    static const ImU32 CLUSTER_COLORS[MAX_CLUSTERS];
 };
 
 } // namespace cyxwiz

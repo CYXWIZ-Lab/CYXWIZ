@@ -40,7 +40,6 @@ private:
     std::string status_message_;
 
     static constexpr int MAX_CLASSES = 20;
-    static const ImU32 HEATMAP_COLORS[5];
 };
 
 } // namespace cyxwiz

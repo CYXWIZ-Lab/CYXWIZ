@@ -374,7 +374,7 @@ void DimReductionPanel::RenderExplainedVarianceChart() {
                         pca_result_.explained_variance_ratio.data(),
                         static_cast<int>(indices.size()), 0.5);
 
-        ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().series[2], 2);
         ImPlot::PlotLine("Cumulative", indices.data(), cumulative.data(),
                         static_cast<int>(indices.size()));
 

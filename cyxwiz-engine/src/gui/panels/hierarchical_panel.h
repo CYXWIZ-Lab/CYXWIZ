@@ -66,9 +66,6 @@ private:
     std::atomic<bool> is_computing_{false};
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // results posted to the UI thread stop once the panel is gone
     std::string status_message_;
-
-    static constexpr int MAX_CLUSTERS = 20;
-    static const ImU32 CLUSTER_COLORS[MAX_CLUSTERS];
 };
 
 } // namespace cyxwiz

@@ -13,6 +13,8 @@
 
 #include <imgui.h>
 
+#include <cstddef>
+
 namespace cyxwiz::ui {
 
 struct Tokens {
@@ -88,6 +90,18 @@ Tokens BuildTokens(const ImGuiStyle& style);
 ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t);
 ImVec4 WithAlpha(ImVec4 colour, float alpha);
 unsigned int ToU32(const ImVec4& colour);
+
+// Data colours derived from the tokens (analysis panels, heatmaps).
+// Category colour i: the six series colours, then the same six faded one
+// and two steps toward the window, so 18 categories stay apart.
+ImVec4 SeriesColour(const Tokens& tokens, size_t index);
+// The sequential scale at v in [0, 1] (low to high).
+ImVec4 SequentialAt(const Tokens& tokens, float v);
+// The diverging scale at v in [-1, 1] (negative, middle, positive).
+ImVec4 DivergingAt(const Tokens& tokens, float v);
+// Text that reads on a filled background such as a heatmap cell (the
+// higher-contrast of bright text and the window colour).
+ImVec4 ReadableOn(const Tokens& tokens, const ImVec4& background);
 
 // Shared status vocabulary (words, colours and icons used by Engine and
 // Installer alike).

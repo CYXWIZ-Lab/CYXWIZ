@@ -1,5 +1,6 @@
 #include "roc_auc_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -93,6 +94,8 @@ void ROCAUCPanel::RenderDataSelector() {
 void ROCAUCPanel::RenderROCCurve() {
     if (!roc_result_.success) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("ROC Curve (AUC = %.4f)", roc_result_.auc);
     ImGui::Spacing();
 
@@ -104,15 +107,15 @@ void ROCAUCPanel::RenderROCCurve() {
         // Random classifier line (diagonal)
         double diag_x[] = {0.0, 1.0};
         double diag_y[] = {0.0, 1.0};
-        ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 0.7f), 1.0f);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.7f), 1.0f);
         ImPlot::PlotLine("Random", diag_x, diag_y, 2);
 
         // ROC curve
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("ROC", roc_result_.fpr.data(), roc_result_.tpr.data(), static_cast<int>(roc_result_.fpr.size()));
 
         // Shade area under curve
-        ImPlot::SetNextFillStyle(ImVec4(0.0f, 0.5f, 1.0f, 0.2f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
         ImPlot::PlotShaded("AUC Area", roc_result_.fpr.data(), roc_result_.tpr.data(), static_cast<int>(roc_result_.fpr.size()), 0);
 
         // Current threshold point
@@ -131,7 +134,7 @@ void ROCAUCPanel::RenderROCCurve() {
 
             double point_x = roc_result_.fpr[best_idx];
             double point_y = roc_result_.tpr[best_idx];
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, t.series[4], 2);
             ImPlot::PlotScatter("Current", &point_x, &point_y, 1);
         }
 
@@ -244,23 +247,24 @@ void ROCAUCPanel::RenderMetrics() {
     ImGui::Text("AUC Score: %.4f", roc_result_.auc);
     ImGui::Spacing();
 
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation;
     ImVec4 color;
     if (roc_result_.auc >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+        color = t.success;
     } else if (roc_result_.auc >= 0.8) {
         interpretation = "Good";
-        color = ImVec4(0.6f, 0.8f, 0.0f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (roc_result_.auc >= 0.7) {
         interpretation = "Fair";
-        color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+        color = t.warning;
     } else if (roc_result_.auc >= 0.6) {
         interpretation = "Poor";
-        color = ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
+        color = t.caution;
     } else {
         interpretation = "Fail";
-        color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        color = t.error;
     }
 
     ImGui::TextColored(color, "Interpretation: %s", interpretation);
@@ -294,10 +298,10 @@ void ROCAUCPanel::RenderMetrics() {
             fpr_rev.push_back(roc_result_.fpr[index]);
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("TPR", thresh_rev.data(), tpr_rev.data(), static_cast<int>(thresh_rev.size()));
 
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[4], 2.0f);
         ImPlot::PlotLine("FPR", thresh_rev.data(), fpr_rev.data(), static_cast<int>(thresh_rev.size()));
 
         ImPlot::EndPlot();

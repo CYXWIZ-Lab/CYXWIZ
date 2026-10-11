@@ -2,6 +2,7 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -130,6 +131,8 @@ void ClusterEvalPanel::RenderMetrics() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Cluster Quality Metrics");
     ImGui::Separator();
     ImGui::Spacing();
@@ -143,9 +146,9 @@ void ClusterEvalPanel::RenderMetrics() {
 
         float silhouette = static_cast<float>(metrics_.silhouette_score);
         ImVec4 color;
-        if (silhouette > 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-        else if (silhouette > 0.25) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-        else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+        if (silhouette > 0.5) color = t.success;
+        else if (silhouette > 0.25) color = t.warning;
+        else color = t.error;
 
         ImGui::TextColored(color, "%.4f", silhouette);
         ImGui::TextWrapped("Range: -1 to 1. Higher is better.");
@@ -163,9 +166,9 @@ void ClusterEvalPanel::RenderMetrics() {
 
         float db = static_cast<float>(metrics_.davies_bouldin_index);
         ImVec4 color;
-        if (db < 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-        else if (db < 1.0) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-        else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+        if (db < 0.5) color = t.success;
+        else if (db < 1.0) color = t.warning;
+        else color = t.error;
 
         ImGui::TextColored(color, "%.4f", db);
         ImGui::TextWrapped("Lower is better.");
@@ -262,6 +265,8 @@ void ClusterEvalPanel::RenderComparison() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     // Comparison table
     if (ImGui::BeginTable("ComparisonTable", 5,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
@@ -284,9 +289,9 @@ void ClusterEvalPanel::RenderComparison() {
 
             ImGui::TableNextColumn();
             ImVec4 color;
-            if (record.silhouette > 0.5) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-            else if (record.silhouette > 0.25) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-            else color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+            if (record.silhouette > 0.5) color = t.success;
+            else if (record.silhouette > 0.25) color = t.warning;
+            else color = t.error;
             ImGui::TextColored(color, "%.4f", record.silhouette);
 
             ImGui::TableNextColumn();

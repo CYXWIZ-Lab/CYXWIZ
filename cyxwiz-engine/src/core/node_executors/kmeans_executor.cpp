@@ -1,34 +1,11 @@
 #include "kmeans_executor.h"
+#include "../../gui/ui_tokens.h"
 #include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
 #include <algorithm>
 
 namespace cyxwiz {
-
-// Cluster colors for visualization (up to 20 clusters)
-const ImU32 KMeansExecutor::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),   // Blue
-    IM_COL32(255, 127, 14, 255),   // Orange
-    IM_COL32(44, 160, 44, 255),    // Green
-    IM_COL32(214, 39, 40, 255),    // Red
-    IM_COL32(148, 103, 189, 255),  // Purple
-    IM_COL32(140, 86, 75, 255),    // Brown
-    IM_COL32(227, 119, 194, 255),  // Pink
-    IM_COL32(127, 127, 127, 255),  // Gray
-    IM_COL32(188, 189, 34, 255),   // Olive
-    IM_COL32(23, 190, 207, 255),   // Cyan
-    IM_COL32(31, 119, 180, 180),   // Light Blue
-    IM_COL32(255, 127, 14, 180),   // Light Orange
-    IM_COL32(44, 160, 44, 180),    // Light Green
-    IM_COL32(214, 39, 40, 180),    // Light Red
-    IM_COL32(148, 103, 189, 180),  // Light Purple
-    IM_COL32(140, 86, 75, 180),    // Light Brown
-    IM_COL32(227, 119, 194, 180),  // Light Pink
-    IM_COL32(127, 127, 127, 180),  // Light Gray
-    IM_COL32(188, 189, 34, 180),   // Light Olive
-    IM_COL32(23, 190, 207, 180)    // Light Cyan
-};
 
 KMeansExecutor::~KMeansExecutor() {
     cancel_requested_ = true;
@@ -154,7 +131,7 @@ void KMeansExecutor::RenderResultsUI() {
     }
 
     if (state_ == ExecutorState::Error) {
-        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Error: %s", error_message_.c_str());
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", error_message_.c_str());
         return;
     }
 
@@ -231,7 +208,7 @@ void KMeansExecutor::RenderParametersSection() {
     if (!can_run) ImGui::EndDisabled();
 
     if (input_data_.empty()) {
-        ImGui::TextColored(ImVec4(1, 0.6f, 0, 1), "Connect input data to run");
+        ImGui::TextColored(ui::CurrentTokens().caution, "Connect input data to run");
     }
 }
 
@@ -303,7 +280,7 @@ void KMeansExecutor::RenderScatterPlot() {
 
             if (!x_vals.empty()) {
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4,
-                    ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[cluster % MAX_CLUSTERS]));
+                    ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(cluster)));
 
                 std::string label = fmt::format("Cluster {}", cluster);
                 ImPlot::PlotScatter(label.c_str(), x_vals.data(), y_vals.data(),
@@ -323,7 +300,7 @@ void KMeansExecutor::RenderScatterPlot() {
             }
 
             if (!cx.empty()) {
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ImVec4(0, 0, 0, 1), 3);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ui::CurrentTokens().text_bright, 3);
                 ImPlot::PlotScatter("Centroids", cx.data(), cy.data(), static_cast<int>(cx.size()));
             }
         }
@@ -352,7 +329,7 @@ void KMeansExecutor::RenderCentroidsTable() {
         for (size_t c = 0; c < result_.centroids.size(); c++) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[c % MAX_CLUSTERS]),
+            ImGui::TextColored(ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(c)),
                               "Cluster %zu", c);
 
             for (size_t d = 0; d < result_.centroids[c].size(); d++) {
@@ -386,7 +363,7 @@ void KMeansExecutor::RenderMetricsSection() {
         ImGui::Separator();
         ImGui::Text("Cluster Sizes:");
         for (int i = 0; i < config_.n_clusters; i++) {
-            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[i % MAX_CLUSTERS]),
+            ImGui::TextColored(ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(i)),
                               "  Cluster %d: %d samples", i, cluster_counts[i]);
         }
     }

@@ -1,6 +1,7 @@
 #include "data_profiler_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -162,7 +163,7 @@ void DataProfilerPanel::RenderSummaryTab() {
         }
 
         if (cols_with_nulls.empty()) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "No missing values!");
+            ImGui::TextColored(ui::CurrentTokens().success, "No missing values!");
         } else {
             ImGui::Text("Columns with missing:");
             for (const auto* col : cols_with_nulls) {

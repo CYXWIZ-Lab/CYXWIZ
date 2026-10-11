@@ -1,5 +1,6 @@
 #include "matrix_calculator_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -232,11 +233,12 @@ void MatrixCalculatorPanel::RenderLoadingIndicator() {
 }
 
 void MatrixCalculatorPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;

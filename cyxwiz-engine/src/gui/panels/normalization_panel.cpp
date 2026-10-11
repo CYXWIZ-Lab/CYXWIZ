@@ -1,5 +1,6 @@
 #include "normalization_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -75,6 +76,7 @@ void NormalizationPanel::RenderDataSelector() {
 }
 
 void NormalizationPanel::RenderSettings() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_COG " Settings");
     ImGui::Spacing();
 
@@ -83,7 +85,7 @@ void NormalizationPanel::RenderSettings() {
     ImGui::SliderFloat("Max", &range_max_, -10.0f, 10.0f, "%.2f");
 
     if (range_min_ >= range_max_) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Warning: Min must be less than Max");
+        ImGui::TextColored(t.caution, "Warning: Min must be less than Max");
     }
 
     ImGui::Spacing();
@@ -112,6 +114,7 @@ void NormalizationPanel::RenderSettings() {
 void NormalizationPanel::RenderPreview() {
     if (!transform_result_.success || original_stats_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Before/After Distribution Comparison:");
     ImGui::Spacing();
 
@@ -148,7 +151,7 @@ void NormalizationPanel::RenderPreview() {
 
             if (ImPlot::BeginPlot("##TransformedHist", ImVec2(ImGui::GetContentRegionAvail().x, 200))) {
                 ImPlot::SetupAxes("Value", "Count");
-                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.8f, 0.2f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
                 ImPlot::PlotHistogram("Normalized", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
                 ImPlot::EndPlot();
             }

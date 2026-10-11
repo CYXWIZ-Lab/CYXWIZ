@@ -1,5 +1,6 @@
 #include "learning_curves_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -110,6 +111,8 @@ void LearningCurvesPanel::RenderLearningCurve() {
 
     if (train_sizes.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Learning Curve");
     ImGui::Text("Shows model performance vs training set size");
     ImGui::Spacing();
@@ -122,13 +125,13 @@ void LearningCurvesPanel::RenderLearningCurve() {
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
 
         // Training score curve
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 1);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, t.series[1], 1);
         ImPlot::PlotLine("Training Score", sizes_d.data(), train_scores.data(), static_cast<int>(train_scores.size()));
 
         // Validation score curve
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 1);
+        ImPlot::SetNextLineStyle(t.series[4], 2.0f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, t.series[4], 1);
         ImPlot::PlotLine("Validation Score", sizes_d.data(), val_scores.data(), static_cast<int>(val_scores.size()));
 
         // Plot error bands if std available
@@ -145,10 +148,10 @@ void LearningCurvesPanel::RenderLearningCurve() {
                 val_lower[i] = val_scores[i] - result_.val_scores_std[i];
             }
 
-            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
             ImPlot::PlotShaded("Train +/- std", sizes_d.data(), train_lower.data(), train_upper.data(), static_cast<int>(sizes_d.size()));
 
-            ImPlot::SetNextFillStyle(ImVec4(1.0f, 0.4f, 0.2f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[4], 0.2f));
             ImPlot::PlotShaded("Val +/- std", sizes_d.data(), val_lower.data(), val_upper.data(), static_cast<int>(sizes_d.size()));
         }
 
@@ -161,6 +164,8 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
     const std::vector<double>& val_scores = result_.train_sizes.empty() ? manual_val_scores_ : result_.val_scores_mean;
 
     if (train_scores.empty() || val_scores.empty()) return;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text(ICON_FA_SCALE_BALANCED " Bias-Variance Analysis");
     ImGui::Separator();
@@ -189,7 +194,7 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
         double values[] = {bias_estimate, variance_estimate};
         const char* labels[] = {"Bias", "Variance"};
 
-        ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.3f, 0.2f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("##bars", positions, values, 2, 0.6);
 
         // Add custom tick labels
@@ -206,18 +211,18 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
     ImGui::Spacing();
 
     if (bias_estimate > 0.2 && variance_estimate < 0.1) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "High Bias (Underfitting)");
+        ImGui::TextColored(t.caution, "High Bias (Underfitting)");
         ImGui::BulletText("Model is too simple");
         ImGui::BulletText("Consider: more features, complex model");
     } else if (bias_estimate < 0.1 && variance_estimate > 0.15) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "High Variance (Overfitting)");
+        ImGui::TextColored(t.error, "High Variance (Overfitting)");
         ImGui::BulletText("Model is memorizing training data");
         ImGui::BulletText("Consider: more data, regularization, simpler model");
     } else if (bias_estimate < 0.1 && variance_estimate < 0.1) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Good Fit");
+        ImGui::TextColored(t.success, "Good Fit");
         ImGui::BulletText("Model has good balance");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Mixed");
+        ImGui::TextColored(t.warning, "Mixed");
         ImGui::BulletText("Model may benefit from tuning");
     }
 }
@@ -231,6 +236,8 @@ void LearningCurvesPanel::RenderRecommendations() {
         ImGui::Text("Need at least 2 data points for recommendations.");
         return;
     }
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text(ICON_FA_LIGHTBULB " Recommendations");
     ImGui::Separator();
@@ -251,10 +258,10 @@ void LearningCurvesPanel::RenderRecommendations() {
     ImGui::Spacing();
 
     if (converging) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Curves are converging");
+        ImGui::TextColored(t.success, "Curves are converging");
         ImGui::BulletText("More data may continue to help");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Curves are not converging");
+        ImGui::TextColored(t.caution, "Curves are not converging");
         ImGui::BulletText("Model changes may be more effective than more data");
     }
 
@@ -286,7 +293,7 @@ void LearningCurvesPanel::RenderRecommendations() {
 
     // Good fit
     if (final_val > 0.85 && gap < 0.1) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Model appears well-tuned!");
+        ImGui::TextColored(t.success, "Model appears well-tuned!");
         ImGui::BulletText("Consider ensembling for marginal gains");
         ImGui::BulletText("Focus on feature engineering");
     }
@@ -300,9 +307,9 @@ void LearningCurvesPanel::RenderRecommendations() {
         // Extrapolate how much more data might help
         double recent_improvement = val_scores.back() - val_scores[val_scores.size() - 2];
         if (recent_improvement > 0.01) {
-            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "More data is still helping");
+            ImGui::TextColored(t.success, "More data is still helping");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Diminishing returns from more data");
+            ImGui::TextColored(t.warning, "Diminishing returns from more data");
         }
     }
 }

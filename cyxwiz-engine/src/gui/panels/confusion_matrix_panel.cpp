@@ -1,5 +1,6 @@
 #include "confusion_matrix_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -9,14 +10,6 @@
 #include <algorithm>
 
 namespace cyxwiz {
-
-const ImU32 ConfusionMatrixPanel::HEATMAP_COLORS[5] = {
-    IM_COL32(255, 255, 255, 255),   // 0% - White
-    IM_COL32(198, 219, 239, 255),   // 25% - Light blue
-    IM_COL32(107, 174, 214, 255),   // 50% - Medium blue
-    IM_COL32(33, 113, 181, 255),    // 75% - Dark blue
-    IM_COL32(8, 48, 107, 255),      // 100% - Very dark blue
-};
 
 ConfusionMatrixPanel::ConfusionMatrixPanel() : Panel("Confusion Matrix", true) {}
 
@@ -101,6 +94,8 @@ void ConfusionMatrixPanel::RenderMatrixHeatmap() {
         }
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Confusion Matrix (Rows: True, Columns: Predicted)");
     ImGui::Spacing();
 
@@ -130,20 +125,16 @@ void ConfusionMatrixPanel::RenderMatrixHeatmap() {
             int val = result_.matrix[i][j];
             float ratio = (max_val > 0) ? static_cast<float>(val) / max_val : 0.0f;
 
-            // Interpolate color
-            int color_idx = static_cast<int>(ratio * 4);
-            color_idx = (color_idx > 4) ? 4 : color_idx;
-            ImU32 bg_color = HEATMAP_COLORS[color_idx];
-
-            // Use dark text for light backgrounds, light text for dark backgrounds
-            ImU32 text_color = (color_idx < 2) ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
+            // Sequential scale colour, with text that reads on it
+            ImVec4 fill = ui::SequentialAt(t, ratio);
+            ImU32 bg_color = ui::ToU32(fill);
+            ImU32 text_color = ui::ToU32(ui::ReadableOn(t, fill));
 
             ImVec2 pos = ImGui::GetCursorScreenPos();
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
             // Draw cell background
             draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-            draw_list->AddRect(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), IM_COL32(100, 100, 100, 255));
 
             // Draw cell value
             char buf[32];
@@ -165,6 +156,8 @@ void ConfusionMatrixPanel::RenderNormalizedMatrix() {
     if (!result_.success || result_.matrix.empty()) return;
 
     int n = result_.n_classes;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::TextUnformatted("Normalized Confusion Matrix (Row-wise %)");
     ImGui::Spacing();
@@ -193,16 +186,14 @@ void ConfusionMatrixPanel::RenderNormalizedMatrix() {
         for (int j = 0; j < n; ++j) {
             float ratio = (row_sum > 0) ? static_cast<float>(result_.matrix[i][j]) / row_sum : 0.0f;
 
-            int color_idx = static_cast<int>(ratio * 4);
-            color_idx = (color_idx > 4) ? 4 : color_idx;
-            ImU32 bg_color = HEATMAP_COLORS[color_idx];
-            ImU32 text_color = (color_idx < 2) ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
+            ImVec4 fill = ui::SequentialAt(t, ratio);
+            ImU32 bg_color = ui::ToU32(fill);
+            ImU32 text_color = ui::ToU32(ui::ReadableOn(t, fill));
 
             ImVec2 pos = ImGui::GetCursorScreenPos();
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
             draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-            draw_list->AddRect(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), IM_COL32(100, 100, 100, 255));
 
             char buf[32];
             snprintf(buf, sizeof(buf), "%.1f%%", ratio * 100);

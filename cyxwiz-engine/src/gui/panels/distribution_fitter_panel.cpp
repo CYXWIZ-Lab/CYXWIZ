@@ -1,6 +1,7 @@
 #include "distribution_fitter_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -112,6 +113,8 @@ void DistributionFitterPanel::RenderFitResults() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("%s Fit Results (ranked by AIC)", ICON_FA_STAR);
     ImGui::Spacing();
 
@@ -141,7 +144,7 @@ void DistributionFitterPanel::RenderFitResults() {
             // Distribution name with fit indicator
             ImGui::TableNextColumn();
             if (fit.good_fit) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s %s",
+                ImGui::TextColored(t.success, "%s %s",
                                   ICON_FA_CIRCLE_CHECK, fit.name.c_str());
             } else {
                 ImGui::Text("%s", fit.name.c_str());
@@ -158,16 +161,16 @@ void DistributionFitterPanel::RenderFitResults() {
 
             ImGui::TableNextColumn();
             if (fit.ks_p_value > 0.05) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.4f", fit.ks_p_value);
+                ImGui::TextColored(t.success, "%.4f", fit.ks_p_value);
             } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "%.4f", fit.ks_p_value);
+                ImGui::TextColored(t.error, "%.4f", fit.ks_p_value);
             }
         }
 
         ImGui::EndTable();
     }
 
-    ImGui::TextDisabled("Green check = good fit (KS p-value > 0.05)");
+    ImGui::TextDisabled("Check mark = good fit (KS p-value > 0.05)");
     ImGui::Spacing();
 }
 
@@ -178,6 +181,8 @@ void DistributionFitterPanel::RenderQQPlot() {
         ImGui::TextDisabled("No data for Q-Q plot");
         return;
     }
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     const auto& fit = fit_results_[selected_dist_];
 
@@ -201,13 +206,13 @@ void DistributionFitterPanel::RenderQQPlot() {
                                   *std::max_element(sorted_data.begin(), sorted_data.end()));
         double ref_x[] = {min_val, max_val};
         double ref_y[] = {min_val, max_val};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 1), 2);
+        ImPlot::SetNextLineStyle(t.series[2], 2);
         ImPlot::PlotLine("Reference", ref_x, ref_y, 2);
 
         ImPlot::EndPlot();
     }
 
-    ImGui::TextWrapped("Points close to the red line indicate good fit. Deviations suggest the data"
+    ImGui::TextWrapped("Points close to the reference line indicate good fit. Deviations suggest the data"
                        " does not follow the %s distribution.", fit.name.c_str());
 }
 
@@ -218,6 +223,8 @@ void DistributionFitterPanel::RenderHistogramWithFit() {
         ImGui::TextDisabled("No data for histogram");
         return;
     }
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     const auto& fit = fit_results_[selected_dist_];
 
@@ -283,7 +290,7 @@ void DistributionFitterPanel::RenderHistogramWithFit() {
             y_curve.push_back(y);
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+        ImPlot::SetNextLineStyle(t.series[2], 2);
         ImPlot::PlotLine(("Fitted " + fit.name).c_str(), x_curve.data(), y_curve.data(), static_cast<int>(x_curve.size()));
 
         ImPlot::EndPlot();
@@ -347,11 +354,12 @@ void DistributionFitterPanel::RenderParameterTable() {
     ImGui::Spacing();
 
     // Interpretation
+    const ui::Tokens& t = ui::CurrentTokens();
     if (fit.good_fit) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                           "%s Good fit: KS test p-value > 0.05", ICON_FA_CIRCLE_CHECK);
     } else {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f),
+        ImGui::TextColored(t.error,
                           "%s Poor fit: KS test p-value <= 0.05", ICON_FA_CIRCLE_XMARK);
     }
 
