@@ -1,245 +1,143 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Shared clustering device helpers (clustering_device.h). The algorithms are in
+// clustering_{kmeans,dbscan,hierarchical,gmm,evaluation}.cpp; all run on ArrayFire on
+// the active device, its CPU backend being the CPU option (TOFIX140).
+
 #ifdef _WIN32
-#ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#endif
 
-#include "cyxwiz/clustering.h"
-#include "arrayfire_host_materialization.h"
-#include <spdlog/spdlog.h>
+#include "clustering_device.h"
 
-#define _USE_MATH_DEFINES
-#include <cmath>
-#include <numeric>
-#include <set>
-#include <queue>
+#include <algorithm>
+#include <random>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
-// Ensure Windows min/max macros are undefined
-#ifdef _WIN32
 #ifdef min
 #undef min
 #endif
 #ifdef max
 #undef max
 #endif
-#endif
 
-namespace cyxwiz {
+namespace cyxwiz::clustering_detail {
+
+std::string MatrixRefusal(const std::vector<std::vector<double>>& data) {
+    if (data.empty()) return "Empty data";
+    const size_t features = data[0].size();
+    if (features == 0) return "Data has no features";
+    for (const auto& row : data) {
+        if (row.size() != features) return "All rows need the same number of features";
+    }
+    return {};
+}
+
+bool IsKnownMetric(const std::string& metric) {
+    return metric == "euclidean" || metric == "manhattan" || metric == "cosine";
+}
+
+std::string NoArrayFire(const char* operation) {
+    return std::string(operation) + " runs on ArrayFire, and this build has no ArrayFire";
+}
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
-// ==================== ArrayFire Conversion Helpers ====================
+namespace {
+constexpr dim_t kBlockElements = dim_t{1} << 22;
+}
 
-af::array Clustering::ToAfArray(const std::vector<std::vector<double>>& data) {
-    if (data.empty()) return af::array();
-
-    int n_samples = static_cast<int>(data.size());
-    int n_features = static_cast<int>(data[0].size());
-
-    // Flatten data in column-major order for ArrayFire
-    std::vector<double> flat_data(n_samples * n_features);
-    for (int i = 0; i < n_samples; ++i) {
-        for (int j = 0; j < n_features; ++j) {
-            flat_data[j * n_samples + i] = data[i][j];
-        }
+af::array MatrixToDevice(const Matrix& data) {
+    const size_t rows = data.size(), cols = data[0].size();
+    std::vector<double> flat(rows * cols);
+    for (size_t c = 0; c < cols; ++c) {
+        for (size_t r = 0; r < rows; ++r) flat[c * rows + r] = data[r][c];
     }
-
-    return af::array(n_samples, n_features, flat_data.data());
+    return af::moddims(HostValuesToDevice(flat), static_cast<dim_t>(rows), static_cast<dim_t>(cols));
 }
 
-std::vector<std::vector<double>> Clustering::FromAfArray(const af::array& arr) {
-    if (arr.isempty()) return {};
-
-    int n_samples = static_cast<int>(arr.dims(0));
-    int n_features = static_cast<int>(arr.dims(1));
-
-    std::vector<double> flat_data(n_samples * n_features);
-    af::array materialized = arr;
-    materialized.eval();
-    MaterializeArrayFireToHost(
-        materialized,
-        flat_data.data(),
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "Clustering::AfArrayToMatrix",
-        "arrayfire_column_major");
-
-    std::vector<std::vector<double>> result(n_samples, std::vector<double>(n_features));
-    for (int i = 0; i < n_samples; ++i) {
-        for (int j = 0; j < n_features; ++j) {
-            result[i][j] = flat_data[j * n_samples + i];
-        }
+Matrix MatrixFromDevice(const af::array& source, const char* operation) {
+    const size_t rows = static_cast<size_t>(source.dims(0)), cols = static_cast<size_t>(source.dims(1));
+    const std::vector<double> values = DeviceToHostValues(source, operation);
+    Matrix result(rows, std::vector<double>(cols));
+    for (size_t c = 0; c < cols; ++c) {
+        for (size_t r = 0; r < rows; ++r) result[r][c] = values[c * rows + r];
     }
-
     return result;
 }
 
-std::vector<int> Clustering::AfArrayToIntVector(const af::array& arr) {
-    if (arr.isempty()) return {};
-
-    int n = static_cast<int>(arr.elements());
-    std::vector<int> result(n);
-
-    // Convert to int array on host
-    af::array int_arr = arr.as(s32);
-    int_arr.eval();
-    MaterializeArrayFireToHost(
-        int_arr,
-        result.data(),
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "Clustering::AfArrayToIntVector",
-        "arrayfire_native");
-
-    return result;
+std::vector<int> LabelsFromDevice(const af::array& source, const char* operation) {
+    std::vector<int> labels(static_cast<size_t>(source.elements()));
+    if (labels.empty()) return labels;
+    af::array values = source.as(s32);
+    values.eval();
+    MaterializeArrayFireToHost(values, labels.data(), ArrayFireHostSyncCategory::OutputMaterialization, operation,
+                               "arrayfire_native");
+    return labels;
 }
 
-std::vector<double> Clustering::AfArrayToDoubleVector(const af::array& arr) {
-    if (arr.isempty()) return {};
-
-    int n = static_cast<int>(arr.elements());
-    std::vector<double> result(n);
-
-    af::array double_arr = arr.as(f64);
-    double_arr.eval();
-    MaterializeArrayFireToHost(
-        double_arr,
-        result.data(),
-        ArrayFireHostSyncCategory::AlgorithmCpuPath,
-        "Clustering::AfArrayToDoubleVector",
-        "arrayfire_native");
-
-    return result;
+dim_t RowBlock(dim_t n) {
+    return std::max<dim_t>(1, kBlockElements / std::max<dim_t>(1, n));
 }
 
-// ==================== GPU Distance Functions ====================
-
-af::array Clustering::ComputeEuclideanDistanceMatrix(const af::array& data) {
-    // data: [n_samples x n_features]
-    // Output: [n_samples x n_samples] distance matrix
-
-    int n = static_cast<int>(data.dims(0));
-
-    // ||a - b||^2 = ||a||^2 + ||b||^2 - 2 * a.b
-    af::array sq_norms = af::sum(data * data, 1);  // [n x 1]
-    sq_norms.eval();
-
-    // Expand for broadcasting
-    af::array sq_norms_row = af::tile(sq_norms, 1, n);          // [n x n]
-    sq_norms_row.eval();
-    af::array sq_norms_col = af::tile(sq_norms.T(), n, 1);      // [n x n]
-    sq_norms_col.eval();
-
-    // Compute dot products: data @ data.T
-    af::array dot_products = af::matmul(data, data.T());  // [n x n]
-    dot_products.eval();
-
-    // Squared distances
-    af::array sq_distances = sq_norms_row + sq_norms_col - 2.0 * dot_products;
-    sq_distances.eval();
-
-    // Clamp negative values (numerical errors) and take sqrt
-    sq_distances = af::max(sq_distances, 0.0);
-    sq_distances.eval();
-    af::array distances = af::sqrt(sq_distances);
-    distances.eval();
-    return distances;
+af::array PairwiseDistances(const af::array& rows, const af::array& all, const std::string& metric) {
+    const dim_t b = rows.dims(0), n = all.dims(0), d = rows.dims(1);
+    if (metric == "cosine") {
+        const auto unit = [](const af::array& x) {
+            const af::array norms = af::sqrt(af::sum(x * x, 1));
+            const af::array safe = af::max(norms, af::constant(1e-300, norms.dims(), norms.type()));
+            return x / af::tile(safe, 1, static_cast<unsigned>(x.dims(1)));
+        };
+        return 1.0 - af::matmul(unit(rows), unit(all), AF_MAT_NONE, AF_MAT_TRANS);
+    }
+    const bool manhattan = metric == "manhattan";
+    af::array total = af::constant(0.0, b, n, rows.type());
+    for (dim_t f = 0; f < d; ++f) {
+        const af::array diff = af::tile(rows(af::span, static_cast<int>(f)), 1, static_cast<unsigned>(n)) -
+                               af::tile(all(af::span, static_cast<int>(f)).T(), static_cast<unsigned>(b), 1);
+        total += manhattan ? af::abs(diff) : diff * diff;
+        total.eval();  // one small kernel per feature, not one per matrix
+    }
+    return manhattan ? total : af::sqrt(total);
 }
 
-af::array Clustering::ComputeManhattanDistanceMatrix(const af::array& data) {
-    int n = static_cast<int>(data.dims(0));
-    int d = static_cast<int>(data.dims(1));
-
-    // Expand data for pairwise computation
-    // data_i: [n x 1 x d], data_j: [1 x n x d]
-    af::array data_i = af::moddims(data, n, 1, d);
-    data_i.eval();
-    af::array data_j = af::moddims(data, 1, n, d);
-    data_j.eval();
-
-    // Tile for broadcasting
-    data_i = af::tile(data_i, 1, n, 1);
-    data_i.eval();
-    data_j = af::tile(data_j, n, 1, 1);
-    data_j.eval();
-
-    // Manhattan distance: sum(|a - b|)
-    af::array diff = af::abs(data_i - data_j);
-    diff.eval();
-    af::array distances = af::sum(diff, 2);  // [n x n]
-    distances.eval();
-    return distances;
+af::array SquaredDistances(const af::array& rows, const af::array& centers) {
+    const dim_t b = rows.dims(0), k = centers.dims(0), d = rows.dims(1);
+    af::array total = af::constant(0.0, b, k, rows.type());
+    for (dim_t f = 0; f < d; ++f) {
+        const af::array diff = af::tile(rows(af::span, static_cast<int>(f)), 1, static_cast<unsigned>(k)) -
+                               af::tile(centers(af::span, static_cast<int>(f)).T(), static_cast<unsigned>(b), 1);
+        total += diff * diff;
+        total.eval();
+    }
+    return total;
 }
 
-af::array Clustering::ComputeCosineDistanceMatrix(const af::array& data) {
-    int n = static_cast<int>(data.dims(0));
-    (void)n;  // Suppress unused variable warning
-
-    // Normalize data
-    af::array norms = af::sqrt(af::sum(data * data, 1));  // [n x 1]
-    norms.eval();
-    norms = af::max(norms, 1e-10);  // Avoid division by zero
-    norms.eval();
-    af::array normalized = data / af::tile(norms, 1, static_cast<int>(data.dims(1)));
-    normalized.eval();
-
-    // Cosine similarity = normalized @ normalized.T
-    af::array similarity = af::matmul(normalized, normalized.T());
-    similarity.eval();
-
-    // Cosine distance = 1 - similarity
-    af::array distances = 1.0 - similarity;
-    distances.eval();
-    return distances;
+af::randomEngine SeededEngine(unsigned int seed) {
+    const unsigned long long value = seed != 0 ? seed : std::random_device{}();
+    return af::randomEngine(AF_RANDOM_ENGINE_DEFAULT, value);
 }
 
-af::array Clustering::ComputeDistanceMatrix(const af::array& data, const std::string& metric) {
-    if (metric == "manhattan") return ComputeManhattanDistanceMatrix(data);
-    if (metric == "cosine") return ComputeCosineDistanceMatrix(data);
-    return ComputeEuclideanDistanceMatrix(data);
+af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine) {
+    const dim_t n = data.dims(0);
+    const auto draw_index = [&](const af::array& weights) {
+        // Smallest index whose cumulative weight reaches a uniform draw in [0, total).
+        const double total = af::sum<double>(weights);
+        const double u = af::randu(1, f32, engine).scalar<float>();
+        if (!(total > 0.0)) return std::min<dim_t>(static_cast<dim_t>(u * n), n - 1);
+        const double reach = u * total;
+        const dim_t below = static_cast<dim_t>(af::count<double>(af::accum(weights) <= reach));
+        return std::min<dim_t>(below, n - 1);
+    };
+    const af::array uniform = af::constant(1.0, n, data.type());
+    af::array centers = data(static_cast<int>(draw_index(uniform)), af::span);
+    af::array nearest = SquaredDistances(data, centers);
+    for (int c = 1; c < k; ++c) {
+        const af::array next = data(static_cast<int>(draw_index(nearest)), af::span);
+        centers = af::join(0, centers, next);
+        nearest = af::min(nearest, SquaredDistances(data, next));
+        nearest.eval();
+    }
+    return centers;
 }
 
-af::array Clustering::ComputePointToCentroidDistances(const af::array& data, const af::array& centroids) {
-    // data: [n_samples x n_features]
-    // centroids: [n_clusters x n_features]
-    // Output: [n_samples x n_clusters]
+#endif
 
-    int n = static_cast<int>(data.dims(0));
-    int k = static_cast<int>(centroids.dims(0));
-
-    // ||x - c||^2 = ||x||^2 + ||c||^2 - 2 * x.c
-    af::array data_sq = af::sum(data * data, 1);          // [n x 1]
-    data_sq.eval();
-    af::array cent_sq = af::sum(centroids * centroids, 1); // [k x 1]
-    cent_sq.eval();
-
-    af::array data_sq_tile = af::tile(data_sq, 1, k);      // [n x k]
-    data_sq_tile.eval();
-    af::array cent_sq_tile = af::tile(cent_sq.T(), n, 1);  // [n x k]
-    cent_sq_tile.eval();
-
-    af::array dot = af::matmul(data, centroids.T());       // [n x k]
-    dot.eval();
-
-    af::array sq_distances = data_sq_tile + cent_sq_tile - 2.0 * dot;
-    sq_distances.eval();
-    sq_distances = af::max(sq_distances, 0.0);
-    sq_distances.eval();
-
-    af::array distances = af::sqrt(sq_distances);
-    distances.eval();
-    return distances;
-}
-
-#else  // No ArrayFire - CPU fallback stubs
-
-#endif  // CYXWIZ_HAS_ARRAYFIRE
-
-} // namespace cyxwiz
+}  // namespace cyxwiz::clustering_detail
