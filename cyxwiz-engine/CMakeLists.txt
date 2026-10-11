@@ -5005,6 +5005,41 @@ set_target_properties(test_computation_truth_recurrent PROPERTIES
 )
 add_test(NAME recurrent_pytorch_parity COMMAND test_computation_truth_recurrent)
 
+# ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
+set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/linear_algebra_pytorch.json"
+)
+add_executable(test_computation_truth_linear_algebra
+    tests/computation_truth/test_computation_truth_linear_algebra.cpp
+)
+target_include_directories(test_computation_truth_linear_algebra PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_linear_algebra PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_linear_algebra PRIVATE
+    CYXWIZ_LINEAR_ALGEBRA_FIXTURE="${CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_linear_algebra_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_linear_algebra>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_linear_algebra>/computation_truth_fixtures/linear_algebra_pytorch.json"
+    SOURCES "${CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_linear_algebra copy_test_computation_truth_linear_algebra_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_linear_algebra PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_linear_algebra PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME linear_algebra_pytorch_parity COMMAND test_computation_truth_linear_algebra)
+
 # ===== Test: a CNN graph compiles, builds and runs (TOFIX140 A1) =====
 add_executable(test_cnn_graph_training
     tests/test_cnn_graph_training.cpp

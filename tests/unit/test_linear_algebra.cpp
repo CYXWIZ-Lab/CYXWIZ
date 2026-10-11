@@ -1,3 +1,5 @@
+// Host LinearAlgebra on the ArrayFire device (TOFIX140); PyTorch parity is in
+// cyxwiz-engine/tests/computation_truth/test_computation_truth_linear_algebra.cpp.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/linear_algebra.h>
@@ -53,7 +55,7 @@ void RequireEigenpair(
 
 }  // namespace
 
-TEST_CASE("LinearAlgebra CPU SVD reconstructs a rectangular matrix", "[linalg][svd]") {
+TEST_CASE("LinearAlgebra SVD reconstructs a rectangular matrix", "[linalg][svd]") {
     const std::vector<std::vector<double>> matrix = {
         {3.0, 0.0},
         {0.0, 2.0},
@@ -81,7 +83,7 @@ TEST_CASE("LinearAlgebra CPU SVD reconstructs a rectangular matrix", "[linalg][s
     }
 }
 
-TEST_CASE("LinearAlgebra CPU full SVD returns complete bases", "[linalg][svd]") {
+TEST_CASE("LinearAlgebra full SVD returns complete bases", "[linalg][svd]") {
     const std::vector<std::vector<double>> matrix = {
         {3.0, 0.0},
         {0.0, 2.0},
@@ -114,7 +116,7 @@ TEST_CASE("LinearAlgebra CPU full SVD returns complete bases", "[linalg][svd]") 
     REQUIRE(ColumnDot(svd.U, 1, 2) == Catch::Approx(0.0).margin(1e-10));
 }
 
-TEST_CASE("LinearAlgebra CPU SVD powers rank condition and low-rank helpers", "[linalg][svd]") {
+TEST_CASE("LinearAlgebra SVD powers rank condition and low-rank helpers", "[linalg][svd]") {
     const std::vector<std::vector<double>> matrix = {
         {3.0, 0.0},
         {0.0, 2.0},
@@ -141,7 +143,7 @@ TEST_CASE("LinearAlgebra CPU SVD powers rank condition and low-rank helpers", "[
     REQUIRE(low_rank.matrix[2][1] == Catch::Approx(0.0).margin(1e-10));
 }
 
-TEST_CASE("LinearAlgebra CPU Eigen returns full symmetric eigendecomposition", "[linalg][eigen]") {
+TEST_CASE("LinearAlgebra Eigen returns full symmetric eigendecomposition", "[linalg][eigen]") {
     const std::vector<std::vector<double>> matrix = {
         {2.0, 1.0},
         {1.0, 2.0},
@@ -161,7 +163,7 @@ TEST_CASE("LinearAlgebra CPU Eigen returns full symmetric eigendecomposition", "
     RequireEigenpair(matrix, eigen, 1);
 }
 
-TEST_CASE("LinearAlgebra CPU Eigen supports nonsymmetric 2x2 complex pairs", "[linalg][eigen]") {
+TEST_CASE("LinearAlgebra Eigen supports nonsymmetric 2x2 complex pairs", "[linalg][eigen]") {
     const std::vector<std::vector<double>> matrix = {
         {0.0, -1.0},
         {1.0, 0.0},
@@ -181,7 +183,7 @@ TEST_CASE("LinearAlgebra CPU Eigen supports nonsymmetric 2x2 complex pairs", "[l
     RequireEigenpair(matrix, eigen, 1);
 }
 
-TEST_CASE("LinearAlgebra CPU Eigen rejects unsupported larger nonsymmetric matrices", "[linalg][eigen]") {
+TEST_CASE("LinearAlgebra Eigen rejects unsupported larger nonsymmetric matrices", "[linalg][eigen]") {
     const std::vector<std::vector<double>> matrix = {
         {1.0, 2.0, 0.0},
         {0.0, 1.0, 3.0},
