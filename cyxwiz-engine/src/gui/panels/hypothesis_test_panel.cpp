@@ -495,8 +495,10 @@ void HypothesisTestPanel::RunTest() {
     bool eq_var = equal_variance_;
     auto chi_cols = chi_square_cols_;
 
-    // Find actual column indices for numeric columns
-    auto GetNumericColumnIndex = [&](int numeric_idx) -> size_t {
+    // Find actual column indices for numeric columns. Runs on the worker, so
+    // it owns its copy of the table (a reference to the local would dangle
+    // once RunTest returns).
+    auto GetNumericColumnIndex = [table](int numeric_idx) -> size_t {
         int count = 0;
         for (size_t i = 0; i < table->GetColumnCount(); i++) {
             auto dtype = DataAnalyzer::DetectColumnType(*table, i);
