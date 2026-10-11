@@ -2089,6 +2089,8 @@ if(WIN32)
     target_compile_definitions(test_transformer_constructor PRIVATE NOMINMAX)
 endif()
 set_target_properties(test_transformer_constructor PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+# CPU only here (machines without a GPU); run cuda / opencl directly (TOFIX140 G).
+add_test(NAME transformer_constructor_cpu COMMAND test_transformer_constructor cpu)
 
 # ===== Test: Transformer Dropout Gradients and Device Residency =====
 add_executable(test_transformer_dropout
@@ -2100,6 +2102,8 @@ if(WIN32)
     target_compile_definitions(test_transformer_dropout PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_transformer_dropout PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME transformer_dropout_cpu
+    COMMAND test_transformer_dropout cpu ${CMAKE_BINARY_DIR}/transformer_dropout_cpu.json)
 
 # ===== Test: Computation Truth - Transformer Primitive Parity =====
 add_executable(test_computation_truth_transformer_primitives

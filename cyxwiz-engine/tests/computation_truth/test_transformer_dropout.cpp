@@ -2,6 +2,7 @@
 #include <cyxwiz/layers/transformer.h>
 #include <cyxwiz/sequential.h>
 #include "core/execution_device_context.h"
+#include "algorithms/arrayfire_backend_utils.h"
 #include <arrayfire.h>
 #include <nlohmann/json.hpp>
 #include <cmath>
@@ -13,6 +14,10 @@
 #include <stdexcept>
 
 namespace {
+// Seed the way training does: SeedCurrentArrayFireRandomEngine also resets the
+// fused-attention dropout stream counter, which a bare af::setSeed leaves running
+// (on GPUs with a fused attention provider the replay then draws other masks).
+void Reseed(unsigned long long seed) { cyxwiz::SeedCurrentArrayFireRandomEngine(seed); }
 using cyxwiz::Tensor;
 using json = nlohmann::json;
 size_t hosts = 0, fallbacks = 0;
@@ -59,9 +64,9 @@ void Difference(Tensor& variable,const Tensor& derivative,const std::function<Te
     for(size_t i=0;i<variable.NumElements();++i) {
         const float original=variable.ReadData<float>()[i];
         variable.MutableData<float>()[i]=original+1e-3f; apply();
-        af::setSeed(81); const float plus=Objective(forward(),upstream);
+        Reseed(81); const float plus=Objective(forward(),upstream);
         variable.MutableData<float>()[i]=original-1e-3f; apply();
-        af::setSeed(81); const float minus=Objective(forward(),upstream);
+        Reseed(81); const float minus=Objective(forward(),upstream);
         variable.MutableData<float>()[i]=original; apply();
         Near((plus-minus)/2e-3f,expected[i],label+"["+std::to_string(i)+"]");
     }
@@ -70,7 +75,7 @@ template<class Layer>
 json Verify(Layer& layer,std::map<std::string,Tensor>& params,Tensor& x,
             const std::function<Tensor()>& forward) {
     Tensor upstream=Fixture(x.Shape(),1.7f),y,dx;
-    layer.SetTraining(true); af::setSeed(81); hosts=fallbacks=0;
+    layer.SetTraining(true); Reseed(81); hosts=fallbacks=0;
     {
         cyxwiz::ScopedArrayFireHostSyncObserver h(Host);
         cyxwiz::ScopedArrayFireNativeCpuFallbackObserver f(Fallback);
@@ -84,10 +89,10 @@ json Verify(Layer& layer,std::map<std::string,Tensor>& params,Tensor& x,
     for(const auto& [name,t]:params) result["parameters"][name]=Pack(t);
     for(const auto& [name,t]:gradients) if(name.find("grad_")!=std::string::npos)
         result["gradients"][name]=Pack(t);
-    af::setSeed(81); const Tensor replay=forward();
+    Reseed(81); const Tensor replay=forward();
     for(size_t i=0;i<y.NumElements();++i) Check(y.ReadData<float>()[i]==replay.ReadData<float>()[i],"seed replay");
     const af::array after_training=af::randu(8);after_training.eval();
-    af::setSeed(81);const af::array fresh=af::randu(8);fresh.eval();
+    Reseed(81);const af::array fresh=af::randu(8);fresh.eval();
     Check(!af::allTrue<bool>(after_training==fresh),"training must advance RNG");
     Difference(x,dx,forward,upstream,[]{},"input gradient");
     for(auto& [name,t]:params) {
@@ -99,10 +104,10 @@ json Verify(Layer& layer,std::map<std::string,Tensor>& params,Tensor& x,
         if(it==gradients.end() || it->second.Shape().empty()) continue;
         Difference(t,it->second,forward,upstream,[&]{layer.SetParameters(params);},name);
     }
-    layer.SetTraining(false); af::setSeed(99);
+    layer.SetTraining(false); Reseed(99);
     const Tensor eval1=forward(),eval2=forward();
     for(size_t i=0;i<y.NumElements();++i) Check(eval1.ReadData<float>()[i]==eval2.ReadData<float>()[i],"evaluation deterministic");
-    const af::array after_eval=af::randu(8); af::setSeed(99); const af::array expected=af::randu(8);
+    const af::array after_eval=af::randu(8); Reseed(99); const af::array expected=af::randu(8);
     Check(af::allTrue<bool>(after_eval==expected),"evaluation must not consume RNG");
     return result;
 }
@@ -115,7 +120,7 @@ json AttentionCase(bool self) {
     for(size_t i=0;i<keys;++i) m[i]=-INFINITY;
     mask.GetSemanticArray().eval();
     const auto forward=[&]{return self?layer.Forward(q,q,q,&mask):layer.Forward(q,k,v,&mask);};
-    af::setSeed(81);
+    Reseed(81);
     const auto keep=(af::randu(af::dim4(3,keys,1,2),f32)>.25f).as(f32); keep.eval();
     const Tensor replay_mask=Tensor::FromSemanticArray(keep,{3,keys,1,2});
     json result=Verify(layer,params,q,forward);
@@ -123,7 +128,7 @@ json AttentionCase(bool self) {
     result["key"]=Pack(self?q:k); result["value"]=Pack(self?q:v);
     result["mask"]=Pack(replay_mask); result["p"]=.25;
     if(!self) {
-        layer.SetTraining(true); af::setSeed(81); forward();
+        layer.SetTraining(true); Reseed(81); forward();
         Tensor upstream=Fixture(q.Shape(),1.7f); layer.Backward(upstream);
         const auto dk=layer.GetLastKeyGradient(),dv=layer.GetLastValueGradient();
         result["dk"]=Pack(dk);result["dv"]=Pack(dv);
@@ -137,7 +142,7 @@ template<class Layer>
 json TransformerCase(bool decoder,bool pre) {
     Layer layer(4,2,5,0.0f,pre,0.25f);
     auto params=Configure(layer); Tensor x=Fixture({1,2,4},0.2f);
-    af::setSeed(81); const auto keep=(af::randu(af::dim4(2,5),f32)>.25f).as(f32);keep.eval();
+    Reseed(81); const auto keep=(af::randu(af::dim4(2,5),f32)>.25f).as(f32);keep.eval();
     const Tensor replay_mask=Tensor::FromSemanticArray(keep,{2,5}).Reshape({1,2,5});
     auto result=Verify(layer,params,x,[&]{return layer.Forward(x);});
     result["kind"]=decoder?"decoder":"encoder";result["norm_first"]=pre;
@@ -157,23 +162,23 @@ void CompatibilityAndCombinedDropout() {
     Layer legacy(4,2,5,0.0f,false),explicit_zero(4,2,5,0.0f,false,0.0f);
     const auto params=Configure(legacy);explicit_zero.SetParameters(params);
     Tensor x=Fixture({1,2,4},0.2f), upstream=Fixture(x.Shape(),1.7f);
-    af::setSeed(99);
+    Reseed(99);
     const auto a=legacy.Forward(x),b=explicit_zero.Forward(x);
-    const af::array after=af::randu(8);af::setSeed(99);const af::array expected=af::randu(8);
+    const af::array after=af::randu(8);Reseed(99);const af::array expected=af::randu(8);
     Check(af::allTrue<bool>(after==expected),"zero dropout must not consume RNG");
     for(size_t i=0;i<a.NumElements();++i) Check(a.template ReadData<float>()[i]==b.template ReadData<float>()[i],"legacy zero dropout compatibility");
     for(bool pre:{false,true}) {
         Layer combined(4,2,5,0.1f,pre,0.25f);Configure(combined);
-        combined.SetTraining(true);af::setSeed(81);hosts=fallbacks=0;
+        combined.SetTraining(true);Reseed(81);hosts=fallbacks=0;
         {
             cyxwiz::ScopedArrayFireHostSyncObserver h(Host);
             cyxwiz::ScopedArrayFireNativeCpuFallbackObserver f(Fallback);
             combined.Forward(x);const auto dx=combined.Backward(upstream);af::sync();
             Check(hosts==0 && fallbacks==0,"combined dropout residency");
         }
-        af::setSeed(81);combined.Forward(x);
+        Reseed(81);combined.Forward(x);
         const Tensor train_dx=combined.Backward(upstream).Clone();
-        af::setSeed(81);combined.Forward(x);combined.SetTraining(false);
+        Reseed(81);combined.Forward(x);combined.SetTraining(false);
         const Tensor switched_dx=combined.Backward(upstream);
         for(size_t i=0;i<x.NumElements();++i) Near(switched_dx.ReadData<float>()[i],train_dx.ReadData<float>()[i],"backward reuses forward masks after mode switch");
     }
@@ -186,11 +191,11 @@ json MemoryCase(bool pre) {
     Tensor x=Fixture({1,2,4},0.2f),memory=Fixture({1,3,4},0.6f);
     Tensor mask=cyxwiz::TransformerDecoderLayer::GenerateCausalMask(2);
     memory.GetSemanticArray().eval();mask.GetSemanticArray().eval();
-    af::setSeed(81);const auto keep=(af::randu(af::dim4(2,5),f32)>.25f).as(f32);keep.eval();
+    Reseed(81);const auto keep=(af::randu(af::dim4(2,5),f32)>.25f).as(f32);keep.eval();
     const Tensor replay_mask=Tensor::FromSemanticArray(keep,{2,5}).Reshape({1,2,5});
     const auto forward=[&]{return layer.Forward(x,memory,&mask);};
     auto result=Verify(layer,params,x,forward);
-    layer.SetTraining(true);af::setSeed(81);forward();
+    layer.SetTraining(true);Reseed(81);forward();
     Tensor upstream=Fixture(x.Shape(),1.7f);layer.Backward(upstream);
     const Tensor dm=layer.GetLastMemoryGradient();
     result["kind"]="memory";result["norm_first"]=pre;result["p"]=.25;
