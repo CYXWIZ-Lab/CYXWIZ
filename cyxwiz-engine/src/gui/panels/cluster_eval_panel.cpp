@@ -1,4 +1,5 @@
 #include "cluster_eval_panel.h"
+#include <cyxwiz/device.h>
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -412,6 +413,7 @@ void ClusterEvalPanel::ComputeMetrics() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         metrics_ = Clustering::EvaluateClustering(input_data_, cluster_labels_);
         is_computing_ = false;
 

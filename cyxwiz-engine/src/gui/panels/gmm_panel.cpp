@@ -1,4 +1,5 @@
 #include "gmm_panel.h"
+#include <cyxwiz/device.h>
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -388,6 +389,7 @@ void GMMPanel::RunClustering() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         const char* cov_types[] = {"full", "tied", "diag", "spherical"};
 
         result_ = Clustering::GMM(
@@ -421,6 +423,7 @@ void GMMPanel::RunModelSelection() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         model_k_values_.clear();
         model_bic_values_.clear();
         model_aic_values_.clear();

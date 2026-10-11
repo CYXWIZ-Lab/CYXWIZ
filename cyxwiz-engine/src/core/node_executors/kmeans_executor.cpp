@@ -1,4 +1,5 @@
 #include "kmeans_executor.h"
+#include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
 #include <algorithm>
@@ -104,6 +105,7 @@ void KMeansExecutor::ExecuteAsync() {
 
     is_async_running_ = true;
     execution_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         Execute();
         is_async_running_ = false;
     });

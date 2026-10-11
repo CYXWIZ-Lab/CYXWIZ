@@ -1,4 +1,5 @@
 #include "kmeans_panel.h"
+#include <cyxwiz/device.h>
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -511,6 +512,7 @@ void KMeansPanel::RunClustering() {
     }
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         std::string init_method = (init_method_ == 1) ? "kmeans++" : "random";
 
         result_ = Clustering::KMeans(
@@ -553,6 +555,7 @@ void KMeansPanel::RunElbowAnalysis() {
     }
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         elbow_result_ = Clustering::ComputeElbowAnalysis(
             input_data_,
             elbow_k_min_,

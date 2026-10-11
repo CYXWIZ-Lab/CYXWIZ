@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include <cyxwiz/device.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
 #include "archive_text_source.h"
@@ -3202,6 +3203,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
             "Pipeline is already executing");
         return false;
     }
+
+    // Operators compute on ArrayFire; run them on the selected device whichever
+    // thread executes the pipeline (a task worker starts on ArrayFire's default).
+    Device::ActivateProcessDeviceOnThisThread();
 
     executing_ = true;
     progress_ = 0.0f;
