@@ -5110,6 +5110,41 @@ set_target_properties(test_computation_truth_clustering PROPERTIES
 )
 add_test(NAME clustering_parity COMMAND test_computation_truth_clustering)
 
+# ===== Test: PCA / t-SNE / UMAP against PyTorch / scipy references (TOFIX140 dimensionality reduction on the device) =====
+set(CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/dimensionality_reduction_pytorch.json"
+)
+add_executable(test_computation_truth_dimensionality_reduction
+    tests/computation_truth/test_computation_truth_dimensionality_reduction.cpp
+)
+target_include_directories(test_computation_truth_dimensionality_reduction PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_dimensionality_reduction PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_dimensionality_reduction PRIVATE
+    CYXWIZ_DIMENSIONALITY_REDUCTION_FIXTURE="${CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_dimensionality_reduction_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_dimensionality_reduction>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_dimensionality_reduction>/computation_truth_fixtures/dimensionality_reduction_pytorch.json"
+    SOURCES "${CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_dimensionality_reduction copy_test_computation_truth_dimensionality_reduction_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_dimensionality_reduction PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_dimensionality_reduction PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME dimensionality_reduction_parity COMMAND test_computation_truth_dimensionality_reduction)
+
 # ===== Test: a CNN graph compiles, builds and runs (TOFIX140 A1) =====
 add_executable(test_cnn_graph_training
     tests/test_cnn_graph_training.cpp
