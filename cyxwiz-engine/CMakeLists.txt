@@ -481,7 +481,6 @@ set(ENGINE_SOURCES
     src/gui/panels/table_viewer_transforms.cpp
     src/gui/panels/table_viewer_plot.cpp
     src/gui/panels/table_viewer_context_menus.cpp
-    src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
@@ -789,7 +788,6 @@ set(ENGINE_HEADERS
     src/gui/panels/python_repl_session.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
-    src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
     src/gui/dialogs/python_setup_dialog.h
     src/gui/dialogs/start_page.h

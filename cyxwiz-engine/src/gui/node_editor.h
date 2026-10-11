@@ -470,6 +470,9 @@ public:
     // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
     void AddDataInputFromAsset(const std::string& path);
+    // Data > Import Dataset: a new Data Input node with its dialog open (data
+    // enters the Engine only through Data Input nodes).
+    void AddDataInputAndConfigure();
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -807,6 +810,7 @@ private:
         std::string name;
         ImVec2 position;  // Grid space position where node should be created
         std::unordered_map<std::string, std::string> initial_parameters;
+        bool open_configuration = false;  // open the node's dialog once it exists
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)

@@ -43,7 +43,6 @@ class AssetBrowserPanel;
 class TrainingPlotPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
-class DataExplorerPanel;
 class AnnotationEditorPanel;
 class VisualizationPanel;
 class ConnectionDialog;
@@ -356,7 +355,6 @@ private:
     std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
-    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
     std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
     std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;

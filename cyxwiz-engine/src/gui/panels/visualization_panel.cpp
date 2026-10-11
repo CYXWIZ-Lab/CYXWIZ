@@ -64,7 +64,7 @@ void VisualizationPanel::Render() {
 
         if (!HasData()) {
             ImGui::TextDisabled("No data loaded.");
-            ImGui::TextDisabled("Use 'Open in Visualizer' from Data Explorer to send data here.");
+            ImGui::TextDisabled("Use 'Open in Visualizer' in a Table Viewer plot to send data here.");
         } else {
             // Compact toolbar
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));

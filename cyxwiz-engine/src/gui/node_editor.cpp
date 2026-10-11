@@ -603,6 +603,7 @@ void NodeEditor::Render() {
         if (!pending_nodes_.empty()) {
             SaveUndoState();  // Save state before adding nodes
         }
+        std::vector<int> configure_ids;
         for (const auto& pending : pending_nodes_) {
             MLNode node = CreateNode(pending.type, pending.name);
             for (const auto& [key, value] : pending.initial_parameters) node.parameters[key] = value;
@@ -626,11 +627,13 @@ void NodeEditor::Render() {
 
             spdlog::info("Added node: {} (ID: {}) at position ({}, {})",
                         pending.name, node.id, position.x, position.y);
+            if (pending.open_configuration) configure_ids.push_back(node.id);
         }
         if (!pending_nodes_.empty()) {
             RebuildPinLookup();  // Rebuild pin lookup after adding nodes
         }
         pending_nodes_.clear();
+        for (int id : configure_ids) ConfigureNode(id);
 
         // Handle interactions AFTER EndNodeEditor() - this is when ImNodes processes them
         HandleInteractions();
@@ -3923,6 +3926,14 @@ void NodeEditor::AddDataInputFromAsset(const std::string& path) {
     pending_nodes_.push_back(std::move(pending));
     spdlog::info("Asset Browser queued Data Input source {}", path);
 }
+void NodeEditor::AddDataInputAndConfigure() {
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    pending.open_configuration = true;
+    pending_nodes_.push_back(std::move(pending));
+    Show();
+}
+
 void NodeEditor::DeleteSelectedNodes() {
     // Reuse existing DeleteSelected logic
     DeleteSelected();

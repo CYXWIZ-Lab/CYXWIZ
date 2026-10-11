@@ -568,9 +568,9 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
     {
         Menu m{"data", "Data", {}};
         auto& i = m.items;
-        i.push_back(Action(f, "data.import", "Import Dataset...", "Opens the dataset import."));
-        i.push_back(Action(f, "data.create_custom", "Create Custom Dataset...", "Starts a dataset from your own files."));
-        i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Shows row counts, columns and value summaries."));
+        i.push_back(Action(f, "data.import", "Import Dataset...", "Adds a Data Input node and opens it: data enters the Engine there."));
+        i.push_back(Action(f, "data.create_custom", "Create Custom Dataset...", "Adds a Data Input node for your own files (tables, image, audio or text folders)."));
+        i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Opens Data Studio's Profile: row counts, columns and value summaries."));
         i.push_back(Sep());
         i.push_back(Sub("data.explore", "Explore", "Look at a table before using it.",
                         {Tool(f, "data.profiler", "Data Profiler"),

@@ -49,7 +49,6 @@
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
-#include "panels/data_explorer_panel.h"
 #include "panels/annotation_editor_panel.h"
 #include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
@@ -621,7 +620,6 @@ MainWindow::MainWindow()
 
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
-    data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
     annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
     visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
@@ -672,19 +670,6 @@ MainWindow::MainWindow()
     hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
     distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
-
-    // Wire Data Explorer Hub to analysis panels
-    if (data_explorer_panel_) {
-        data_explorer_panel_->SetPanelReferences(
-            descriptive_stats_panel_.get(),
-            correlation_matrix_panel_.get(),
-            regression_panel_.get(),
-            outlier_detection_panel_.get(),
-            missing_value_panel_.get(),
-            data_profiler_panel_.get()
-        );
-        data_explorer_panel_->SetVisualizationPanel(visualization_panel_.get());
-    }
 
     // Connect TableViewer to VisualizationPanel
     if (table_viewer_ && visualization_panel_) {
@@ -1192,18 +1177,13 @@ MainWindow::MainWindow()
     });
 
 
+    // Data enters only through Data Input nodes: both open a new one's dialog.
     toolbar_->SetImportDatasetCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel");
-        }
+        if (node_editor_) node_editor_->AddDataInputAndConfigure();
     });
 
     toolbar_->SetCreateCustomDatasetCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel");
-        }
+        if (node_editor_) node_editor_->AddDataInputAndConfigure();
     });
 
     // Preprocess - opens Feature Scaling panel
@@ -1229,11 +1209,9 @@ MainWindow::MainWindow()
         }
     });
 
+    // Row counts, columns and value summaries: Data Studio's Profile tab.
     toolbar_->SetDatasetStatisticsCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel for statistics");
-        }
+        if (data_studio_panel_) data_studio_panel_->ShowProfile(data_studio_panel_->GetActiveDataset());
     });
 
     // Compile Graph - dry-run the graph compilation and show results in a popup
@@ -2937,8 +2915,6 @@ MainWindow::~MainWindow() {
     connection_dialog_.reset();
     spdlog::info("~MainWindow: table_viewer_");
     table_viewer_.reset();
-    spdlog::info("~MainWindow: data_explorer_panel_");
-    data_explorer_panel_.reset();
     // script_editor_ and console_ already reset with the scripting-engine panels.
     // training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
@@ -3252,7 +3228,6 @@ void MainWindow::Render() {
     TimedRender("training plot", training_plot_panel_);  // Now "Training Dashboard"
     TimedRender("script editor", script_editor_);
     TimedRender("table viewer", table_viewer_);
-    TimedRender("data explorer", data_explorer_panel_);
     TimedRender("annotation editor", annotation_editor_panel_);
     TimedRender("visualization", visualization_panel_);
     TimedRender("connection dialog", connection_dialog_);
@@ -3617,7 +3592,7 @@ void MainWindow::BuildInitialDockLayout() {
         ImGui::DockBuilderSplitNode(dock_id_right, ImGuiDir_Down, 0.45f, nullptr, &dock_id_right);
     for (const char* name : {"Nodes", "Pattern Browser"}) ImGui::DockBuilderDockWindow(name, dock_id_left);
     for (const char* name : {"Info", "Wallet"}) ImGui::DockBuilderDockWindow(name, dock_id_right_bottom);
-    for (const char* name : {"Table Viewer", "Data Explorer", "Annotation Editor", "###Visualizer", "Query Console",
+    for (const char* name : {"Table Viewer", "Annotation Editor", "###Visualizer", "Query Console",
                              "Plot Output", "###CloudBrowser", "###DatasetManager", "Plugin Manager"})
         ImGui::DockBuilderDockWindow(name, dock_id_center_right);
     for (const char* name : {"###VariableExplorer", "Background Tasks", "Job Status & Orchestration",
@@ -3667,7 +3642,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Data
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
     add("Table Viewer", ICON_FA_TABLE, table_viewer_, "Data");
-    add("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_, "Data");
     add("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_, "Data");
     add("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_, "Data");
     add("Query Console", ICON_FA_MAGNIFYING_GLASS_CHART, query_console_, "Data");

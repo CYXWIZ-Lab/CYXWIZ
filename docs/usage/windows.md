@@ -8,7 +8,7 @@ it. They come back with one command.
 
 Dashboard, Plot, the plot view's own window, Plot Output, Data Studio, Script
 Editor (and the notebooks in it), Training, Console, Table Viewer (Data
-Viewer), Data Explorer, Variable Explorer and the CyxWiz Studio canvas.
+Viewer), Variable Explorer and the CyxWiz Studio canvas.
 
 Everything else stays in the main window: Properties, Asset Browser, Node
 Browser, the tool panels, dialogs, the sidebar, the status bar. Dragging one
