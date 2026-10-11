@@ -129,15 +129,9 @@ void LogTransformPanel::RenderPreview() {
     ImGui::Text("Before/After Distribution:");
     ImGui::Spacing();
 
-    int vis_idx = 0;
-    for (size_t i = 0; i < selected_columns_.size(); ++i) {
-        if (selected_columns_[i]) {
-            vis_idx = static_cast<int>(i);
-            break;
-        }
-    }
-
-    if (vis_idx < static_cast<int>(original_stats_.size())) {
+    // The first transformed column (transformed_data follows transformed_columns_).
+    if (!transformed_columns_.empty() && !transform_result_.transformed_data.empty()) {
+        const int vis_idx = transformed_columns_[0];
         ImGui::Text("Column: %s", column_names_[vis_idx].c_str());
 
         std::vector<double> original_data;
@@ -153,9 +147,7 @@ void LogTransformPanel::RenderPreview() {
             }
         }
 
-        if (vis_idx < static_cast<int>(transform_result_.transformed_data.size())) {
-            transformed_data = transform_result_.transformed_data[vis_idx];
-        }
+        transformed_data = transform_result_.transformed_data[0];
 
         if (!original_data.empty() && !transformed_data.empty()) {
             if (ImPlot::BeginPlot("##OriginalHist", ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 200))) {
@@ -186,14 +178,10 @@ void LogTransformPanel::RenderPreview() {
         ImGui::TableSetupColumn("Transformed Skew");
         ImGui::TableHeadersRow();
 
-        int trans_idx = 0;
-        for (size_t i = 0; i < selected_columns_.size(); ++i) {
-            if (!selected_columns_[i]) continue;
-            if (trans_idx >= static_cast<int>(transformed_stats_.size())) break;
-
+        for (size_t trans_idx = 0; trans_idx < transformed_columns_.size() && trans_idx < transformed_stats_.size(); ++trans_idx) {
             double orig_skew = 0, trans_skew = 0;
 
-            if (trans_idx < static_cast<int>(transform_result_.transformed_data.size())) {
+            if (trans_idx < transform_result_.transformed_data.size()) {
                 const auto& orig = original_stats_[trans_idx];
                 const auto& trans = transformed_stats_[trans_idx];
 
@@ -204,15 +192,13 @@ void LogTransformPanel::RenderPreview() {
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", column_names_[i].c_str());
+            ImGui::Text("%s", column_names_[transformed_columns_[trans_idx]].c_str());
             ImGui::TableNextColumn();
             ImVec4 color1 = std::abs(orig_skew) > 1 ? ImVec4(1, 0.5f, 0, 1) : ImVec4(0, 0.8f, 0, 1);
             ImGui::TextColored(color1, "%.3f", orig_skew);
             ImGui::TableNextColumn();
             ImVec4 color2 = std::abs(trans_skew) > 1 ? ImVec4(1, 0.5f, 0, 1) : ImVec4(0, 0.8f, 0, 1);
             ImGui::TextColored(color2, "%.3f", trans_skew);
-
-            trans_idx++;
         }
 
         ImGui::EndTable();
@@ -232,10 +218,8 @@ void LogTransformPanel::RenderResults() {
     if (n_cols > 0 && ImGui::BeginTable("TransData", n_cols + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX)) {
         ImGui::TableSetupColumn("Row");
 
-        for (size_t i = 0; i < selected_columns_.size(); ++i) {
-            if (selected_columns_[i]) {
-                ImGui::TableSetupColumn(column_names_[i].c_str());
-            }
+        for (int col = 0; col < n_cols && col < static_cast<int>(transformed_columns_.size()); ++col) {
+            ImGui::TableSetupColumn(column_names_[transformed_columns_[col]].c_str());
         }
         ImGui::TableHeadersRow();
 
@@ -246,7 +230,8 @@ void LogTransformPanel::RenderResults() {
 
             for (int col = 0; col < n_cols; ++col) {
                 ImGui::TableNextColumn();
-                ImGui::Text("%.4f", transform_result_.transformed_data[col][row]);
+                const auto& values = transform_result_.transformed_data[col];  // columns can differ in length
+                if (row < static_cast<int>(values.size())) ImGui::Text("%.4f", values[row]);
             }
         }
 
@@ -273,6 +258,7 @@ void LogTransformPanel::UseTable(std::shared_ptr<DataTable> table) {
     transform_result_ = TransformResult();
     original_stats_.clear();
     transformed_stats_.clear();
+    transformed_columns_.clear();
     can_transform_ = true;
     status_message_ = "Data loaded. Select columns.";
 }
@@ -282,6 +268,7 @@ void LogTransformPanel::ApplyLogTransform() {
 
     std::vector<std::vector<double>> data;
     original_stats_.clear();
+    transformed_columns_.clear();
 
     std::string base_str = log_base_ == 0 ? "natural" : (log_base_ == 1 ? "log10" : "log2");
 
@@ -307,6 +294,7 @@ void LogTransformPanel::ApplyLogTransform() {
 
             original_stats_.push_back(DataTransform::ComputeColumnStats(col_data));
             data.push_back(col_data);
+            transformed_columns_.push_back(static_cast<int>(col));
         }
     }
 

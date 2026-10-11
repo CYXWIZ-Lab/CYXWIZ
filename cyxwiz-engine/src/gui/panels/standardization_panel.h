@@ -40,6 +40,7 @@ private:
     TransformResult transform_result_;
     std::vector<ColumnStats> original_stats_;
     std::vector<ColumnStats> transformed_stats_;
+    std::vector<int> transformed_columns_;  // table column of each transformed column (data skips empty ones)
 
     std::string status_message_;
 };
