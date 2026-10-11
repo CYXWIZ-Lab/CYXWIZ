@@ -92,6 +92,7 @@ private:
     UMAPResult umap_result_;
 
     bool has_result_ = false;
+    std::string error_message_;  // last run's failure, shown under the settings
     int last_algorithm_ = -1;  // Track which algorithm produced current result
 
     // Async computation

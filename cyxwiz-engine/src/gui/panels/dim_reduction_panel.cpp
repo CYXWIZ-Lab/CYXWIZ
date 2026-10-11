@@ -1,4 +1,6 @@
 #include "dim_reduction_panel.h"
+#include "../ui_tokens.h"
+#include <cyxwiz/device.h>
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
 #include "../icons.h"
@@ -38,6 +40,13 @@ void DimReductionPanel::Render() {
             RenderDataSelector();
             ImGui::Spacing();
             RenderAlgorithmConfig();
+
+            if (!error_message_.empty()) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ui::CurrentTokens().error, "%s", error_message_.c_str());
+                ImGui::PopTextWrapPos();
+            }
 
             if (has_result_) {
                 ImGui::Separator();
@@ -648,9 +657,11 @@ void DimReductionPanel::RunReduction() {
     int umap_neigh = umap_n_neighbors_;
     double umap_dist = umap_min_dist_;
 
+    error_message_.clear();
     compute_thread_ = std::make_unique<std::thread>([this, algo, data,
                                                       pca_comp, tsne_dims, tsne_perp, tsne_iter, tsne_lr,
                                                       umap_dims, umap_neigh, umap_dist]() {
+        Device::ActivateProcessDeviceOnThisThread();
         try {
             switch (algo) {
                 case 0: {
@@ -661,7 +672,8 @@ void DimReductionPanel::RunReduction() {
                     std::lock_guard<std::mutex> lock(result_mutex_);
                     pca_result_ = std::move(result);
                     last_algorithm_ = 0;
-                    has_result_ = true;
+                    has_result_ = pca_result_.success;
+                    error_message_ = pca_result_.error_message;
 
                     spdlog::info("PCA complete: explained variance = {:.2f}%",
                                 pca_result_.total_variance_explained * 100);
@@ -684,7 +696,8 @@ void DimReductionPanel::RunReduction() {
                     std::lock_guard<std::mutex> lock(result_mutex_);
                     tsne_result_ = std::move(result);
                     last_algorithm_ = 1;
-                    has_result_ = true;
+                    has_result_ = tsne_result_.success;
+                    error_message_ = tsne_result_.error_message;
 
                     spdlog::info("t-SNE complete: final KL = {:.4f}", tsne_result_.final_kl_divergence);
                     break;
@@ -701,7 +714,8 @@ void DimReductionPanel::RunReduction() {
                     std::lock_guard<std::mutex> lock(result_mutex_);
                     umap_result_ = std::move(result);
                     last_algorithm_ = 2;
-                    has_result_ = true;
+                    has_result_ = umap_result_.success;
+                    error_message_ = umap_result_.error_message;
 
                     spdlog::info("UMAP complete");
                     break;
