@@ -74,6 +74,7 @@ private:
     // Async
     std::thread compute_thread_;
     std::atomic<bool> is_computing_{false};
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // results posted to the UI thread stop once the panel is gone
     std::atomic<int> progress_iteration_{0};
     std::string status_message_;
 

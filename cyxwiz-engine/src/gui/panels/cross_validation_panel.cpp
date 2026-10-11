@@ -3,6 +3,7 @@
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
+#include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -276,23 +277,28 @@ void CrossValidationPanel::RunCrossValidation() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this, n_samples]() {
-        if (stratified_) {
+    // The worker gets copies of its inputs and hands the folds to the UI thread.
+    compute_thread_ = std::thread([this, n_samples, table = current_table_, target = target_column_, stratified = stratified_,
+                                   folds = n_folds_, shuffle = shuffle_, seed = static_cast<unsigned int>(random_seed_)]() {
+        std::vector<std::pair<std::vector<int>, std::vector<int>>> splits;
+        if (stratified) {
             // Get labels for stratified split
             std::vector<int> labels;
             labels.reserve(n_samples);
             for (int row = 0; row < n_samples; ++row) {
-                auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
+                auto val = DataAnalyzer::ToDouble(table->GetCell(row, target));
                 labels.push_back(val.has_value() ? static_cast<int>(val.value()) : 0);
             }
-            fold_splits_ = ModelEvaluation::StratifiedKFoldSplit(labels, n_folds_, shuffle_, static_cast<unsigned int>(random_seed_));
+            splits = ModelEvaluation::StratifiedKFoldSplit(labels, folds, shuffle, seed);
         } else {
-            fold_splits_ = ModelEvaluation::KFoldSplit(n_samples, n_folds_, shuffle_, static_cast<unsigned int>(random_seed_));
+            splits = ModelEvaluation::KFoldSplit(n_samples, folds, shuffle, seed);
         }
-
-        result_.n_folds = n_folds_;
-        is_computing_ = false;
-        status_message_ = std::to_string(n_folds_) + " folds generated successfully.";
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, splits = std::move(splits), folds]() mutable {
+            fold_splits_ = std::move(splits);
+            result_.n_folds = folds;
+            status_message_ = std::to_string(folds) + " folds generated successfully.";
+            is_computing_ = false;
+        });
     });
 }
 

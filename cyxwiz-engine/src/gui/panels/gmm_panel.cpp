@@ -1,5 +1,6 @@
 #include "gmm_panel.h"
 #include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -373,29 +374,30 @@ void GMMPanel::RunClustering() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+    compute_thread_ = std::thread([this, data = input_data_, k = n_components_, cov = std::string(cov_types[covariance_type_]),
+                                   max_iter = max_iter_, n_init = n_init_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        const char* cov_types[] = {"full", "tied", "diag", "spherical"};
-
-        result_ = Clustering::GMM(
-            input_data_,
-            n_components_,
-            cov_types[covariance_type_],
-            max_iter_,
+        GMMResult result = Clustering::GMM(
+            data,
+            k,
+            cov,
+            max_iter,
             1e-3,
-            n_init_,
+            n_init,
             0,
             [this](int iter, double) { progress_iteration_ = iter; }
         );
-
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = std::to_string(result_.n_components) + " components, BIC=" +
-                             std::to_string(static_cast<int>(result_.bic));
-        } else {
-            status_message_ = "Failed: " + result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = std::to_string(result_.n_components) + " components, BIC=" +
+                                 std::to_string(static_cast<int>(result_.bic));
+            } else {
+                status_message_ = "Failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
@@ -407,33 +409,38 @@ void GMMPanel::RunModelSelection() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+    compute_thread_ = std::thread([this, data = input_data_, cov = std::string(cov_types[covariance_type_]),
+                                   k_min = model_select_min_, k_max = model_select_max_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        model_k_values_.clear();
-        model_bic_values_.clear();
-        model_aic_values_.clear();
-
-        const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+        std::vector<int> k_values;
+        std::vector<double> bic_values, aic_values;
         double best_bic = std::numeric_limits<double>::max();
-        suggested_components_ = model_select_min_;
+        int suggested = k_min;
 
-        for (int k = model_select_min_; k <= model_select_max_; ++k) {
-            auto gmm_result = Clustering::GMM(input_data_, k, cov_types[covariance_type_], 50, 1e-3, 1, 0);
+        for (int k = k_min; k <= k_max; ++k) {
+            auto gmm_result = Clustering::GMM(data, k, cov, 50, 1e-3, 1, 0);
 
             if (gmm_result.success) {
-                model_k_values_.push_back(k);
-                model_bic_values_.push_back(gmm_result.bic);
-                model_aic_values_.push_back(gmm_result.aic);
+                k_values.push_back(k);
+                bic_values.push_back(gmm_result.bic);
+                aic_values.push_back(gmm_result.aic);
 
                 if (gmm_result.bic < best_bic) {
                     best_bic = gmm_result.bic;
-                    suggested_components_ = k;
+                    suggested = k;
                 }
             }
         }
-
-        is_computing_ = false;
-        status_message_ = "Model selection complete. Suggested: " + std::to_string(suggested_components_);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, k_values = std::move(k_values), bic_values = std::move(bic_values),
+                                                               aic_values = std::move(aic_values), suggested]() mutable {
+            model_k_values_ = std::move(k_values);
+            model_bic_values_ = std::move(bic_values);
+            model_aic_values_ = std::move(aic_values);
+            suggested_components_ = suggested;
+            status_message_ = "Model selection complete. Suggested: " + std::to_string(suggested_components_);
+            is_computing_ = false;
+        });
     });
 }
 

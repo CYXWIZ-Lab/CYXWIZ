@@ -1,5 +1,6 @@
 #include "hierarchical_panel.h"
 #include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -293,25 +294,27 @@ void HierarchicalPanel::RunClustering() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    const char* linkages[] = {"ward", "complete", "average", "single"};
+    const char* metrics[] = {"euclidean", "manhattan", "cosine"};
+    compute_thread_ = std::thread([this, data = input_data_, k = n_clusters_, linkage = std::string(linkages[linkage_method_]),
+                                   metric = std::string(metrics[metric_idx_])]() {
         Device::ActivateProcessDeviceOnThisThread();
-        const char* linkages[] = {"ward", "complete", "average", "single"};
-        const char* metrics[] = {"euclidean", "manhattan", "cosine"};
-
-        result_ = Clustering::Hierarchical(input_data_, n_clusters_, linkages[linkage_method_], metrics[metric_idx_]);
-        is_computing_ = false;
-
-        if (result_.success) {
-            // Find max height for slider
-            max_height_ = 0.0;
-            for (const auto& link : result_.linkage_matrix) {
-                if (link[2] > max_height_) max_height_ = link[2];
+        HierarchicalResult result = Clustering::Hierarchical(data, k, linkage, metric);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                // Find max height for slider
+                max_height_ = 0.0;
+                for (const auto& link : result_.linkage_matrix) {
+                    if (link[2] > max_height_) max_height_ = link[2];
+                }
+                cut_height_ = max_height_ * 0.5;
+                status_message_ = std::to_string(result_.n_clusters) + " clusters found.";
+            } else {
+                status_message_ = "Failed: " + result_.error_message;
             }
-            cut_height_ = max_height_ * 0.5;
-            status_message_ = std::to_string(result_.n_clusters) + " clusters found.";
-        } else {
-            status_message_ = "Failed: " + result_.error_message;
-        }
+            is_computing_ = false;
+        });
     });
 }
 

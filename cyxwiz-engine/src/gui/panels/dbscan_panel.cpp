@@ -1,5 +1,6 @@
 #include "dbscan_panel.h"
 #include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -301,17 +302,20 @@ void DBSCANPanel::RunClustering() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    const char* metrics[] = {"euclidean", "manhattan", "cosine"};
+    compute_thread_ = std::thread([this, data = input_data_, eps = eps_, min_samples = min_samples_,
+                                   metric = std::string(metrics[metric_idx_])]() {
         Device::ActivateProcessDeviceOnThisThread();
-        const char* metrics[] = {"euclidean", "manhattan", "cosine"};
-        result_ = Clustering::DBSCAN(input_data_, eps_, min_samples_, metrics[metric_idx_]);
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = std::to_string(result_.n_clusters) + " clusters, " + std::to_string(result_.n_noise_points) + " noise points.";
-        } else {
-            status_message_ = "Failed: " + result_.error_message;
-        }
+        DBSCANResult result = Clustering::DBSCAN(data, eps, min_samples, metric);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = std::to_string(result_.n_clusters) + " clusters, " + std::to_string(result_.n_noise_points) + " noise points.";
+            } else {
+                status_message_ = "Failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
@@ -321,19 +325,20 @@ void DBSCANPanel::ComputeKDistances() {
     is_computing_ = true;
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    compute_thread_ = std::thread([this, data = input_data_, k = k_distance_k_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        k_distances_ = Clustering::ComputeKDistances(input_data_, k_distance_k_);
-
-        // Find elbow point
-        if (k_distances_.size() > 10) {
-            size_t elbow_idx = k_distances_.size() * 9 / 10;  // 90th percentile
-            suggested_eps_ = k_distances_[elbow_idx];
-        } else if (!k_distances_.empty()) {
-            suggested_eps_ = k_distances_.back() * 0.9;
-        }
-
-        is_computing_ = false;
+        std::vector<double> distances = Clustering::ComputeKDistances(data, k);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, distances = std::move(distances)]() mutable {
+            k_distances_ = std::move(distances);
+            // Find elbow point
+            if (k_distances_.size() > 10) {
+                size_t elbow_idx = k_distances_.size() * 9 / 10;  // 90th percentile
+                suggested_eps_ = k_distances_[elbow_idx];
+            } else if (!k_distances_.empty()) {
+                suggested_eps_ = k_distances_.back() * 0.9;
+            }
+            is_computing_ = false;
+        });
     });
 }
 

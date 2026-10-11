@@ -1,5 +1,6 @@
 #include "cluster_eval_panel.h"
 #include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -397,17 +398,19 @@ void ClusterEvalPanel::ComputeMetrics() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
+    compute_thread_ = std::thread([this, data = input_data_, labels = cluster_labels_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        metrics_ = Clustering::EvaluateClustering(input_data_, cluster_labels_);
-        is_computing_ = false;
-
-        if (metrics_.success) {
-            status_message_ = "Metrics computed successfully.";
-            current_name_ = source_.Name();
-        } else {
-            status_message_ = "Failed: " + metrics_.error_message;
-        }
+        ClusterMetrics metrics = Clustering::EvaluateClustering(data, labels);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, metrics = std::move(metrics)]() mutable {
+            metrics_ = std::move(metrics);
+            if (metrics_.success) {
+                status_message_ = "Metrics computed successfully.";
+                current_name_ = source_.Name();
+            } else {
+                status_message_ = "Failed: " + metrics_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 

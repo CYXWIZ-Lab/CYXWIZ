@@ -1,5 +1,6 @@
 #include "kmeans_panel.h"
 #include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -488,32 +489,35 @@ void KMeansPanel::RunClustering() {
         compute_thread_.join();
     }
 
-    compute_thread_ = std::thread([this]() {
+    // The worker gets copies of its inputs and hands the result to the UI
+    // thread; panel state is only touched there.
+    std::string init_method = (init_method_ == 1) ? "kmeans++" : "random";
+    compute_thread_ = std::thread([this, data = input_data_, k = n_clusters_, max_iter = max_iter_, init_method,
+                                   n_init = n_init_, tol = tolerance_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        std::string init_method = (init_method_ == 1) ? "kmeans++" : "random";
-
-        result_ = Clustering::KMeans(
-            input_data_,
-            n_clusters_,
-            max_iter_,
+        KMeansResult result = Clustering::KMeans(
+            data,
+            k,
+            max_iter,
             init_method,
-            n_init_,
-            tolerance_,
+            n_init,
+            tol,
             0,  // Random seed
             [this](int iter, double inertia) {
                 progress_iteration_ = iter;
                 progress_inertia_ = inertia;
             }
         );
-
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = "Clustering complete. " + std::to_string(result_.n_clusters) +
-                             " clusters found in " + std::to_string(result_.n_iterations) + " iterations.";
-        } else {
-            status_message_ = "Clustering failed: " + result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = "Clustering complete. " + std::to_string(result_.n_clusters) +
+                                 " clusters found in " + std::to_string(result_.n_iterations) + " iterations.";
+            } else {
+                status_message_ = "Clustering failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
@@ -531,26 +535,27 @@ void KMeansPanel::RunElbowAnalysis() {
         compute_thread_.join();
     }
 
-    compute_thread_ = std::thread([this]() {
+    compute_thread_ = std::thread([this, data = input_data_, k_min = elbow_k_min_, k_max = elbow_k_max_]() {
         Device::ActivateProcessDeviceOnThisThread();
-        elbow_result_ = Clustering::ComputeElbowAnalysis(
-            input_data_,
-            elbow_k_min_,
-            elbow_k_max_,
+        ElbowAnalysis result = Clustering::ComputeElbowAnalysis(
+            data,
+            k_min,
+            k_max,
             [this](int current, int total) {
                 progress_iteration_ = current;
                 progress_total_ = total;
             }
         );
-
-        is_computing_ = false;
-
-        if (elbow_result_.success) {
-            n_clusters_ = elbow_result_.suggested_k;
-            status_message_ = "Elbow analysis complete. Suggested K: " + std::to_string(elbow_result_.suggested_k);
-        } else {
-            status_message_ = "Elbow analysis failed: " + elbow_result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            elbow_result_ = std::move(result);
+            if (elbow_result_.success) {
+                n_clusters_ = elbow_result_.suggested_k;
+                status_message_ = "Elbow analysis complete. Suggested K: " + std::to_string(elbow_result_.suggested_k);
+            } else {
+                status_message_ = "Elbow analysis failed: " + elbow_result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
