@@ -2757,6 +2757,9 @@ if(WIN32)
         NOMINMAX
     )
 endif()
+target_compile_definitions(test_pipeline_executor_operator_routing PRIVATE
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
 
 set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

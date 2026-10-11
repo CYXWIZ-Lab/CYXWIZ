@@ -15,7 +15,7 @@ follows (and against scipy where scipy has the same function) to 1e-8.
 | --- | --- | --- |
 | Min-Max | `(x - min) / (max - min)` scaled to the chosen range | scikit-learn `MinMaxScaler` |
 | Z-Score | `(x - mean) / std`, std divides by n | scikit-learn `StandardScaler` |
-| Robust | `(x - median) / IQR`, quartiles interpolated linearly | scikit-learn `RobustScaler` |
+| Robust | `(x - median) / (q_max - q_min)`, default quartiles 25 / 75, interpolated linearly; a zero spread scales by 1 | scikit-learn `RobustScaler` |
 | Max-Abs | `x / max(|x|)` | scikit-learn `MaxAbsScaler` |
 | Quantile | Each value through min(n quantiles, rows) empirical quantiles onto uniform [0, 1] or a standard normal | scikit-learn `QuantileTransformer` fitted on the whole column (no 10,000-row subsample) |
 | Log | ln, log10 or log2 of x, or of 1 + x with log1p | |
@@ -40,5 +40,5 @@ own likelihood, so the Lambda tab works with "Use Yeo-Johnson" too.
 ## Refusals
 
 A column is refused, with the reason shown, when it is constant (Min-Max,
-Z-Score), has zero IQR (Robust) or is all zeros (Max-Abs), when Box-Cox data has
+Z-Score) or is all zeros (Max-Abs), when Box-Cox data has
 a value ≤ 0, or when log data has a value ≤ 0 (≤ -1 with log1p).

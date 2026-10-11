@@ -10,6 +10,7 @@
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
 #include "core/plot/node_result_plan.h"
+#include "core/graph_document.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include <thread>
@@ -23,6 +24,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <limits>
 #include <set>
@@ -1667,6 +1670,96 @@ void CheckPreparationRecipe() {
     std::cout << "Preparation Recipe lowering passed\n";
 }
 
+// TOFIX140: the analysis demo graph (examples/cyxgraph/analysis) opens as saved
+// and each Plot node's lane runs, as a double-click does in the Engine: Log
+// Transform -> Robust Scaler -> PCA -> K-Means / DBSCAN on the selected device.
+void CheckCustomerSegmentsDemoGraph() {
+    namespace fs = std::filesystem;
+    using gui::NodeType;
+    const fs::path graph_path = fs::path(CYXWIZ_SOURCE_ROOT) / "examples" / "cyxgraph" / "analysis" /
+                                "customer_segments_analysis.cyxgraph";
+    std::ifstream in(graph_path, std::ios::binary);
+    Check(static_cast<bool>(in), "demo graph: cannot open " + graph_path.string());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cyxwiz::GraphDocument graph;
+    std::string error;
+    Check(cyxwiz::ParseGraphDocument(text, graph, error), "demo graph: loads: " + error);
+    Check(graph.links.size() == 8, "demo graph: all 8 links resolve");
+    const auto type_of = [&](int id) {
+        for (const auto& node : graph.nodes) if (node.id == id) return node.type;
+        return NodeType::Dense;
+    };
+    Check(type_of(1) == NodeType::DataInput && type_of(2) == NodeType::LogTransform &&
+              type_of(3) == NodeType::RobustScaler && type_of(4) == NodeType::PCANode &&
+              type_of(5) == NodeType::KMeansCluster && type_of(6) == NodeType::DBSCANCluster &&
+              type_of(7) == NodeType::Plot && type_of(8) == NodeType::Plot && type_of(9) == NodeType::Plot,
+          "demo graph: node types");
+    // The CSV path is relative: found beside the graph, as when the Engine opens it.
+    cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(graph_path.string());
+
+    const auto run_plot = [&](int plot_id) {
+        const auto plan = cyxwiz::plot::PlanNodeResult(plot_id, graph.nodes, graph.links,
+                                                       [](const std::string&) { return false; });
+        Check(plan.state == cyxwiz::plot::NodeResultPlan::State::Run,
+              "demo graph: plot " + std::to_string(plot_id) + " is runnable: " + plan.reason);
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(plan.pipeline_json),
+              "demo graph: plot " + std::to_string(plot_id) + " runs: " + executor.GetLastError());
+        const auto it = executor.NodeResults().find(plan.feeder_id);
+        Check(it != executor.NodeResults().end(), "demo graph: feeder result named");
+        auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(it->second);
+        Check(dataset != nullptr, "demo graph: feeder table registered");
+        return dataset->GetArrowTable();
+    };
+    const auto int_column = [](const std::shared_ptr<arrow::Table>& table, const std::string& name) {
+        const auto column = table->GetColumnByName(name);
+        Check(column != nullptr, "demo graph: column " + name);
+        std::vector<int> values;
+        for (const auto& chunk : column->chunks()) {
+            const auto& ints = static_cast<const arrow::Int32Array&>(*chunk);
+            for (int64_t i = 0; i < ints.length(); ++i) values.push_back(ints.Value(i));
+        }
+        return values;
+    };
+
+    // PCA: two components plus the segment codes, every row kept.
+    const auto pca = run_plot(7);
+    Check(pca->num_rows() == 248 && pca->GetColumnByName("pc_0") && pca->GetColumnByName("pc_1"),
+          "demo graph: PCA gives pc_0, pc_1 for 248 rows");
+    const std::vector<int> segment = int_column(pca, "y");
+    std::map<int, int> segment_sizes;
+    for (int code : segment) ++segment_sizes[code];
+    int outlier_code = -1;
+    for (const auto& [code, size] : segment_sizes) if (size == 8) outlier_code = code;
+    Check(segment_sizes.size() == 5 && outlier_code >= 0, "demo graph: 4 segments of 60 and 8 outliers");
+
+    // K-Means: each cluster is (almost) one segment.
+    const std::vector<int> kmeans = int_column(run_plot(8), "cluster_id");
+    std::map<int, std::map<int, int>> counts;
+    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_code) ++counts[kmeans[i]][segment[i]];
+    int agree = 0;
+    for (const auto& [cluster, by_segment] : counts) {
+        int best = 0;
+        for (const auto& entry : by_segment) best = std::max(best, entry.second);
+        agree += best;
+    }
+    Check(counts.size() == 4 && agree >= 228, "demo graph: K-Means recovers the segments (" +
+                                                   std::to_string(agree) + " of 240)");
+
+    // DBSCAN: four clusters, and most planted outliers are noise.
+    const std::vector<int> dbscan = int_column(run_plot(9), "cluster_id");
+    std::set<int> clusters;
+    int noise_outliers = 0;
+    for (size_t i = 0; i < dbscan.size(); ++i) {
+        if (dbscan[i] >= 0) clusters.insert(dbscan[i]);
+        if (dbscan[i] == -1 && segment[i] == outlier_code) ++noise_outliers;
+    }
+    Check(clusters.size() == 4 && noise_outliers >= 5, "demo graph: DBSCAN finds 4 clusters and flags " +
+                                                           std::to_string(noise_outliers) + " of 8 outliers");
+    std::cout << "demo graph: customer segments analysis runs (K-Means " << agree << "/240, DBSCAN noise outliers "
+              << noise_outliers << "/8)\n";
+}
+
 int main(int argc, char** argv) {
     if (argc == 6 && std::string(argv[1]) == "--html-selection") {
         std::ifstream file(argv[3], std::ios::binary);
@@ -1789,6 +1882,10 @@ int main(int argc, char** argv) {
         CheckPlotLaneRunsOnlyTheClosure();
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--analysis-demo") {
+        CheckCustomerSegmentsDemoGraph();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--pipeline-ingestion-cache") {
         CheckPipelineDataInputUsesProjectIngestionCache();
@@ -1801,6 +1898,7 @@ int main(int argc, char** argv) {
     CheckTrack70RowAndColumnLimits();
     CheckPipelineDataInputUsesProjectIngestionCache();
     CheckPlotLaneRunsOnlyTheClosure();
+    CheckCustomerSegmentsDemoGraph();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
 

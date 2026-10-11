@@ -1,0 +1,100 @@
+{
+  "version": "2.1",
+  "data_boundary_version": 2,
+  "data_validator_contract_version": 2,
+  "evaluation_table_contract_version": 2,
+  "classical_tree_table_contract_version": 2,
+  "framework": 0,
+  "execution_mode": 1,
+  "workflow_description": "Customer segments: log the skewed spend, robust-scale the five measures, project to two principal components, then cluster with K-Means and DBSCAN. Double-click a Plot node to run the nodes above it and see the result. Everything runs on the device selected in the Devices tab.",
+  "annotations": [],
+  "groups": [],
+  "nodes": [
+    {
+      "id": 1, "type": 157, "name": "Customer CSV", "pos_x": 0, "pos_y": 240,
+      "parameters": {
+        "source_type": "file",
+        "file_path": "customer_segments.csv",
+        "file_type": "csv",
+        "file_category": "tabular",
+        "has_header": "true"
+      }
+    },
+    {
+      "id": 2, "type": 145, "name": "Log spend", "pos_x": 260, "pos_y": 240,
+      "parameters": { "value_col": "spend" }
+    },
+    {
+      "id": 3, "type": 239, "name": "Robust Scaler", "pos_x": 520, "pos_y": 240,
+      "parameters": {
+        "columns": "visits,basket_size,returns,age,spend",
+        "label_col": "segment",
+        "with_centering": "true",
+        "with_scaling": "true",
+        "quantile_min": "25",
+        "quantile_max": "75"
+      }
+    },
+    {
+      "id": 4, "type": 217, "name": "PCA (2 components)", "pos_x": 780, "pos_y": 240,
+      "parameters": {
+        "feature_cols": "visits,basket_size,returns,age,spend",
+        "label_col": "segment",
+        "n_components": "2",
+        "center": "true",
+        "scale": "false"
+      }
+    },
+    {
+      "id": 5, "type": 213, "name": "K-Means (k = 4)", "pos_x": 1040, "pos_y": 80,
+      "parameters": {
+        "feature_cols": "pc_0,pc_1",
+        "label_col": "y",
+        "n_clusters": "4",
+        "max_iter": "300",
+        "n_init": "10",
+        "tol": "0.0001",
+        "init": "kmeans++",
+        "seed": "42"
+      }
+    },
+    {
+      "id": 6, "type": 214, "name": "DBSCAN (eps 0.2)", "pos_x": 1040, "pos_y": 400,
+      "parameters": {
+        "feature_cols": "pc_0,pc_1",
+        "label_col": "y",
+        "eps": "0.2",
+        "min_samples": "5",
+        "metric": "euclidean"
+      }
+    },
+    {
+      "id": 7, "type": 348, "name": "True segments", "pos_x": 1040, "pos_y": 240,
+      "parameters": {
+        "plot_spec": "{\"version\":1,\"kind\":\"scatter\",\"x\":\"pc_0\",\"y\":[\"pc_1\"],\"color\":\"y\",\"color_mode\":\"groups\",\"title\":\"PCA, coloured by the true segment\",\"x_label\":\"PC 1\",\"y_label\":\"PC 2\"}"
+      }
+    },
+    {
+      "id": 8, "type": 348, "name": "K-Means clusters", "pos_x": 1300, "pos_y": 80,
+      "parameters": {
+        "plot_spec": "{\"version\":1,\"kind\":\"scatter\",\"x\":\"pc_0\",\"y\":[\"pc_1\"],\"color\":\"cluster_id\",\"color_mode\":\"groups\",\"title\":\"K-Means clusters (k = 4)\",\"x_label\":\"PC 1\",\"y_label\":\"PC 2\"}"
+      }
+    },
+    {
+      "id": 9, "type": 348, "name": "DBSCAN clusters", "pos_x": 1300, "pos_y": 400,
+      "parameters": {
+        "plot_spec": "{\"version\":1,\"kind\":\"scatter\",\"x\":\"pc_0\",\"y\":[\"pc_1\"],\"color\":\"cluster_id\",\"color_mode\":\"groups\",\"title\":\"DBSCAN clusters (-1 = noise)\",\"x_label\":\"PC 1\",\"y_label\":\"PC 2\"}"
+      }
+    }
+  ],
+  "links": [
+    { "id": 1, "from_node": 1, "to_node": 2, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 2, "from_node": 2, "to_node": 3, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 3, "from_node": 3, "to_node": 4, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 4, "from_node": 4, "to_node": 5, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 5, "from_node": 4, "to_node": 6, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 6, "from_node": 4, "to_node": 7, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 7, "from_node": 5, "to_node": 8, "from_pin_index": 0, "to_pin_index": 0 },
+    { "id": 8, "from_node": 6, "to_node": 9, "from_pin_index": 0, "to_pin_index": 0 }
+  ]
+}
