@@ -3219,6 +3219,7 @@ endif()
 set_target_properties(test_recurrent_backend_placement PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_test(NAME recurrent_backend_placement COMMAND test_recurrent_backend_placement)
 
 # ===== Test: Recurrent ArrayFire Profile Smoke =====
 add_executable(test_recurrent_af_profile_smoke

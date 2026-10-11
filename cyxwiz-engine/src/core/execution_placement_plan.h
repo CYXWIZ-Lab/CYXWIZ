@@ -215,20 +215,18 @@ inline bool IsArrayFireTrainingLoss(gui::NodeType type) {
         case gui::NodeType::TripletLoss:
         case gui::NodeType::ContrastiveLoss:
         case gui::NodeType::CosineEmbeddingLoss:
+        case gui::NodeType::SoftDiceLoss:
+        case gui::NodeType::TverskyLoss:
+        case gui::NodeType::JaccardLoss:
             return true;
         default:
             return false;
     }
 }
 
-inline bool IsNativeCpuTrainingLoss(gui::NodeType type) {
-    return type == gui::NodeType::SoftDiceLoss ||
-           type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss;
-}
-
+// Every training loss runs on ArrayFire (TOFIX140, 58a94b3c): no native CPU loss.
 inline bool IsSupportedTrainingLoss(gui::NodeType type) {
-    return IsArrayFireTrainingLoss(type) || IsNativeCpuTrainingLoss(type);
+    return IsArrayFireTrainingLoss(type);
 }
 
 inline bool IsSupportedTrainingOptimizer(gui::NodeType type) {
@@ -354,33 +352,18 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
     }
 
     const bool supported_loss = IsSupportedTrainingLoss(config.loss_type);
-    const bool arrayfire_loss = IsArrayFireTrainingLoss(config.loss_type);
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
         config.loss_node_id >= 0 ? config.loss_node_id : -3001,
         "loss",
         "Loss." + TrainingLossPlacementName(config),
         context,
-        !supported_loss
-            ? BackendPlacementStatus::Unsupported
-            : (arrayfire_loss
-                   ? ExecutionPlacementStatus::ArrayFire
-                   : BackendPlacementStatus::Cpu),
-        !supported_loss
-            ? "loss_unsupported"
-            : (arrayfire_loss
-                   ? "loss_arrayfire"
-                   : "loss_native_cpu_compatibility"),
-        !supported_loss
-            ? "unavailable"
-            : (arrayfire_loss ? backend : "native_cpu"),
-        !supported_loss
-            ? "TrainingExecutor has no configured loss implementation for "
-              "this node type."
-            : (arrayfire_loss
-                   ? "Loss computation is assigned to the selected ArrayFire "
-                     "backend."
-                   : "This loss currently executes through its declared "
-                     "native CPU compatibility implementation.")));
+        supported_loss ? ExecutionPlacementStatus::ArrayFire : BackendPlacementStatus::Unsupported,
+        supported_loss ? "loss_arrayfire" : "loss_unsupported",
+        supported_loss ? backend : "unavailable",
+        supported_loss
+            ? "Loss computation is assigned to the selected ArrayFire backend."
+            : "TrainingExecutor has no configured loss implementation for "
+              "this node type."));
 
     const bool supported_metrics =
         IsSupportedTrainingMetricContract(config);

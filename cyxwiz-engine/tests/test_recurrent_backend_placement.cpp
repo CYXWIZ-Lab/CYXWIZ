@@ -563,6 +563,8 @@ int main() {
     std::error_code remove_error;
     std::filesystem::remove(cache_path, remove_error);
 
+    // Model layers run on ArrayFire only (TOFIX140, 354ac907): a runtime-fallback
+    // observation saved before the sweep must not route them to CPU any more.
     cyxwiz::ClearBackendPlacementObservationCacheForTesting();
     auto embedding_layer = TensorLayer(
         gui::NodeType::Embedding, 30, {16}, {16, 32});
@@ -575,18 +577,7 @@ int main() {
         cyxwiz::BuildEmbeddingPlacementShapeSignature(500, 32, {16}, "int32"),
         cyxwiz::BackendPlacementObservationReason::GpuBackendException,
         cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
-        "simulated Embedding fallback observation");
-    const auto embedding_cached_placement =
-        cyxwiz::backend_placement::BuildArrayFireTensorPlacement(
-            embedding_layer);
-    Check(embedding_cached_placement.status == cyxwiz::BackendPlacementStatus::Cpu,
-          "cached Embedding fallback should route exact shape to CPU");
-    Check(embedding_cached_placement.reason_code ==
-              cyxwiz::BackendPlacementObservationReason::GpuBackendException,
-          "cached Embedding fallback should preserve structured reason");
-
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-    auto relu_layer = TensorLayer(gui::NodeType::ReLU, 31, {4, 8}, {4, 8});
+        "stale Embedding fallback observation");
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
         "ReLU",
         "cuda",
@@ -594,32 +585,15 @@ int main() {
         cyxwiz::BuildActivationPlacementShapeSignature({4, 8}, "float32"),
         cyxwiz::BackendPlacementObservationReason::ArrayFireJitCompileFailure,
         cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
-        "simulated ReLU fallback observation");
-    const auto relu_cached_placement =
-        cyxwiz::backend_placement::BuildArrayFireTensorPlacement(relu_layer);
-    Check(relu_cached_placement.status == cyxwiz::BackendPlacementStatus::Cpu,
-          "cached ReLU fallback should route exact activation shape to CPU");
-
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-    for (const auto activation_case : {
-             std::pair<gui::NodeType, const char*>{gui::NodeType::Sigmoid, "Sigmoid"},
-             std::pair<gui::NodeType, const char*>{gui::NodeType::Tanh, "Tanh"}}) {
-        cyxwiz::RecordBackendPlacementObservationForActiveDevice(
-            activation_case.second,
-            "cuda",
-            "float32",
-            cyxwiz::BuildActivationPlacementShapeSignature({4, 8}, "float32"),
-            cyxwiz::BackendPlacementObservationReason::BackendInternalError,
-            cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
-            "simulated activation fallback observation");
-        const auto placement =
-            cyxwiz::backend_placement::BuildArrayFireTensorPlacement(
-                TensorLayer(activation_case.first, 32, {4, 8}, {4, 8}));
-        Check(placement.status == cyxwiz::BackendPlacementStatus::Cpu,
-              std::string("cached ") + activation_case.second +
-                  " fallback should route exact activation shape to CPU");
-        cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+        "stale ReLU fallback observation");
+    for (const auto& layer : {embedding_layer, TensorLayer(gui::NodeType::ReLU, 31, {4, 8}, {4, 8})}) {
+        const auto placement = cyxwiz::backend_placement::BuildArrayFireTensorPlacement(layer);
+        Check(placement.status == cyxwiz::BackendPlacementStatus::Gpu &&
+                  placement.fallback_backend == "none" &&
+                  placement.reason_code == cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+              "a stale fallback observation must not route a model layer to CPU");
     }
+    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
 
     Check(cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
               gui::NodeType::Embedding),
@@ -845,17 +819,15 @@ int main() {
     Check(saw_optimizer_update,
           "executable plan should declare optimizer update placement");
 
-    auto native_loss_config = dense_config;
-    native_loss_config.loss_type = gui::NodeType::SoftDiceLoss;
-    const auto native_loss_plan =
-        cyxwiz::BuildExecutionPlacementPlan(native_loss_config, cpu_context);
-    Check(native_loss_plan.IsExecutable(),
-          "declared native CPU loss should remain executable in compatibility mode");
-    Check(!native_loss_plan.IsStrictlyExecutable(),
-          "declared native CPU loss should block strict ArrayFire residency");
-    Check(native_loss_plan.StrictBlockerSummary().find(
-              "loss_native_cpu_compatibility") != std::string::npos,
-          "strict blocker should identify the native CPU loss reason");
+    // SoftDice / Tversky / Jaccard run on ArrayFire only (58a94b3c): strict runs allow them.
+    for (const auto loss : {gui::NodeType::SoftDiceLoss, gui::NodeType::TverskyLoss, gui::NodeType::JaccardLoss}) {
+        auto overlap_loss_config = dense_config;
+        overlap_loss_config.loss_type = loss;
+        const auto overlap_loss_plan =
+            cyxwiz::BuildExecutionPlacementPlan(overlap_loss_config, cpu_context);
+        Check(overlap_loss_plan.IsExecutable() && overlap_loss_plan.IsStrictlyExecutable(),
+              "overlap losses run on ArrayFire and pass strict placement");
+    }
 
     auto sequence_metrics_config = dense_config;
     sequence_metrics_config.sequence_batch.enabled = true;
@@ -981,6 +953,8 @@ int main() {
               cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
           "LSTM placement should use the ArrayFire tensor reason code");
 
+    // A Dense fallback observation recorded (or persisted) before the TOFIX140
+    // sweep must not route the compiled Dense layer to CPU: it has no CPU path.
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
         "Dense",
         "cuda",
@@ -988,34 +962,7 @@ int main() {
         cyxwiz::BuildDensePlacementShapeSignature({8}, 2),
         cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
         cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
-        "simulated Dense fallback observation");
-    auto dense_cached_config =
-        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
-    const auto* dense_cached_placement =
-        FindPlacement(dense_cached_config, 5);
-    Check(dense_cached_placement != nullptr,
-          "cached Dense fallback placement entry should reference node 5");
-    Check(dense_cached_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "cached tensor-layer fallback should route exact Dense shape to CPU");
-    Check(dense_cached_placement->reason_code ==
-              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
-          "cached Dense fallback should preserve structured fallback reason");
-    Check(dense_cached_placement->explanation.find("source=runtime_fallback") !=
-              std::string::npos,
-          "cached Dense fallback should include observation source");
-    Check(dense_cached_placement->declared_execution_mode ==
-              "direct_arrayfire",
-          "tensor-layer placement should keep the declared direct_arrayfire "
-          "mode even when evidence routes this exact key to CPU");
-    Check(dense_cached_placement->observation_source ==
-              cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
-          "cached Dense fallback should carry observation source metadata");
-    Check(dense_cached_placement->observation_shape_signature ==
-              cyxwiz::BuildDensePlacementShapeSignature({8}, 2),
-          "cached Dense fallback should carry observation shape metadata");
-    Check(HasWarningText(dense_cached_config,
-                         cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory),
-          "cached Dense fallback should surface as a compiler warning");
+        "stale Dense fallback observation");
     const auto compiler_cache_path = std::filesystem::temp_directory_path() /
         "cyxwiz_backend_placement_compiler_cache_test.json";
     cache_error.clear();
@@ -1023,27 +970,20 @@ int main() {
               compiler_cache_path.string(),
               &cache_error),
           "Compiler placement observation cache should save: " + cache_error);
-    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-    auto persistent_dense_cached_config =
-        CompileRecurrentGraph(
-            gui::NodeType::LSTM,
-            8,
-            false,
-            compiler_cache_path.string());
-    const auto* persistent_dense_cached_placement =
-        FindPlacement(persistent_dense_cached_config, 5);
-    Check(persistent_dense_cached_placement != nullptr,
-          "persistent Dense fallback placement entry should reference node 5");
-    Check(persistent_dense_cached_placement->status ==
-              cyxwiz::BackendPlacementStatus::Cpu,
-          "persistent tensor-layer fallback should route exact Dense shape to CPU");
-    Check(persistent_dense_cached_placement->reason_code ==
-              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
-          "persistent Dense fallback should preserve structured fallback reason");
-    Check(HasWarningText(
-              persistent_dense_cached_config,
-              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory),
-          "persistent Dense fallback should surface as a compiler warning");
+    for (const bool persisted : {false, true}) {
+        if (persisted) cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+        auto stale_config = persisted
+            ? CompileRecurrentGraph(gui::NodeType::LSTM, 8, false, compiler_cache_path.string())
+            : CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
+        const auto* dense_placement = FindPlacement(stale_config, 5);
+        Check(dense_placement != nullptr, "Dense placement entry should reference node 5");
+        Check(dense_placement->status == cyxwiz::BackendPlacementStatus::Gpu &&
+                  dense_placement->declared_execution_mode == "direct_arrayfire",
+              std::string(persisted ? "a persisted" : "an in-memory") +
+                  " stale Dense fallback observation must not route Dense to CPU");
+        Check(!HasWarningText(stale_config, cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory),
+              "a stale Dense fallback observation must not surface as a compiler warning");
+    }
     std::error_code compiler_cache_remove_error;
     std::filesystem::remove(compiler_cache_path, compiler_cache_remove_error);
     cyxwiz::ClearBackendPlacementObservationCacheForTesting();
