@@ -13,6 +13,7 @@
 #endif
 
 #include <cmath>
+#include <functional>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -151,16 +152,13 @@ void CheckElementwise(const cyxwiz::Tensor& actual, const json& test_case) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_elementwise_host_sync_count = 0;
 size_t g_elementwise_fallback_count = 0;
-std::vector<std::string> g_elementwise_fallback_operations;
 
 void CountElementwiseHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_elementwise_host_sync_count;
 }
 
-void CountElementwiseFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+void CountElementwiseFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
     ++g_elementwise_fallback_count;
-    g_elementwise_fallback_operations.push_back(event.operation_name);
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -297,85 +295,65 @@ TEST_CASE("Tensor elementwise matrix matches PyTorch on every installed accelera
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
 
-TEST_CASE("Tensor rank-five elementwise fallback is explicit and strict-safe",
-          "[tensor][tensor_elementwise][arrayfire][fallback]") {
+// TOFIX140 F4: rank-five elementwise ops run on the device (flat view, with
+// the broadcast collapse). Each result equals the same op on the equivalent
+// rank-4 shapes, which take the semantic path.
+TEST_CASE("Tensor rank-five elementwise ops run on the device",
+          "[tensor][tensor_elementwise][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
     const cyxwiz::Tensor left = cyxwiz::Tensor::RangeN(
         {1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-    const float right_values[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    const float right_values[] = {1.0f, 2.0f, 3.0f, 0.5f};
     const cyxwiz::Tensor right(
         {2, 1, 2, 1}, right_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor left4 = left.Reshape({2, 1, 2, 2});
+    right.GetRowMajorFlatArray().eval();
 
+    using Op = std::function<cyxwiz::Tensor(const cyxwiz::Tensor&, const cyxwiz::Tensor&)>;
+    const std::vector<std::pair<std::string, Op>> ops = {
+        {"add", [](const auto& l, const auto& r) { return l + r; }},
+        {"subtract", [](const auto& l, const auto& r) { return l - r; }},
+        {"multiply", [](const auto& l, const auto& r) { return l * r; }},
+        {"divide", [](const auto& l, const auto& r) { return l / r; }},
+        {"pow tensor", [](const auto& l, const auto& r) { return l.Pow(r); }},
+        {"add scalar", [](const auto& l, const auto&) { return l + 1.0f; }},
+        {"subtract scalar", [](const auto& l, const auto&) { return l - 1.0f; }},
+        {"multiply scalar", [](const auto& l, const auto&) { return l * 2.0f; }},
+        {"divide scalar", [](const auto& l, const auto&) { return l / 2.0f; }},
+        {"pow scalar", [](const auto& l, const auto&) { return l.Pow(2.0f); }},
+        {"sqrt", [](const auto& l, const auto&) { return l.Sqrt(); }},
+        {"exp", [](const auto& l, const auto&) { return l.Exp(); }},
+        {"log", [](const auto& l, const auto&) { return l.Log(); }},
+        {"sin", [](const auto& l, const auto&) { return l.Sin(); }},
+        {"cos", [](const auto& l, const auto&) { return l.Cos(); }},
+        {"abs", [](const auto& l, const auto&) { return (l - 3.0f).Abs(); }},
+        {"sign", [](const auto& l, const auto&) { return (l - 3.0f).Sign(); }},
+        {"clip", [](const auto& l, const auto&) { return l.Clip(1.0f, 4.0f); }},
+        {"negate", [](const auto& l, const auto&) { return -l; }},
+    };
     g_elementwise_fallback_count = 0;
-    g_elementwise_fallback_operations.clear();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountElementwiseFallback);
-        REQUIRE((left + right).Shape() == left.Shape());
-        REQUIRE((left - right).Shape() == left.Shape());
-        REQUIRE((left * right).Shape() == left.Shape());
-        REQUIRE((left / right).Shape() == left.Shape());
-        REQUIRE(left.Pow(right).Shape() == left.Shape());
-        REQUIRE((left + 1.0f).Shape() == left.Shape());
-        REQUIRE((left - 1.0f).Shape() == left.Shape());
-        REQUIRE((left * 2.0f).Shape() == left.Shape());
-        REQUIRE((left / 2.0f).Shape() == left.Shape());
-        REQUIRE(left.Pow(2.0f).Shape() == left.Shape());
-        REQUIRE(left.Sqrt().Shape() == left.Shape());
-        REQUIRE(left.Exp().Shape() == left.Shape());
-        REQUIRE(left.Log().Shape() == left.Shape());
-        REQUIRE(left.Sin().Shape() == left.Shape());
-        REQUIRE(left.Cos().Shape() == left.Shape());
-        REQUIRE(left.Abs().Shape() == left.Shape());
-        REQUIRE(left.Sign().Shape() == left.Shape());
-        REQUIRE(left.Clip(1.0f, 4.0f).Shape() == left.Shape());
-        REQUIRE((-left).Shape() == left.Shape());
-    }
-    REQUIRE(g_elementwise_fallback_count == 19);
-    REQUIRE(g_elementwise_fallback_operations == std::vector<std::string>{
-        "Tensor::operator+",
-        "Tensor::operator-",
-        "Tensor::operator*",
-        "Tensor::operator/",
-        "Tensor::Pow(tensor)",
-        "Tensor::operator+(scalar)",
-        "Tensor::operator-(scalar)",
-        "Tensor::operator*(scalar)",
-        "Tensor::operator/(scalar)",
-        "Tensor::Pow(scalar)",
-        "Tensor::Sqrt",
-        "Tensor::Exp",
-        "Tensor::Log",
-        "Tensor::Sin",
-        "Tensor::Cos",
-        "Tensor::Abs",
-        "Tensor::Sign",
-        "Tensor::Clip",
-        "Tensor::operator-()"});
-
-    g_elementwise_fallback_count = 0;
-    g_elementwise_fallback_operations.clear();
+    std::vector<cyxwiz::Tensor> rank5, rank4;
     {
         const cyxwiz::ScopedArrayFireFallbackPolicy strict(
             cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
             &CountElementwiseFallback);
-        REQUIRE_THROWS_AS(left + right, std::runtime_error);
-        REQUIRE_THROWS_AS(left.Pow(right), std::runtime_error);
-        REQUIRE_THROWS_AS(left + 1.0f, std::runtime_error);
-        REQUIRE_THROWS_AS(left.Sqrt(), std::runtime_error);
-        REQUIRE_THROWS_AS(left.Abs(), std::runtime_error);
-        REQUIRE_THROWS_AS(-left, std::runtime_error);
+        for (const auto& [name, op] : ops) {
+            rank5.push_back(op(left, right));
+            rank4.push_back(op(left4, right));
+        }
     }
-    REQUIRE(g_elementwise_fallback_count == 6);
-    REQUIRE(g_elementwise_fallback_operations == std::vector<std::string>{
-        "Tensor::operator+",
-        "Tensor::Pow(tensor)",
-        "Tensor::operator+(scalar)",
-        "Tensor::Sqrt",
-        "Tensor::Abs",
-        "Tensor::operator-()"});
+    REQUIRE(g_elementwise_fallback_count == 0);
+    for (size_t i = 0; i < ops.size(); ++i) {
+        CAPTURE(ops[i].first);
+        REQUIRE(rank5[i].Shape() == left.Shape());
+        const float* a = rank5[i].ReadData<float>();
+        const float* b = rank4[i].ReadData<float>();
+        for (size_t k = 0; k < 8; ++k) {
+            CAPTURE(k);
+            REQUIRE(((std::isnan(a[k]) && std::isnan(b[k])) || a[k] == b[k]));
+        }
+    }
 }
 #endif
 

@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -122,16 +123,13 @@ void CheckMask(const cyxwiz::Tensor& actual, const json& expected) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_mask_host_sync_count = 0;
 size_t g_mask_fallback_count = 0;
-std::vector<std::string> g_mask_fallback_operations;
 
 void CountMaskHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_mask_host_sync_count;
 }
 
-void CountMaskFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+void CountMaskFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
     ++g_mask_fallback_count;
-    g_mask_fallback_operations.push_back(event.operation_name);
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -240,62 +238,58 @@ TEST_CASE("Tensor masks match PyTorch on every installed accelerator",
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
 
-TEST_CASE("Tensor rank-five mask fallback is explicit and strict-safe",
-          "[tensor][tensor_mask][arrayfire][fallback]") {
+// TOFIX140 F4: rank-five comparisons and logical ops run on the device; each
+// result equals the same op on the equivalent rank-4 shapes.
+TEST_CASE("Tensor rank-five masks run on the device",
+          "[tensor][tensor_mask][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
     const cyxwiz::Tensor left = cyxwiz::Tensor::RangeN(
         {1, 2, 1, 2, 2}, cyxwiz::DataType::Int32);
     const int32_t right_values[] = {0, 1, 0, 1};
     const cyxwiz::Tensor right(
         {2, 1, 2, 1}, right_values, cyxwiz::DataType::Int32);
+    const cyxwiz::Tensor left4 = left.Reshape({2, 1, 2, 2});
+    right.GetRowMajorFlatArray().eval();
 
+    using Op = std::function<cyxwiz::Tensor(const cyxwiz::Tensor&, const cyxwiz::Tensor&)>;
+    const std::vector<std::pair<std::string, Op>> ops = {
+        {">", [](const auto& l, const auto& r) { return l > r; }},
+        {">=", [](const auto& l, const auto& r) { return l >= r; }},
+        {"<", [](const auto& l, const auto& r) { return l < r; }},
+        {"<=", [](const auto& l, const auto& r) { return l <= r; }},
+        {"==", [](const auto& l, const auto& r) { return l == r; }},
+        {"!=", [](const auto& l, const auto& r) { return l != r; }},
+        {"> scalar", [](const auto& l, const auto&) { return l > 2.5f; }},
+        {">= scalar", [](const auto& l, const auto&) { return l >= 2.5f; }},
+        {"< scalar", [](const auto& l, const auto&) { return l < 2.5f; }},
+        {"<= scalar", [](const auto& l, const auto&) { return l <= 2.5f; }},
+        {"== scalar", [](const auto& l, const auto&) { return l == 3.0f; }},
+        {"!= scalar", [](const auto& l, const auto&) { return l != 3.0f; }},
+        {"&&", [](const auto& l, const auto& r) { return l && r; }},
+        {"||", [](const auto& l, const auto& r) { return l || r; }},
+        {"!", [](const auto& l, const auto&) { return !l; }},
+    };
     g_mask_fallback_count = 0;
-    g_mask_fallback_operations.clear();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountMaskFallback);
-        REQUIRE((left > right).Shape() == left.Shape());
-        REQUIRE((left >= right).Shape() == left.Shape());
-        REQUIRE((left < right).Shape() == left.Shape());
-        REQUIRE((left <= right).Shape() == left.Shape());
-        REQUIRE((left == right).Shape() == left.Shape());
-        REQUIRE((left != right).Shape() == left.Shape());
-        REQUIRE((left > 2.5f).Shape() == left.Shape());
-        REQUIRE((left >= 2.5f).Shape() == left.Shape());
-        REQUIRE((left < 2.5f).Shape() == left.Shape());
-        REQUIRE((left <= 2.5f).Shape() == left.Shape());
-        REQUIRE((left == 2.5f).Shape() == left.Shape());
-        REQUIRE((left != 2.5f).Shape() == left.Shape());
-        REQUIRE((left && right).Shape() == left.Shape());
-        REQUIRE((left || right).Shape() == left.Shape());
-        REQUIRE((!left).Shape() == left.Shape());
-    }
-    REQUIRE(g_mask_fallback_count == 15);
-    REQUIRE(g_mask_fallback_operations == std::vector<std::string>{
-        "Tensor::operator>", "Tensor::operator>=", "Tensor::operator<",
-        "Tensor::operator<=", "Tensor::operator==", "Tensor::operator!=",
-        "Tensor::operator>(scalar)", "Tensor::operator>=(scalar)",
-        "Tensor::operator<(scalar)", "Tensor::operator<=(scalar)",
-        "Tensor::operator==(scalar)", "Tensor::operator!=(scalar)",
-        "Tensor::operator&&", "Tensor::operator||", "Tensor::operator!"});
-
-    g_mask_fallback_count = 0;
-    g_mask_fallback_operations.clear();
+    std::vector<cyxwiz::Tensor> rank5, rank4;
     {
         const cyxwiz::ScopedArrayFireFallbackPolicy strict(
             cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
             &CountMaskFallback);
-        REQUIRE_THROWS_AS(left > right, std::runtime_error);
-        REQUIRE_THROWS_AS(left > 2.5f, std::runtime_error);
-        REQUIRE_THROWS_AS(left && right, std::runtime_error);
-        REQUIRE_THROWS_AS(!left, std::runtime_error);
+        for (const auto& [name, op] : ops) {
+            rank5.push_back(op(left, right));
+            rank4.push_back(op(left4, right));
+        }
     }
-    REQUIRE(g_mask_fallback_count == 4);
-    REQUIRE(g_mask_fallback_operations == std::vector<std::string>{
-        "Tensor::operator>", "Tensor::operator>(scalar)",
-        "Tensor::operator&&", "Tensor::operator!"});
+    REQUIRE(g_mask_fallback_count == 0);
+    for (size_t i = 0; i < ops.size(); ++i) {
+        CAPTURE(ops[i].first);
+        REQUIRE(rank5[i].Shape() == left.Shape());
+        REQUIRE(rank5[i].GetDataType() == cyxwiz::DataType::UInt8);
+        const uint8_t* a = rank5[i].ReadData<uint8_t>();
+        const uint8_t* b = rank4[i].ReadData<uint8_t>();
+        for (size_t k = 0; k < 8; ++k) REQUIRE(a[k] == b[k]);
+    }
 }
 #endif
 

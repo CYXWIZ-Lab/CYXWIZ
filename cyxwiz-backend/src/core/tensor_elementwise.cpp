@@ -1,21 +1,15 @@
 #include "cyxwiz/tensor.h"
 
-#include "tensor_backend_observation_utils.h"
 #include "tensor_math_utils.h"
 #include "tensor_utils.h"
 
-#include <bit>
-#include <cmath>
-#include <cstdint>
-#include <limits>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
+#include "../algorithms/arrayfire_host_values.h"
 #endif
 
 namespace cyxwiz {
@@ -51,304 +45,19 @@ const char* UnaryOperationName(UnaryOp operation) {
     return "Tensor::unary";
 }
 
-const char* UnaryName(UnaryOp operation) {
-    switch (operation) {
-        case UnaryOp::Pow: return "pow";
-        case UnaryOp::Sqrt: return "sqrt";
-        case UnaryOp::Exp: return "exp";
-        case UnaryOp::Log: return "log";
-        case UnaryOp::Sin: return "sin";
-        case UnaryOp::Cos: return "cos";
-        case UnaryOp::Abs: return "abs";
-        case UnaryOp::Sign: return "sign";
-        case UnaryOp::Clip: return "clip";
-        case UnaryOp::Negate: return "negate";
-    }
-    return "unknown";
-}
-
-template <typename T>
-T NegateWrapped(T value) {
-    if constexpr (std::is_integral_v<T>) {
-        using Unsigned = std::make_unsigned_t<T>;
-        const Unsigned result = Unsigned{} - static_cast<Unsigned>(value);
-        if constexpr (std::is_signed_v<T>) {
-            return std::bit_cast<T>(result);
-        } else {
-            return static_cast<T>(result);
-        }
-    } else {
-        return -value;
-    }
-}
-
-template <typename T>
-T MultiplyWrapped(T left, T right) {
-    if constexpr (std::is_integral_v<T>) {
-        using Unsigned = std::make_unsigned_t<T>;
-        const Unsigned result =
-            static_cast<Unsigned>(left) * static_cast<Unsigned>(right);
-        if constexpr (std::is_signed_v<T>) {
-            return std::bit_cast<T>(result);
-        } else {
-            return static_cast<T>(result);
-        }
-    } else {
-        return left * right;
-    }
-}
-
-template <typename T>
-T IntegerPower(T base, T exponent) {
-    if constexpr (std::is_signed_v<T>) {
-        if (exponent < 0) return T{};
-    }
-    using UnsignedExponent = std::make_unsigned_t<T>;
-    UnsignedExponent remaining = static_cast<UnsignedExponent>(exponent);
-    T result = static_cast<T>(1);
-    while (remaining != 0) {
-        if ((remaining & static_cast<UnsignedExponent>(1)) != 0) {
-            result = MultiplyWrapped(result, base);
-        }
-        remaining >>= 1;
-        if (remaining != 0) {
-            base = MultiplyWrapped(base, base);
-        }
-    }
-    return result;
-}
-
-template <typename In, typename Out>
-Tensor NativeRealUnaryTyped(const Tensor& input,
-                            UnaryOp operation,
-                            float first,
-                            float second,
-                            DataType output_dtype) {
-    Tensor result(input.Shape(), output_dtype);
-    const In* source = input.ReadData<In>();
-    Out* output = result.MutableData<Out>();
-    for (size_t index = 0; index < input.NumElements(); ++index) {
-        const Out value = static_cast<Out>(source[index]);
-        switch (operation) {
-            case UnaryOp::Pow:
-                output[index] = std::pow(value, static_cast<Out>(first));
-                break;
-            case UnaryOp::Sqrt: output[index] = std::sqrt(value); break;
-            case UnaryOp::Exp: output[index] = std::exp(value); break;
-            case UnaryOp::Log: output[index] = std::log(value); break;
-            case UnaryOp::Sin: output[index] = std::sin(value); break;
-            case UnaryOp::Cos: output[index] = std::cos(value); break;
-            case UnaryOp::Clip:
-                output[index] = (std::min)(
-                    (std::max)(value, static_cast<Out>(first)),
-                    static_cast<Out>(second));
-                break;
-            default:
-                throw std::runtime_error("Tensor real unary: invalid operation");
-        }
-    }
-    return result;
-}
-
-template <typename In>
-Tensor NativeRealUnaryOutput(const Tensor& input,
-                             UnaryOp operation,
-                             float first,
-                             float second,
-                             DataType output_dtype) {
-    if (output_dtype == DataType::Float64) {
-        return NativeRealUnaryTyped<In, double>(
-            input, operation, first, second, output_dtype);
-    }
-    return NativeRealUnaryTyped<In, float>(
-        input, operation, first, second, output_dtype);
-}
-
-Tensor NativeRealUnary(const Tensor& input,
-                       UnaryOp operation,
-                       float first,
-                       float second,
-                       DataType output_dtype) {
-    switch (input.GetDataType()) {
-        case DataType::Float32: return NativeRealUnaryOutput<float>(input, operation, first, second, output_dtype);
-        case DataType::Float64: return NativeRealUnaryOutput<double>(input, operation, first, second, output_dtype);
-        case DataType::Int32: return NativeRealUnaryOutput<int32_t>(input, operation, first, second, output_dtype);
-        case DataType::Int64: return NativeRealUnaryOutput<int64_t>(input, operation, first, second, output_dtype);
-        case DataType::UInt8: return NativeRealUnaryOutput<uint8_t>(input, operation, first, second, output_dtype);
-    }
-    throw std::runtime_error("Tensor real unary: unsupported data type");
-}
-
-template <typename T>
-Tensor NativePreservingUnaryTyped(const Tensor& input, UnaryOp operation) {
-    Tensor result(input.Shape(), input.GetDataType());
-    const T* source = input.ReadData<T>();
-    T* output = result.MutableData<T>();
-    for (size_t index = 0; index < input.NumElements(); ++index) {
-        const T value = source[index];
-        switch (operation) {
-            case UnaryOp::Abs:
-                output[index] = value < T{} ? NegateWrapped(value) : value;
-                break;
-            case UnaryOp::Sign:
-                output[index] = value > T{} ? static_cast<T>(1)
-                    : value < T{} ? static_cast<T>(-1) : T{};
-                break;
-            case UnaryOp::Negate:
-                output[index] = NegateWrapped(value);
-                break;
-            default:
-                throw std::runtime_error("Tensor preserving unary: invalid operation");
-        }
-    }
-    return result;
-}
-
-Tensor NativePreservingUnary(const Tensor& input, UnaryOp operation) {
-    switch (input.GetDataType()) {
-        case DataType::Float32: return NativePreservingUnaryTyped<float>(input, operation);
-        case DataType::Float64: return NativePreservingUnaryTyped<double>(input, operation);
-        case DataType::Int32: return NativePreservingUnaryTyped<int32_t>(input, operation);
-        case DataType::Int64: return NativePreservingUnaryTyped<int64_t>(input, operation);
-        case DataType::UInt8: return NativePreservingUnaryTyped<uint8_t>(input, operation);
-    }
-    throw std::runtime_error("Tensor preserving unary: unsupported data type");
-}
-
-template <typename Base, typename Exponent, typename Out>
-Tensor NativeTensorPowTyped(const Tensor& base,
-                            const Tensor& exponent,
-                            const std::vector<size_t>& output_shape,
-                            DataType output_dtype) {
-    Tensor result(output_shape, output_dtype);
-    const size_t count = result.NumElements();
-    if (count == 0) return result;
-    const auto output_strides = tensor_utils::RowMajorStrides(
-        output_shape, "Tensor::Pow: output stride overflow");
-    const auto base_strides = tensor_utils::RowMajorStrides(
-        base.Shape(), "Tensor::Pow: base stride overflow", true);
-    const auto exponent_strides = tensor_utils::RowMajorStrides(
-        exponent.Shape(), "Tensor::Pow: exponent stride overflow", true);
-    const Base* base_data = base.ReadData<Base>();
-    const Exponent* exponent_data = exponent.ReadData<Exponent>();
-    Out* output = result.MutableData<Out>();
-    for (size_t index = 0; index < count; ++index) {
-        const size_t base_index = tensor_math_utils::BroadcastIndex(
-            index, output_shape, output_strides, base.Shape(), base_strides);
-        const size_t exponent_index = tensor_math_utils::BroadcastIndex(
-            index, output_shape, output_strides,
-            exponent.Shape(), exponent_strides);
-        const Out left = static_cast<Out>(base_data[base_index]);
-        const Out right = static_cast<Out>(exponent_data[exponent_index]);
-        if constexpr (std::is_integral_v<Out>) {
-            output[index] = IntegerPower(left, right);
-        } else {
-            output[index] = std::pow(left, right);
-        }
-    }
-    return result;
-}
-
-template <typename Base, typename Exponent>
-Tensor DispatchPowOutput(const Tensor& base,
-                         const Tensor& exponent,
-                         const std::vector<size_t>& output_shape,
-                         DataType output_dtype) {
-    switch (output_dtype) {
-        case DataType::Float32: return NativeTensorPowTyped<Base, Exponent, float>(base, exponent, output_shape, output_dtype);
-        case DataType::Float64: return NativeTensorPowTyped<Base, Exponent, double>(base, exponent, output_shape, output_dtype);
-        case DataType::Int32: return NativeTensorPowTyped<Base, Exponent, int32_t>(base, exponent, output_shape, output_dtype);
-        case DataType::Int64: return NativeTensorPowTyped<Base, Exponent, int64_t>(base, exponent, output_shape, output_dtype);
-        case DataType::UInt8: return NativeTensorPowTyped<Base, Exponent, uint8_t>(base, exponent, output_shape, output_dtype);
-    }
-    throw std::runtime_error("Tensor::Pow: unsupported output data type");
-}
-
-template <typename Base>
-Tensor DispatchPowExponent(const Tensor& base,
-                           const Tensor& exponent,
-                           const std::vector<size_t>& output_shape,
-                           DataType output_dtype) {
-    switch (exponent.GetDataType()) {
-        case DataType::Float32: return DispatchPowOutput<Base, float>(base, exponent, output_shape, output_dtype);
-        case DataType::Float64: return DispatchPowOutput<Base, double>(base, exponent, output_shape, output_dtype);
-        case DataType::Int32: return DispatchPowOutput<Base, int32_t>(base, exponent, output_shape, output_dtype);
-        case DataType::Int64: return DispatchPowOutput<Base, int64_t>(base, exponent, output_shape, output_dtype);
-        case DataType::UInt8: return DispatchPowOutput<Base, uint8_t>(base, exponent, output_shape, output_dtype);
-    }
-    throw std::runtime_error("Tensor::Pow: unsupported exponent data type");
-}
-
-Tensor NativeTensorPow(const Tensor& base,
-                       const Tensor& exponent,
-                       const std::vector<size_t>& output_shape,
-                       DataType output_dtype) {
-    switch (base.GetDataType()) {
-        case DataType::Float32: return DispatchPowExponent<float>(base, exponent, output_shape, output_dtype);
-        case DataType::Float64: return DispatchPowExponent<double>(base, exponent, output_shape, output_dtype);
-        case DataType::Int32: return DispatchPowExponent<int32_t>(base, exponent, output_shape, output_dtype);
-        case DataType::Int64: return DispatchPowExponent<int64_t>(base, exponent, output_shape, output_dtype);
-        case DataType::UInt8: return DispatchPowExponent<uint8_t>(base, exponent, output_shape, output_dtype);
-    }
-    throw std::runtime_error("Tensor::Pow: unsupported base data type");
-}
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-void RecordUnaryArrayFireFallback(const char* operation_name,
-                         const Tensor& input,
-                         const std::vector<size_t>& output_shape,
-                         DataType output_dtype,
-                         const std::string& attributes,
-                         const char* error_message) {
-    const std::string message = tensor_backend_observation::RecordArrayFireFallback(
-        operation_name,
-        tensor_backend_observation::DataTypeName(output_dtype),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {input.Shape()}, output_shape, output_dtype, attributes),
-        error_message);
-    spdlog::warn("{}", message);
-}
-
-void RecordPowArrayFireFallback(const Tensor& base,
-                       const Tensor& exponent,
-                       const std::vector<size_t>& output_shape,
-                       DataType output_dtype,
-                       const char* error_message) {
-    const std::string message = tensor_backend_observation::RecordArrayFireFallback(
-        "Tensor::Pow(tensor)",
-        tensor_backend_observation::DataTypeName(output_dtype),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {base.Shape(), exponent.Shape()}, output_shape, output_dtype,
-            "op=pow;exponent=tensor;broadcast=true"),
-        error_message);
-    spdlog::warn("{}", message);
-}
-
-Tensor ArrayFireRealUnary(const Tensor& input,
-                          UnaryOp operation,
-                          float first,
-                          float second,
-                          DataType output_dtype) {
-    const af::array values =
-        input.GetSemanticArray().as(
-            tensor_math_utils::ArrayFireType(output_dtype));
-    af::array output;
+af::array RealUnary(const af::array& values, UnaryOp operation, float first, float second) {
     switch (operation) {
-        case UnaryOp::Pow: output = af::pow(values, first); break;
-        case UnaryOp::Sqrt: output = af::sqrt(values); break;
-        case UnaryOp::Exp: output = af::exp(values); break;
-        case UnaryOp::Log: output = af::log(values); break;
-        case UnaryOp::Sin: output = af::sin(values); break;
-        case UnaryOp::Cos: output = af::cos(values); break;
-        case UnaryOp::Clip:
-            output = (af::min)((af::max)(values, first), second);
-            break;
-        default:
-            throw std::runtime_error("Tensor real unary: invalid ArrayFire operation");
+        case UnaryOp::Pow: return af::pow(values, first);
+        case UnaryOp::Sqrt: return af::sqrt(values);
+        case UnaryOp::Exp: return af::exp(values);
+        case UnaryOp::Log: return af::log(values);
+        case UnaryOp::Sin: return af::sin(values);
+        case UnaryOp::Cos: return af::cos(values);
+        case UnaryOp::Clip: return (af::min)((af::max)(values, first), second);
+        default: break;
     }
-    output = output.as(tensor_math_utils::ArrayFireType(output_dtype));
-    output.eval();
-    return Tensor::FromSemanticArray(output, input.Shape());
+    throw std::runtime_error("Tensor real unary: invalid ArrayFire operation");
 }
 
 af::array ArrayFireSign(const af::array& values) {
@@ -360,67 +69,40 @@ af::array ArrayFireSign(const af::array& values) {
         values > 0, one, af::select(values < 0, negative_one, zero));
 }
 
-Tensor ArrayFirePreservingUnary(const Tensor& input, UnaryOp operation) {
-    const af::array values = input.GetSemanticArray();
-    af::array output;
+af::array PreservingUnary(const af::array& values, UnaryOp operation) {
     switch (operation) {
-        case UnaryOp::Abs: output = af::abs(values); break;
-        case UnaryOp::Sign: output = ArrayFireSign(values); break;
-        case UnaryOp::Negate:
-            output = af::constant(0, values.dims(), values.type()) - values;
-            break;
-        default:
-            throw std::runtime_error(
-                "Tensor preserving unary: invalid ArrayFire operation");
+        case UnaryOp::Abs: return af::abs(values);
+        case UnaryOp::Sign: return ArrayFireSign(values);
+        // Integers wrap like two's complement (0 - x), floats negate.
+        case UnaryOp::Negate: return af::constant(0, values.dims(), values.type()) - values;
+        default: break;
     }
-    output = output.as(
-        tensor_math_utils::ArrayFireType(input.GetDataType()));
-    output.eval();
-    return Tensor::FromSemanticArray(output, input.Shape());
+    throw std::runtime_error("Tensor preserving unary: invalid ArrayFire operation");
 }
 
-Tensor ArrayFireTensorPow(const Tensor& base,
-                          const Tensor& exponent,
-                          const std::vector<size_t>& output_shape,
-                          DataType output_dtype) {
-    af::array left = tensor_math_utils::BroadcastArray(
-        base, output_shape, output_dtype);
-    af::array right =
-        tensor_math_utils::BroadcastArray(
-            exponent, output_shape, output_dtype);
-    af::array output;
-    if (tensor_math_utils::IsIntegralType(output_dtype)) {
-        const unsigned bit_count = output_dtype == DataType::UInt8 ? 8u
-            : output_dtype == DataType::Int32 ? 32u : 64u;
-        const af::array nonnegative = right >= 0;
-        af::array remaining = af::select(
-            nonnegative, right, af::constant(0, right.dims(), right.type())).as(u64);
-        af::array factor = left;
-        output = af::constant(
-            1, left.dims(), tensor_math_utils::ArrayFireType(output_dtype));
-        for (unsigned bit = 0; bit < bit_count; ++bit) {
-            const af::array odd = (remaining & 1u) != 0u;
-            output = af::select(
-                odd,
-                (output * factor).as(
-                    tensor_math_utils::ArrayFireType(output_dtype)),
-                output);
-            remaining = remaining >> 1u;
-            if (bit + 1u < bit_count) {
-                factor = (factor * factor).as(
-                    tensor_math_utils::ArrayFireType(output_dtype));
-            }
-        }
-        output = af::select(
-            nonnegative,
-            output,
-            af::constant(0, output.dims(), output.type()));
-    } else {
-        output = af::pow(left, right);
+// Integer powers by square-and-multiply in the output type (wrapping);
+// negative exponents give 0. Floats use af::pow.
+af::array TensorPow(const af::array& left, const af::array& right, DataType output_dtype) {
+    if (!tensor_math_utils::IsIntegralType(output_dtype)) {
+        return af::pow(left, right);
     }
-    output = output.as(tensor_math_utils::ArrayFireType(output_dtype));
-    output.eval();
-    return Tensor::FromSemanticArray(output, output_shape);
+    const af::dtype type = tensor_math_utils::ArrayFireType(output_dtype);
+    const unsigned bit_count = output_dtype == DataType::UInt8 ? 8u
+        : output_dtype == DataType::Int32 ? 32u : 64u;
+    const af::array nonnegative = right >= 0;
+    af::array remaining = af::select(
+        nonnegative, right, af::constant(0, right.dims(), right.type())).as(u64);
+    af::array factor = left;
+    af::array output = af::constant(1, left.dims(), type);
+    for (unsigned bit = 0; bit < bit_count; ++bit) {
+        const af::array odd = (remaining & 1u) != 0u;
+        output = af::select(odd, (output * factor).as(type), output);
+        remaining = remaining >> 1u;
+        if (bit + 1u < bit_count) {
+            factor = (factor * factor).as(type);
+        }
+    }
+    return af::select(nonnegative, output, af::constant(0, output.dims(), output.type()));
 }
 #endif
 
@@ -432,26 +114,21 @@ Tensor ApplyRealUnary(const Tensor& input,
         tensor_math_utils::RealType(input.GetDataType());
     if (input.NumElements() == 0) return Tensor(input.Shape(), output_dtype);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const char* operation_name = UnaryOperationName(operation);
-    const std::string attributes =
-        "op=" + std::string(UnaryName(operation));
-    if (input.Shape().size() <= 4) {
-        try {
-            return ArrayFireRealUnary(
-                input, operation, first, second, output_dtype);
-        } catch (const af::exception& error) {
-            RecordUnaryArrayFireFallback(
-                operation_name, input, input.Shape(), output_dtype,
-                attributes, error.what());
-        }
-    } else {
-        RecordUnaryArrayFireFallback(
-            operation_name, input, input.Shape(), output_dtype, attributes,
-            "ArrayFire Tensor elementwise operations support ranks up to 4");
+    try {
+        const af::dtype type = tensor_math_utils::ArrayFireType(output_dtype);
+        af::array output = RealUnary(tensor_math_utils::ElementwiseArray(input).as(type),
+                                     operation, first, second).as(type);
+        output.eval();
+        return tensor_math_utils::FromElementwiseArray(output, input.Shape());
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError(UnaryOperationName(operation), e));
     }
+#else
+    (void)first;
+    (void)second;
+    throw std::runtime_error(std::string(UnaryOperationName(operation)) +
+                             " runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    return NativeRealUnary(
-        input, operation, first, second, output_dtype);
 }
 
 Tensor ApplyPreservingUnary(const Tensor& input, UnaryOp operation) {
@@ -459,25 +136,18 @@ Tensor ApplyPreservingUnary(const Tensor& input, UnaryOp operation) {
         return Tensor(input.Shape(), input.GetDataType());
     }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const char* operation_name = UnaryOperationName(operation);
-    const std::string attributes =
-        "op=" + std::string(UnaryName(operation));
-    if (input.Shape().size() <= 4) {
-        try {
-            return ArrayFirePreservingUnary(input, operation);
-        } catch (const af::exception& error) {
-            RecordUnaryArrayFireFallback(
-                operation_name, input, input.Shape(), input.GetDataType(),
-                attributes, error.what());
-        }
-    } else {
-        RecordUnaryArrayFireFallback(
-            operation_name, input, input.Shape(), input.GetDataType(),
-            attributes,
-            "ArrayFire Tensor elementwise operations support ranks up to 4");
+    try {
+        af::array output = PreservingUnary(tensor_math_utils::ElementwiseArray(input), operation)
+                               .as(tensor_math_utils::ArrayFireType(input.GetDataType()));
+        output.eval();
+        return tensor_math_utils::FromElementwiseArray(output, input.Shape());
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError(UnaryOperationName(operation), e));
     }
+#else
+    throw std::runtime_error(std::string(UnaryOperationName(operation)) +
+                             " runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    return NativePreservingUnary(input, operation);
 }
 
 } // namespace
@@ -497,22 +167,19 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
         return Tensor(output_shape, output_dtype);
     }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (output_shape.size() <= 4) {
-        try {
-            return ArrayFireTensorPow(
-                *this, exponent, output_shape, output_dtype);
-        } catch (const af::exception& error) {
-            RecordPowArrayFireFallback(
-                *this, exponent, output_shape, output_dtype, error.what());
-        }
-    } else {
-        RecordPowArrayFireFallback(
-            *this, exponent, output_shape, output_dtype,
-            "ArrayFire Tensor elementwise operations support ranks up to 4");
+    try {
+        af::array output = TensorPow(tensor_math_utils::BroadcastArray(*this, output_shape, output_dtype),
+                                     tensor_math_utils::BroadcastArray(exponent, output_shape, output_dtype),
+                                     output_dtype)
+                               .as(tensor_math_utils::ArrayFireType(output_dtype));
+        output.eval();
+        return tensor_math_utils::FromElementwiseArray(output, output_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::Pow(tensor)", e));
     }
+#else
+    throw std::runtime_error("Tensor::Pow(tensor) runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    return NativeTensorPow(
-        *this, exponent, output_shape, output_dtype);
 }
 
 Tensor Tensor::Sqrt() const {

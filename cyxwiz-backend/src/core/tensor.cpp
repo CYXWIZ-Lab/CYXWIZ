@@ -3,6 +3,7 @@
 #include "cyxwiz/memory_manager.h"
 #include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
+#include "tensor_math_utils.h"
 #include "../algorithms/arrayfire_host_values.h"
 #include <stdexcept>
 #include <cstring>
@@ -78,29 +79,6 @@ std::unique_ptr<TensorHostBuffer> AllocateHostBuffer(size_t bytes) {
     return bytes > 0 ? std::make_unique<TensorHostBuffer>(bytes) : nullptr;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-// ArrayFire dims of a rank <= 4 shape, in shape order and reversed.
-af::dim4 ShapeDims(const std::vector<size_t>& shape) {
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t i = 0; i < shape.size(); ++i) dims[static_cast<unsigned>(i)] = static_cast<dim_t>(shape[i]);
-    return dims;
-}
-
-af::dim4 ReversedDims(const std::vector<size_t>& shape) {
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t i = 0; i < shape.size(); ++i)
-        dims[static_cast<unsigned>(i)] = static_cast<dim_t>(shape[shape.size() - 1 - i]);
-    return dims;
-}
-
-// Row-major flat storage to the semantic view of a rank 2 / 3 / 4 shape.
-af::array SemanticFromFlat(const af::array& flat, const std::vector<size_t>& shape) {
-    const af::array storage = af::moddims(flat, ReversedDims(shape));
-    if (shape.size() == 2) return af::transpose(storage);
-    if (shape.size() == 3) return af::reorder(storage, 2, 1, 0);
-    return af::reorder(storage, 3, 2, 1, 0);
-}
-#endif
 
 } // namespace
 
@@ -309,7 +287,7 @@ af::array Tensor::GetArray() const {
         throw std::runtime_error("Tensor::GetArray: ArrayFire supports at most 4 dimensions");
     }
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::RowMajorFlat) {
-        af_array_ = std::make_unique<af::array>(af::moddims(*af_array_, ShapeDims(shape_)));
+        af_array_ = std::make_unique<af::array>(af::moddims(*af_array_, tensor_math_utils::ArrayFireDims(shape_)));
         device_layout_ = TensorDeviceLayout::ArrayFireNative;
         return *af_array_;
     }
@@ -382,7 +360,7 @@ af::array Tensor::GetArrayRowMajor2D() const {
         return GetArray();
     }
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::RowMajorFlat) {
-        af::array converted = SemanticFromFlat(*af_array_, shape_);
+        af::array converted = tensor_math_utils::RowMajorFlatToSemantic(*af_array_, shape_);
         converted.eval();
         af_array_ = std::make_unique<af::array>(std::move(converted));
         device_layout_ = TensorDeviceLayout::RowMajor2D;
@@ -431,7 +409,7 @@ af::array Tensor::GetArrayRowMajor3D() const {
         return GetArray();
     }
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::RowMajorFlat) {
-        af::array converted = SemanticFromFlat(*af_array_, shape_);
+        af::array converted = tensor_math_utils::RowMajorFlatToSemantic(*af_array_, shape_);
         converted.eval();
         af_array_ = std::make_unique<af::array>(std::move(converted));
         device_layout_ = TensorDeviceLayout::RowMajor3D;
@@ -481,7 +459,7 @@ af::array Tensor::GetArrayRowMajor4D() const {
         return GetArray();
     }
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::RowMajorFlat) {
-        af::array converted = SemanticFromFlat(*af_array_, shape_);
+        af::array converted = tensor_math_utils::RowMajorFlatToSemantic(*af_array_, shape_);
         converted.eval();
         af_array_ = std::make_unique<af::array>(std::move(converted));
         device_layout_ = TensorDeviceLayout::RowMajor4D;
@@ -909,7 +887,7 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
                 result.shape_ = new_shape;
                 result.dtype_ = dtype_;
                 result.device_ = device_;
-                result.af_array_ = std::make_unique<af::array>(af::moddims(*af_array_, ShapeDims(new_shape)));
+                result.af_array_ = std::make_unique<af::array>(af::moddims(*af_array_, tensor_math_utils::ArrayFireDims(new_shape)));
                 result.host_current_ = false;
                 result.device_current_ = true;
                 result.device_layout_ = TensorDeviceLayout::ArrayFireNative;
