@@ -52,7 +52,12 @@ private:
 
     // Results
     CholeskyResult result_;
+    MatrixResult reconstruction_;  // L * L^T, computed with the result
     bool has_result_ = false;
+    // Input checks, recomputed only when the matrix changes.
+    std::vector<std::vector<double>> checked_matrix_;
+    bool input_symmetric_ = false;
+    bool input_positive_definite_ = false;
     std::string error_message_;
 
     // Async computation

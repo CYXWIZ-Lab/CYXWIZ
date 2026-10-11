@@ -1,5 +1,6 @@
 #include "matrix_calculator_panel.h"
 #include "../icons.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -364,6 +365,11 @@ void MatrixCalculatorPanel::ComputeAsync() {
     error_message_.clear();
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
+        // Compute where the process runs: a worker starts on ArrayFire's
+        // default backend, not the selected device.
+        if (const auto selected = Device::GetProcessDevice()) {
+            Device(selected->type, selected->device_id).ActivateExact(false);
+        }
         ComputeOperation();
         is_computing_ = false;
     });

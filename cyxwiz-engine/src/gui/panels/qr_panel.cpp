@@ -1,5 +1,6 @@
 #include "qr_panel.h"
 #include "../icons.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -196,8 +197,7 @@ void QRPanel::RenderMatrixQ() {
     }
 
     // Check orthogonality
-    bool is_orthogonal = LinearAlgebra::IsOrthogonal(result_.Q);
-    if (is_orthogonal) {
+    if (q_orthogonal_) {
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Q is orthogonal (Q^T * Q = I)");
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Q orthogonality check failed");
@@ -254,8 +254,7 @@ void QRPanel::RenderVerification() {
     ImGui::Text("Verification: A = Q * R");
     ImGui::Spacing();
 
-    // Compute Q * R
-    auto qr_product = LinearAlgebra::Multiply(result_.Q, result_.R);
+    const MatrixResult& qr_product = qr_product_;
 
     if (!qr_product.success) {
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not verify: %s", qr_product.error_message.c_str());
@@ -327,10 +326,19 @@ void QRPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        // Compute where the process runs: a worker starts on ArrayFire's
+        // default backend, not the selected device.
+        if (const auto selected = Device::GetProcessDevice()) {
+            Device(selected->type, selected->device_id).ActivateExact(false);
+        }
 
         try {
             result_ = LinearAlgebra::QR(matrix_);
+            qr_product_ = {};
+            q_orthogonal_ = false;
             if (result_.success) {
+                qr_product_ = LinearAlgebra::Multiply(result_.Q, result_.R);
+                q_orthogonal_ = LinearAlgebra::IsOrthogonal(result_.Q);
                 has_result_ = true;
             } else {
                 error_message_ = result_.error_message;

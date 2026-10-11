@@ -1,5 +1,6 @@
 #include "svd_panel.h"
 #include "../icons.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -361,6 +362,11 @@ void SVDPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        // Compute where the process runs: a worker starts on ArrayFire's
+        // default backend, not the selected device.
+        if (const auto selected = Device::GetProcessDevice()) {
+            Device(selected->type, selected->device_id).ActivateExact(false);
+        }
 
         try {
             result_ = LinearAlgebra::SVD(matrix_, full_matrices_);

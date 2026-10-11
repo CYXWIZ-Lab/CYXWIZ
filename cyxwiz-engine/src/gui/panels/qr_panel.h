@@ -53,6 +53,8 @@ private:
 
     // Results
     QRResult result_;
+    MatrixResult qr_product_;  // Q * R, computed with the result
+    bool q_orthogonal_ = false;
     bool has_result_ = false;
     std::string error_message_;
 

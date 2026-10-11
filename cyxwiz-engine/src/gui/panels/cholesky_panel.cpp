@@ -1,5 +1,6 @@
 #include "cholesky_panel.h"
 #include "../icons.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -91,9 +92,20 @@ void CholeskyPanel::RenderMatrixInput() {
 
     ImGui::Spacing();
 
-    // Check symmetry and positive definiteness
-    bool is_symmetric = LinearAlgebra::IsSymmetric(matrix_);
-    bool is_pos_def = LinearAlgebra::IsPositiveDefinite(matrix_);
+    // Check symmetry and positive definiteness (on the device, so only
+    // when the matrix changed, not every frame).
+    if (checked_matrix_ != matrix_) {
+        checked_matrix_ = matrix_;
+        try {
+            input_symmetric_ = LinearAlgebra::IsSymmetric(matrix_);
+            input_positive_definite_ = LinearAlgebra::IsPositiveDefinite(matrix_);
+        } catch (const std::exception& e) {
+            input_symmetric_ = input_positive_definite_ = false;
+            spdlog::warn("Cholesky input check: {}", e.what());
+        }
+    }
+    const bool is_symmetric = input_symmetric_;
+    const bool is_pos_def = input_positive_definite_;
 
     if (is_symmetric) {
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Symmetric");
@@ -248,15 +260,7 @@ void CholeskyPanel::RenderVerification() {
         return;
     }
 
-    // Compute L^T
-    auto Lt = LinearAlgebra::Transpose(result_.L);
-    if (!Lt.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not compute L^T");
-        return;
-    }
-
-    // Compute L * L^T
-    auto LLt = LinearAlgebra::Multiply(result_.L, Lt.matrix);
+    const MatrixResult& LLt = reconstruction_;
     if (!LLt.success) {
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not compute L * L^T");
         return;
@@ -344,10 +348,18 @@ void CholeskyPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        // Compute where the process runs: a worker starts on ArrayFire's
+        // default backend, not the selected device.
+        if (const auto selected = Device::GetProcessDevice()) {
+            Device(selected->type, selected->device_id).ActivateExact(false);
+        }
 
         try {
             result_ = LinearAlgebra::Cholesky(matrix_);
+            reconstruction_ = {};
             if (result_.success) {
+                const auto Lt = LinearAlgebra::Transpose(result_.L);
+                if (Lt.success) reconstruction_ = LinearAlgebra::Multiply(result_.L, Lt.matrix);
                 has_result_ = true;
             } else {
                 error_message_ = result_.error_message;
