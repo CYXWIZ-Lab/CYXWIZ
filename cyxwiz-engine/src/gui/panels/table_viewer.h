@@ -95,7 +95,6 @@ public:
 
     // Set table to display (opens in new tab)
     void SetTable(std::shared_ptr<DataTable> table);
-    void SetTableByName(const std::string& name);
 
     // Close current tab
     void CloseCurrentTab();

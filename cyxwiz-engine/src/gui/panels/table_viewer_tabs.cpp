@@ -109,15 +109,6 @@ void TableViewerPanel::ReadLive(TableTab* tab, std::vector<int> index, long long
     });
 }
 
-void TableViewerPanel::SetTableByName(const std::string& name) {
-    auto table = DataTableRegistry::Instance().GetTable(name);
-    if (table) {
-        SetTable(table);
-    } else {
-        spdlog::warn("Table not found in registry: {}", name);
-    }
-}
-
 void TableViewerPanel::CloseCurrentTab() {
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
         CloseTab(active_tab_index_);

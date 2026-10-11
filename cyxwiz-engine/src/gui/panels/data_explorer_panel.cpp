@@ -1935,9 +1935,6 @@ void DataExplorerPanel::SendToDescriptiveStats() {
     auto table = ConvertResultToDataTable();
     if (!table) return;
 
-    // Add to registry for persistence
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
-
     // Show panel and analyze
     stats_panel_->SetVisible(true);
     stats_panel_->AnalyzeTable(table);
@@ -1954,8 +1951,6 @@ void DataExplorerPanel::SendToCorrelationMatrix() {
     auto table = ConvertResultToDataTable();
     if (!table) return;
 
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
-
     correlation_panel_->SetVisible(true);
     correlation_panel_->AnalyzeTable(table);
 
@@ -1970,8 +1965,6 @@ void DataExplorerPanel::SendToRegression() {
 
     auto table = ConvertResultToDataTable();
     if (!table) return;
-
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
 
     regression_panel_->SetVisible(true);
     regression_panel_->AnalyzeTable(table);
@@ -1988,8 +1981,6 @@ void DataExplorerPanel::SendToOutlierDetection() {
     auto table = ConvertResultToDataTable();
     if (!table) return;
 
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
-
     outlier_panel_->SetVisible(true);
     outlier_panel_->AnalyzeTable(table);
 
@@ -2005,8 +1996,6 @@ void DataExplorerPanel::SendToMissingValuePanel() {
     auto table = ConvertResultToDataTable();
     if (!table) return;
 
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
-
     missing_panel_->SetVisible(true);
     missing_panel_->AnalyzeTable(table);
 
@@ -2021,8 +2010,6 @@ void DataExplorerPanel::SendToDataProfiler() {
 
     auto table = ConvertResultToDataTable();
     if (!table) return;
-
-    DataTableRegistry::Instance().AddTable("explorer_result", table);
 
     profiler_panel_->SetVisible(true);
     profiler_panel_->AnalyzeTable(table);

@@ -479,44 +479,4 @@ bool DataTable::LoadFromExcel(const std::string& filepath, const std::string& sh
     return false;
 }
 
-// ============================================================================
-// DataTableRegistry Implementation
-// ============================================================================
-
-DataTableRegistry& DataTableRegistry::Instance() {
-    static DataTableRegistry instance;
-    return instance;
-}
-
-void DataTableRegistry::AddTable(const std::string& name, std::shared_ptr<DataTable> table) {
-    tables_[name] = table;
-    spdlog::info("Added table to registry: {}", name);
-}
-
-void DataTableRegistry::RemoveTable(const std::string& name) {
-    tables_.erase(name);
-    spdlog::info("Removed table from registry: {}", name);
-}
-
-void DataTableRegistry::Clear() {
-    tables_.clear();
-    spdlog::info("Cleared table registry");
-}
-
-std::shared_ptr<DataTable> DataTableRegistry::GetTable(const std::string& name) {
-    auto it = tables_.find(name);
-    if (it != tables_.end()) {
-        return it->second;
-    }
-    return nullptr;
-}
-
-std::vector<std::string> DataTableRegistry::GetTableNames() const {
-    std::vector<std::string> names;
-    for (const auto& [name, table] : tables_) {
-        names.push_back(name);
-    }
-    return names;
-}
-
 } // namespace cyxwiz

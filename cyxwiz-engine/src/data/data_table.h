@@ -69,25 +69,4 @@ private:
     std::vector<Row> rows_;
 };
 
-/**
- * DataTableRegistry - Manages multiple open data tables
- */
-class DataTableRegistry {
-public:
-    static DataTableRegistry& Instance();
-
-    // Add/remove tables
-    void AddTable(const std::string& name, std::shared_ptr<DataTable> table);
-    void RemoveTable(const std::string& name);
-    void Clear();
-
-    // Access tables
-    std::shared_ptr<DataTable> GetTable(const std::string& name);
-    std::vector<std::string> GetTableNames() const;
-
-private:
-    DataTableRegistry() = default;
-    std::map<std::string, std::shared_ptr<DataTable>> tables_;
-};
-
 } // namespace cyxwiz
