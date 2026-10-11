@@ -189,7 +189,7 @@ void PRCurvePanel::RenderF1Curve() {
         ImPlot::PlotLine("F1", sorted_t.data(), sorted_f1.data(), static_cast<int>(sorted_t.size()));
 
         // Mark best point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2, t.accent_text);
         ImPlot::PlotScatter("Best", &best_threshold, &best_f1, 1);
 
         ImPlot::EndPlot();

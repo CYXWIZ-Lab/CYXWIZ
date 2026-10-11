@@ -126,12 +126,12 @@ void LearningCurvesPanel::RenderLearningCurve() {
 
         // Training score curve
         ImPlot::SetNextLineStyle(t.series[1], 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, t.series[1], 1);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, t.series[1], 1, t.series[1]);
         ImPlot::PlotLine("Training Score", sizes_d.data(), train_scores.data(), static_cast<int>(train_scores.size()));
 
         // Validation score curve
         ImPlot::SetNextLineStyle(t.series[4], 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, t.series[4], 1);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, t.series[4], 1, t.series[4]);
         ImPlot::PlotLine("Validation Score", sizes_d.data(), val_scores.data(), static_cast<int>(val_scores.size()));
 
         // Plot error bands if std available

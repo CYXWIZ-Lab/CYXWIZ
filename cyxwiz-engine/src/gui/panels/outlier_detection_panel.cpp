@@ -273,14 +273,15 @@ void OutlierDetectionPanel::RenderScatterPlot() {
 
         // Plot normal points
         if (!normal_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, ui::WithAlpha(t.series[1], 0.8f));
+            const ImVec4 normal = ui::WithAlpha(t.series[1], 0.8f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, normal, IMPLOT_AUTO, normal);
             ImPlot::PlotScatter("Normal", normal_x.data(), normal_y.data(),
                                 static_cast<int>(normal_x.size()));
         }
 
         // Plot outliers
         if (!outlier_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[4]);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[4], IMPLOT_AUTO, t.series[4]);
             ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_y.data(),
                                 static_cast<int>(outlier_x.size()));
         }

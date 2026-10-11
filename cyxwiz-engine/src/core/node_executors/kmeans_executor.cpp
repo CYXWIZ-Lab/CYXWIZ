@@ -279,8 +279,8 @@ void KMeansExecutor::RenderScatterPlot() {
             }
 
             if (!x_vals.empty()) {
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4,
-                    ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(cluster)));
+                const ImVec4 colour = ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(cluster));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, colour, IMPLOT_AUTO, colour);
 
                 std::string label = fmt::format("Cluster {}", cluster);
                 ImPlot::PlotScatter(label.c_str(), x_vals.data(), y_vals.data(),
@@ -300,7 +300,7 @@ void KMeansExecutor::RenderScatterPlot() {
             }
 
             if (!cx.empty()) {
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ui::CurrentTokens().text_bright, 3);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ui::CurrentTokens().text_bright, 3, ui::CurrentTokens().text_bright);
                 ImPlot::PlotScatter("Centroids", cx.data(), cy.data(), static_cast<int>(cx.size()));
             }
         }

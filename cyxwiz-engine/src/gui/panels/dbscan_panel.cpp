@@ -207,7 +207,8 @@ void DBSCANPanel::RenderScatterPlot() {
             }
         }
         if (!noise_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, ui::WithAlpha(t.text_dim, 0.5f));
+            const ImVec4 noise = ui::WithAlpha(t.text_dim, 0.5f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, noise, IMPLOT_AUTO, noise);
             ImPlot::PlotScatter("Noise", noise_x.data(), noise_y.data(), static_cast<int>(noise_x.size()));
         }
 
@@ -222,7 +223,7 @@ void DBSCANPanel::RenderScatterPlot() {
             }
             if (!x_data.empty()) {
                 ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color, IMPLOT_AUTO, color);
                 ImPlot::PlotScatter(("Cluster " + std::to_string(k)).c_str(), x_data.data(), y_data.data(), static_cast<int>(x_data.size()));
             }
         }

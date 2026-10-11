@@ -134,7 +134,7 @@ void ROCAUCPanel::RenderROCCurve() {
 
             double point_x = roc_result_.fpr[best_idx];
             double point_y = roc_result_.tpr[best_idx];
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, t.series[4], 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, t.series[4], 2, t.series[4]);
             ImPlot::PlotScatter("Current", &point_x, &point_y, 1);
         }
 

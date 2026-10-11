@@ -162,7 +162,7 @@ void BoxCoxPanel::RenderLambdaPlot() {
                         static_cast<int>(lambda_result_.lambdas_tested.size()));
 
         // Mark optimal point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2, t.accent_text);
         ImPlot::PlotScatter("Optimal", &lambda_result_.optimal_lambda, &lambda_result_.best_log_likelihood, 1);
 
         ImPlot::EndPlot();

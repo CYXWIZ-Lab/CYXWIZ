@@ -240,7 +240,7 @@ void GMMPanel::RenderScatterPlot() {
             }
             if (!x_data.empty()) {
                 ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color, IMPLOT_AUTO, color);
                 ImPlot::PlotScatter(("Component " + std::to_string(k)).c_str(), x_data.data(), y_data.data(), static_cast<int>(x_data.size()));
             }
         }
@@ -254,7 +254,7 @@ void GMMPanel::RenderScatterPlot() {
                     my.push_back(mean[y_idx]);
                 }
             }
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, t.text_bright, 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, t.text_bright, 2, t.text_bright);
             ImPlot::PlotScatter("Means", mx.data(), my.data(), static_cast<int>(mx.size()));
         }
 

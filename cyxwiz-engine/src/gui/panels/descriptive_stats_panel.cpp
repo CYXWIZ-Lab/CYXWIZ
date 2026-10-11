@@ -237,7 +237,7 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
         // Mean point
         double mean_x[] = {1.0};
         double mean_y[] = {stats_.mean};
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[3]);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[3], IMPLOT_AUTO, t.series[3]);
         ImPlot::PlotScatter("Mean", mean_x, mean_y, 1);
 
         // Outliers
@@ -249,7 +249,8 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
             }
         }
         if (!outlier_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ui::WithAlpha(t.series[4], 0.7f));
+            const ImVec4 outlier = ui::WithAlpha(t.series[4], 0.7f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, outlier, IMPLOT_AUTO, outlier);
             ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_y.data(), static_cast<int>(outlier_x.size()));
         }
 
