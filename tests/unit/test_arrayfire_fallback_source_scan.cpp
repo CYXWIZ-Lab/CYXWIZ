@@ -42,7 +42,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/distributed/distributed_trainer.cpp", 10, "compatibility_compute", "legacy distributed trainer"},
         {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
         {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
-        {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
         {"cyxwiz-backend/src/algorithms/providers/nvidia_cublas_provider.cpp", 8, "transport_boundary", "NVIDIA neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0: rnn/lstm/gru forward outputs + optional stacked final states, lstm/gru backward dx and per-layer weight/bias gradients; explicit v1 boundary copies)"},
         {"cyxwiz-backend/src/algorithms/providers/opencl_cell_provider.cpp", 8, "transport_boundary", "OpenCL neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0 mirror of the NVIDIA provider: forward outputs + optional stacked final states, backward dx and per-layer gradients)"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},

@@ -196,6 +196,60 @@ TEST_CASE("BatchNorm2DLayer computes training forward and backward values", "[no
     REQUIRE(params.at("grad_beta").Data<float>()[0] == Catch::Approx(1.0f));
 }
 
+// Two channels over [H=2, W=3, C=2, N=2]: per-channel statistics across H, W and
+// the batch (the ArrayFire channel-column view). Values from PyTorch
+// functional.batch_norm(training=True), float64, eps 1e-5.
+TEST_CASE("BatchNorm2DLayer matches PyTorch across channels", "[norm][layer]") {
+    cyxwiz::BatchNorm2DLayer norm(2, 1e-5f, 0.1f);
+    float gamma_values[] = {1.5f, 0.5f};
+    float beta_values[] = {0.1f, -0.2f};
+    norm.SetParameters({
+        {"gamma", cyxwiz::Tensor({2}, gamma_values, cyxwiz::DataType::Float32)},
+        {"beta", cyxwiz::Tensor({2}, beta_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {
+        -2.0f, 1.75f, 0.0f, 3.75f, 1.0f, -0.75f, 3.0f, 1.25f, -1.5f, 2.25f, 0.5f, -1.25f,
+        1.5f, -0.25f, 3.5f, 1.75f, -1.0f, 2.75f, 1.0f, -0.75f, 2.0f, 0.25f, -1.5f, 2.25f,
+    };
+    float grad_values[] = {
+        -0.9f, 0.6f, 0.0f, -0.6f, 0.9f, 0.3f, -0.3f, -0.9f, 0.6f, 0.0f, -0.6f, 0.9f,
+        0.3f, -0.3f, -0.9f, 0.6f, 0.0f, -0.6f, 0.9f, 0.3f, -0.3f, -0.9f, 0.6f, 0.0f,
+    };
+    const float expected_output[] = {
+        -2.3604442f, 1.3302221f, -0.5273263f, 0.5637613f, 0.5920888f, -1.1302221f,
+        0.3455438f, -0.1636304f, -1.8683553f, 1.8223109f, -0.3818479f, -0.8910221f,
+        1.0841777f, -0.6381333f, 0.4910221f, -0.0181521f, -1.3762665f, 2.3143998f,
+        -0.2363696f, -0.7455438f, 1.5762665f, -0.1460444f, -0.9637613f, 0.1273263f,
+    };
+    const float expected_grad_input[] = {
+        -0.7883355f, 0.5787010f, -0.0741244f, -0.0016170f, 0.8958003f, 0.3562677f,
+        0.0362537f, -0.2536250f, 0.6733671f, -0.0263696f, -0.2157543f, 0.1053761f,
+        0.2907297f, -0.2488029f, -0.1053761f, 0.2157543f, 0.0682964f, -0.6314402f,
+        0.2536250f, -0.0362537f, -0.3143409f, -0.8538735f, 0.0016170f, 0.0741244f,
+    };
+
+    const cyxwiz::Tensor output =
+        norm.Forward(cyxwiz::Tensor({2, 3, 2, 2}, input_values, cyxwiz::DataType::Float32));
+    const cyxwiz::Tensor grad_input =
+        norm.Backward(cyxwiz::Tensor({2, 3, 2, 2}, grad_values, cyxwiz::DataType::Float32));
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 3, 2, 2});
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{2, 3, 2, 2});
+    const float* output_data = output.ReadData<float>();
+    const float* grad_input_data = grad_input.ReadData<float>();
+    for (size_t i = 0; i < 24; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]).margin(1e-5f));
+        REQUIRE(grad_input_data[i] == Catch::Approx(expected_grad_input[i]).margin(1e-5f));
+    }
+    const auto params = norm.GetParameters();
+    const float* grad_gamma = params.at("grad_gamma").ReadData<float>();
+    const float* grad_beta = params.at("grad_beta").ReadData<float>();
+    REQUIRE(grad_gamma[0] == Catch::Approx(0.5412977f).margin(1e-5f));
+    REQUIRE(grad_gamma[1] == Catch::Approx(-4.6698549f).margin(1e-5f));
+    REQUIRE(grad_beta[0] == Catch::Approx(-0.3f).margin(1e-5f));
+    REQUIRE(grad_beta[1] == Catch::Approx(0.0f).margin(1e-5f));
+}
+
 TEST_CASE("BatchNorm2DLayer uses running statistics in eval mode", "[norm][layer]") {
     cyxwiz::BatchNorm2DLayer norm(1, 1e-5f, 0.1f);
 
