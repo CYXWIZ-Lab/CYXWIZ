@@ -185,6 +185,16 @@ void CheckNer() {
     const auto not_compiled = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
                                                              IdNamed(ner.graph, "Dropout"), none);
     Check(not_compiled.status == "Not compiled yet" && !not_compiled.has_shapes, "before the first compile");
+
+    // Data Pipeline mode: no training compile, even with an older result around.
+    cyxwiz::CompiledNodeInputs pipeline = counting;
+    pipeline.state = cyxwiz::LiveCompileState::Failed;
+    pipeline.data_pipeline = true;
+    const auto pipeline_card = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
+                                                             IdNamed(ner.graph, "Dropout"), pipeline);
+    Check(pipeline_card.status == "Not compiled for training" && !pipeline_card.has_shapes &&
+              pipeline_card.kind == cyxwiz::CompiledStatusKind::None,
+          "a Data Pipeline graph shows no training compile status");
 }
 
 void CheckBerean() {

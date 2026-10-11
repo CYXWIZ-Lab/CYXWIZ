@@ -167,7 +167,8 @@ EmptyView BuildEmpty(const std::string& file_path,
                      size_t link_count,
                      LiveCompileState state,
                      const TrainingConfiguration* config,
-                     const std::vector<gui::MLNode>* nodes);
+                     const std::vector<gui::MLNode>* nodes,
+                     bool data_pipeline = false);  // Data Pipeline mode: no training compile
 
 // "Generation Preview Every Epochs" under "Generation previews" -> "Every epochs":
 // drops the group's words from the front of a label; the full label stays for hover.

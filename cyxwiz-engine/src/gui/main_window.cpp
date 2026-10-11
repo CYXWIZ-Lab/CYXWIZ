@@ -3419,6 +3419,9 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
 
 void MainWindow::UpdateLiveCompile() {
     if (!live_compile_ || !node_editor_) return;
+    // A Data Pipeline graph has no model: no training compile (it runs with
+    // Execute Pipeline or a Plot node).
+    if (node_editor_->GetExecutionMode() == gui::ExecutionMode::DuckDBPipeline) return;
     // Counting parameters builds the model once; not while training uses
     // the device.
     const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();

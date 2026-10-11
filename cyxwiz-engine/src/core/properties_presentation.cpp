@@ -343,11 +343,17 @@ EmptyView BuildEmpty(const std::string& file_path,
                      size_t link_count,
                      LiveCompileState state,
                      const TrainingConfiguration* config,
-                     const std::vector<gui::MLNode>* nodes) {
+                     const std::vector<gui::MLNode>* nodes,
+                     bool data_pipeline) {
     EmptyView e;
     e.graph_name = file_path.empty() ? "Untitled graph" : std::filesystem::path(file_path).stem().string();
     e.nodes = node_count;
     e.links = link_count;
+    if (data_pipeline) {
+        e.status = node_count ? "Not compiled for training" : "";
+        e.kind = CompiledStatusKind::None;
+        return e;
+    }
     switch (state) {
         case LiveCompileState::NotCompiled:
             e.status = node_count ? "Not compiled yet" : "";

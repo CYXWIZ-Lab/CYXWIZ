@@ -286,6 +286,7 @@ void Properties::RefreshView(MLNode& node) {
             compiled.parameters_counted = live_compile_->ParametersCounted();
             compiled.parameters_counting = live_compile_->ParametersCounting();
         }
+        compiled.data_pipeline = node_editor_->GetExecutionMode() == gui::ExecutionMode::DuckDBPipeline;
         compiled.data_loaded = std::any_of(dataset_facts_.begin(), dataset_facts_.end(),
                                            [](const properties_truth::DatasetTruthFact& f) { return f.found; });
         in.compiled = &compiled;
@@ -349,7 +350,8 @@ void Properties::RenderEmpty() {
     const auto e = cyxwiz::properties_view::BuildEmpty(
         node_editor_->GetCurrentFilePath(), node_editor_->GetNodes().size(), node_editor_->GetLinks().size(),
         live_compile_ ? live_compile_->State() : cyxwiz::LiveCompileState::NotCompiled,
-        live_compile_ ? live_compile_->Config() : nullptr, &node_editor_->GetNodes());
+        live_compile_ ? live_compile_->Config() : nullptr, &node_editor_->GetNodes(),
+        node_editor_->GetExecutionMode() == gui::ExecutionMode::DuckDBPipeline);
     if (e.nodes == 0) return;
     ImGui::Dummy(ImVec2(0.0f, t.space_xl));
     std::string line = e.graph_name + " \xC2\xB7 " + std::to_string(e.nodes) + (e.nodes == 1 ? " node, " : " nodes, ") +
