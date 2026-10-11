@@ -1,6 +1,6 @@
 #include "data_studio_panel.h"
 
-#include "../../core/dataset_catalog.h"
+#include "../dataset_picker.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -8,35 +8,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+
 namespace cyxwiz {
-
-namespace {
-
-std::string Thousands(size_t n) {
-    std::string s = std::to_string(n);
-    for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<size_t>(i), ",");
-    return s;
-}
-
-// "8,582 rows · 15 cols", "2,000 files · 2 classes".
-std::string SizeText(const DatasetEntry& e) {
-    std::string unit = "rows";
-    if (e.modality == DatasetModality::Image) unit = "files";
-    else if (e.modality == DatasetModality::Audio) unit = "clips";
-    else if (e.modality == DatasetModality::Text && !e.Has(kBackingArrow)) unit = "texts";
-    std::string s = Thousands(e.rows) + " " + unit;
-    if (e.columns) s += " \xC2\xB7 " + Thousands(e.columns) + " cols";
-    if (e.classes) s += " \xC2\xB7 " + Thousands(e.classes) + " classes";
-    return s;
-}
-
-const char* OriginText(const DatasetEntry& e) {
-    if (e.materialized) return "node result";
-    if (e.Has(kBackingLegacy) && e.backings == kBackingLegacy) return "older dataset";
-    return "Data Input";
-}
-
-}  // namespace
 
 void DataStudioPanel::Render() {
     if (query_editor_) query_editor_->RenderWindows();
@@ -86,42 +60,14 @@ void DataStudioPanel::RenderToolbar() {
 
 void DataStudioPanel::RenderDatasetSelector() {
     const ui::Tokens& t = ui::CurrentTokens();
-    // Every dataset the catalog knows: Data Input tables, node results, files.
-    const auto entries = DatasetCatalog::Instance().List();
     ImGui::TextColored(t.text_dim, "Dataset");
     ImGui::SameLine();
-    std::string preview = "Select a dataset...";
-    for (const auto& e : entries)
-        if (e.name == active_dataset_) preview = e.Shown() + "  \xC2\xB7  " + OriginText(e) + "  \xC2\xB7  " + SizeText(e);
-    if (!active_dataset_.empty() && preview == "Select a dataset...") preview = active_dataset_ + "  (no longer loaded)";
-    ImGui::SetNextItemWidth(std::min(520.0f, ImGui::GetContentRegionAvail().x * 0.45f));
-    if (ImGui::BeginCombo("##dataset_selector", preview.c_str(), ImGuiComboFlags_HeightLarge)) {
-        if (entries.empty()) ImGui::TextColored(t.text_dim, "No datasets yet: load a Data Input in CyxWiz Studio.");
-        if (entries.size() > 0 && ImGui::BeginTable("##datasets", 4, ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-            ImGui::TableSetupColumn("origin", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-            ImGui::TableSetupColumn("kind", ImGuiTableColumnFlags_WidthStretch, 1.3f);
-            ImGui::TableSetupColumn("size", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-            for (const auto& e : entries) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::PushID(e.name.c_str());
-                const bool selected = e.name == active_dataset_;
-                if (ImGui::Selectable(e.Shown().c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) SetActiveDataset(e.name);
-                if (selected) ImGui::SetItemDefaultFocus();
-                if (!e.label.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("Dataset name: %s (a query can use either)", e.name.c_str());
-                ImGui::PopID();
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(t.text_dim, "%s", OriginText(e));
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextColored(t.text_dim, "%s", StorageText(e.storage));
-                ImGui::TableSetColumnIndex(3);
-                ImGui::TextColored(t.text_dim, "%s", SizeText(e).c_str());
-            }
-            ImGui::EndTable();
-        }
-        ImGui::EndCombo();
-    }
+    // Every dataset the catalog knows: Data Input tables, node results, files.
+    std::string picked = active_dataset_;
+    ui::DatasetPickerOptions options;
+    options.tabular_only = false;
+    options.width = std::min(520.0f, ImGui::GetContentRegionAvail().x * 0.45f);
+    if (ui::DatasetPicker("dataset_selector", picked, options)) SetActiveDataset(picked);
 }
 
 void DataStudioPanel::RenderTabBar() {

@@ -130,6 +130,7 @@ set(ENGINE_SOURCES
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
+    src/core/dataset_picker_presentation.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -408,6 +409,8 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
+    src/gui/dataset_picker.cpp
+    src/gui/dataset_table_loader.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
@@ -5007,6 +5010,19 @@ set_target_properties(test_computation_truth_recurrent PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME recurrent_pytorch_parity COMMAND test_computation_truth_recurrent)
+
+# ===== Test: dataset picker wording (TOFIX140 A, one data entry point) =====
+add_executable(test_dataset_picker_presentation
+    tests/test_dataset_picker_presentation.cpp
+    src/core/dataset_picker_presentation.cpp
+    src/core/dataset_catalog.cpp
+)
+target_include_directories(test_dataset_picker_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_dataset_picker_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME dataset_picker_presentation COMMAND test_dataset_picker_presentation)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
