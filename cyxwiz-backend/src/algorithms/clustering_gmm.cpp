@@ -8,7 +8,7 @@
 #endif
 
 #include "cyxwiz/clustering.h"
-#include "clustering_device.h"
+#include "analysis_device.h"
 
 #include <cmath>
 #include <limits>
@@ -24,7 +24,7 @@
 
 namespace cyxwiz {
 
-using namespace clustering_detail;
+using namespace analysis_detail;
 
 namespace {
 

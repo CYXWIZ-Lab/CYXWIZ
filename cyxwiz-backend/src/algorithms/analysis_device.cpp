@@ -1,12 +1,12 @@
-// Shared clustering device helpers (clustering_device.h). The algorithms are in
-// clustering_{kmeans,dbscan,hierarchical,gmm,evaluation}.cpp; all run on ArrayFire on
-// the active device, its CPU backend being the CPU option (TOFIX140).
+// Shared analysis device helpers (analysis_device.h), used by clustering_*.cpp and
+// dimensionality_reduction.cpp; all run on ArrayFire on the active device, its CPU
+// backend being the CPU option (TOFIX140).
 
 #ifdef _WIN32
 #define NOMINMAX
 #endif
 
-#include "clustering_device.h"
+#include "analysis_device.h"
 
 #include <algorithm>
 #include <random>
@@ -18,7 +18,7 @@
 #undef max
 #endif
 
-namespace cyxwiz::clustering_detail {
+namespace cyxwiz::analysis_detail {
 
 std::string MatrixRefusal(const std::vector<std::vector<double>>& data) {
     if (data.empty()) return "Empty data";
@@ -140,4 +140,4 @@ af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine)
 
 #endif
 
-}  // namespace cyxwiz::clustering_detail
+}  // namespace cyxwiz::analysis_detail

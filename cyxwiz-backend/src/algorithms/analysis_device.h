@@ -1,9 +1,10 @@
 #pragma once
 
-// Device helpers shared by the clustering sources (TOFIX140): host rows in and
-// out of ArrayFire, pairwise distances in row blocks, seeded random engines and
-// k-means++ seeding. Data matrices are [n_samples, n_features] in the compute
-// precision (float64 where the device has it).
+// Device helpers shared by the host-matrix analysis APIs (clustering,
+// dimensionality reduction; TOFIX140): host rows in and out of ArrayFire,
+// pairwise distances in row blocks, seeded random engines and k-means++ seeding.
+// Data matrices are [n_samples, n_features] in the compute precision (float64
+// where the device has it).
 
 #include <string>
 #include <vector>
@@ -16,7 +17,7 @@
 
 #include <stdexcept>
 
-namespace cyxwiz::clustering_detail {
+namespace cyxwiz::analysis_detail {
 
 using Matrix = std::vector<std::vector<double>>;
 
@@ -47,15 +48,15 @@ af::randomEngine SeededEngine(unsigned int seed);
 // proportional to its squared distance to the nearest chosen row.
 af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine);
 
-}  // namespace cyxwiz::clustering_detail
+}  // namespace cyxwiz::analysis_detail
 
 #endif
 
-namespace cyxwiz::clustering_detail {
+namespace cyxwiz::analysis_detail {
 
 // Empty when data is a non-empty rectangular matrix with at least one feature.
 std::string MatrixRefusal(const std::vector<std::vector<double>>& data);
 bool IsKnownMetric(const std::string& metric);
 std::string NoArrayFire(const char* operation);
 
-}  // namespace cyxwiz::clustering_detail
+}  // namespace cyxwiz::analysis_detail

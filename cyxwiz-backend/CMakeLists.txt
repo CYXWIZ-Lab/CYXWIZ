@@ -214,7 +214,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/spatial_normalization_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
-    src/algorithms/clustering.cpp
+    src/algorithms/analysis_device.cpp
     src/algorithms/clustering_kmeans.cpp
     src/algorithms/clustering_dbscan.cpp
     src/algorithms/clustering_hierarchical.cpp
