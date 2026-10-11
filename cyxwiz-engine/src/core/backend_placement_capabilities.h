@@ -301,18 +301,16 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
     placement.expected_backend = BackendPlacementStatus::Unknown;
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::TimeDistributedSequenceWrapper;
     placement.explanation =
-        "TimeDistributed Dense is a concrete shared linear projection across "
-        "time steps, not a generic inner-layer wrapper. Placement remains "
-        "unknown because its rank-3 to rank-2 reshape boundary and inner "
-        "Linear execution are not yet proven as one device-resident contract.";
+        "TimeDistributed Dense is a shared linear projection across time "
+        "steps (Linear's sequence path on ArrayFire). Its input shape is not "
+        "known at compile time, so the placement cannot be stated yet; with a "
+        "[sequence, features] input it is placed on the ArrayFire backend.";
     placement.suggested_action =
-        "No action needed for compile support. For performance-sensitive "
-        "sequence models, validate the reshape and Linear runtime placement "
-        "before relying on GPU residency.";
+        "Connect an input whose [sequence, features] shape is known.";
     return placement;
 }
 
@@ -359,7 +357,8 @@ inline void ApplyNativeProviderPlacement(
     if (const auto provider = registry.FindSupporting(request)) {
         placement.expected_backend =
             std::string("native provider ") + provider->ProviderId();
-        placement.fallback_backend = "CPU";
+        // A provider failure runs the layer's ArrayFire path instead.
+        placement.fallback_backend = "ArrayFire";
         placement.status = BackendPlacementStatus::Gpu;
         placement.reason_code = BackendPlacementReason::NativeProviderSelected;
         placement.explanation +=
