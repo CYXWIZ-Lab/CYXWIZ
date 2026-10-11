@@ -234,19 +234,13 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     placement.expected_backend = "ArrayFire active backend";
     placement.status = BackendPlacementStatus::Gpu;
     placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
-    // Model layers run on ArrayFire only (TOFIX140); the Tensor* graph primitives
-    // go through core Tensor operations, which still keep a native CPU fallback.
-    const bool tensor_primitive = placement.node_type.rfind("Tensor", 0) == 0;
-    placement.fallback_backend = tensor_primitive ? "CPU" : "none";
+    // Model layers and the Tensor* primitives run on ArrayFire only (TOFIX140).
+    placement.fallback_backend = "none";
     placement.explanation =
         std::string(placement.node_type) +
-        (tensor_primitive
-             ? " runs on the active ArrayFire backend for supported dtype/shape paths; "
-               "the core Tensor operation may use its native CPU fallback when the "
-               "dtype or shape is unsupported, or a backend operation fails."
-             : " runs on the active ArrayFire backend (the selected device; ArrayFire's "
-               "CPU backend when the CPU is selected). There is no native CPU fallback: "
-               "a backend failure stops the run with the device error.");
+        " runs on the active ArrayFire backend (the selected device; ArrayFire's "
+        "CPU backend when the CPU is selected). There is no native CPU fallback: "
+        "a backend failure stops the run with the device error.";
     placement.suggested_action = "No action needed.";
     StampDeclaredExecutionMode(placement,
                                cyxwiz::GpuExecutionMode::DirectArrayFire);
@@ -285,15 +279,14 @@ inline BackendPlacementEntry BuildUnclassifiedPlacement(
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
     placement.expected_backend = BackendPlacementStatus::Unknown;
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::BackendCapabilityUnclassified;
     placement.explanation =
         std::string(placement.node_type) +
         " is compiled, but the compiler does not yet have a precise backend "
         "capability rule for this node type. Runtime will execute through the "
-        "existing model path and may use the active backend or a recorded "
-        "native CPU fallback.";
+        "existing model path on the active ArrayFire backend.";
     placement.suggested_action =
         "No action needed unless training is slow; this node type should be "
         "classified in the backend capability registry.";
@@ -381,7 +374,7 @@ inline void ApplyNativeProviderPlacement(
         ") declined this contract: " + capability.detail + ".";
 }
 
-inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
+inline bool IsArrayFireGraphRuntimeOp(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Add:
         case gui::NodeType::Multiply:
@@ -405,56 +398,24 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
     placement.node_name = node.name;
     placement.node_type = LayerTypeName(node.type);
     placement.requested_backend = "auto";
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
 
-    if (IsMixedArrayFireGraphRuntimeOp(node.type)) {
-        placement.expected_backend = "ArrayFire tensor primitive when supported";
-        placement.status = BackendPlacementStatus::Mixed;
-        placement.reason_code = BackendPlacementReason::GraphRuntimeArrayFireMixed;
+    if (IsArrayFireGraphRuntimeOp(node.type)) {
+        // Core Tensor operations run on ArrayFire for every dtype and rank
+        // (TOFIX140 F4), forward and graph backward alike.
+        placement.expected_backend = "ArrayFire active backend";
+        placement.status = BackendPlacementStatus::Gpu;
+        placement.reason_code = BackendPlacementReason::GraphRuntimeArrayFire;
         placement.explanation =
             std::string(placement.node_type) +
-            " is a graph-runtime tensor op. It can use ArrayFire-backed "
-            "Tensor primitives for supported dtypes/shapes, but it keeps CPU "
-            "fallback for unsupported dtypes, CPU-only builds, or backend "
-            "failures.";
-        if (node.type == gui::NodeType::TensorDot) {
-            placement.explanation +=
-                " Current TensorDot ArrayFire coverage is Float32/Float64 "
-                "forward for 1D vector dot and 2D row-wise dot; graph backward "
-                "still uses the graph-executable gradient path.";
-        } else if (node.type == gui::NodeType::Add) {
-            placement.explanation +=
-                " Current Add ArrayFire coverage includes Float32/Float64 "
-                "row-major 2D elementwise addition, including shared-input "
-                "and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::Multiply) {
-            placement.explanation +=
-                " Current Multiply ArrayFire coverage includes Float32/Float64 "
-                "row-major 2D elementwise multiplication, including shared-input "
-                "and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::Average) {
-            placement.explanation +=
-                " Current Average ArrayFire coverage reuses Float32/Float64 "
-                "row-major 2D addition and scalar scaling, including "
-                "shared-input and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::TensorCompare) {
-            placement.explanation +=
-                " Current TensorCompare ArrayFire coverage is Float32/Float64 "
-                "forward for tensor and scalar comparisons with matching "
-                "tensor dtypes.";
-        } else if (node.type == gui::NodeType::Concatenate) {
-            placement.explanation +=
-                " Current Concatenate ArrayFire coverage is Float32/Float64 "
-                "2D concatenation through the row-major tensor bridge.";
-        } else if (node.type == gui::NodeType::Split) {
+            " is a graph-runtime tensor op on the active ArrayFire backend (the "
+            "selected device; ArrayFire's CPU backend when the CPU is selected), "
+            "forward and graph backward. There is no native CPU fallback: a "
+            "backend failure stops the run with the device error.";
+        if (node.type == gui::NodeType::Split) {
             placement.explanation +=
                 " Split slices its input into two tensors with Tensor::Split "
                 "and concatenates the branch gradients back in backward.";
-        } else if (node.type == gui::NodeType::TensorLogicalMask) {
-            placement.explanation +=
-                " Current TensorLogicalMask ArrayFire coverage is "
-                "Float32/Float64 matching-dtype tensor logical operations and "
-                "unary logical not.";
         }
         placement.suggested_action =
             "No correctness action needed. Treat performance as workload-specific "
@@ -474,7 +435,7 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
         " is recorded as a graph-runtime op, but no backend placement rule "
         "exists for it yet.";
     placement.suggested_action =
-        "Classify this graph op before relying on any GPU/fallback claim.";
+        "Classify this graph op before relying on any GPU claim.";
     return placement;
 }
 

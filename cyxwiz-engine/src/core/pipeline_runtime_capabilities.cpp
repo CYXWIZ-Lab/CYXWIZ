@@ -1167,7 +1167,7 @@ GetPipelineSupportedTrainingRoleCapabilities() {
         {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable recurrent model layer"},
         {gui::NodeType::RNN, PipelineTrainingSupportRole::ModelLayer,
-         "compiled as a trainable simple recurrent model layer on the native CPU reference"},
+         "compiled as a trainable simple recurrent model layer"},
         {gui::NodeType::Embedding, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable token embedding layer"},
         {gui::NodeType::TransformerEncoder, PipelineTrainingSupportRole::ModelLayer,

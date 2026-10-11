@@ -1842,8 +1842,10 @@ int main() {
           "selected Add graph should report unary layer backend placement");
     Check(abs_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "selected unary tensor layer should remain ArrayFire-capable");
-    Check(abs_placement->explanation.find("supported dtype/shape paths") != std::string::npos,
-          "unary tensor layer placement should avoid blanket GPU wording");
+    // Tensor primitives run on ArrayFire for every dtype and rank (TOFIX140 F4).
+    Check(abs_placement->fallback_backend == "none" &&
+              abs_placement->explanation.find("no native CPU fallback") != std::string::npos,
+          "unary tensor layer placement has no CPU fallback");
     Check(abs_placement->explanation.find("CPU fallback") != std::string::npos,
           "unary tensor layer placement should explain CPU fallback");
     Check(config.graph_op_node_ids.size() == 1,
@@ -1863,17 +1865,16 @@ int main() {
     const auto* add_placement = FindPlacement(config, 9);
     Check(add_placement != nullptr,
           "selected Add graph should report graph-op backend placement");
-    Check(add_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected Add graph op should be reported as mixed backend");
+    // Graph ops run on core Tensor operations, ArrayFire only (TOFIX140 F4).
+    Check(add_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected Add graph op should be reported on the ArrayFire backend");
     Check(add_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected Add graph op should use mixed graph-runtime reason");
-    Check(add_placement->fallback_backend == "CPU",
-          "selected Add graph op should report CPU fallback");
-    Check(add_placement->explanation.find("row-major 2D elementwise addition") != std::string::npos,
-          "selected Add graph op should explain concrete ArrayFire coverage");
-    Check(add_placement->explanation.find("CPU fallback") != std::string::npos,
-          "selected Add graph op should describe fallback as normal behavior");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected Add graph op should use the graph-runtime ArrayFire reason");
+    Check(add_placement->fallback_backend == "none",
+          "selected Add graph op has no CPU fallback");
+    Check(add_placement->explanation.find("no native CPU fallback") != std::string::npos,
+          "selected Add graph op should say a device failure stops the run");
     Check(add_placement->suggested_action.find("No correctness action needed") != std::string::npos,
           "selected Add graph op should avoid noisy fallback warnings");
 
@@ -1921,11 +1922,11 @@ int main() {
     const auto* concat_placement = FindPlacement(config, 10);
     Check(concat_placement != nullptr,
           "selected Concatenate graph should report graph-op backend placement");
-    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected Concatenate graph op should be reported as mixed");
+    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected Concatenate graph op should be reported on the ArrayFire backend");
     Check(concat_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected Concatenate graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected Concatenate graph op should use the graph-runtime ArrayFire reason");
 
     auto runtime_dot = Node(13,
                             gui::NodeType::TensorDot,
@@ -1960,11 +1961,11 @@ int main() {
     const auto* dot_placement = FindPlacement(config, 13);
     Check(dot_placement != nullptr,
           "selected TensorDot graph should report graph-op backend placement");
-    Check(dot_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorDot graph op should be reported as mixed backend");
+    Check(dot_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorDot graph op should be reported on the ArrayFire backend");
     Check(dot_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorDot graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorDot graph op should use the graph-runtime ArrayFire reason");
     Check(dot_placement->explanation.find("graph backward") != std::string::npos,
           "selected TensorDot graph op should keep backward policy visible");
     Check(dot_placement->suggested_action.find("focused benchmarks") != std::string::npos,
@@ -2004,11 +2005,11 @@ int main() {
     const auto* compare_placement = FindPlacement(config, 11);
     Check(compare_placement != nullptr,
           "selected TensorCompare graph should report graph-op backend placement");
-    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorCompare graph op should be reported as mixed");
+    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorCompare graph op should be reported on the ArrayFire backend");
     Check(compare_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorCompare graph op should use mixed graph reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorCompare graph op should use the graph-runtime ArrayFire reason");
 
     auto logical = Node(12,
                         gui::NodeType::TensorLogicalMask,
@@ -2042,11 +2043,11 @@ int main() {
     const auto* logical_placement = FindPlacement(config, 12);
     Check(logical_placement != nullptr,
           "selected TensorLogicalMask graph should report graph-op backend placement");
-    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorLogicalMask graph op should be reported as mixed");
+    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorLogicalMask graph op should be reported on the ArrayFire backend");
     Check(logical_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorLogicalMask graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorLogicalMask graph op should use the graph-runtime ArrayFire reason");
 
     auto binary_loss = Node(14,
                             gui::NodeType::BCELoss,

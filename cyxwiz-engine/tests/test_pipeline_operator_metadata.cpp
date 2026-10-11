@@ -1767,7 +1767,7 @@ void CheckImplementedRecurrentConfigurationContract(
     }
 
     // tofix68 Studio RNN wiring: the simple RNN is an implemented
-    // recurrent node backed by the native CPU reference layer. It keeps
+    // recurrent node computed on ArrayFire. It keeps
     // its 7 saved fields (nonlinearity included) and the optional Hidden
     // pin contract of the other recurrent nodes.
     const auto* rnn = metadata.GetMetadata(gui::NodeType::RNN);

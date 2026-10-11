@@ -832,7 +832,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "d_model must divide evenly by num_heads",
             "Autoregressive generation loops remain a separate future contract",
-            "position_encoding=rope/alibi, qk_norm, grouped-query attention and soft-capping run on the ArrayFire attention path only; the native CPU fallback refuses them with a clear error"
+            "position_encoding=rope/alibi, qk_norm, grouped-query attention and soft-capping run on the ArrayFire attention path (the CPU is ArrayFire's CPU backend)"
         },
         "Attention"
     };

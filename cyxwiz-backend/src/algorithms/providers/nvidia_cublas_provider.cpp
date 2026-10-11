@@ -10,8 +10,7 @@
 // Kernel provenance: the cell structure (one GEMM pass for all gate
 // projections + a fused pointwise cell update, gate order i,f,g,o)
 // follows PyTorch ATen's fused RNN/LSTM cells (BSD-3) and lmnt/haste
-// (Apache-2.0), matching CyxWiz's native CPU reference in
-// lstm_direction_helpers.cpp.
+// (Apache-2.0), matching CyxWiz's ArrayFire LSTM cell (layers/lstm.cpp).
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 

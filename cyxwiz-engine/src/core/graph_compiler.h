@@ -307,8 +307,8 @@ inline constexpr const char* Unknown = "unknown";
 namespace BackendPlacementReason {
 inline constexpr const char* ArrayFireTensorOpCapable =
     "arrayfire_tensor_op_capable";
-inline constexpr const char* GraphRuntimeArrayFireMixed =
-    "graph_runtime_arrayfire_mixed";
+inline constexpr const char* GraphRuntimeArrayFire =
+    "graph_runtime_arrayfire";
 inline constexpr const char* BackendCapabilityUnclassified =
     "backend_capability_unclassified";
 inline constexpr const char* TimeDistributedSequenceWrapper =

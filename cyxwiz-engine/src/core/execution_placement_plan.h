@@ -459,9 +459,7 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
             : "optimizer_unsupported",
         supported_optimizer ? backend : "unavailable",
         supported_optimizer
-            ? "Parameter updates are assigned to the selected ArrayFire "
-              "backend; any runtime native CPU fallback is recorded as an "
-              "event."
+            ? "Parameter updates run on the selected ArrayFire backend."
             : "TrainingExecutor has no optimizer implementation for this "
               "node type."));
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(

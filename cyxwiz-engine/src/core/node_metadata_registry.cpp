@@ -2335,8 +2335,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable long short-term memory sequence layer",
         "Engine training supports unidirectional and split-path bidirectional "
         "LSTM with dropout=0.0; each direction runs as an independent "
-        "single-direction LSTM on the native CPU reference or the native "
-        "neural provider when one serves the run's device.", "",
+        "single-direction LSTM on ArrayFire (the selected device), or on the "
+        "native neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2362,8 +2362,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable gated recurrent unit sequence layer",
         "Engine training supports unidirectional and split-path bidirectional "
         "GRU with dropout=0.0; each direction runs as an independent "
-        "single-direction GRU on the native CPU reference or the native "
-        "neural provider when one serves the run's device.", "",
+        "single-direction GRU on ArrayFire (the selected device), or on the "
+        "native neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2389,8 +2389,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable simple (Elman) recurrent sequence layer",
         "Engine training supports stacked simple RNN with tanh or relu "
         "nonlinearity and dropout=0.0, unidirectional or split-path "
-        "bidirectional, on the native CPU recurrent reference layer or the "
-        "native neural provider (CUDA/OpenCL).", "",
+        "bidirectional, on ArrayFire (the selected device) or the native "
+        "neural provider (CUDA/OpenCL).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
