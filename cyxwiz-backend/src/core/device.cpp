@@ -658,6 +658,12 @@ void Device::RecordProcessDevice(DeviceType type, int device_id) {
     ProcessDeviceSlot() = ProcessDeviceSelection{type, device_id};
 }
 
+void Device::ActivateProcessDeviceOnThisThread() {
+    if (const auto selected = GetProcessDevice()) {
+        Device(selected->type, selected->device_id).ActivateExact(false);
+    }
+}
+
 Device* Device::GetCurrentDevice() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // Query ArrayFire directly. The previous implementation retained a pointer

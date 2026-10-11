@@ -196,9 +196,7 @@ void QualityAnalyzerDialog::StartAnalysis() {
             try {
                 // Measure where training runs: a worker starts on ArrayFire's
                 // default backend, not the selected device.
-                if (const auto selected = cyxwiz::Device::GetProcessDevice()) {
-                    cyxwiz::Device(selected->type, selected->device_id).ActivateExact(false);
-                }
+                cyxwiz::Device::ActivateProcessDeviceOnThisThread();
                 const auto analysis = cyxwiz::AnalyzeImageQuality(
                     entry, width, height,
                     [&](size_t done, size_t total) {

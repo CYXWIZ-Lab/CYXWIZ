@@ -326,11 +326,7 @@ void QRPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
-        // Compute where the process runs: a worker starts on ArrayFire's
-        // default backend, not the selected device.
-        if (const auto selected = Device::GetProcessDevice()) {
-            Device(selected->type, selected->device_id).ActivateExact(false);
-        }
+        Device::ActivateProcessDeviceOnThisThread();
 
         try {
             result_ = LinearAlgebra::QR(matrix_);
