@@ -1,5 +1,6 @@
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/session_query_service.h"
+#include "../core/pipeline_type_names.h"
 #include "../core/image_quality_analysis.h"
 #include "../core/training_export_metadata.h"
 #include "separate_windows.h"
@@ -3186,13 +3187,19 @@ void MainWindow::Render() {
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     // Dataset labels for the catalog: each Data Input node's name for its
-    // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1.
+    // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1,
+    // and each node's name for the table a pipeline run made from it.
     static double labels_at = -1.0;
     if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
         labels_at = ImGui::GetTime();
         std::map<std::string, std::string> labels, targets, sources;
         for (const auto& n : node_editor_->GetNodes()) {
-            if (n.type != gui::NodeType::DataInput) continue;
+            if (n.type != gui::NodeType::DataInput) {
+                // PipelineExecutor names a node's output ds_operator_<Type>_<id>.
+                const std::string type = cyxwiz::PipelineTypeName(n.type);
+                if (type != "Unknown" && !n.name.empty()) labels.emplace("ds_operator_" + type + "_" + std::to_string(n.id), n.name);
+                continue;
+            }
             std::vector<std::string> names{"ds_datainput_" + std::to_string(n.id)};  // read for a plot or a run (PipelineExecutor)
             auto it = n.parameters.find("dataset_name");
             if (it != n.parameters.end() && !it->second.empty()) names.push_back(it->second);
