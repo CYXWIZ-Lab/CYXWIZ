@@ -236,10 +236,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
     // Generate unique name if not provided
     std::string dataset_name = name.empty() ? GenerateUniqueName("arrow_data") : name;
 
-    // Check if already exists
-    if (arrow_datasets_.find(dataset_name) != arrow_datasets_.end()) {
-        spdlog::warn("Arrow dataset '{}' already exists, overwriting", dataset_name);
-    }
+    // A re-run or re-load replaces its own table under the same name (not an error).
+    const bool replaced = arrow_datasets_.find(dataset_name) != arrow_datasets_.end();
 
     // Create ArrowDataset wrapper
     auto dataset = std::make_shared<ArrowDataset>(table, dataset_name);
@@ -251,7 +249,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
     ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
-    spdlog::info("Registered Arrow dataset '{}': {} rows, {} columns, {} bytes",
+    spdlog::info("{} Arrow dataset '{}': {} rows, {} columns, {} bytes",
+                 replaced ? "Replaced" : "Registered",
                  dataset_name,
                  dataset->GetNumRows(),
                  dataset->GetNumColumns(),
