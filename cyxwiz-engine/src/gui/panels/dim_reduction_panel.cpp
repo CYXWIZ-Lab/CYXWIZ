@@ -559,25 +559,27 @@ void DimReductionPanel::PrepareData() {
         }
     }
 
-    // Extract data
-    size_t n_rows = current_table_->GetRowCount();
-    input_data_.resize(n_rows);
-
+    // Rows whose selected features are all numbers (a missing value is skipped,
+    // not read as 0); labels follow the rows kept.
+    const bool with_labels = label_column_ >= 0 && label_column_ < static_cast<int>(current_table_->GetColumnCount());
+    const size_t n_rows = current_table_->GetRowCount();
+    size_t skipped = 0;
     for (size_t row = 0; row < n_rows; row++) {
-        input_data_[row].resize(col_indices.size());
-        for (size_t j = 0; j < col_indices.size(); j++) {
-            auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, col_indices[j]));
-            input_data_[row][j] = val.value_or(0.0);
+        std::vector<double> values(col_indices.size());
+        bool complete = true;
+        for (size_t j = 0; j < col_indices.size() && complete; j++) {
+            const auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, col_indices[j]));
+            if (val) values[j] = *val;
+            else complete = false;
         }
-    }
-
-    // Extract labels if specified
-    if (label_column_ >= 0 && label_column_ < static_cast<int>(current_table_->GetColumnCount())) {
-        labels_.resize(n_rows);
-        for (size_t row = 0; row < n_rows; row++) {
-            labels_[row] = current_table_->GetCellAsString(row, label_column_);
+        if (!complete) {
+            ++skipped;
+            continue;
         }
+        input_data_.push_back(std::move(values));
+        if (with_labels) labels_.push_back(current_table_->GetCellAsString(row, label_column_));
     }
+    if (skipped > 0) spdlog::info("Dimensionality reduction: skipped {} of {} rows with missing values", skipped, n_rows);
 }
 
 void DimReductionPanel::RunReduction() {
