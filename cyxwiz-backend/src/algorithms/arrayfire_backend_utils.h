@@ -5,22 +5,15 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <random>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
 
-// Reset the current thread/device default ArrayFire RNG and this thread's
-// native RNG (CPU layer paths); return the ArrayFire generator identity. Does
-// not restore stream continuation.
+// Reset the current thread/device default ArrayFire RNG and the attention
+// dropout stream counter; return the ArrayFire generator identity. Does not
+// restore stream continuation.
 CYXWIZ_API std::string SeedCurrentArrayFireRandomEngine(uint64_t seed);
-
-// This thread's native random engine for CPU layer paths (dropout masks,
-// random tensors). Seeded by SeedCurrentArrayFireRandomEngine on the training
-// worker, so a seeded run repeats on CPU-placed layers too; otherwise seeded
-// from std::random_device.
-CYXWIZ_API std::mt19937& NativeRandomEngine();
 
 // Next attention-dropout mask stream: fused attention derives each call's mask
 // seed from ArrayFire's seed and this counter. Reset to zero by

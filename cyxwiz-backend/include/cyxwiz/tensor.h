@@ -105,6 +105,12 @@ public:
     static Tensor FromSemanticArray(
         const af::array& arr,
         std::vector<size_t> semantic_shape);
+    // Row-major storage order as a 1-D ArrayFire array, for any rank. Ranks
+    // above 4 live on the device through this view; ops collapse neighbouring
+    // dimensions to fit ArrayFire's four.
+    af::array GetRowMajorFlatArray() const;
+    void SetFromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
+    static Tensor FromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
 #endif
 
     // Operations
@@ -324,7 +330,8 @@ private:
         ArrayFireNative,
         RowMajor2D,
         RowMajor3D,
-        RowMajor4D
+        RowMajor4D,
+        RowMajorFlat  // 1-D, row-major storage order, any rank
     };
 
     mutable std::unique_ptr<af::array> af_array_;

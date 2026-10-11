@@ -65,14 +65,7 @@ uint64_t NextAttentionDropoutStream() {
     return g_attention_dropout_streams.fetch_add(1) + 1;
 }
 
-std::mt19937& NativeRandomEngine() {
-    thread_local std::mt19937 engine{std::random_device{}()};
-    return engine;
-}
-
 std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
-    std::seed_seq native_seed{static_cast<uint32_t>(seed), static_cast<uint32_t>(seed >> 32)};
-    NativeRandomEngine().seed(native_seed);
     g_attention_dropout_streams = 0;
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto type = af::getDefaultRandomEngine().getType();
