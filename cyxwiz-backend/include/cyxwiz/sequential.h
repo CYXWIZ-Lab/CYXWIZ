@@ -1404,7 +1404,6 @@ private:
     // Cached for backward pass
     Tensor normalized_;
     Tensor std_inv_;
-    Tensor batch_mean_;
 
     // Gradients
     Tensor grad_gamma_;

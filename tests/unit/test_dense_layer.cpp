@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/layer.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include "algorithms/arrayfire_backend_utils.h"
 #include <map>
@@ -173,7 +174,8 @@ TEST_CASE("BatchNorm2DLayer computes training forward and backward values", "[no
 
     const std::map<std::string, cyxwiz::Tensor> forward_params = norm.GetParameters();
     REQUIRE(forward_params.at("running_mean").Data<float>()[0] == Catch::Approx(1.25f));
-    REQUIRE(forward_params.at("running_var").Data<float>()[0] == Catch::Approx(1.125f));
+    // PyTorch: the running estimate takes the unbiased variance (5/3 here).
+    REQUIRE(forward_params.at("running_var").Data<float>()[0] == Catch::Approx(1.3333333f));
 
     float grad_values[] = {
         1.0f, 0.0f,
@@ -248,6 +250,81 @@ TEST_CASE("BatchNorm2DLayer matches PyTorch across channels", "[norm][layer]") {
     REQUIRE(grad_gamma[1] == Catch::Approx(-4.6698549f).margin(1e-5f));
     REQUIRE(grad_beta[0] == Catch::Approx(-0.3f).margin(1e-5f));
     REQUIRE(grad_beta[1] == Catch::Approx(0.0f).margin(1e-5f));
+    // Momentum 0.1 from zeros / ones, unbiased variance (PyTorch BatchNorm2d).
+    const float* running_mean = params.at("running_mean").ReadData<float>();
+    const float* running_var = params.at("running_var").ReadData<float>();
+    REQUIRE(running_mean[0] == Catch::Approx(0.05f).margin(1e-6f));
+    REQUIRE(running_mean[1] == Catch::Approx(0.1125f).margin(1e-6f));
+    REQUIRE(running_var[0] == Catch::Approx(1.1534091f).margin(1e-6f));
+    REQUIRE(running_var[1] == Catch::Approx(1.2221591f).margin(1e-6f));
+}
+
+// The Engine's BatchNorm node in training: per-feature statistics over the
+// batch on [batch=4, features=3]. Values from PyTorch functional.batch_norm.
+TEST_CASE("BatchNormModule training forward and backward match PyTorch", "[norm][layer]") {
+    cyxwiz::BatchNormModule norm(3, 1e-5f, 0.1f);
+    float gamma_values[] = {1.5f, 0.5f, -1.0f};
+    float beta_values[] = {0.1f, -0.2f, 0.3f};
+    norm.SetParameters({
+        {"gamma", cyxwiz::Tensor({3}, gamma_values, cyxwiz::DataType::Float32)},
+        {"beta", cyxwiz::Tensor({3}, beta_values, cyxwiz::DataType::Float32)},
+    });
+    norm.SetTraining(true);
+    float input_values[] = {1.0f, -2.0f, 0.5f, 3.0f, 0.0f, 1.5f, -1.0f, 4.0f, 2.5f, 2.0f, 1.0f, -0.5f};
+    float grad_values[] = {0.3f, -0.6f, 0.9f, -0.9f, 0.0f, 0.3f, 0.6f, 0.3f, -0.6f, 0.0f, 0.9f, -0.3f};
+    const cyxwiz::Tensor output = norm.Forward(cyxwiz::Tensor({4, 3}, input_values, cyxwiz::DataType::Float32));
+    const cyxwiz::Tensor grad_input = norm.Backward(cyxwiz::Tensor({4, 3}, grad_values, cyxwiz::DataType::Float32));
+
+    const float expected_output[] = {-0.1535457f, -0.8350846f, 0.7472118f, 1.8748199f, -0.3732049f, -0.1472118f,
+                                     -2.1819113f, 0.5505545f, -1.0416354f, 0.8606371f, -0.1422650f, 1.6416354f};
+    const float expected_grad_input[] = {0.2173253f, -0.0766722f, -0.6708182f, -0.3042576f, -0.0083139f, -0.2683265f,
+                                         -0.1738563f, -0.0794431f, 0.4024922f, 0.2607887f, 0.1644292f, 0.5366526f};
+    const float* output_data = output.ReadData<float>();
+    const float* grad_input_data = grad_input.ReadData<float>();
+    for (size_t i = 0; i < 12; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]).margin(1e-5f));
+        REQUIRE(grad_input_data[i] == Catch::Approx(expected_grad_input[i]).margin(1e-5f));
+    }
+    const auto gradients = norm.GetGradients();
+    const float expected_grad_gamma[] = {-2.0283656f, 1.3163572f, -0.6708177f};
+    const float expected_grad_beta[] = {0.0f, 0.6f, 0.3f};
+    const float* grad_gamma = gradients.at("gamma").ReadData<float>();
+    const float* grad_beta = gradients.at("beta").ReadData<float>();
+    for (size_t f = 0; f < 3; ++f) {
+        REQUIRE(grad_gamma[f] == Catch::Approx(expected_grad_gamma[f]).margin(1e-5f));
+        REQUIRE(grad_beta[f] == Catch::Approx(expected_grad_beta[f]).margin(1e-5f));
+    }
+}
+
+// The Engine's BatchNorm node: two training steps, then eval on the first
+// batch. Values from PyTorch BatchNorm1d(3, momentum=0.1), float64.
+TEST_CASE("BatchNormModule running statistics match PyTorch", "[norm][layer]") {
+    cyxwiz::BatchNormModule norm(3, 1e-5f, 0.1f);
+    float first[] = {1.0f, -2.0f, 0.5f, 3.0f, 0.0f, 1.5f, -1.0f, 4.0f, 2.5f, 2.0f, 1.0f, -0.5f};
+    float second[] = {0.5f, 1.0f, -1.0f, 1.5f, -3.0f, 2.0f, 2.5f, 2.0f, 0.0f, -0.5f, 0.0f, 3.0f};
+    const cyxwiz::Tensor a({4, 3}, first, cyxwiz::DataType::Float32);
+    norm.SetTraining(true);
+    norm.Forward(a);
+    norm.Forward(cyxwiz::Tensor({4, 3}, second, cyxwiz::DataType::Float32));
+
+    const auto params = norm.GetParameters();
+    const float expected_mean[] = {0.2125f, 0.0675f, 0.19f};
+    const float expected_var[] = {1.2391667f, 1.8391667f, 1.2933333f};
+    const float* running_mean = params.at("running_mean").ReadData<float>();
+    const float* running_var = params.at("running_var").ReadData<float>();
+    for (size_t f = 0; f < 3; ++f) {
+        REQUIRE(running_mean[f] == Catch::Approx(expected_mean[f]).margin(1e-6f));
+        REQUIRE(running_var[f] == Catch::Approx(expected_var[f]).margin(1e-6f));
+    }
+
+    norm.SetTraining(false);
+    const cyxwiz::Tensor output = norm.Forward(a);
+    const float expected_eval[] = {0.7074308f, -1.5245223f, 0.2725868f, 2.5040804f, -0.0497728f, 1.1518989f,
+                                   -1.0892188f, 2.8997263f, 2.0312111f, 1.6057556f, 0.6876020f, -0.6067254f};
+    const float* output_data = output.ReadData<float>();
+    for (size_t i = 0; i < 12; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_eval[i]).margin(1e-5f));
+    }
 }
 
 TEST_CASE("BatchNorm2DLayer uses running statistics in eval mode", "[norm][layer]") {

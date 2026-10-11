@@ -99,7 +99,10 @@ Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
         // Publish state only once every device result exists.
         if (training_) {
             const af::array next_mean = (1.0f - momentum_) * ChannelRow(running_mean_) + momentum_ * mean;
-            const af::array next_var = (1.0f - momentum_) * ChannelRow(running_var_) + momentum_ * var;
+            // PyTorch keeps the unbiased variance in the running estimate.
+            const dim_t count = x.dims(0);
+            const float unbiased = count > 1 ? static_cast<float>(count) / static_cast<float>(count - 1) : 1.0f;
+            const af::array next_var = (1.0f - momentum_) * ChannelRow(running_var_) + momentum_ * unbiased * var;
             running_mean_ = Tensor::FromSemanticArray(af::flat(next_mean), channel_shape);
             running_var_ = Tensor::FromSemanticArray(af::flat(next_var), channel_shape);
         }
