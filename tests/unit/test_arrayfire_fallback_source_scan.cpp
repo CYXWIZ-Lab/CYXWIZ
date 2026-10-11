@@ -276,38 +276,6 @@ size_t CountLegacyTensorDataLines(const fs::path& path) {
     return count;
 }
 
-bool FunctionBodyContains(
-    const std::vector<std::string>& lines,
-    const std::string& function_name,
-    const std::string& needle) {
-    bool found_signature = false;
-    bool found_body = false;
-    int brace_depth = 0;
-    for (const auto& line : lines) {
-        if (!found_signature) {
-            if (line.find(function_name + "(") == std::string::npos) {
-                continue;
-            }
-            found_signature = true;
-        }
-        if (line.find(needle) != std::string::npos) {
-            return true;
-        }
-        for (const char ch : line) {
-            if (ch == '{') {
-                found_body = true;
-                ++brace_depth;
-            } else if (ch == '}') {
-                --brace_depth;
-            }
-        }
-        if (found_body && brace_depth == 0) {
-            return false;
-        }
-    }
-    return false;
-}
-
 } // namespace
 
 TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy",
@@ -537,22 +505,46 @@ TEST_CASE("Legacy Tensor Data compatibility access has exact reviewed ownership"
     REQUIRE(actual == expected);
 }
 
-TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native compute",
+// TOFIX140 F4: core Tensor ops run on ArrayFire at every rank; there is no
+// native fallback to guard, so none may come back.
+TEST_CASE("Core Tensor ops have no native fallback",
           "[arrayfire][fallback][policy][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
-    const std::vector<std::pair<std::string, std::string>> guarded_helpers = {
-        {"cyxwiz-backend/src/core/tensor_backend_observation_utils.h",
-         "RecordArrayFireFallback"},
+    const std::vector<std::string> relative_paths = {
+        "cyxwiz-backend/src/core/tensor_arithmetic.cpp",
+        "cyxwiz-backend/src/core/tensor_broadcast.cpp",
+        "cyxwiz-backend/src/core/tensor_comparison.cpp",
+        "cyxwiz-backend/src/core/tensor_concat.cpp",
+        "cyxwiz-backend/src/core/tensor_elementwise.cpp",
+        "cyxwiz-backend/src/core/tensor_factory.cpp",
+        "cyxwiz-backend/src/core/tensor_indexing.cpp",
+        "cyxwiz-backend/src/core/tensor_linalg.cpp",
+        "cyxwiz-backend/src/core/tensor_logical.cpp",
+        "cyxwiz-backend/src/core/tensor_math_utils.h",
+        "cyxwiz-backend/src/core/tensor_reductions.cpp",
+        "cyxwiz-backend/src/core/tensor_shape.cpp",
     };
-
-    for (const auto& [relative_path, helper_name] : guarded_helpers) {
+    const std::vector<std::string> forbidden_needles = {
+        "RecordArrayFireFallback",
+        "AllowNativeCpuFallback",
+        "memcpy",
+        "Native",
+        "ranks up to 4",
+    };
+    std::vector<RawFallbackHit> hits;
+    for (const auto& relative_path : relative_paths) {
         const auto lines = ReadLines(repo_root / relative_path);
-        INFO(relative_path << "::" << helper_name);
-        REQUIRE(FunctionBodyContains(
-            lines,
-            helper_name,
-            "ThrowIfArrayFireNativeCpuFallbackForbidden"));
+        REQUIRE_FALSE(lines.empty());
+        for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+            for (const auto& needle : forbidden_needles) {
+                if (lines[line_index].find(needle) != std::string::npos) {
+                    hits.push_back(RawFallbackHit{relative_path, line_index + 1, needle, lines[line_index]});
+                }
+            }
+        }
     }
+    INFO("Core Tensor ops must stay device-only:" + FormatHits(hits));
+    REQUIRE(hits.empty());
 }
 
 TEST_CASE("Host-vector model evaluation has one native execution owner",
