@@ -4932,6 +4932,24 @@ set_target_properties(test_node_presets PROPERTIES
 add_test(NAME node_presets_contract COMMAND test_node_presets)
 
 # ===== Test: spatial (CNN) layers against PyTorch (TOFIX140 A1) =====
+# Sequence-tag metrics on the device (TOFIX140 F3).
+add_executable(test_sequence_tag_metrics
+    tests/test_sequence_tag_metrics.cpp
+)
+
+target_include_directories(test_sequence_tag_metrics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src
+)
+
+target_link_libraries(test_sequence_tag_metrics PRIVATE
+    cyxwiz-backend
+)
+
+add_test(NAME sequence_tag_metrics COMMAND test_sequence_tag_metrics)
+
 add_executable(test_computation_truth_spatial_layers
     tests/computation_truth/test_computation_truth_spatial_layers.cpp
 )
