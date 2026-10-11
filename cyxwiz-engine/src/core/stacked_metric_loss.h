@@ -6,7 +6,7 @@
 //     the loss splits the blocks.
 //   Hard / semi-hard mining: the embeddings are the batch's [N, D] and the
 //     labels its class ids; the loss mines its triplets or pairs from their
-//     distances (metric_learning_mining.h) and gathers the blocks.
+//     distances (metric_learning_mining.h, on the device) and gathers the blocks.
 // Either way the blocks are scored by the backend loss, and the gradient goes
 // back to the encoder's rows (stacked, or summed per row through the picks),
 // so a single backward sums the shared-weight gradients (torch:
@@ -16,9 +16,7 @@
 
 #include <cyxwiz/losses/metric_learning.h>
 
-#include <array>
 #include <utility>
-#include <vector>
 
 namespace cyxwiz {
 
@@ -35,10 +33,10 @@ public:
 
 private:
     // The three [T, D] blocks; hands the negatives to the backend loss and
-    // returns {anchors, positives}. `picks` gets the mined rows (empty for
-    // random mining).
-    std::pair<Tensor, Tensor> Blocks(const Tensor& embeddings, const Tensor& labels,
-                                     std::vector<std::array<int, 3>>& picks);
+    // returns {anchors, positives}. `source_rows` gets the mined rows of the
+    // stacked blocks (anchors; positives; negatives) as device indices, or
+    // stays empty for random mining.
+    std::pair<Tensor, Tensor> Blocks(const Tensor& embeddings, const Tensor& labels, Tensor& source_rows);
 
     MetricMining mining_;
     TripletLoss triplet_;
@@ -63,11 +61,12 @@ public:
 
 private:
     // The two [P, D] blocks; hands the pair labels to the backend loss and
-    // returns {firsts, seconds}. `picks` gets the mined rows (empty for random
-    // mining).
-    std::pair<Tensor, Tensor> Blocks(const Tensor& embeddings, const Tensor& labels,
-                                     std::vector<std::array<int, 3>>& picks);
-    void SetPairLabels(const std::vector<bool>& similar);
+    // returns {firsts, seconds}. `source_rows` gets the mined rows of the
+    // stacked blocks (firsts; seconds) as device indices, or stays empty for
+    // random mining.
+    std::pair<Tensor, Tensor> Blocks(const Tensor& embeddings, const Tensor& labels, Tensor& source_rows);
+    // similar: Float32 [P], 1 for a same-class pair.
+    void SetPairLabels(const Tensor& similar);
 
     Kind kind_;
     MetricMining mining_;

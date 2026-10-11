@@ -479,36 +479,60 @@ void CheckRefusals() {
 
 // The mining rules on a hand-made batch: rows 0, 1 class 0; rows 2, 3 class 1.
 // Distances from row 0: row 1 at 4, row 2 at 1, row 3 at 6.
+// The i-th pick of an Int32 index tensor, and a mined triplet / pair as an array.
+int Pick(const cyxwiz::Tensor& indices, size_t i) { return indices.ReadData<int32_t>()[i]; }
+std::array<int, 3> TripletAt(const cyxwiz::MinedTriplets& t, size_t i) {
+    return {Pick(t.anchors, i), Pick(t.positives, i), Pick(t.negatives, i)};
+}
+std::array<int, 3> PairAt(const cyxwiz::MinedPairs& p, size_t i) {
+    return {Pick(p.firsts, i), Pick(p.seconds, i), static_cast<int>(p.similar.ReadData<float>()[i])};
+}
+double DistanceAt(const cyxwiz::Tensor& distances, size_t i, size_t j) {
+    const size_t n = distances.Shape()[1];
+    return distances.GetDataType() == cyxwiz::DataType::Float64 ? distances.ReadData<double>()[i * n + j]
+                                                                 : distances.ReadData<float>()[i * n + j];
+}
+
+// Mining runs on the device (TOFIX140 F7); the picks are the host rule's.
 void CheckMining() {
     const float points[] = {0, 0, 4, 0, 0, 1, 6, 0};
-    const std::vector<int64_t> ids = {0, 0, 1, 1};
-    const auto distances = cyxwiz::MiningDistances(points, 4, 2, cyxwiz::MiningDistance::Euclidean);
-    Check(std::abs(distances[0 * 4 + 1] - 4.0) < 1e-12 && std::abs(distances[0 * 4 + 3] - 6.0) < 1e-12,
+    const float id_values[] = {0, 0, 1, 1};
+    const cyxwiz::Tensor embeddings({4, 2}, points, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor class_ids({4}, id_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor ids = cyxwiz::BatchClassIds(class_ids, 4);
+    const auto distances = cyxwiz::MiningDistances(embeddings, cyxwiz::MiningDistance::Euclidean);
+    Check(std::abs(DistanceAt(distances, 0, 1) - 4.0) < 1e-6 && std::abs(DistanceAt(distances, 0, 3) - 6.0) < 1e-6,
           "Euclidean mining distances");
     const auto hard = cyxwiz::MineTriplets(ids, distances, cyxwiz::MetricMining::Hard);
-    Check(hard.size() == 4 && hard[0] == std::array<int, 3>{0, 1, 2},
+    Check(hard.count == 4 && TripletAt(hard, 0) == std::array<int, 3>{0, 1, 2},
           "hard: row 0 takes its farthest positive (1) and closest negative (2)");
     // Semi-hard for (0, 1): negatives farther than 4 -> row 3 (6).
     const auto semi = cyxwiz::MineTriplets(ids, distances, cyxwiz::MetricMining::SemiHard);
-    Check(semi.size() == 4 && semi[0] == std::array<int, 3>{0, 1, 3},
+    Check(semi.count == 4 && TripletAt(semi, 0) == std::array<int, 3>{0, 1, 3},
           "semi-hard: the closest negative farther than the positive");
     // Row 1 (4,0): positive 0 at 4; negatives 2 at sqrt(17) ~ 4.12, 3 at 2 ->
     // 2 is the only one farther than 4.
-    Check(semi[1] == std::array<int, 3>{1, 0, 2}, "semi-hard for row 1 takes row 2");
+    Check(TripletAt(semi, 1) == std::array<int, 3>{1, 0, 2}, "semi-hard for row 1 takes row 2");
     // Row 3 (6,0): positive 2 at sqrt(37) ~ 6.08; negatives 0 at 6, 1 at 2: none
     // farther -> the farthest negative, row 0.
-    Check(semi[3] == std::array<int, 3>{3, 2, 0}, "semi-hard falls back to the farthest negative");
+    Check(TripletAt(semi, 3) == std::array<int, 3>{3, 2, 0}, "semi-hard falls back to the farthest negative");
     const auto pairs = cyxwiz::MinePairs(ids, distances);
-    Check(pairs.size() == 8 && pairs[0] == std::array<int, 3>{0, 1, 1} && pairs[1] == std::array<int, 3>{0, 2, 0},
+    Check(pairs.count == 8 && PairAt(pairs, 0) == std::array<int, 3>{0, 1, 1} &&
+              PairAt(pairs, 1) == std::array<int, 3>{0, 2, 0},
           "hard pairs: per row, the farthest positive and the closest negative");
-    const auto cosine = cyxwiz::MiningDistances(points, 4, 2, cyxwiz::MiningDistance::Cosine);
-    Check(std::abs(cosine[1 * 4 + 3]) < 1e-9 && std::abs(cosine[1 * 4 + 2] - 1.0) < 1e-9,
+    const auto cosine = cyxwiz::MiningDistances(embeddings, cyxwiz::MiningDistance::Cosine);
+    Check(std::abs(DistanceAt(cosine, 1, 3)) < 1e-6 && std::abs(DistanceAt(cosine, 1, 2) - 1.0) < 1e-6,
           "cosine mining distances: same direction 0, orthogonal 1");
+    bool fractional_refused = false;
+    try {
+        const float fractional[] = {0, 0.5f, 1, 1};
+        (void)cyxwiz::BatchClassIds(cyxwiz::Tensor({4}, fractional, cyxwiz::DataType::Float32), 4);
+    } catch (const std::runtime_error&) {
+        fractional_refused = true;
+    }
+    Check(fractional_refused, "fractional class ids are refused");
 
     // A mined loss sums each row's gradients over every pick it is in.
-    const cyxwiz::Tensor embeddings({4, 2}, points, cyxwiz::DataType::Float32);
-    const float id_values[] = {0, 0, 1, 1};
-    const cyxwiz::Tensor class_ids({4}, id_values, cyxwiz::DataType::Float32);
     cyxwiz::StackedTripletLoss mined(1.0f, cyxwiz::MetricMining::Hard);
     const cyxwiz::Tensor gradient = mined.Backward(embeddings, class_ids);
     Check(gradient.Shape() == std::vector<size_t>{4, 2}, "a mined loss's gradient covers the N batch rows");
@@ -533,7 +557,7 @@ gui::NodeType LossFor(const std::string& kind) {
 
 }  // namespace
 
-int main(int, char** argv) {
+int RunChecks(char** argv) {
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -723,4 +747,14 @@ int main(int, char** argv) {
     fs::remove_all(work_dir);
     std::cout << "Metric learning matches PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
+}
+
+// An exception names itself instead of aborting the run unexplained.
+int main(int, char** argv) {
+    try {
+        return RunChecks(argv);
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL: " << e.what() << std::endl;
+        return 1;
+    }
 }
