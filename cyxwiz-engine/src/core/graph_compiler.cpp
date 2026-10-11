@@ -2154,12 +2154,6 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 }
                 continue;
             }
-            case backend_placement::LayerCapabilityKind::CpuBackedModelLayer: {
-                auto placement =
-                    backend_placement::BuildCpuBackedModelLayerPlacement(layer);
-                config.backend_placements.push_back(placement);
-                continue;
-            }
             case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
                 config.backend_placements.push_back(
                     backend_placement::BuildUnsupportedSequentialModelPlacement(

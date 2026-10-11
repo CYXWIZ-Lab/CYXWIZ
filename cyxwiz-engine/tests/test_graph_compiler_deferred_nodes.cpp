@@ -840,12 +840,11 @@ int main() {
         Check(mha_placement->node_type == "MultiHeadAttention",
               "standalone MultiHeadAttention placement should name the node type");
         Check(mha_placement->status ==
-                  cyxwiz::BackendPlacementStatus::Cpu,
-              "self-attention-capable MultiHeadAttention placement should be CPU-backed");
+                  cyxwiz::BackendPlacementStatus::Gpu,
+              "MultiHeadAttention runs on ArrayFire only (TOFIX140)");
         Check(mha_placement->reason_code ==
-                  cyxwiz::BackendPlacementReason::
-                      GraphRuntimeCpuBacked,
-              "standalone MultiHeadAttention placement should use CPU-backed reason");
+                  cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+              "standalone MultiHeadAttention placement should use the ArrayFire tensor reason");
     }
 
     auto masked_mha = Node(371,
@@ -905,7 +904,7 @@ int main() {
 
     auto cpu_loader = Node(39,
                            gui::NodeType::DataLoader,
-                           "CPU DataLoader",
+                           "Pinned DataLoader",
                            {Pin(3901, gui::PinType::Dataset, "Dataset", true)},
                            {Pin(3902, gui::PinType::Tensor, "Batch", false)});
     cpu_loader.parameters["batch_size"] = "8";
@@ -920,23 +919,25 @@ int main() {
         Link(5, 4, 403, 5, 501),
     };
 
+    // Attention runs on ArrayFire only (TOFIX140), so this is a GPU graph:
+    // pin_memory is requested but the batchers have no pinned transfer yet.
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
-          "CPU-only pin_memory graph should compile with a warning");
-    Check(HasIssueText(config, "pin_memory=true is not applicable"),
-          "CPU-only pin_memory request should surface a not-applicable warning");
+          "pin_memory attention graph should compile with a warning");
+    Check(HasIssueText(config, "pin_memory=true is unsupported by current batchers"),
+          "pin_memory on an ArrayFire graph should say the batchers ignore it");
     Check(config.pin_memory_transfer.requested,
-          "CPU-only pin_memory request should be preserved");
-    Check(config.pin_memory_transfer.backend == "CPU",
-          "CPU-only pin_memory status should identify CPU backend");
+          "pin_memory request should be preserved");
+    Check(config.pin_memory_transfer.backend == "gpu",
+          "pin_memory status should identify the GPU placement");
     Check(config.pin_memory_transfer.effective_mode ==
-              cyxwiz::PinMemoryTransferMode::PinnedRequestedButNotApplicable,
-          "CPU-only pin_memory status should expose not-applicable mode");
+              cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported,
+          "pin_memory status should expose the unsupported mode");
     Check(config.pin_memory_transfer.reason_code ==
-              cyxwiz::PinMemoryTransferReason::CpuBackendNotApplicable,
-          "CPU-only pin_memory status should expose not-applicable reason");
+              cyxwiz::PinMemoryTransferReason::BackendUnavailable,
+          "pin_memory status should expose the backend-unavailable reason");
     Check(config.pin_memory_transfer.NeedsUserWarning(),
-          "CPU-only pin_memory status should require user warning");
+          "pin_memory status should require a user warning");
 
     auto sequence_data = data;
     sequence_data.name = "NER Sentence CSV";
@@ -1190,8 +1191,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "decoder-only TransformerDecoder path should compile under current engine support");
-    Check(config.SummarizeBackendPlacements().cpu == 1,
-          "decoder-only TransformerDecoder path should carry one CPU-backed placement");
+    Check(config.SummarizeBackendPlacements().cpu == 0,
+          "decoder-only TransformerDecoder path runs on ArrayFire only (TOFIX140): no CPU placement");
     Check(config.SummarizeBackendPlacements().unknown == 0,
           "decoder-only TransformerDecoder path should not carry unknown backend placement");
 

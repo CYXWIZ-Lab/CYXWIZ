@@ -3886,8 +3886,7 @@ void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(
     cpu_stage.expected_backend = "CPU";
     cpu_stage.fallback_backend = "CPU";
     cpu_stage.status = cyxwiz::BackendPlacementStatus::Cpu;
-    cpu_stage.reason_code =
-        cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked;
+    cpu_stage.reason_code = "backend_internal_error";  // any CPU-stage reason
     strict_config.backend_placements.push_back(cpu_stage);
 
     cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");

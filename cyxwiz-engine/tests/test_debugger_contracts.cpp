@@ -590,7 +590,7 @@ void TestRuntimeBackendClassificationContract() {
     mha_cpu.expected_backend = "CPU";
     mha_cpu.fallback_backend = "CPU";
     mha_cpu.status = cyxwiz::BackendPlacementStatus::Cpu;
-    mha_cpu.reason_code = cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked;
+    mha_cpu.reason_code = "backend_internal_error";
     mha_cpu.explanation =
         "MultiHeadAttention is supported as CPU-backed self-attention.";
     mha_cpu.suggested_action =
@@ -609,8 +609,7 @@ void TestRuntimeBackendClassificationContract() {
           "MHA CPU-backed placement should be marked proven");
     Check(mha_classification.status == cyxwiz::BackendPlacementStatus::Cpu,
           "MHA CPU-backed placement should preserve CPU status");
-    Check(mha_classification.reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+    Check(mha_classification.reason_code == "backend_internal_error",
           "MHA CPU-backed placement should preserve CPU-backed reason");
     Check(mha_classification.observation_source == "preflight_probe",
           "MHA CPU-backed placement should preserve observation source");
@@ -643,8 +642,7 @@ void TestRuntimeBackendClassificationContract() {
     Check(mha_trace.payload["backend_status"].get<std::string>() ==
               cyxwiz::BackendPlacementStatus::Cpu,
           "MHA backend trace payload should expose CPU status");
-    Check(mha_trace.payload["backend_reason_code"].get<std::string>() ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+    Check(mha_trace.payload["backend_reason_code"].get<std::string>() == "backend_internal_error",
           "MHA backend trace payload should expose CPU-backed reason");
     Check(mha_trace.payload["backend_observation_source"].get<std::string>() ==
               "preflight_probe",

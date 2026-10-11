@@ -635,51 +635,30 @@ int main() {
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::GRU).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::Recurrent,
           "GRU capability kind should be Recurrent");
-    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
-              gui::NodeType::LayerNorm),
-          "LayerNorm should not be classified as direct ArrayFire tensor-capable");
-    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
-              gui::NodeType::LayerNorm),
-          "LayerNorm should be classified as a known CPU-backed model layer");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::LayerNorm).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "LayerNorm capability kind should be CpuBackedModelLayer");
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "LayerNorm runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::MultiHeadAttention).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "MultiHeadAttention runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::CrossAttention).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "CrossAttention runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::TransformerEncoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerEncoder runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::TransformerDecoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerDecoder runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::PositionalEncoding).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "PositionalEncoding runs on ArrayFire only (TOFIX140): ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::Dropout).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
           "Dropout capability kind should remain ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::BatchNorm).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
           "BatchNorm capability kind should remain ArrayFireTensor");
-    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
-              gui::NodeType::MultiHeadAttention),
-          "MultiHeadAttention should not be classified as direct ArrayFire tensor-capable");
-    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
-              gui::NodeType::MultiHeadAttention),
-          "MultiHeadAttention should be classified as a known CPU-backed model layer");
-    Check(cyxwiz::backend_placement::ClassifyLayer(
-              gui::NodeType::MultiHeadAttention).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "MultiHeadAttention capability kind should be CpuBackedModelLayer");
-    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
-              gui::NodeType::TransformerEncoder),
-          "TransformerEncoder should not be classified as direct ArrayFire tensor-capable");
-    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
-              gui::NodeType::TransformerEncoder),
-          "TransformerEncoder should be classified as a known CPU-backed model layer");
-    Check(cyxwiz::backend_placement::ClassifyLayer(
-              gui::NodeType::TransformerEncoder).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "TransformerEncoder capability kind should be CpuBackedModelLayer");
-    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
-              gui::NodeType::TransformerDecoder),
-          "TransformerDecoder should not be classified as direct ArrayFire tensor-capable");
-    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
-              gui::NodeType::TransformerDecoder),
-          "TransformerDecoder should be classified as a known CPU-backed model layer");
-    Check(cyxwiz::backend_placement::ClassifyLayer(
-              gui::NodeType::TransformerDecoder).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "TransformerDecoder capability kind should be CpuBackedModelLayer");
     cyxwiz::CompiledLayer supported_decoder;
     supported_decoder.type = gui::NodeType::TransformerDecoder;
     supported_decoder.name = "Supported Causal Decoder";
@@ -726,31 +705,6 @@ int main() {
     Check(cyxwiz::backend_placement::ClassifyLayer(supported_attention).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
           "MultiHeadAttention dropout sequence path should be classified as ArrayFireTensor");
-    cyxwiz::CompiledLayer invalid_dropout_decoder = supported_decoder;
-    invalid_dropout_decoder.name = "Invalid Dropout Decoder";
-    invalid_dropout_decoder.parameters["dropout"] = "1.0";
-    Check(cyxwiz::backend_placement::ClassifyLayer(invalid_dropout_decoder).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "invalid TransformerDecoder dropout should not be classified as ArrayFireTensor");
-    auto invalid_dropout_placement =
-        cyxwiz::backend_placement::BuildCpuBackedModelLayerPlacement(
-            invalid_dropout_decoder);
-    Check(invalid_dropout_placement.explanation.find("dropout value '1.0'") !=
-              std::string::npos,
-          "CPU-backed TransformerDecoder explanation should name invalid dropout value");
-    Check(invalid_dropout_placement.explanation.find("probability in [0,1)") !=
-              std::string::npos,
-          "CPU-backed TransformerDecoder explanation should give the valid probability range");
-    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
-              gui::NodeType::PositionalEncoding),
-          "PositionalEncoding should not be classified as direct ArrayFire tensor-capable");
-    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
-              gui::NodeType::PositionalEncoding),
-          "PositionalEncoding should be classified as a known CPU-backed model layer");
-    Check(cyxwiz::backend_placement::ClassifyLayer(
-              gui::NodeType::PositionalEncoding).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
-          "PositionalEncoding capability kind should be CpuBackedModelLayer");
     Check(cyxwiz::backend_placement::ClassifyLayer(
               gui::NodeType::TimeDistributed).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::TimeDistributedSequenceWrapper,

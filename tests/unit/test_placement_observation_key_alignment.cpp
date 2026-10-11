@@ -6,7 +6,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "algorithms/arrayfire_backend_utils.h"
-#include "algorithms/layers/layer_utils.h"
 
 #include <cyxwiz/backend_placement_observation.h>
 #include <cyxwiz/tensor.h>
@@ -61,41 +60,4 @@ TEST_CASE("Runtime writer shape signatures align with compile-time lookups",
     CHECK(BuildTensorLayerPlacementShapeSignature(
               StripBatchDimensionForPlacementSignature(runtime_conv_shape)) ==
           BuildTensorLayerPlacementShapeSignature(compiler_conv_shape));
-}
-
-TEST_CASE("Layer fallback observations land under the compiler's lookup key",
-          "[gpu_execution][taxonomy][placement]") {
-    using namespace cyxwiz;
-
-    ClearBackendPlacementObservationCacheForTesting();
-
-    // Simulate a Conv2D runtime Forward failure through the shared layer
-    // funnel with a batched input tensor, then look it up exactly the way
-    // BuildArrayFireTensorPlacement does at compile time.
-    Tensor input(std::vector<size_t>{8, 28, 28, 3});
-    float* data = input.Data<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        data[i] = 0.0f;
-    }
-    RecordLayerArrayFireFallbackObservation(
-        "Conv2DLayer::Forward",
-        "Conv2D",
-        BackendFallbackReason::UnsupportedShape,
-        "simulated unsupported conv shape",
-        input,
-        "input");
-
-    BackendPlacementObservation observation;
-    REQUIRE(TryGetBackendPlacementObservationForActiveDevice(
-        "Conv2D",
-        CurrentArrayFireBackendName(),
-        "float32",
-        BuildTensorLayerPlacementShapeSignature({28, 28, 3}),
-        observation));
-    CHECK(observation.reason_code ==
-          BackendPlacementObservationReason::UnsupportedShape);
-    CHECK(observation.source ==
-          BackendPlacementObservationSource::RuntimeFallback);
-
-    ClearBackendPlacementObservationCacheForTesting();
 }

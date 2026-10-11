@@ -80,21 +80,18 @@ constexpr const char* GpuOperationFamilyName(GpuOperationFamily family) {
     return "unclassified";
 }
 
-// 2026-09-22 initial audit (tofix67 implementation-order step 3). Modes
-// reflect what the code does TODAY, not aspirations:
+// Modes reflect what the code does today (audited 2026-09-22 in tofix67; the
+// TOFIX140 sweeps of 2026-10-10 / 11 made every model layer, loss, optimizer and
+// the recurrent family ArrayFire-only: no native-CPU fallback, a backend failure
+// is reported):
 //
-// - Recurrent: staged. The LSTM ArrayFire path materializes per timestep
-//   (de-facto staging) behind the formal-parameter-byte estimator; GRU and
-//   bidirectional LSTM are policy-routed to CPU per exact key. Slice 5
-//   names the staged plan; a native provider is step 8.
-// - DenseMatmul / EmbeddingIndexing / ConvolutionPooling / Activation /
-//   Loss / Optimizer / Reduction / Transform / GraphTensorOp: direct
-//   ArrayFire calls with recorded native-CPU fallback per exact key.
-// - AttentionNormalization (MultiHeadAttention, Transformer encoder/decoder,
-//   PositionalEncoding, LayerNorm): CPU-backed per the part_f contract; the
-//   strict-shape ArrayFire variants stay evidence-gated until residency is
-//   claimed.
-// - Evaluation: native CPU by design — the host-vector evaluation owner is
+// - Recurrent: staged. The ArrayFire per-timestep plan (eval barriers), or the
+//   native provider op where one exists.
+// - DenseMatmul / EmbeddingIndexing / AttentionNormalization (attention,
+//   Transformer encoder / decoder, PositionalEncoding, LayerNorm) /
+//   ConvolutionPooling / Activation / Loss / Optimizer / Reduction / Transform /
+//   GraphTensorOp: direct ArrayFire calls.
+// - Evaluation: native CPU by design: the host-vector evaluation owner is
 //   enforced ArrayFire-free by source scan.
 constexpr GpuExecutionMode DeclaredGpuExecutionMode(
     GpuOperationFamily family) {
@@ -106,7 +103,7 @@ constexpr GpuExecutionMode DeclaredGpuExecutionMode(
     case GpuOperationFamily::EmbeddingIndexing:
         return GpuExecutionMode::DirectArrayFire;
     case GpuOperationFamily::AttentionNormalization:
-        return GpuExecutionMode::Cpu;
+        return GpuExecutionMode::DirectArrayFire;
     case GpuOperationFamily::ConvolutionPooling:
         return GpuExecutionMode::DirectArrayFire;
     case GpuOperationFamily::Activation:
