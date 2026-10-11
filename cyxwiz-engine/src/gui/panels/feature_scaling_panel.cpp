@@ -163,6 +163,12 @@ void FeatureScalingPanel::RenderMethodTabs() {
             method_results_[ScalingMethod::Robust] = DataTransform::RobustScale(data);
             method_results_[ScalingMethod::MaxAbs] = DataTransform::MaxAbsScale(data);
             method_results_[ScalingMethod::Quantile] = DataTransform::QuantileTransform(data, quantile_normal_output_ ? "normal" : "uniform", quantile_n_quantiles_);
+            method_stats_.clear();
+            for (const auto& [method, result] : method_results_) {
+                if (result.success && !result.transformed_data.empty()) {
+                    method_stats_[method] = DataTransform::ComputeColumnStats(result.transformed_data[0]);
+                }
+            }
         }
     }
 
@@ -379,10 +385,9 @@ void FeatureScalingPanel::RenderComparison() {
         ImGui::TableHeadersRow();
 
         for (int m = 0; m < 5; ++m) {
-            auto it = method_results_.find(methods[m]);
-            if (it == method_results_.end() || !it->second.success || it->second.transformed_data.empty()) continue;
-
-            auto stats = DataTransform::ComputeColumnStats(it->second.transformed_data[0]);
+            auto it = method_stats_.find(methods[m]);
+            if (it == method_stats_.end()) continue;
+            const ColumnStats& stats = it->second;
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -424,6 +429,7 @@ void FeatureScalingPanel::LoadSelectedData() {
     original_stats_.clear();
     transformed_stats_.clear();
     method_results_.clear();
+    method_stats_.clear();
     show_comparison_ = false;
     status_message_ = "Data loaded. Select columns and method.";
 }

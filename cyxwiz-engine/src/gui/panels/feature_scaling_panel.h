@@ -69,6 +69,7 @@ private:
 
     // Comparison data for multiple methods
     std::map<ScalingMethod, TransformResult> method_results_;
+    std::map<ScalingMethod, ColumnStats> method_stats_;  // first column of each result, computed once
     bool show_comparison_ = false;
 
     std::string status_message_;

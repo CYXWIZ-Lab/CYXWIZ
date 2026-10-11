@@ -214,13 +214,16 @@ void BoxCoxPanel::RenderLambdaPlot() {
 
     // Normality test results
     ImGui::Spacing();
-    ImGui::Text("Normality Assessment:");
-    ImGui::BulletText("Original: %s (p=%.4f)",
-                     orig_normality_.is_normal ? "Normal" : "Non-normal",
-                     orig_normality_.p_value);
-    ImGui::BulletText("Transformed: %s (p=%.4f)",
-                     trans_normality_.is_normal ? "Normal" : "Non-normal",
-                     trans_normality_.p_value);
+    ImGui::Text("Normality Assessment (D'Agostino-Pearson):");
+    const auto normality_line = [](const char* label, const NormalityTestResult& test) {
+        if (!test.computed) {
+            ImGui::BulletText("%s: not tested (%s)", label, test.error_message.c_str());
+            return;
+        }
+        ImGui::BulletText("%s: %s (p=%.4f)", label, test.is_normal ? "Normal" : "Non-normal", test.p_value);
+    };
+    normality_line("Original", orig_normality_);
+    normality_line("Transformed", trans_normality_);
 }
 
 void BoxCoxPanel::RenderResults() {
@@ -364,13 +367,14 @@ void BoxCoxPanel::FindOptimalLambda() {
         return;
     }
 
-    lambda_result_ = DataTransform::FindOptimalLambda(col_data, -5.0, 5.0, 100);
+    lambda_result_ = use_yeo_johnson_ ? DataTransform::FindOptimalYeoJohnsonLambda(col_data, -5.0, 5.0, 100)
+                                      : DataTransform::FindOptimalLambda(col_data, -5.0, 5.0, 100);
 
     if (lambda_result_.success) {
         manual_lambda_ = static_cast<float>(lambda_result_.optimal_lambda);
         status_message_ = "Optimal lambda found: " + std::to_string(lambda_result_.optimal_lambda);
     } else {
-        status_message_ = "Failed to find optimal lambda.";
+        status_message_ = "Failed to find optimal lambda: " + lambda_result_.error_message;
     }
 }
 
@@ -391,29 +395,34 @@ void BoxCoxPanel::ApplyBoxCox() {
         return;
     }
 
+    if (!use_yeo_johnson_ && !DataTransform::CanApplyBoxCox(col_data)) {
+        status_message_ = "Cannot apply Box-Cox to non-positive data.";
+        can_transform_ = false;
+        return;
+    }
+
     original_stats_ = DataTransform::ComputeColumnStats(col_data);
     orig_normality_ = DataTransform::DAgostinoPearsonTest(col_data);
 
-    if (use_yeo_johnson_) {
-        transform_result_ = DataTransform::YeoJohnsonColumn(col_data, manual_lambda_, auto_lambda_);
-    } else {
-        if (!DataTransform::CanApplyBoxCox(col_data)) {
-            status_message_ = "Cannot apply Box-Cox to non-positive data.";
-            can_transform_ = false;
+    // Auto lambda: search once (it also fills the Lambda tab's profile), then
+    // transform with the lambda found.
+    double lambda = manual_lambda_;
+    if (auto_lambda_) {
+        lambda_result_ = use_yeo_johnson_ ? DataTransform::FindOptimalYeoJohnsonLambda(col_data, -5.0, 5.0, 100)
+                                          : DataTransform::FindOptimalLambda(col_data, -5.0, 5.0, 100);
+        if (!lambda_result_.success) {
+            transform_result_ = TransformResult();
+            status_message_ = "Failed to find optimal lambda: " + lambda_result_.error_message;
             return;
         }
-        transform_result_ = DataTransform::BoxCoxColumn(col_data, manual_lambda_, auto_lambda_);
+        lambda = lambda_result_.optimal_lambda;
     }
+    transform_result_ = use_yeo_johnson_ ? DataTransform::YeoJohnsonColumn(col_data, lambda, false)
+                                         : DataTransform::BoxCoxColumn(col_data, lambda, false);
 
     if (transform_result_.success && !transform_result_.transformed_data.empty()) {
         transformed_stats_ = DataTransform::ComputeColumnStats(transform_result_.transformed_data[0]);
         trans_normality_ = DataTransform::DAgostinoPearsonTest(transform_result_.transformed_data[0]);
-
-        // Also run lambda search if auto was enabled
-        if (auto_lambda_ && !use_yeo_johnson_) {
-            lambda_result_ = DataTransform::FindOptimalLambda(col_data, -5.0, 5.0, 100);
-        }
-
         status_message_ = "Transform applied successfully.";
     } else {
         status_message_ = "Error: " + transform_result_.error_message;
