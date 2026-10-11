@@ -37,10 +37,12 @@ def blobs(seed, centers, sizes, scales):
 
 
 def distances(a, b, metric):
+    # Exact differences: torch.cdist(p=2) takes a matmul shortcut above 25 rows.
+    diff = a[:, None, :] - b[None, :, :]
     if metric == "euclidean":
-        return torch.cdist(a, b, p=2)
+        return diff.pow(2).sum(-1).sqrt()
     if metric == "manhattan":
-        return torch.cdist(a, b, p=1)
+        return diff.abs().sum(-1)
     an, bn = a / a.norm(dim=1, keepdim=True), b / b.norm(dim=1, keepdim=True)
     return 1.0 - an @ bn.T
 
@@ -68,7 +70,7 @@ def dbscan(x, eps, min_samples, metric):
 
 
 def silhouette_samples(x, codes, k):
-    d = torch.cdist(x, x)
+    d = distances(x, x, "euclidean")
     one_hot = torch.nn.functional.one_hot(codes, k).double()
     counts = one_hot.sum(0)
     totals = d @ one_hot
@@ -87,7 +89,7 @@ def silhouette_samples(x, codes, k):
 def davies_bouldin(x, codes, k):
     centroids = torch.stack([x[codes == c].mean(0) for c in range(k)])
     intra = torch.stack([(x[codes == c] - centroids[c]).norm(dim=1).mean() for c in range(k)])
-    cd = torch.cdist(centroids, centroids)
+    cd = distances(centroids, centroids, "euclidean")
     if torch.allclose(intra, torch.zeros_like(intra), atol=1e-8) or torch.allclose(cd, torch.zeros_like(cd), atol=1e-8):
         return 0.0
     cd[cd == 0] = float("inf")
@@ -178,7 +180,7 @@ def main():
                                            ("cosine", positive, 0.0005, 4)]:
         labels, core = dbscan(data, eps, min_samples, metric)
         add("dbscan", metric, data, eps=eps, min_samples=min_samples, metric=metric, labels=labels, core=core)
-    d = torch.cdist(noisy, noisy).sort(1).values[:, 4].sort().values
+    d = distances(noisy, noisy, "euclidean").sort(1).values[:, 4].sort().values
     add("kdistances", "k4", noisy, k=4, distances=vec(d))
 
     # Hierarchical against scipy on the same distances.
