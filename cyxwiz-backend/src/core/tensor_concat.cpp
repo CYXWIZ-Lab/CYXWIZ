@@ -1,18 +1,16 @@
 #include "cyxwiz/tensor.h"
-#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
+#include "../algorithms/arrayfire_host_values.h"
 #endif
 
 namespace cyxwiz {
@@ -53,34 +51,28 @@ bool IsPyTorchEmptyCatIdentity(const Tensor& tensor) {
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-std::vector<std::vector<size_t>> BuildInputShapes(
-    const std::vector<Tensor>& tensors) {
-    std::vector<std::vector<size_t>> input_shapes;
-    input_shapes.reserve(tensors.size());
-    for (const Tensor& tensor : tensors) {
-        input_shapes.push_back(tensor.Shape());
+// Concatenate along axis on the device. Up to rank 4 the semantic views join on
+// that axis; above, each row-major flat array is viewed as [after, extent,
+// before] and joined on ArrayFire dim 1, which is the output's row-major order.
+Tensor JoinOnDevice(const std::vector<const Tensor*>& parts, int axis, const std::vector<size_t>& out_shape) {
+    const size_t rank = out_shape.size();
+    dim_t before = 1;
+    dim_t after = 1;
+    for (size_t i = 0; i < rank; ++i) {
+        if (i < static_cast<size_t>(axis)) before *= static_cast<dim_t>(out_shape[i]);
+        if (i > static_cast<size_t>(axis)) after *= static_cast<dim_t>(out_shape[i]);
     }
-    return input_shapes;
-}
-
-void RecordConcatArrayFireFallback(
-    const char* operation_name,
-    const std::vector<Tensor>& tensors,
-    DataType dtype,
-    const std::vector<size_t>& output_shape,
-    int axis,
-    const char* error_message) {
-    spdlog::warn(
-        "{}",
-        tensor_backend_observation::RecordArrayFireFallback(
-            operation_name,
-            tensor_backend_observation::DataTypeName(dtype),
-            tensor_backend_observation::BuildTensorOpSignature(
-                BuildInputShapes(tensors),
-                output_shape,
-                dtype,
-                "dim=" + std::to_string(axis)),
-            error_message));
+    af::array joined;
+    for (const Tensor* part : parts) {
+        const af::array piece = rank <= 4
+            ? part->GetSemanticArray()
+            : af::moddims(part->GetRowMajorFlatArray(), after,
+                          static_cast<dim_t>(part->Shape()[static_cast<size_t>(axis)]), before);
+        joined = joined.isempty() ? piece : af::join(rank <= 4 ? axis : 1, joined, piece);
+    }
+    joined.eval();
+    return rank <= 4 ? Tensor::FromSemanticArray(joined, out_shape)
+                     : Tensor::FromRowMajorFlatArray(af::flat(joined), out_shape);
 }
 #endif
 
@@ -138,90 +130,21 @@ Tensor Tensor::Cat(const std::vector<Tensor>& tensors, int dim) {
         return Tensor(out_shape, dtype);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (out_shape.size() <= 4) {
-        try {
-            const Tensor* first = nullptr;
-            for (const Tensor& tensor : tensors) {
-                if (!IsPyTorchEmptyCatIdentity(tensor) &&
-                    tensor.Shape()[static_cast<size_t>(axis)] > 0) {
-                    first = &tensor;
-                    break;
-                }
-            }
-            if (!first) {
-                return Tensor(out_shape, dtype);
-            }
-
-            af::array joined = first->GetSemanticArray();
-            bool passed_first = false;
-            for (const Tensor& tensor : tensors) {
-                if (&tensor == first) {
-                    passed_first = true;
-                    continue;
-                }
-                if (!passed_first || IsPyTorchEmptyCatIdentity(tensor) ||
-                    tensor.Shape()[static_cast<size_t>(axis)] == 0) {
-                    continue;
-                }
-                joined = af::join(
-                    static_cast<unsigned>(axis),
-                    joined,
-                    tensor.GetSemanticArray());
-            }
-            joined.eval();
-            return Tensor::FromSemanticArray(joined, out_shape);
-        } catch (const af::exception& e) {
-            RecordConcatArrayFireFallback(
-                "Tensor::Cat", tensors, dtype, out_shape, axis, e.what());
-        }
-    } else {
-        RecordConcatArrayFireFallback(
-            "Tensor::Cat",
-            tensors,
-            dtype,
-            out_shape,
-            axis,
-            "ArrayFire concatenation supports ranks up to 4");
-    }
-#endif
-
-    Tensor result(out_shape, dtype);
-    const auto dst_strides = tensor_utils::RowMajorStrides(out_shape, "Tensor concat: stride overflow");
-    const size_t element_size = tensor_utils::ElementSize(dtype);
-    auto* dst = static_cast<unsigned char*>(result.MutableData());
-
-    size_t axis_offset = 0;
+    std::vector<const Tensor*> parts;
     for (const Tensor& tensor : tensors) {
-        if (IsPyTorchEmptyCatIdentity(tensor)) {
-            continue;
+        if (!IsPyTorchEmptyCatIdentity(tensor) && tensor.Shape()[static_cast<size_t>(axis)] > 0) {
+            parts.push_back(&tensor);
         }
-        const auto src_strides = tensor_utils::RowMajorStrides(tensor.Shape(), "Tensor concat: stride overflow");
-        const auto* src = static_cast<const unsigned char*>(tensor.ReadData());
-        std::vector<size_t> index(tensor.Shape().size(), 0);
-
-        for (size_t src_linear = 0; src_linear < tensor.NumElements(); src_linear++) {
-            size_t remaining = src_linear;
-            for (size_t i = 0; i < tensor.Shape().size(); i++) {
-                index[i] = remaining / src_strides[i];
-                remaining %= src_strides[i];
-            }
-
-            size_t dst_linear = 0;
-            for (size_t i = 0; i < index.size(); i++) {
-                const size_t coord = i == static_cast<size_t>(axis) ? index[i] + axis_offset : index[i];
-                dst_linear += coord * dst_strides[i];
-            }
-
-            std::memcpy(dst + dst_linear * element_size,
-                        src + src_linear * element_size,
-                        element_size);
-        }
-
-        axis_offset += tensor.Shape()[static_cast<size_t>(axis)];
     }
-
-    return result;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        return JoinOnDevice(parts, axis, out_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::Cat", e));
+    }
+#else
+    throw std::runtime_error("Tensor::Cat runs on ArrayFire, and this build has no ArrayFire");
+#endif
 }
 
 Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
@@ -253,70 +176,20 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
         return Tensor(out_shape, dtype);
     }
 
+    std::vector<Tensor> expanded;
+    expanded.reserve(tensors.size());
+    std::vector<const Tensor*> parts;
+    for (const Tensor& tensor : tensors) expanded.push_back(tensor.Unsqueeze(axis));
+    for (const Tensor& tensor : expanded) parts.push_back(&tensor);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (out_shape.size() <= 4) {
-        try {
-            Tensor expanded = tensors.front().Unsqueeze(axis);
-            af::array joined = expanded.GetSemanticArray();
-            for (size_t index = 1; index < tensors.size(); ++index) {
-                Tensor next = tensors[index].Unsqueeze(axis);
-                joined = af::join(
-                    static_cast<unsigned>(axis),
-                    joined,
-                    next.GetSemanticArray());
-            }
-            joined.eval();
-            return Tensor::FromSemanticArray(joined, out_shape);
-        } catch (const af::exception& e) {
-            RecordConcatArrayFireFallback(
-                "Tensor::Stack", tensors, dtype, out_shape, axis, e.what());
-        }
-    } else {
-        RecordConcatArrayFireFallback(
-            "Tensor::Stack",
-            tensors,
-            dtype,
-            out_shape,
-            axis,
-            "ArrayFire stacking supports output ranks up to 4");
+    try {
+        return JoinOnDevice(parts, axis, out_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::Stack", e));
     }
+#else
+    throw std::runtime_error("Tensor::Stack runs on ArrayFire, and this build has no ArrayFire");
 #endif
-
-    Tensor result(out_shape, dtype);
-    const auto input_strides = tensor_utils::RowMajorStrides(
-        input_shape, "Tensor stack: input stride overflow");
-    const auto output_strides = tensor_utils::RowMajorStrides(
-        out_shape, "Tensor stack: output stride overflow");
-    const size_t element_size = tensor_utils::ElementSize(dtype);
-    auto* dst = static_cast<unsigned char*>(result.MutableData());
-    std::vector<size_t> coordinate(input_shape.size(), 0);
-
-    for (size_t tensor_index = 0; tensor_index < tensors.size(); ++tensor_index) {
-        const auto* src = static_cast<const unsigned char*>(
-            tensors[tensor_index].ReadData());
-        for (size_t src_linear = 0;
-             src_linear < tensors[tensor_index].NumElements(); ++src_linear) {
-            size_t remainder = src_linear;
-            for (size_t input_axis = 0;
-                 input_axis < input_shape.size(); ++input_axis) {
-                coordinate[input_axis] = remainder / input_strides[input_axis];
-                remainder %= input_strides[input_axis];
-            }
-
-            size_t dst_linear = tensor_index * output_strides[axis];
-            for (size_t output_axis = 0, input_axis = 0;
-                 output_axis < out_shape.size(); ++output_axis) {
-                if (output_axis != static_cast<size_t>(axis)) {
-                    dst_linear += coordinate[input_axis++] *
-                                  output_strides[output_axis];
-                }
-            }
-            std::memcpy(dst + dst_linear * element_size,
-                        src + src_linear * element_size,
-                        element_size);
-        }
-    }
-    return result;
 }
 
 std::vector<Tensor> Tensor::Split(int split_size, int dim) const {

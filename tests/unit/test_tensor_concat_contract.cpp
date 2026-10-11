@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "tensor_index_helpers.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/device.h>
@@ -399,38 +400,51 @@ TEST_CASE("Tensor cat and stack remain device resident for every dtype",
     CheckResidentConcatMatrix<uint8_t>();
 }
 
-TEST_CASE("Tensor rank-five concat fallback is explicit",
-          "[tensor][tensor_concat][arrayfire][fallback]") {
-    const cyxwiz::Tensor rank5 =
-        cyxwiz::Tensor::RangeN(
-            {1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-    const cyxwiz::Tensor rank4 =
-        DeviceTensor<float>({1, 2, 1, 2}, 0);
-
+// TOFIX140 F4: rank-five Cat / Stack run on the device ([after, extent,
+// before] flat views joined on ArrayFire dim 1).
+TEST_CASE("Tensor rank-five concat runs on the device",
+          "[tensor][tensor_concat][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
+    const std::vector<size_t> shape{2, 3, 2, 2, 3};
+    const cyxwiz::Tensor first = cyxwiz::Tensor::RangeN(shape, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second = first + 1000.0f;
+    const std::vector<size_t> shape4{2, 3, 2, 3};
+    const cyxwiz::Tensor first4 = cyxwiz::Tensor::RangeN(shape4, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second4 = first4 + 1000.0f;
     g_concat_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountConcatFallback);
-        REQUIRE(cyxwiz::Tensor::Cat({rank5, rank5}, 0).Shape() ==
-                std::vector<size_t>{2, 2, 1, 2, 2});
-        REQUIRE(cyxwiz::Tensor::Stack({rank4, rank4}, 0).Shape() ==
-                std::vector<size_t>{2, 1, 2, 1, 2});
+    for (int axis = 0; axis < 5; ++axis) {
+        CAPTURE(axis);
+        cyxwiz::Tensor cat, stack;
+        {
+            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
+                &CountConcatFallback);
+            cat = cyxwiz::Tensor::Cat({first, second}, axis);
+            stack = cyxwiz::Tensor::Stack({first4, second4}, axis);
+        }
+        std::vector<size_t> cat_shape = shape;
+        cat_shape[static_cast<size_t>(axis)] *= 2;
+        REQUIRE(cat.Shape() == cat_shape);
+        const float* cat_values = cat.ReadData<float>();
+        for (size_t i = 0; i < cat.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, cat_shape);
+            const size_t extent = shape[static_cast<size_t>(axis)];
+            const bool from_second = c[static_cast<size_t>(axis)] >= extent;
+            if (from_second) c[static_cast<size_t>(axis)] -= extent;
+            REQUIRE(cat_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)) + (from_second ? 1000.0f : 0.0f));
+        }
+        std::vector<size_t> stack_shape = shape4;
+        stack_shape.insert(stack_shape.begin() + axis, 2);
+        REQUIRE(stack.Shape() == stack_shape);
+        const float* stack_values = stack.ReadData<float>();
+        for (size_t i = 0; i < stack.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, stack_shape);
+            const size_t which = c[static_cast<size_t>(axis)];
+            c.erase(c.begin() + axis);
+            REQUIRE(stack_values[i] == static_cast<float>(tensor_test::Ravel(c, shape4)) + (which == 1 ? 1000.0f : 0.0f));
+        }
     }
-    REQUIRE(g_concat_fallback_count == 2);
-
-    g_concat_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountConcatFallback);
-        REQUIRE_THROWS_AS(cyxwiz::Tensor::Cat({rank5, rank5}, 0),
-                          std::runtime_error);
-        REQUIRE_THROWS_AS(cyxwiz::Tensor::Stack({rank4, rank4}, 0),
-                          std::runtime_error);
-    }
-    REQUIRE(g_concat_fallback_count == 2);
+    REQUIRE(g_concat_fallback_count == 0);
 }
 #endif

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "tensor_index_helpers.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/device.h>
@@ -323,32 +324,49 @@ TEST_CASE("Tensor empty gathers are metadata-only",
     REQUIRE(g_indexing_fallback_count == 0);
 }
 
-TEST_CASE("Tensor rank-five indexing fallback is explicit",
-          "[tensor][tensor_indexing][arrayfire][fallback]") {
-    const cyxwiz::Tensor input =
-        cyxwiz::Tensor::RangeN({1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-
+// TOFIX140 F4: rank-five Slice / IndexSelect run on the device (lookup on
+// ArrayFire dim 1 of the [after, extent, before] flat view).
+TEST_CASE("Tensor rank-five indexing runs on the device",
+          "[tensor][tensor_indexing][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
+    const std::vector<size_t> shape{2, 3, 2, 2, 3};
+    const cyxwiz::Tensor input = cyxwiz::Tensor::RangeN(shape, cyxwiz::DataType::Float32);
     g_indexing_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountIndexingFallback);
-        REQUIRE(input.Slice(3, 0, -1).Shape() == input.Shape());
-        REQUIRE(input.IndexSelect(4, {1, 0}).Shape() == input.Shape());
+    for (int axis = 0; axis < 5; ++axis) {
+        CAPTURE(axis);
+        const size_t extent = shape[static_cast<size_t>(axis)];
+        std::vector<int> selected;
+        for (size_t k = extent; k-- > 0;) selected.push_back(static_cast<int>(k));  // reversed
+        selected.push_back(0);                                                         // a repeat
+        cyxwiz::Tensor sliced, chosen;
+        {
+            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
+                &CountIndexingFallback);
+            sliced = input.Slice(axis, 1, static_cast<int>(extent), 2);
+            chosen = input.IndexSelect(axis, selected);
+        }
+        std::vector<size_t> slice_shape = shape;
+        slice_shape[static_cast<size_t>(axis)] = extent / 2;  // positions 1, 3, ... below extent
+        REQUIRE(sliced.Shape() == slice_shape);
+        const float* slice_values = sliced.ReadData<float>();
+        for (size_t i = 0; i < sliced.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, slice_shape);
+            c[static_cast<size_t>(axis)] = 1 + 2 * c[static_cast<size_t>(axis)];
+            REQUIRE(slice_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)));
+        }
+        std::vector<size_t> select_shape = shape;
+        select_shape[static_cast<size_t>(axis)] = selected.size();
+        REQUIRE(chosen.Shape() == select_shape);
+        const float* select_values = chosen.ReadData<float>();
+        for (size_t i = 0; i < chosen.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, select_shape);
+            c[static_cast<size_t>(axis)] = static_cast<size_t>(selected[c[static_cast<size_t>(axis)]]);
+            REQUIRE(select_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)));
+        }
     }
-    REQUIRE(g_indexing_fallback_count == 2);
-
-    g_indexing_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountIndexingFallback);
-        REQUIRE_THROWS_AS(input.Slice(3, 0, -1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.IndexSelect(4, {1, 0}), std::runtime_error);
-    }
-    REQUIRE(g_indexing_fallback_count == 2);
+    REQUIRE(g_indexing_fallback_count == 0);
 }
 
 TEST_CASE("Tensor scalar indexing uses an explicit bounded host boundary",
