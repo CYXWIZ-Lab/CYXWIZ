@@ -70,46 +70,10 @@ void DimReductionPanel::RenderToolbar() {
 }
 
 void DimReductionPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
     ImGui::Text("%s Data Selection", ICON_FA_DATABASE);
     ImGui::Spacing();
 
-    // Table selector
-    ImGui::Text("Table:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                selected_columns_.clear();
-                label_column_ = -1;
-                has_result_ = false;
-
-                // Find numeric columns
-                numeric_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            numeric_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                    // Default: select all numeric columns
-                    for (size_t i = 0; i < numeric_columns_.size(); i++) {
-                        selected_columns_.push_back(static_cast<int>(i));
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("dimred_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 
     if (!current_table_) {
         ImGui::TextDisabled("Select a data table to continue");
@@ -555,15 +519,6 @@ void DimReductionPanel::RenderExportOptions() {
         }
 
         ImGui::EndPopup();
-    }
-}
-
-void DimReductionPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

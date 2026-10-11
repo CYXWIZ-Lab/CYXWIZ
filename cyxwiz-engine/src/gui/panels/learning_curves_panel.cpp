@@ -20,8 +20,6 @@ void LearningCurvesPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_GRADUATION_CAP) + " Learning Curves###LearningCurvesPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
         ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
         RenderDataSelector();
         ImGui::EndChild();
@@ -64,16 +62,7 @@ void LearningCurvesPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Source");
     ImGui::Spacing();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("learning_curves_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -318,12 +307,8 @@ void LearningCurvesPanel::RenderRecommendations() {
     }
 }
 
-void LearningCurvesPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void LearningCurvesPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     // Try to load learning curve data from table
     auto headers = current_table_->GetHeaders();
 

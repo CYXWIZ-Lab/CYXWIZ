@@ -63,8 +63,6 @@ void RegressionPanel::Render() {
 void RegressionPanel::RenderToolbar() {
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     if (!has_result_) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
@@ -77,36 +75,7 @@ void RegressionPanel::RenderToolbar() {
 }
 
 void RegressionPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                x_column_ = -1;
-                y_column_ = -1;
-                has_result_ = false;
-
-                // Find numeric columns
-                numeric_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            numeric_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("regression_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void RegressionPanel::RenderConfiguration() {
@@ -487,15 +456,6 @@ void RegressionPanel::RenderExportOptions() {
         }
 
         ImGui::EndPopup();
-    }
-}
-
-void RegressionPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

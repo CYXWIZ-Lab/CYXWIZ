@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cyxwiz/dimensionality_reduction.h>
+#include "../dataset_source.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
@@ -38,7 +39,6 @@ public:
     void Toggle() { visible_ = !visible_; }
     bool* GetVisiblePtr() { return &visible_; }
 
-    void AnalyzeTable(const std::string& table_name);
     void AnalyzeTable(std::shared_ptr<DataTable> table);
 
 private:
@@ -59,7 +59,7 @@ private:
     void PrepareData();
 
     bool visible_ = false;
-    std::string selected_table_;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::shared_ptr<DataTable> current_table_;
     std::vector<std::string> numeric_columns_;
     std::vector<int> selected_columns_;  // Columns to use for reduction

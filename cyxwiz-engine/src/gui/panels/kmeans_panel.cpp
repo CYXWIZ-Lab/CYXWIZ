@@ -50,11 +50,6 @@ void KMeansPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_BULLSEYE) + " K-Means Clustering###KMeansPanel").c_str(), &visible_)) {
-        // Update available tables
-        if (data_registry_) {
-            available_tables_ = data_registry_->GetTableNames();
-        }
-
         // Left panel - Configuration
         ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
 
@@ -82,17 +77,7 @@ void KMeansPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Selection");
     ImGui::Spacing();
 
-    // Table selector
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("kmeans_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     // Column selection
     if (!column_names_.empty()) {
@@ -409,16 +394,8 @@ void KMeansPanel::RenderCentroidsTable() {
     }
 }
 
-void KMeansPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || selected_table_idx_ >= static_cast<int>(available_tables_.size())) {
-        return;
-    }
-
-    if (!data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void KMeansPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     // Get column names
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);

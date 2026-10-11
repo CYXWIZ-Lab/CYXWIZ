@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../dataset_source.h"
 #include <cyxwiz/clustering.h>
 #include "../../data/data_table.h"
 #include <imgui.h>
@@ -11,8 +12,6 @@
 #include <atomic>
 
 namespace cyxwiz {
-
-class DataTableRegistry;
 
 /**
  * KMeansPanel - K-Means clustering UI panel
@@ -31,7 +30,6 @@ public:
     ~KMeansPanel() override;
 
     void Render() override;
-    void SetDataTableRegistry(DataTableRegistry* registry) { data_registry_ = registry; }
 
     bool IsOpen() const { return visible_; }
     void SetOpen(bool open) { visible_ = open; }
@@ -44,17 +42,15 @@ private:
     void RenderScatterPlot();
     void RenderCentroidsTable();
 
-    void LoadSelectedData();
+    void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
     void RunClustering();
     void RunElbowAnalysis();
 
     // State
-    DataTableRegistry* data_registry_ = nullptr;
     std::shared_ptr<DataTable> current_table_;
 
     // Data selection
-    std::vector<std::string> available_tables_;
-    int selected_table_idx_ = -1;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::vector<std::string> column_names_;
     std::vector<bool> selected_columns_;
     int label_column_idx_ = -1;  // Optional label column for coloring

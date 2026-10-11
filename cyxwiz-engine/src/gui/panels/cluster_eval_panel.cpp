@@ -23,8 +23,6 @@ void ClusterEvalPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
         ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
         RenderDataSelector();
         ImGui::EndChild();
@@ -61,16 +59,7 @@ void ClusterEvalPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Selection");
     ImGui::Spacing();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("cluster_eval_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
         ImGui::Text("Feature Columns:");
@@ -336,12 +325,8 @@ void ClusterEvalPanel::RenderComparison() {
     }
 }
 
-void ClusterEvalPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void ClusterEvalPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
     label_column_idx_ = -1;
@@ -419,7 +404,7 @@ void ClusterEvalPanel::ComputeMetrics() {
 
         if (metrics_.success) {
             status_message_ = "Metrics computed successfully.";
-            current_name_ = available_tables_[selected_table_idx_];
+            current_name_ = source_.Name();
         } else {
             status_message_ = "Failed: " + metrics_.error_message;
         }

@@ -46,7 +46,6 @@ void OutlierDetectionPanel::RenderToolbar() {
     // Row 1: Data and column selection
     RenderDataSelector();
 
-    ImGui::SameLine();
     RenderColumnSelector();
 
     // Row 2: Method selection and parameters
@@ -67,37 +66,7 @@ void OutlierDetectionPanel::RenderToolbar() {
 }
 
 void OutlierDetectionPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                if (name != selected_table_) {
-                    selected_table_ = name;
-                    auto table = registry.GetTable(name);
-                    if (table) {
-                        current_table_ = table;
-                        // Find numeric columns
-                        numeric_columns_.clear();
-                        const auto& headers = table->GetHeaders();
-                        for (size_t i = 0; i < headers.size(); i++) {
-                            auto dtype = DataAnalyzer::DetectColumnType(*table, i);
-                            if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                                numeric_columns_.push_back(headers[i]);
-                            }
-                        }
-                        selected_column_idx_ = numeric_columns_.empty() ? -1 : 0;
-                        has_result_ = false;
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("outlier_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void OutlierDetectionPanel::RenderColumnSelector() {
@@ -420,15 +389,6 @@ void OutlierDetectionPanel::RenderOutlierTable() {
         }
 
         ImGui::EndTable();
-    }
-}
-
-void OutlierDetectionPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

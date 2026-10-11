@@ -45,47 +45,11 @@ void HypothesisTestPanel::Render() {
 
 void HypothesisTestPanel::RenderToolbar() {
     RenderDataSelector();
-    ImGui::SameLine();
     RenderTestTypeSelector();
 }
 
 void HypothesisTestPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                sample1_col_ = -1;
-                sample2_col_ = -1;
-                group_col_ = -1;
-                has_result_ = false;
-
-                // Refresh column lists
-                numeric_columns_.clear();
-                all_columns_.clear();
-
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        std::string col_name = i < headers.size() ? headers[i] : "Column " + std::to_string(i);
-                        all_columns_.push_back(col_name);
-
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            numeric_columns_.push_back(col_name);
-                        }
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("hypothesis_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void HypothesisTestPanel::RenderTestTypeSelector() {
@@ -479,15 +443,6 @@ void HypothesisTestPanel::RenderEffectSizeInterpretation() {
                        d >= 0.2 ? ImVec4(1.0f, 0.8f, 0.2f, 1) :
                                   ImVec4(0.6f, 0.6f, 0.6f, 1),
                        "%s (%.3f)", interpretation, result_.effect_size);
-}
-
-void HypothesisTestPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
-    }
 }
 
 void HypothesisTestPanel::AnalyzeTable(std::shared_ptr<DataTable> table) {

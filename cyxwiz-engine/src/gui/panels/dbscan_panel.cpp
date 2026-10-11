@@ -35,8 +35,6 @@ void DBSCANPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CIRCLE_NODES) + " DBSCAN Clustering###DBSCANPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
         ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
         RenderDataSelector();
         ImGui::Separator();
@@ -58,16 +56,7 @@ void DBSCANPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Selection");
     ImGui::Spacing();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("dbscan_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
         ImGui::Text("Feature Columns:");
@@ -251,12 +240,8 @@ void DBSCANPanel::RenderScatterPlot() {
     }
 }
 
-void DBSCANPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void DBSCANPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
 

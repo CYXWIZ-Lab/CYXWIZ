@@ -410,7 +410,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
-    src/gui/dataset_table_loader.cpp
+    src/gui/dataset_source.cpp
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp

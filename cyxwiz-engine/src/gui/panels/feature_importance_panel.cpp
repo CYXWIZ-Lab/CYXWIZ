@@ -73,43 +73,8 @@ void FeatureImportancePanel::RenderDataSelector() {
         ImGui::TextDisabled("Call SetModel() with a trained SequentialModel");
     }
 
-    // Table selector
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::Text("Dataset:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                selected_features_.clear();
-                target_column_ = -1;
-                has_result_ = false;
-
-                // Find columns
-                feature_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            feature_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                    // Select all features by default
-                    for (size_t i = 0; i < feature_columns_.size(); i++) {
-                        selected_features_.push_back(static_cast<int>(i));
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    // Dataset selector
+    source_.Render("importance_dataset", [this](std::shared_ptr<DataTable> table) { SetDataset(std::move(table)); });
 
     if (!current_table_) {
         ImGui::TextDisabled("Select a dataset to continue");
@@ -418,15 +383,6 @@ void FeatureImportancePanel::SetModel(std::shared_ptr<SequentialModel> model) {
     model_ = model;
     has_model_ = (model != nullptr);
     has_result_ = false;
-}
-
-void FeatureImportancePanel::SetDataset(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        SetDataset(table);
-    }
 }
 
 void FeatureImportancePanel::SetDataset(std::shared_ptr<DataTable> table) {

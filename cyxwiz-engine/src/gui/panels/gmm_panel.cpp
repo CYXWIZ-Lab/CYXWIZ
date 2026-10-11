@@ -35,8 +35,6 @@ void GMMPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(950, 750), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_PIE) + " Gaussian Mixture Models###GMMPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
         ImGui::BeginChild("ConfigPanel", ImVec2(320, 0), true);
         RenderDataSelector();
         ImGui::Separator();
@@ -58,16 +56,7 @@ void GMMPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Selection");
     ImGui::Spacing();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("gmm_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
         ImGui::Text("Feature Columns:");
@@ -320,12 +309,8 @@ void GMMPanel::RenderComponentInfo() {
     }
 }
 
-void GMMPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void GMMPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
 

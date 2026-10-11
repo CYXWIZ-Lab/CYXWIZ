@@ -48,8 +48,6 @@ void CorrelationMatrixPanel::Render() {
 void CorrelationMatrixPanel::RenderToolbar() {
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Compute")) {
         if (current_table_) {
             ComputeAsync(current_table_);
@@ -88,27 +86,7 @@ void CorrelationMatrixPanel::RenderToolbar() {
 }
 
 void CorrelationMatrixPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                auto table = registry.GetTable(name);
-                if (table) {
-                    AnalyzeTable(table);
-                }
-            }
-            if (is_selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("correlation_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void CorrelationMatrixPanel::RenderLoadingIndicator() {
@@ -304,15 +282,6 @@ void CorrelationMatrixPanel::RenderSelectedInfo() {
 
             ImGui::Text("Strength: %s %s", strength, corr >= 0 ? "(positive)" : "(negative)");
         }
-    }
-}
-
-void CorrelationMatrixPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

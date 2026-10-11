@@ -67,8 +67,6 @@ void DataProfilerPanel::RenderToolbar() {
     // Data selector
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     // Refresh button
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh")) {
         if (current_table_) {
@@ -109,28 +107,7 @@ void DataProfilerPanel::RenderToolbar() {
 }
 
 void DataProfilerPanel::RenderDataSelector() {
-    // Get available tables
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(250);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select a table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                auto table = registry.GetTable(name);
-                if (table) {
-                    AnalyzeTable(table);
-                }
-            }
-            if (is_selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("profiler_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void DataProfilerPanel::RenderLoadingIndicator() {
@@ -524,15 +501,6 @@ void DataProfilerPanel::RenderExportOptions() {
         }
 
         ImGui::EndPopup();
-    }
-}
-
-void DataProfilerPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

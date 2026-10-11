@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cyxwiz/feature_importance.h>
+#include "../dataset_source.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
@@ -43,7 +44,6 @@ public:
     void SetModel(std::shared_ptr<SequentialModel> model);
 
     // Set the dataset for evaluation
-    void SetDataset(const std::string& table_name);
     void SetDataset(std::shared_ptr<DataTable> table);
 
 private:
@@ -66,7 +66,7 @@ private:
     bool has_model_ = false;
 
     // Dataset
-    std::string selected_table_;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::shared_ptr<DataTable> current_table_;
     std::vector<std::string> feature_columns_;
     std::vector<int> selected_features_;

@@ -20,8 +20,6 @@ void ROCAUCPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_AREA) + " ROC Curve / AUC###ROCAUCPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
         ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
         RenderDataSelector();
         ImGui::EndChild();
@@ -57,16 +55,7 @@ void ROCAUCPanel::RenderDataSelector() {
     ImGui::Text(ICON_FA_TABLE " Data Selection");
     ImGui::Spacing();
 
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("roc_auc_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
         ImGui::Separator();
@@ -315,12 +304,8 @@ void ROCAUCPanel::RenderMetrics() {
     }
 }
 
-void ROCAUCPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void ROCAUCPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     true_label_column_ = 0;
     int max_col = static_cast<int>(column_names_.size()) - 1;
