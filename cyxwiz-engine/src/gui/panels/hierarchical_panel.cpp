@@ -78,7 +78,7 @@ void HierarchicalPanel::RenderParameters() {
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_PLAY " Run Clustering", ImVec2(-1, 30))) {

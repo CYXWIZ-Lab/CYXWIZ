@@ -78,7 +78,7 @@ void DBSCANPanel::RenderParameters() {
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_PLAY " Run DBSCAN", ImVec2(-1, 30))) {
@@ -102,7 +102,7 @@ void DBSCANPanel::RenderKDistanceAnalysis() {
 
     ImGui::SliderInt("K", &k_distance_k_, 1, 20);
 
-    bool can_run = !is_computing_ && !input_data_.empty();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Compute K-Distances", ImVec2(-1, 25))) {
@@ -256,9 +256,9 @@ void DBSCANPanel::UseTable(std::shared_ptr<DataTable> table) {
     status_message_ = "Data loaded.";
 }
 
-void DBSCANPanel::RunClustering() {
-    if (!current_table_ || is_computing_) return;
-
+// Rows of the selected columns that parse as numbers; false (with a
+// status message) when there is nothing to cluster.
+bool DBSCANPanel::CollectInputData() {
     std::vector<int> col_indices;
     for (size_t i = 0; i < selected_columns_.size(); ++i) {
         if (selected_columns_[i]) col_indices.push_back(static_cast<int>(i));
@@ -266,7 +266,7 @@ void DBSCANPanel::RunClustering() {
 
     if (col_indices.size() < 2) {
         status_message_ = "Select at least 2 columns.";
-        return;
+        return false;
     }
 
     input_data_.clear();
@@ -284,8 +284,13 @@ void DBSCANPanel::RunClustering() {
 
     if (input_data_.empty()) {
         status_message_ = "No valid data.";
-        return;
+        return false;
     }
+    return true;
+}
+
+void DBSCANPanel::RunClustering() {
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     status_message_ = "Computing...";
@@ -310,7 +315,7 @@ void DBSCANPanel::RunClustering() {
 }
 
 void DBSCANPanel::ComputeKDistances() {
-    if (input_data_.empty() || is_computing_) return;
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     if (compute_thread_.joinable()) compute_thread_.join();

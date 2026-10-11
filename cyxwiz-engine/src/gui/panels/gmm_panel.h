@@ -41,6 +41,7 @@ private:
     void RenderModelSelection();
 
     void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
+    bool CollectInputData();
     void RunClustering();
     void RunModelSelection();
 

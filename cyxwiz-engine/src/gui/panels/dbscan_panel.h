@@ -40,6 +40,7 @@ private:
     void RenderScatterPlot();
 
     void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
+    bool CollectInputData();
     void RunClustering();
     void ComputeKDistances();
 

@@ -108,7 +108,7 @@ void KMeansPanel::RenderParameters() {
     ImGui::Spacing();
 
     // Run button
-    bool can_run = !is_computing_ && !input_data_.empty();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_PLAY " Run K-Means", ImVec2(-1, 30))) {
@@ -144,7 +144,7 @@ void KMeansPanel::RenderElbowAnalysis() {
     ImGui::SliderInt("K Min", &elbow_k_min_, 1, 10);
     ImGui::SliderInt("K Max", &elbow_k_max_, elbow_k_min_ + 1, 20);
 
-    bool can_run = !is_computing_ && !input_data_.empty();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Find Optimal K", ImVec2(-1, 25))) {
@@ -408,9 +408,9 @@ void KMeansPanel::UseTable(std::shared_ptr<DataTable> table) {
     status_message_ = "Data loaded. Select columns and run clustering.";
 }
 
-void KMeansPanel::RunClustering() {
-    if (!current_table_ || is_computing_) return;
-
+// Rows of the selected columns that parse as numbers; false (with a
+// status message) when there is nothing to cluster.
+bool KMeansPanel::CollectInputData() {
     // Collect selected column indices
     std::vector<int> col_indices;
     for (size_t i = 0; i < selected_columns_.size(); ++i) {
@@ -421,7 +421,7 @@ void KMeansPanel::RunClustering() {
 
     if (col_indices.size() < 2) {
         status_message_ = "Please select at least 2 columns.";
-        return;
+        return false;
     }
 
     // Extract data
@@ -455,8 +455,13 @@ void KMeansPanel::RunClustering() {
 
     if (input_data_.empty()) {
         status_message_ = "No valid numeric data found.";
-        return;
+        return false;
     }
+    return true;
+}
+
+void KMeansPanel::RunClustering() {
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     // Start clustering in background thread
     is_computing_ = true;
@@ -503,7 +508,7 @@ void KMeansPanel::RunClustering() {
 }
 
 void KMeansPanel::RunElbowAnalysis() {
-    if (!current_table_ || is_computing_ || input_data_.empty()) return;
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     cancel_requested_ = false;

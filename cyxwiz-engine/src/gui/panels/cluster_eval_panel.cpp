@@ -85,7 +85,7 @@ void ClusterEvalPanel::RenderDataSelector() {
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty() && label_column_idx_ >= 0;
+    bool can_run = !is_computing_ && current_table_ != nullptr && label_column_idx_ >= 0;
     if (!can_run) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_CALCULATOR " Compute Metrics", ImVec2(-1, 30))) {
