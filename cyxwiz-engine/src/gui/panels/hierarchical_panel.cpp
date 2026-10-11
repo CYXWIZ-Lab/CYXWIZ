@@ -1,4 +1,5 @@
 #include "hierarchical_panel.h"
+#include <cyxwiz/device.h>
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -113,7 +114,8 @@ void HierarchicalPanel::RenderParameters() {
         ImGui::Separator();
         ImGui::Text("Cut Dendrogram:");
 
-        if (ImGui::SliderFloat("Cut Height", (float*)&cut_height_, 0.0f, (float)max_height_, "%.2f")) {
+        const double cut_min = 0.0;
+        if (ImGui::SliderScalar("Cut Height", ImGuiDataType_Double, &cut_height_, &cut_min, &max_height_, "%.2f")) {
             // Recompute labels based on cut height
             result_.labels = Clustering::CutDendrogram(result_.linkage_matrix, cut_height_, static_cast<int>(input_data_.size()));
             std::set<int> unique_labels(result_.labels.begin(), result_.labels.end());
@@ -307,6 +309,7 @@ void HierarchicalPanel::RunClustering() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         const char* linkages[] = {"ward", "complete", "average", "single"};
         const char* metrics[] = {"euclidean", "manhattan", "cosine"};
 

@@ -1,4 +1,5 @@
 #include "dbscan_panel.h"
+#include <cyxwiz/device.h>
 #include "../icons.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
@@ -90,7 +91,8 @@ void DBSCANPanel::RenderParameters() {
     ImGui::Text(ICON_FA_SLIDERS " Parameters");
     ImGui::Spacing();
 
-    ImGui::SliderFloat("Epsilon (eps)", (float*)&eps_, 0.01f, 10.0f, "%.3f");
+    const double eps_min = 0.01, eps_max = 10.0;
+    ImGui::SliderScalar("Epsilon (eps)", ImGuiDataType_Double, &eps_, &eps_min, &eps_max, "%.3f");
     ImGui::SliderInt("Min Samples", &min_samples_, 1, 50);
 
     const char* metrics[] = {"Euclidean", "Manhattan", "Cosine"};
@@ -315,6 +317,7 @@ void DBSCANPanel::RunClustering() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         const char* metrics[] = {"euclidean", "manhattan", "cosine"};
         result_ = Clustering::DBSCAN(input_data_, eps_, min_samples_, metrics[metric_idx_]);
         is_computing_ = false;
@@ -334,6 +337,7 @@ void DBSCANPanel::ComputeKDistances() {
     if (compute_thread_.joinable()) compute_thread_.join();
 
     compute_thread_ = std::thread([this]() {
+        Device::ActivateProcessDeviceOnThisThread();
         k_distances_ = Clustering::ComputeKDistances(input_data_, k_distance_k_);
 
         // Find elbow point
