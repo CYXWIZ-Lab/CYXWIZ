@@ -836,24 +836,18 @@ int main() {
     const auto sequence_metrics_plan =
         cyxwiz::BuildExecutionPlacementPlan(
             sequence_metrics_config, cpu_context);
-    Check(sequence_metrics_plan.IsExecutable(),
-          "sequence metrics should remain executable in compatibility mode");
-    Check(!sequence_metrics_plan.IsStrictlyExecutable(),
-          "host sequence metrics should block strict ArrayFire residency");
-    Check(sequence_metrics_plan.StrictBlockerSummary().find(
-              "metrics_sequence_native_cpu_compatibility") !=
-              std::string::npos,
-          "strict blocker should identify sequence metric host materialization");
+    // Sequence metrics run on the device (TOFIX140 F3), so strict runs pass.
+    Check(sequence_metrics_plan.IsExecutable() && sequence_metrics_plan.IsStrictlyExecutable(),
+          "sequence metrics run on ArrayFire and pass strict placement");
     bool saw_sequence_metrics = false;
     for (const auto& entry : sequence_metrics_plan.entries) {
         if (entry.node_type != "Metrics.SequenceTokenAccuracy") {
             continue;
         }
         saw_sequence_metrics = true;
-        Check(entry.status == cyxwiz::BackendPlacementStatus::Cpu,
-              "sequence token metrics should be declared native CPU");
-        Check(entry.expected_backend == "native_cpu",
-              "sequence token metrics should not claim the ArrayFire device");
+        Check(entry.status == cyxwiz::ExecutionPlacementStatus::ArrayFire &&
+                  entry.reason_code == "metrics_arrayfire_scalar_reduction",
+              "sequence token metrics are declared on the ArrayFire device");
     }
     Check(saw_sequence_metrics,
           "sequence plan should include the token-accuracy metric stage");
