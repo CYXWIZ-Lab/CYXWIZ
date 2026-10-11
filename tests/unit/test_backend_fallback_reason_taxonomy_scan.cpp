@@ -1,7 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cyxwiz/backend_fallback_reason.h>
-#include <cyxwiz/backend_placement_observation.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -167,14 +166,6 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
               BackendFallbackReason::OneapiProviderExecutionFailed)) ==
           "oneapi_provider_execution_failed");
 
-    // The observation-facing namespace must be the same pointers/values as
-    // the authority, not a re-typed copy.
-    CHECK(std::string(
-              cyxwiz::BackendPlacementObservationReason::CudaJitParamOverflow) ==
-          BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow));
-    CHECK(std::string(
-              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory) ==
-          BackendFallbackReasonName(BackendFallbackReason::GpuOutOfMemory));
 }
 
 TEST_CASE("Device-only ArrayFire exception handlers report the device error",

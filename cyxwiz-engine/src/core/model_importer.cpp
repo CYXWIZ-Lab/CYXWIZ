@@ -176,7 +176,7 @@ static bool BuildModelFromGraph(
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;
-        TrainingConfiguration config = compiler.Compile(nodes, links, true, {}, GraphCompiler::Purpose::ModelImport);
+        TrainingConfiguration config = compiler.Compile(nodes, links, true, GraphCompiler::Purpose::ModelImport);
 
         if (!config.is_valid) {
             error_message = "Graph compilation failed: " + config.error_message;

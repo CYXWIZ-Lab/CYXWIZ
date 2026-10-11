@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <cyxwiz/backend_placement_observation.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
@@ -488,8 +487,6 @@ TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",
         }
         DYNAMIC_SECTION("backend type " << static_cast<int>(info.type) << " device " << info.device_id) {
             cyxwiz::Device(info.type, info.device_id).SetActive();
-            cyxwiz::ClearBackendPlacementObservationCacheForTesting();
-
             cyxwiz::CrossEntropyLoss loss(cyxwiz::Reduction::Mean, -100);
             // Same tensors as Forward: reuses Forward's log-sum-exp.
             static_cast<void>(loss.Forward(first, first_targets));
@@ -501,12 +498,6 @@ TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",
             require_matches_fresh(loss.Backward(first, second_targets), first, second_targets);
             // A second Backward after one Forward still recomputes correctly.
             require_matches_fresh(loss.Backward(second, second_targets), second, second_targets);
-
-            // The device path ran: no CrossEntropy fallback was recorded.
-            for (const auto& observation : cyxwiz::SnapshotBackendPlacementObservations()) {
-                INFO(observation.op_type << ": " << observation.detail);
-                REQUIRE(observation.op_type.find("CrossEntropy") == std::string::npos);
-            }
         }
     }
 }

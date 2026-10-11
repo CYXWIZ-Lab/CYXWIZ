@@ -1,5 +1,4 @@
 #include "cyxwiz/layers/linear.h"
-#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstdlib>

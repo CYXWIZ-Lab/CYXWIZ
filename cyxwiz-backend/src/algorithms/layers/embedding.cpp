@@ -1,7 +1,6 @@
 #include "cyxwiz/layers/embedding.h"
 #include <vector>
 #include "layer_arrayfire_utils.h"
-#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 
 #include <cmath>

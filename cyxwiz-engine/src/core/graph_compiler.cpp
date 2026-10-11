@@ -20,7 +20,6 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
-#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
@@ -4357,7 +4356,6 @@ TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     bool allow_unloaded_data,
-    const std::string& placement_observation_cache_path,
     Purpose purpose)
 {
     const auto compile_started = std::chrono::steady_clock::now();
@@ -5880,17 +5878,6 @@ TrainingConfiguration GraphCompiler::Compile(
     // These need the values populated by the layer-extraction passes
     // above, so they live at the end of Compile().
 
-    if (!placement_observation_cache_path.empty()) {
-        std::string cache_error;
-        if (!LoadBackendPlacementObservationCache(
-                placement_observation_cache_path,
-                &cache_error)) {
-            AddIssue(config,
-                     IssueLevel::Warning,
-                     "Backend placement observation cache could not be loaded: " +
-                         cache_error);
-        }
-    }
     timing("data_and_layers");
     AddBackendPlacementReports(config);
     config.compiler_placement_fingerprint =

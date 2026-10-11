@@ -2062,16 +2062,6 @@ if(WIN32)
 endif()
 set_target_properties(test_transformer_benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# ===== Test: Placement Observation Cache Session Round-Trip =====
-add_executable(test_placement_observation_cache_session
-    tests/test_placement_observation_cache_session.cpp)
-target_include_directories(test_placement_observation_cache_session PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_placement_observation_cache_session PRIVATE spdlog::spdlog cyxwiz-backend)
-if(WIN32)
-    target_compile_definitions(test_placement_observation_cache_session PRIVATE NOMINMAX)
-endif()
-set_target_properties(test_placement_observation_cache_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
 # ===== Benchmark: Recurrent Staged Plan vs Native CPU =====
 add_executable(test_recurrent_staged_benchmark
     tests/benchmarks/test_recurrent_staged_benchmark.cpp)

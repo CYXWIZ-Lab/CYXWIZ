@@ -137,7 +137,6 @@ set(BACKEND_SOURCES
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
     src/algorithms/arrayfire_host_materialization.cpp
-    src/algorithms/backend_placement_observation.cpp
     src/algorithms/providers/neural_provider_registry.cpp
     src/algorithms/providers/neural_device_interop.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
@@ -281,7 +280,6 @@ set(BACKEND_HEADERS
     include/cyxwiz/device.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
-    include/cyxwiz/backend_placement_observation.h
     include/cyxwiz/optimizers/adaptive.h
     include/cyxwiz/optimizers/adam.h
     include/cyxwiz/optimizers/lamb.h

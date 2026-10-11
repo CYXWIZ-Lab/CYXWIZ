@@ -3702,9 +3702,8 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
                 JsonNumber(payload, "placement_count"),
                 JsonNumber(payload, "actual_backend_observed_count"));
     ImGui::SameLine(500.0f);
-    ImGui::TextDisabled("attention %.0f  current fallback %.0f",
-                        JsonNumber(payload, "attention_count"),
-                        JsonNumber(payload, "same_run_fallback_count"));
+    ImGui::TextDisabled("attention %.0f",
+                        JsonNumber(payload, "attention_count"));
 
     if (JsonBool(payload, "linked_execution_context_available", false)) {
         ImGui::TextDisabled(
@@ -3796,14 +3795,7 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
             }
 
             ImGui::TableSetColumnIndex(3);
-            if (JsonBool(row, "fallback_observed_this_run", false)) {
-                ImGui::TextColored(DebuggerDanger(),
-                    "observed this run");
-            } else if (JsonBool(
-                           row, "prior_runtime_fallback_observed", false)) {
-                ImGui::TextColored(DebuggerWarning(),
-                    "prior observation");
-            } else if (JsonBool(row, "fallback_possible", false)) {
+            if (JsonBool(row, "fallback_possible", false)) {
                 ImGui::TextDisabled("possible");
             } else {
                 ImGui::TextDisabled("not declared");
@@ -4680,16 +4672,6 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                 !JsonString(trace.payload, "backend_fallback").empty()) {
                 ImGui::Text("Fallback path: %s",
                     JsonString(trace.payload, "backend_fallback").c_str());
-            }
-            ImGui::Text("Same-run fallback observed: %s",
-                JsonBool(trace.payload,
-                         "backend_fallback_observed_this_run", false)
-                    ? "yes"
-                    : "no");
-            if (JsonBool(trace.payload,
-                         "backend_prior_runtime_fallback_observed", false)) {
-                ImGui::TextDisabled(
-                    "A matching fallback was observed before this debug run.");
             }
             if (!JsonBool(trace.payload,
                           "backend_cost_estimate_available", false)) {

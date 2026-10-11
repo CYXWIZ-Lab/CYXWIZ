@@ -77,8 +77,6 @@ inline std::string FingerprintPlacementEntries(
         HashExecutionPlacementField(hash, placement.observation_device);
         HashExecutionPlacementField(hash, placement.observation_dtype);
         HashExecutionPlacementField(
-            hash, placement.observation_shape_signature);
-        HashExecutionPlacementField(
             hash, placement.observation_probe_outcome);
         HashExecutionPlacementField(hash, placement.observation_probe_scope);
     }

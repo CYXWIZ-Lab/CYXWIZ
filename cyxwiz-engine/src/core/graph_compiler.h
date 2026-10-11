@@ -330,12 +330,9 @@ struct BackendPlacementEntry {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
-    std::string observation_source;
+    // Run-time metadata of execution-plan entries (execution_placement_plan.h).
     std::string observation_device;
     std::string observation_dtype;
-    std::string observation_shape_signature;
-    std::string observation_detail;
-    std::string observation_timestamp;
     std::string observation_probe_outcome;
     std::string observation_probe_scope;
     // GpuExecutionModeName of the owning operation family's declared mode
@@ -352,12 +349,8 @@ struct BackendPlacementEntry {
     }
 
     bool HasObservationMetadata() const {
-        return !observation_source.empty() ||
-               !observation_device.empty() ||
+        return !observation_device.empty() ||
                !observation_dtype.empty() ||
-               !observation_shape_signature.empty() ||
-               !observation_detail.empty() ||
-               !observation_timestamp.empty() ||
                !observation_probe_outcome.empty() ||
                !observation_probe_scope.empty();
     }
@@ -742,7 +735,6 @@ public:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         bool allow_unloaded_data = false,
-        const std::string& placement_observation_cache_path = {},
         Purpose purpose = Purpose::Training
     );
 

@@ -13,7 +13,6 @@
 #include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
-#include "placement_observation_cache_session.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
@@ -1295,7 +1294,6 @@ void TrainingManager::TrainingThreadFunc(
     // fallbacks) so the next compile — including in a future session —
     // routes around the observed device/shape keys. Runs on the training
     // worker thread; the store snapshot is mutex-guarded.
-    SavePlacementObservationCache();
 
     // Preserve trained model for export before clearing executor
     {

@@ -38,7 +38,6 @@
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/compute_runtime_config.h"
 #include "../core/compute_runtime_paths.h"
-#include "../core/placement_observation_cache_session.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "frame_metrics.h"
@@ -549,7 +548,6 @@ MainWindow::MainWindow()
     // Merge persisted GPU placement evidence (runtime fallbacks, preflight
     // probes) into the process-global store so the first compile of this
     // session already routes around known-unsafe device/shape keys.
-    cyxwiz::LoadPlacementObservationCacheAtStartup();
 
     // Original panels
     node_editor_ = std::make_unique<NodeEditor>();
@@ -2732,7 +2730,6 @@ MainWindow::~MainWindow() {
 
     // Persist placement evidence gathered this session (covers compile-time
     // probe results even when no training ran).
-    cyxwiz::SavePlacementObservationCache();
 
     spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
     training_plot_panel_.reset();
@@ -5910,10 +5907,6 @@ void MainWindow::RenderCompileResultPopup() {
                             }
                             if (placement.HasObservationMetadata()) {
                                 reason_label += "\nObservation";
-                                if (!placement.observation_source.empty()) {
-                                    reason_label += " source=" +
-                                        placement.observation_source;
-                                }
                                 if (!placement.observation_dtype.empty()) {
                                     reason_label += " dtype=" +
                                         placement.observation_dtype;
@@ -5929,14 +5922,6 @@ void MainWindow::RenderCompileResultPopup() {
                                 if (!placement.observation_device.empty()) {
                                     reason_label += "\nDevice: " +
                                         placement.observation_device;
-                                }
-                                if (!placement.observation_shape_signature.empty()) {
-                                    reason_label += "\nShape: " +
-                                        placement.observation_shape_signature;
-                                }
-                                if (!placement.observation_detail.empty()) {
-                                    reason_label += "\nDetail: " +
-                                        placement.observation_detail;
                                 }
                             }
 
