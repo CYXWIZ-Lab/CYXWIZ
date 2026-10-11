@@ -10,7 +10,7 @@
 
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
-#include "arrayfire_host_materialization.h"
+#include "arrayfire_host_values.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,13 +62,9 @@ std::vector<std::complex<double>> Eigenvector2x2(const Matrix& A, const std::com
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
-bool DoubleOnDevice() {
-    return af::isDoubleAvailable(af::getDevice());
-}
-
 // Relative pivot / singular-value threshold for the compute precision.
 double SingularTolerance() {
-    return DoubleOnDevice() ? 1e-12 : 1e-6;
+    return DeviceHasDouble() ? 1e-12 : 1e-6;
 }
 
 template <typename T>
@@ -82,32 +78,12 @@ af::array PackColumnMajor(const Matrix& A) {
 }
 
 af::array ToDevice(const Matrix& A) {
-    return DoubleOnDevice() ? PackColumnMajor<double>(A) : PackColumnMajor<float>(A);
-}
-
-// Every element of `source`, column-major, as double.
-std::vector<double> ToHostValues(const af::array& source, const char* operation) {
-    std::vector<double> values(static_cast<size_t>(source.elements()));
-    if (values.empty()) return values;
-    if (source.type() == f64) {
-        af::array data = source;
-        data.eval();
-        MaterializeArrayFireToHost(data, values.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                                   operation, "arrayfire_column_major");
-        return values;
-    }
-    af::array data = source.as(f32);
-    data.eval();
-    std::vector<float> narrow(values.size());
-    MaterializeArrayFireToHost(data, narrow.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                               operation, "arrayfire_column_major");
-    std::copy(narrow.begin(), narrow.end(), values.begin());
-    return values;
+    return DeviceHasDouble() ? PackColumnMajor<double>(A) : PackColumnMajor<float>(A);
 }
 
 Matrix ToHostMatrix(const af::array& source, const char* operation) {
     const size_t rows = static_cast<size_t>(source.dims(0)), cols = static_cast<size_t>(source.dims(1));
-    const std::vector<double> values = ToHostValues(source, operation);
+    const std::vector<double> values = DeviceToHostValues(source, operation);
     Matrix result(rows, std::vector<double>(cols));
     for (size_t c = 0; c < cols; ++c) {
         for (size_t r = 0; r < rows; ++r) result[r][c] = values[c * rows + r];
@@ -128,7 +104,7 @@ MatrixResult MatrixFromDevice(const af::array& source, const char* operation) {
 std::vector<double> SingularValues(const af::array& a, const char* operation) {
     af::array u, s, vt;
     af::svd(u, s, vt, a);
-    return ToHostValues(s, operation);
+    return DeviceToHostValues(s, operation);
 }
 
 // True when a square matrix is singular or numerically singular: its smallest
@@ -149,10 +125,6 @@ bool CholeskyLower(const af::array& a, af::array& lower) {
     const af::array residual = af::matmul(lower, lower, AF_MAT_NONE, AF_MAT_TRANS) - a;
     const double scale = std::sqrt(af::sum<double>(a * a));
     return std::sqrt(af::sum<double>(residual * residual)) <= std::sqrt(SingularTolerance()) * (1.0 + scale);
-}
-
-std::string DeviceError(const char* operation, const af::exception& e) {
-    return std::string(operation) + " failed on the ArrayFire device: " + e.what();
 }
 
 #else
@@ -479,7 +451,7 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
         const double shift = std::sqrt(af::sum<double>(a * a)) + 1.0;
         af::array u, s, vt;
         af::svd(u, s, vt, a + shift * af::identity(n, n, a.type()));
-        const std::vector<double> values = ToHostValues(s, "LinearAlgebra::Eigen");
+        const std::vector<double> values = DeviceToHostValues(s, "LinearAlgebra::Eigen");
         const Matrix vectors = ToHostMatrix(u, "LinearAlgebra::Eigen");
         result.eigenvalues.resize(n);
         result.eigenvectors.assign(n, std::vector<std::complex<double>>(n));
@@ -511,7 +483,7 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
             vt = vt(af::seq(0, result.k - 1), af::span);
         }
         result.U = ToHostMatrix(u, "LinearAlgebra::SVD");
-        result.S = ToHostValues(s, "LinearAlgebra::SVD");
+        result.S = DeviceToHostValues(s, "LinearAlgebra::SVD");
         result.Vt = ToHostMatrix(vt, "LinearAlgebra::SVD");
         result.success = true;
         return result;
@@ -719,7 +691,7 @@ bool LinearAlgebra::IsOrthogonal(const std::vector<std::vector<double>>& A, doub
         const af::array gram = af::matmul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
         const af::array eye = af::identity(gram.dims(0), gram.dims(1), gram.type());
         // float32 devices cannot reach the float64 default tolerance.
-        const double effective = DoubleOnDevice() ? tolerance : std::max(tolerance, 1e-5);
+        const double effective = DeviceHasDouble() ? tolerance : std::max(tolerance, 1e-5);
         return af::allTrue<bool>(af::abs(gram - eye) <= effective);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("LinearAlgebra::IsOrthogonal", e));
