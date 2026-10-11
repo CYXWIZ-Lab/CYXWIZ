@@ -5,9 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -37,7 +35,6 @@ LSTMLayer::LSTMLayer(int input_size, int hidden_size, int num_layers,
 LSTMLayer::~LSTMLayer() = default;
 
 void LSTMLayer::InitializeWeights() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     W_ih_.resize(num_layers_);
     W_hh_.resize(num_layers_);
     b_ih_.resize(num_layers_);
@@ -76,9 +73,6 @@ void LSTMLayer::InitializeWeights() {
         throw std::runtime_error(
             std::string("LSTMLayer weight initialization failed on the ArrayFire device: ") + e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("LSTMLayer");
-#endif
 }
 
 } // namespace cyxwiz

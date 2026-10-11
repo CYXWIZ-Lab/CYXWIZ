@@ -1,6 +1,6 @@
 // Column transforms, statistics and the normality test on ArrayFire (TOFIX140): the
-// CPU option is ArrayFire's CPU backend, there are no hand-written CPU kernels, and a
-// build without ArrayFire refuses. Each column crosses to the device once and its
+// CPU option is ArrayFire's CPU backend and there are no hand-written CPU kernels.
+// Each column crosses to the device once and its
 // result comes back once; float64 where the active device has it, else float32.
 // Semantics follow scikit-learn / scipy (StandardScaler, RobustScaler,
 // QuantileTransformer, scipy.stats.boxcox / yeojohnson / normaltest); PyTorch
@@ -22,9 +22,7 @@
 #include <type_traits>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #ifdef min
 #undef min
@@ -48,8 +46,6 @@ Result Fail(Result result, std::string message) {
     if constexpr (std::is_same_v<Result, TransformResult>) result.transformed_data.clear();
     return result;
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 std::string ColumnMessage(size_t column, const std::string& message) {
     return "Column " + std::to_string(column) + ": " + message;
@@ -321,14 +317,6 @@ TransformResult TransformEachColumn(const Columns& data, const char* method, con
     }
 }
 
-#else
-
-std::string NoArrayFire(const char* operation) {
-    return std::string(operation) + " runs on ArrayFire, and this build has no ArrayFire";
-}
-
-#endif
-
 }  // namespace
 
 // ============================================================================
@@ -353,7 +341,6 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
         stats.error_message = "Empty data";
         return stats;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = HostValuesToDevice(data);
         stats.min = af::min<double>(x);
@@ -371,9 +358,6 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
         stats = ColumnStats{};
         stats.error_message = DeviceError("DataTransform::ComputeColumnStats", e);
     }
-#else
-    stats.error_message = NoArrayFire("DataTransform::ComputeColumnStats");
-#endif
     return stats;
 }
 
@@ -384,7 +368,6 @@ NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double
         result.error_message = "Needs at least 20 values";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     double m2 = 0.0, m3 = 0.0, m4 = 0.0;
     try {
         const af::array x = HostValuesToDevice(data);
@@ -433,9 +416,6 @@ NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double
     result.p_value = std::exp(-0.5 * result.statistic);  // chi-squared, 2 degrees of freedom
     result.is_normal = result.p_value > 0.05;
     result.computed = true;
-#else
-    result.error_message = NoArrayFire("DataTransform::DAgostinoPearsonTest");
-#endif
     return result;
 }
 
@@ -444,7 +424,6 @@ NormalityTestResult DataTransform::DAgostinoPearsonTest(const std::vector<double
 // ============================================================================
 
 TransformResult DataTransform::Normalize(const Columns& data, double range_min, double range_max) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     TransformResult result = TransformEachColumn(data, "normalize", "DataTransform::Normalize",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
             const double low = af::min<double>(x), high = af::max<double>(x);
@@ -457,15 +436,9 @@ TransformResult DataTransform::Normalize(const Columns& data, double range_min, 
         result.params["range_max"] = range_max;
     }
     return result;
-#else
-    TransformResult result;
-    result.method = "normalize";
-    return Fail(result, NoArrayFire("DataTransform::Normalize"));
-#endif
 }
 
 TransformResult DataTransform::Standardize(const Columns& data, const StandardizeOptions& options) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "standardize", "DataTransform::Standardize",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
             const double mean = options.with_mean ? af::mean<double>(x) : 0.0;
@@ -478,11 +451,6 @@ TransformResult DataTransform::Standardize(const Columns& data, const Standardiz
             params[prefix + "std"] = scale;
             return (x - mean) / scale;
         });
-#else
-    TransformResult result;
-    result.method = "standardize";
-    return Fail(result, NoArrayFire("DataTransform::Standardize"));
-#endif
 }
 
 TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vector<double>& centers,
@@ -499,18 +467,12 @@ TransformResult DataTransform::ScaleColumns(const Columns& data, const std::vect
             return Fail(result, "Scales must be finite and non-zero");
         }
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     size_t column = 0;
     return TransformEachColumn(data, "scale_columns", "DataTransform::ScaleColumns",
         [&](const af::array& x, const std::string&, auto&, std::string&) -> af::array {
             const size_t i = column++;
             return (x - centers[i]) / scales[i];
         });
-#else
-    TransformResult result;
-    result.method = "scale_columns";
-    return Fail(result, NoArrayFire("DataTransform::ScaleColumns"));
-#endif
 }
 
 OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const std::string& method, double threshold) {
@@ -527,7 +489,6 @@ OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const 
         result.success = true;
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = HostValuesToDevice(data);
         af::array flags;
@@ -549,9 +510,6 @@ OutlierFlags DataTransform::FindOutliers(const std::vector<double>& data, const 
         result = OutlierFlags{};
         result.error_message = DeviceError("DataTransform::FindOutliers", e);
     }
-#else
-    result.error_message = NoArrayFire("DataTransform::FindOutliers");
-#endif
     return result;
 }
 
@@ -561,7 +519,6 @@ TransformResult DataTransform::LogTransform(const Columns& data, const std::stri
         result.method = "log_transform";
         return Fail(result, "Unknown log base '" + base + "' (natural, log10 or log2)");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     TransformResult result = TransformEachColumn(data, "log_transform", "DataTransform::LogTransform",
         [&](const af::array& x, const std::string&, auto&, std::string& refusal) -> af::array {
             if (!af::allTrue<bool>(use_log1p ? x > -1.0 : x > 0.0)) {
@@ -573,11 +530,6 @@ TransformResult DataTransform::LogTransform(const Columns& data, const std::stri
             if (base == "natural") return natural;
             return natural / std::log(base == "log10" ? 10.0 : 2.0);
         });
-#else
-    TransformResult result;
-    result.method = "log_transform";
-    result = Fail(result, NoArrayFire("DataTransform::LogTransform"));
-#endif
     result.params["base"] = base == "natural" ? 0.0 : base == "log10" ? 10.0 : 2.0;
     result.params["use_log1p"] = use_log1p ? 1.0 : 0.0;
     return result;
@@ -589,7 +541,6 @@ TransformResult DataTransform::RobustScale(const Columns& data, const RobustScal
         result.method = "robust_scale";
         return Fail(result, "Quantiles must satisfy 0 <= quantile_min < quantile_max <= 100");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "robust_scale", "DataTransform::RobustScale",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
             const std::vector<double> q = PercentilesAt(
@@ -603,26 +554,15 @@ TransformResult DataTransform::RobustScale(const Columns& data, const RobustScal
             params[prefix + "iqr"] = scale;
             return (x - center) / scale;
         });
-#else
-    TransformResult result;
-    result.method = "robust_scale";
-    return Fail(result, NoArrayFire("DataTransform::RobustScale"));
-#endif
 }
 
 TransformResult DataTransform::MaxAbsScale(const Columns& data) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return TransformEachColumn(data, "maxabs_scale", "DataTransform::MaxAbsScale",
         [](const af::array& x, const std::string& prefix, auto& params, std::string&) -> af::array {
             const double max_abs = ZeroSafeScale(af::max<double>(af::abs(x)));
             params[prefix + "maxabs"] = max_abs;
             return x / max_abs;
         });
-#else
-    TransformResult result;
-    result.method = "maxabs_scale";
-    return Fail(result, NoArrayFire("DataTransform::MaxAbsScale"));
-#endif
 }
 
 TransformResult DataTransform::QuantileTransform(const Columns& data, const std::string& output_distribution,
@@ -638,7 +578,6 @@ TransformResult DataTransform::QuantileTransform(const Columns& data, const std:
         result.method = "quantile_transform";
         return Fail(result, "Needs at least 2 quantiles");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     TransformResult result = TransformEachColumn(data, "quantile_transform", "DataTransform::QuantileTransform",
         [&](const af::array& x, const std::string&, auto&, std::string& refusal) -> af::array {
             const dim_t n = x.elements();
@@ -662,11 +601,6 @@ TransformResult DataTransform::QuantileTransform(const Columns& data, const std:
             return NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
                                           af::constant(clip, y.dims(), y.type())));
         });
-#else
-    TransformResult result;
-    result.method = "quantile_transform";
-    result = Fail(result, NoArrayFire("DataTransform::QuantileTransform"));
-#endif
     result.params["output_distribution"] = normal ? 1.0 : 0.0;
     result.params["n_quantiles"] = static_cast<double>(n_quantiles);
     return result;
@@ -678,7 +612,6 @@ TransformResult DataTransform::QuantileTransform(const Columns& data, const std:
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 BoxCoxLambdaResult FindLambda(const std::vector<double>& data, PowerFamily family, double lambda_min,
                               double lambda_max, int n_steps, const char* operation) {
     BoxCoxLambdaResult result;
@@ -720,48 +653,27 @@ TransformResult PowerColumn(const std::vector<double>& data, PowerFamily family,
         return Fail(result, DeviceError(operation, e));
     }
 }
-#endif
 
 }  // namespace
 
 BoxCoxLambdaResult DataTransform::FindOptimalLambda(const std::vector<double>& data, double lambda_min,
                                                     double lambda_max, int n_steps) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return FindLambda(data, PowerFamily::BoxCox, lambda_min, lambda_max, n_steps, "DataTransform::FindOptimalLambda");
-#else
-    return Fail(BoxCoxLambdaResult{}, NoArrayFire("DataTransform::FindOptimalLambda"));
-#endif
 }
 
 BoxCoxLambdaResult DataTransform::FindOptimalYeoJohnsonLambda(const std::vector<double>& data, double lambda_min,
                                                               double lambda_max, int n_steps) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return FindLambda(data, PowerFamily::YeoJohnson, lambda_min, lambda_max, n_steps,
                       "DataTransform::FindOptimalYeoJohnsonLambda");
-#else
-    return Fail(BoxCoxLambdaResult{}, NoArrayFire("DataTransform::FindOptimalYeoJohnsonLambda"));
-#endif
 }
 
 TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data, double lambda, bool auto_lambda) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return PowerColumn(data, PowerFamily::BoxCox, lambda, auto_lambda, "boxcox", "DataTransform::BoxCoxColumn");
-#else
-    TransformResult result;
-    result.method = "boxcox";
-    return Fail(result, NoArrayFire("DataTransform::BoxCoxColumn"));
-#endif
 }
 
 TransformResult DataTransform::YeoJohnsonColumn(const std::vector<double>& data, double lambda, bool auto_lambda) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return PowerColumn(data, PowerFamily::YeoJohnson, lambda, auto_lambda, "yeojohnson",
                        "DataTransform::YeoJohnsonColumn");
-#else
-    TransformResult result;
-    result.method = "yeojohnson";
-    return Fail(result, NoArrayFire("DataTransform::YeoJohnsonColumn"));
-#endif
 }
 
 } // namespace cyxwiz

@@ -5,9 +5,7 @@
 #include <cmath>
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -43,7 +41,6 @@ HuberLoss::HuberLoss(float delta, Reduction reduction)
 Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "MSELoss::Forward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -58,15 +55,11 @@ Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "MSELoss::Backward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -85,15 +78,11 @@ Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "L1Loss::Forward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -106,15 +95,11 @@ Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "L1Loss::Backward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -133,15 +118,11 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "SmoothL1Loss::Forward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -168,15 +149,11 @@ Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "SmoothL1Loss::Backward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -208,15 +185,11 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor HuberLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "HuberLoss::Forward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -235,15 +208,11 @@ Tensor HuberLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor HuberLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "HuberLoss::Backward";
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = loss_detail::TensorToAf(predictions);
         af::array target = loss_detail::TensorToAf(targets);
@@ -264,9 +233,6 @@ Tensor HuberLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 } // namespace cyxwiz

@@ -7,9 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -211,7 +209,6 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
             }
         }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetArray();
             af::array grad_gpu = grad.GetArray();
@@ -240,9 +237,6 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
     step_count_++;
 }
@@ -354,7 +348,6 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
             cache_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetArray();
             af::array grad_gpu = grad.GetArray();
@@ -373,9 +366,6 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
     step_count_++;
 }
@@ -489,7 +479,6 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
             acc_delta_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetArray();
             af::array grad_gpu = grad.GetArray();
@@ -519,9 +508,6 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
     step_count_++;
 }

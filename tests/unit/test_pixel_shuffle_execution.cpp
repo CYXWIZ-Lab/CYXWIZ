@@ -13,7 +13,6 @@
 using namespace cyxwiz;
 using namespace cyxwiz::test::convolution;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("PixelShuffle rejects empty and unrepresentable geometry before "
           "device access",
           "[pixelshuffle][validation]") {
@@ -192,4 +191,3 @@ TEST_CASE("PixelShuffle fixed device-input baseline",
             << " fallbacks=" << fallbacks << '\n';
   REQUIRE(samples[2] > 0.0);
 }
-#endif

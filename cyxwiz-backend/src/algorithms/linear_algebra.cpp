@@ -1,6 +1,6 @@
 // Host-matrix linear algebra (the analysis panels' API) on ArrayFire: the CPU
-// option is ArrayFire's CPU backend, there are no hand-written CPU kernels, and
-// a build without ArrayFire refuses (TOFIX140). Matrices cross the host boundary
+// option is ArrayFire's CPU backend and there are no hand-written CPU kernels
+// (TOFIX140). Matrices cross the host boundary
 // once on the way in and once on the way out; float64 where the active device
 // has it, else float32.
 
@@ -19,9 +19,7 @@
 #include <string>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #ifdef min
 #undef min
@@ -59,8 +57,6 @@ std::vector<std::complex<double>> Eigenvector2x2(const Matrix& A, const std::com
     if (norm <= 1e-12) return {1.0, 0.0};
     return {vector[0] / norm, vector[1] / norm};
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // Relative pivot / singular-value threshold for the compute precision.
 double SingularTolerance() {
@@ -127,17 +123,6 @@ bool CholeskyLower(const af::array& a, af::array& lower) {
     return std::sqrt(af::sum<double>(residual * residual)) <= std::sqrt(SingularTolerance()) * (1.0 + scale);
 }
 
-#else
-
-template <typename Result>
-Result NoArrayFire(const char* operation) {
-    Result result;
-    result.error_message = std::string(operation) + " runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-}
-
-#endif
-
 template <typename Result>
 Result Failure(std::string message) {
     Result result;
@@ -188,15 +173,11 @@ MatrixResult LinearAlgebra::Add(const std::vector<std::vector<double>>& A, const
         result.error_message = "Matrix dimensions must match for addition";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return MatrixFromDevice(ToDevice(A) + ToDevice(B), "LinearAlgebra::Add");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Add", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Add");
-#endif
 }
 
 MatrixResult LinearAlgebra::Subtract(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
@@ -206,15 +187,11 @@ MatrixResult LinearAlgebra::Subtract(const std::vector<std::vector<double>>& A, 
         result.error_message = "Matrix dimensions must match for subtraction";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return MatrixFromDevice(ToDevice(A) - ToDevice(B), "LinearAlgebra::Subtract");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Subtract", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Subtract");
-#endif
 }
 
 MatrixResult LinearAlgebra::Multiply(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& B) {
@@ -224,44 +201,31 @@ MatrixResult LinearAlgebra::Multiply(const std::vector<std::vector<double>>& A, 
         result.error_message = "Matrix dimensions incompatible for multiplication (A cols must equal B rows)";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return MatrixFromDevice(af::matmul(ToDevice(A), ToDevice(B)), "LinearAlgebra::Multiply");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Multiply", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Multiply");
-#endif
 }
 
 MatrixResult LinearAlgebra::ScalarMultiply(const std::vector<std::vector<double>>& A, double scalar) {
     MatrixResult result;
     if (!RequireMatrix(A, result)) return result;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return MatrixFromDevice(ToDevice(A) * scalar, "LinearAlgebra::ScalarMultiply");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::ScalarMultiply", e));
     }
-#else
-    (void)scalar;
-    return NoArrayFire<MatrixResult>("LinearAlgebra::ScalarMultiply");
-#endif
 }
 
 MatrixResult LinearAlgebra::Transpose(const std::vector<std::vector<double>>& A) {
     MatrixResult result;
     if (!RequireMatrix(A, result)) return result;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return MatrixFromDevice(af::transpose(ToDevice(A)), "LinearAlgebra::Transpose");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Transpose", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Transpose");
-#endif
 }
 
 MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
@@ -271,7 +235,6 @@ MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
         result.error_message = "Matrix must be square for inversion";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         if (NearlySingular(a, "LinearAlgebra::Inverse")) {
@@ -282,9 +245,6 @@ MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Inverse", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Inverse");
-#endif
 }
 
 // ============================================================================
@@ -298,7 +258,6 @@ ScalarResult LinearAlgebra::Determinant(const std::vector<std::vector<double>>& 
         result.error_message = "Matrix must be square for determinant";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // A (numerically) singular matrix has determinant 0; checked first
         // because OpenCL's getrf throws on an exactly singular matrix.
@@ -309,9 +268,6 @@ ScalarResult LinearAlgebra::Determinant(const std::vector<std::vector<double>>& 
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::Determinant", e));
     }
-#else
-    return NoArrayFire<ScalarResult>("LinearAlgebra::Determinant");
-#endif
 }
 
 ScalarResult LinearAlgebra::Trace(const std::vector<std::vector<double>>& A) {
@@ -321,7 +277,6 @@ ScalarResult LinearAlgebra::Trace(const std::vector<std::vector<double>>& A) {
         result.error_message = "Matrix must be square for trace";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         result.value = af::sum<double>(af::diag(ToDevice(A)));
         result.success = true;
@@ -329,9 +284,6 @@ ScalarResult LinearAlgebra::Trace(const std::vector<std::vector<double>>& A) {
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::Trace", e));
     }
-#else
-    return NoArrayFire<ScalarResult>("LinearAlgebra::Trace");
-#endif
 }
 
 ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, double tolerance) {
@@ -342,7 +294,6 @@ ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, doub
         return result;
     }
     if (!RequireMatrix(A, result)) return result;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::Rank");
         const double largest = singular.empty() ? 0.0 : singular.front();
@@ -354,10 +305,6 @@ ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, doub
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::Rank", e));
     }
-#else
-    (void)tolerance;
-    return NoArrayFire<ScalarResult>("LinearAlgebra::Rank");
-#endif
 }
 
 ScalarResult LinearAlgebra::FrobeniusNorm(const std::vector<std::vector<double>>& A) {
@@ -368,7 +315,6 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const std::vector<std::vector<double>>
         return result;
     }
     if (!RequireMatrix(A, result)) return result;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         result.value = std::sqrt(af::sum<double>(a * a));
@@ -377,15 +323,11 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const std::vector<std::vector<double>>
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::FrobeniusNorm", e));
     }
-#else
-    return NoArrayFire<ScalarResult>("LinearAlgebra::FrobeniusNorm");
-#endif
 }
 
 ScalarResult LinearAlgebra::ConditionNumber(const std::vector<std::vector<double>>& A) {
     ScalarResult result;
     if (!RequireMatrix(A, result)) return result;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::ConditionNumber");
         if (singular.empty()) {
@@ -399,9 +341,6 @@ ScalarResult LinearAlgebra::ConditionNumber(const std::vector<std::vector<double
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::ConditionNumber", e));
     }
-#else
-    return NoArrayFire<ScalarResult>("LinearAlgebra::ConditionNumber");
-#endif
 }
 
 // ============================================================================
@@ -445,7 +384,6 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
         return result;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         const double shift = std::sqrt(af::sum<double>(a * a)) + 1.0;
@@ -464,9 +402,6 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
     } catch (const af::exception& e) {
         return Failure<EigenResult>(DeviceError("LinearAlgebra::Eigen", e));
     }
-#else
-    return NoArrayFire<EigenResult>("LinearAlgebra::Eigen");
-#endif
 }
 
 SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool full_matrices) {
@@ -474,7 +409,6 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
     if (!RequireMatrix(A, result)) return result;
     GetDimensions(A, result.m, result.n);
     result.k = std::min(result.m, result.n);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array u, s, vt;
         af::svd(u, s, vt, ToDevice(A));  // full: U m x m, Vt n x n
@@ -494,10 +428,6 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
         failed.k = result.k;
         return failed;
     }
-#else
-    (void)full_matrices;
-    return NoArrayFire<SVDResult>("LinearAlgebra::SVD");
-#endif
 }
 
 // A_k = U_k diag(S_k) Vt_k from the top k singular triplets.
@@ -508,7 +438,6 @@ MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<d
         result.error_message = "k must be between 1 and min(m,n)";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array u, s, vt;
         af::svd(u, s, vt, ToDevice(A));
@@ -519,9 +448,6 @@ MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<d
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LowRankApproximation", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::LowRankApproximation");
-#endif
 }
 
 // Reduced QR (PyTorch's default): Q m x k with orthonormal columns, R k x n,
@@ -530,7 +456,6 @@ QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {
     QRResult result;
     if (!RequireMatrix(A, result)) return result;
     GetDimensions(A, result.m, result.n);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const int k = std::min(result.m, result.n);
         af::array q, r, tau;
@@ -542,9 +467,6 @@ QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {
     } catch (const af::exception& e) {
         return Failure<QRResult>(DeviceError("LinearAlgebra::QR", e));
     }
-#else
-    return NoArrayFire<QRResult>("LinearAlgebra::QR");
-#endif
 }
 
 CholeskyResult LinearAlgebra::Cholesky(const std::vector<std::vector<double>>& A) {
@@ -555,7 +477,6 @@ CholeskyResult LinearAlgebra::Cholesky(const std::vector<std::vector<double>>& A
         return result;
     }
     result.n = static_cast<int>(A.size());
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array lower;
         if (!CholeskyLower(ToDevice(A), lower)) {
@@ -571,9 +492,6 @@ CholeskyResult LinearAlgebra::Cholesky(const std::vector<std::vector<double>>& A
         failed.n = result.n;
         return failed;
     }
-#else
-    return NoArrayFire<CholeskyResult>("LinearAlgebra::Cholesky");
-#endif
 }
 
 // P A = L U with partial pivoting; P[i] is the row of A that lands in row i.
@@ -585,7 +503,6 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
         return result;
     }
     result.n = static_cast<int>(A.size());
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array lower, upper, pivot;
         af::lu(lower, upper, pivot, ToDevice(A));  // pivot: permutation indices
@@ -603,9 +520,6 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
         failed.n = result.n;
         return failed;
     }
-#else
-    return NoArrayFire<LUResult>("LinearAlgebra::LU");
-#endif
 }
 
 // ============================================================================
@@ -623,7 +537,6 @@ MatrixResult LinearAlgebra::Solve(const std::vector<std::vector<double>>& A, con
         result.error_message = "Dimensions mismatch: A rows must equal b rows";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         if (NearlySingular(a, "LinearAlgebra::Solve")) {
@@ -634,9 +547,6 @@ MatrixResult LinearAlgebra::Solve(const std::vector<std::vector<double>>& A, con
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Solve", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::Solve");
-#endif
 }
 
 MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>& A, const std::vector<std::vector<double>>& b) {
@@ -646,16 +556,12 @@ MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>&
         result.error_message = "A and b must have same number of rows";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // af::solve takes the QR least-squares route for a non-square A.
         return MatrixFromDevice(af::solve(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LeastSquares", e));
     }
-#else
-    return NoArrayFire<MatrixResult>("LinearAlgebra::LeastSquares");
-#endif
 }
 
 // ============================================================================
@@ -664,17 +570,12 @@ MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>&
 
 bool LinearAlgebra::IsSymmetric(const std::vector<std::vector<double>>& A, double tolerance) {
     if (!IsRectangularMatrix(A) || !IsSquare(A)) return false;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         return af::allTrue<bool>(af::abs(a - af::transpose(a)) <= tolerance);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("LinearAlgebra::IsSymmetric", e));
     }
-#else
-    (void)tolerance;
-    throw std::runtime_error(NoArrayFire<ScalarResult>("LinearAlgebra::IsSymmetric").error_message);
-#endif
 }
 
 bool LinearAlgebra::IsPositiveDefinite(const std::vector<std::vector<double>>& A) {
@@ -685,7 +586,6 @@ bool LinearAlgebra::IsPositiveDefinite(const std::vector<std::vector<double>>& A
 // QR's Q qualifies too).
 bool LinearAlgebra::IsOrthogonal(const std::vector<std::vector<double>>& A, double tolerance) {
     if (!IsRectangularMatrix(A) || A.size() < A[0].size()) return false;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array a = ToDevice(A);
         const af::array gram = af::matmul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
@@ -696,10 +596,6 @@ bool LinearAlgebra::IsOrthogonal(const std::vector<std::vector<double>>& A, doub
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("LinearAlgebra::IsOrthogonal", e));
     }
-#else
-    (void)tolerance;
-    throw std::runtime_error(NoArrayFire<ScalarResult>("LinearAlgebra::IsOrthogonal").error_message);
-#endif
 }
 
 } // namespace cyxwiz

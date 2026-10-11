@@ -11,9 +11,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 TEST_CASE("SGD optimizer creation", "[optimizer]") {
     auto opt = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, 0.01);
@@ -438,7 +436,6 @@ TEST_CASE("Adam optimizer state resumes the exact next step", "[optimizer][check
     REQUIRE(resumed.GetStepCount() == 2);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {
         af::Backend backend = af::getActiveBackend();
@@ -547,4 +544,3 @@ TEST_CASE("Adaptive GPU optimizers keep parameters device resident until host re
         RequireOptimizerKeepsParametersDeviceResident(opt);
     }
 }
-#endif

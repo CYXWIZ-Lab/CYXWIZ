@@ -4,22 +4,14 @@
 
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace optimizer_detail {
 
-void ThrowOptimizerNeedsArrayFire(const char* operation_name) {
-    throw std::runtime_error(std::string(operation_name) + " runs on ArrayFire, and this build has no ArrayFire");
-}
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void ThrowOptimizerDeviceError(const char* operation_name, const af::exception& error) {
     throw std::runtime_error(std::string(operation_name) + " failed on the ArrayFire device: " + error.what());
 }
-#endif
 
 void ValidateOptimizerStepTensors(
     const char* operation_name,

@@ -34,7 +34,6 @@ std::vector<size_t> UpsampleOutputShape(const std::vector<size_t> &input_shape,
   return output_shape;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Explicit provider broadcasting avoids both a full-size weight tile and a
 // process-wide gfor/batch-mode switch. The returned array owns the C API
 // handle.
@@ -106,68 +105,51 @@ af::array BilinearAxis(af::array values, dim_t extent, int factor,
   values.eval();
   return axis == 1 ? af::reorder(values, 1, 0, 2, 3) : values;
 }
-#endif
 
 Tensor Execute(const Tensor &input, const std::vector<size_t> &low,
                const std::vector<size_t> &high, int factor, UpsampleMode mode,
                bool backward) {
   const char *operation =
       backward ? "Upsample2DLayer::Backward" : "Upsample2DLayer::Forward";
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-  {
-    const size_t channel_batches =
-        CheckedLayerProduct(low[2], low[3], "Upsample2D", "channel batches");
-    for (const size_t dimension :
-         {low[0], low[1], low[2], low[3], high[0], high[1], channel_batches}) {
-      (void)CheckedIntDim(dimension, "Upsample2D dimension");
-    }
-    {
-      try {
-        const auto h = static_cast<dim_t>(low[0]);
-        const auto w = static_cast<dim_t>(low[1]);
-        const auto cn = static_cast<dim_t>(channel_batches);
-        const auto r = static_cast<dim_t>(factor);
-        af::array values = input.GetSemanticArray();
-        if (mode == UpsampleMode::Bilinear) {
-          if (backward) {
-            values = BilinearAxis(values, h, factor, 0, true);
-            values = BilinearAxis(values, w, factor, 1, true);
-          } else {
-            values = BilinearAxis(values, w, factor, 1, false);
-            values = BilinearAxis(values, h, factor, 0, false);
-          }
-        } else if (backward) {
-          // Sum [rh,h,rw,w,c,n] over the two repeated spatial axes.
-          values = af::sum(af::moddims(values, r, h, r * w, cn), 0);
-          values = af::sum(af::moddims(values, h, r, w, cn), 1);
-        } else {
-          values = af::tile(af::moddims(values, 1, h, w, cn), factor, 1, 1, 1);
-          values =
-              af::tile(af::moddims(values, r * h, 1, w, cn), 1, factor, 1, 1);
-        }
-        const auto &shape = backward ? low : high;
-        values = af::moddims(
-            values, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
-            static_cast<dim_t>(shape[2]), static_cast<dim_t>(shape[3]));
-        values.eval();
-        return Tensor::FromSemanticArray(values, shape);
-      } catch (const af::exception &error) {
-        throw std::runtime_error(std::string(operation) +
-                                 " failed on the ArrayFire device: " + error.what());
-      }
-    }
+  const size_t channel_batches =
+      CheckedLayerProduct(low[2], low[3], "Upsample2D", "channel batches");
+  for (const size_t dimension :
+       {low[0], low[1], low[2], low[3], high[0], high[1], channel_batches}) {
+    (void)CheckedIntDim(dimension, "Upsample2D dimension");
   }
-#else
-  (void)input;
-  (void)low;
-  (void)high;
-  (void)factor;
-  (void)mode;
-  (void)backward;
-  (void)operation;
-  throw std::runtime_error(
-      "Upsample2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
+  try {
+    const auto h = static_cast<dim_t>(low[0]);
+    const auto w = static_cast<dim_t>(low[1]);
+    const auto cn = static_cast<dim_t>(channel_batches);
+    const auto r = static_cast<dim_t>(factor);
+    af::array values = input.GetSemanticArray();
+    if (mode == UpsampleMode::Bilinear) {
+      if (backward) {
+        values = BilinearAxis(values, h, factor, 0, true);
+        values = BilinearAxis(values, w, factor, 1, true);
+      } else {
+        values = BilinearAxis(values, w, factor, 1, false);
+        values = BilinearAxis(values, h, factor, 0, false);
+      }
+    } else if (backward) {
+      // Sum [rh,h,rw,w,c,n] over the two repeated spatial axes.
+      values = af::sum(af::moddims(values, r, h, r * w, cn), 0);
+      values = af::sum(af::moddims(values, h, r, w, cn), 1);
+    } else {
+      values = af::tile(af::moddims(values, 1, h, w, cn), factor, 1, 1, 1);
+      values =
+          af::tile(af::moddims(values, r * h, 1, w, cn), 1, factor, 1, 1);
+    }
+    const auto &shape = backward ? low : high;
+    values = af::moddims(
+        values, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
+        static_cast<dim_t>(shape[2]), static_cast<dim_t>(shape[3]));
+    values.eval();
+    return Tensor::FromSemanticArray(values, shape);
+  } catch (const af::exception &error) {
+    throw std::runtime_error(std::string(operation) +
+                             " failed on the ArrayFire device: " + error.what());
+  }
 }
 } // namespace
 

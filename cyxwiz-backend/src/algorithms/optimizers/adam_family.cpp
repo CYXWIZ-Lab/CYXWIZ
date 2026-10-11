@@ -9,9 +9,7 @@
 #include <stdexcept>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -242,7 +240,6 @@ void AdamOptimizer::StepImpl(
         const float bias_correction2 =
             1.0f - static_cast<float>(std::pow(b2, parameter_step));
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetSemanticArray();
             af::array grad_gpu = grad.GetSemanticArray();
@@ -280,9 +277,6 @@ void AdamOptimizer::StepImpl(
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(operation_name, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(operation_name);
-#endif
     }
     ++step_count_;
 }
@@ -562,7 +556,6 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         const float mu_product = mu_products_.at(name) * mu;
         const float mu_product_next = mu_product * mu_next;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetSemanticArray();
             af::array grad_gpu = grad.GetSemanticArray();
@@ -596,9 +589,6 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
     ++step_count_;
 }

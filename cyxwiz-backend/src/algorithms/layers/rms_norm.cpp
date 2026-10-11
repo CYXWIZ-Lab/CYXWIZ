@@ -4,7 +4,7 @@
 //   dx     = inv_rms * (g - n * mean(g * n))
 //   dgamma = sum over rows of dy * n
 // On the ArrayFire device only: a device error is reported, not hidden behind
-// host loops; a build without ArrayFire refuses the layer.
+// host loops.
 #include "cyxwiz/layers/normalization.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
@@ -14,9 +14,7 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #ifdef max
 #undef max
@@ -53,16 +51,11 @@ Tensor RMSNormLayer::Forward(const Tensor& input) {
     }
     const size_t rows = input.NumElements() / normalized_size_;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ForwardArrayFire(input, rows);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("RMSNormLayer::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)rows;
-    throw std::runtime_error("RMSNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor RMSNormLayer::Backward(const Tensor& grad_output) {
@@ -75,19 +68,13 @@ Tensor RMSNormLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("RMSNorm backward cache shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BackwardArrayFire(grad_output, rows);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("RMSNormLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)rows;
-    throw std::runtime_error("RMSNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 Tensor RMSNormLayer::ForwardArrayFire(const Tensor& input, size_t rows) {
     const size_t d = normalized_size_;
     const af::array x = input.Reshape({rows, d}).GetSemanticArray();
@@ -126,7 +113,6 @@ Tensor RMSNormLayer::BackwardArrayFire(const Tensor& gradient, size_t rows) {
     if (elementwise_affine_) grad_gamma_ = std::move(gamma_gradient);
     return result;
 }
-#endif
 
 std::map<std::string, Tensor> RMSNormLayer::GetParameters() {
     std::map<std::string, Tensor> params;

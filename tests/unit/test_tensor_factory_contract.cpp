@@ -6,6 +6,7 @@
 #include <cyxwiz/memory_manager.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -216,7 +217,6 @@ void CheckSeedReplay(const json& fixture) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_factory_host_sync_count = 0;
 size_t g_factory_fallback_count = 0;
 
@@ -297,36 +297,21 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
         }
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor exact factories match PyTorch shape dtype and values",
           "[tensor][tensor_factory][pytorch]") {
     const json fixture = LoadFactoryFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckFactoryCasesOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture.at("exact_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const auto shape = test_case.at("shape").get<std::vector<size_t>>();
-        CheckExact(
-            ApplyFactory(
-                test_case.at("operation").get<std::string>(), shape, dtype),
-            dtype,
-            test_case.at("expected"));
-    }
-#endif
     CheckRandomContract(fixture);
     CheckSeedReplay(fixture);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor seeded and range factories are device-resident",
           "[tensor][tensor_factory][arrayfire][residency]") {
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
@@ -441,13 +426,11 @@ TEST_CASE("Tensor empty factories require no compute or fallback",
     REQUIRE(g_factory_host_sync_count == 0);
     REQUIRE(g_factory_fallback_count == 0);
 }
-#endif
 
 TEST_CASE("Tensor factory shape overflow fails before compute",
           "[tensor][tensor_factory][invalid]") {
     const std::vector<size_t> shape{
         (std::numeric_limits<size_t>::max)(), 2};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_factory_host_sync_count = 0;
     g_factory_fallback_count = 0;
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
@@ -456,15 +439,12 @@ TEST_CASE("Tensor factory shape overflow fails before compute",
         &CountFactoryHostSync);
     const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
         &CountFactoryFallback);
-#endif
     for (const std::string operation : {
              "zeros", "ones", "random", "random_seeded", "range_n"}) {
         REQUIRE_THROWS_AS(
             ApplyFactory(operation, shape, cyxwiz::DataType::Float32),
             std::overflow_error);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     REQUIRE(g_factory_host_sync_count == 0);
     REQUIRE(g_factory_fallback_count == 0);
-#endif
 }

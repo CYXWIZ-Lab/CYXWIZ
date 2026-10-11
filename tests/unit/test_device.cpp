@@ -25,7 +25,6 @@
 #include <thread>
 #include <tuple>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 
 namespace {
@@ -47,7 +46,6 @@ private:
     int device_;
 };
 }  // namespace
-#endif
 
 namespace {
 
@@ -420,9 +418,7 @@ TEST_CASE("Route qualification snapshot rejects unsafe and stale evidence",
     record.provider = route.provider;
     record.driver_version = route.driver_version;
     record.physical_fingerprint = route.physical_fingerprint;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     record.runtime_version = AF_VERSION;
-#endif
     record.operation_count = cyxwiz::kRouteQualificationOperationCount;
     record.pass_count = cyxwiz::kRouteQualificationOperationCount;
     record.certified = true;
@@ -2014,7 +2010,6 @@ TEST_CASE("Production device selection rejects an active execution context",
     CHECK(commit_calls == 0);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Production selection transaction restores process route and commits atomically",
           "[device][selection][transaction][arrayfire]") {
     ArrayFireStateGuard restore;
@@ -2093,7 +2088,6 @@ TEST_CASE("Production selection transaction restores process route and commits a
     cyxwiz::ClearSavedExecutionDeviceSelection();
     cyxwiz::ClearRouteQualificationSnapshot();
 }
-#endif
 
 } // namespace
 
@@ -2250,7 +2244,6 @@ TEST_CASE("Provider UUID correlates CUDA and OpenCL routes when reported",
     CHECK(cuda->physical_fingerprint == opencl->physical_fingerprint);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Device enumeration restores the active ArrayFire state",
           "[device][arrayfire]") {
     const auto original_backend = af::getActiveBackend();
@@ -2522,4 +2515,3 @@ TEST_CASE("Failed exact oneAPI evidence follows compatibility and strict policy"
     CHECK(cyxwiz::GetPendingExecutionDeviceSelection().has_value());
     cyxwiz::ClearPendingExecutionDeviceSelection();
 }
-#endif

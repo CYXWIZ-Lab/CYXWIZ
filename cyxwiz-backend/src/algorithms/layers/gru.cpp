@@ -38,7 +38,6 @@ GRULayer::GRULayer(int input_size, int hidden_size, int num_layers,
 GRULayer::~GRULayer() = default;
 
 void GRULayer::InitializeWeights() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     W_ih_.resize(num_layers_);
     W_hh_.resize(num_layers_);
     b_ih_.resize(num_layers_);
@@ -75,9 +74,6 @@ void GRULayer::InitializeWeights() {
         throw std::runtime_error(
             std::string("GRULayer weight initialization failed on the ArrayFire device: ") + e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("GRULayer");
-#endif
 }
 
 void GRULayer::ResetState() {
@@ -206,7 +202,6 @@ Tensor GRULayer::ForwardBidirectional(const Tensor& input) {
 }
 
 Tensor GRULayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto& shape = input.Shape();
     const size_t batch = batch_first_ ? shape[0] : shape[1];
     const size_t seq = batch_first_ ? shape[1] : shape[0];
@@ -311,11 +306,6 @@ Tensor GRULayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) {
         throw std::runtime_error(std::string("GRULayer::Forward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    (void)input;
-    (void)use_initial_state;
-    recurrent_detail::ThrowWithoutArrayFire("GRULayer");
-#endif
 }
 
 std::map<std::string, Tensor> GRULayer::GetParameters() {

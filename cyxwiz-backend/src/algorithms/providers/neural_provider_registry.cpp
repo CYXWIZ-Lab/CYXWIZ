@@ -4,9 +4,7 @@
 #include <cstdlib>
 #include <mutex>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -65,7 +63,6 @@ const char* NeuralDevicePlatformName(DeviceType platform) {
 
 NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
     NeuralDeviceTarget target;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         switch (af::getActiveBackend()) {
         case AF_BACKEND_CUDA: target.platform = DeviceType::CUDA; break;
@@ -79,7 +76,6 @@ NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
         // (no provider serves it), the portable path decides.
         target = NeuralDeviceTarget{};
     }
-#endif
     return target;
 }
 

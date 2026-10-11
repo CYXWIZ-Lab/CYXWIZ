@@ -6,9 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::tensor_math_utils {
 
@@ -37,7 +35,6 @@ inline DataType RealType(DataType input) {
     return input == DataType::Float64 ? DataType::Float64 : DataType::Float32;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 inline af::dtype ArrayFireType(DataType dtype) {
     switch (dtype) {
         case DataType::Float32: return f32;
@@ -187,6 +184,5 @@ inline af::array BroadcastArray(const Tensor& input,
     }
     return af::tile(values, factors);
 }
-#endif
 
 } // namespace cyxwiz::tensor_math_utils

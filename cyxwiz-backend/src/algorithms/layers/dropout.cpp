@@ -9,16 +9,10 @@
 namespace cyxwiz {
 
 // One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
-// reported, not hidden behind host loops; a build without ArrayFire refuses.
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+// reported, not hidden behind host loops.
 [[noreturn]] static void ThrowDropoutDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-#else
-[[noreturn]] static void ThrowDropoutNeedsArrayFire() {
-    throw std::runtime_error("Dropout runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
 
 DropoutLayer::DropoutLayer(float p) : p_(p) {
     if (!std::isfinite(p) || p < 0.0f || p > 1.0f) {
@@ -42,7 +36,6 @@ Tensor DropoutLayer::Forward(const Tensor& input) {
             "Dropout training requires Float32 input");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         af::array mask;
@@ -66,9 +59,6 @@ Tensor DropoutLayer::Forward(const Tensor& input) {
     } catch (const af::exception& error) {
         ThrowDropoutDeviceError("DropoutLayer::Forward", error);
     }
-#else
-    ThrowDropoutNeedsArrayFire();
-#endif
 }
 
 Tensor DropoutLayer::Backward(const Tensor& grad_output) {
@@ -88,7 +78,6 @@ Tensor DropoutLayer::Backward(const Tensor& grad_output) {
         return grad_output;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array mask = TensorToAf(mask_);
@@ -99,9 +88,6 @@ Tensor DropoutLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& error) {
         ThrowDropoutDeviceError("DropoutLayer::Backward", error);
     }
-#else
-    ThrowDropoutNeedsArrayFire();
-#endif
 }
 
 } // namespace cyxwiz

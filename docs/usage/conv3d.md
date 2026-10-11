@@ -73,8 +73,8 @@ with few filters and small volumes.
 
 On ArrayFire the column matrix comes from one sparse gather, built once for the
 volume shape, and the convolution is one matrix product. Backward uses the
-transposed gather, so training stays on the device. Builds without ArrayFire
-use plain loops.
+transposed gather, so training stays on the device. On a CPU selection the same
+code runs on ArrayFire's CPU backend.
 
 ## Notes
 

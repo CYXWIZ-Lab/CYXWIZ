@@ -41,9 +41,7 @@
 #include <cstdio>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -247,11 +245,9 @@ void AccumulateDeviceValue(Tensor& accumulator,
     }
 
     Tensor next = initialized ? accumulator + value : value;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array materialized = next.GetSemanticArray();
     materialized.eval();
     next.SetFromSemanticArray(materialized, {expected_elements});
-#endif
     accumulator = std::move(next);
     initialized = true;
 }
@@ -288,16 +284,11 @@ Tensor ApplyDeviceScalar(const Tensor& value,
         throw std::runtime_error(
             "Training device-scalar operations require Float32 tensors and one scalar value");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array result = divide
         ? value.GetSemanticArray() / scalar.GetSemanticArray()
         : value.GetSemanticArray() * scalar.GetSemanticArray();
     result.eval();
     return Tensor::FromSemanticArray(result, value.Shape());
-#else
-    const float host_scalar = scalar.ReadData<float>()[0];
-    return divide ? value / host_scalar : value * host_scalar;
-#endif
 }
 
 struct LossAggregationWeightValue {
@@ -397,7 +388,6 @@ void RecordDeclaredScalarLossOutputBoundary() {
         message);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void AddRegressionMetricsArrayFire(
     RegressionMetricAccumulator& regression,
     const Tensor& predictions,
@@ -467,7 +457,6 @@ void AddRegressionMetricsArrayFire(
         static_cast<double>(squared_error_sum);
     regression.value_count += batch_size * output_width;
 }
-#endif
 
 void AddRegressionMetricScalars(
     RegressionMetricAccumulator& regression,
@@ -480,7 +469,6 @@ void AddRegressionMetricScalars(
         return;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         AddRegressionMetricsArrayFire(
             regression,
@@ -493,13 +481,6 @@ void AddRegressionMetricScalars(
         throw std::runtime_error(std::string("RegressionMetricAccumulator failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    (void)regression;
-    (void)predictions;
-    (void)targets;
-    (void)config;
-    throw std::runtime_error("RegressionMetricAccumulator runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace

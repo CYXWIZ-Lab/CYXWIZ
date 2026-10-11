@@ -3,7 +3,7 @@
 // channel's windows unwrapped ([k*k, L, C, N]), weighted by that channel's M
 // kernels and summed over the window; backward mirrors it, folds the window
 // gradients back with wrap and crops the padding. The CPU is ArrayFire's CPU
-// backend; a build without ArrayFire refuses the layer.
+// backend.
 #include "cyxwiz/layers/convolution.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
@@ -43,7 +43,6 @@ DepthwiseGeometry ValidateDepthwiseInput(const Tensor& input, int channels, int 
     return {shape[0], shape[1], shape[2], shape[3], (padded_h - k) / s + 1, (padded_w - k) / s + 1};
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 [[noreturn]] void ThrowDepthwiseDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
@@ -55,11 +54,6 @@ af::array PadSpatial(const af::array& x, int padding) {
     const dim_t p = padding;
     return af::pad(x, af::dim4(p, p, 0, 0), af::dim4(p, p, 0, 0), AF_PAD_ZERO);
 }
-#else
-[[noreturn]] void ThrowDepthwiseNeedsArrayFire() {
-    throw std::runtime_error("Depthwise Conv2D runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
 
 }  // namespace
 
@@ -79,12 +73,8 @@ DepthwiseConv2DLayer::DepthwiseConv2DLayer(int channels, int depth_multiplier, i
     const size_t outputs = static_cast<size_t>(channels) * static_cast<size_t>(depth_multiplier);
     const std::vector<size_t> weight_shape{k, k, 1, outputs};
     // As Conv2D: Kaiming uniform over the fan-in (k*k: one input channel per group).
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     weights_ = AfToTensor(KaimingUniform(static_cast<int>(k * k),
                                          af::dim4(kernel_size, kernel_size, 1, static_cast<dim_t>(outputs))));
-#else
-    ThrowDepthwiseNeedsArrayFire();
-#endif
     if (use_bias_) bias_ = Tensor::Zeros({outputs}, DataType::Float32);
     grad_weights_ = Tensor::Zeros(weight_shape, DataType::Float32);
     if (use_bias_) grad_bias_ = Tensor::Zeros({outputs}, DataType::Float32);
@@ -97,7 +87,6 @@ Tensor DepthwiseConv2DLayer::Forward(const Tensor& input) {
     const size_t outputs = g.channels * m_count;
     const std::vector<size_t> output_shape{g.out_h, g.out_w, outputs, g.batch_size};
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t kk = static_cast<dim_t>(kernel_size_) * kernel_size_;
         const dim_t positions = static_cast<dim_t>(g.out_h * g.out_w);
@@ -132,10 +121,6 @@ Tensor DepthwiseConv2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowDepthwiseDeviceError("DepthwiseConv2DLayer::Forward", e);
     }
-#else
-    (void)outputs; (void)output_shape;
-    ThrowDepthwiseNeedsArrayFire();
-#endif
 }
 
 Tensor DepthwiseConv2DLayer::Backward(const Tensor& grad_output) {
@@ -150,7 +135,6 @@ Tensor DepthwiseConv2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("DepthwiseConv2D backward gradient does not match the Forward output");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t kk = static_cast<dim_t>(kernel_size_) * kernel_size_;
         const dim_t positions = static_cast<dim_t>(g.out_h * g.out_w);
@@ -199,9 +183,6 @@ Tensor DepthwiseConv2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowDepthwiseDeviceError("DepthwiseConv2DLayer::Backward", e);
     }
-#else
-    ThrowDepthwiseNeedsArrayFire();
-#endif
 }
 
 std::map<std::string, Tensor> DepthwiseConv2DLayer::GetParameters() {

@@ -6,9 +6,7 @@
 #include <numeric>
 #include <cctype>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -135,7 +133,6 @@ DatasetStatistics StatisticsCalculator::Compute(
     // Compute PCA for whitening using ArrayFire SVD
     spdlog::info("Computing PCA components for whitening...");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // 1. Calculate total features per sample from shape
         size_t n_features = 1;
@@ -238,10 +235,6 @@ DatasetStatistics StatisticsCalculator::Compute(
         spdlog::error("PCA computation failed: {}", e.what());
         stats.pca_computed = false;
     }
-#else
-    spdlog::warn("PCA computation requires ArrayFire (GPU support not available)");
-    stats.pca_computed = false;
-#endif
 
     stats.is_valid = true;
 

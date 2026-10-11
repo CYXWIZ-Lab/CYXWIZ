@@ -7,9 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 Tensor ReLU::Forward(const Tensor& input) {
@@ -17,7 +15,6 @@ Tensor ReLU::Forward(const Tensor& input) {
         throw std::runtime_error("ReLU only supports Float32 tensors");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array input_gpu = input.GetSemanticArray();
 
@@ -29,9 +26,6 @@ Tensor ReLU::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("ReLU::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("ReLU runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -39,7 +33,6 @@ Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
         throw std::runtime_error("ReLU::Backward: gradient and input shapes must match");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_gpu = grad_output.GetSemanticArray();
         af::array input_gpu = input.GetSemanticArray();
@@ -54,9 +47,6 @@ Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("ReLU::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("ReLU runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

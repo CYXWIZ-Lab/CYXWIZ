@@ -8,9 +8,7 @@
 #include <utility>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -136,7 +134,6 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
             v_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
         }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array param_gpu = param.GetSemanticArray();
             af::array grad_gpu = grad.GetSemanticArray();
@@ -185,9 +182,6 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
     step_count_ = next_step;
 }

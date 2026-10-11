@@ -6,10 +6,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -48,7 +46,6 @@ const char* ScalarComparisonOperationName(CompareOp op) {
     return "Tensor::scalar_comparison";
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array CompareArrays(const af::array& left,
                         const af::array& right,
                         CompareOp op) {
@@ -62,7 +59,6 @@ af::array CompareArrays(const af::array& left,
     }
     throw std::runtime_error("Tensor comparison: invalid ArrayFire operation");
 }
-#endif
 
 // Scalars compare in the input's real type; the result is UInt8 0 / 1.
 Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
@@ -71,7 +67,6 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
     if (input.NumElements() == 0) {
         return Tensor(input.Shape(), DataType::UInt8);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dtype type = tensor_math_utils::ArrayFireType(common_dtype);
         const af::array values = tensor_math_utils::ElementwiseArray(input).as(type);
@@ -81,12 +76,6 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(ScalarComparisonOperationName(op), e));
     }
-#else
-    (void)scalar;
-    (void)common_dtype;
-    throw std::runtime_error(std::string(ScalarComparisonOperationName(op)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
@@ -99,7 +88,6 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
             "Tensor comparison: output shape overflow") == 0) {
         return Tensor(output_shape, DataType::UInt8);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = CompareArrays(tensor_math_utils::BroadcastArray(left, output_shape, common_dtype),
                                          tensor_math_utils::BroadcastArray(right, output_shape, common_dtype),
@@ -109,11 +97,6 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(TensorComparisonOperationName(op), e));
     }
-#else
-    (void)common_dtype;
-    throw std::runtime_error(std::string(TensorComparisonOperationName(op)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace

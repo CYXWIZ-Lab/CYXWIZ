@@ -10,9 +10,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -55,7 +53,6 @@ std::string FormatHits(const std::vector<DirectHostHit>& hits) {
     return out.str();
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 int g_observer_calls = 0;
 cyxwiz::ArrayFireHostSyncEvent g_observed_event;
 
@@ -63,7 +60,6 @@ void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
     ++g_observer_calls;
     g_observed_event = event;
 }
-#endif
 
 } // namespace
 
@@ -119,7 +115,6 @@ TEST_CASE("Production ArrayFire host calls stay behind attributed owners",
     REQUIRE(unexpected.empty());
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Shared ArrayFire host boundary reports complete attribution",
           "[arrayfire][host_sync][materialization]") {
     CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
@@ -180,4 +175,3 @@ TEST_CASE("Shared ArrayFire host boundary reports complete attribution",
             "arrayfire_native"),
         std::invalid_argument);
 }
-#endif

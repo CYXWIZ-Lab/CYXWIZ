@@ -7,7 +7,6 @@
 
 #include <cstddef>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace cyxwiz {
 
 struct GroupNormForward {
@@ -29,4 +28,3 @@ GroupNormBackward GroupNormBackwardArrayFire(const Tensor& grad_output, const Te
                                              const Tensor& std_inv, size_t groups, const Tensor* gamma);
 
 }  // namespace cyxwiz
-#endif

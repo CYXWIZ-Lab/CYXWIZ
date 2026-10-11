@@ -21,14 +21,7 @@ find_package(OpenSSL REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(jwt-cpp CONFIG REQUIRED)
 
-# Optional: Find ArrayFire for GPU support
-find_package(ArrayFire QUIET)
-if(ArrayFire_FOUND)
-    message(STATUS "ArrayFire found - GPU support enabled")
-    # Note: CYXWIZ_HAS_ARRAYFIRE is added per-target, not globally
-else()
-    message(WARNING "ArrayFire not found - GPU metrics will be limited")
-endif()
+# ArrayFire (and CYXWIZ_HAS_ARRAYFIRE) comes with cyxwiz-backend, which requires it.
 
 # ========== GUI Dependencies (Conditional) ==========
 if(CYXWIZ_BUILD_GUI)
@@ -209,12 +202,6 @@ if(CYXWIZ_BUILD_DAEMON)
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()
 
-    # ArrayFire linkage
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_ARRAYFIRE)
-    endif()
-
     # ONNX Runtime linkage
     # onnxruntime::onnxruntime target is created by root CMakeLists.txt (via FindONNXRuntime.cmake)
     # Works on Windows (vcpkg onnxruntime-gpu), Linux (vcpkg onnxruntime), macOS (vcpkg/brew)
@@ -327,12 +314,6 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
         )
     else()
         target_link_libraries(cyxwiz-server-gui PRIVATE pthread)
-    endif()
-
-    # ArrayFire linkage (for device pool)
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-gui PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     # ONNX Runtime linkage

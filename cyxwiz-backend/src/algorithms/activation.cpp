@@ -5,9 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with ArrayFire functions
 // Must be AFTER all includes (Windows headers define these)
@@ -57,13 +55,6 @@ int NormalizeActivationAxis(int axis, int rank, const char* name) {
 // Helper Functions for ArrayFire Integration
 // ============================================================================
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-[[noreturn]] static void ThrowActivationNeedsArrayFire(const char* operation) {
-    throw std::runtime_error(std::string(operation) + " runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // Helper: Create ArrayFire array from Tensor
 static af::array TensorToAf(const Tensor& t) {
@@ -87,7 +78,6 @@ static Tensor AfToTensor(const af::array& arr) {
 static const float SQRT_2_OVER_PI = 0.7978845608028654f;  // sqrt(2/pi)
 static const float GELU_CONST = 0.044715f;
 
-#endif // CYXWIZ_HAS_ARRAYFIRE
 
 // ============================================================================
 // Factory Function
@@ -134,7 +124,6 @@ std::unique_ptr<Activation> CreateActivation(ActivationType type, float alpha) {
 // ============================================================================
 
 Tensor ReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // ReLU: max(0, x)
@@ -143,13 +132,9 @@ Tensor ReLUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ReLU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("ReLU::Forward");
-#endif
 }
 
 Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -159,9 +144,6 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ReLU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("ReLU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -169,7 +151,6 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor LeakyReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // LeakyReLU: max(alpha*x, x) = x if x > 0 else alpha*x
@@ -180,13 +161,9 @@ Tensor LeakyReLUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("LeakyReLU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("LeakyReLU::Forward");
-#endif
 }
 
 Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -197,9 +174,6 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("LeakyReLU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("LeakyReLU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -207,7 +181,6 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor ELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // ELU: x if x > 0 else alpha * (exp(x) - 1)
@@ -219,13 +192,9 @@ Tensor ELUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ELU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("ELU::Forward");
-#endif
 }
 
 Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -235,9 +204,6 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ELU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("ELU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -245,7 +211,6 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
 // ============================================================================
 
 Tensor GELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // GELU approximation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
@@ -255,13 +220,9 @@ Tensor GELUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("GELU::Forward");
-#endif
 }
 
 Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -284,9 +245,6 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("GELU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -294,7 +252,6 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor SwishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Swish: x * sigmoid(x)
@@ -304,13 +261,9 @@ Tensor SwishActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Swish::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Swish::Forward");
-#endif
 }
 
 Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -324,9 +277,6 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Swish::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Swish::Backward");
-#endif
 }
 
 // ============================================================================
@@ -334,7 +284,6 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
 // ============================================================================
 
 Tensor SigmoidActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Sigmoid: 1 / (1 + exp(-x))
@@ -343,13 +292,9 @@ Tensor SigmoidActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Sigmoid::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Sigmoid::Forward");
-#endif
 }
 
 Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -362,9 +307,6 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Sigmoid::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Sigmoid::Backward");
-#endif
 }
 
 // ============================================================================
@@ -372,7 +314,6 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 // ============================================================================
 
 Tensor TanhActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         af::array output = af::tanh(x);
@@ -380,13 +321,9 @@ Tensor TanhActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Tanh::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Tanh::Forward");
-#endif
 }
 
 Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -399,9 +336,6 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Tanh::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Tanh::Backward");
-#endif
 }
 
 // ============================================================================
@@ -416,7 +350,6 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
         cached_output_ = input.Clone();
         return cached_output_;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
 
@@ -444,9 +377,6 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Softmax::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Softmax::Forward");
-#endif
 }
 
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -456,7 +386,6 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
     if (input.NumElements() == 0) {
         return grad_output.Clone();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = grad_output.GetSemanticArray();
         af::array x = input.GetSemanticArray();
@@ -481,9 +410,6 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Softmax::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Softmax::Backward");
-#endif
 }
 
 // ============================================================================
@@ -491,7 +417,6 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 // ============================================================================
 
 Tensor MishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Stable softplus avoids exp overflow for large finite inputs.
@@ -502,13 +427,9 @@ Tensor MishActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Mish::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Mish::Forward");
-#endif
 }
 
 Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -528,9 +449,6 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Mish::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Mish::Backward");
-#endif
 }
 
 // ============================================================================
@@ -538,7 +456,6 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor HardswishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Hardswish: x * ReLU6(x + 3) / 6
@@ -555,13 +472,9 @@ Tensor HardswishActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Hardswish::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Hardswish::Forward");
-#endif
 }
 
 Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -580,9 +493,6 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Hardswish::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("Hardswish::Backward");
-#endif
 }
 
 
@@ -591,29 +501,21 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor SquaredReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array r = af::max(TensorToAf(input), 0.0f);
         return AfToTensor(r * r);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SquaredReLU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("SquaredReLU::Forward");
-#endif
 }
 
 Tensor SquaredReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array dx = TensorToAf(grad_output) * (2.0f * af::max(TensorToAf(input), 0.0f));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SquaredReLU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("SquaredReLU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -626,21 +528,16 @@ constexpr float kInvSqrt2Pi = 0.39894228040143268f;  // 1 / sqrt(2*pi)
 }
 
 Tensor GELUExactActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         return AfToTensor(0.5f * x * (1.0f + af::erf(x * kInvSqrt2)));
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELUExact::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("GELUExact::Forward");
-#endif
 }
 
 Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& input) {
     // d/dx x*Phi(x) = Phi(x) + x*phi(x)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         af::array cdf = 0.5f * (1.0f + af::erf(x * kInvSqrt2));
@@ -649,9 +546,6 @@ Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& in
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELUExact::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("GELUExact::Backward");
-#endif
 }
 
 // ============================================================================
@@ -659,7 +553,6 @@ Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor SELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // SELU: scale * (max(0, x) + alpha * min(0, exp(x) - 1))
@@ -670,13 +563,9 @@ Tensor SELUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SELU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("SELU::Forward");
-#endif
 }
 
 Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -689,9 +578,6 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SELU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("SELU::Backward");
-#endif
 }
 
 // ============================================================================
@@ -731,7 +617,6 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
         throw std::invalid_argument(
             "PReLU channel parameters must match input dimension 1");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
         af::array alpha = alpha_.GetSemanticArray();
@@ -765,9 +650,6 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("PReLU::Forward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("PReLU::Forward");
-#endif
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -778,7 +660,6 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
         throw std::invalid_argument(
             "PReLU channel parameters must match input dimension 1");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad = grad_output.GetSemanticArray();
         af::array x = input.GetSemanticArray();
@@ -827,9 +708,6 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("PReLU::Backward", e);
     }
-#else
-    ThrowActivationNeedsArrayFire("PReLU::Backward");
-#endif
 }
 
 } // namespace cyxwiz

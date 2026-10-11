@@ -93,13 +93,6 @@ Pool2DGeometry ValidatePoolBackwardInput(const Tensor& cached_input,
     return geometry;
 }
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-[[noreturn]] void ThrowPoolingNeedsArrayFire(const char* layer) {
-    throw std::runtime_error(std::string(layer) + " runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // torch's adaptive pooling bins: [floor(i*in/out), ceil((i+1)*in/out)).
 size_t AdaptiveBinStart(size_t i, size_t in, size_t out) { return (i * in) / out; }
@@ -169,7 +162,6 @@ af::array TransposeSquarePoolingPatchOrder(
             window * window, patch_count, channels, batch_size));
 }
 
-#endif
 
 } // namespace
 
@@ -189,7 +181,6 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
         input, pool_size_, stride_, padding_, "MaxPool2D");
     const std::vector<size_t> output_shape = PoolOutputShape(geometry);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t window = static_cast<dim_t>(pool_size_);
         const dim_t patch_count =
@@ -230,9 +221,6 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("MaxPool2DLayer::Forward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Max Pool 2D");
-#endif
 }
 
 Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
@@ -249,7 +237,6 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
             "MaxPool2D backward index cache does not match Forward output");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t window = static_cast<dim_t>(pool_size_);
         const dim_t window_elements = window * window;
@@ -298,9 +285,6 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("MaxPool2DLayer::Backward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Max Pool 2D");
-#endif
 }
 
 // ============================================================================
@@ -323,7 +307,6 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
         input, pool_size_, stride_, padding_, "AvgPool2D");
     const std::vector<size_t> output_shape = PoolOutputShape(geometry);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t window = static_cast<dim_t>(pool_size_);
         af::array patches = af::unwrap(
@@ -351,9 +334,6 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("AvgPool2DLayer::Forward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Average Pool 2D");
-#endif
 }
 
 Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
@@ -365,7 +345,6 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
         cached_input_, grad_output, pool_size_, stride_, padding_,
         "AvgPool2D");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t window = static_cast<dim_t>(pool_size_);
         const dim_t window_elements = window * window;
@@ -397,9 +376,6 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("AvgPool2DLayer::Backward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Average Pool 2D");
-#endif
 }
 
 // ============================================================================
@@ -413,7 +389,6 @@ Tensor GlobalAvgPool2DLayer::Forward(const Tensor& input) {
     const size_t channels = shape[2];
     const size_t batch_size = shape[3];
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = af::mean(
             af::mean(TensorToAf(input), 0), 1);
@@ -432,9 +407,6 @@ Tensor GlobalAvgPool2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("GlobalAvgPool2DLayer::Forward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Global Average Pool");
-#endif
 }
 
 Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
@@ -456,7 +428,6 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("GlobalAvgPool2D backward gradient shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad = af::moddims(
             TensorToAf(grad_output),
@@ -481,9 +452,6 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("GlobalAvgPool2DLayer::Backward", e);
     }
-#else
-    ThrowPoolingNeedsArrayFire("Global Average Pool");
-#endif
 }
 
 // ============================================================================
@@ -498,7 +466,6 @@ Tensor GlobalMaxPool2DLayer::Forward(const Tensor& input) {
     const size_t in_w = shape[1];
     const size_t channels = shape[2];
     const size_t batch_size = shape[3];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array positions = af::moddims(
             TensorToAf(input),
@@ -517,10 +484,6 @@ Tensor GlobalMaxPool2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("GlobalMaxPool2DLayer::Forward", e);
     }
-#else
-    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
-    ThrowPoolingNeedsArrayFire("Global Max Pool");
-#endif
 }
 
 Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
@@ -541,7 +504,6 @@ Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{channels, batch_size}) {
         throw std::runtime_error("GlobalMaxPool2D backward gradient shape mismatch");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t count = static_cast<dim_t>(in_h * in_w);
         const dim_t c_dim = static_cast<dim_t>(channels);
@@ -565,10 +527,6 @@ Tensor GlobalMaxPool2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("GlobalMaxPool2DLayer::Backward", e);
     }
-#else
-    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
-    ThrowPoolingNeedsArrayFire("Global Max Pool");
-#endif
 }
 
 // ============================================================================
@@ -593,7 +551,6 @@ Tensor AdaptiveAvgPool2DLayer::Forward(const Tensor& input) {
     const size_t out_h = static_cast<size_t>(out_h_);
     const size_t out_w = static_cast<size_t>(out_w_);
     const std::vector<size_t> output_shape{out_h, out_w, channels, batch_size};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Y = P_h X P_w^T, the bin-averaging matrices batched over C and N.
         const unsigned c = static_cast<unsigned>(channels);
@@ -609,10 +566,6 @@ Tensor AdaptiveAvgPool2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("AdaptiveAvgPool2DLayer::Forward", e);
     }
-#else
-    (void)in_h; (void)in_w; (void)channels; (void)batch_size; (void)output_shape;
-    ThrowPoolingNeedsArrayFire("Adaptive Average Pool");
-#endif
 }
 
 Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
@@ -635,7 +588,6 @@ Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, channels, batch_size}) {
         throw std::runtime_error("AdaptiveAvgPool2D backward gradient shape mismatch");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // dX = P_h^T dY P_w
         const unsigned c = static_cast<unsigned>(channels);
@@ -648,10 +600,6 @@ Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowPoolingDeviceError("AdaptiveAvgPool2DLayer::Backward", e);
     }
-#else
-    (void)in_h; (void)in_w; (void)channels; (void)batch_size;
-    ThrowPoolingNeedsArrayFire("Adaptive Average Pool");
-#endif
 }
 
 } // namespace cyxwiz

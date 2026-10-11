@@ -8,16 +8,13 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // One af::reorder of a rank <= 4 semantic array.
 af::array ReorderSemantic(const af::array& semantic, const std::vector<int>& order) {
     std::array<unsigned int, 4> axes = {0, 1, 2, 3};
@@ -93,7 +90,6 @@ Tensor PermuteArrayFire(const Tensor& input,
     output.eval();
     return Tensor::FromRowMajorFlatArray(output, new_shape);
 }
-#endif
 
 } // namespace
 
@@ -242,15 +238,11 @@ Tensor Tensor::Permute(const std::vector<int>& dims) const {
         return Reshape(shape_);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return PermuteArrayFire(*this, normalized_dims, new_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Permute", e));
     }
-#else
-    throw std::runtime_error("Tensor::Permute runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

@@ -224,7 +224,6 @@ TEST_CASE("ConvTranspose2D updates through successive training batches",
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE(
     "ConvTranspose2D strict device execution has zero host synchronization",
     "[conv_transpose][residency]") {
@@ -286,4 +285,3 @@ TEST_CASE("ConvTranspose2D runs padding wider than the kernel on the device",
   CheckValues(layer.GetParameters().at("grad_weights"), {1, 1, 1, 1}, {5});
   CheckValues(layer.GetParameters().at("grad_bias"), {1}, {1});
 }
-#endif

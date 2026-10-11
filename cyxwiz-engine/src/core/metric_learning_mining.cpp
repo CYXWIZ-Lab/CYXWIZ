@@ -6,14 +6,11 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
@@ -71,7 +68,6 @@ RowMasks Masks(const Tensor& class_ids, const Tensor& distances) {
 }
 
 }  // namespace
-#endif
 
 Tensor BatchClassIds(const Tensor& labels, size_t rows) {
     const std::string builder = "The Pair / Triplet Dataset Builder";
@@ -84,7 +80,6 @@ Tensor BatchClassIds(const Tensor& labels, size_t rows) {
     if (dtype != DataType::Int32 && dtype != DataType::Int64 && dtype != DataType::Float32) {
         throw std::runtime_error(builder + " needs Int32, Int64 or Float32 class ids");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("BatchClassIds", [&]() {
         const af::array ids = af::flat(labels.GetRowMajorFlatArray());
         if (dtype == DataType::Float32) {
@@ -99,9 +94,6 @@ Tensor BatchClassIds(const Tensor& labels, size_t rows) {
         result.eval();
         return Tensor::FromRowMajorFlatArray(result, {rows});
     });
-#else
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::vector<int64_t> ReadBatchClassIds(const Tensor& labels, size_t rows) {
@@ -115,7 +107,6 @@ Tensor MiningDistances(const Tensor& embeddings, MiningDistance kind) {
     if (shape.size() != 2 || shape[0] == 0) {
         throw std::invalid_argument("metric mining needs [N, D] embeddings");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("MiningDistances", [&]() {
         const af::array x = embeddings.GetArrayRowMajor2D().as(DeviceHasDouble() ? f64 : f32);
         const dim_t n = x.dims(0);
@@ -141,14 +132,9 @@ Tensor MiningDistances(const Tensor& embeddings, MiningDistance kind) {
         distances.eval();
         return Tensor::FromSemanticArray(distances, {shape[0], shape[0]});
     });
-#else
-    (void)kind;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 MinedTriplets MineTriplets(const Tensor& class_ids, const Tensor& distances, MetricMining mining) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("MineTriplets", [&]() {
         const RowMasks m = Masks(class_ids, distances);
         const af::array has_negative = af::flat(af::anyTrue(m.negative, 1));
@@ -206,16 +192,9 @@ MinedTriplets MineTriplets(const Tensor& class_ids, const Tensor& distances, Met
         out.negatives = IndexTensor(negatives);
         return out;
     });
-#else
-    (void)class_ids;
-    (void)distances;
-    (void)mining;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 MinedPairs MinePairs(const Tensor& class_ids, const Tensor& distances) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("MinePairs", [&]() {
         const RowMasks m = Masks(class_ids, distances);
         const dim_t n = m.n;
@@ -236,29 +215,17 @@ MinedPairs MinePairs(const Tensor& class_ids, const Tensor& distances) {
         out.similar = Tensor::FromRowMajorFlatArray(similar, {out.count});
         return out;
     });
-#else
-    (void)class_ids;
-    (void)distances;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor GatherRows(const Tensor& matrix, const Tensor& rows) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("GatherRows", [&]() {
         af::array gathered = af::lookup(matrix.GetArrayRowMajor2D(), af::flat(rows.GetRowMajorFlatArray()), 0);
         gathered.eval();
         return Tensor::FromSemanticArray(gathered, {rows.NumElements(), matrix.Shape()[1]});
     });
-#else
-    (void)matrix;
-    (void)rows;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor ScatterAddRows(const Tensor& stacked, const Tensor& source_rows, size_t rows) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("ScatterAddRows", [&]() {
         const af::array source = af::moddims(af::flat(source_rows.GetRowMajorFlatArray()), 1,
                                              static_cast<dim_t>(source_rows.NumElements()));
@@ -270,16 +237,9 @@ Tensor ScatterAddRows(const Tensor& stacked, const Tensor& source_rows, size_t r
         summed.eval();
         return Tensor::FromSemanticArray(summed, {rows, stacked.Shape()[1]});
     });
-#else
-    (void)stacked;
-    (void)source_rows;
-    (void)rows;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor DistancesAt(const Tensor& distances, const Tensor& rows, const Tensor& columns) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     return OnDevice("DistancesAt", [&]() {
         const af::array d = distances.GetArrayRowMajor2D();
         const af::array r = af::flat(rows.GetRowMajorFlatArray()).as(s64);
@@ -289,12 +249,6 @@ Tensor DistancesAt(const Tensor& distances, const Tensor& rows, const Tensor& co
         values.eval();
         return Tensor::FromRowMajorFlatArray(values, {rows.NumElements()});
     });
-#else
-    (void)distances;
-    (void)rows;
-    (void)columns;
-    throw std::runtime_error("Metric mining runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 }  // namespace cyxwiz

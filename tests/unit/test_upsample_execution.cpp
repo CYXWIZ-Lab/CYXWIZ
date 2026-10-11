@@ -12,7 +12,6 @@
 using namespace cyxwiz;
 using namespace cyxwiz::test::convolution;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Nearest Upsample forward and adjoint stay device resident",
           "[upsample][residency]") {
   BackendLane lane;
@@ -199,4 +198,3 @@ TEST_CASE("Bilinear Upsample and its nonuniform adjoint stay device resident",
     }
   }
 }
-#endif

@@ -8,11 +8,9 @@
 #include <memory>
 #include <initializer_list>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace af {
     class array;
 }
-#endif
 
 namespace cyxwiz {
     class Device;
@@ -36,10 +34,8 @@ public:
     Tensor();
     Tensor(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
     Tensor(const std::vector<size_t>& shape, const void* data, DataType dtype = DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Construct from ArrayFire array (takes ownership)
     explicit Tensor(const af::array& arr);
-#endif
     ~Tensor();
 
     // Copy/Move
@@ -75,7 +71,6 @@ public:
     // Device metadata
     Device* GetDevice() const { return device_; }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire array access (creates if needed, syncs from CPU data)
     af::array GetArray() const;
     // 2D row-major Tensor view as semantic ArrayFire [rows, cols].
@@ -111,7 +106,6 @@ public:
     af::array GetRowMajorFlatArray() const;
     void SetFromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
     static Tensor FromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
-#endif
 
     // Operations
     Tensor Clone() const;
@@ -324,7 +318,6 @@ private:
     DataType dtype_;
     Device* device_;
     mutable std::unique_ptr<TensorHostBuffer> host_buffer_;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     enum class TensorDeviceLayout {
         None,
         ArrayFireNative,
@@ -342,7 +335,6 @@ private:
     void EnsureHostCurrent() const;
     void MarkHostModified() const;
     void ClearDeviceCache() const;
-#endif
 };
 
 } // namespace cyxwiz

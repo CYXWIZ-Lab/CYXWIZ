@@ -2,9 +2,7 @@
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_host_materialization.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <stdexcept>
@@ -18,7 +16,6 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
     }
     if (gradients.empty()) return 0.0f;
     double squared = 0.0;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array total = af::constant(0.0f, 1);
         for (const auto& [name, grad] : gradients) {
@@ -33,9 +30,6 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
         throw std::runtime_error(std::string("ClipGradientsByGlobalNorm failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    throw std::runtime_error("Gradient clipping runs on ArrayFire, and this build has no ArrayFire");
-#endif
     const float norm = static_cast<float>(std::sqrt(squared));
     if (!std::isfinite(norm)) {
         throw std::runtime_error("Gradient norm is not finite; the step cannot be clipped safely");

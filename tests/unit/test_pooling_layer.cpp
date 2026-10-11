@@ -6,9 +6,7 @@
 #include <cyxwiz/layers/pooling.h>
 #include <cyxwiz/tensor.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdlib>
 #include <stdexcept>
@@ -28,8 +26,6 @@ void CheckValues(const cyxwiz::Tensor& actual,
         CHECK(data[index] == Catch::Approx(expected_values[index]));
     }
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 size_t pooling_host_sync_count = 0;
 size_t pooling_fallback_count = 0;
@@ -77,8 +73,6 @@ cyxwiz::Tensor DeviceOnlyOnes(const std::vector<size_t>& shape) {
     values.eval();
     return cyxwiz::Tensor::FromSemanticArray(values, shape);
 }
-
-#endif
 
 } // namespace
 
@@ -240,8 +234,6 @@ TEST_CASE("Pooling validates forward state, exact gradient shape, and padding",
     CHECK_THROWS_AS(cyxwiz::AvgPool2DLayer(2, 1, 2), std::invalid_argument);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
           "[pool][arrayfire][residency]") {
     const std::vector<size_t> input_shape{4, 4, 2, 2};
@@ -327,4 +319,3 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
     }
 }
 
-#endif

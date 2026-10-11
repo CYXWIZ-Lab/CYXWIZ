@@ -9,7 +9,7 @@ namespace cyxwiz {
 
 // Column transforms, column statistics and the normality test behind the data
 // transformation panels. Everything runs on ArrayFire on the active device (its
-// CPU backend is the CPU option); a build without ArrayFire reports an error.
+// CPU backend is the CPU option).
 // Each input column is a std::vector<double>; columns may differ in length.
 
 // Result structure for all transforms

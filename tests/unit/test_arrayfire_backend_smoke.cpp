@@ -10,9 +10,7 @@
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/tensor.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -117,7 +115,6 @@ TEST_CASE("Loss path returns clean forward value and gradient",
     REQUIRE(ShapeEquals(grad, {2, 3}));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Weighted smoothed CrossEntropy keeps device logits resident",
           "[arrayfire][backend_smoke][loss][residency]") {
     float logit_values[] = {
@@ -193,4 +190,3 @@ TEST_CASE("Recurrent layers keep forward and backward on the device",
         REQUIRE(ShapeEquals(gru_dx, {2, 3, 4}));
     }
 }
-#endif

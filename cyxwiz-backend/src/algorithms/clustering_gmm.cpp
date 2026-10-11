@@ -28,8 +28,6 @@ using namespace analysis_detail;
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 constexpr double kRegCovar = 1e-6;
 
 int CovarianceParameters(const std::string& type, int k, int d) {
@@ -148,8 +146,6 @@ EmRun RunEm(const af::array& x, int k, const std::string& type, int max_iter, do
     return run;
 }
 
-#endif
-
 }  // namespace
 
 GMMResult Clustering::GMM(
@@ -181,7 +177,6 @@ GMMResult Clustering::GMM(
         result.error_message = "max_iter and n_init must be at least 1, and tol non-negative";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         af::randomEngine engine = SeededEngine(seed);
@@ -216,13 +211,6 @@ GMMResult Clustering::GMM(
         result = GMMResult{};
         result.error_message = DeviceError("Clustering::GMM", e);
     }
-#else
-    (void)n;
-    (void)d;
-    (void)progress_callback;
-    (void)seed;
-    result.error_message = NoArrayFire("Clustering::GMM");
-#endif
     return result;
 }
 

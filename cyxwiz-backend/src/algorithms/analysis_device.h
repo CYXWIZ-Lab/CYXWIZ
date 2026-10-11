@@ -9,8 +9,6 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 #include "arrayfire_host_values.h"
 
 #include <arrayfire.h>
@@ -50,13 +48,10 @@ af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine)
 
 }  // namespace cyxwiz::analysis_detail
 
-#endif
-
 namespace cyxwiz::analysis_detail {
 
 // Empty when data is a non-empty rectangular matrix with at least one feature.
 std::string MatrixRefusal(const std::vector<std::vector<double>>& data);
 bool IsKnownMetric(const std::string& metric);
-std::string NoArrayFire(const char* operation);
 
 }  // namespace cyxwiz::analysis_detail

@@ -10,10 +10,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include <af/internal.h>
-#endif
 
 // Undefine Windows macros that conflict with std::max/min and ArrayFire helpers.
 // Must be AFTER all includes (Windows headers define these).
@@ -145,7 +143,6 @@ void ValidateClassWeights(const std::vector<float>& class_weights,
 
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array ToCrossEntropyRows(const af::array& values,
                              const std::vector<size_t>& semantic_shape) {
     if (semantic_shape.size() == 1) {
@@ -393,7 +390,6 @@ af::array ApplyWeightedCrossEntropyReduction(
     }
     return total / denominator;
 }
-#endif
 
 } // namespace
 
@@ -401,15 +397,11 @@ af::array ApplyWeightedCrossEntropyReduction(
 // Cross Entropy Loss Implementation
 // ============================================================================
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 struct CrossEntropyLoss::ClassIndexForwardCache {
     af::array logits;
     af::array target_ids;
     ClassIndexCrossEntropy prepared;
 };
-#else
-struct CrossEntropyLoss::ClassIndexForwardCache {};
-#endif
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     has_cached_mean_denominator_ = false;
@@ -422,7 +414,6 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
             (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
@@ -492,9 +483,6 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("CrossEntropyLoss::Forward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("CrossEntropyLoss::Forward");
-#endif
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -508,7 +496,6 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
             (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
@@ -567,9 +554,6 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("CrossEntropyLoss::Backward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("CrossEntropyLoss::Backward");
-#endif
 }
 
 // ============================================================================
@@ -581,7 +565,6 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         ValidateClassAxisPredictions(predictions, "NLL");
     ValidateClassIndexTargets(targets, shape, "NLL");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array log_probability_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
@@ -617,9 +600,6 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("NLLLoss::Forward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("NLLLoss::Forward");
-#endif
 }
 
 Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -627,7 +607,6 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         ValidateClassAxisPredictions(predictions, "NLL");
     ValidateClassIndexTargets(targets, shape, "NLL");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array target_indices = ToCrossEntropyIndexRows(
             TensorToAf(targets), predictions.Shape()).as(s32);
@@ -654,9 +633,6 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("NLLLoss::Backward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("NLLLoss::Backward");
-#endif
 }
 
 // ============================================================================
@@ -667,7 +643,6 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     const ClassAxisShape shape =
         ValidateClassAxisPredictions(predictions, "Focal");
     ValidateClassIndexTargets(targets, shape, "Focal");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array prediction_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
@@ -700,16 +675,12 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("FocalLoss::Forward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("FocalLoss::Forward");
-#endif
 }
 
 Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     const ClassAxisShape shape =
         ValidateClassAxisPredictions(predictions, "Focal");
     ValidateClassIndexTargets(targets, shape, "Focal");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array prediction_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
@@ -755,9 +726,6 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError("FocalLoss::Backward", e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire("FocalLoss::Backward");
-#endif
 }
 
 } // namespace cyxwiz

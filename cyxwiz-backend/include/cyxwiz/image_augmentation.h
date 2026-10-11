@@ -6,7 +6,7 @@
 // transforms follow torchvision.transforms.functional and run on the whole
 // batch on the ArrayFire device; the host only draws each sample's settings
 // (flip yes/no, crop position, angle, jitter factors and order). There is no
-// second CPU implementation: without ArrayFire the build refuses them.
+// second CPU implementation.
 
 #include "api_export.h"
 #include "tensor.h"

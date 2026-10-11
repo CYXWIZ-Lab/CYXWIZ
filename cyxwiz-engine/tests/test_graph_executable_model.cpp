@@ -12,9 +12,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -347,7 +345,6 @@ void CheckConcatOp() {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void CheckMergeOpArrayFireResidency(gui::NodeType merge_type,
                                     const std::vector<float>& expected_output,
                                     const std::string& name) {
@@ -627,7 +624,6 @@ void CheckGraphMaskArrayFireResidency() {
                                   {0.0f, 1.0f, 1.0f},
                                   "TensorLogicalMask");
 }
-#endif
 
 void CheckBinaryMaskOp(gui::NodeType mask_type,
                        const std::vector<float>& input_values,
@@ -717,7 +713,6 @@ void CheckDotOp() {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void CheckDotOpArrayFireResidency() {
     cyxwiz::BuiltExecutableModel built =
         cyxwiz::BuildExecutableFromConfig(DotConfig());
@@ -764,7 +759,6 @@ void CheckDotOpArrayFireResidency() {
     CheckNear(out[1], 77.0f, 1e-4f,
               "TensorDot ArrayFire graph forward second row");
 }
-#endif
 
 void CheckTensorNear(const cyxwiz::Tensor& actual,
                      const cyxwiz::Tensor& expected,
@@ -864,16 +858,12 @@ int main() {
                       {0.0f, 2.0f, -1.0f},
                       {0.0f, 1.0f, 1.0f},
                       "TensorLogicalMask");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckGraphFanInArrayFireResidency();
     CheckGraphFanInBackwardArrayFireResidency();
     CheckIndependentGraphFanInArrayFireResidency();
     CheckGraphMaskArrayFireResidency();
-#endif
     CheckDotOp();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckDotOpArrayFireResidency();
-#endif
 
     std::cout << "Graph executable model parity passed\n";
     return 0;

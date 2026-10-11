@@ -7,9 +7,7 @@
 #include <cmath>
 
 // ArrayFire header (from backend)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace arrow_converters {
@@ -147,11 +145,6 @@ std::shared_ptr<af::array> ArrowToTensor(
     std::shared_ptr<arrow::Table> table,
     const ConversionOptions& options) {
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowToTensor: ArrayFire not available in this build");
-    return nullptr;
-#else
-
     if (!table) {
         spdlog::error("ArrowToTensor: null table");
         return nullptr;
@@ -215,18 +208,12 @@ std::shared_ptr<af::array> ArrowToTensor(
         spdlog::error("ArrayFire error in ArrowToTensor: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<af::array> ArrowColumnToTensor(
     std::shared_ptr<arrow::Table> table,
     const std::string& column_name,
     const ConversionOptions& options) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowColumnToTensor: ArrayFire not available");
-    return nullptr;
-#else
 
     if (!table) {
         spdlog::error("ArrowColumnToTensor: null table");
@@ -257,18 +244,12 @@ std::shared_ptr<af::array> ArrowColumnToTensor(
         spdlog::error("ArrayFire error in ArrowColumnToTensor: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<arrow::Table> TensorToArrow(
     const ::af::array& tensor,
     const std::vector<std::string>& column_names,
     const std::string& table_name) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("TensorToArrow: ArrayFire not available");
-    return nullptr;
-#else
 
     try {
         // Get tensor dimensions
@@ -333,17 +314,11 @@ std::shared_ptr<arrow::Table> TensorToArrow(
         spdlog::error("ArrayFire error in TensorToArrow: {}", e.what());
         return nullptr;
     }
-#endif
 }
 
 std::shared_ptr<af::array> ArrowBatchesToTensor(
     const std::vector<std::shared_ptr<arrow::Table>>& batches,
     const ConversionOptions& options) {
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::error("ArrowBatchesToTensor: ArrayFire not available");
-    return nullptr;
-#else
 
     if (batches.empty()) {
         spdlog::error("ArrowBatchesToTensor: empty batch list");
@@ -360,7 +335,6 @@ std::shared_ptr<af::array> ArrowBatchesToTensor(
 
     auto combined_table = concat_result.ValueOrDie();
     return ArrowToTensor(combined_table, options);
-#endif
 }
 
 // =============================================================================

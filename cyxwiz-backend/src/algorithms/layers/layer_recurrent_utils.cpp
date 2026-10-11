@@ -2,16 +2,9 @@
 
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::recurrent_detail {
-
-void ThrowWithoutArrayFire(const char* layer) {
-    throw std::runtime_error(std::string(layer) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-}
 
 namespace {
 
@@ -25,7 +18,6 @@ void RequireRank3(const Tensor& tensor, const char* operation) {
 
 Tensor ReverseTime(const Tensor& sequence, bool batch_first) {
     RequireRank3(sequence, "ReverseTime");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return Tensor::FromSemanticArray(af::flip(sequence.GetSemanticArray(), batch_first ? 1 : 0),
                                          sequence.Shape());
@@ -33,10 +25,6 @@ Tensor ReverseTime(const Tensor& sequence, bool batch_first) {
         throw std::runtime_error(std::string("Recurrent time reversal failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    (void)batch_first;
-    ThrowWithoutArrayFire("Recurrent time reversal");
-#endif
 }
 
 Tensor JoinFeatures(const Tensor& first, const Tensor& second) {
@@ -45,7 +33,6 @@ Tensor JoinFeatures(const Tensor& first, const Tensor& second) {
     if (first.Shape()[0] != second.Shape()[0] || first.Shape()[1] != second.Shape()[1]) {
         throw std::invalid_argument("JoinFeatures: sequences differ outside the feature axis");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return Tensor::FromSemanticArray(
             af::join(2, first.GetSemanticArray(), second.GetSemanticArray()),
@@ -54,9 +41,6 @@ Tensor JoinFeatures(const Tensor& first, const Tensor& second) {
         throw std::runtime_error(std::string("Recurrent feature join failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent feature join");
-#endif
 }
 
 Tensor SliceFeatures(const Tensor& sequence, size_t offset, size_t width) {
@@ -65,7 +49,6 @@ Tensor SliceFeatures(const Tensor& sequence, size_t offset, size_t width) {
     if (width == 0 || offset + width > shape[2]) {
         throw std::invalid_argument("SliceFeatures: feature range is outside the sequence");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array sliced = sequence.GetSemanticArray()(
             af::span, af::span,
@@ -78,9 +61,6 @@ Tensor SliceFeatures(const Tensor& sequence, size_t offset, size_t width) {
         throw std::runtime_error(std::string("Recurrent feature slice failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent feature slice");
-#endif
 }
 
 Tensor LastTimeStep(const Tensor& sequence) {
@@ -89,7 +69,6 @@ Tensor LastTimeStep(const Tensor& sequence) {
     if (shape[1] == 0) {
         throw std::invalid_argument("LastTimeStep: the sequence has no time steps");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array last =
             sequence.GetSemanticArray()(af::span, static_cast<int>(shape[1] - 1), af::span);
@@ -100,9 +79,6 @@ Tensor LastTimeStep(const Tensor& sequence) {
         throw std::runtime_error(std::string("Recurrent last-step slice failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent last-step slice");
-#endif
 }
 
 Tensor ExpandLastTimeStep(const Tensor& last_step_gradient, size_t seq_len) {
@@ -110,7 +86,6 @@ Tensor ExpandLastTimeStep(const Tensor& last_step_gradient, size_t seq_len) {
     if (shape.size() != 2 || seq_len == 0) {
         throw std::invalid_argument("ExpandLastTimeStep expects a [batch, features] gradient");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t batch = static_cast<dim_t>(shape[0]);
         const dim_t features = static_cast<dim_t>(shape[1]);
@@ -128,16 +103,12 @@ Tensor ExpandLastTimeStep(const Tensor& last_step_gradient, size_t seq_len) {
             std::string("Recurrent last-step gradient expansion failed on the ArrayFire device: ") +
             e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent last-step gradient expansion");
-#endif
 }
 
 Tensor MakeDropoutMask(const std::vector<size_t>& shape, float dropout) {
     if (!(dropout > 0.0f && dropout < 1.0f) || shape.size() != 3) {
         throw std::invalid_argument("MakeDropoutMask expects 0 < dropout < 1 and a rank-3 shape");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array keep =
             (af::randu(af::dim4(static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
@@ -149,9 +120,6 @@ Tensor MakeDropoutMask(const std::vector<size_t>& shape, float dropout) {
         throw std::runtime_error(std::string("Recurrent dropout mask failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent dropout");
-#endif
 }
 
 Tensor StateAt(const Tensor& states, size_t index, const char* what) {
@@ -160,7 +128,6 @@ Tensor StateAt(const Tensor& states, size_t index, const char* what) {
         throw std::invalid_argument(std::string(what) +
                                     " must be [layers * directions, batch, hidden]");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array state = states.GetSemanticArray()(static_cast<int>(index), af::span, af::span);
         return Tensor::FromSemanticArray(
@@ -170,9 +137,6 @@ Tensor StateAt(const Tensor& states, size_t index, const char* what) {
         throw std::runtime_error(std::string("Recurrent state slice failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent state slice");
-#endif
 }
 
 Tensor StackStates(const std::vector<Tensor>& states) {
@@ -180,7 +144,6 @@ Tensor StackStates(const std::vector<Tensor>& states) {
         throw std::invalid_argument("StackStates needs at least one state");
     }
     const auto& shape = states.front().Shape();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         size_t count = 0;
         af::array stacked;
@@ -198,9 +161,6 @@ Tensor StackStates(const std::vector<Tensor>& states) {
         throw std::runtime_error(std::string("Recurrent state stacking failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    ThrowWithoutArrayFire("Recurrent state stacking");
-#endif
 }
 
 }  // namespace cyxwiz::recurrent_detail

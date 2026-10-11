@@ -4,7 +4,7 @@
 // output, the padding crop folded in. Backward uses its transpose and batched
 // matmuls. No wrap / unwrap / reorder: ArrayFire 3.10's CUDA backend fails to
 // compile its unwrap and strided-copy kernels at image sizes. The CPU is
-// ArrayFire's CPU backend; a build without ArrayFire refuses the layer.
+// ArrayFire's CPU backend.
 #include "cyxwiz/layers/convolution.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
@@ -93,11 +93,9 @@ Geometry Validate(const Tensor &input, const Tensor &weights,
   ValidateBytes(s);
   ValidateBytes(output_shape);
   ValidateBytes({rows, columns});
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   for (size_t dim : {s[0], s[1], s[2], s[3], h, w, rows, positions, columns}) {
     (void)CheckedIntDim(dim, "ConvTranspose2D dimension");
   }
-#endif
   return {{s[0], s[1], s[2], s[3], h, w},
           area,
           rows,
@@ -106,11 +104,9 @@ Geometry Validate(const Tensor &input, const Tensor &weights,
           output_shape};
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 [[noreturn]] void ThrowDeviceError(const char *operation, const af::exception &error) {
   throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-#endif
 } // namespace
 
 // Patch element (a, b) of input pixel p = ih + H*iw (column p + P*(a + k*b))
@@ -119,10 +115,8 @@ Geometry Validate(const Tensor &input, const Tensor &weights,
 // its transpose.
 struct ConvTranspose2DLayer::DeviceScatter {
   size_t in_h = 0, in_w = 0;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   af::array place;
   af::array lift;
-#endif
 };
 
 ConvTranspose2DLayer::ConvTranspose2DLayer(int in_channels, int out_channels,
@@ -149,15 +143,11 @@ ConvTranspose2DLayer::ConvTranspose2DLayer(int in_channels, int out_channels,
     throw std::overflow_error(
         "ConvTranspose2D fan-in exceeds initialization limit");
   }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   weights_ = Tensor::FromSemanticArray(
       KaimingUniform(
           static_cast<int>(fan),
           af::dim4(kernel_size, kernel_size, out_channels, in_channels)),
       shape);
-#else
-  throw std::runtime_error("ConvTranspose2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
   grad_weights_ = Tensor::Zeros(shape);
   if (use_bias_) {
     bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
@@ -165,7 +155,6 @@ ConvTranspose2DLayer::ConvTranspose2DLayer(int in_channels, int out_channels,
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 void EnsurePlacement(size_t &cached_h, size_t &cached_w, af::array &place, af::array &lift,
@@ -219,14 +208,12 @@ void EnsurePlacement(size_t &cached_h, size_t &cached_w, af::array &place, af::a
 }
 
 }  // namespace
-#endif
 
 Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
   has_forward_ = false;
   const auto g =
       Validate(input, weights_, bias_, in_channels_, out_channels_,
                kernel_size_, stride_, padding_, output_padding_, use_bias_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   try {
     EnsurePlacement(scatter_->in_h, scatter_->in_w, scatter_->place, scatter_->lift, g, kernel_size_, stride_,
                     padding_);
@@ -255,10 +242,6 @@ Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
   } catch (const af::exception &error) {
     ThrowDeviceError("ConvTranspose2DLayer::Forward", error);
   }
-#else
-  (void)g;
-  throw std::runtime_error("ConvTranspose2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
@@ -274,7 +257,6 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
     throw std::runtime_error(
         "ConvTranspose2D backward gradient dtype or shape mismatch");
   }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   try {
     EnsurePlacement(scatter_->in_h, scatter_->in_w, scatter_->place, scatter_->lift, g, kernel_size_, stride_,
                     padding_);
@@ -311,10 +293,6 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
   } catch (const af::exception &error) {
     ThrowDeviceError("ConvTranspose2DLayer::Backward", error);
   }
-#else
-  (void)g;
-  throw std::runtime_error("ConvTranspose2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> ConvTranspose2DLayer::GetParameters() {

@@ -4,11 +4,9 @@
 #include <bit>
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 
 #include "../arrayfire_host_materialization.h"
-#endif
 
 namespace cyxwiz::image {
 
@@ -16,8 +14,6 @@ namespace {
 
 constexpr int kHashRows = 8;
 constexpr int kHashCols = 9;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // Luminance [H, W, N] of rows [N, H*W*C] (HWC per row), 0 to 255.
 af::array Luminance(const af::array& rows, const ImageShape& shape) {
@@ -84,8 +80,6 @@ void ToHost(const af::array& values, void* destination, const char* what) {
                                std::string("MeasureImageQuality::") + what, "per_image");
 }
 
-#endif
-
 }  // namespace
 
 std::string ValidateImageQualityShape(const ImageShape& shape) {
@@ -102,7 +96,6 @@ std::vector<ImageQualityMetrics> MeasureImageQuality(const Tensor& rows, const I
     if (const std::string why = ValidateImageQualityShape(shape); !why.empty()) {
         throw std::invalid_argument(why);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const af::array luma = Luminance(rows.GetArrayRowMajor2D(), shape);
     const dim_t pixels = luma.dims(0) * luma.dims(1), n = luma.dims(2);
     const af::array flat = af::moddims(luma, pixels, n);
@@ -127,10 +120,6 @@ std::vector<ImageQualityMetrics> MeasureImageQuality(const Tensor& rows, const I
         out[i].hash = hash;
     }
     return out;
-#else
-    (void)rows;
-    throw std::runtime_error("the Quality Analyzer needs the ArrayFire build");
-#endif
 }
 
 int HashDistance(uint64_t a, uint64_t b) {
@@ -141,7 +130,6 @@ std::vector<int64_t> FindNearDuplicates(const std::vector<uint64_t>& hashes, int
     const size_t n = hashes.size();
     std::vector<int64_t> duplicate_of(n, -1);
     if (n < 2) return duplicate_of;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Bits as +-1, [64, N]: the dot product of two hashes is 64 - 2 * distance.
     std::vector<float> signs(n * 64);
     for (size_t i = 0; i < n; ++i) {
@@ -180,10 +168,6 @@ std::vector<int64_t> FindNearDuplicates(const std::vector<uint64_t>& hashes, int
         }
     }
     return duplicate_of;
-#else
-    (void)max_bits;
-    throw std::runtime_error("the Quality Analyzer needs the ArrayFire build");
-#endif
 }
 
 std::string ValidateImageQualityChecks(const ImageQualityChecks& checks) {

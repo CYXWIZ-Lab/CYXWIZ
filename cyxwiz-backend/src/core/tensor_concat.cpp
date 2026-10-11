@@ -8,10 +8,8 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -50,7 +48,6 @@ bool IsPyTorchEmptyCatIdentity(const Tensor& tensor) {
     return tensor.Shape().size() == 1 && tensor.Shape()[0] == 0;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Concatenate along axis on the device. Up to rank 4 the semantic views join on
 // that axis; above, each row-major flat array is viewed as [after, extent,
 // before] and joined on ArrayFire dim 1, which is the output's row-major order.
@@ -74,7 +71,6 @@ Tensor JoinOnDevice(const std::vector<const Tensor*>& parts, int axis, const std
     return rank <= 4 ? Tensor::FromSemanticArray(joined, out_shape)
                      : Tensor::FromRowMajorFlatArray(af::flat(joined), out_shape);
 }
-#endif
 
 } // namespace
 
@@ -136,15 +132,11 @@ Tensor Tensor::Cat(const std::vector<Tensor>& tensors, int dim) {
             parts.push_back(&tensor);
         }
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return JoinOnDevice(parts, axis, out_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Cat", e));
     }
-#else
-    throw std::runtime_error("Tensor::Cat runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
@@ -181,15 +173,11 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
     std::vector<const Tensor*> parts;
     for (const Tensor& tensor : tensors) expanded.push_back(tensor.Unsqueeze(axis));
     for (const Tensor& tensor : expanded) parts.push_back(&tensor);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return JoinOnDevice(parts, axis, out_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Stack", e));
     }
-#else
-    throw std::runtime_error("Tensor::Stack runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::vector<Tensor> Tensor::Split(int split_size, int dim) const {

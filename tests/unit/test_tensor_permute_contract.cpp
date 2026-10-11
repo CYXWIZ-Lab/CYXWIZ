@@ -8,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <fstream>
@@ -101,7 +99,6 @@ std::vector<size_t> PermutedSourceIndices(
     return source_indices;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -226,7 +223,6 @@ void CheckDevicePermutationMatrix() {
     CheckDeviceTranspose<T>({2, 2, 3, 2}, 1, 3);
     CheckDeviceDefaultTranspose<T>();
 }
-#endif
 
 } // namespace
 
@@ -259,7 +255,6 @@ TEST_CASE("Tensor permute and transpose reject invalid dimensions",
     REQUIRE_THROWS_AS(scalar.Transpose(0, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor permute and transpose remain device resident for every dtype",
           "[tensor][tensor_permute][arrayfire][host_sync]") {
     const auto activation =
@@ -306,4 +301,3 @@ TEST_CASE("Tensor rank-five permute runs on the device",
         }
     }
 }
-#endif

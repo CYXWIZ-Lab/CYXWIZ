@@ -10,13 +10,11 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+#ifndef NDEBUG
 constexpr const char* kForceFallbackEnv =
     "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
 
@@ -110,7 +108,6 @@ cyxwiz::Tensor IntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Int64);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 cyxwiz::Tensor DeviceFloatTensor(const std::vector<size_t>& shape,
                                  const std::vector<float>& values) {
     const auto host = FloatTensor(shape, values);
@@ -124,7 +121,6 @@ cyxwiz::Tensor DeviceIntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor::FromSemanticArray(
         host.GetSemanticArray(), host.Shape());
 }
-#endif
 
 void TestContrastivePairDistanceMetrics() {
     const auto left = FloatTensor({4, 2}, {
@@ -358,7 +354,7 @@ void TestMetricValidation() {
     Check(rejected_zero_k, "retrieval metrics should reject k=0");
 }
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+#ifndef NDEBUG
 void TestStrictAndCompatibleFallbackTruth() {
     if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
         std::cout << "SKIP: ArrayFire metric fallback contract unavailable\n";
@@ -564,7 +560,7 @@ int main() {
     TestRetrievalEffectiveKAndMRR();
     TestRetrievalTiedRelevantCandidates();
     TestMetricValidation();
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+#ifndef NDEBUG
     TestStrictAndCompatibleFallbackTruth();
     TestDeviceResidencyTruth();
 #endif

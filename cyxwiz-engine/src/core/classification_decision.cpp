@@ -10,10 +10,8 @@
 #include <cstddef>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -29,7 +27,6 @@ ClassificationDecisionScalar BuildTripletOrderScalar(
         predictions.GetDataType() != DataType::Float32) {
         return {};
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array all = predictions.GetArrayRowMajor2D();
         const double count = static_cast<double>(triplets);
@@ -46,9 +43,6 @@ ClassificationDecisionScalar BuildTripletOrderScalar(
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("TripletDecisionCount", e));
     }
-#else
-    throw std::runtime_error("TripletDecisionCount runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 // predictions [2P, D]: rows 0..P-1 firsts, P..2P-1 seconds; similar [P] is 1
@@ -68,7 +62,6 @@ ClassificationDecisionScalar BuildPairDecisionScalar(
     const bool by_distance = mode == ClassificationDecisionMode::PairDistance;
     // As the backend Cosine Embedding loss.
     constexpr float kCosineEpsilon = 1.0e-12f;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array all = predictions.GetArrayRowMajor2D();
         const double count = static_cast<double>(pairs);
@@ -86,11 +79,6 @@ ClassificationDecisionScalar BuildPairDecisionScalar(
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("PairDecisionCount", e));
     }
-#else
-    (void)by_distance;
-    (void)threshold;
-    throw std::runtime_error("PairDecisionCount runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 // predictions [N, D] and the batch's class ids: the triplets / pairs the loss
@@ -128,7 +116,6 @@ ClassificationDecisionScalar BuildMinedDecisionScalar(
             correct = (DistancesAt(distances, pairs.firsts, pairs.seconds) < cut) == (pairs.similar == 1.0f);
         }
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array hits = total > 0 ? af::sum(af::flat(correct.GetRowMajorFlatArray()).as(f32))
                                          : af::constant(0.0f, 1);
@@ -138,12 +125,8 @@ ClassificationDecisionScalar BuildMinedDecisionScalar(
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("MinedDecisionCount", e));
     }
-#else
-    throw std::runtime_error("MinedDecisionCount runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // [batch, width] rows on the device from any layout with that element count.
 af::array DecisionRows(const Tensor& values, size_t batch, size_t width, const char* what) {
     if (values.NumElements() != batch * width) {
@@ -199,7 +182,6 @@ ClassificationDecisionScalar BuildClassificationDecisionScalarArrayFire(
     counts.eval();
     return {Tensor::FromSemanticArray(counts, {2})};
 }
-#endif
 
 } // namespace
 
@@ -225,17 +207,12 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
         return BuildMinedDecisionScalar(predictions, targets, mode, pair_threshold);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BuildClassificationDecisionScalarArrayFire(
             predictions, targets, batch_size, output_width, mode, ignore_index);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("ClassificationDecisionCount", e));
     }
-#else
-    (void)ignore_index;
-    throw std::runtime_error("ClassificationDecisionCount runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 ClassificationDecisionCount ReadClassificationDecisionScalar(

@@ -105,7 +105,7 @@ struct CYXWIZ_API ElbowAnalysis {
 /**
  * Clustering - K-Means, DBSCAN, hierarchical, Gaussian mixture and cluster
  * metrics on ArrayFire on the active device (its CPU backend is the CPU
- * option; TOFIX140). A build without ArrayFire returns an error. Semantics
+ * option; TOFIX140). Semantics
  * follow scikit-learn (KMeans, DBSCAN, GaussianMixture, silhouette_score,
  * davies_bouldin_score, calinski_harabasz_score) and scipy linkage / cophenet.
  * Rows are samples; every row needs the same number of features.

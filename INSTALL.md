@@ -14,7 +14,7 @@ CyxWiz is pre-release software. Signed alpha installers are published on the [Re
 
 Python scripting is optional; CMake accepts Python 3.12 or 3.13 (3.12 is preferred).
 
-ArrayFire is required when `CYXWIZ_BUILD_ENGINE=ON`: install it separately and expose its CMake package to the build. A backend-only build with `CYXWIZ_BUILD_ENGINE=OFF` may compile without ArrayFire as a reduced native development/test configuration, but that is not the public Engine runtime path and does not provide ArrayFire CPU/CUDA/OpenCL/oneAPI placement.
+ArrayFire is required for every build that includes the backend (Engine, Server Node, backend-only): install it separately and expose its CMake package to the build. Configure fails if it is missing. Only the standalone installer (`CYXWIZ_BUILD_INSTALLER_ONLY`) builds without it.
 
 ONNX Runtime, llama.cpp/GGUF, LibTorch, the assistant plugin, and MuJoCo are optional integrations. Disable the ones you do not have.
 
@@ -155,7 +155,7 @@ Other useful builds:
 cmake --preset windows-debug -DCYXWIZ_ENABLE_ONNX=OFF -DCYXWIZ_ENABLE_GGUF=OFF -DCYXWIZ_ENABLE_PYTORCH=OFF -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF
 cmake --build --preset windows-debug
 
-# Backend-only native development without the Engine GUI
+# Backend-only development without the Engine GUI (still needs ArrayFire)
 cmake --preset windows-debug -DCYXWIZ_BUILD_ENGINE=OFF -DCYXWIZ_BUILD_SERVER_NODE=OFF -DCYXWIZ_BUILD_TESTS=ON
 cmake --build --preset windows-debug
 ```

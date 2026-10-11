@@ -5,9 +5,7 @@
 #include <random>
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace {
@@ -22,19 +20,6 @@ int NormalizeSoftmaxDimension(int dimension, int rank) {
     }
     return normalized;
 }
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-std::vector<size_t> SoftmaxRowMajorStrides(
-    const std::vector<size_t>& shape) {
-    std::vector<size_t> strides(shape.size(), 1);
-    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
-        strides[static_cast<size_t>(i)] =
-            strides[static_cast<size_t>(i + 1)] *
-            shape[static_cast<size_t>(i + 1)];
-    }
-    return strides;
-}
-#endif
 
 } // namespace
 
@@ -56,7 +41,6 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
         return output_cache_;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
     af::array x = input.GetSemanticArray();
 
@@ -72,39 +56,6 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
     Tensor output = Tensor::FromSemanticArray(softmax, input.Shape());
     output_cache_ = output.Clone();
     return output;
-#else
-    // CPU fallback
-    const auto& shape = input.Shape();
-    const std::vector<size_t> strides = SoftmaxRowMajorStrides(shape);
-    const size_t axis_size = shape[static_cast<size_t>(actual_dim)];
-    const size_t axis_stride = strides[static_cast<size_t>(actual_dim)];
-    const size_t outer_count = input.NumElements() / axis_size;
-
-    Tensor output(shape, DataType::Float32);
-    const float* in_data = input.ReadData<float>();
-    float* out_data = output.MutableData<float>();
-
-    for (size_t outer = 0; outer < outer_count; ++outer) {
-        const size_t before_axis = outer / axis_stride;
-        const size_t after_axis = outer % axis_stride;
-        const size_t base = before_axis * axis_size * axis_stride + after_axis;
-        float max_val = in_data[base];
-        for (size_t i = 1; i < axis_size; ++i) {
-            max_val = std::max(max_val, in_data[base + i * axis_stride]);
-        }
-        float sum = 0.0f;
-        for (size_t i = 0; i < axis_size; ++i) {
-            const size_t index = base + i * axis_stride;
-            out_data[index] = std::exp(in_data[index] - max_val);
-            sum += out_data[index];
-        }
-        for (size_t i = 0; i < axis_size; ++i) {
-            out_data[base + i * axis_stride] /= sum;
-        }
-    }
-    output_cache_ = output.Clone();
-    return output;
-#endif
 }
 
 Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
@@ -118,7 +69,6 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
     if (grad_output.NumElements() == 0) {
         return grad_output.Clone();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
     // Softmax backward: grad_input = softmax * (grad_output - sum(grad_output * softmax))
     af::array grad = grad_output.GetSemanticArray();
@@ -132,35 +82,6 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
     af::array grad_input = soft * (grad - af::tile(dot, tile_dims));
 
     return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
-#else
-    // CPU fallback
-    const auto& shape = grad_output.Shape();
-    const std::vector<size_t> strides = SoftmaxRowMajorStrides(shape);
-    const size_t axis_size = shape[static_cast<size_t>(actual_dim)];
-    const size_t axis_stride = strides[static_cast<size_t>(actual_dim)];
-    const size_t outer_count = grad_output.NumElements() / axis_size;
-
-    Tensor grad_input(shape, DataType::Float32);
-    const float* grad_data = grad_output.ReadData<float>();
-    const float* soft_data = output_cache_.ReadData<float>();
-    float* out_data = grad_input.MutableData<float>();
-
-    for (size_t outer = 0; outer < outer_count; ++outer) {
-        const size_t before_axis = outer / axis_stride;
-        const size_t after_axis = outer % axis_stride;
-        const size_t base = before_axis * axis_size * axis_stride + after_axis;
-        float dot = 0.0f;
-        for (size_t i = 0; i < axis_size; ++i) {
-            const size_t index = base + i * axis_stride;
-            dot += grad_data[index] * soft_data[index];
-        }
-        for (size_t i = 0; i < axis_size; ++i) {
-            const size_t index = base + i * axis_stride;
-            out_data[index] = soft_data[index] * (grad_data[index] - dot);
-        }
-    }
-    return grad_input;
-#endif
 }
 
 // ============================================================================

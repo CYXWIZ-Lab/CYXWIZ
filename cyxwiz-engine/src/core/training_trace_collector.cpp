@@ -27,9 +27,7 @@
 #include <windows.h>
 #endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -56,7 +54,6 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
         event.process_memory_source = process.source;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (cyxwiz::IsInitialized()) {
         try {
             size_t alloc_bytes = 0;
@@ -73,7 +70,6 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
             // Memory tracing must never affect training.
         }
     }
-#endif
 }
 
 void PopulateStageExecutionContext(TrainingTraceEvent& event) {

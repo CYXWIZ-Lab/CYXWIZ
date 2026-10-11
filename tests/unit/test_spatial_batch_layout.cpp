@@ -59,7 +59,6 @@ TEST_CASE("Spatial ingress takes image batches [N,H,W,C] like rows (TOFIX140 A1b
   for (size_t i = 0; i < values.size(); ++i) CHECK(pa[i] == pb[i]);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Spatial row boundaries preserve sample channel order on device",
           "[spatial_layout][residency]") {
   BackendLane lane;
@@ -173,4 +172,3 @@ TEST_CASE(
   config.input_shape = {2, 3};
   CHECK_THROWS_AS(MakeSyntheticBatch(config, 100), std::invalid_argument);
 }
-#endif

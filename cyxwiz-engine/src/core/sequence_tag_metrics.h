@@ -1,12 +1,10 @@
 #pragma once
 
 #include <cyxwiz/tensor.h>
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <af/array.h>
 #include <af/arith.h>
 #include <af/algorithm.h>
 #include <af/data.h>
-#endif
 #include "algorithms/arrayfire_backend_utils.h"
 #include <cmath>
 #include <limits>
@@ -63,7 +61,6 @@ inline int64_t SequenceTagIdAt(const Tensor& tensor, size_t index) {
     throw std::runtime_error("sequence tag ids must be Int32 or Int64");
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Argmax over the last axis of semantic [batch, seq, classes] logits. Ties go
 // to the first class; a row without a maximum (all NaN) gives class 0, as a
 // strict ">" scan from class 0 does.
@@ -73,7 +70,6 @@ inline af::array SequenceTagArgmaxDevice(const af::array& values, size_t classes
     const af::array first = (af::min)(af::select(values == maximum, indices, static_cast<double>(classes)), 2).as(s64);
     return af::select(first >= static_cast<double>(classes), 0.0, first);
 }
-#endif
 
 inline Tensor ArgmaxSequenceTagLogits(const Tensor& logits) {
     if (logits.GetDataType() != DataType::Float32) {
@@ -84,7 +80,6 @@ inline Tensor ArgmaxSequenceTagLogits(const Tensor& logits) {
         throw std::runtime_error(
             "sequence tag logits must be shaped [batch, seq, tags]");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array ids = af::moddims(SequenceTagArgmaxDevice(logits.GetSemanticArray(), shape[2]),
                                           static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]));
@@ -93,9 +88,6 @@ inline Tensor ArgmaxSequenceTagLogits(const Tensor& logits) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("ArgmaxSequenceTagLogits failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("ArgmaxSequenceTagLogits runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 inline void ValidateSequenceTagIdShapes(const Tensor& predicted_ids,
@@ -210,7 +202,6 @@ inline SequenceTagMetrics ComputeSequenceTagMetrics(
     ValidateSequenceTagIdShapes(predicted_ids, gold_ids);
 
     SequenceTagMetrics metrics;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     Tensor masked_predicted_ids;
     try {
         const af::array gold = gold_ids.GetSemanticArray().as(s64);
@@ -231,9 +222,6 @@ inline SequenceTagMetrics ComputeSequenceTagMetrics(
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("ComputeSequenceTagMetrics failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("ComputeSequenceTagMetrics runs on ArrayFire, and this build has no ArrayFire");
-#endif
     if (metrics.total_tokens > 0) {
         metrics.token_accuracy =
             static_cast<double>(metrics.correct_tokens) /
@@ -320,7 +308,6 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
     }
 
     const size_t vocab_size = logit_shape[2];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array values = logits.GetSemanticArray();
         const af::array targets = target_ids.GetSemanticArray().as(s64);
@@ -343,11 +330,6 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("CountNextTokenAccuracyFromLogits failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)vocab_size;
-    (void)ignore_index;
-    throw std::runtime_error("CountNextTokenAccuracyFromLogits runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

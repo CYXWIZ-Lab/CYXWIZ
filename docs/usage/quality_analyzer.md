@@ -78,7 +78,7 @@ again.
 ## Notes
 
 - Measured on the GPU with ArrayFire; without a GPU the same code runs on
-  ArrayFire's CPU backend. A build without ArrayFire refuses the node.
+  ArrayFire's CPU backend.
 - Code export does not include the filter yet and says so; train these graphs
   in Studio.
 - Checked against OpenCV: `image_quality_opencv_parity` compares every

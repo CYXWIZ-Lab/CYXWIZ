@@ -119,7 +119,6 @@ TEST_CASE("Upsampling sample inference validates metadata without allocation",
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
           "[upsampling_builder][residency]") {
   BackendLane lane;
@@ -208,4 +207,3 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
     }
   }
 }
-#endif

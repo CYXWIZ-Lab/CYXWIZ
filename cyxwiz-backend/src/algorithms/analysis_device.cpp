@@ -34,12 +34,6 @@ bool IsKnownMetric(const std::string& metric) {
     return metric == "euclidean" || metric == "manhattan" || metric == "cosine";
 }
 
-std::string NoArrayFire(const char* operation) {
-    return std::string(operation) + " runs on ArrayFire, and this build has no ArrayFire";
-}
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 namespace {
 constexpr dim_t kBlockElements = dim_t{1} << 22;
 }
@@ -137,7 +131,5 @@ af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine)
     }
     return centers;
 }
-
-#endif
 
 }  // namespace cyxwiz::analysis_detail

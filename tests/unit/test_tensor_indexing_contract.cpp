@@ -8,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <fstream>
@@ -97,7 +95,6 @@ std::vector<size_t> GatherSourceIndices(
     return source_indices;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -240,7 +237,6 @@ void CheckScalarHostBoundary() {
     }
     REQUIRE(device_only.ReadData<T>()[1] == static_cast<T>(9));
 }
-#endif
 
 } // namespace
 
@@ -283,7 +279,6 @@ TEST_CASE("Tensor indexing rejects invalid ranges before compute",
     REQUIRE_THROWS_AS(empty_axis.IndexSelect(1, {0}), std::out_of_range);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor gathers remain device resident for every dtype",
           "[tensor][tensor_indexing][arrayfire][host_sync]") {
     const auto activation =
@@ -381,4 +376,3 @@ TEST_CASE("Tensor scalar indexing uses an explicit bounded host boundary",
     CheckScalarHostBoundary<int64_t>();
     CheckScalarHostBoundary<uint8_t>();
 }
-#endif

@@ -130,12 +130,10 @@ private:
     bool cached_attention_dropout_ = false;
 
     void InitializeWeights();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     Tensor ForwardArrayFire(const Tensor& query, const Tensor& key,
                             const Tensor& value, const Tensor* attn_mask);
     Tensor BackwardArrayFire(const Tensor& grad_output);
     Tensor ForwardIncrementalArrayFire(const Tensor& input);
-#endif
     // Returns true and fills context_heads ([Sq, head_dim, B, heads]) when the
     // fused provider ran; q/k/v heads are post QK-norm/RoPE, k/v not expanded.
     bool TryFusedAttention(const void* qh, const void* kh, const void* vh, size_t batch, size_t sq,

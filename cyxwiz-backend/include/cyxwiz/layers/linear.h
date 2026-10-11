@@ -60,7 +60,7 @@ public:
      * without layout copies (TOFIX118 P8): the semantic 3D array is already a
      * [batch*seq, in] matrix in memory, so the multiplies run in place.
      * Same parameters and gradients as Forward/Backward on the flattened
-     * input; falls back to that path when ArrayFire is unavailable.
+     * input.
      */
     Tensor ForwardSequence(const Tensor& input);
     Tensor BackwardSequence(const Tensor& grad_output);

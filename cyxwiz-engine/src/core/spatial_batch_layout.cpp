@@ -3,9 +3,7 @@
 
 #include <stdexcept>
 #include <utility>
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 Tensor SpatialBatchFromRows(const Tensor &rows,
@@ -23,11 +21,9 @@ Tensor SpatialBatchFromRows(const Tensor &rows,
     throw std::invalid_argument(
         "Spatial row feature count does not match [H,W,C]");
   const auto shape = SpatialRuntimeShape(sample_shape, in[0]);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
   // Host-origin rows enter the selected device here; device-current rows reuse
   // the canonical semantic view. Avoid Reshape's host-copy compatibility path.
   (void)rows.GetSemanticArray();
-#endif
   return rows.Reshape({shape[3], shape[0], shape[1], shape[2]})
       .Permute({1, 2, 3, 0});
 }

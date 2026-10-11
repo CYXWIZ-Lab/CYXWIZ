@@ -7,9 +7,7 @@
 #include <cyxwiz/tensor.h>
 #include <string>
 #include <vector>
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::test::convolution {
 inline void CheckValues(const cyxwiz::Tensor &actual,
@@ -24,7 +22,6 @@ inline void CheckValues(const cyxwiz::Tensor &actual,
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 inline size_t conv_host_sync_count = 0;
 inline uint64_t conv_host_sync_bytes = 0;
 inline size_t conv_fallback_count = 0;
@@ -131,9 +128,6 @@ private:
   std::string previous_;
 };
 
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Select the requested lane for every numerical test as well as residency.
 class BackendLane {
 public:
@@ -174,8 +168,5 @@ private:
   af_backend original_;
   int device_;
 };
-#else
-struct BackendLane {};
-#endif
 
 } // namespace cyxwiz::test::convolution

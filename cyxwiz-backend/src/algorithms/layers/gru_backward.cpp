@@ -97,7 +97,6 @@ Tensor GRULayer::BackwardArrayFire(const Tensor& grad_output) {
     if (grad_output.Shape() != expected_grad) {
         throw std::invalid_argument("GRULayer::Backward gradient does not match the Forward output shape");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const int seq_i = CheckedIntDim(seq, "seq_len");
         const int batch_i = CheckedIntDim(batch, "batch_size");
@@ -181,9 +180,6 @@ Tensor GRULayer::BackwardArrayFire(const Tensor& grad_output) {
         throw std::runtime_error(std::string("GRULayer::Backward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("GRULayer");
-#endif
 }
 
 } // namespace cyxwiz

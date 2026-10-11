@@ -20,9 +20,7 @@
 #include <cassert>
 
 // Include ArrayFire header for tests
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 using namespace cyxwiz;
 
@@ -167,11 +165,6 @@ bool Test_DataRegistry_Arrow() {
 bool Test_ArrowToTensor() {
     spdlog::info("\n=== Test 4: Arrow to Tensor Conversion ===");
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::warn("ArrayFire not available - skipping tensor conversion test");
-    return true;
-#endif
-
     std::string csv_path = "test_tensor.csv";
     CreateTestCSV(csv_path);
 
@@ -209,11 +202,6 @@ bool Test_ArrowToTensor() {
  */
 bool Test_TensorToArrow() {
     spdlog::info("\n=== Test 5: Tensor to Arrow Conversion ===");
-
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    spdlog::warn("ArrayFire not available - skipping");
-    return true;
-#endif
 
     // Create a simple tensor
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
@@ -371,7 +359,6 @@ bool Test_EndToEnd_Pipeline() {
     spdlog::info("Cleaned data: {} rows", cleaned->num_rows());
 
     // Step 3: Convert to tensor for training
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     auto tensor = arrow_converters::ArrowToTensor(cleaned);
     TEST_ASSERT(tensor != nullptr, "Convert cleaned data to tensor");
     ::af::dim4 tensor_dims = tensor->dims();
@@ -386,7 +373,6 @@ bool Test_EndToEnd_Pipeline() {
     // Step 5: Register results for export
     auto results_dataset = registry.RegisterArrowTable(results, "predictions");
     TEST_ASSERT(results_dataset != nullptr, "Register prediction results");
-#endif
 
     // Export to Parquet
     std::string parquet_path = "test_results.parquet";

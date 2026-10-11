@@ -83,7 +83,6 @@ HierarchicalResult Clustering::Hierarchical(
         result.error_message = "Ward linkage needs the euclidean metric";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         const double inf = std::numeric_limits<double>::infinity();
@@ -170,9 +169,6 @@ HierarchicalResult Clustering::Hierarchical(
         result = HierarchicalResult{};
         result.error_message = DeviceError("Clustering::Hierarchical", e);
     }
-#else
-    result.error_message = NoArrayFire("Clustering::Hierarchical");
-#endif
     return result;
 }
 

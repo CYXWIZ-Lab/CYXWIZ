@@ -11,9 +11,7 @@
 #include <sstream>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -103,7 +101,6 @@ inline uint64_t NextExecutionDeviceCapabilityGeneration() {
 }
 
 inline std::string ArrayFireBackendNameForContext(int backend) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     switch (backend) {
         case AF_BACKEND_CPU: return "arrayfire_cpu";
         case AF_BACKEND_CUDA: return "arrayfire_cuda";
@@ -111,14 +108,9 @@ inline std::string ArrayFireBackendNameForContext(int backend) {
         case AF_BACKEND_ONEAPI: return "arrayfire_oneapi";
         default: return "arrayfire_unknown";
     }
-#else
-    (void)backend;
-    return "native_cpu";
-#endif
 }
 
 inline DeviceType DeviceTypeForContextBackend(int backend) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     switch (backend) {
         case AF_BACKEND_CUDA: return DeviceType::CUDA;
         case AF_BACKEND_OPENCL: return DeviceType::OPENCL;
@@ -127,10 +119,6 @@ inline DeviceType DeviceTypeForContextBackend(int backend) {
         default:
             return DeviceType::CPU;
     }
-#else
-    (void)backend;
-    return DeviceType::CPU;
-#endif
 }
 
 inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
@@ -139,7 +127,6 @@ inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
     context.fallback_policy = fallback_policy;
     context.capability_generation = NextExecutionDeviceCapabilityGeneration();
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::Backend backend = af::getActiveBackend();
         const int device_id = af::getDevice();
@@ -175,18 +162,6 @@ inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
         context.error = error_name != nullptr ? error_name
                                               : "unknown ArrayFire error";
     }
-#else
-    context.platform = "native";
-    context.requested_backend = "native_cpu";
-    context.effective_backend = "native_cpu";
-    context.device_name = "native CPU";
-    context.route_identity = "native:native_cpu:0";
-    context.identity_confidence = DeviceIdentityConfidence::BackendLocal;
-    context.activation_succeeded = true;
-    context.execution_validated = true;
-    context.preflight_stage = "complete";
-    context.valid = true;
-#endif
 
     return context;
 }

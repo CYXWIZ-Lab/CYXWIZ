@@ -24,8 +24,6 @@ namespace cyxwiz {
 
 using namespace analysis_detail;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 namespace {
 
 struct KMeansRun {
@@ -87,8 +85,6 @@ af::array RandomRows(const af::array& data, int k, af::randomEngine& engine) {
 
 }  // namespace
 
-#endif
-
 KMeansResult Clustering::KMeans(
     const std::vector<std::vector<double>>& data,
     int n_clusters,
@@ -116,7 +112,6 @@ KMeansResult Clustering::KMeans(
         result.error_message = "Unknown init '" + init + "' (kmeans++ or random)";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         const double tolerance = tol * af::mean<double>(af::var(x, AF_VARIANCE_POPULATION, 0));
@@ -142,11 +137,6 @@ KMeansResult Clustering::KMeans(
         result = KMeansResult{};
         result.error_message = DeviceError("Clustering::KMeans", e);
     }
-#else
-    (void)progress_callback;
-    (void)seed;
-    result.error_message = NoArrayFire("Clustering::KMeans");
-#endif
     return result;
 }
 

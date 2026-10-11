@@ -7,9 +7,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with std::max/min and ArrayFire
 // helpers. Must be AFTER all includes (Windows headers define these).
@@ -168,7 +166,6 @@ void ContrastiveLoss::SetMargin(float margin) {
 Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "CosineEmbeddingLoss::Forward";
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
     try {
         {
@@ -200,15 +197,11 @@ Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "CosineEmbeddingLoss::Backward";
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
     try {
         {
@@ -260,9 +253,6 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 // ============================================================================
@@ -272,7 +262,6 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
 Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
     constexpr const char* kOperation = "TripletLoss::Forward";
     ValidateTripletInputs(anchor, positive, negative_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(anchor, positive, kOperation);
     try {
         af::array a = TensorToAf(anchor);
@@ -306,9 +295,6 @@ Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
@@ -318,7 +304,6 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
 TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor& positive) {
     constexpr const char* kOperation = "TripletLoss::Backward";
     const EmbeddingPairShape shape = ValidateTripletInputs(anchor, positive, negative_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(anchor, positive, kOperation);
     try {
         af::array a = TensorToAf(anchor);
@@ -389,9 +374,6 @@ TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 // ============================================================================
@@ -401,7 +383,6 @@ TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor
 Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "ContrastiveLoss::Forward";
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
     try {
         {
@@ -430,15 +411,11 @@ Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "ContrastiveLoss::Backward";
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(x1, x2, kOperation);
     try {
         {
@@ -492,9 +469,6 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 } // namespace cyxwiz

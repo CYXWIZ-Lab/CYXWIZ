@@ -22,7 +22,6 @@
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 af::array TokenRowsToSemanticOutput(const af::array& token_rows,
@@ -62,18 +61,10 @@ af::array SemanticGradientToTokenRows(const af::array& gradient,
 } // namespace
 
 // One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
-// reported, not hidden behind host loops; a build without ArrayFire refuses.
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+// reported, not hidden behind host loops.
 [[noreturn]] static void ThrowEmbeddingDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-#else
-[[noreturn]] static void ThrowEmbeddingNeedsArrayFire() {
-    throw std::runtime_error("Embedding runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
-
-#endif
 
 EmbeddingLayer::EmbeddingLayer(int num_embeddings, int embedding_dim,
                                int padding_idx, float max_norm)
@@ -101,7 +92,6 @@ EmbeddingLayer::EmbeddingLayer(int num_embeddings, int embedding_dim,
 }
 
 void EmbeddingLayer::InitializeWeights() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Initialize with normal distribution N(0, 1)
     af::array w = af::randn(af::dim4(num_embeddings_, embedding_dim_), af::dtype::f32);
     w.eval();
@@ -112,10 +102,6 @@ void EmbeddingLayer::InitializeWeights() {
     weight_ = Tensor::FromSemanticArray(
         w, {static_cast<size_t>(num_embeddings_),
             static_cast<size_t>(embedding_dim_)});
-#else
-    weight_ = Tensor::Random({static_cast<size_t>(num_embeddings_),
-                               static_cast<size_t>(embedding_dim_)});
-#endif
 
     grad_weight_ = Tensor::Zeros({static_cast<size_t>(num_embeddings_),
                                    static_cast<size_t>(embedding_dim_)});
@@ -124,7 +110,6 @@ void EmbeddingLayer::InitializeWeights() {
 void EmbeddingLayer::NormalizeEmbeddings() {
     if (max_norm_ <= 0.0f) return;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array w = weight_.GetSemanticArray();
 
@@ -147,9 +132,6 @@ void EmbeddingLayer::NormalizeEmbeddings() {
     } catch (const af::exception& e) {
         ThrowEmbeddingDeviceError("EmbeddingLayer::NormalizeEmbeddings", e);
     }
-#else
-    ThrowEmbeddingNeedsArrayFire();
-#endif
 }
 
 Tensor EmbeddingLayer::Forward(const Tensor& input) {
@@ -174,7 +156,6 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
     // Cache indices for backward pass
     cached_indices_ = input.Clone();
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (max_norm_ > 0.0f) {
             NormalizeEmbeddings();
@@ -206,9 +187,6 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowEmbeddingDeviceError("EmbeddingLayer::Forward", e);
     }
-#else
-    ThrowEmbeddingNeedsArrayFire();
-#endif
 }
 
 Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
@@ -217,7 +195,6 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         return Tensor();
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const auto& shape = cached_indices_.Shape();
         if (shape.size() != 1 && shape.size() != 2) {
@@ -281,9 +258,6 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowEmbeddingDeviceError("EmbeddingLayer::Backward", e);
     }
-#else
-    ThrowEmbeddingNeedsArrayFire();
-#endif
 }
 
 void EmbeddingLayer::AddPendingWeightGradient(const Tensor& gradient) {
@@ -337,7 +311,6 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
 
     // Ensure padding index is zero
     if (padding_idx_ >= 0 && padding_idx_ < num_embeddings_) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             af::array padded = weight_.GetSemanticArray().copy();
             padded(padding_idx_, af::span) = 0.0f;
@@ -347,9 +320,6 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
         } catch (const af::exception& e) {
             ThrowEmbeddingDeviceError("EmbeddingLayer::LoadPretrainedWeights", e);
         }
-#else
-        ThrowEmbeddingNeedsArrayFire();
-#endif
     }
 }
 

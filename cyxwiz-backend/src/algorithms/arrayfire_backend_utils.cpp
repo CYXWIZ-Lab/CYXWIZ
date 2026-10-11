@@ -12,9 +12,7 @@
 #include <stdexcept>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -41,22 +39,18 @@ int64_t SteadyNowNs() {
 ScopedProfileSpan::ScopedProfileSpan(const char* name)
     : name_(name), active_(BackendDebugHooks::HasDebugEventCallback()), start_ns_(0) {
     if (!active_) return;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (ProfileStageSyncEnabled()) af::sync();
-#endif
     start_ns_ = SteadyNowNs();
 }
 
 ScopedProfileSpan::~ScopedProfileSpan() {
     if (!active_) return;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (ProfileStageSyncEnabled()) {
         try {
             af::sync();
         } catch (...) {
         }
     }
-#endif
     const double ms = static_cast<double>(SteadyNowNs() - start_ns_) / 1.0e6;
     BackendDebugHooks::EmitDebugEvent("ModelSpan", std::string("name=") + name_ + " duration_ms=" + std::to_string(ms));
 }
@@ -67,7 +61,6 @@ uint64_t NextAttentionDropoutStream() {
 
 std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
     g_attention_dropout_streams = 0;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto type = af::getDefaultRandomEngine().getType();
     int major = 0, minor = 0, patch = 0;
     const af_err version_status = af_get_version(&major, &minor, &patch);
@@ -76,10 +69,6 @@ std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
     af::setSeed(seed);
     return "arrayfire/" + std::to_string(major) + "." + std::to_string(minor) + "." +
         std::to_string(patch) + "/default_type=" + std::to_string(static_cast<int>(type));
-#else
-    (void)seed;
-    throw std::runtime_error("Model RNG seed requires an ArrayFire runtime; native RNGs are not controlled");
-#endif
 }
 
 namespace {
@@ -344,7 +333,6 @@ std::string BuildTensorShapeContext(
 }
 
 std::string CurrentArrayFireBackendName() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         switch (af::getActiveBackend()) {
         case AF_BACKEND_CUDA:
@@ -361,13 +349,9 @@ std::string CurrentArrayFireBackendName() {
     } catch (...) {
         return "unknown";
     }
-#else
-    return "unavailable";
-#endif
 }
 
 bool IsCurrentArrayFireBackendAvailable() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::Backend backend = af::getActiveBackend();
         return backend == AF_BACKEND_CUDA ||
@@ -377,9 +361,6 @@ bool IsCurrentArrayFireBackendAvailable() {
     } catch (...) {
         return false;
     }
-#else
-    return false;
-#endif
 }
 
 std::string BuildArrayFireBackendFallbackContext(

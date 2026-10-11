@@ -13,11 +13,9 @@ namespace cyxwiz {
 // The sparse gather (column matrix rows <- input elements) and its transpose,
 // built once on the device; the forward pass's column matrix for backward.
 struct Conv3DModule::DeviceGather {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array gather;   // CSR [C*k^3 * P, C*D*H*W]
     af::array scatter;  // CSR [C*D*H*W, C*k^3 * P]
     af::array columns;  // [C*k^3, P*N] from the last Forward
-#endif
 };
 
 namespace {
@@ -31,11 +29,9 @@ size_t OutputExtent(size_t extent, int kernel, int stride, int padding, const ch
     return static_cast<size_t>((padded - kernel) / stride + 1);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 [[noreturn]] void ThrowConv3DDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-#endif
 
 }  // namespace
 
@@ -57,9 +53,6 @@ Conv3DModule::Conv3DModule(size_t depth, size_t height, size_t width, size_t in_
     column_size_ = in_channels_ * k * k * k;
     patches_ = out_depth_ * out_height_ * out_width_;
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    throw std::runtime_error("Conv3D runs on ArrayFire, and this build has no ArrayFire");
-#else
     // For patch p and column k, the input element at gather[p * column_size_ + k]
     // (channel-major index within a sample), or -1 in the zero padding.
     std::vector<long long> gather(patches_ * column_size_, -1);
@@ -127,7 +120,6 @@ Conv3DModule::Conv3DModule(size_t depth, size_t height, size_t width, size_t in_
         bias_ = Tensor::Zeros({filters_});
         grad_bias_ = Tensor::Zeros({filters_});
     }
-#endif
 }
 
 Tensor Conv3DModule::Forward(const Tensor& input) {
@@ -137,7 +129,6 @@ Tensor Conv3DModule::Forward(const Tensor& input) {
         throw std::runtime_error("Conv3D expects Float32 rows [N, " + std::to_string(samples) + "] (C*D*H*W)");
     }
     input_ = input;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t n = static_cast<dim_t>(input.Shape()[0]);
         const dim_t k = static_cast<dim_t>(column_size_);
@@ -156,9 +147,6 @@ Tensor Conv3DModule::Forward(const Tensor& input) {
         device_->columns = af::array();
         ThrowConv3DDeviceError("Conv3DModule::Forward", e);
     }
-#else
-    throw std::runtime_error("Conv3D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Conv3DModule::Backward(const Tensor& grad_output) {
@@ -168,7 +156,6 @@ Tensor Conv3DModule::Backward(const Tensor& grad_output) {
         grad_output.Shape() != std::vector<size_t>{n_rows, filters_ * patches_}) {
         throw std::runtime_error("Conv3D backward gradient shape does not match Forward output");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t n = static_cast<dim_t>(n_rows);
         const dim_t k = static_cast<dim_t>(column_size_);
@@ -196,9 +183,6 @@ Tensor Conv3DModule::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowConv3DDeviceError("Conv3DModule::Backward", e);
     }
-#else
-    throw std::runtime_error("Conv3D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> Conv3DModule::GetParameters() {

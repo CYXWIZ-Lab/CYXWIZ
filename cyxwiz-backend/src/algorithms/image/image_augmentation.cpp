@@ -8,9 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::image {
 
@@ -72,8 +70,6 @@ float LinspaceAt(float start, float end, int steps, int index) {
     return index < steps / 2 ? start + step * static_cast<float>(index)
                              : end - step * static_cast<float>(steps - 1 - index);
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // Rows [N, H*W*C] (HWC per row) <-> the device layout [H, W, C, N].
 af::array RowsToImages(const af::array& rows, const ImageShape& shape) {
@@ -617,8 +613,6 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
     return images;
 }
 
-#endif  // CYXWIZ_HAS_ARRAYFIRE
-
 }  // namespace
 
 bool IsRandomImageOp(ImageOpKind kind) {
@@ -879,14 +873,8 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
 
 Tensor ApplyImageOp(const ImageOp& op, const ImageOpDraws& draws, const ImageShape& input, const Tensor& rows) {
     ImageShapeAfter(op, input);  // throws for an invalid op
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const af::array images = RowsToImages(rows.GetArrayRowMajor2D(), input);
     return Tensor::FromArrayRowMajor2D(ImagesToRows(ApplyOnDevice(op, draws, input, images)));
-#else
-    (void)draws;
-    (void)rows;
-    throw std::runtime_error("image transforms need the ArrayFire build");
-#endif
 }
 
 float RandAugmentMagnitude(RandAugmentOp op, int magnitude, size_t height, size_t width) {
@@ -966,17 +954,10 @@ BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability, const
 void ApplyBatchMix(BatchMix method, const BatchMixDraw& draw, const ImageShape& shape, Tensor& rows,
                    Tensor& labels) {
     if (!draw.apply || method == BatchMix::None) return;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const af::array images = RowsToImages(rows.GetArrayRowMajor2D(), shape);
     rows = Tensor::FromArrayRowMajor2D(ImagesToRows(MixImages(method, draw, images)));
     const af::array targets = labels.GetArrayRowMajor2D();
     labels = Tensor::FromArrayRowMajor2D(MixLabels(draw, targets));
-#else
-    (void)shape;
-    (void)rows;
-    (void)labels;
-    throw std::runtime_error("image transforms need the ArrayFire build");
-#endif
 }
 
 ImageShape ImageAugmentation::ShapeAfter(const ImageShape& input) const {
@@ -987,7 +968,6 @@ ImageShape ImageAugmentation::ShapeAfter(const ImageShape& input) const {
 
 Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, bool training,
                                 std::mt19937& rng, Tensor* labels) const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array images = RowsToImages(rows.GetArrayRowMajor2D(), input);
     const size_t batch = static_cast<size_t>(images.dims(3));
     ImageShape shape = input;
@@ -1007,14 +987,6 @@ Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, boo
         images = (images - mean) / std_dev;
     }
     return Tensor::FromArrayRowMajor2D(ImagesToRows(images));
-#else
-    (void)rows;
-    (void)input;
-    (void)training;
-    (void)rng;
-    (void)labels;
-    throw std::runtime_error("image transforms need the ArrayFire build");
-#endif
 }
 
 }  // namespace cyxwiz::image

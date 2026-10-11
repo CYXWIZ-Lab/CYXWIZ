@@ -4,8 +4,6 @@
 // algebra, data transforms): values cross to the active device once, in float64
 // where the device has it and float32 otherwise, and come back as double.
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 #include "arrayfire_host_materialization.h"
 
 #include <arrayfire.h>
@@ -55,4 +53,3 @@ inline std::string DeviceError(const char* operation, const af::exception& e) {
 
 }  // namespace cyxwiz
 
-#endif

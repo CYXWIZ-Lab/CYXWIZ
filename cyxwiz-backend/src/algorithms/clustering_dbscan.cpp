@@ -27,8 +27,6 @@ namespace cyxwiz {
 
 using namespace analysis_detail;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 namespace {
 
 // For every point, the smallest `labels` value among its core neighbours
@@ -50,8 +48,6 @@ af::array MinCoreNeighbourLabel(const af::array& adjacency, const af::array& cor
 
 }  // namespace
 
-#endif
-
 DBSCANResult Clustering::DBSCAN(
     const std::vector<std::vector<double>>& data,
     double eps,
@@ -71,7 +67,6 @@ DBSCANResult Clustering::DBSCAN(
         result.error_message = "Unknown metric '" + metric + "' (euclidean, manhattan or cosine)";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         const dim_t n = x.dims(0);
@@ -118,9 +113,6 @@ DBSCANResult Clustering::DBSCAN(
         result = DBSCANResult{};
         result.error_message = DeviceError("Clustering::DBSCAN", e);
     }
-#else
-    result.error_message = NoArrayFire("Clustering::DBSCAN");
-#endif
     return result;
 }
 
@@ -132,7 +124,6 @@ std::vector<double> Clustering::ComputeKDistances(
         spdlog::error("Clustering::ComputeKDistances: {}", refusal.empty() ? "needs k >= 1 and 2 samples" : refusal);
         return {};
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         const dim_t n = x.dims(0);
@@ -150,10 +141,6 @@ std::vector<double> Clustering::ComputeKDistances(
         spdlog::error("{}", DeviceError("Clustering::ComputeKDistances", e));
         return {};
     }
-#else
-    spdlog::error("{}", NoArrayFire("Clustering::ComputeKDistances"));
-    return {};
-#endif
 }
 
 } // namespace cyxwiz

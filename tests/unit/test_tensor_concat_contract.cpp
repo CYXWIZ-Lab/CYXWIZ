@@ -8,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -84,7 +82,6 @@ std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape) {
     return strides;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -313,7 +310,6 @@ void CheckResidentConcatMatrix() {
     CheckResidentStack<T>({2, 2, 2}, 3);
     CheckResidentSplitChunk<T>();
 }
-#endif
 
 } // namespace
 
@@ -385,7 +381,6 @@ TEST_CASE("Tensor concat family rejects invalid contracts before compute",
     REQUIRE_THROWS_AS(matrix.Chunk(0, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor cat and stack remain device resident for every dtype",
           "[tensor][tensor_concat][arrayfire][host_sync]") {
     const auto activation =
@@ -447,4 +442,3 @@ TEST_CASE("Tensor rank-five concat runs on the device",
     }
     REQUIRE(g_concat_fallback_count == 0);
 }
-#endif

@@ -6,10 +6,8 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -96,7 +94,6 @@ std::vector<unsigned> NormalizeIndexSelectIndices(const std::vector<int>& indice
     return normalized;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Gather positions along axis on the device. Up to rank 4 on the semantic
 // view; above, the row-major flat storage viewed as [after, extent, before]
 // and gathered on ArrayFire dim 1 (already the output's row-major order).
@@ -124,7 +121,6 @@ Tensor LookupArrayFire(const Tensor& input,
     output.eval();
     return Tensor::FromRowMajorFlatArray(output, output_shape);
 }
-#endif
 
 } // namespace
 
@@ -197,15 +193,11 @@ Tensor Tensor::Slice(int dim, int start, int end, int step) const {
             begin + static_cast<int>(index) * step));
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return LookupArrayFire(*this, selected_indices, axis, out_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Slice", e));
     }
-#else
-    throw std::runtime_error("Tensor::Slice runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
@@ -225,15 +217,11 @@ Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
         return Tensor(out_shape, dtype_);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return LookupArrayFire(*this, normalized_indices, axis, out_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::IndexSelect", e));
     }
-#else
-    throw std::runtime_error("Tensor::IndexSelect runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

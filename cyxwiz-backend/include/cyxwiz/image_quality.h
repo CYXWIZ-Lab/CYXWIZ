@@ -15,8 +15,7 @@
 //   (cv2.resize INTER_AREA); bit r*8+c is set when column c+1 is brighter
 //   than column c in row r.
 //
-// The measurements run on the ArrayFire device; there is no CPU copy, and a
-// build without ArrayFire refuses them.
+// The measurements run on the ArrayFire device; there is no CPU copy.
 
 #include "api_export.h"
 #include "image_augmentation.h"

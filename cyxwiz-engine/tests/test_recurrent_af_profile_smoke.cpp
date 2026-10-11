@@ -2,9 +2,7 @@
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "cyxwiz/tensor.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -26,7 +24,6 @@ void Check(bool condition, const std::string& message) {
 }
 
 std::string ActiveArrayFireBackendName() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         switch (af::getActiveBackend()) {
             case AF_BACKEND_CPU: return "ArrayFire CPU";
@@ -37,9 +34,6 @@ std::string ActiveArrayFireBackendName() {
     } catch (const af::exception& e) {
         return std::string("ArrayFire unavailable: ") + e.what();
     }
-#else
-    return "ArrayFire not compiled";
-#endif
 }
 
 cyxwiz::Tensor MakeInput(size_t batch_size,

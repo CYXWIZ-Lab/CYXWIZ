@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -130,7 +131,6 @@ void CheckShapeCases(const json& fixture) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_broadcast_host_sync_count = 0;
 size_t g_broadcast_fallback_count = 0;
 
@@ -184,7 +184,6 @@ void CheckMaterializationCasesOnActiveDevice(const json& fixture,
         }
     }
 }
-#endif
 
 } // namespace
 
@@ -192,31 +191,13 @@ TEST_CASE("Tensor broadcast helpers and materialization match PyTorch",
           "[tensor][tensor_broadcast][pytorch]") {
     const json fixture = LoadBroadcastFixture();
     CheckShapeCases(fixture);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckMaterializationCasesOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture.at("materialization_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const auto target_shape =
-            test_case.at("target_shape").get<std::vector<size_t>>();
-        for (const std::string operation : {"expand", "broadcast_to"}) {
-            const cyxwiz::Tensor input =
-                TensorFromFixture(test_case.at("input"), dtype);
-            CheckTensor(
-                ApplyMaterialization(input, target_shape, operation),
-                dtype,
-                test_case.at("expected"));
-        }
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor broadcast materialization matches PyTorch on every accelerator",
           "[tensor][tensor_broadcast][accelerator]") {
     const json fixture = LoadBroadcastFixture();
@@ -314,7 +295,6 @@ TEST_CASE("Tensor rank-five broadcast runs on the device",
             for (size_t a4 = 0; a4 < 3; ++a4, ++index)
                 REQUIRE(sum_values[index] == static_cast<int32_t>(a1 * 2 + a3 + a3 * 3 + a4));
 }
-#endif
 
 TEST_CASE("Tensor broadcast materialization rejects PyTorch-invalid shapes",
           "[tensor][tensor_broadcast][invalid]") {
@@ -337,7 +317,6 @@ TEST_CASE("Tensor broadcast shape overflow fails before compute",
     const cyxwiz::Tensor scalar({}, &value, cyxwiz::DataType::Float32);
     const std::vector<size_t> target{
         (std::numeric_limits<size_t>::max)(), 2};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_broadcast_host_sync_count = 0;
     g_broadcast_fallback_count = 0;
     {
@@ -352,8 +331,4 @@ TEST_CASE("Tensor broadcast shape overflow fails before compute",
     }
     REQUIRE(g_broadcast_host_sync_count == 0);
     REQUIRE(g_broadcast_fallback_count == 0);
-#else
-    REQUIRE_THROWS_AS(scalar.Expand(target), std::overflow_error);
-    REQUIRE_THROWS_AS(scalar.BroadcastTo(target), std::overflow_error);
-#endif
 }

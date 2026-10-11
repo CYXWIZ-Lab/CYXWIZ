@@ -566,12 +566,10 @@ void TestRegressionLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name + " targets"),
             target_values.data(), cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -648,12 +646,10 @@ void TestProbabilityLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -717,12 +713,10 @@ void TestOverlapLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -1105,12 +1099,10 @@ void TestCrossEntropyMatrixParity(const json& cases) {
         // Re-wrap through the semantic ArrayFire view so the public inputs are
         // device-current and host-stale at the compute boundary. A supported
         // CrossEntropy shape must neither materialize them nor fall back.
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::CrossEntropyLoss loss(
             ParseReduction(test_case.at("reduction").get<std::string>()),
@@ -1172,12 +1164,10 @@ void TestNLLLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Int64);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::NLLLoss loss(
             ParseReduction(test_case.at("reduction").get<std::string>()),
@@ -1236,12 +1226,10 @@ void TestFocalLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Int64);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::FocalLoss loss(
             test_case.at("alpha").get<float>(),

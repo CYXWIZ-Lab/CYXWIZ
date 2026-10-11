@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -120,7 +121,6 @@ void CheckMask(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_mask_host_sync_count = 0;
 size_t g_mask_fallback_count = 0;
 
@@ -184,32 +184,19 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
         CheckMask(actual, test_case.at("expected"));
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor masks match generated PyTorch dtype broadcast and rank matrix",
           "[tensor][tensor_mask][pytorch]") {
     const json fixture = LoadMaskFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckFixtureOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture) {
-        CAPTURE(test_case.at("name").get<std::string>());
-        const auto dtype =
-            ParseDataType(test_case.at("input_dtype").get<std::string>());
-        CheckMask(
-            ApplyMask(TensorFromFixture(test_case.at("input"), dtype), test_case),
-            test_case.at("expected"));
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor masks match PyTorch on every installed accelerator",
           "[tensor][tensor_mask][accelerator]") {
     const json fixture = LoadMaskFixture();
@@ -291,7 +278,6 @@ TEST_CASE("Tensor rank-five masks run on the device",
         for (size_t k = 0; k < 8; ++k) REQUIRE(a[k] == b[k]);
     }
 }
-#endif
 
 TEST_CASE("Tensor masks reject incompatible broadcast shapes",
           "[tensor][tensor_mask][invalid]") {

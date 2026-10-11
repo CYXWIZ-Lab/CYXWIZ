@@ -204,13 +204,11 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
 // [sequence, features] input runs as a tensor layer.
 inline LayerCapability ClassifyLayer(const CompiledLayer& layer) {
     auto result = ClassifyLayer(layer.type);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const bool nonempty = !layer.input_shape.empty() &&
         std::all_of(layer.input_shape.begin(), layer.input_shape.end(), [](size_t d) { return d > 0; });
     if (layer.type == gui::NodeType::TimeDistributed && nonempty && layer.input_shape.size() == 2) {
         result.kind = LayerCapabilityKind::ArrayFireTensor;
     }
-#endif
     return result;
 }
 

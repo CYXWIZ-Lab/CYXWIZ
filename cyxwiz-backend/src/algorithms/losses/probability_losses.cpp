@@ -5,9 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with std::max/min and ArrayFire helpers.
 // Must be AFTER all includes (Windows headers define these).
@@ -67,7 +65,6 @@ JaccardLoss::JaccardLoss(Reduction reduction, float smooth)
 Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "BCELoss::Forward";
     ValidateFloat32Pair(predictions, targets, "BCE");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array pred = TensorToAf(predictions);
@@ -92,15 +89,11 @@ Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "BCELoss::Backward";
     ValidateFloat32Pair(predictions, targets, "BCE");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array pred = TensorToAf(predictions);
@@ -121,9 +114,6 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 // ============================================================================
@@ -133,7 +123,6 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "BCEWithLogitsLoss::Forward";
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array logits = TensorToAf(predictions);
@@ -161,15 +150,11 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "BCEWithLogitsLoss::Backward";
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array logits = TensorToAf(predictions);
@@ -192,9 +177,6 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 // ============================================================================
@@ -204,7 +186,6 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "KLDivLoss::Forward";
     ValidateFloat32Pair(predictions, targets, "KLDiv");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array log_pred = TensorToAf(predictions);  // Log probabilities
@@ -236,15 +217,11 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     constexpr const char* kOperation = "KLDivLoss::Backward";
     ValidateFloat32Pair(predictions, targets, "KLDiv");
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         af::array log_pred = TensorToAf(predictions);
@@ -268,9 +245,6 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 // ============================================================================
@@ -312,7 +286,6 @@ void ValidateSoftDiceInputs(const Tensor& predictions,
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array ReduceOverlapSamples(
     const af::array& values,
     const std::vector<size_t>& semantic_shape) {
@@ -359,7 +332,6 @@ Tensor WrapOverlapLoss(const af::array& per_sample,
             ? SoftDiceLossShape(batch)
             : std::vector<size_t>{1});
 }
-#endif
 
 }  // namespace
 
@@ -368,7 +340,6 @@ Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -387,9 +358,6 @@ Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -397,7 +365,6 @@ Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) 
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -427,9 +394,6 @@ Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) 
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 TverskyLoss::TverskyLoss(Reduction reduction,
@@ -456,7 +420,6 @@ Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -478,9 +441,6 @@ Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -488,7 +448,6 @@ Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -522,9 +481,6 @@ Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
@@ -532,7 +488,6 @@ Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -552,9 +507,6 @@ Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -562,7 +514,6 @@ Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     loss_detail::ValidateFloat32Pair(predictions, targets, kOperation);
     try {
         const af::array prediction_values = TensorToAf(predictions);
@@ -592,9 +543,6 @@ Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     } catch (const af::exception& e) {
         loss_detail::ThrowLossDeviceError(kOperation, e);
     }
-#else
-    loss_detail::ThrowLossNeedsArrayFire(kOperation);
-#endif
 }
 
 } // namespace cyxwiz

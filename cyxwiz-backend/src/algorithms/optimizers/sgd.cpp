@@ -8,9 +8,7 @@
 #include <utility>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -61,7 +59,6 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         const Tensor& grad = grad_it->second;
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             const std::vector<size_t> parameter_shape = param.Shape();
             af::array param_gpu = param.GetSemanticArray();
@@ -97,9 +94,6 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
         }
-#else
-        optimizer_detail::ThrowOptimizerNeedsArrayFire(kOperation);
-#endif
     }
 
     step_count_++;

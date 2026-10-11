@@ -11,9 +11,7 @@
 #include <spdlog/spdlog.h>
 #include <cyxwiz/error_codes.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace {
@@ -96,7 +94,6 @@ void LinearLayer::InitializeWeights() {
     // Xavier/Glorot initialization: weights ~ U(-sqrt(6/(in+out)), sqrt(6/(in+out)))
     double limit = std::sqrt(6.0 / (in_features_ + out_features_));
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array w_gpu = af::randu(static_cast<dim_t>(out_features_),
                                      static_cast<dim_t>(in_features_), f32);
@@ -115,10 +112,6 @@ void LinearLayer::InitializeWeights() {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::InitializeWeights failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)limit;
-    throw std::runtime_error("Linear runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LinearLayer::Forward(const Tensor& input) {
@@ -141,7 +134,6 @@ Tensor LinearLayer::Forward(const Tensor& input) {
                                std::to_string(in_features));
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array input_gpu;
         if (is_batched) {
@@ -179,16 +171,12 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Linear runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LinearLayer::ForwardSparseCsr(
     const LinearSparseCsrBatchView& input) {
     ValidateLinearSparseCsrBatchView(input, in_features_);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output_gpu;
         if (input.nnz == 0) {
@@ -231,9 +219,6 @@ Tensor LinearLayer::ForwardSparseCsr(
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::ForwardSparseCsr failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Linear runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LinearLayer::ForwardSequence(const Tensor& input) {
@@ -242,29 +227,23 @@ Tensor LinearLayer::ForwardSequence(const Tensor& input) {
         throw std::runtime_error("LinearLayer::ForwardSequence: input must be [batch, seq, in_features]");
     }
     const size_t positions = shape[0] * shape[1];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    {
-        try {
-            const af::array x = af::moddims(input.GetSemanticArray().as(af::dtype::f32),
-                                            static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
-            const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
-            af::array y = af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
-            if (use_bias_) {
-                const af::array b = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
-                y = y + af::tile(b, static_cast<unsigned int>(positions), 1);
-            }
-            y = af::moddims(y, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
-                            static_cast<dim_t>(out_features_));
-            y.eval();
-            input_cache_ = input;
-            return Tensor::FromSemanticArray(y, {shape[0], shape[1], out_features_});
-        } catch (const af::exception& e) {
-            throw std::runtime_error(std::string("LinearLayer::ForwardSequence failed on the ArrayFire device: ") + e.what());
+    try {
+        const af::array x = af::moddims(input.GetSemanticArray().as(af::dtype::f32),
+                                        static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
+        const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+        af::array y = af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
+        if (use_bias_) {
+            const af::array b = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+            y = y + af::tile(b, static_cast<unsigned int>(positions), 1);
         }
+        y = af::moddims(y, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
+                        static_cast<dim_t>(out_features_));
+        y.eval();
+        input_cache_ = input;
+        return Tensor::FromSemanticArray(y, {shape[0], shape[1], out_features_});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("LinearLayer::ForwardSequence failed on the ArrayFire device: ") + e.what());
     }
-#endif
-    Tensor flat = Forward(input.Reshape({positions, in_features_}));
-    return flat.Reshape({shape[0], shape[1], out_features_});
 }
 
 Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
@@ -273,7 +252,6 @@ Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
         throw std::runtime_error("LinearLayer::BackwardSequence: grad must be [batch, seq, out_features]");
     }
     const size_t positions = shape[0] * shape[1];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (input_cache_.Shape().size() == 3) {
         try {
             const af::array dy = af::moddims(grad_output.GetSemanticArray().as(af::dtype::f32),
@@ -302,8 +280,6 @@ Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
             throw std::runtime_error(std::string("LinearLayer::BackwardSequence failed on the ArrayFire device: ") + e.what());
         }
     }
-#endif
-    if (input_cache_.Shape().size() == 3) input_cache_ = input_cache_.Reshape({positions, in_features_});
     Tensor flat = Backward(grad_output.Reshape({positions, out_features_}));
     return flat.Reshape({shape[0], shape[1], in_features_});
 }
@@ -314,7 +290,6 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
     (void)input_shape;  // Suppress unused variable warning
     bool is_batched = grad_shape.size() == 2;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_gpu;
         af::array input_gpu;
@@ -360,9 +335,6 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Linear runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 void LinearLayer::BackwardSparseCsr(
@@ -377,7 +349,6 @@ void LinearLayer::BackwardSparseCsr(
             std::to_string(out_features_) + "]");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_gpu =
             grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
@@ -418,9 +389,6 @@ void LinearLayer::BackwardSparseCsr(
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::BackwardSparseCsr failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Linear runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> LinearLayer::GetParameters() {

@@ -10,9 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -57,7 +55,6 @@ void CheckTensorExact(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t dropout_host_sync_count = 0;
 size_t dropout_fallback_count = 0;
 
@@ -132,7 +129,6 @@ void CheckActiveDeviceResidency(Dropout& dropout) {
     CHECK(unexpected_values == 0);
     CHECK(backward_mismatches == 0);
 }
-#endif
 
 } // namespace
 
@@ -196,9 +192,7 @@ TEST_CASE("Dropout backward follows the exact forward mask contract",
 
     const auto check = [&](auto& dropout) {
         CHECK_THROWS_AS(dropout.Backward(grad_output), std::logic_error);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         af::setSeed(3923);
-#endif
         const cyxwiz::Tensor output = dropout.Forward(input);
         dropout.SetTraining(false);
         const cyxwiz::Tensor grad_input = dropout.Backward(grad_output);
@@ -236,7 +230,6 @@ TEST_CASE("Dropout backward follows the exact forward mask contract",
         unsupported_module.Forward(unsupported), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Dropout distribution matches PyTorch and backend seed replays",
           "[dropout][pytorch][random][replay]") {
     const ScopedArrayFireDeviceRestore restore;
@@ -346,4 +339,3 @@ TEST_CASE("Dropout remains resident on every installed supported route",
     }
 }
 
-#endif

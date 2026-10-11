@@ -107,7 +107,6 @@ Tensor LSTMLayer::BackwardArrayFire(const Tensor& grad_output) {
     if (grad_output.Shape() != expected_grad) {
         throw std::invalid_argument("LSTMLayer::Backward gradient does not match the Forward output shape");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const int eval_interval = LstmAfBackwardEvalInterval();
         const int seq_i = CheckedIntDim(seq, "seq_len");
@@ -204,9 +203,6 @@ Tensor LSTMLayer::BackwardArrayFire(const Tensor& grad_output) {
         throw std::runtime_error(std::string("LSTMLayer::Backward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("LSTMLayer");
-#endif
 }
 
 } // namespace cyxwiz

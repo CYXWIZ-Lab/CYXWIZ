@@ -4,8 +4,7 @@
 // straight into the [L_out, F, N] layout; backward scatters the window
 // gradients back with the transposed gather. No unwrap and no reorder:
 // ArrayFire 3.10's CUDA backend fails to compile its unwrap and strided-copy
-// kernels for these shapes. The CPU is ArrayFire's CPU backend; a build
-// without ArrayFire refuses the layer.
+// kernels for these shapes. The CPU is ArrayFire's CPU backend.
 #include "cyxwiz/layers/convolution.h"
 
 #include "layer_arrayfire_utils.h"
@@ -120,14 +119,12 @@ Conv1DGeometry ValidateConv1DForwardInput(const Tensor& input,
         "Conv1D",
         "matrix column count");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     (void)CheckedIntDim(shape[0], "Conv1D input length");
     (void)CheckedIntDim(shape[1], "Conv1D input channels");
     (void)CheckedIntDim(shape[2], "Conv1D batch size");
     (void)CheckedIntDim(output_length, "Conv1D output length");
     (void)CheckedIntDim(kernel_elements, "Conv1D kernel element count");
     (void)CheckedIntDim(matrix_columns, "Conv1D matrix column count");
-#endif
 
     return {
         shape[0],
@@ -172,13 +169,11 @@ Conv1DGeometry ValidateConv1DBackwardInput(const Tensor& cached_input,
     return geometry;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 [[noreturn]] void ThrowConv1DDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
 
-#endif
 
 } // namespace
 
@@ -187,10 +182,8 @@ Conv1DGeometry ValidateConv1DBackwardInput(const Tensor& cached_input,
 // padding, c) (column l + L*c); padding reads nothing. scatter is G^T.
 struct Conv1DLayer::DeviceGather {
     size_t length = 0;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array gather;
     af::array scatter;
-#endif
 };
 
 Conv1DLayer::Conv1DLayer(int in_channels,
@@ -215,7 +208,6 @@ Conv1DLayer::Conv1DLayer(int in_channels,
             "non-negative padding");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const size_t fan_in_size = CheckedLayerProduct(
         static_cast<size_t>(in_channels_),
         static_cast<size_t>(kernel_size_),
@@ -232,9 +224,6 @@ Conv1DLayer::Conv1DLayer(int in_channels,
         bias_ = AfToTensor(
             af::constant(0.0f, af::dim4(out_channels_)));
     }
-#else
-    throw std::runtime_error("Conv1D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 
     grad_weights_ = Tensor::Zeros(
         Conv1DWeightShape(out_channels_, in_channels_, kernel_size_));
@@ -243,7 +232,6 @@ Conv1DLayer::Conv1DLayer(int in_channels,
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 // The gather for this geometry, rebuilt only when the input length changes.
@@ -308,7 +296,6 @@ af::array Conv1DFilters(const Tensor& weights, const Conv1DGeometry& geometry, i
 }
 
 }  // namespace
-#endif
 
 Tensor Conv1DLayer::Forward(const Tensor& input) {
     has_forward_ = false;
@@ -326,7 +313,6 @@ Tensor Conv1DLayer::Forward(const Tensor& input) {
     const std::vector<size_t> output_shape =
         Conv1DOutputShape(geometry, out_channels_);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         EnsureConv1DGather(gather_->length, gather_->gather, gather_->scatter, geometry, kernel_size_, stride_,
                            padding_, dilation_);
@@ -346,10 +332,6 @@ Tensor Conv1DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowConv1DDeviceError("Conv1DLayer::Forward", e);
     }
-#else
-    (void)geometry; (void)output_shape;
-    throw std::runtime_error("Conv1D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
@@ -370,7 +352,6 @@ Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
         bias_,
         use_bias_);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         EnsureConv1DGather(gather_->length, gather_->gather, gather_->scatter, geometry, kernel_size_, stride_,
                            padding_, dilation_);
@@ -407,10 +388,6 @@ Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowConv1DDeviceError("Conv1DLayer::Backward", e);
     }
-#else
-    (void)geometry;
-    throw std::runtime_error("Conv1D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> Conv1DLayer::GetParameters() {

@@ -2,7 +2,7 @@
 // + cuBLAS on ArrayFire's stream) where it serves, else ArrayFire's unwrap on
 // an explicitly zero-padded input (unwrap refuses padding >= kernel). An
 // ArrayFire error is reported, not hidden behind host loops; the CPU is
-// ArrayFire's CPU backend and a build without ArrayFire refuses the layer.
+// ArrayFire's CPU backend.
 #include "cyxwiz/layers/convolution.h"
 #include "cyxwiz/neural_provider.h"
 #include <spdlog/spdlog.h>
@@ -91,7 +91,6 @@ Conv2DGeometry ValidateConv2DForwardInput(const Tensor& input,
     const size_t matrix_columns = CheckedLayerProduct(
         patch_count, shape[3], layer_name, "matrix column count");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     (void)CheckedIntDim(shape[0], "Conv2D input height");
     (void)CheckedIntDim(shape[1], "Conv2D input width");
     (void)CheckedIntDim(shape[2], "Conv2D input channels");
@@ -101,7 +100,6 @@ Conv2DGeometry ValidateConv2DForwardInput(const Tensor& input,
     (void)CheckedIntDim(kernel_elements, "Conv2D kernel element count");
     (void)CheckedIntDim(patch_count, "Conv2D patch count");
     (void)CheckedIntDim(matrix_columns, "Conv2D matrix column count");
-#endif
 
     return {
         shape[0], shape[1], shape[2], shape[3],
@@ -143,7 +141,6 @@ Conv2DGeometry ValidateConv2DBackwardInput(const Tensor& cached_input,
     return geometry;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 [[noreturn]] void ThrowConv2DDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
@@ -185,7 +182,6 @@ af::array Conv2DGradOutputColumns(const af::array& grad_output,
         static_cast<dim_t>(geometry.matrix_columns));
 }
 
-#endif
 
 } // namespace
 
@@ -208,7 +204,6 @@ Conv2DLayer::Conv2DLayer(int in_channels,
             "non-negative padding");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const size_t kernel_area = CheckedLayerProduct(
         static_cast<size_t>(kernel_size_),
         static_cast<size_t>(kernel_size_),
@@ -230,9 +225,6 @@ Conv2DLayer::Conv2DLayer(int in_channels,
         bias_ = AfToTensor(
             af::constant(0.0f, af::dim4(out_channels_)));
     }
-#else
-    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 
     grad_weights_ = Tensor::Zeros(
         {
@@ -262,7 +254,6 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
     const std::vector<size_t> output_shape =
         Conv2DOutputShape(geometry, out_channels_);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     {
         Tensor provided;
         if (TryProviderForward(input, output_shape, provided)) {
@@ -318,10 +309,6 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         ThrowConv2DDeviceError("Conv2DLayer::Forward", e);
     }
-#else
-    (void)geometry; (void)output_shape;
-    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
@@ -341,7 +328,6 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
         bias_,
         use_bias_);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     {
         Tensor provided;
         if (TryProviderBackward(grad_output, provided)) return provided;
@@ -422,10 +408,6 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         ThrowConv2DDeviceError("Conv2DLayer::Backward", e);
     }
-#else
-    (void)geometry;
-    throw std::runtime_error("Conv2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> Conv2DLayer::GetParameters() {

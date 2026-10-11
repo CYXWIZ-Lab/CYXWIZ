@@ -8,9 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -82,17 +80,11 @@ int main() {
     cyxwiz::Tensor left_host({kBatch, kFeatures}, left_data.data(), cyxwiz::DataType::Float32);
     cyxwiz::Tensor right_host({kBatch, kFeatures}, right_data.data(), cyxwiz::DataType::Float32);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     cyxwiz::Tensor left =
         cyxwiz::Tensor::FromArrayRowMajor2D(left_host.GetArrayRowMajor2D());
     cyxwiz::Tensor right =
         cyxwiz::Tensor::FromArrayRowMajor2D(right_host.GetArrayRowMajor2D());
     const char* backend = "ArrayFire row-major 2D";
-#else
-    const cyxwiz::Tensor& left = left_host;
-    const cyxwiz::Tensor& right = right_host;
-    const char* backend = "CPU fallback";
-#endif
 
     float warmup_checksum = 0.0f;
     RunRowWiseDotBenchmark(left, right, kWarmupIterations, warmup_checksum);

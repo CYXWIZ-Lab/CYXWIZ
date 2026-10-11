@@ -12,9 +12,7 @@
 #include <string>
 #include <spdlog/spdlog.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with ArrayFire functions
 // Must be AFTER all includes (Windows headers define these)

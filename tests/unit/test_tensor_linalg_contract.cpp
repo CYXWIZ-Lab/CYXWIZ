@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -99,17 +100,6 @@ void CheckTensor(const cyxwiz::Tensor& actual,
     throw std::runtime_error("unsupported linalg expected dtype");
 }
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-// A build without ArrayFire refuses linear algebra that needs compute.
-void CheckRefusalWithoutArrayFire(const json& fixture) {
-    const json& dot = fixture.at("dot_cases").at(0);
-    const auto dtype = ParseDataType(dot.at("dtype").get<std::string>());
-    REQUIRE_THROWS_AS(TensorFromFixture(dot.at("left"), dtype).Dot(TensorFromFixture(dot.at("right"), dtype)),
-                      std::runtime_error);
-}
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_linalg_host_sync_count = 0;
 size_t g_linalg_fallback_count = 0;
 
@@ -192,25 +182,18 @@ void CheckResidentCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
     }
 }
 
-#endif
-
 } // namespace
 
 TEST_CASE("Tensor Dot and BatchMatMul match the PyTorch contract",
           "[tensor][tensor_linalg][pytorch]") {
     const json fixture = LoadLinalgFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckResidentCasesOnActiveDevice(fixture, true);
-#else
-    CheckRefusalWithoutArrayFire(fixture);
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor floating BatchMatMul has a resident execution boundary",
           "[tensor][tensor_linalg][arrayfire][batch_residency]") {
     const json fixture = LoadLinalgFixture();
@@ -298,7 +281,6 @@ TEST_CASE("Tensor linalg stays resident on every supported accelerator route",
     }
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
-#endif
 
 TEST_CASE("Tensor linalg rejects invalid PyTorch shapes and mixed dtypes",
           "[tensor][tensor_linalg][invalid]") {
@@ -341,7 +323,6 @@ TEST_CASE("Tensor linalg output overflow fails before compute",
         {maximum, 1, 0}, cyxwiz::DataType::Float32);
     const cyxwiz::Tensor batch_right(
         {maximum, 0, 2}, cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_linalg_host_sync_count = 0;
     g_linalg_fallback_count = 0;
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
@@ -350,12 +331,9 @@ TEST_CASE("Tensor linalg output overflow fails before compute",
         &CountLinalgHostSync);
     const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
         &CountLinalgFallback);
-#endif
     REQUIRE_THROWS_AS(dot_left.Dot(dot_right), std::overflow_error);
     REQUIRE_THROWS_AS(
         batch_left.BatchMatMul(batch_right), std::overflow_error);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     REQUIRE(g_linalg_host_sync_count == 0);
     REQUIRE(g_linalg_fallback_count == 0);
-#endif
 }

@@ -1,6 +1,5 @@
 #include "group_norm_arrayfire.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 
 namespace cyxwiz {
@@ -73,4 +72,3 @@ GroupNormBackward GroupNormBackwardArrayFire(const Tensor& grad_output, const Te
 }
 
 }  // namespace cyxwiz
-#endif

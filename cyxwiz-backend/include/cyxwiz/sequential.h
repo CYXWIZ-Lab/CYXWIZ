@@ -324,7 +324,7 @@ private:
  * matrix is one sparse gather (built once for the sample shape) times the
  * input, the convolution one matmul; backward is the transposed gather, so
  * nothing leaves the device. There is no second CPU implementation: the CPU
- * is ArrayFire's CPU backend, and a build without ArrayFire refuses Conv3D.
+ * is ArrayFire's CPU backend.
  */
 class CYXWIZ_API Conv3DModule : public Module {
 public:

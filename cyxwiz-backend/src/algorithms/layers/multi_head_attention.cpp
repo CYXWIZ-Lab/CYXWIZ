@@ -21,19 +21,11 @@
 namespace cyxwiz {
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
-// reported, not hidden behind host loops; a build without ArrayFire refuses.
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+// reported, not hidden behind host loops.
 [[noreturn]] void ThrowAttentionDeviceError(const char* operation, const af::exception& error) {
     throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
-#else
-[[noreturn]] void ThrowAttentionNeedsArrayFire() {
-    throw std::runtime_error("Multi-head attention runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
-#endif
 
 } // namespace
 
@@ -65,7 +57,6 @@ void MultiHeadAttentionLayer::InitializeWeights() {
     const int kv_dim = num_kv_heads_ * head_dim_;
     const std::vector<size_t> kv_weight_shape{static_cast<size_t>(kv_dim), static_cast<size_t>(embed_dim_)};
     const std::vector<size_t> kv_bias_shape{static_cast<size_t>(kv_dim)};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Xavier initialization for projection weights
         float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
@@ -111,11 +102,6 @@ void MultiHeadAttentionLayer::InitializeWeights() {
     } catch (const af::exception& e) {
         ThrowAttentionDeviceError("MultiHeadAttentionLayer::InitializeWeights", e);
     }
-#else
-    (void)kv_weight_shape;
-    (void)kv_bias_shape;
-    ThrowAttentionNeedsArrayFire();
-#endif
 }
 
 Tensor MultiHeadAttentionLayer::Forward(const Tensor& input) {
@@ -210,11 +196,7 @@ void MultiHeadAttentionLayer::SetQKNorm(bool enabled, float eps) {
 Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
                                          const Tensor& value, const Tensor* attn_mask) {
     if (incremental_) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         return ForwardIncrementalArrayFire(query);
-#else
-        throw std::runtime_error("MultiHeadAttention incremental decoding needs the ArrayFire path");
-#endif
     }
     const auto& q_shape = query.Shape();
     const auto& k_shape = key.Shape();
@@ -266,15 +248,11 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         }
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ForwardArrayFire(query, key, value, attn_mask);
     } catch (const af::exception& e) {
         ThrowAttentionDeviceError("MultiHeadAttentionLayer::Forward", e);
     }
-#else
-    ThrowAttentionNeedsArrayFire();
-#endif
 }
 
 Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
@@ -314,15 +292,11 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("MultiHeadAttention backward dropout mask shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BackwardArrayFire(grad_output);
     } catch (const af::exception& e) {
         ThrowAttentionDeviceError("MultiHeadAttentionLayer::Backward", e);
     }
-#else
-    ThrowAttentionNeedsArrayFire();
-#endif
 }
 
 std::map<std::string, Tensor> MultiHeadAttentionLayer::GetParameters() {

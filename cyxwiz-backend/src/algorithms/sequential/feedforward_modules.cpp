@@ -1,8 +1,6 @@
 ﻿#include <cyxwiz/sequential.h>
 #include "../arrayfire_backend_utils.h"
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 #include <cmath>
 #include <random>
 #include <limits>
@@ -212,7 +210,6 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
         throw std::runtime_error(
             "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     Tensor int_input;
     try {
         // Ids are checked on the device: finite exact integers within the
@@ -239,9 +236,6 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
         throw std::runtime_error(std::string("EmbeddingModule::Forward failed on the ArrayFire device: ") + e.what());
     }
     return layer_->Forward(int_input);
-#else
-    throw std::runtime_error("EmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor EmbeddingModule::Backward(const Tensor& grad_output) {
@@ -441,7 +435,6 @@ Tensor PositionalEncodingModule::ForwardAt(const Tensor& input, size_t position_
             "PositionalEncodingModule: sequence length exceeds max_sequence_length");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Compute one sinusoidal table for this sequence on the selected
         // backend. Preserve the native formula's double intermediate and
@@ -460,9 +453,6 @@ Tensor PositionalEncodingModule::ForwardAt(const Tensor& input, size_t position_
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("PositionalEncodingModule::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("PositionalEncodingModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor PositionalEncodingModule::Backward(const Tensor& grad_output) {
@@ -493,7 +483,6 @@ Tensor TiedOutputProjectionModule::Forward(const Tensor& input) {
         throw std::runtime_error("TiedOutputProjection: input must be Float32 [batch, seq_len, embedding_dim]");
     }
     cached_input_ = input;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = input.GetSemanticArray();
         const dim_t rows = static_cast<dim_t>(shape[0] * shape[1]);
@@ -509,9 +498,6 @@ Tensor TiedOutputProjectionModule::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("TiedOutputProjectionModule::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("TiedOutputProjectionModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
@@ -521,7 +507,6 @@ Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{shape[0], shape[1], vocab}) {
         throw std::runtime_error("TiedOutputProjection: backward shape does not match forward");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t rows = static_cast<dim_t>(shape[0] * shape[1]);
         const af::array dy = af::moddims(grad_output.GetSemanticArray(), rows, static_cast<dim_t>(vocab));
@@ -541,9 +526,6 @@ Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("TiedOutputProjectionModule::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("TiedOutputProjectionModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> TiedOutputProjectionModule::GetParameters() {
@@ -582,7 +564,6 @@ LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_mode
         throw std::invalid_argument("LearnedPositionalEmbedding needs positive d_model and max_sequence_length");
     }
     const std::vector<size_t> shape{max_sequence_length_, d_model_};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array w = af::randn(af::dim4(static_cast<dim_t>(max_sequence_length_), static_cast<dim_t>(d_model_))) * 0.02f;
         w.eval();
@@ -592,9 +573,6 @@ LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_mode
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LearnedPositionalEmbeddingModule::Forward(const Tensor& input) {
@@ -615,7 +593,6 @@ Tensor LearnedPositionalEmbeddingModule::ForwardAt(const Tensor& input, size_t p
         throw std::runtime_error("LearnedPositionalEmbedding: sequence length exceeds max_sequence_length");
     }
     cached_seq_len_ = shape[1];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t seq = static_cast<dim_t>(shape[1]);
         const double first = static_cast<double>(position_offset);
@@ -628,9 +605,6 @@ Tensor LearnedPositionalEmbeddingModule::ForwardAt(const Tensor& input, size_t p
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
@@ -639,7 +613,6 @@ Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
         throw std::runtime_error("LearnedPositionalEmbedding: backward shape does not match forward");
     }
     const std::vector<size_t> weight_shape{max_sequence_length_, d_model_};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const dim_t seq = static_cast<dim_t>(shape[1]);
         const af::array used = af::moddims(af::sum(grad_output.GetSemanticArray(), 0),
@@ -653,9 +626,6 @@ Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LearnedPositionalEmbeddingModule::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("LearnedPositionalEmbeddingModule runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> LearnedPositionalEmbeddingModule::GetParameters() {

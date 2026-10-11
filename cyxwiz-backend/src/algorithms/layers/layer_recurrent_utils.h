@@ -10,11 +10,8 @@
 
 // Device-side sequence plumbing shared by LSTMLayer, GRULayer and the
 // recurrent modules. Every helper works on rank-3 semantic ArrayFire arrays
-// and keeps the data on the device; a build without ArrayFire refuses.
+// and keeps the data on the device.
 namespace cyxwiz::recurrent_detail {
-
-// Throws "<layer> runs on ArrayFire, and this build has no ArrayFire".
-[[noreturn]] void ThrowWithoutArrayFire(const char* layer);
 
 // Flips a [batch, seq, features] (batch_first) or [seq, batch, features]
 // sequence along its time axis.

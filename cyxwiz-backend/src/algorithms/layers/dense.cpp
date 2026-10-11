@@ -26,7 +26,6 @@ DenseLayer::DenseLayer(int in_features, int out_features, bool use_bias)
             "DenseLayer: in_features and out_features must be positive");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Initialize weights using Xavier initialization
     af::dim4 weight_dims(out_features, in_features);
     af::array w = XavierUniform(in_features, out_features, weight_dims);
@@ -44,9 +43,6 @@ DenseLayer::DenseLayer(int in_features, int out_features, bool use_bias)
     if (use_bias_) {
         grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_features)});
     }
-#else
-    throw std::runtime_error("Dense runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor DenseLayer::Forward(const Tensor& input) {
@@ -75,7 +71,6 @@ Tensor DenseLayer::Forward(const Tensor& input) {
     cached_input_ = input.Clone();
     has_cached_input_ = false;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = is_batched
             ? input.GetArrayRowMajor2D().as(af::dtype::f32)
@@ -112,9 +107,6 @@ Tensor DenseLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("DenseLayer::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Dense runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor DenseLayer::Backward(const Tensor& grad_output) {
@@ -139,7 +131,6 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
             "DenseLayer: grad_output must be Float32");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = is_batched
             ? grad_output.GetArrayRowMajor2D().as(af::dtype::f32)
@@ -181,9 +172,6 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("DenseLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Dense runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> DenseLayer::GetParameters() {

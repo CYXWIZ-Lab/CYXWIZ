@@ -8,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <algorithm>
 #include <cmath>
@@ -154,7 +152,6 @@ void CheckReduction(const cyxwiz::Tensor& actual, const json& test_case) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_reduction_host_sync_count = 0;
 size_t g_reduction_fallback_count = 0;
 
@@ -203,37 +200,20 @@ void CheckReductionFixtureOnActiveDevice(const json& fixture,
         CheckReduction(actual, test_case);
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor reductions match generated PyTorch dtype rank and correction matrix",
           "[tensor][tensor_reduction][pytorch]") {
     const json fixture = LoadReductionFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
-#endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckReductionFixtureOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture) {
-        const std::string name = test_case.at("name").get<std::string>();
-        CAPTURE(name);
-        const cyxwiz::DataType input_dtype =
-            ParseDataType(test_case.at("input_dtype").get<std::string>());
-        const cyxwiz::Tensor input =
-            TensorFromFixture(test_case.at("input"), input_dtype);
-        const cyxwiz::Tensor actual = ApplyReduction(input, test_case);
-        CheckReduction(actual, test_case);
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor reductions match PyTorch on every installed accelerator",
           "[tensor][tensor_reduction][accelerator]") {
     const json fixture = LoadReductionFixture();
@@ -266,7 +246,6 @@ TEST_CASE("Tensor reductions match PyTorch on every installed accelerator",
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(restore.success);
 }
-#endif
 
 TEST_CASE("Tensor reduction empty and scalar domains match PyTorch semantics",
           "[tensor][tensor_reduction][empty]") {
@@ -316,7 +295,6 @@ TEST_CASE("Tensor variance correction matches PyTorch singular domains",
     REQUIRE(std::isinf(input.VarWithCorrection(3).ReadData<float>()[0]));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor global empty reductions remain device resident",
           "[tensor][tensor_reduction][arrayfire][empty][residency]") {
     const auto activation =
@@ -435,4 +413,3 @@ TEST_CASE("Tensor rank-five reductions run on the device",
     }
     REQUIRE(g_reduction_fallback_count == 0);
 }
-#endif

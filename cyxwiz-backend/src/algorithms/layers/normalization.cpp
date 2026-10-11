@@ -78,16 +78,11 @@ Tensor LayerNormLayer::Forward(const Tensor& input) {
     }
 
     // Any rank: the device path works on [rows, norm_size].
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ForwardArrayFire(input, norm_size);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LayerNormLayer::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)norm_size;
-    throw std::runtime_error("LayerNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
@@ -117,16 +112,11 @@ Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("LayerNorm backward gamma shape mismatch");
     }
     // Any rank: the device path works on [rows, norm_size].
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BackwardArrayFire(grad_output, norm_size);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LayerNormLayer::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    (void)norm_size;
-    throw std::runtime_error("LayerNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> LayerNormLayer::GetParameters() {
@@ -182,7 +172,6 @@ Tensor InstanceNorm2DLayer::Forward(const Tensor& input) {
         throw std::runtime_error("InstanceNorm2D forward affine parameter mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         auto result = GroupNormForwardArrayFire(input, channels, eps_,
                                                 affine_ ? &gamma_ : nullptr, affine_ ? &beta_ : nullptr);
@@ -192,9 +181,6 @@ Tensor InstanceNorm2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("InstanceNorm2DLayer::Forward", e));
     }
-#else
-    throw std::runtime_error("InstanceNorm2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor InstanceNorm2DLayer::Backward(const Tensor& grad_output) {
@@ -219,7 +205,6 @@ Tensor InstanceNorm2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("InstanceNorm2D backward gamma shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         auto result = GroupNormBackwardArrayFire(grad_output, normalized_, std_inv_, channels,
                                                  affine_ ? &gamma_ : nullptr);
@@ -231,9 +216,6 @@ Tensor InstanceNorm2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("InstanceNorm2DLayer::Backward", e));
     }
-#else
-    throw std::runtime_error("InstanceNorm2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> InstanceNorm2DLayer::GetParameters() {
@@ -288,7 +270,6 @@ Tensor GroupNormLayer::Forward(const Tensor& input) {
         throw std::runtime_error("GroupNorm forward affine parameter mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         auto result = GroupNormForwardArrayFire(input, static_cast<size_t>(num_groups_), eps_,
                                                 affine_ ? &gamma_ : nullptr, affine_ ? &beta_ : nullptr);
@@ -298,9 +279,6 @@ Tensor GroupNormLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("GroupNormLayer::Forward", e));
     }
-#else
-    throw std::runtime_error("GroupNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor GroupNormLayer::Backward(const Tensor& grad_output) {
@@ -327,7 +305,6 @@ Tensor GroupNormLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("GroupNorm backward gamma shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         auto result = GroupNormBackwardArrayFire(grad_output, normalized_, std_inv_, group_count,
                                                  affine_ ? &gamma_ : nullptr);
@@ -339,9 +316,6 @@ Tensor GroupNormLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("GroupNormLayer::Backward", e));
     }
-#else
-    throw std::runtime_error("GroupNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> GroupNormLayer::GetParameters() {

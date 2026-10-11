@@ -29,8 +29,6 @@ using namespace analysis_detail;
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 constexpr double kMachineEpsilon = std::numeric_limits<double>::epsilon();
 
 af::array Constant(double value, const af::array& like) {
@@ -271,8 +269,6 @@ af::array UmapEpoch(const af::array& y, const af::array& rate, const af::array& 
     return updated;
 }
 
-#endif
-
 }  // namespace
 
 // ================================================================== PCA
@@ -295,7 +291,6 @@ PCAResult DimensionalityReduction::ComputePCA(
     }
     const int limit = std::min(n, d);
     const int k = n_components <= 0 || n_components > limit ? limit : n_components;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const Projection projection = Project(MatrixToDevice(data), k, center, scale);
         if (!(projection.total_variance > 0.0)) {
@@ -317,12 +312,6 @@ PCAResult DimensionalityReduction::ComputePCA(
         result = PCAResult{};
         result.error_message = DeviceError("DimensionalityReduction::ComputePCA", e);
     }
-#else
-    (void)center;
-    (void)scale;
-    (void)k;
-    result.error_message = NoArrayFire("DimensionalityReduction::ComputePCA");
-#endif
     return result;
 }
 
@@ -354,7 +343,6 @@ tSNEResult DimensionalityReduction::ComputetSNE(
         result.error_message = "Learning rate must be positive and iterations at least 1";
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         af::array p = ConditionalProbabilities(SquaredDistances(x, x), perplexity);
@@ -409,10 +397,6 @@ tSNEResult DimensionalityReduction::ComputetSNE(
         result = tSNEResult{};
         result.error_message = DeviceError("DimensionalityReduction::ComputetSNE", e);
     }
-#else
-    (void)progress_callback;
-    result.error_message = NoArrayFire("DimensionalityReduction::ComputetSNE");
-#endif
     return result;
 }
 
@@ -444,7 +428,6 @@ UMAPResult DimensionalityReduction::ComputeUMAP(
         return result;
     }
     const int epochs = n_epochs > 0 ? n_epochs : (n <= 10000 ? 500 : 200);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x = MatrixToDevice(data);
         const auto [a, b] = FitAb(min_dist, x.type());
@@ -469,10 +452,6 @@ UMAPResult DimensionalityReduction::ComputeUMAP(
         result = UMAPResult{};
         result.error_message = DeviceError("DimensionalityReduction::ComputeUMAP", e);
     }
-#else
-    (void)epochs;
-    result.error_message = NoArrayFire("DimensionalityReduction::ComputeUMAP");
-#endif
     return result;
 }
 

@@ -2,9 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 Tensor Sigmoid::Forward(const Tensor& input) {
@@ -12,7 +10,6 @@ Tensor Sigmoid::Forward(const Tensor& input) {
         throw std::runtime_error("Sigmoid only supports Float32 tensors");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array input_gpu = input.GetSemanticArray();
 
@@ -24,9 +21,6 @@ Tensor Sigmoid::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("Sigmoid::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Sigmoid runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -34,7 +28,6 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
         throw std::runtime_error("Sigmoid::Backward: gradient and input shapes must match");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_gpu = grad_output.GetSemanticArray();
         af::array input_gpu = input.GetSemanticArray();
@@ -49,9 +42,6 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("Sigmoid::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("Sigmoid runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

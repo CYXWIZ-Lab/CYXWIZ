@@ -2,11 +2,9 @@
 
 #include "algorithms/arrayfire_backend_utils.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include "algorithms/arrayfire_host_materialization.h"
 
 #include <arrayfire.h>
-#endif
 
 #include <spdlog/spdlog.h>
 
@@ -360,7 +358,6 @@ void ReportNativeFallback(const char* operation_name,
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 bool SupportsArrayFireShape(EmbeddingShape shape, size_t rank) {
     return rank <= 4 &&
            shape.batch <=
@@ -559,7 +556,6 @@ RetrievalMetricResult ComputeRetrievalArrayFire(const Tensor& embeddings,
         static_cast<double>(values[2]) / denominator;
     return result;
 }
-#endif
 
 } // namespace
 
@@ -573,7 +569,6 @@ ComputePairDistanceMetrics(const Tensor& embedding_a, const Tensor& embedding_b,
     const std::string context =
         PairFallbackContext(embedding_a, embedding_b, pair_label);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (!SupportsArrayFireShape(shape, embedding_a.Shape().size())) {
         ReportNativeFallback(
             kPairMetricOperation, BackendFallbackReason::UnsupportedShape,
@@ -598,11 +593,6 @@ ComputePairDistanceMetrics(const Tensor& embedding_a, const Tensor& embedding_b,
                 error.what(), context);
         }
     }
-#else
-    ReportNativeFallback(kPairMetricOperation,
-                         BackendFallbackReason::BackendUnavailable,
-                         "ArrayFire support is unavailable", context);
-#endif
     return ComputePairDistanceMetricsNative(embedding_a, embedding_b,
                                             pair_label, convention, threshold);
 }
@@ -614,7 +604,6 @@ RetrievalMetricResult ComputeRetrievalMetrics(const Tensor& embeddings,
         ValidateRetrievalInputs(embeddings, class_ids, k);
     const std::string context = RetrievalFallbackContext(embeddings, class_ids);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const bool supported =
         SupportsArrayFireShape(shape, embeddings.Shape().size()) &&
         shape.batch <= std::numeric_limits<unsigned>::max();
@@ -643,11 +632,6 @@ RetrievalMetricResult ComputeRetrievalMetrics(const Tensor& embeddings,
                 error.what(), context);
         }
     }
-#else
-    ReportNativeFallback(kRetrievalMetricOperation,
-                         BackendFallbackReason::BackendUnavailable,
-                         "ArrayFire support is unavailable", context);
-#endif
     return ComputeRetrievalMetricsNative(embeddings, class_ids, k);
 }
 

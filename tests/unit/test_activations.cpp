@@ -16,9 +16,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -548,7 +546,6 @@ TEST_CASE("PReLU validates parameter and channel contracts", "[activation]") {
     REQUIRE_THROWS(prelu.Forward(wrong_channels));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {
         af::Backend backend = af::getActiveBackend();
@@ -610,4 +607,3 @@ TEST_CASE("Standalone activation GPU gradients materialize host data lazily", "[
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >=
             before + relu_grad.NumBytes() + sigmoid_grad.NumBytes() + tanh_grad.NumBytes());
 }
-#endif

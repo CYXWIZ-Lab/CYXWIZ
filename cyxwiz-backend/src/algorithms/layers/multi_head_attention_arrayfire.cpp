@@ -8,7 +8,6 @@
 #include <cmath>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #ifdef max
 #undef max
@@ -545,4 +544,3 @@ Tensor MultiHeadAttentionLayer::ForwardIncrementalArrayFire(const Tensor& input)
 }
 
 } // namespace cyxwiz
-#endif

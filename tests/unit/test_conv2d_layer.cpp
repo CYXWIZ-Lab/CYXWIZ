@@ -10,9 +10,7 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdlib>
 #include <map>
@@ -40,7 +38,6 @@ void ConfigureReferenceConv(cyxwiz::Conv2DLayer& layer) {
     });
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 void ConfigureReferenceConvDeviceOnly(cyxwiz::Conv2DLayer& layer) {
     layer.SetParameters({
@@ -51,8 +48,6 @@ void ConfigureReferenceConvDeviceOnly(cyxwiz::Conv2DLayer& layer) {
     });
 }
 
-
-#endif
 
 } // namespace
 
@@ -282,7 +277,6 @@ TEST_CASE("Conv2D validates lifecycle shapes dtypes and parameters",
         cyxwiz::Conv2DLayer(1, 1, 1, 1, -1), std::invalid_argument);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 TEST_CASE("Conv2D remains ArrayFire resident under strict fallback policy",
           "[conv][conv2d][arrayfire][residency]") {
@@ -412,4 +406,3 @@ TEST_CASE("Conv2D runs padding wider than the kernel on the device",
          0.0f, 0.0f, 0.0f});
 }
 
-#endif

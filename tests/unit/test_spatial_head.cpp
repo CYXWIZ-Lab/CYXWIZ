@@ -65,7 +65,6 @@ TEST_CASE("Spatial head construction rejects ambiguous layouts",
   CHECK_FALSE(ResolveSpatialSequentialHead(config));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Spatial Flatten preserves row ordering and backward lifecycle",
           "[spatial_head][residency]") {
   BackendLane lane;
@@ -194,4 +193,3 @@ TEST_CASE("Built spatial heads train two batch sizes and reload weights",
     }
   }
 }
-#endif

@@ -4,9 +4,7 @@
 #include <numeric>
 #include <random>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 

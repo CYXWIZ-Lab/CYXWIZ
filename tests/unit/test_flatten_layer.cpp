@@ -10,9 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <cstring>
@@ -61,7 +59,6 @@ void CheckTensor(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_flatten_host_sync_count = 0;
 size_t g_flatten_fallback_count = 0;
 
@@ -147,7 +144,6 @@ void CheckActiveDeviceResidency() {
         grad_input,
         json{{"shape", {2, 3, 4}}, {"values", gradients}});
 }
-#endif
 
 } // namespace
 
@@ -252,7 +248,6 @@ TEST_CASE("Flatten preserves every supported tensor dtype exactly",
           cyxwiz::DataType::UInt8);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Flatten forward and backward remain ArrayFire-resident",
           "[flatten][arrayfire][residency]") {
     CheckActiveDeviceResidency();
@@ -285,4 +280,3 @@ TEST_CASE("Flatten residency passes every installed CUDA and OpenCL device",
         WARN("No CUDA or OpenCL accelerator is installed");
     }
 }
-#endif

@@ -43,7 +43,6 @@ RNNLayer::~RNNLayer() = default;
 
 // PyTorch's nn.RNN initialisation: every weight and bias U(-1/sqrt(H), 1/sqrt(H)).
 void RNNLayer::InitializeWeights() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     W_ih_.resize(num_layers_);
     W_hh_.resize(num_layers_);
     b_ih_.resize(num_layers_);
@@ -74,9 +73,6 @@ void RNNLayer::InitializeWeights() {
         throw std::runtime_error(
             std::string("RNNLayer weight initialization failed on the ArrayFire device: ") + e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("RNNLayer");
-#endif
 }
 
 void RNNLayer::ResetState() {
@@ -165,7 +161,6 @@ bool RNNLayer::TryProviderForward(const Tensor& input, Tensor& output) {
 }
 
 Tensor RNNLayer::ForwardArrayFire(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto& shape = input.Shape();
     const size_t batch = shape[0];
     const size_t seq = shape[1];
@@ -225,10 +220,6 @@ Tensor RNNLayer::ForwardArrayFire(const Tensor& input) {
         throw std::runtime_error(std::string("RNNLayer::Forward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    (void)input;
-    recurrent_detail::ThrowWithoutArrayFire("RNNLayer");
-#endif
 }
 
 Tensor RNNLayer::Backward(const Tensor& grad_output) {
@@ -314,7 +305,6 @@ Tensor RNNLayer::BackwardArrayFire(const Tensor& grad_output) {
     if (grad_output.Shape() != std::vector<size_t>{batch, seq, hidden}) {
         throw std::invalid_argument("RNNLayer::Backward gradient does not match the Forward output shape");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const int seq_i = CheckedIntDim(seq, "seq_len");
         const int batch_i = CheckedIntDim(batch, "batch_size");
@@ -370,9 +360,6 @@ Tensor RNNLayer::BackwardArrayFire(const Tensor& grad_output) {
         throw std::runtime_error(std::string("RNNLayer::Backward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    recurrent_detail::ThrowWithoutArrayFire("RNNLayer");
-#endif
 }
 
 std::map<std::string, Tensor> RNNLayer::GetParameters() {

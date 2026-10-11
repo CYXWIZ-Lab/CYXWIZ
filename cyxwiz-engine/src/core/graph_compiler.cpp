@@ -6780,10 +6780,6 @@ void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
         AddIssue(config, IssueLevel::Error, message, node.id, node.name,
                  errors::Compiler::TensorShapeMismatch);
     };
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    refuse("Image transforms run on ArrayFire, and this build has no ArrayFire");
-    return;
-#endif
     if (!parse_error.empty()) {
         refuse(parse_error);
         return;
@@ -6806,10 +6802,6 @@ void ExtractImageBatchMix(const gui::MLNode& node, const std::string& method, Tr
     const auto refuse = [&](const std::string& message) {
         AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
     };
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    refuse("Image transforms run on ArrayFire, and this build has no ArrayFire");
-    return;
-#endif
     float alpha = 1.0f, probability = 0.5f;
     std::string error;
     if (ParseFloatParam(node.parameters, "alpha", 1.0f, alpha, error)) {
@@ -6837,10 +6829,6 @@ void ExtractImageQuality(const gui::MLNode& node, TrainingConfiguration& config)
     const auto refuse = [&](const std::string& message) {
         AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
     };
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-    refuse("The Quality Analyzer measures images on ArrayFire, and this build has no ArrayFire");
-    return;
-#endif
     if (config.image_quality_node_id >= 0) {
         return refuse("Only one Quality Analyzer per graph");
     }

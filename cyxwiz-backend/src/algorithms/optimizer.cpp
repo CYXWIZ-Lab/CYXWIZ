@@ -11,9 +11,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 

@@ -14,9 +14,7 @@
 #include <tuple>
 #include <unordered_map>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace {
@@ -133,7 +131,6 @@ bool ObservationFromJson(
 } // namespace
 
 std::string CurrentBackendPlacementDeviceSignature() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const int device_id = af::getDevice();
         char name[64] = {};
@@ -151,9 +148,6 @@ std::string CurrentBackendPlacementDeviceSignature() {
     } catch (...) {
         return "af_device=unknown";
     }
-#else
-    return "af_device=unavailable";
-#endif
 }
 
 const char* BackendPlacementProbeOutcomeName(

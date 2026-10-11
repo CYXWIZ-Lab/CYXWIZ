@@ -12,9 +12,7 @@
 #include <string>
 #include <utility>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -82,7 +80,6 @@ std::unique_ptr<TensorHostBuffer> AllocateHostBuffer(size_t bytes) {
 
 } // namespace
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Helper: Convert CyxWiz DataType to ArrayFire dtype
 static af::dtype ToArrayFireType(DataType dtype) {
     switch (dtype) {
@@ -129,21 +126,16 @@ static std::vector<size_t> ShapeFromArrayFireDims(const af::array& arr) {
     return shape;
 }
 
-#endif
 
 Tensor::Tensor()
     : dtype_(DataType::Float32), device_(nullptr)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
       , host_current_(true), device_current_(false), device_layout_(TensorDeviceLayout::None)
-#endif
 {
 }
 
 Tensor::Tensor(const std::vector<size_t>& shape, DataType dtype)
     : shape_(shape), dtype_(dtype), device_(nullptr)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
       , host_current_(true), device_current_(false), device_layout_(TensorDeviceLayout::None)
-#endif
 {
     size_t num_bytes = NumBytes();
     if (num_bytes > 0) {
@@ -154,9 +146,7 @@ Tensor::Tensor(const std::vector<size_t>& shape, DataType dtype)
 
 Tensor::Tensor(const std::vector<size_t>& shape, const void* data, DataType dtype)
     : shape_(shape), dtype_(dtype), device_(nullptr)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
       , host_current_(true), device_current_(false), device_layout_(TensorDeviceLayout::None)
-#endif
 {
     size_t num_bytes = NumBytes();
     if (num_bytes > 0 && data) {
@@ -165,7 +155,6 @@ Tensor::Tensor(const std::vector<size_t>& shape, const void* data, DataType dtyp
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 Tensor::Tensor(const af::array& arr)
     : device_(nullptr), af_array_(std::make_unique<af::array>(arr)),
       host_current_(false), device_current_(true), device_layout_(TensorDeviceLayout::ArrayFireNative)
@@ -173,46 +162,33 @@ Tensor::Tensor(const af::array& arr)
     shape_ = ShapeFromArrayFireDims(arr);
     dtype_ = FromArrayFireType(arr.type());
 }
-#endif
 
 Tensor::Tensor(const Tensor& other)
     : shape_(other.shape_), dtype_(other.dtype_), device_(other.device_)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
       , host_current_(other.host_current_), device_current_(other.device_current_),
         device_layout_(other.device_layout_)
-#endif
 {
     size_t num_bytes = NumBytes();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const bool copy_host = other.host_current_;
-#else
-    const bool copy_host = true;
-#endif
     const void* other_data = HostData(other.host_buffer_);
     if (num_bytes > 0 && copy_host && other_data) {
         host_buffer_ = AllocateHostBuffer(num_bytes);
         memcpy(host_buffer_->Data(), other_data, num_bytes);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (other.device_current_ && other.af_array_) {
         af_array_ = std::make_unique<af::array>(*other.af_array_);
     }
-#endif
 }
 
 Tensor::Tensor(Tensor&& other) noexcept
     : shape_(std::move(other.shape_)), dtype_(other.dtype_), device_(other.device_),
       host_buffer_(std::move(other.host_buffer_))
-#ifdef CYXWIZ_HAS_ARRAYFIRE
       , af_array_(std::move(other.af_array_)), host_current_(other.host_current_),
         device_current_(other.device_current_), device_layout_(other.device_layout_)
-#endif
 {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     other.host_current_ = true;
     other.device_current_ = false;
     other.device_layout_ = TensorDeviceLayout::None;
-#endif
 }
 
 Tensor::~Tensor() = default;
@@ -224,29 +200,21 @@ Tensor& Tensor::operator=(const Tensor& other) {
         dtype_ = other.dtype_;
         device_ = other.device_;
         host_buffer_.reset();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         af_array_.reset();
         host_current_ = other.host_current_;
         device_current_ = other.device_current_;
         device_layout_ = other.device_layout_;
-#endif
 
         size_t num_bytes = NumBytes();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         const bool copy_host = other.host_current_;
-#else
-        const bool copy_host = true;
-#endif
         const void* other_data = HostData(other.host_buffer_);
         if (num_bytes > 0 && copy_host && other_data) {
             host_buffer_ = AllocateHostBuffer(num_bytes);
             memcpy(host_buffer_->Data(), other_data, num_bytes);
         }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         if (other.device_current_ && other.af_array_) {
             af_array_ = std::make_unique<af::array>(*other.af_array_);
         }
-#endif
     }
     return *this;
 }
@@ -258,18 +226,14 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept {
         dtype_ = other.dtype_;
         device_ = other.device_;
         host_buffer_ = std::move(other.host_buffer_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         af_array_ = std::move(other.af_array_);
         host_current_ = other.host_current_;
         device_current_ = other.device_current_;
         device_layout_ = other.device_layout_;
-#endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         other.host_current_ = true;
         other.device_current_ = false;
         other.device_layout_ = TensorDeviceLayout::None;
-#endif
     }
     return *this;
 }
@@ -278,7 +242,6 @@ Tensor Tensor::Clone() const {
     return Tensor(*this);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array Tensor::GetArray() const {
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::ArrayFireNative) {
         return *af_array_;
@@ -803,7 +766,6 @@ void Tensor::ClearDeviceCache() const {
     device_current_ = false;
     device_layout_ = TensorDeviceLayout::None;
 }
-#endif
 
 size_t Tensor::NumElements() const {
     for (size_t dim : shape_) {
@@ -832,16 +794,12 @@ size_t Tensor::NumBytes() const {
 }
 
 const void* Tensor::ReadData() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     EnsureHostCurrent();
-#endif
     return HostData(host_buffer_);
 }
 
 void* Tensor::MutableData() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     MarkHostModified();
-#endif
     return HostData(host_buffer_);
 }
 
@@ -879,7 +837,6 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
         throw std::runtime_error("Tensor::Reshape: new shape must have same number of elements");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (device_current_ && af_array_) {
         try {
             if (new_shape.size() <= 4 && device_layout_ == TensorDeviceLayout::ArrayFireNative) {
@@ -900,7 +857,6 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
             throw std::runtime_error(DeviceError("Tensor::Reshape", e));
         }
     }
-#endif
 
     return Tensor(new_shape, ReadData(), dtype_);
 }

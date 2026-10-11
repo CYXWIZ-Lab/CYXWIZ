@@ -15,7 +15,7 @@ The public C++ entry point is `include/cyxwiz/cyxwiz.h`. Implementation lives un
 
 ## ArrayFire
 
-ArrayFire is discovered with `find_package(ArrayFire QUIET)`. When found, `CYXWIZ_HAS_ARRAYFIRE` is enabled and the backend links to ArrayFire. When the desktop Engine is enabled, ArrayFire is required and configure fails early if it is missing. Backend-only builds with `CYXWIZ_BUILD_ENGINE=OFF` may still compile without ArrayFire as a reduced native development/test configuration.
+ArrayFire is required: configure fails early if `find_package(ArrayFire)` does not find it, whatever else is enabled. The backend computes on ArrayFire only; the CPU option is ArrayFire's CPU backend, and there are no hand-written CPU kernels. The backend links ArrayFire publicly and defines `CYXWIZ_HAS_ARRAYFIRE`, which only sources shared with the ArrayFire-free installer still test.
 
 Not every operation currently has identical placement behavior. Callers and tests must distinguish requested backend, resolved backend, actual device, ArrayFire CPU backend selection, and native CPU compute fallback. ArrayFire execution backends are CPU, CUDA, oneAPI, and OpenCL; Metal/Vulkan are not ArrayFire backends in the current Engine path. Device selection is not proof of complete GPU execution.
 

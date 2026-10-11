@@ -8,9 +8,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with std::min/max
 #ifdef min
@@ -43,7 +41,6 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         return result;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         af::array aB = B.GetArrayRowMajor2D();
@@ -63,10 +60,6 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         result.error_message = std::string("LinearAlgebra::TensorMultiply failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorMultiply runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 TensorResult LinearAlgebra::Transpose(const Tensor& A) {
@@ -79,7 +72,6 @@ TensorResult LinearAlgebra::Transpose(const Tensor& A) {
     }
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
@@ -95,10 +87,6 @@ TensorResult LinearAlgebra::Transpose(const Tensor& A) {
         result.error_message = std::string("LinearAlgebra::TensorTranspose failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorTranspose runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 TensorResult LinearAlgebra::Inverse(const Tensor& A) {
@@ -115,7 +103,6 @@ TensorResult LinearAlgebra::Inverse(const Tensor& A) {
     }
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
@@ -131,10 +118,6 @@ TensorResult LinearAlgebra::Inverse(const Tensor& A) {
         result.error_message = std::string("LinearAlgebra::TensorInverse failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorInverse runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
@@ -146,7 +129,6 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
         return result;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         if (aA.type() != af::dtype::f32 && aA.type() != af::dtype::f64) {
@@ -163,10 +145,6 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
         result.error_message = std::string("LinearAlgebra::TensorFrobeniusNorm failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorFrobeniusNorm runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
@@ -196,7 +174,6 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
         return result;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         af::array aB = b.GetArrayRowMajor2D();
@@ -225,10 +202,6 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
         result.error_message = std::string("LinearAlgebra::TensorSolve failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorSolve runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
@@ -255,7 +228,6 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
         return result;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array aA = A.GetArrayRowMajor2D();
         af::array aB = b.GetArrayRowMajor2D();
@@ -284,10 +256,6 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
         result.error_message = std::string("LinearAlgebra::TensorLeastSquares failed on the ArrayFire device: ") + e.what();
         return result;
     }
-#else
-    result.error_message = "LinearAlgebra::TensorLeastSquares runs on ArrayFire, and this build has no ArrayFire";
-    return result;
-#endif
 }
 
 

@@ -11,13 +11,10 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_host_sync_events = nullptr;
 
 void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
@@ -25,7 +22,6 @@ void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
         g_host_sync_events->push_back(event);
     }
 }
-#endif
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -56,7 +52,6 @@ cyxwiz::Tensor IntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Int64);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 cyxwiz::Tensor DeviceFloatTensor(const std::vector<size_t>& shape,
                                  const std::vector<float>& values) {
     const auto host = FloatTensor(shape, values);
@@ -70,7 +65,6 @@ cyxwiz::Tensor DeviceIntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor::FromSemanticArray(
         host.GetSemanticArray(), host.Shape());
 }
-#endif
 
 void TestEmbeddingOutputResponse() {
     const auto embeddings = FloatTensor({2, 2, 2}, {
@@ -314,7 +308,6 @@ void TestOutputValidation() {
           "cosine pair score should reject zero vectors");
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void TestDeviceOutputMaterializationAttribution() {
     if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
         std::cout << "SKIP: ArrayFire output attribution unavailable\n";
@@ -369,7 +362,6 @@ void TestDeviceOutputMaterializationAttribution() {
               "pair output reads must be attributed");
     }
 }
-#endif
 
 }  // namespace
 
@@ -381,9 +373,7 @@ int main() {
     TestOutputJsonContracts();
     TestPairScoreDefaultsAndThreshold();
     TestOutputValidation();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     TestDeviceOutputMaterializationAttribution();
-#endif
     std::cout << "Metric-learning inference outputs passed\n";
     return 0;
 }

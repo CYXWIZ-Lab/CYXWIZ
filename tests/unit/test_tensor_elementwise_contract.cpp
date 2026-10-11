@@ -8,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <functional>
@@ -149,7 +147,6 @@ void CheckElementwise(const cyxwiz::Tensor& actual, const json& test_case) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_elementwise_host_sync_count = 0;
 size_t g_elementwise_fallback_count = 0;
 
@@ -241,32 +238,19 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
         CheckElementwise(actual, test_case);
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor elementwise operations match generated PyTorch dtype broadcast and rank matrix",
           "[tensor][tensor_elementwise][pytorch]") {
     const json fixture = LoadElementwiseFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckFixtureOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture) {
-        CAPTURE(test_case.at("name").get<std::string>());
-        const auto dtype =
-            ParseDataType(test_case.at("input_dtype").get<std::string>());
-        const cyxwiz::Tensor input =
-            TensorFromFixture(test_case.at("input"), dtype);
-        CheckElementwise(ApplyElementwise(input, test_case), test_case);
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor elementwise matrix matches PyTorch on every installed accelerator",
           "[tensor][tensor_elementwise][accelerator]") {
     const json fixture = LoadElementwiseFixture();
@@ -355,7 +339,6 @@ TEST_CASE("Tensor rank-five elementwise ops run on the device",
         }
     }
 }
-#endif
 
 TEST_CASE("Tensor elementwise finite extremes and invalid domains follow PyTorch",
           "[tensor][tensor_elementwise][extreme]") {

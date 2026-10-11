@@ -2,9 +2,7 @@
 #include "cyxwiz/activations/relu.h"
 #include "../arrayfire_backend_utils.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <map>
@@ -862,7 +860,6 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size, int window) {
     if (window <= 0 || window >= size) {
         return GenerateCausalMask(size);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dim4 dims(size, size);
         const af::array query = af::range(dims, 0, s32);
@@ -874,9 +871,6 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size, int window) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("TransformerDecoderLayer runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
@@ -884,7 +878,6 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
         throw std::invalid_argument("TransformerDecoderLayer causal mask size must be positive");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dim4 dims(size, size);
         const af::array mask = (af::range(dims, 1, u32) > af::range(dims, 0, u32)).as(f32) * -1e9f;
@@ -893,9 +886,6 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("TransformerDecoderLayer runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

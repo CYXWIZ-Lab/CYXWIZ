@@ -3,8 +3,7 @@
 The Matrix Calculator, SVD, QR, Cholesky and Eigen panels compute on the device
 selected in the Devices tab (CUDA, OpenCL, or ArrayFire's CPU backend), the same
 device training uses. There is no separate CPU code path: on a CPU selection the
-work runs on ArrayFire's CPU backend. A build without ArrayFire reports that the
-operation needs ArrayFire.
+work runs on ArrayFire's CPU backend.
 
 ## Precision
 

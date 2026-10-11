@@ -9,10 +9,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -56,13 +54,6 @@ double VarianceDenominator(size_t count, int64_t correction) {
     return denominator > 0.0L ? static_cast<double>(denominator) : 0.0;
 }
 
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-[[noreturn]] void NoArrayFire(const char* operation_name) {
-    throw std::runtime_error(std::string(operation_name) + " runs on ArrayFire, and this build has no ArrayFire");
-}
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 using AxisReduceFn = std::function<af::array(const af::array&, int)>;
 
 // The result of an empty reduction (0 for sum, 1 for prod, NaN for mean / var).
@@ -128,10 +119,8 @@ af::array Variance(const af::array& values, int axis, size_t count, int64_t corr
     const af::array centered = values - af::tile(mean, tiles);
     return af::sum(centered * centered, axis) / VarianceDenominator(count, correction);
 }
-#endif
 
 Tensor VarianceGlobal(const Tensor& input, int64_t correction, const char* operation_name) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const DataType output_dtype = RealReductionType(input.GetDataType());
     try {
         const size_t count = input.NumElements();
@@ -143,11 +132,6 @@ Tensor VarianceGlobal(const Tensor& input, int64_t correction, const char* opera
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(operation_name, e));
     }
-#else
-    (void)input;
-    (void)correction;
-    NoArrayFire(operation_name);
-#endif
 }
 
 Tensor VarianceDim(const Tensor& input, int dim, bool keepdim, int64_t correction,
@@ -156,7 +140,6 @@ Tensor VarianceDim(const Tensor& input, int dim, bool keepdim, int64_t correctio
     if (input.Shape().empty()) {
         return VarianceGlobal(input, correction, operation_name);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const DataType output_dtype = RealReductionType(input.GetDataType());
     const size_t count = input.Shape()[static_cast<size_t>(axis)];
     try {
@@ -171,26 +154,17 @@ Tensor VarianceDim(const Tensor& input, int dim, bool keepdim, int64_t correctio
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(operation_name, e));
     }
-#else
-    (void)keepdim;
-    (void)correction;
-    NoArrayFire(operation_name);
-#endif
 }
 
 } // namespace
 
 Tensor Tensor::Sum() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (NumElements() == 0) return ConstantReduction({}, dtype_, 0.0);
         return FinishGlobal(af::sum(AllValues(*this)), dtype_);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Sum", e));
     }
-#else
-    NoArrayFire("Tensor::Sum");
-#endif
 }
 
 Tensor Tensor::Sum(int dim, bool keepdim) const {
@@ -198,7 +172,6 @@ Tensor Tensor::Sum(int dim, bool keepdim) const {
     if (shape_.empty()) {
         return Sum();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (shape_[static_cast<size_t>(axis)] == 0) {
             return ConstantReduction(ReducedShape(shape_, axis, keepdim), dtype_, 0.0);
@@ -209,15 +182,10 @@ Tensor Tensor::Sum(int dim, bool keepdim) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Sum(dim)", e));
     }
-#else
-    (void)keepdim;
-    NoArrayFire("Tensor::Sum(dim)");
-#endif
 }
 
 Tensor Tensor::Mean() const {
     const DataType output_dtype = RealReductionType(dtype_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (NumElements() == 0) {
             return ConstantReduction({}, output_dtype, std::numeric_limits<double>::quiet_NaN());
@@ -226,10 +194,6 @@ Tensor Tensor::Mean() const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Mean", e));
     }
-#else
-    (void)output_dtype;
-    NoArrayFire("Tensor::Mean");
-#endif
 }
 
 Tensor Tensor::Mean(int dim, bool keepdim) const {
@@ -237,7 +201,6 @@ Tensor Tensor::Mean(int dim, bool keepdim) const {
     if (shape_.empty()) {
         return Mean();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const DataType output_dtype = RealReductionType(dtype_);
     try {
         if (shape_[static_cast<size_t>(axis)] == 0) {
@@ -250,25 +213,17 @@ Tensor Tensor::Mean(int dim, bool keepdim) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Mean(dim)", e));
     }
-#else
-    (void)keepdim;
-    NoArrayFire("Tensor::Mean(dim)");
-#endif
 }
 
 Tensor Tensor::Max() const {
     if (NumElements() == 0) {
         throw std::runtime_error("Tensor::Max: cannot reduce an empty tensor");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return FinishGlobal((af::max)(AllValues(*this)), dtype_);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Max", e));
     }
-#else
-    NoArrayFire("Tensor::Max");
-#endif
 }
 
 Tensor Tensor::Max(int dim, bool keepdim) const {
@@ -279,7 +234,6 @@ Tensor Tensor::Max(int dim, bool keepdim) const {
     if (shape_[static_cast<size_t>(axis)] == 0) {
         throw std::runtime_error("Tensor::Max: cannot reduce an empty dimension");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ReduceAxis(*this, axis, keepdim, dtype_,
                           [](const af::array& values, int reduction_axis) { return (af::max)(values, reduction_axis); },
@@ -287,25 +241,17 @@ Tensor Tensor::Max(int dim, bool keepdim) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Max(dim)", e));
     }
-#else
-    (void)keepdim;
-    NoArrayFire("Tensor::Max(dim)");
-#endif
 }
 
 Tensor Tensor::Min() const {
     if (NumElements() == 0) {
         throw std::runtime_error("Tensor::Min: cannot reduce an empty tensor");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return FinishGlobal((af::min)(AllValues(*this)), dtype_);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Min", e));
     }
-#else
-    NoArrayFire("Tensor::Min");
-#endif
 }
 
 Tensor Tensor::Min(int dim, bool keepdim) const {
@@ -316,7 +262,6 @@ Tensor Tensor::Min(int dim, bool keepdim) const {
     if (shape_[static_cast<size_t>(axis)] == 0) {
         throw std::runtime_error("Tensor::Min: cannot reduce an empty dimension");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return ReduceAxis(*this, axis, keepdim, dtype_,
                           [](const af::array& values, int reduction_axis) { return (af::min)(values, reduction_axis); },
@@ -324,23 +269,15 @@ Tensor Tensor::Min(int dim, bool keepdim) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Min(dim)", e));
     }
-#else
-    (void)keepdim;
-    NoArrayFire("Tensor::Min(dim)");
-#endif
 }
 
 Tensor Tensor::Prod() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (NumElements() == 0) return ConstantReduction({}, dtype_, 1.0);
         return FinishGlobal(af::product(AllValues(*this)), dtype_);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Prod", e));
     }
-#else
-    NoArrayFire("Tensor::Prod");
-#endif
 }
 
 Tensor Tensor::Prod(int dim, bool keepdim) const {
@@ -348,7 +285,6 @@ Tensor Tensor::Prod(int dim, bool keepdim) const {
     if (shape_.empty()) {
         return Prod();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (shape_[static_cast<size_t>(axis)] == 0) {
             return ConstantReduction(ReducedShape(shape_, axis, keepdim), dtype_, 1.0);
@@ -359,10 +295,6 @@ Tensor Tensor::Prod(int dim, bool keepdim) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Prod(dim)", e));
     }
-#else
-    (void)keepdim;
-    NoArrayFire("Tensor::Prod(dim)");
-#endif
 }
 
 Tensor Tensor::Var() const {

@@ -6,10 +6,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -37,7 +35,6 @@ Tensor LogicalTensors(const Tensor& left, const Tensor& right, LogicalOp op) {
             "Tensor logical: output shape overflow") == 0) {
         return Tensor(output_shape, DataType::UInt8);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array lhs = tensor_math_utils::BroadcastArray(left, output_shape, left.GetDataType()) != 0;
         const af::array rhs = tensor_math_utils::BroadcastArray(right, output_shape, right.GetDataType()) != 0;
@@ -47,10 +44,6 @@ Tensor LogicalTensors(const Tensor& left, const Tensor& right, LogicalOp op) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(LogicalOperationName(op), e));
     }
-#else
-    throw std::runtime_error(std::string(LogicalOperationName(op)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace
@@ -67,7 +60,6 @@ Tensor Tensor::operator!() const {
     if (NumElements() == 0) {
         return Tensor(shape_, DataType::UInt8);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = (tensor_math_utils::ElementwiseArray(*this) == 0).as(u8);
         output.eval();
@@ -75,9 +67,6 @@ Tensor Tensor::operator!() const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::operator!", e));
     }
-#else
-    throw std::runtime_error("Tensor::operator! runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz

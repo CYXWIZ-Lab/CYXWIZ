@@ -29,7 +29,6 @@ void RequireValues(const cyxwiz::TensorResult& result, const std::vector<size_t>
 
 }  // namespace
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor Solve handles a non-symmetric system", "[linear_algebra][tensor]") {
     const auto a = Matrix({2, 2}, {4, 2, 1, 3});  // 4x + 2y = 10, x + 3y = 5
     // A^T x = b would give (2.5, 0).
@@ -55,4 +54,3 @@ TEST_CASE("Tensor LeastSquares and FrobeniusNorm", "[linear_algebra][tensor]") {
     REQUIRE(norm.success);
     CHECK(norm.value == Catch::Approx(std::sqrt(30.0)));
 }
-#endif

@@ -60,7 +60,6 @@ ClusterMetrics Clustering::EvaluateClustering(
         result.error_message = "Needs between 2 and n - 1 clusters (noise excluded); found " + std::to_string(k);
         return result;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array all = MatrixToDevice(data);
         const af::array x = all(af::array(m, kept.data()), af::span);  // [m, d]
@@ -130,9 +129,6 @@ ClusterMetrics Clustering::EvaluateClustering(
         result = ClusterMetrics{};
         result.error_message = DeviceError("Clustering::EvaluateClustering", e);
     }
-#else
-    result.error_message = NoArrayFire("Clustering::EvaluateClustering");
-#endif
     return result;
 }
 

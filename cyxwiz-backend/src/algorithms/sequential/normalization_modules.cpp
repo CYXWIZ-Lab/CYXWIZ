@@ -5,9 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 // ============================================================================
@@ -42,7 +40,6 @@ BatchNormModule::BatchNormModule(size_t num_features, float eps, float momentum)
     spdlog::debug("BatchNormModule({}) initialized", num_features);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 // A [features] vector as a [1, features] row of the semantic [batch, features] view.
@@ -52,7 +49,6 @@ af::array FeatureRow(const Tensor& vector) {
 }
 
 }  // namespace
-#endif
 
 // Per-feature statistics over the batch, on the semantic (row-major)
 // [batch, features] view, matching PyTorch BatchNorm1d.
@@ -65,7 +61,6 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
         throw std::invalid_argument(
             "BatchNormModule: input must be non-empty Float32 [batch, num_features]");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const size_t batch_size = shape[0];
         const af::array x = input.GetSemanticArray();
@@ -100,9 +95,6 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("BatchNormModule::Forward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("BatchNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor BatchNormModule::Backward(const Tensor& grad_output) {
@@ -113,7 +105,6 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
         throw std::invalid_argument(
             "BatchNormModule: backward requires a matching training-mode forward pass");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array dy = grad_output.GetSemanticArray();
         const af::array normalized = normalized_.GetSemanticArray();
@@ -134,9 +125,6 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("BatchNormModule::Backward failed on the ArrayFire device: ") + e.what());
     }
-#else
-    throw std::runtime_error("BatchNorm runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> BatchNormModule::GetParameters() {

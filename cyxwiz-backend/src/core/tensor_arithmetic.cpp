@@ -7,10 +7,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -58,7 +56,6 @@ DataType ScalarResultType(DataType input) {
     return input == DataType::Float64 ? DataType::Float64 : DataType::Float32;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array Arithmetic(const af::array& left, const af::array& right, ArithmeticOp operation) {
     switch (operation) {
         case ArithmeticOp::Add: return left + right;
@@ -78,7 +75,6 @@ af::array ScalarArithmetic(const af::array& values, float scalar, ArithmeticOp o
     }
     return values / scalar;
 }
-#endif
 
 Tensor ApplyTensorArithmetic(const Tensor& left,
                              const Tensor& right,
@@ -92,7 +88,6 @@ Tensor ApplyTensorArithmetic(const Tensor& left,
             "Tensor arithmetic: output shape overflow") == 0) {
         return Tensor(output_shape, output_dtype);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dtype type = tensor_math_utils::ArrayFireType(output_dtype);
         af::array output = Arithmetic(tensor_math_utils::BroadcastArray(left, output_shape, output_dtype),
@@ -103,10 +98,6 @@ Tensor ApplyTensorArithmetic(const Tensor& left,
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(TensorOperationName(operation), e));
     }
-#else
-    throw std::runtime_error(std::string(TensorOperationName(operation)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor ApplyScalarArithmetic(const Tensor& input,
@@ -116,7 +107,6 @@ Tensor ApplyScalarArithmetic(const Tensor& input,
     if (input.NumElements() == 0) {
         return Tensor(input.Shape(), output_dtype);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dtype type = tensor_math_utils::ArrayFireType(output_dtype);
         af::array output = ScalarArithmetic(tensor_math_utils::ElementwiseArray(input).as(type),
@@ -126,11 +116,6 @@ Tensor ApplyScalarArithmetic(const Tensor& input,
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(ScalarOperationName(operation), e));
     }
-#else
-    (void)scalar;
-    throw std::runtime_error(std::string(ScalarOperationName(operation)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace

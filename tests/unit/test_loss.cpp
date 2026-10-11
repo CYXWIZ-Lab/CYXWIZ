@@ -16,9 +16,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -54,7 +52,7 @@ public:
     }
 };
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+#ifndef NDEBUG
 using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
 #endif
 
@@ -1176,7 +1174,7 @@ TEST_CASE("Metric-learning backward recomputes from supplied tensors", "[loss][m
     require_equal(actual_triplet.negative, expected_triplet.negative);
 }
 
-#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+#ifndef NDEBUG
 TEST_CASE("Metric-learning device label validation is explicitly attributed",
           "[loss][metric-learning][arrayfire][residency]") {
     const auto make_device_tensor = [](const std::vector<size_t>& shape,

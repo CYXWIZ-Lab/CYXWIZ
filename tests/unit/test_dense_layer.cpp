@@ -817,7 +817,6 @@ TEST_CASE("Attention training dropout stays on ArrayFire under strict native fal
 
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
         cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // The ArrayFire attention path applies training dropout itself and caches
     // the mask for backward, so the strict policy must not see a CPU fallback
     // in either mode.
@@ -826,9 +825,6 @@ TEST_CASE("Attention training dropout stays on ArrayFire under strict native fal
     attention.SetTraining(false);
     REQUIRE_NOTHROW(attention.Forward(attention_input));
     REQUIRE_NOTHROW(attention.Backward(attention_input));
-#else
-    REQUIRE_THROWS_AS(attention.Forward(attention_input), std::runtime_error);
-#endif
 }
 
 TEST_CASE("MultiHeadAttentionLayer causal output matches CPU scaled-dot-product reference",

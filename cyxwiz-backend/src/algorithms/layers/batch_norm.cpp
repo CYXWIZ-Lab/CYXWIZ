@@ -18,7 +18,6 @@
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 // Semantic [H, W, C, B] as [H*W*B, C]: one column per channel.
@@ -36,7 +35,6 @@ af::array ChannelRow(const Tensor& vector) {
 }
 
 }  // namespace
-#endif
 
 BatchNorm2DLayer::BatchNorm2DLayer(int num_features, float eps, float momentum)
     : num_features_(num_features), eps_(eps), momentum_(momentum) {
@@ -78,7 +76,6 @@ Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
         throw std::runtime_error("BatchNorm2D forward channel mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array x4 = input.GetSemanticArray();
         const af::array x = ChannelColumns(x4);
@@ -112,10 +109,6 @@ Tensor BatchNorm2DLayer::Forward(const Tensor& input) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("BatchNorm2DLayer::Forward", e));
     }
-#else
-    (void)channel_shape;
-    throw std::runtime_error("BatchNorm2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
@@ -137,7 +130,6 @@ Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("BatchNorm2D backward parameter/cache shape mismatch");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array dy4 = grad_output.GetSemanticArray();
         const af::array dy = ChannelColumns(dy4);
@@ -158,9 +150,6 @@ Tensor BatchNorm2DLayer::Backward(const Tensor& grad_output) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("BatchNorm2DLayer::Backward", e));
     }
-#else
-    throw std::runtime_error("BatchNorm2D runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 std::map<std::string, Tensor> BatchNorm2DLayer::GetParameters() {

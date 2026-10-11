@@ -7,10 +7,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -61,7 +59,6 @@ Tensor MaterializeBroadcast(const Tensor& input,
         return input.Reshape(target_shape);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = tensor_math_utils::BroadcastArray(input, target_shape, input.GetDataType());
         output.eval();
@@ -69,9 +66,6 @@ Tensor MaterializeBroadcast(const Tensor& input,
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(operation_name, e));
     }
-#else
-    throw std::runtime_error(std::string(operation_name) + " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace

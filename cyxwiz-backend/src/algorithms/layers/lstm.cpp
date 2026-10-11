@@ -137,7 +137,6 @@ Tensor LSTMLayer::ForwardBidirectional(const Tensor& input) {
 }
 
 Tensor LSTMLayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto& shape = input.Shape();
     const size_t batch = batch_first_ ? shape[0] : shape[1];
     const size_t seq = batch_first_ ? shape[1] : shape[0];
@@ -260,11 +259,6 @@ Tensor LSTMLayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) 
         throw std::runtime_error(std::string("LSTMLayer::Forward failed on the ArrayFire device: ") +
                                  e.what());
     }
-#else
-    (void)input;
-    (void)use_initial_state;
-    recurrent_detail::ThrowWithoutArrayFire("LSTMLayer");
-#endif
 }
 
 } // namespace cyxwiz

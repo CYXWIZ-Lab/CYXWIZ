@@ -8,10 +8,6 @@
 #include <memory>
 #include <optional>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
 namespace cyxwiz {
 
 enum class DeviceMetadataStatus {

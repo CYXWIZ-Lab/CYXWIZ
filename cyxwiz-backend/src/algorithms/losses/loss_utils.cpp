@@ -21,15 +21,9 @@
 namespace cyxwiz {
 namespace loss_detail {
 
-void ThrowLossNeedsArrayFire(const char* operation_name) {
-    throw std::runtime_error(std::string(operation_name) + " runs on ArrayFire, and this build has no ArrayFire");
-}
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void ThrowLossDeviceError(const char* operation_name, const af::exception& error) {
     throw std::runtime_error(std::string(operation_name) + " failed on the ArrayFire device: " + error.what());
 }
-#endif
 
 void ValidateFloat32Pair(const Tensor& predictions, const Tensor& targets, const char* name) {
     if (predictions.GetDataType() != DataType::Float32 || targets.GetDataType() != DataType::Float32) {
@@ -58,7 +52,6 @@ void ValidateFloat32Pair(const Tensor& predictions, const Tensor& targets, const
 
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array TensorToAf(const Tensor& t) {
     return t.GetSemanticArray();
 }
@@ -84,13 +77,11 @@ Tensor AfToTensor(const af::array& arr,
                   const std::vector<size_t>& semantic_shape) {
     return Tensor::FromSemanticArray(arr, semantic_shape);
 }
-#endif
 
 
 
 
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array ApplyReduction(const af::array& loss, Reduction reduction) {
     switch (reduction) {
         case Reduction::None:
@@ -140,7 +131,6 @@ af::array SignLike(const af::array& x) {
     return af::select(x > 0.0f, ones, af::select(x < 0.0f, minus_ones, zeros));
 }
 
-#endif // CYXWIZ_HAS_ARRAYFIRE
 
 } // namespace loss_detail
 } // namespace cyxwiz

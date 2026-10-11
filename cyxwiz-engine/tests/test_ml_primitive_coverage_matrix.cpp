@@ -1,9 +1,7 @@
 #include "core/metric_learning_metrics.h"
 #include "cyxwiz/loss.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -18,7 +16,6 @@ namespace {
 class ArrayFireCpuScope {
 public:
     ArrayFireCpuScope() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             original_backend_ = af::getActiveBackend();
             has_original_backend_ = true;
@@ -27,11 +24,9 @@ public:
             std::cout << "NOTE: could not force ArrayFire CPU backend: "
                       << e.what() << "\n";
         }
-#endif
     }
 
     ~ArrayFireCpuScope() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         if (has_original_backend_) {
             try {
                 af::setBackend(original_backend_);
@@ -40,14 +35,11 @@ public:
                           << e.what() << "\n";
             }
         }
-#endif
     }
 
 private:
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::Backend original_backend_ = AF_BACKEND_DEFAULT;
     bool has_original_backend_ = false;
-#endif
 };
 
 void Check(bool condition, const std::string& message) {
@@ -216,7 +208,6 @@ void TestCpuMetricCoverage() {
 }
 
 bool ActiveArrayFireGpuBackend() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::Backend backend = af::getActiveBackend();
         return backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL;
@@ -225,10 +216,6 @@ bool ActiveArrayFireGpuBackend() {
                   << e.what() << "\n";
         return false;
     }
-#else
-    std::cout << "SKIP: ArrayFire not compiled for this build\n";
-    return false;
-#endif
 }
 
 void TestArrayFireGpuLossCoverageOrSkip() {
@@ -238,7 +225,6 @@ void TestArrayFireGpuLossCoverageOrSkip() {
         return;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const float prediction_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
     const float target_values[] = {1.0f, 1.0f, 2.0f, 2.0f};
     const af::array prediction_array(2, 2, prediction_values);
@@ -253,7 +239,6 @@ void TestArrayFireGpuLossCoverageOrSkip() {
     Check(grad.Shape() == std::vector<size_t>({2, 2}),
           "ArrayFire MSELoss backward should preserve shape");
     CheckFiniteTensor(grad, "ArrayFire MSELoss backward");
-#endif
 }
 
 void PrintCoverageMatrix() {

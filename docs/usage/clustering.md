@@ -3,7 +3,7 @@
 The K-Means, DBSCAN, Hierarchical, GMM and Cluster Evaluation panels, and the
 clustering nodes in Data Studio, compute on the device selected in the Devices
 tab (CUDA, OpenCL, or ArrayFire's CPU backend). There is no separate CPU code
-path; a build without ArrayFire reports that clustering needs ArrayFire. Results
+path. Results
 are float64 where the device supports it, otherwise float32.
 
 Each algorithm is checked against float64 references of the library it follows:

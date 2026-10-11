@@ -7,10 +7,8 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
@@ -45,7 +43,6 @@ const char* UnaryOperationName(UnaryOp operation) {
     return "Tensor::unary";
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array RealUnary(const af::array& values, UnaryOp operation, float first, float second) {
     switch (operation) {
         case UnaryOp::Pow: return af::pow(values, first);
@@ -104,7 +101,6 @@ af::array TensorPow(const af::array& left, const af::array& right, DataType outp
     }
     return af::select(nonnegative, output, af::constant(0, output.dims(), output.type()));
 }
-#endif
 
 Tensor ApplyRealUnary(const Tensor& input,
                       UnaryOp operation,
@@ -113,7 +109,6 @@ Tensor ApplyRealUnary(const Tensor& input,
     const DataType output_dtype =
         tensor_math_utils::RealType(input.GetDataType());
     if (input.NumElements() == 0) return Tensor(input.Shape(), output_dtype);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dtype type = tensor_math_utils::ArrayFireType(output_dtype);
         af::array output = RealUnary(tensor_math_utils::ElementwiseArray(input).as(type),
@@ -123,19 +118,12 @@ Tensor ApplyRealUnary(const Tensor& input,
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(UnaryOperationName(operation), e));
     }
-#else
-    (void)first;
-    (void)second;
-    throw std::runtime_error(std::string(UnaryOperationName(operation)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor ApplyPreservingUnary(const Tensor& input, UnaryOp operation) {
     if (input.NumElements() == 0) {
         return Tensor(input.Shape(), input.GetDataType());
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = PreservingUnary(tensor_math_utils::ElementwiseArray(input), operation)
                                .as(tensor_math_utils::ArrayFireType(input.GetDataType()));
@@ -144,10 +132,6 @@ Tensor ApplyPreservingUnary(const Tensor& input, UnaryOp operation) {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError(UnaryOperationName(operation), e));
     }
-#else
-    throw std::runtime_error(std::string(UnaryOperationName(operation)) +
-                             " runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace
@@ -166,7 +150,6 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
             "Tensor::Pow: output shape overflow") == 0) {
         return Tensor(output_shape, output_dtype);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array output = TensorPow(tensor_math_utils::BroadcastArray(*this, output_shape, output_dtype),
                                      tensor_math_utils::BroadcastArray(exponent, output_shape, output_dtype),
@@ -177,9 +160,6 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::Pow(tensor)", e));
     }
-#else
-    throw std::runtime_error("Tensor::Pow(tensor) runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 Tensor Tensor::Sqrt() const {

@@ -7,9 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <fstream>
@@ -59,7 +57,6 @@ void CheckTensor(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -157,7 +154,6 @@ void CheckDeviceShapeMatrix() {
     REQUIRE(flattened.Shape() == std::vector<size_t>{1, 6});
     REQUIRE(flattened.ReadData<T>()[5] == values[5]);
 }
-#endif
 
 } // namespace
 
@@ -223,7 +219,6 @@ TEST_CASE("Tensor shape operations reject invalid dimensions and products",
     REQUIRE(zero_product.NumElements() == 0);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor shape operations remain device resident for every dtype",
           "[tensor][tensor_shape][arrayfire][host_sync]") {
     const auto activation =
@@ -237,4 +232,3 @@ TEST_CASE("Tensor shape operations remain device resident for every dtype",
     CheckDeviceShapeMatrix<int64_t>();
     CheckDeviceShapeMatrix<uint8_t>();
 }
-#endif

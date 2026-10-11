@@ -7,17 +7,14 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_backend_utils.h"
 #include "../algorithms/arrayfire_host_values.h"
-#endif
 
 namespace cyxwiz {
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 Tensor DotArrayFire(const Tensor& left, const Tensor& right) {
     af::array output = af::sum(
         left.GetSemanticArray() * right.GetSemanticArray());
@@ -83,7 +80,6 @@ Tensor BatchMatMulArrayFire(const Tensor& left,
     output.eval();
     return Tensor::FromSemanticArray(output, output_shape);
 }
-#endif
 
 void RequireSameDType(const Tensor& left, const Tensor& right, const char* message) {
     if (left.GetDataType() != right.GetDataType()) {
@@ -118,15 +114,11 @@ Tensor Tensor::Dot(const Tensor& other) const {
         const std::vector<size_t> output_shape{1};
         ValidateLinalgOutputShape(output_shape, dtype_);
         if (NumElements() == 0) return Tensor::Zeros(output_shape, dtype_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             return DotArrayFire(*this, other);
         } catch (const af::exception& e) {
             throw std::runtime_error(DeviceError("Tensor::Dot", e));
         }
-#else
-        throw std::runtime_error("Tensor::Dot runs on ArrayFire, and this build has no ArrayFire");
-#endif
     }
 
     if (shape_.size() == 2 && other.Shape().size() == 2) {
@@ -138,15 +130,11 @@ Tensor Tensor::Dot(const Tensor& other) const {
             ValidateLinalgOutputShape(output_shape, dtype_);
         if (output_count == 0) return Tensor(output_shape, dtype_);
         if (shape_[1] == 0) return Tensor::Zeros(output_shape, dtype_);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         try {
             return RowWiseDotArrayFire(*this, other);
         } catch (const af::exception& e) {
             throw std::runtime_error(DeviceError("Tensor::Dot", e));
         }
-#else
-        throw std::runtime_error("Tensor::Dot runs on ArrayFire, and this build has no ArrayFire");
-#endif
     }
 
     throw std::runtime_error("Tensor::Dot: both tensors must be 1D or both 2D");
@@ -175,15 +163,11 @@ Tensor Tensor::BatchMatMul(const Tensor& other) const {
         return Tensor::Zeros(output_shape, dtype_);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         return BatchMatMulArrayFire(*this, other, output_shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(DeviceError("Tensor::BatchMatMul", e));
     }
-#else
-    throw std::runtime_error("Tensor::BatchMatMul runs on ArrayFire, and this build has no ArrayFire");
-#endif
 }
 
 } // namespace cyxwiz
