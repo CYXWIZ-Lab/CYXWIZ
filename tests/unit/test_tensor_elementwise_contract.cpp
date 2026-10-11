@@ -148,14 +148,9 @@ void CheckElementwise(const cyxwiz::Tensor& actual, const json& test_case) {
 }
 
 size_t g_elementwise_host_sync_count = 0;
-size_t g_elementwise_fallback_count = 0;
 
 void CountElementwiseHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_elementwise_host_sync_count;
-}
-
-void CountElementwiseFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_elementwise_fallback_count;
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -198,15 +193,10 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
             const std::string operation =
                 test_case.at("operation").get<std::string>();
             g_elementwise_host_sync_count = 0;
-            g_elementwise_fallback_count = 0;
             cyxwiz::Tensor actual;
             {
-                const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                    cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
                 const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                     &CountElementwiseHostSync);
-                const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                    &CountElementwiseFallback);
                 if (operation == "add") actual = input + rhs;
                 else if (operation == "subtract") actual = input - rhs;
                 else if (operation == "multiply") actual = input * rhs;
@@ -215,26 +205,19 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
                 if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
             }
             REQUIRE(g_elementwise_host_sync_count == 0);
-            REQUIRE(g_elementwise_fallback_count == 0);
             CheckElementwise(actual, test_case);
             continue;
         }
 
         g_elementwise_host_sync_count = 0;
-        g_elementwise_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountElementwiseHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountElementwiseFallback);
             actual = ApplyElementwise(input, active_case);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_elementwise_host_sync_count == 0);
-        REQUIRE(g_elementwise_fallback_count == 0);
         CheckElementwise(actual, test_case);
     }
 }
@@ -315,19 +298,13 @@ TEST_CASE("Tensor rank-five elementwise ops run on the device",
         {"clip", [](const auto& l, const auto&) { return l.Clip(1.0f, 4.0f); }},
         {"negate", [](const auto& l, const auto&) { return -l; }},
     };
-    g_elementwise_fallback_count = 0;
     std::vector<cyxwiz::Tensor> rank5, rank4;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountElementwiseFallback);
         for (const auto& [name, op] : ops) {
             rank5.push_back(op(left, right));
             rank4.push_back(op(left4, right));
         }
     }
-    REQUIRE(g_elementwise_fallback_count == 0);
     for (size_t i = 0; i < ops.size(); ++i) {
         CAPTURE(ops[i].first);
         REQUIRE(rank5[i].Shape() == left.Shape());

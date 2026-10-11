@@ -86,15 +86,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_shape_host_sync_count = 0;
-size_t g_shape_fallback_count = 0;
 
 void CountShapeHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_shape_host_sync_count;
-}
-
-void CountShapeFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_shape_fallback_count;
 }
 
 template<typename T>
@@ -110,7 +104,6 @@ void CheckDeviceShapeMatrix() {
     device_only.SetFromArray(host.GetArray());
 
     g_shape_host_sync_count = 0;
-    g_shape_fallback_count = 0;
     cyxwiz::Tensor reshaped;
     cyxwiz::Tensor viewed;
     cyxwiz::Tensor squeezed;
@@ -119,12 +112,8 @@ void CheckDeviceShapeMatrix() {
     cyxwiz::Tensor unsqueezed;
     cyxwiz::Tensor flattened;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountShapeHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountShapeFallback);
 
         reshaped = device_only.Reshape({3, 2});
         viewed = device_only.View({2, 3});
@@ -144,7 +133,6 @@ void CheckDeviceShapeMatrix() {
     }
 
     REQUIRE(g_shape_host_sync_count == 0);
-    REQUIRE(g_shape_fallback_count == 0);
     REQUIRE(reshaped.Shape() == std::vector<size_t>{3, 2});
     REQUIRE(viewed.Shape() == std::vector<size_t>{2, 3});
     REQUIRE(squeezed.Shape() == std::vector<size_t>{2, 3});

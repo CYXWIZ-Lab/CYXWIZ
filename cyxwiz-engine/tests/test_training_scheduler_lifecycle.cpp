@@ -118,7 +118,7 @@ void SelectStrictArrayFireCpu() {
         cyxwiz::DeviceType::CPU, cpu->device_id);
     cyxwiz::ClearNextRunExecutionPolicy();
     cyxwiz::SetNextRunExecutionPolicy(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Strict);
 }
 
 cyxwiz::TrainingMetrics Run(
@@ -405,8 +405,6 @@ void TestOneCycleUsesRealOptimizerUpdates(
     }
     Check(scheduler_events == metrics.scheduler_step_count,
           "trace scheduler events should reconcile with TrainingMetrics");
-    Check(trace.native_cpu_fallback_count == 0,
-          "strict scheduler lifecycle run should use no native CPU fallback");
     Check(trace.requested_backend == "arrayfire_cpu" &&
               trace.effective_backend == "arrayfire_cpu",
           "scheduler lifecycle trace should preserve exact CPU route identity");

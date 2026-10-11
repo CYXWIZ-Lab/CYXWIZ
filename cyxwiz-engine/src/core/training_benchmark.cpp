@@ -141,7 +141,6 @@ json ToJson(const TrainingBenchmarkResult& r) {
             {"step_ms_p90", r.step_ms_p90},
             {"tokens_per_second", r.tokens_per_second},
             {"wall_seconds", r.wall_seconds},
-            {"native_cpu_fallbacks", r.native_cpu_fallbacks},
             {"first_loss", r.first_loss},
             {"last_loss", r.last_loss}};
 }
@@ -166,7 +165,6 @@ TrainingBenchmarkResult FromJson(const json& j) {
     r.step_ms_p90 = j.value("step_ms_p90", 0.0);
     r.tokens_per_second = j.value("tokens_per_second", 0.0);
     r.wall_seconds = j.value("wall_seconds", 0.0);
-    r.native_cpu_fallbacks = j.value("native_cpu_fallbacks", 0LL);
     r.first_loss = j.value("first_loss", 0.0f);
     r.last_loss = j.value("last_loss", 0.0f);
     return r;
@@ -247,7 +245,6 @@ TrainingBenchmarkResult RunTrainingBenchmark(const TrainingBenchmarkOptions& opt
     result.step_ms_p90 = Percentile(steady, 0.9);
     result.tokens_per_second =
         result.step_ms_median > 0.0 ? result.tokens_per_step * 1000.0 / result.step_ms_median : 0.0;
-    result.native_cpu_fallbacks = static_cast<long long>(trace.native_cpu_fallback_count);
     result.first_loss = losses.front();
     result.last_loss = losses.back();
     result.ok = true;

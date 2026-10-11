@@ -111,14 +111,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_concat_host_sync_count = 0;
-size_t g_concat_fallback_count = 0;
 
 void CountConcatHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_concat_host_sync_count;
-}
-
-void CountConcatFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_concat_fallback_count;
 }
 
 size_t ElementCount(const std::vector<size_t>& shape) {
@@ -156,20 +151,14 @@ void CheckResidentCat(const std::vector<std::vector<size_t>>& shapes,
     }
 
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         output = cyxwiz::Tensor::Cat(inputs, static_cast<int>(axis));
         output.GetSemanticArray().eval();
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
 
     std::vector<size_t> output_shape = shapes.front();
     output_shape[axis] = 0;
@@ -214,20 +203,14 @@ void CheckResidentStack(const std::vector<size_t>& shape, size_t axis) {
         DeviceTensor<T>(shape, count)};
 
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         output = cyxwiz::Tensor::Stack(inputs, static_cast<int>(axis));
         output.GetSemanticArray().eval();
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
 
     std::vector<size_t> output_shape = shape;
     output_shape.insert(output_shape.begin() + static_cast<ptrdiff_t>(axis), 2);
@@ -260,16 +243,11 @@ template<typename T>
 void CheckResidentSplitChunk() {
     cyxwiz::Tensor input = DeviceTensor<T>({2, 3, 4}, 0);
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     std::vector<cyxwiz::Tensor> split;
     std::vector<cyxwiz::Tensor> chunks;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         split = input.Split(2, 2);
         chunks = input.Chunk(2, 1);
         for (const cyxwiz::Tensor& output : split) {
@@ -280,7 +258,6 @@ void CheckResidentSplitChunk() {
         }
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
     REQUIRE(split.size() == 2);
     REQUIRE(chunks.size() == 2);
     REQUIRE(split[0].Shape() == std::vector<size_t>{2, 3, 2});
@@ -406,15 +383,10 @@ TEST_CASE("Tensor rank-five concat runs on the device",
     const std::vector<size_t> shape4{2, 3, 2, 3};
     const cyxwiz::Tensor first4 = cyxwiz::Tensor::RangeN(shape4, cyxwiz::DataType::Float32);
     const cyxwiz::Tensor second4 = first4 + 1000.0f;
-    g_concat_fallback_count = 0;
     for (int axis = 0; axis < 5; ++axis) {
         CAPTURE(axis);
         cyxwiz::Tensor cat, stack;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-                &CountConcatFallback);
             cat = cyxwiz::Tensor::Cat({first, second}, axis);
             stack = cyxwiz::Tensor::Stack({first4, second4}, axis);
         }
@@ -440,5 +412,4 @@ TEST_CASE("Tensor rank-five concat runs on the device",
             REQUIRE(stack_values[i] == static_cast<float>(tensor_test::Ravel(c, shape4)) + (which == 1 ? 1000.0f : 0.0f));
         }
     }
-    REQUIRE(g_concat_fallback_count == 0);
 }

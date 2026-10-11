@@ -174,10 +174,7 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
         Tensor y, dx;
         ResetConvObservations();
         {
-          ScopedArrayFireFallbackPolicy strict(
-              ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
           ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-          ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
           y = built.model->Forward(input);
           dx = built.model->Backward(dy);
           dx.GetSemanticArray().eval();
@@ -185,7 +182,6 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
         }
         CHECK(conv_host_sync_count == 0);
         CHECK(conv_host_sync_bytes == 0);
-        CHECK(conv_fallback_count == 0);
         CheckValues(y, high, expected);
         UpsamplingConfiguration resolved;
         REQUIRE_FALSE(ResolveUpsamplingConfiguration(

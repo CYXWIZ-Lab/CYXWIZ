@@ -207,8 +207,6 @@ TEST_CASE("Device-only ArrayFire exception handlers report the device error",
         size_t handlers = 0;
         for (size_t i = 0; i < lines.size(); ++i) {
             INFO(relative_path << ":" << (i + 1));
-            CHECK(lines[i].find("ThrowIfArrayFireNativeCpuFallbackForbidden") ==
-                  std::string::npos);
             if (lines[i].find("catch (const af::exception") == std::string::npos) continue;
             ++handlers;
             bool reports = false;

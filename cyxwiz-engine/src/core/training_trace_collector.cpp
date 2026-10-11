@@ -313,11 +313,7 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"selection_fallback_applied", event.selection_fallback_applied},
         {"preflight_stage", event.preflight_stage},
         {"preflight_error_code", event.preflight_error_code},
-        {"fallback_target", event.fallback_target},
-        {"fallback_operation", event.fallback_operation},
-        {"fallback_reason", event.fallback_reason},
-        {"fallback_policy", event.fallback_policy},
-        {"native_cpu_fallback", event.native_cpu_fallback},
+        {"execution_policy", event.execution_policy},
         {"arrayfire_host_sync_bytes", event.arrayfire_host_sync_bytes},
         {"arrayfire_host_sync_reason", event.arrayfire_host_sync_reason},
         {"arrayfire_host_sync_category", event.arrayfire_host_sync_category},
@@ -422,11 +418,7 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
         j.value("selection_fallback_applied", false);
     event.preflight_stage = j.value("preflight_stage", "");
     event.preflight_error_code = j.value("preflight_error_code", 0);
-    event.fallback_target = j.value("fallback_target", "");
-    event.fallback_operation = j.value("fallback_operation", "");
-    event.fallback_reason = j.value("fallback_reason", "");
-    event.fallback_policy = j.value("fallback_policy", "");
-    event.native_cpu_fallback = j.value("native_cpu_fallback", false);
+    event.execution_policy = j.value("execution_policy", "");
     event.arrayfire_host_sync_bytes =
         j.value("arrayfire_host_sync_bytes", uint64_t{0});
     event.arrayfire_host_sync_reason =
@@ -466,8 +458,6 @@ bool IsFailureStatus(const std::string& status) {
 void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     bool saw_context_bind = !summary.execution_context_id.empty();
     bool saw_placement_plan = !summary.placement_fingerprint.empty();
-    const bool derive_fallback_count =
-        summary.native_cpu_fallback_count == 0;
     const bool derive_transfer_counts =
         summary.transfer_event_count == 0 &&
         summary.transfer_known_bytes == 0;
@@ -479,7 +469,6 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     const bool derive_host_sync =
         summary.arrayfire_host_sync_count == 0 &&
         summary.arrayfire_host_sync_bytes == 0;
-    uint64_t derived_fallback_count = 0;
     uint64_t derived_transfer_event_count = 0;
     uint64_t derived_transfer_known_bytes = 0;
     uint64_t derived_synchronization_event_count = 0;
@@ -492,9 +481,6 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     std::map<std::string, TrainingTraceHostSyncGroup>
         derived_host_sync_groups;
     for (const auto& event : summary.recent_events) {
-        if (event.native_cpu_fallback) {
-            ++derived_fallback_count;
-        }
         if (!event.transfer_mode.empty()) {
             ++derived_transfer_event_count;
             derived_transfer_known_bytes += event.arrayfire_host_sync_bytes;
@@ -566,7 +552,7 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
                 event.selection_fallback_applied;
             summary.preflight_stage = event.preflight_stage;
             summary.preflight_error_code = event.preflight_error_code;
-            summary.fallback_policy = event.fallback_policy;
+            summary.execution_policy = event.execution_policy;
         }
         if (!saw_placement_plan &&
             event.stage == "TrainingExecutor.PlacementPlan") {
@@ -575,9 +561,6 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
             summary.placement_entry_count = event.placement_entry_count;
             summary.placement_summary = event.placement_summary;
         }
-    }
-    if (derive_fallback_count) {
-        summary.native_cpu_fallback_count = derived_fallback_count;
     }
     if (derive_transfer_counts) {
         summary.transfer_event_count = derived_transfer_event_count;
@@ -625,12 +608,6 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
             "No execution device context bind event was recorded.";
         return;
     }
-    if (summary.native_cpu_fallback_count > 0) {
-        summary.residency_verdict = "native_cpu_fallback_observed";
-        summary.residency_reason =
-            "Native CPU fallback events were recorded for this run.";
-        return;
-    }
     if (!IsTerminalStatus(summary.status)) {
         summary.residency_verdict = "in_progress";
         summary.residency_reason =
@@ -640,24 +617,23 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     if (!IsSuccessfulTerminalStatus(summary.status)) {
         summary.residency_verdict = "terminal_without_residency_pass";
         summary.residency_reason =
-            "Run ended without native CPU fallback, but did not complete "
-            "successfully.";
+            "Run did not complete successfully.";
         return;
     }
-    if (summary.fallback_policy == "forbid_native_cpu_fallback" &&
+    if (summary.execution_policy == "strict" &&
         summary.execution_platform == "arrayfire") {
         summary.residency_verdict =
             "strict_arrayfire_declared_boundaries";
         summary.residency_reason =
-            "Strict ArrayFire run completed with zero native CPU fallback "
-            "events; declared host output boundaries are recorded separately.";
+            "Strict ArrayFire run completed on the selected device; declared "
+            "host output boundaries are recorded separately.";
         return;
     }
 
-    summary.residency_verdict = "compatibility_mode_no_fallback_observed";
+    summary.residency_verdict = "compatibility_completed";
     summary.residency_reason =
-        "Run completed without recorded native CPU fallback, but native CPU "
-        "fallback was allowed by policy.";
+        "Run completed under the compatibility policy, which may recover on "
+        "ArrayFire's CPU backend.";
 }
 
 } // namespace
@@ -679,7 +655,6 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     has_execution_context_event_ = false;
     placement_plan_event_ = TrainingTraceEvent{};
     has_placement_plan_event_ = false;
-    native_cpu_fallback_count_ = 0;
     transfer_event_count_ = 0;
     transfer_known_bytes_ = 0;
     transfer_reason_counts_.clear();
@@ -911,62 +886,6 @@ void TrainingTraceCollector::RecordPinMemoryTransferStatus(
     MaybePersistLocked(IsFailureStatus(event.status));
 }
 
-void TrainingTraceCollector::RecordNativeCpuFallback(
-    const ArrayFireNativeCpuFallbackEvent& fallback) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (run_id_.empty()) {
-        return;
-    }
-
-    TrainingTraceEvent event;
-    event.timestamp = NowLocal();
-    event.run_id = run_id_;
-    event.stage = "ArrayFire.NativeCpuFallback";
-    event.thread_id = ThreadIdString();
-    event.status = fallback.fallback_forbidden ? "error" : "warning";
-    event.compute_backend = fallback.selected_backend;
-    event.fallback_target = "native_cpu";
-    event.fallback_operation = fallback.operation_name;
-    event.fallback_reason = fallback.reason_code;
-    event.fallback_policy = fallback.fallback_forbidden
-        ? "forbid_native_cpu_fallback"
-        : "allow_native_cpu_fallback";
-    event.native_cpu_fallback = true;
-    event.message = "ArrayFire operation '" + fallback.operation_name +
-        "' on backend '" + fallback.selected_backend +
-        "' attempted native CPU fallback";
-    if (!fallback.reason_code.empty()) {
-        event.message += " (reason=" + fallback.reason_code + ")";
-    }
-    if (!fallback.context.empty()) {
-        event.message += ". Context: " + fallback.context;
-    }
-    if (!events_.empty()) {
-        const auto& latest = events_.back();
-        event.epoch = latest.epoch;
-        event.batch = latest.batch;
-        event.total_batches = latest.total_batches;
-        event.loss = latest.loss;
-        event.accuracy = latest.accuracy;
-        event.validation_loss = latest.validation_loss;
-        event.validation_accuracy = latest.validation_accuracy;
-    }
-    PopulateStageExecutionContext(event);
-    PopulateMemorySnapshot(event);
-    events_.push_back(event);
-    ++native_cpu_fallback_count_;
-    while (events_.size() > settings_.max_recent_events) {
-        events_.pop_front();
-    }
-
-    warnings_.push_back(event.message);
-    if (warnings_.size() > 50) {
-        warnings_.erase(warnings_.begin());
-    }
-
-    MaybePersistLocked(true);
-}
-
 void TrainingTraceCollector::RecordArrayFireHostSync(
     const ArrayFireHostSyncEvent& sync) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1095,7 +1014,7 @@ void TrainingTraceCollector::RecordExecutionDeviceContext(
     event.stage_backend = context.effective_backend;
     event.stage_device_id = context.effective_device_id;
     event.stage_device_name = context.device_name;
-    event.fallback_policy = context.FallbackPolicyName();
+    event.execution_policy = context.ExecutionPolicyName();
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     execution_context_event_ = event;
@@ -1441,7 +1360,6 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     summary.recent_events.assign(events_.begin(), events_.end());
     summary.materialization_events.assign(
         materialization_events_.begin(), materialization_events_.end());
-    summary.native_cpu_fallback_count = native_cpu_fallback_count_;
     summary.transfer_event_count = transfer_event_count_;
     summary.transfer_known_bytes = transfer_known_bytes_;
     summary.transfer_summary = FormatReasonCounts(transfer_reason_counts_);
@@ -1509,7 +1427,7 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
         summary.preflight_stage = execution_context_event_.preflight_stage;
         summary.preflight_error_code =
             execution_context_event_.preflight_error_code;
-        summary.fallback_policy = execution_context_event_.fallback_policy;
+        summary.execution_policy = execution_context_event_.execution_policy;
     }
     if (!events_.empty()) {
         const auto& latest = events_.back();
@@ -1630,8 +1548,6 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
         if (j.contains("randomness")) summary.randomness = j.at("randomness").get<TrainingRandomness>();
         summary.status = j.value("status", "");
         summary.warnings = j.value("warnings", std::vector<std::string>{});
-        summary.native_cpu_fallback_count =
-            j.value("native_cpu_fallback_count", uint64_t{0});
         summary.transfer_event_count =
             j.value("transfer_event_count", uint64_t{0});
         summary.transfer_known_bytes =
@@ -1694,7 +1610,7 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
             j.value("selection_fallback_applied", false);
         summary.preflight_stage = j.value("preflight_stage", "");
         summary.preflight_error_code = j.value("preflight_error_code", 0);
-        summary.fallback_policy = j.value("fallback_policy", "");
+        summary.execution_policy = j.value("execution_policy", "");
         summary.declared_output_boundary_count =
             j.value("declared_output_boundary_count", uint64_t{0});
         if (j.contains("events") && j["events"].is_array()) {
@@ -1774,7 +1690,6 @@ void TrainingTraceCollector::WriteLocked() const {
             {"events", events},
             {"materialization_events", materialization_events},
             {"warnings", warnings_},
-            {"native_cpu_fallback_count", native_cpu_fallback_count_},
             {"transfer_event_count", transfer_event_count_},
             {"transfer_known_bytes", transfer_known_bytes_},
             {"transfer_summary",
@@ -1796,7 +1711,6 @@ void TrainingTraceCollector::WriteLocked() const {
         summary.randomness = randomness_;
         summary.status = status_;
         summary.recent_events.assign(events_.begin(), events_.end());
-        summary.native_cpu_fallback_count = native_cpu_fallback_count_;
         summary.transfer_event_count = transfer_event_count_;
         summary.transfer_known_bytes = transfer_known_bytes_;
         summary.transfer_summary =
@@ -1868,8 +1782,8 @@ void TrainingTraceCollector::WriteLocked() const {
                 execution_context_event_.preflight_stage;
             summary.preflight_error_code =
                 execution_context_event_.preflight_error_code;
-            summary.fallback_policy =
-                execution_context_event_.fallback_policy;
+            summary.execution_policy =
+                execution_context_event_.execution_policy;
         }
         PopulateRunLevelTraceSummary(summary);
         j["execution_platform"] = summary.execution_platform;
@@ -1903,7 +1817,7 @@ void TrainingTraceCollector::WriteLocked() const {
             summary.selection_fallback_applied;
         j["preflight_stage"] = summary.preflight_stage;
         j["preflight_error_code"] = summary.preflight_error_code;
-        j["fallback_policy"] = summary.fallback_policy;
+        j["execution_policy"] = summary.execution_policy;
         j["declared_output_boundary_count"] =
             summary.declared_output_boundary_count;
         j["transfer_event_count"] = summary.transfer_event_count;

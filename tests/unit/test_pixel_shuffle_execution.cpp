@@ -33,16 +33,12 @@ TEST_CASE("PixelShuffle rejects empty and unrepresentable geometry before "
     const Tensor oversized({extent, 1, 4, 1}, nullptr, DataType::Float32);
     ResetConvObservations();
     {
-      ScopedArrayFireFallbackPolicy strict(
-          ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
       ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
       REQUIRE_THROWS_WITH(
           layer.Forward(oversized),
           "PixelShuffle dimension exceeds ArrayFire int dimension limit");
     }
     CHECK(conv_host_sync_count == 0);
-    CHECK(conv_fallback_count == 0);
   }
 }
 
@@ -61,9 +57,6 @@ TEST_CASE("PixelShuffle strict permutation and inverse stay device resident",
     Tensor output, restored;
     ResetConvObservations();
     {
-      ScopedArrayFireFallbackPolicy strict(
-          ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
       ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
       output = layer.Forward(x);
       restored = inverse.Backward(output);
@@ -72,7 +65,6 @@ TEST_CASE("PixelShuffle strict permutation and inverse stay device resident",
     }
     CHECK(conv_host_sync_count == 0);
     CHECK(conv_host_sync_bytes == 0);
-    CHECK(conv_fallback_count == 0);
     REQUIRE(output.Shape() == std::vector<size_t>{2 * r, 3 * r, 2, 2});
     CheckValues(restored, shape, values);
   }
@@ -94,9 +86,6 @@ TEST_CASE("PixelShuffle composes with trainable modules and checkpoint state",
     Tensor y, dx;
     ResetConvObservations();
     {
-      ScopedArrayFireFallbackPolicy strict(
-          ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
       ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
       y = model.Forward(x);
       dx = model.Backward(dy);
@@ -107,7 +96,6 @@ TEST_CASE("PixelShuffle composes with trainable modules and checkpoint state",
     }
     CHECK(conv_host_sync_count == 0);
     CHECK(conv_host_sync_bytes == 0);
-    CHECK(conv_fallback_count == 0);
     const float offset = .5f * step;
     CheckValues(y, {2, 2, 1, 2},
                 {2 * (1 - offset), 3 * (1 - offset), 2 * (2 - offset),
@@ -161,16 +149,13 @@ TEST_CASE("PixelShuffle fixed device-input baseline",
     run();
   af::sync();
   std::vector<double> samples;
-  size_t syncs = 0, fallbacks = 0;
+  size_t syncs = 0;
   uint64_t bytes = 0;
   for (int sample = 0; sample < 5; ++sample) {
     ResetConvObservations();
     const auto start = std::chrono::steady_clock::now();
     {
-      ScopedArrayFireFallbackPolicy policy(
-          ArrayFireFallbackPolicy::AllowNativeCpuFallback);
       ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
       for (int i = 0; i < iterations; ++i)
         run();
       af::sync();
@@ -181,13 +166,12 @@ TEST_CASE("PixelShuffle fixed device-input baseline",
                       iterations);
     syncs += conv_host_sync_count;
     bytes += conv_host_sync_bytes;
-    fallbacks += conv_fallback_count;
   }
   std::sort(samples.begin(), samples.end());
   std::cout << "PixelShuffle baseline backend=" << CurrentArrayFireBackendName()
             << " device=" << af::getDevice() << " input=[32,48,32,4] factor=2"
-            << " policy=allow_native samples=5 iterations=20 median_pair_ms="
+            << " samples=5 iterations=20 median_pair_ms="
             << samples[2] << " host_syncs=" << syncs << " host_bytes=" << bytes
-            << " fallbacks=" << fallbacks << '\n';
+            << '\n';
   REQUIRE(samples[2] > 0.0);
 }

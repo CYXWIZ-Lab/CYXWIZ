@@ -28,23 +28,13 @@ void CheckValues(const cyxwiz::Tensor& actual,
 }
 
 size_t pooling_host_sync_count = 0;
-size_t pooling_fallback_count = 0;
-cyxwiz::ArrayFireNativeCpuFallbackEvent last_pooling_fallback;
 
 void CountPoolingHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++pooling_host_sync_count;
 }
 
-void CountPoolingFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++pooling_fallback_count;
-    last_pooling_fallback = event;
-}
-
 void ResetPoolingObservations() {
     pooling_host_sync_count = 0;
-    pooling_fallback_count = 0;
-    last_pooling_fallback = {};
 }
 
 af::dim4 SemanticDims(const std::vector<size_t>& shape) {
@@ -249,10 +239,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
         cyxwiz::Tensor output;
         cyxwiz::Tensor grad_input;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountPoolingFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountPoolingHostSync);
             output = pool.Forward(input);
@@ -262,7 +248,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
             grad_input.GetSemanticArray().eval();
             af::sync();
         }
-        CHECK(pooling_fallback_count == 0);
         CHECK(pooling_host_sync_count == 0);
         CHECK(output.Shape() == std::vector<size_t>{5, 5, 2, 2});
         CHECK(grad_input.Shape() == input_shape);
@@ -274,10 +259,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
         cyxwiz::Tensor output;
         cyxwiz::Tensor grad_input;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountPoolingFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountPoolingHostSync);
             output = pool.Forward(input);
@@ -287,7 +268,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
             grad_input.GetSemanticArray().eval();
             af::sync();
         }
-        CHECK(pooling_fallback_count == 0);
         CHECK(pooling_host_sync_count == 0);
         CHECK(output.Shape() == std::vector<size_t>{5, 5, 2, 2});
         CHECK(grad_input.Shape() == input_shape);
@@ -299,10 +279,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
         cyxwiz::Tensor output;
         cyxwiz::Tensor grad_input;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountPoolingFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountPoolingHostSync);
             output = pool.Forward(input);
@@ -312,7 +288,6 @@ TEST_CASE("Pooling stays ArrayFire-resident under strict policy",
             grad_input.GetSemanticArray().eval();
             af::sync();
         }
-        CHECK(pooling_fallback_count == 0);
         CHECK(pooling_host_sync_count == 0);
         CHECK(output.Shape() == std::vector<size_t>{2, 2});
         CHECK(grad_input.Shape() == input_shape);

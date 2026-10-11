@@ -46,14 +46,13 @@ void TestExecutor::TestCausalSequence(int batch_size,
     built.batcher->Reset();
     if (built.batcher->GetNumBatches() == 0)
         throw std::runtime_error("Sequence Run Test has no test windows.");
-    const auto policy = config_.forbid_native_cpu_fallback
-        ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-        : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+    const auto policy = config_.strict_execution
+        ? ExecutionPolicy::Strict
+        : ExecutionPolicy::Compatibility;
     const auto context = CaptureCurrentExecutionDeviceContext(policy);
     if (!context.valid) throw std::runtime_error("Sequence test execution context is invalid.");
     ScopedActiveExecutionDeviceContext active;
     ScopedExecutionDeviceContext binding(context);
-    ScopedArrayFireFallbackPolicy fallback(policy);
     if (!Initialize(batch_size)) throw std::runtime_error("Sequence test initialization failed.");
     if (loss_->GetReduction() == Reduction::None)
         throw std::runtime_error("Sequence Run Test requires a scalar loss reduction.");

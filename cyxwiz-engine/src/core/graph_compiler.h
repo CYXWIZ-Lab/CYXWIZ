@@ -626,10 +626,10 @@ struct TrainingConfiguration {
     // immutable execution-device context.
     std::string compiler_placement_fingerprint;
 
-    // ArrayFire-first production runs keep native CPU fallback available for
-    // known gaps and diagnostics. Strict residency tests can opt in to forbid
-    // native CPU fallback and fail terminally on any routed fallback attempt.
-    bool forbid_native_cpu_fallback = false;
+    // The strict execution policy (execution_policy.h): the run stays on the
+    // selected device - no ArrayFire CPU recovery, the placement plan must be
+    // fully on the device, no debug sample dumps.
+    bool strict_execution = false;
 
     // Convenience: count issues by level. Used by UI gating logic.
     size_t CountIssues(IssueLevel level) const {

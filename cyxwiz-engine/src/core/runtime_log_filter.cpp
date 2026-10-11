@@ -662,7 +662,7 @@ std::string_view RuntimeLogFilterHelpText() {
         "  node or node_id; dataset or dataset_name; diagnostic_phase\n"
         "  code or error_code\n\n"
         "Examples\n"
-        "  message contains \"native CPU fallback\"\n"
+        "  message contains \"host sync\"\n"
         "  category=training and level>=warn\n"
         "  (category=training or category=device) and level>=warn\n"
         "  not (category=system or level<info)\n"

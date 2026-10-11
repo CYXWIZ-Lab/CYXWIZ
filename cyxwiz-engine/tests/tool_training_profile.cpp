@@ -179,7 +179,6 @@ int main(int argc, char** argv) {
                 {"batch_ms_p90", Percentile(steady, 0.9)},
                 {"tokens_per_second", median > 0 ? tokens * 1000.0 / median : 0.0},
                 {"wall_seconds_including_setup", wall_s},
-                {"native_cpu_fallbacks", trace.native_cpu_fallback_count},
                 {"host_syncs_per_batch", seen ? double(trace.arrayfire_host_sync_count) / seen.load() : 0.0},
                 {"host_sync_bytes_per_batch", seen ? double(trace.arrayfire_host_sync_bytes) / seen.load() : 0.0},
                 {"first_loss", losses.empty() ? 0.0f : losses.front()},

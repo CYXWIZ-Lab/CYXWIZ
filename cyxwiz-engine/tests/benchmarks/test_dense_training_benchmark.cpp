@@ -240,7 +240,7 @@ cyxwiz::TrainingConfiguration MakeConfiguration(
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
     config.checkpoint_dir = (options.trace_root / "checkpoints").string();
-    config.forbid_native_cpu_fallback = true;
+    config.strict_execution = true;
     config.target.required_by_objective = true;
     config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
     config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
@@ -355,7 +355,7 @@ int RunBenchmark(const BenchmarkOptions& options) {
             ResolveDeviceId(*device_type, options.device_id));
     }
     cyxwiz::SetNextRunExecutionPolicy(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Strict);
 
     auto dataset = MakeDataset(row_count);
     auto config = MakeConfiguration(options);
@@ -407,10 +407,6 @@ int RunBenchmark(const BenchmarkOptions& options) {
     }
     const auto final_trace =
         cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    if (final_trace.native_cpu_fallback_count != 0) {
-        throw std::runtime_error(
-            "Dense training benchmark observed native CPU fallback");
-    }
     if (final_trace.selection_fallback_applied ||
         !final_trace.requested_route_qualified ||
         !final_trace.effective_route_qualified ||
@@ -516,9 +512,7 @@ int RunBenchmark(const BenchmarkOptions& options) {
     std::cout << "selection_fallback_applied="
               << (final_trace.selection_fallback_applied ? "true" : "false")
               << '\n';
-    std::cout << "fallback_policy=" << final_trace.fallback_policy << '\n';
-    std::cout << "native_cpu_fallback_count="
-              << final_trace.native_cpu_fallback_count << '\n';
+    std::cout << "execution_policy=" << final_trace.execution_policy << '\n';
     std::cout << "shape=170->128->64->1\n";
     std::cout << "batch_size=" << options.batch_size << '\n';
     std::cout << "warmup_batches=" << options.warmup_batches << '\n';

@@ -133,20 +133,7 @@ bool WindowContains(
     return false;
 }
 
-bool UsesSharedFallbackPolicy(
-    const std::vector<std::string>& lines,
-    size_t catch_index) {
-    return WindowContains(lines, catch_index, "FallbackOnce") ||
-           WindowContains(lines, catch_index, "BackendFailureOnce") ||
-           WindowContains(lines, catch_index, "BackendWarningOnce") ||
-           WindowContains(lines, catch_index, "ArrayFireFallback") ||
-           WindowContains(lines, catch_index,
-                          "ClassifyArrayFireBackendFallbackReason") ||
-           WindowContains(lines, catch_index,
-                          "BuildArrayFireBackendFallbackMessage");
-}
-
-bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
+bool IsAllowedArrayFireCatch(
     const std::string& relative_path,
     const std::vector<std::string>& lines,
     size_t catch_index) {
@@ -163,6 +150,10 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     // Device-only layers (one ArrayFire path, no host loop): the handler
     // reports the error ("... failed on the ArrayFire device: ...", directly
     // or through a Throw...DeviceError helper) instead of falling back.
+    // A provider classifies the error to decline a contract.
+    if (WindowContains(lines, catch_index, "ClassifyArrayFireBackendFallbackReason", 4)) {
+        return true;
+    }
     if (WindowContains(lines, catch_index, "DeviceError(", 3) ||
         WindowContains(lines, catch_index, "failed on the ArrayFire device", 4)) {
         return true;
@@ -326,7 +317,7 @@ TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy"
     REQUIRE(unexpected_hits.empty());
 }
 
-TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared policy",
+TEST_CASE("ArrayFire exception handlers report the device error",
           "[arrayfire][fallback][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
     const auto scan_files = ArrayFireFallbackHandlerScanFiles(repo_root);
@@ -342,9 +333,7 @@ TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared
                 std::string::npos) {
                 continue;
             }
-            if (UsesSharedFallbackPolicy(lines, i) ||
-                IsAllowedArrayFireCatchWithoutFallbackPolicy(
-                    relative_path, lines, i)) {
+            if (IsAllowedArrayFireCatch(relative_path, lines, i)) {
                 continue;
             }
             unexpected_handlers.push_back(

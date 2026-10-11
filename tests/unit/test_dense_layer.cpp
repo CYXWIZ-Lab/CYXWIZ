@@ -815,8 +815,6 @@ TEST_CASE("Attention training dropout stays on ArrayFire under strict native fal
     const cyxwiz::Tensor attention_input(
         {1, 2, 2}, attention_values, cyxwiz::DataType::Float32);
 
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     // The ArrayFire attention path applies training dropout itself and caches
     // the mask for backward, so the strict policy must not see a CPU fallback
     // in either mode.

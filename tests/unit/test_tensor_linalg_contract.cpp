@@ -101,14 +101,9 @@ void CheckTensor(const cyxwiz::Tensor& actual,
 }
 
 size_t g_linalg_host_sync_count = 0;
-size_t g_linalg_fallback_count = 0;
 
 void CountLinalgHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_linalg_host_sync_count;
-}
-
-void CountLinalgFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_linalg_fallback_count;
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -130,20 +125,14 @@ void CheckResidentCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             DeviceTensorFromFixture(test_case.at("right"), dtype);
         CAPTURE(test_case.at("name").get<std::string>());
         g_linalg_host_sync_count = 0;
-        g_linalg_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountLinalgHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountLinalgFallback);
             actual = left.Dot(right);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_linalg_host_sync_count == 0);
-        REQUIRE(g_linalg_fallback_count == 0);
         CheckTensor(actual, dtype, test_case.at("expected"));
     }
 
@@ -163,21 +152,15 @@ void CheckResidentCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             continue;
         }
         g_linalg_host_sync_count = 0;
-        g_linalg_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountLinalgHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountLinalgFallback);
             actual = left.BatchMatMul(right);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         // Integers read back one scalar: the 2^53 exactness bound.
         REQUIRE(g_linalg_host_sync_count <= (integer ? 1u : 0u));
-        REQUIRE(g_linalg_fallback_count == 0);
         CheckTensor(actual, dtype, test_case.at("expected"));
     }
 }
@@ -205,20 +188,14 @@ TEST_CASE("Tensor floating BatchMatMul has a resident execution boundary",
     const cyxwiz::Tensor right =
         DeviceTensorFromFixture(test_case.at("right"), dtype);
     g_linalg_host_sync_count = 0;
-    g_linalg_fallback_count = 0;
     cyxwiz::Tensor actual;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountLinalgHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountLinalgFallback);
         actual = left.BatchMatMul(right);
         actual.GetSemanticArray().eval();
     }
     REQUIRE(g_linalg_host_sync_count == 0);
-    REQUIRE(g_linalg_fallback_count == 0);
     CheckTensor(actual, dtype, test_case.at("expected"));
 }
 
@@ -324,16 +301,10 @@ TEST_CASE("Tensor linalg output overflow fails before compute",
     const cyxwiz::Tensor batch_right(
         {maximum, 0, 2}, cyxwiz::DataType::Float32);
     g_linalg_host_sync_count = 0;
-    g_linalg_fallback_count = 0;
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
         &CountLinalgHostSync);
-    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &CountLinalgFallback);
     REQUIRE_THROWS_AS(dot_left.Dot(dot_right), std::overflow_error);
     REQUIRE_THROWS_AS(
         batch_left.BatchMatMul(batch_right), std::overflow_error);
     REQUIRE(g_linalg_host_sync_count == 0);
-    REQUIRE(g_linalg_fallback_count == 0);
 }

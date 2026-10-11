@@ -1,4 +1,5 @@
 #include "task_progress_panel.h"
+#include "core/execution_policy.h"
 #include "core/training_trace_collector.h"
 #include "gui/icons.h"
 #include <imgui.h>
@@ -98,11 +99,9 @@ void TaskProgressPanel::RenderTrainingTraceSummary() {
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", trace.effective_device_name.c_str());
     }
-    if (!trace.fallback_policy.empty()) {
+    if (!trace.execution_policy.empty()) {
         ImGui::Text("Policy: %s",
-                    trace.fallback_policy == "forbid_native_cpu_fallback"
-                        ? "Strict ArrayFire residency"
-                        : "Compatibility with recorded fallback");
+                    RecordedExecutionPolicyDisplayName(trace.execution_policy));
     }
     ImGui::Text("Placement: %s", trace.placement_fingerprint.empty()
         ? "not recorded" : trace.placement_fingerprint.c_str());
@@ -118,14 +117,6 @@ void TaskProgressPanel::RenderTrainingTraceSummary() {
     ImGui::Text("Syncs: %llu events, %llu known bytes",
                 static_cast<unsigned long long>(trace.synchronization_event_count),
                 static_cast<unsigned long long>(trace.synchronization_known_bytes));
-    if (trace.native_cpu_fallback_count > 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
-                           "Native CPU fallback: %llu",
-                           static_cast<unsigned long long>(
-                               trace.native_cpu_fallback_count));
-    } else {
-        ImGui::Text("Native CPU fallback: 0");
-    }
     ImGui::Separator();
 }
 

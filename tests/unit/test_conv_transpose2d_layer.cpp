@@ -237,9 +237,6 @@ TEST_CASE(
   ResetConvObservations();
   Tensor output, gradient;
   {
-    ScopedArrayFireFallbackPolicy strict(
-        ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-    ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
     ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
     output = layer.Forward(x);
     gradient = layer.Backward(dy);
@@ -251,7 +248,6 @@ TEST_CASE(
   }
   CHECK(conv_host_sync_count == 0);
   CHECK(conv_host_sync_bytes == 0);
-  CHECK(conv_fallback_count == 0);
   REQUIRE(output.Shape() == std::vector<size_t>{4, 6, 3, 2});
   REQUIRE(gradient.Shape() == x.Shape());
   CheckValues(layer.GetParameters().at("grad_bias"), {3}, {48, 48, 48});
@@ -269,16 +265,12 @@ TEST_CASE("ConvTranspose2D runs padding wider than the kernel on the device",
   ResetConvObservations();
   Tensor output, dx;
   {
-    ScopedArrayFireFallbackPolicy strict(
-        ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-    ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
     ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
     output = layer.Forward(x);
     dx = layer.Backward(DeviceOnlyOnes({1, 1, 1, 1}));
     output.GetSemanticArray().eval();
     dx.GetSemanticArray().eval();
   }
-  CHECK(conv_fallback_count == 0);
   CHECK(conv_host_sync_count == 0);
   CheckValues(output, {1, 1, 1, 1}, {10.5f});  // centre 5 * 2 + 0.5
   CheckValues(dx, x.Shape(), {0, 0, 0, 0, 2, 0, 0, 0, 0});

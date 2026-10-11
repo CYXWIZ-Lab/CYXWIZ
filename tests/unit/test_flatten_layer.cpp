@@ -60,15 +60,9 @@ void CheckTensor(const cyxwiz::Tensor& actual, const json& expected) {
 }
 
 size_t g_flatten_host_sync_count = 0;
-size_t g_flatten_fallback_count = 0;
 
 void CountFlattenHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_flatten_host_sync_count;
-}
-
-void CountFlattenFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_flatten_fallback_count;
 }
 
 cyxwiz::Tensor DeviceRowMajor3D(const std::vector<float>& values) {
@@ -114,17 +108,12 @@ void CheckActiveDeviceResidency() {
     cyxwiz::FlattenModule module(1);
 
     g_flatten_host_sync_count = 0;
-    g_flatten_fallback_count = 0;
     const size_t host_bytes_before = cyxwiz::MemoryManager::GetAllocatedBytes();
     cyxwiz::Tensor output;
     cyxwiz::Tensor grad_input;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
             &CountFlattenHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFlattenFallback);
 
         output = module.Forward(input);
         grad_input = module.Backward(grad_output);
@@ -136,7 +125,6 @@ void CheckActiveDeviceResidency() {
     CHECK(output.Shape() == std::vector<size_t>{2, 12});
     CHECK(grad_input.Shape() == std::vector<size_t>{2, 3, 4});
     CHECK(g_flatten_host_sync_count == 0);
-    CHECK(g_flatten_fallback_count == 0);
     CHECK(cyxwiz::MemoryManager::GetAllocatedBytes() == host_bytes_before);
 
     CheckTensor(output, json{{"shape", {2, 12}}, {"values", values}});

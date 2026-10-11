@@ -153,14 +153,9 @@ void CheckReduction(const cyxwiz::Tensor& actual, const json& test_case) {
 }
 
 size_t g_reduction_host_sync_count = 0;
-size_t g_reduction_fallback_count = 0;
 
 void CountReductionHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_reduction_host_sync_count;
-}
-
-void CountReductionFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_reduction_fallback_count;
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -183,20 +178,14 @@ void CheckReductionFixtureOnActiveDevice(const json& fixture,
         const cyxwiz::Tensor input =
             DeviceTensorFromFixture(test_case.at("input"), input_dtype);
         g_reduction_host_sync_count = 0;
-        g_reduction_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountReductionHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountReductionFallback);
             actual = ApplyReduction(input, test_case);
             actual.GetSemanticArray().eval();
         }
         REQUIRE(g_reduction_host_sync_count == 0);
-        REQUIRE(g_reduction_fallback_count == 0);
         CheckReduction(actual, test_case);
     }
 }
@@ -303,15 +292,10 @@ TEST_CASE("Tensor global empty reductions remain device resident",
     const cyxwiz::Tensor empty({0}, cyxwiz::DataType::Float32);
 
     g_reduction_host_sync_count = 0;
-    g_reduction_fallback_count = 0;
     std::vector<cyxwiz::Tensor> outputs;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountReductionHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountReductionFallback);
         outputs = {
             empty.Sum(), empty.Prod(), empty.Mean(), empty.Var(), empty.Std()};
         for (const auto& output : outputs) {
@@ -320,7 +304,6 @@ TEST_CASE("Tensor global empty reductions remain device resident",
     }
 
     REQUIRE(g_reduction_host_sync_count == 0);
-    REQUIRE(g_reduction_fallback_count == 0);
     REQUIRE(outputs[0].ReadData<float>()[0] == 0.0f);
     REQUIRE(outputs[1].ReadData<float>()[0] == 1.0f);
     REQUIRE(std::isnan(outputs[2].ReadData<float>()[0]));
@@ -362,12 +345,7 @@ TEST_CASE("Tensor rank-five reductions run on the device",
         }
     };
 
-    g_reduction_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountReductionFallback);
         const Reference all = reduce(values);
         REQUIRE(input.Sum().Shape().empty());
         check(input.Sum(), {all.sum}, 1e-4);
@@ -411,5 +389,4 @@ TEST_CASE("Tensor rank-five reductions run on the device",
             }
         }
     }
-    REQUIRE(g_reduction_fallback_count == 0);
 }

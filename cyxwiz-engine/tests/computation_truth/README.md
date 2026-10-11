@@ -141,7 +141,7 @@ The broad tracking ticket is:
   zero-norm edges, `zero_grad` preservation, and exact resume across three steps
   against an independent PyTorch tensor-equation fixture.
 - Activates ArrayFire CPU exactly, binds an immutable execution context, and
-  runs the fixture-backed core checks with native CPU fallback forbidden.
+  runs the fixture-backed core checks under the strict execution policy.
 - Repeats the complete Adam/AdamW/NAdam, SGD, RMSprop/AdaGrad/Adadelta, and
   LAMB multi-step/state/resume fixture matrix on every selectable installed
   CUDA/OpenCL route. Each route is activated exactly, forbids native fallback,
@@ -453,7 +453,7 @@ Float64, Int32, Int64, and UInt8. Shape, dtype, and exact payload bytes must
 round-trip, and the file must contain exactly the declared payload size.
 Unsupported dtype headers and truncated payloads must fail closed
 without mutating the active model. Checkpoint reads and writes remain explicit
-bounded host I/O; this is serialization evidence, not native CPU fallback.
+bounded host I/O; this is serialization evidence, not compute.
 
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
@@ -471,7 +471,7 @@ weighted, ignored, label-smoothed sum-reduction case proves that microbatch
 gradients add without mean normalization and that the reported epoch loss is
 the exact effective-batch sum. Bias parameters are compared at every SGD
 boundary, final parameters and optimizer-step counts must match, terminal
-lifecycle truth is exact, and native CPU fallback is forbidden.
+lifecycle truth is exact, and the run uses the strict execution policy.
 
 `test_training_executor_arrow_parquet --paused-control-matrix-only` exercises
 resume and cancellation while paused across Arrow, Parquet, external

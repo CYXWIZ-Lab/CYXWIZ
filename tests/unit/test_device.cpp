@@ -633,8 +633,8 @@ TEST_CASE("Machine compute runtime configuration persists atomically",
     const auto path = cyxwiz::GetComputeRuntimeConfigPath();
 
     cyxwiz::ComputeRuntimeConfig config;
-    config.default_fallback_policy =
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    config.default_execution_policy =
+        cyxwiz::ExecutionPolicy::Strict;
     config.preferred_route = cyxwiz::PreferredComputeRoute{
         cyxwiz::DeviceType::OPENCL, 2, "pci:8086:0000:00:02.0"};
     std::string error;
@@ -650,23 +650,23 @@ TEST_CASE("Machine compute runtime configuration persists atomically",
     CHECK(loaded.config.preferred_route->last_device_id == 2);
     CHECK(loaded.config.preferred_route->physical_fingerprint ==
           "pci:8086:0000:00:02.0");
-    CHECK(loaded.config.default_fallback_policy ==
-          cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    CHECK(loaded.config.default_execution_policy ==
+          cyxwiz::ExecutionPolicy::Strict);
 
     REQUIRE(cyxwiz::UpdatePreferredComputeRouteAtomic(
         path,
         {cyxwiz::DeviceType::CUDA, 0, "uuid:nvidia"},
         error));
-    REQUIRE(cyxwiz::UpdateDefaultFallbackPolicyAtomic(
+    REQUIRE(cyxwiz::UpdateDefaultExecutionPolicyAtomic(
         path,
-        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback,
+        cyxwiz::ExecutionPolicy::Compatibility,
         error));
     const auto updated = cyxwiz::LoadComputeRuntimeConfig(path);
     REQUIRE(updated.loaded);
     REQUIRE(updated.config.preferred_route.has_value());
     CHECK(updated.config.preferred_route->type == cyxwiz::DeviceType::CUDA);
-    CHECK(updated.config.default_fallback_policy ==
-          cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+    CHECK(updated.config.default_execution_policy ==
+          cyxwiz::ExecutionPolicy::Compatibility);
 
     {
         std::ofstream corrupt(path, std::ios::binary | std::ios::trunc);
@@ -2398,7 +2398,7 @@ TEST_CASE("Run preflight preserves requested and effective selection truth",
     cyxwiz::SetPendingExecutionDeviceSelection(
         cyxwiz::DeviceType::CPU, 999999);
     const auto context = cyxwiz::PrepareExecutionDeviceForRun(
-        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Compatibility);
     CHECK(context.valid);
     CHECK(context.requested_backend == "arrayfire_cpu");
     CHECK(context.requested_device_id == 999999);
@@ -2422,7 +2422,7 @@ TEST_CASE("Run preflight never activates a stale saved hardware ordinal",
         {cyxwiz::DeviceType::CUDA, 0, "uuid:not-installed"});
 
     const auto compatible = cyxwiz::PrepareExecutionDeviceForRun(
-        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Compatibility);
     CHECK(compatible.valid);
     CHECK(compatible.requested_backend == "arrayfire_cuda");
     CHECK(compatible.effective_backend == "arrayfire_cpu");
@@ -2435,7 +2435,7 @@ TEST_CASE("Run preflight never activates a stale saved hardware ordinal",
 
     CHECK_THROWS_AS(
         cyxwiz::PrepareExecutionDeviceForRun(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback),
+            cyxwiz::ExecutionPolicy::Strict),
         std::runtime_error);
     CHECK(cyxwiz::GetSavedExecutionDeviceSelection().has_value());
 
@@ -2452,7 +2452,7 @@ TEST_CASE("Strict run preflight retains a failed pending selection",
 
     CHECK_THROWS_AS(
         cyxwiz::PrepareExecutionDeviceForRun(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback),
+            cyxwiz::ExecutionPolicy::Strict),
         std::runtime_error);
     CHECK(cyxwiz::GetPendingExecutionDeviceSelection().has_value());
     cyxwiz::ClearPendingExecutionDeviceSelection();
@@ -2492,7 +2492,7 @@ TEST_CASE("Failed exact oneAPI evidence follows compatibility and strict policy"
     cyxwiz::SetPendingExecutionDeviceSelection(
         cyxwiz::DeviceType::ONEAPI, 0);
     const auto compatible = cyxwiz::PrepareExecutionDeviceForRun(
-        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Compatibility);
     CHECK(compatible.valid);
     CHECK(compatible.requested_backend == "arrayfire_oneapi");
     CHECK(compatible.effective_backend == "arrayfire_cpu");
@@ -2510,7 +2510,7 @@ TEST_CASE("Failed exact oneAPI evidence follows compatibility and strict policy"
         cyxwiz::DeviceType::ONEAPI, 0);
     CHECK_THROWS_AS(
         cyxwiz::PrepareExecutionDeviceForRun(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback),
+            cyxwiz::ExecutionPolicy::Strict),
         std::runtime_error);
     CHECK(cyxwiz::GetPendingExecutionDeviceSelection().has_value());
     cyxwiz::ClearPendingExecutionDeviceSelection();

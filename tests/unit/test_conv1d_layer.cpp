@@ -310,10 +310,6 @@ TEST_CASE("Conv1D remains ArrayFire resident under strict fallback policy",
         cyxwiz::Tensor output;
         cyxwiz::Tensor grad_input;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver
-                fallback_observer(&CountConvFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountConvHostSync);
             output = layer.Forward(input);
@@ -327,7 +323,6 @@ TEST_CASE("Conv1D remains ArrayFire resident under strict fallback policy",
             af::sync();
         }
 
-        CHECK(conv_fallback_count == 0);
         CHECK(conv_host_sync_count == 0);
         CHECK(output.Shape() == std::vector<size_t>{4, 1, 2});
         CHECK(grad_input.Shape() == input.Shape());
@@ -355,16 +350,11 @@ TEST_CASE("Conv1D runs dilation and wide padding on the device",
     ResetConvObservations();
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConvHostSync);
         output = layer.Forward(input);
         output.GetSemanticArray().eval();
     }
-    CHECK(conv_fallback_count == 0);
     CHECK(conv_host_sync_count == 0);
     CheckValues(output, {1, 1, 1}, {7.0f});  // 1*1 + 2*3
 
@@ -374,14 +364,9 @@ TEST_CASE("Conv1D runs dilation and wide padding on the device",
     });
     ResetConvObservations();
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConvFallback);
         output = padded.Forward(input);
         output.GetSemanticArray().eval();
     }
-    CHECK(conv_fallback_count == 0);
     // [0 0 0 1 2 3 0 0 0] with taps (1, 2): 0 0 2 5 8 3 0 0
     CheckValues(output, {8, 1, 1}, {0.0f, 0.0f, 2.0f, 5.0f, 8.0f, 3.0f, 0.0f, 0.0f});
 }

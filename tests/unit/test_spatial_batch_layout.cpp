@@ -77,10 +77,7 @@ TEST_CASE("Spatial row boundaries preserve sample channel order on device",
       Tensor spatial, restored;
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         spatial = SpatialBatchFromRows(input, sample);
         restored = SpatialBatchToRows(spatial);
         restored.GetSemanticArray().eval();
@@ -88,7 +85,6 @@ TEST_CASE("Spatial row boundaries preserve sample channel order on device",
       }
       CHECK(conv_host_sync_count == 0);
       CHECK(conv_host_sync_bytes == 0);
-      CHECK(conv_fallback_count == 0);
       CheckValues(spatial, SpatialRuntimeShape(sample, batch), expected);
       CheckValues(restored, {batch, features}, rows);
     }
@@ -118,10 +114,7 @@ TEST_CASE("Spatial boundaries compose with ModelBuilder forward and gradient",
       Tensor y, dx;
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         y = SpatialBatchToRows(
             built.model->Forward(SpatialBatchFromRows(input, {1, 2, 1})));
         dx = SpatialBatchToRows(
@@ -131,7 +124,6 @@ TEST_CASE("Spatial boundaries compose with ModelBuilder forward and gradient",
       }
       CHECK(conv_host_sync_count == 0);
       CHECK(conv_host_sync_bytes == 0);
-      CHECK(conv_fallback_count == 0);
       std::vector<float> expected;
       for (size_t b = 0; b < batch; ++b)
         expected.insert(expected.end(), 8, static_cast<float>(b + 1));

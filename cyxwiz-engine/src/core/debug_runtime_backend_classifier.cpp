@@ -374,8 +374,6 @@ DebugTraceRecord DebugRuntimeBackendClassifier::BuildAuditTrace(
     payload["linked_effective_device_name"] =
         execution.effective_device_name;
     payload["linked_residency_verdict"] = execution.residency_verdict;
-    payload["linked_native_cpu_fallback_count"] =
-        execution.native_cpu_fallback_count;
     payload["linked_context_is_node_actual_evidence"] = false;
     payload["tensor_reads_added"] = false;
     payload["raw_tensor_values_included"] = false;

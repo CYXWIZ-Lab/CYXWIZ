@@ -122,14 +122,9 @@ void CheckMask(const cyxwiz::Tensor& actual, const json& expected) {
 }
 
 size_t g_mask_host_sync_count = 0;
-size_t g_mask_fallback_count = 0;
 
 void CountMaskHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_mask_host_sync_count;
-}
-
-void CountMaskFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_mask_fallback_count;
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -158,14 +153,9 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
             DeviceTensorFromFixture(test_case.at("input"), input_dtype);
         cyxwiz::Tensor actual;
         g_mask_host_sync_count = 0;
-        g_mask_fallback_count = 0;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountMaskHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountMaskFallback);
             if (test_case.at("rhs_kind") == "tensor") {
                 const auto right_dtype = ParseDataType(
                     test_case.at("rhs_dtype").get<std::string>());
@@ -180,7 +170,6 @@ void CheckFixtureOnActiveDevice(const json& fixture, bool supports_fp64) {
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_mask_host_sync_count == 0);
-        REQUIRE(g_mask_fallback_count == 0);
         CheckMask(actual, test_case.at("expected"));
     }
 }
@@ -256,19 +245,13 @@ TEST_CASE("Tensor rank-five masks run on the device",
         {"||", [](const auto& l, const auto& r) { return l || r; }},
         {"!", [](const auto& l, const auto&) { return !l; }},
     };
-    g_mask_fallback_count = 0;
     std::vector<cyxwiz::Tensor> rank5, rank4;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountMaskFallback);
         for (const auto& [name, op] : ops) {
             rank5.push_back(op(left, right));
             rank4.push_back(op(left4, right));
         }
     }
-    REQUIRE(g_mask_fallback_count == 0);
     for (size_t i = 0; i < ops.size(); ++i) {
         CAPTURE(ops[i].first);
         REQUIRE(rank5[i].Shape() == left.Shape());

@@ -148,8 +148,6 @@ void CheckTerminalTrace(const cyxwiz::TrainingMetrics& metrics,
         Check(trace.effective_backend == expected_backend && trace.requested_backend == expected_backend,
               "worker must use the requested test backend");
     }
-    Check(trace.native_cpu_fallback_count == 0,
-          "supported manager session should not use native CPU fallback");
 
     const std::string expected_terminal_stage =
         expected_status == "early_stopped"

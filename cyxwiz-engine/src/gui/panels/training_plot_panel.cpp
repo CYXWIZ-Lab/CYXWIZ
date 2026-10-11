@@ -7,6 +7,7 @@
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 #include "../../core/async_task_manager.h"
 #include "../../core/crash_run_recorder.h"
+#include "../../core/execution_policy.h"
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #endif
@@ -456,18 +457,6 @@ const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     return nullptr;
 }
 
-const TrainingTraceEvent* FindLatestNativeCpuFallbackEvent(
-    const TrainingTraceSummary& trace) {
-    for (auto it = trace.recent_events.rbegin();
-         it != trace.recent_events.rend();
-         ++it) {
-        if (it->native_cpu_fallback) {
-            return &(*it);
-        }
-    }
-    return nullptr;
-}
-
 bool IsPinMemoryTransferWarning(const std::string& warning) {
     return warning.rfind("DataLoader.PinMemoryTransfer", 0) == 0;
 }
@@ -482,11 +471,8 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
     if (verdict == "strict_arrayfire_declared_boundaries") {
         return "Strict ArrayFire residency";
     }
-    if (verdict == "native_cpu_fallback_observed") {
-        return "Native CPU fallback observed";
-    }
-    if (verdict == "compatibility_no_observed_fallback") {
-        return "ArrayFire-first; no fallback observed";
+    if (verdict == "compatibility_completed") {
+        return "Compatibility; completed";
     }
     if (verdict == "terminal_without_residency_pass") {
         return "Residency not proven";
@@ -503,8 +489,7 @@ ImVec4 ResidencyVerdictColor(const std::string& verdict) {
     if (verdict == "strict_arrayfire_declared_boundaries") {
         return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
     }
-    if (verdict == "native_cpu_fallback_observed" ||
-        verdict == "terminal_without_residency_pass") {
+    if (verdict == "terminal_without_residency_pass") {
         return ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
     }
     return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
@@ -2705,20 +2690,18 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     }
 
     const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    const TrainingTraceEvent* fallback =
-        FindLatestNativeCpuFallbackEvent(trace);
     const bool has_execution_truth =
         !trace.requested_backend.empty() ||
         !trace.effective_backend.empty() ||
         !trace.placement_fingerprint.empty();
-    if (!transfer && !fallback && trace.warnings.empty() &&
+    if (!transfer && trace.warnings.empty() &&
         !HasResidencyVerdict(trace) && !has_execution_truth) {
         return;
     }
 
     ImGui::Spacing();
     bool truth_open = false;
-    if (has_execution_truth || !trace.residency_verdict.empty() || transfer || fallback) {
+    if (has_execution_truth || !trace.residency_verdict.empty() || transfer) {
         std::string header = "Execution Truth";
         std::string summary = trace.effective_backend;
         if (!trace.residency_verdict.empty()) {
@@ -2802,8 +2785,9 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                     "Selection fallback",
                     "Applied to ArrayFire CPU");
             }
-            RenderExecutionTruthRow("Fallback policy",
-                                    trace.fallback_policy);
+            RenderExecutionTruthRow(
+                "Execution policy",
+                RecordedExecutionPolicyDisplayName(trace.execution_policy));
 
             std::string placement = trace.placement_fingerprint;
             if (!placement.empty()) {
@@ -2834,21 +2818,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 trace.synchronization_summary.empty()
                     ? "None recorded"
                     : trace.synchronization_summary);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("Native CPU fallback");
-            ImGui::TableNextColumn();
-            const ImVec4 fallback_count_color =
-                trace.native_cpu_fallback_count == 0
-                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                    : ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
-            ImGui::TextColored(
-                fallback_count_color,
-                "%llu event%s",
-                static_cast<unsigned long long>(
-                    trace.native_cpu_fallback_count),
-                trace.native_cpu_fallback_count == 1 ? "" : "s");
             ImGui::EndTable();
         }
 
@@ -2884,34 +2853,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
             RenderExecutionTruthRow(
                 "Batch size",
                 std::to_string(transfer->transfer_batch_size));
-            ImGui::EndTable();
-        }
-    }
-
-    if (truth_open && fallback) {
-        ImGui::SeparatorText("Fallback Detail");
-        const ImVec4 color = fallback->status == "error"
-            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        ImGui::TextColored(color, "Native CPU fallback");
-        if (ImGui::BeginTable(
-                "##native_cpu_fallback_detail",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-            RenderExecutionTruthRow(
-                "Count",
-                std::to_string(trace.native_cpu_fallback_count));
-            RenderExecutionTruthRow("Selected backend",
-                                    fallback->compute_backend);
-            RenderExecutionTruthRow("Operation",
-                                    fallback->fallback_operation);
-            RenderExecutionTruthRow("Reason", fallback->fallback_reason);
-            RenderExecutionTruthRow("Policy", fallback->fallback_policy);
             ImGui::EndTable();
         }
     }

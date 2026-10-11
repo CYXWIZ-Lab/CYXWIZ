@@ -750,8 +750,7 @@ void TestRuntimeBackendClassificationContract() {
     linked_execution.effective_backend = "arrayfire_cuda";
     linked_execution.effective_device_id = 0;
     linked_execution.effective_device_name = "Test CUDA Device";
-    linked_execution.residency_verdict =
-        "compatibility_mode_no_fallback_observed";
+    linked_execution.residency_verdict = "compatibility_completed";
 
     const auto audit = classifier.BuildAuditTrace(
         "backend-audit-run",
@@ -2152,7 +2151,6 @@ void TestSlowPathDetectorContract() {
     training.run_id = "training-source-run";
     training.status = "completed";
     training.effective_backend = "arrayfire_cpu";
-    training.native_cpu_fallback_count = 1;
     const auto add_event = [&](const std::string& stage, float duration_ms) {
         cyxwiz::TrainingTraceEvent event;
         event.run_id = training.run_id;
@@ -2188,7 +2186,7 @@ void TestSlowPathDetectorContract() {
           "slow path should state host wall-clock semantics");
     Check(!payload["device_kernel_time_proven"].get<bool>(),
           "slow path should not claim device kernel timing");
-    Check(payload["timing_category_count"].get<size_t>() == 9,
+    Check(payload["timing_category_count"].get<size_t>() == 8,
           "slow path should keep a bounded category set");
     Check(payload["available_timing_category_count"].get<size_t>() == 6,
           "slow path available category count");
@@ -2220,10 +2218,8 @@ void TestSlowPathDetectorContract() {
               (*batch_creation)["unavailable_reason"].get<std::string>().find(
                   "combines") != std::string::npos,
           "slow path should not fabricate separate batch-creation timing");
-    const auto* fallback = find_stage("native_cpu_fallback");
-    Check(fallback && !(*fallback)["timing_available"].get<bool>() &&
-              (*fallback)["occurrence_count"].get<uint64_t>() == 1,
-          "slow path should separate fallback occurrence from unavailable duration");
+    Check(find_stage("native_cpu_fallback") == nullptr,
+          "slow path has no native CPU fallback stage (ArrayFire only)");
 }
 
 void TestTrainingStallDetectorContract() {
@@ -4253,7 +4249,6 @@ void TestDebugRunStoreContract() {
     execution_trace.execution_context_id = "arrayfire:arrayfire_cuda:2";
     execution_trace.placement_fingerprint = "placement-contract";
     execution_trace.residency_verdict = "device_resident";
-    execution_trace.native_cpu_fallback_count = 0;
     execution_trace.transfer_event_count = 3;
     execution_trace.transfer_known_bytes = 4096;
     execution_trace.synchronization_event_count = 2;
@@ -4313,7 +4308,7 @@ void TestDebugRunStoreContract() {
     replay_config.balance_seed = 23;
     replay_config.learning_rate = 0.005f;
     replay_config.compiler_placement_fingerprint = "replay-placement";
-    replay_config.forbid_native_cpu_fallback = true;
+    replay_config.strict_execution = true;
     record.replay_capsule = cyxwiz::MakeDebugRunReplayCapsule(
         replay_session, &replay_config, record.summary.execution, 100);
 
@@ -4439,7 +4434,7 @@ void TestDebugRunStoreContract() {
               loaded->replay_capsule.compiled_config
                       .compiler_placement_fingerprint == "replay-placement" &&
               loaded->replay_capsule.compiled_config
-                  .forbid_native_cpu_fallback,
+                  .strict_execution,
           "replay capsule should round-trip reconstruction-critical config");
     Check(loaded->replay_capsule.split_seed == 17 &&
               loaded->replay_capsule.dataloader_seed == 19 &&

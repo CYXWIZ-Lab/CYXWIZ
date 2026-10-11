@@ -212,7 +212,7 @@ void SelectArrayFireCpu() {
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
     cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 cyxwiz::TrainingMetrics Train(cyxwiz::TrainingExecutor& executor, int epochs) {

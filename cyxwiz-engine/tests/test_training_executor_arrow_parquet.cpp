@@ -65,57 +65,6 @@ void CheckNear(double actual,
     }
 }
 
-#ifndef NDEBUG
-constexpr const char* kForceFallbackEnv =
-    "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
-
-void SetEnvVar(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value);
-#else
-    setenv(name, value, 1);
-#endif
-}
-
-void ClearEnvVar(const char* name) {
-#ifdef _WIN32
-    _putenv_s(name, "");
-#else
-    unsetenv(name);
-#endif
-}
-
-class ScopedEnvVar {
-public:
-    ScopedEnvVar(const char* name, const char* value)
-        : name_(name) {
-        const char* previous = std::getenv(name);
-        if (previous != nullptr) {
-            had_previous_ = true;
-            previous_ = previous;
-        }
-        if (value == nullptr) {
-            ClearEnvVar(name_);
-        } else {
-            SetEnvVar(name_, value);
-        }
-    }
-
-    ~ScopedEnvVar() {
-        if (had_previous_) {
-            SetEnvVar(name_, previous_.c_str());
-        } else {
-            ClearEnvVar(name_);
-        }
-    }
-
-private:
-    const char* name_;
-    bool had_previous_ = false;
-    std::string previous_;
-};
-#endif
-
 std::shared_ptr<arrow::Array> FinishFloatArray(const std::vector<float>& values) {
     arrow::FloatBuilder builder;
     for (float value : values) {
@@ -328,7 +277,7 @@ void TestGradientAccumulationParityCase(
     config.has_data_split = true;
     config.shuffle = false;
     config.log_interval = 0;
-    config.forbid_native_cpu_fallback = true;
+    config.strict_execution = true;
     config.loss_params["reduction"] = loss_reduction;
     const auto class_weights =
         test_case.value("class_weights", std::vector<float>{});
@@ -417,8 +366,6 @@ void TestGradientAccumulationParityCase(
         test_case.at("expected").at("bias"), tolerance,
         test_case.at("name").get<std::string>() + " final bias");
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    Check(trace.native_cpu_fallback_count == 0,
-          "gradient accumulation parity must remain ArrayFire-resident");
 }
 
 void TestGradientAccumulationPyTorchParity(
@@ -592,7 +539,7 @@ void TestUnevenFinalBatchMetricAggregation(
     classification_config.batch_size = 4;
     classification_config.learning_rate = 0.0f;
     classification_config.log_interval = 0;
-    classification_config.forbid_native_cpu_fallback = true;
+    classification_config.strict_execution = true;
 
     cyxwiz::TrainingExecutor classification_executor(
         classification_config, classification_dataset, "label");
@@ -607,8 +554,6 @@ void TestUnevenFinalBatchMetricAggregation(
         });
     const auto classification_trace =
         cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    Check(classification_trace.native_cpu_fallback_count == 0,
-          "uneven classification aggregation should remain ArrayFire-resident");
     const auto classification_oracle = EvaluateCurrentModelAsOneBatch(
         classification_executor,
         classification_config,
@@ -651,8 +596,6 @@ void TestUnevenFinalBatchMetricAggregation(
         });
     const auto weighted_trace =
         cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    Check(weighted_trace.native_cpu_fallback_count == 0,
-          "weighted smoothed aggregation should remain ArrayFire-resident");
     const auto weighted_oracle = EvaluateCurrentModelAsOneBatch(
         weighted_executor,
         weighted_config,
@@ -683,7 +626,7 @@ void TestUnevenFinalBatchMetricAggregation(
     validation_config.batch_size = 4;
     validation_config.learning_rate = 0.0f;
     validation_config.log_interval = 0;
-    validation_config.forbid_native_cpu_fallback = true;
+    validation_config.strict_execution = true;
     validation_config.loss_params["ignore_index"] = "-100";
 
     cyxwiz::TrainingExecutor validation_executor(
@@ -699,8 +642,6 @@ void TestUnevenFinalBatchMetricAggregation(
         });
     const auto validation_trace =
         cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    Check(validation_trace.native_cpu_fallback_count == 0,
-          "uneven validation aggregation should remain ArrayFire-resident");
     const auto validation_oracle = EvaluateCurrentModelAsOneBatch(
         validation_executor,
         validation_config,
@@ -734,7 +675,7 @@ void TestUnevenFinalBatchMetricAggregation(
     regression_config.batch_size = 4;
     regression_config.learning_rate = 0.0f;
     regression_config.log_interval = 0;
-    regression_config.forbid_native_cpu_fallback = true;
+    regression_config.strict_execution = true;
 
     cyxwiz::TrainingExecutor regression_executor(
         regression_config, regression_dataset, "target");
@@ -749,8 +690,6 @@ void TestUnevenFinalBatchMetricAggregation(
         });
     const auto regression_trace =
         cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-    Check(regression_trace.native_cpu_fallback_count == 0,
-          "uneven regression aggregation should remain ArrayFire-resident");
     const auto regression_oracle = EvaluateCurrentModelAsOneBatch(
         regression_executor,
         regression_config,
@@ -3088,11 +3027,10 @@ void CheckPausedControlCase(
     Check(trace.effective_backend.rfind("arrayfire_", 0) == 0,
           label + " should retain effective ArrayFire execution truth");
     if (strict_residency) {
-        Check(trace.native_cpu_fallback_count == 0 &&
-                  trace.fallback_policy == "forbid_native_cpu_fallback",
-              label + " should retain strict zero-fallback execution truth");
+        Check(trace.execution_policy == "strict",
+              label + " should retain the strict execution policy");
     } else {
-        Check(trace.fallback_policy == "allow_native_cpu_fallback",
+        Check(trace.execution_policy == "compatibility",
               label + " should expose its declared compatibility policy");
     }
 }
@@ -3169,7 +3107,7 @@ void TestLifecycleControlAcrossModernDatasetModes(
         config.test_ratio = 0.0f;
         config.has_data_split = true;
         config.log_interval = 0;
-        config.forbid_native_cpu_fallback = true;
+        config.strict_execution = true;
         return config;
     };
 
@@ -3247,7 +3185,7 @@ void TestLifecycleControlAcrossModernDatasetModes(
             config.sequence_batch.ignore_index = -100;
             config.save_best_checkpoint = false;
             config.log_interval = 0;
-            config.forbid_native_cpu_fallback = false;
+            config.strict_execution = false;
             config.checkpoint_dir = path.string();
 
             cyxwiz::CompiledLayer embedding;
@@ -3371,7 +3309,7 @@ void TestStrictTrainingSkipsFirstBatchDebugHostDump(
     }
 
     auto strict_config = config;
-    strict_config.forbid_native_cpu_fallback = true;
+    strict_config.strict_execution = true;
     cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
 
     bool completed = false;
@@ -3404,9 +3342,6 @@ void TestStrictTrainingSkipsFirstBatchDebugHostDump(
             saw_loss_boundary = true;
             Check(event.status == "ok",
                   "loss scalar output boundary should be an ok runtime event");
-            Check(event.message.find("not native CPU compute fallback") !=
-                      std::string::npos,
-                  "loss scalar output boundary should distinguish reporting from fallback");
         }
     }
     Check(saw_skip_event,
@@ -3516,7 +3451,7 @@ void TestRunPreflightEnforcesRouteQualification() {
     bool strict_rejected = false;
     try {
         (void)cyxwiz::PrepareExecutionDeviceForRun(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            cyxwiz::ExecutionPolicy::Strict);
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         strict_rejected =
@@ -3531,7 +3466,7 @@ void TestRunPreflightEnforcesRouteQualification() {
     cyxwiz::SetPendingExecutionDeviceSelection(
         rejected->type, rejected->device_id);
     const auto recovered = cyxwiz::PrepareExecutionDeviceForRun(
-        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Compatibility);
     Check(recovered.selection_fallback_applied,
           "compatibility preflight should record ArrayFire CPU route recovery");
     Check(!recovered.requested_qualification.qualified,
@@ -3562,10 +3497,10 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
         cpu->device_id);
     cyxwiz::ClearNextRunExecutionPolicy();
     cyxwiz::SetNextRunExecutionPolicy(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Strict);
 
     auto strict_config = config;
-    strict_config.forbid_native_cpu_fallback = false;
+    strict_config.strict_execution = false;
     strict_config.log_interval = 0;
     strict_config.save_best_checkpoint = true;
     strict_config.loss_params["class_weight"] = "manual";
@@ -3599,7 +3534,7 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
           "strict ArrayFire CPU run should consume pending selection");
     Check(cyxwiz::GetNextRunExecutionPolicy() ==
-              cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback,
+              cyxwiz::ExecutionPolicy::Strict,
           "GUI execution policy preference should persist for later runs");
 
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
@@ -3613,8 +3548,6 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "latest trace authority should preserve effective backend truth");
     Check(latest_trace.placement_fingerprint == trace.placement_fingerprint,
           "latest trace authority should preserve placement fingerprint truth");
-    Check(trace.native_cpu_fallback_count == 0,
-          "strict ArrayFire CPU dense training should record zero native CPU fallback events");
     Check(trace.residency_verdict ==
               "strict_arrayfire_declared_boundaries",
           "strict ArrayFire CPU run should record strict residency verdict");
@@ -3633,7 +3566,7 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU summary should retain qualification matrix");
     Check(!trace.identity_confidence.empty(),
           "strict ArrayFire CPU summary should retain identity confidence");
-    Check(trace.fallback_policy == "forbid_native_cpu_fallback",
+    Check(trace.execution_policy == "strict",
           "strict ArrayFire CPU summary should record strict fallback policy");
     Check(trace.declared_output_boundary_count > 0,
           "strict ArrayFire CPU summary should count declared output boundaries");
@@ -3807,8 +3740,8 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
               "strict CPU run should record requested CPU device id");
         Check(event.effective_device_id == cpu->device_id,
               "strict CPU run should record effective CPU device id");
-        Check(event.fallback_policy == "forbid_native_cpu_fallback",
-              "strict CPU run should record forbidden native CPU fallback policy");
+        Check(event.execution_policy == "strict",
+              "strict CPU run should record the strict execution policy");
     }
     Check(saw_cpu_bind,
           "strict ArrayFire CPU run should record execution context bind");
@@ -3876,7 +3809,7 @@ void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(
     const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
     const cyxwiz::TrainingConfiguration& config) {
     auto strict_config = config;
-    strict_config.forbid_native_cpu_fallback = true;
+    strict_config.strict_execution = true;
     strict_config.backend_placements.clear();
 
     cyxwiz::BackendPlacementEntry cpu_stage;
@@ -3922,8 +3855,6 @@ void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
     Check(trace.status == "failed",
           "strict placement preflight rejection should terminate the trace");
-    Check(trace.native_cpu_fallback_count == 0,
-          "known placement rejection should not attempt native CPU fallback");
     Check(trace.residency_verdict == "terminal_without_residency_pass",
           "strict placement preflight rejection should not claim residency");
     bool saw_preflight_warning = false;
@@ -3986,8 +3917,6 @@ void TestExecutablePreflightRejectsUnsupportedOptimizer(
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
     Check(trace.status == "failed",
           "unsupported optimizer preflight should terminate the trace");
-    Check(trace.native_cpu_fallback_count == 0,
-          "unsupported optimizer preflight should not attempt CPU fallback");
     bool saw_execution_preflight = false;
     for (const auto& warning : trace.warnings) {
         if (warning.find("execution_preflight_failed") != std::string::npos &&
@@ -4158,7 +4087,7 @@ void TestObjectiveAwareRegressionMetrics(
     if (cyxwiz::IsCurrentArrayFireBackendAvailable()) {
         auto strict_config = MakeRegressionConfig(
             checkpoint_dir / "strict_residency");
-        strict_config.forbid_native_cpu_fallback = true;
+        strict_config.strict_execution = true;
 
         cyxwiz::TrainingExecutor strict_executor(
             strict_config, dataset, "target");
@@ -4183,8 +4112,6 @@ void TestObjectiveAwareRegressionMetrics(
 
         const auto trace =
             cyxwiz::TrainingTraceCollector::Instance().Snapshot();
-        Check(trace.native_cpu_fallback_count == 0,
-              "strict regression metrics should not use native CPU fallback");
     }
 #endif
 }

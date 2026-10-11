@@ -68,30 +68,7 @@ void AppendExecutionDeviceLifecycleEvent(
     event.details.emplace_back(
         "requested_device_id", std::to_string(context.requested_device_id));
     event.details.emplace_back(
-        "fallback_policy", context.FallbackPolicyName());
-    RuntimeLogStore::Instance().Append(std::move(event));
-}
-
-void AppendNativeCpuFallbackLifecycleEvent(
-    const ArrayFireNativeCpuFallbackEvent& fallback,
-    const std::string& run_id, const std::string& detail) {
-    RuntimeLogEvent event;
-    event.timestamp_utc = std::chrono::system_clock::now();
-    event.level = fallback.fallback_forbidden ? RuntimeLogLevel::Error
-                                              : RuntimeLogLevel::Warning;
-    event.category = "training";
-    event.source = "TrainingExecutor";
-    event.event_name = "ArrayFire.NativeCpuFallback";
-    event.run_id = run_id;
-    event.backend = fallback.selected_backend;
-    event.primary_error_code = errors::Gpu::KernelExecutionFailed;
-    event.message = "Native CPU fallback: " + detail;
-    event.details.emplace_back("operation", fallback.operation_name);
-    event.details.emplace_back("reason", fallback.reason_code);
-    event.details.emplace_back(
-        "policy", fallback.fallback_forbidden
-            ? "forbid_native_cpu_fallback"
-            : "allow_native_cpu_fallback");
+        "execution_policy", context.ExecutionPolicyName());
     RuntimeLogStore::Instance().Append(std::move(event));
 }
 
@@ -168,26 +145,6 @@ void ReportPinMemoryTransferStatus(const TrainingConfiguration& config) {
         status,
         detail,
         severity);
-}
-
-void RecordArrayFireNativeCpuFallbackForActiveTrace(
-    const ArrayFireNativeCpuFallbackEvent& fallback) {
-    std::string detail = fallback.operation_name;
-    if (!fallback.reason_code.empty()) {
-        detail += " reason=" + fallback.reason_code;
-    }
-    if (!fallback.selected_backend.empty()) {
-        detail += " selected_backend=" + fallback.selected_backend;
-    }
-    if (!fallback.context.empty()) {
-        detail += " " + fallback.context;
-    }
-    CrashRunRecorder::Instance().MarkBackendEvent(
-        "ArrayFire.NativeCpuFallback",
-        detail);
-    TrainingTraceCollector::Instance().RecordNativeCpuFallback(fallback);
-    const auto trace = TrainingTraceCollector::Instance().Snapshot();
-    AppendNativeCpuFallbackLifecycleEvent(fallback, trace.run_id, detail);
 }
 
 void RecordArrayFireHostSyncForActiveTrace(
@@ -365,7 +322,7 @@ bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
 
 bool ShouldMaterializeFirstBatchDebugSamples(
     const TrainingConfiguration& config) {
-    return !config.forbid_native_cpu_fallback;
+    return !config.strict_execution;
 }
 
 void RecordSkippedFirstBatchDebugSampleDump() {
@@ -378,8 +335,7 @@ void RecordSkippedFirstBatchDebugSampleDump() {
 void RecordDeclaredScalarLossOutputBoundary() {
     const std::string message =
         "Declared bounded host output boundary: loss_scalar_readback reads one "
-        "scalar loss value for reporting and callbacks; this is not native CPU "
-        "compute fallback.";
+        "scalar loss value for reporting and callbacks.";
     CrashRunRecorder::Instance().MarkBackendEvent(
         "TrainingExecutor.OutputBoundary",
         message);
@@ -770,26 +726,20 @@ void TrainingExecutor::Train(
 
     const auto next_run_execution_policy = GetNextRunExecutionPolicy();
     if (next_run_execution_policy.has_value()) {
-        config_.forbid_native_cpu_fallback =
+        config_.strict_execution =
             *next_run_execution_policy ==
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+            ExecutionPolicy::Strict;
         spdlog::info(
             "TrainingExecutor: applied next-run execution policy: {}",
             ExecutionPolicyDisplayName(*next_run_execution_policy));
     }
 
-    const ArrayFireFallbackPolicy fallback_policy_value =
-        config_.forbid_native_cpu_fallback
-            ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-            : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
-    const ScopedArrayFireFallbackPolicy fallback_policy(fallback_policy_value);
-    if (config_.forbid_native_cpu_fallback) {
-        spdlog::info(
-            "TrainingExecutor: strict ArrayFire residency enabled; native CPU fallback is forbidden");
-    } else {
-        spdlog::info(
-            "TrainingExecutor: ArrayFire-first execution; native CPU fallback remains available for declared gaps");
-    }
+    const ExecutionPolicy execution_policy_value =
+        config_.strict_execution
+            ? ExecutionPolicy::Strict
+            : ExecutionPolicy::Compatibility;
+    spdlog::info("TrainingExecutor: execution policy {}",
+                 ExecutionPolicyDisplayName(execution_policy_value));
 
     CrashRunRecorder::Instance().StartTrainingRun(
         config_,
@@ -835,7 +785,7 @@ void TrainingExecutor::Train(
     // Do not publish an effective device until preflight actually succeeds.
     ExecutionDeviceContext execution_context;
     try {
-        execution_context = PrepareExecutionDeviceForRun(fallback_policy_value);
+        execution_context = PrepareExecutionDeviceForRun(execution_policy_value);
         spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
                      execution_context.Describe());
     } catch (const std::exception& e) {
@@ -863,15 +813,12 @@ void TrainingExecutor::Train(
                     execution_placement_plan.entries.size(),
                     execution_placement_plan.fingerprint,
                     execution_placement_plan.summary));
-    const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &RecordArrayFireNativeCpuFallbackForActiveTrace);
     const ScopedArrayFireHostSyncObserver host_sync_observer(
         &RecordArrayFireHostSyncForActiveTrace);
     training_trace.RecordRuntimeEvent(
         "TrainingDevicePolicy",
-        config_.forbid_native_cpu_fallback
-            ? "ArrayFire-first execution; native CPU fallback forbidden"
-            : "ArrayFire-first execution; native CPU fallback allowed and recorded");
+        std::string("Execution policy: ") +
+            ExecutionPolicyDisplayName(execution_policy_value));
     RecordDeclaredScalarLossOutputBoundary();
 
     if (!execution_placement_plan.IsExecutable()) {
@@ -885,7 +832,7 @@ void TrainingExecutor::Train(
         return;
     }
 
-    if (config_.forbid_native_cpu_fallback &&
+    if (config_.strict_execution &&
         !execution_placement_plan.IsStrictlyExecutable()) {
         const std::string reason =
             "placement_preflight_failed: " +

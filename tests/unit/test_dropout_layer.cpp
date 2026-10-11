@@ -62,10 +62,6 @@ void CountHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++dropout_host_sync_count;
 }
 
-void CountFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++dropout_fallback_count;
-}
-
 class ScopedArrayFireDeviceRestore {
 public:
     ScopedArrayFireDeviceRestore()
@@ -97,12 +93,8 @@ void CheckActiveDeviceResidency(Dropout& dropout) {
     cyxwiz::Tensor output;
     cyxwiz::Tensor grad_input;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFallback);
         af::setSeed(3917);
         output = dropout.Forward(input);
         grad_input = dropout.Backward(grad_output);

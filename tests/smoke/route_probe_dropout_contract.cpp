@@ -16,14 +16,9 @@ namespace cyxwiz::route_probe {
 namespace {
 
 size_t host_sync_count = 0;
-size_t fallback_count = 0;
 
 void CountHostSync(const ArrayFireHostSyncEvent&) {
     ++host_sync_count;
-}
-
-void CountFallback(const ArrayFireNativeCpuFallbackEvent&) {
-    ++fallback_count;
 }
 
 } // namespace
@@ -42,14 +37,9 @@ void RunDropoutForwardBackwardContract(
     Tensor output;
     Tensor grad_input;
     host_sync_count = 0;
-    fallback_count = 0;
     const size_t host_bytes_before = MemoryManager::GetAllocatedBytes();
     {
-        const ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const ScopedArrayFireHostSyncObserver host_observer(&CountHostSync);
-        const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFallback);
 
         af::setSeed(3953);
         report_stage(operation, "dropout_forward_begin");
@@ -73,9 +63,6 @@ void RunDropoutForwardBackwardContract(
     if (host_sync_count != 0) {
         throw std::runtime_error(
             "Dropout performed an undeclared host synchronization");
-    }
-    if (fallback_count != 0) {
-        throw std::runtime_error("Dropout used native CPU fallback");
     }
     if (MemoryManager::GetAllocatedBytes() != host_bytes_before) {
         throw std::runtime_error("Dropout materialized host-owned tensor bytes");
@@ -107,8 +94,7 @@ void RunDropoutForwardBackwardContract(
     std::cout << "dropout_contract schema=1 pytorch_semantics=inverted_dropout"
               << " probability=0.5 dtype=float32 kept=" << kept
               << " dropped=" << dropped
-              << " host_sync_count=" << host_sync_count
-              << " native_fallback_count=" << fallback_count << std::endl;
+              << " host_sync_count=" << host_sync_count << std::endl;
 }
 
 } // namespace cyxwiz::route_probe

@@ -18,14 +18,9 @@ namespace cyxwiz::route_probe {
 namespace {
 
 size_t host_sync_count = 0;
-size_t fallback_count = 0;
 
 void CountHostSync(const ArrayFireHostSyncEvent&) {
     ++host_sync_count;
-}
-
-void CountFallback(const ArrayFireNativeCpuFallbackEvent&) {
-    ++fallback_count;
 }
 
 Tensor DeviceRowMajor3D(const std::vector<float>& values) {
@@ -92,15 +87,10 @@ void RunFlattenForwardBackwardContract(
     Tensor output;
     Tensor grad_input;
     host_sync_count = 0;
-    fallback_count = 0;
     const size_t host_bytes_before = MemoryManager::GetAllocatedBytes();
     {
-        const ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const ScopedArrayFireHostSyncObserver host_sync_observer(
             &CountHostSync);
-        const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFallback);
 
         report_stage(operation, "flatten_forward_begin");
         output = module.Forward(input);
@@ -121,9 +111,6 @@ void RunFlattenForwardBackwardContract(
         throw std::runtime_error(
             "Flatten performed an undeclared host synchronization");
     }
-    if (fallback_count != 0) {
-        throw std::runtime_error("Flatten used native CPU fallback");
-    }
     if (MemoryManager::GetAllocatedBytes() != host_bytes_before) {
         throw std::runtime_error("Flatten materialized host-owned tensor bytes");
     }
@@ -134,8 +121,7 @@ void RunFlattenForwardBackwardContract(
     report_stage(operation, "flatten_numerical_read_complete");
     std::cout << "flatten_contract schema=1 pytorch_case=rank3_start1"
               << " forward_shape=2x12 backward_shape=2x3x4"
-              << " dtype=float32 host_sync_count=" << host_sync_count
-              << " native_fallback_count=" << fallback_count << std::endl;
+              << " dtype=float32 host_sync_count=" << host_sync_count << std::endl;
 }
 
 } // namespace cyxwiz::route_probe

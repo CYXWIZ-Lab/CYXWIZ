@@ -132,14 +132,9 @@ void CheckShapeCases(const json& fixture) {
 }
 
 size_t g_broadcast_host_sync_count = 0;
-size_t g_broadcast_fallback_count = 0;
 
 void CountBroadcastHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_broadcast_host_sync_count;
-}
-
-void CountBroadcastFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_broadcast_fallback_count;
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -167,19 +162,13 @@ void CheckMaterializationCasesOnActiveDevice(const json& fixture,
                 DeviceTensorFromFixture(test_case.at("input"), dtype);
             cyxwiz::Tensor actual;
             g_broadcast_host_sync_count = 0;
-            g_broadcast_fallback_count = 0;
             {
-                const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                    cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
                 const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                     &CountBroadcastHostSync);
-                const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                    &CountBroadcastFallback);
                 actual = ApplyMaterialization(input, target_shape, operation);
                 if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
             }
             REQUIRE(g_broadcast_host_sync_count == 0);
-            REQUIRE(g_broadcast_fallback_count == 0);
             CheckTensor(actual, dtype, test_case.at("expected"));
         }
     }
@@ -242,15 +231,10 @@ TEST_CASE("Tensor rank-five broadcast runs on the device",
     const std::vector<size_t> alternating_target{3, 2, 4, 2, 5};
     const std::vector<size_t> collapsing_target{4, 2, 5, 6, 3};
     g_broadcast_host_sync_count = 0;
-    g_broadcast_fallback_count = 0;
     cyxwiz::Tensor expanded, broadcast, identity, collapsed, sum;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountBroadcastHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountBroadcastFallback);
         expanded = alternating.Expand(alternating_target);
         broadcast = alternating.BroadcastTo(alternating_target);
         identity = alternating.Expand({1, 2, 1, 2, 1});
@@ -258,7 +242,6 @@ TEST_CASE("Tensor rank-five broadcast runs on the device",
         sum = alternating + collapsing.Reshape({1, 1, 1, 2, 3}).Expand({1, 2, 1, 2, 3});
     }
     REQUIRE(g_broadcast_host_sync_count == 0);
-    REQUIRE(g_broadcast_fallback_count == 0);
 
     REQUIRE(expanded.Shape() == alternating_target);
     const int32_t* expanded_values = expanded.ReadData<int32_t>();
@@ -318,17 +301,11 @@ TEST_CASE("Tensor broadcast shape overflow fails before compute",
     const std::vector<size_t> target{
         (std::numeric_limits<size_t>::max)(), 2};
     g_broadcast_host_sync_count = 0;
-    g_broadcast_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountBroadcastHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountBroadcastFallback);
         REQUIRE_THROWS_AS(scalar.Expand(target), std::overflow_error);
         REQUIRE_THROWS_AS(scalar.BroadcastTo(target), std::overflow_error);
     }
     REQUIRE(g_broadcast_host_sync_count == 0);
-    REQUIRE(g_broadcast_fallback_count == 0);
 }

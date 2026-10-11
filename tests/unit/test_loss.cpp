@@ -20,16 +20,7 @@
 
 namespace {
 
-std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>* g_loss_fallback_events =
-    nullptr;
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
-
-void CaptureLossFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    if (g_loss_fallback_events != nullptr) {
-        g_loss_fallback_events->push_back(event);
-    }
-}
 
 void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
     if (g_loss_host_sync_events != nullptr) {
@@ -39,15 +30,12 @@ void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
 
 class ScopedLossEventCapture {
 public:
-    ScopedLossEventCapture(
-        std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>& fallback_events,
+    explicit ScopedLossEventCapture(
         std::vector<cyxwiz::ArrayFireHostSyncEvent>& host_sync_events) {
-        g_loss_fallback_events = &fallback_events;
         g_loss_host_sync_events = &host_sync_events;
     }
 
     ~ScopedLossEventCapture() {
-        g_loss_fallback_events = nullptr;
         g_loss_host_sync_events = nullptr;
     }
 };
@@ -1208,15 +1196,10 @@ TEST_CASE("Metric-learning device label validation is explicitly attributed",
     for (const auto& [factory, name] : losses) {
         for (const bool forward : {true, false}) {
             DYNAMIC_SECTION(name << (forward ? " forward" : " backward")) {
-                std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
                 std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
                 cyxwiz::Tensor result;
                 {
-                    const ScopedLossEventCapture capture(fallback_events, host_sync_events);
-                    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-                    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                        &CaptureLossFallback);
+                    const ScopedLossEventCapture capture(host_sync_events);
                     const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
                         &CaptureLossHostSync);
                     auto loss = factory();
@@ -1226,7 +1209,6 @@ TEST_CASE("Metric-learning device label validation is explicitly attributed",
                                      : loss->Backward(first, second);
                 }
 
-                REQUIRE(fallback_events.empty());
                 REQUIRE(result.Shape() ==
                         (forward ? std::vector<size_t>{2}
                                  : std::vector<size_t>{2, 2}));

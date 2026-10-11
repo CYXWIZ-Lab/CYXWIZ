@@ -92,8 +92,8 @@ cyxwiz::MaterializationCachePruneResult ClearGraphMaterializationCache(
 //  - sequence token / sentence-id / tag columns missing from a loaded
 //    train, dev or test dataset (the same check Train runs);
 //  - the requested device route is not qualified for training on this machine
-//    (error when native CPU fallback is forbidden or CPU recovery is not
-//    qualified, otherwise a fallback warning);
+//    (error under the strict execution policy or when CPU recovery is not
+//    qualified, otherwise a warning that the run moves to ArrayFire CPU);
 //  - a Data Input max_rows limit that training does not apply.
 // `route` is the device decision previewed by the caller (Compile uses
 // PreviewRequestedRouteTrainingReadiness, the run preflight's own route

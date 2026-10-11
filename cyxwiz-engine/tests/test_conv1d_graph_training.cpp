@@ -357,7 +357,7 @@ void SelectArrayFireCpu() {
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
     cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 // A Conv1D graph trains with the TrainingExecutor: 16 rows of 10 values, the

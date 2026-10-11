@@ -128,15 +128,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_permute_host_sync_count = 0;
-size_t g_permute_fallback_count = 0;
 
 void CountPermuteHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_permute_host_sync_count;
-}
-
-void CountPermuteFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_permute_fallback_count;
 }
 
 template<typename T, typename Operation>
@@ -158,21 +152,15 @@ void CheckDeviceReorder(const std::vector<size_t>& shape,
     device_only.SetFromArray(host.GetArray());
 
     g_permute_host_sync_count = 0;
-    g_permute_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountPermuteHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountPermuteFallback);
         output = operation(device_only);
         output.GetSemanticArray().eval();
     }
 
     REQUIRE(g_permute_host_sync_count == 0);
-    REQUIRE(g_permute_fallback_count == 0);
     const auto source_indices = PermutedSourceIndices(shape, expected_dims);
     const T* output_values = output.ReadData<T>();
     for (size_t index = 0; index < source_indices.size(); ++index) {
@@ -279,16 +267,10 @@ TEST_CASE("Tensor rank-five permute runs on the device",
     const std::vector<std::vector<int>> permutations{{0, 3, 4, 1, 2}, {4, 1, 3, 0, 2}};
     for (const std::vector<int>& dims : permutations) {
         CAPTURE(dims);
-        g_permute_fallback_count = 0;
         cyxwiz::Tensor output;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-                &CountPermuteFallback);
             output = input.Permute(dims);
         }
-        REQUIRE(g_permute_fallback_count == 0);
         std::vector<size_t> out_shape;
         for (int dim : dims) out_shape.push_back(shape[static_cast<size_t>(dim)]);
         REQUIRE(output.Shape() == out_shape);

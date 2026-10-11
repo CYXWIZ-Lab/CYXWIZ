@@ -248,18 +248,18 @@
     {
       "id": "EXEC-FALLBACK-001",
       "family": "execution",
-      "operation": "native CPU fallback compatibility and strict policies",
+      "operation": "compatibility and strict execution policies (no native CPU fallback)",
       "tier": 0,
-      "owner": "cyxwiz-backend/src/algorithms/arrayfire_backend_utils.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/arrayfire_backend_utils.cpp"],
-      "callers": ["Tensor operations", "layers", "losses", "optimizers", "TrainingExecutor trace"],
-      "contract": "Every attempt records operation/reason/backend/context/policy; strict mode rejects before native compute; ArrayFire CPU is not native fallback.",
-      "supported": "declared compatibility gaps only",
+      "owner": "cyxwiz-engine/src/core/execution_policy.h",
+      "implementation": ["cyxwiz-engine/src/core/execution_device_preferences.h", "cyxwiz-engine/src/core/training_executor.cpp"],
+      "callers": ["TrainingExecutor", "Preferences > Devices", "graph training launcher"],
+      "contract": "Compute is ArrayFire only (TOFIX140). Compatibility may recover an unqualified GPU on ArrayFire CPU; strict refuses recovery and any stage the placement plan does not put on the device.",
+      "supported": "ArrayFire CPU, CUDA and OpenCL routes",
       "oracle": "engine execution contract",
-      "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
-      "execution": "observed compatibility boundary plus exact reviewed residual inventory; explicit host/serialization/selected-CPU aliases have been removed",
+      "tests": ["cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
+      "execution": "no native CPU compute remains; ArrayFire exception handlers report the device error (source scan)",
       "status": "partial",
-      "gaps": ["migrate or explicitly guard the 24 inventoried compatibility-compute files; give NCCL transport a real Tensor device-pointer contract"]
+      "gaps": ["give NCCL transport a real Tensor device-pointer contract"]
     },
     {
       "id": "EXEC-SYNC-001",
@@ -481,7 +481,7 @@
       "supported": "Float32 non-empty rank-2 embeddings; CosineEmbedding labels in {-1,+1}; Contrastive labels in {0,1}; Euclidean and smoothed-cosine Triplet; None/Mean/Sum reductions",
       "oracle": "PyTorch 2.10 nn.CosineEmbeddingLoss, nn.TripletMarginLoss, and explicit autograd equations for CyxWiz contrastive and smoothed-cosine triplet variants",
       "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:[metric-learning]", "cyxwiz-tests:[source_scan]"],
-      "execution": "forward and every embedding-branch gradient proven against checked-in PyTorch fixtures on strict ArrayFire CPU and every locally qualified CUDA/OpenCL route with exact identity, zero native fallback, and bounded attributed verification readback; forced failures prove strict rejection and compatible attributed native CPU fallback; locally incompatible oneAPI is an explicit device-selection skip",
+      "execution": "forward and every embedding-branch gradient proven against checked-in PyTorch fixtures on strict ArrayFire CPU and every locally qualified CUDA/OpenCL route with exact identity, and bounded attributed verification readback; locally incompatible oneAPI is an explicit device-selection skip",
       "status": "covered",
       "gaps": []
     },

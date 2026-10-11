@@ -1,6 +1,7 @@
 #pragma once
 
 #include "algorithms/arrayfire_backend_utils.h"
+#include "execution_policy.h"
 #include "route_qualification_snapshot.h"
 #include "../../../redist/bootstrapper/runtime_mutation_gate.h"
 
@@ -36,8 +37,8 @@ struct ExecutionDeviceContext {
     ExecutionRouteQualification requested_qualification;
     ExecutionRouteQualification effective_qualification;
     uint64_t capability_generation = 0;
-    ArrayFireFallbackPolicy fallback_policy =
-        ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+    ExecutionPolicy execution_policy =
+        ExecutionPolicy::Compatibility;
     bool valid = false;
     bool activation_succeeded = false;
     bool execution_validated = false;
@@ -46,11 +47,8 @@ struct ExecutionDeviceContext {
     int preflight_error_code = 0;
     std::string error;
 
-    std::string FallbackPolicyName() const {
-        return fallback_policy ==
-                ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-            ? "forbid_native_cpu_fallback"
-            : "allow_native_cpu_fallback";
+    std::string ExecutionPolicyName() const {
+        return cyxwiz::ExecutionPolicyName(execution_policy);
     }
 
     std::string Describe() const {
@@ -78,7 +76,7 @@ struct ExecutionDeviceContext {
             << RouteQualificationEvidenceLabel(
                    effective_qualification.matrix_id)
             << " generation=" << capability_generation
-            << " fallback_policy=" << FallbackPolicyName()
+            << " execution_policy=" << ExecutionPolicyName()
             << " activation=" << (activation_succeeded ? "ok" : "failed")
             << " execution="
             << (execution_validated ? "validated" : "not_validated")
@@ -122,9 +120,9 @@ inline DeviceType DeviceTypeForContextBackend(int backend) {
 }
 
 inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
-    ArrayFireFallbackPolicy fallback_policy) {
+    ExecutionPolicy execution_policy) {
     ExecutionDeviceContext context;
-    context.fallback_policy = fallback_policy;
+    context.execution_policy = execution_policy;
     context.capability_generation = NextExecutionDeviceCapabilityGeneration();
 
     try {

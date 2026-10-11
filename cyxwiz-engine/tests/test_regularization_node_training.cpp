@@ -219,7 +219,7 @@ void SelectArrayFireCpu() {
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
     cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 // Trains and returns the model's parameters, flattened in the Engine's layout.

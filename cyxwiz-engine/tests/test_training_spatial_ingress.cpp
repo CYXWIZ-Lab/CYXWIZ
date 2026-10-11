@@ -71,7 +71,7 @@ TrainingConfiguration Configuration(gui::NodeType type, int mode, int prefetch,
   config.save_best_checkpoint = false;
   config.early_stopping_patience = 0;
   config.checkpoint_dir = dir.string();
-  config.forbid_native_cpu_fallback = true;
+  config.strict_execution = true;
   for (auto node_type : {type, gui::NodeType::ReLU, gui::NodeType::Flatten,
                          gui::NodeType::Dense}) {
     CompiledLayer layer;
@@ -125,8 +125,6 @@ std::vector<float> Run(const TrainingConfiguration &config,
       Require(final.has_validation_metrics && final.has_test_metrics,
               "validation and held-out test executed");
       const auto trace = TrainingTraceCollector::Instance().Snapshot();
-      Require(trace.native_cpu_fallback_count == 0,
-              "strict spatial training native fallback");
       Require(trace.effective_backend == backend_name &&
                   trace.effective_device_id == device_id,
               "exact effective backend/device: " + trace.effective_backend);

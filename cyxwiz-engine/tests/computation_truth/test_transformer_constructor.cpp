@@ -94,7 +94,6 @@ int main(int argc,char**argv) {
         auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:
             backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
         Check(activation.success && activation.execution_validated,activation.message);
-        cyxwiz::ScopedArrayFireFallbackPolicy strict(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         InvalidModule<cyxwiz::TransformerEncoderModule>("encoder module");
         InvalidModule<cyxwiz::TransformerDecoderModule>("decoder module");
         InvalidLayer<cyxwiz::TransformerEncoderLayer>("encoder layer");

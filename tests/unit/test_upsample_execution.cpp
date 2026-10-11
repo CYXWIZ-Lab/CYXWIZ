@@ -28,10 +28,7 @@ TEST_CASE("Nearest Upsample forward and adjoint stay device resident",
       Tensor output, gradient;
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         output = layer.Forward(input);
         // A nonuniform cotangent: U* U x = factor^2 x for nearest replication.
         gradient = layer.Backward(output);
@@ -40,7 +37,6 @@ TEST_CASE("Nearest Upsample forward and adjoint stay device resident",
       }
       CHECK(conv_host_sync_count == 0);
       CHECK(conv_host_sync_bytes == 0);
-      CHECK(conv_fallback_count == 0);
       REQUIRE(output.Shape() == std::vector<size_t>{shape[0] * factor,
                                                     shape[1] * factor, shape[2],
                                                     shape[3]});
@@ -85,16 +81,12 @@ TEST_CASE("Nearest Upsample rejects provider dimensions before device access",
       const Tensor input(shape, nullptr, DataType::Float32);
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         REQUIRE_THROWS_WITH(
             layer.Forward(input),
             "Upsample2D dimension exceeds ArrayFire int dimension limit");
       }
       CHECK(conv_host_sync_count == 0);
-      CHECK(conv_fallback_count == 0);
     }
   }
 }
@@ -116,10 +108,7 @@ TEST_CASE("Upsample supports two optimizer updates and checkpoint reload",
       Tensor y, dx;
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         y = model.Forward(input);
         dx = model.Backward(dy);
         model.UpdateParameters(&optimizer);
@@ -129,7 +118,6 @@ TEST_CASE("Upsample supports two optimizer updates and checkpoint reload",
       }
       CHECK(conv_host_sync_count == 0);
       CHECK(conv_host_sync_bytes == 0);
-      CHECK(conv_fallback_count == 0);
       const float weight = 2.0f - 1.5f * step;
       CheckValues(y, {2, 2, 1, 2},
                   {weight, 2 * weight, weight, 2 * weight, weight, 2 * weight,
@@ -173,10 +161,7 @@ TEST_CASE("Bilinear Upsample and its nonuniform adjoint stay device resident",
       Tensor y, dx;
       ResetConvObservations();
       {
-        ScopedArrayFireFallbackPolicy strict(
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-        ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
         y = layer.Forward(input);
         dx = layer.Backward(cotangent);
         dx.GetSemanticArray().eval();
@@ -184,7 +169,6 @@ TEST_CASE("Bilinear Upsample and its nonuniform adjoint stay device resident",
       }
       CHECK(conv_host_sync_count == 0);
       CHECK(conv_host_sync_bytes == 0);
-      CHECK(conv_fallback_count == 0);
       REQUIRE(y.Shape() == high);
       REQUIRE(dx.Shape() == shape);
       double forward_dot = 0, backward_dot = 0;

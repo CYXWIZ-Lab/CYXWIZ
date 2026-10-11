@@ -737,8 +737,8 @@ int main() {
     cpu_context.effective_backend = "arrayfire_cpu";
     cpu_context.device_name = "Contract CPU";
     cpu_context.valid = true;
-    cpu_context.fallback_policy =
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    cpu_context.execution_policy =
+        cyxwiz::ExecutionPolicy::Strict;
     const auto gru_cpu_plan =
         cyxwiz::BuildExecutionPlacementPlan(gru_config, cpu_context);
     const auto gru_cpu_plan_repeat =

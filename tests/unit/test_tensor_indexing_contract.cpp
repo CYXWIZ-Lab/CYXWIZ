@@ -124,15 +124,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_indexing_host_sync_count = 0;
-size_t g_indexing_fallback_count = 0;
 
 void CountIndexingHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_indexing_host_sync_count;
-}
-
-void CountIndexingFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_indexing_fallback_count;
 }
 
 template<typename T, typename Operation>
@@ -155,21 +149,15 @@ void CheckDeviceGather(const std::vector<size_t>& shape,
     device_only.SetFromArray(host.GetArray());
 
     g_indexing_host_sync_count = 0;
-    g_indexing_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountIndexingHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountIndexingFallback);
         output = operation(device_only);
         output.GetSemanticArray().eval();
     }
 
     REQUIRE(g_indexing_host_sync_count == 0);
-    REQUIRE(g_indexing_fallback_count == 0);
     const auto source_indices = GatherSourceIndices(shape, axis, selected);
     const T* output_values = output.ReadData<T>();
     for (size_t index = 0; index < source_indices.size(); ++index) {
@@ -302,21 +290,15 @@ TEST_CASE("Tensor empty gathers are metadata-only",
     const cyxwiz::Tensor input =
         cyxwiz::Tensor::RangeN({3, 4}, cyxwiz::DataType::Float32);
     g_indexing_host_sync_count = 0;
-    g_indexing_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountIndexingHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountIndexingFallback);
         const cyxwiz::Tensor slice = input.Slice(1, 3, 1);
         const cyxwiz::Tensor selected = input.IndexSelect(1, {});
         REQUIRE(slice.Shape() == std::vector<size_t>{3, 0});
         REQUIRE(selected.Shape() == std::vector<size_t>{3, 0});
     }
     REQUIRE(g_indexing_host_sync_count == 0);
-    REQUIRE(g_indexing_fallback_count == 0);
 }
 
 // TOFIX140 F4: rank-five Slice / IndexSelect run on the device (lookup on
@@ -326,7 +308,6 @@ TEST_CASE("Tensor rank-five indexing runs on the device",
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
     const std::vector<size_t> shape{2, 3, 2, 2, 3};
     const cyxwiz::Tensor input = cyxwiz::Tensor::RangeN(shape, cyxwiz::DataType::Float32);
-    g_indexing_fallback_count = 0;
     for (int axis = 0; axis < 5; ++axis) {
         CAPTURE(axis);
         const size_t extent = shape[static_cast<size_t>(axis)];
@@ -335,10 +316,6 @@ TEST_CASE("Tensor rank-five indexing runs on the device",
         selected.push_back(0);                                                         // a repeat
         cyxwiz::Tensor sliced, chosen;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-                &CountIndexingFallback);
             sliced = input.Slice(axis, 1, static_cast<int>(extent), 2);
             chosen = input.IndexSelect(axis, selected);
         }
@@ -361,7 +338,6 @@ TEST_CASE("Tensor rank-five indexing runs on the device",
             REQUIRE(select_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)));
         }
     }
-    REQUIRE(g_indexing_fallback_count == 0);
 }
 
 TEST_CASE("Tensor scalar indexing uses an explicit bounded host boundary",

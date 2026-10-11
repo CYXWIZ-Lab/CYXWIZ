@@ -203,7 +203,6 @@ StudioDebuggerSnapshot OwnerMachineSnapshot() {
     snapshot.execution.effective_backend = "cuda";
     snapshot.execution.effective_device_name = "NVIDIA GeForce GTX 1050 Ti";
     snapshot.execution.residency_verdict = "device_resident";
-    snapshot.execution.native_cpu_fallback_count = 0;
     return snapshot;
 }
 
@@ -219,7 +218,7 @@ void TestStatusLine() {
               line.counts.fixes == 1,
           "status counts");
     Check(line.backend == "CUDA · NVIDIA GeForce GTX 1050 Ti", "backend: " + line.backend);
-    Check(line.provenance == "device resident · 0 CPU fallbacks", "provenance: " + line.provenance);
+    Check(line.provenance == "device resident", "provenance: " + line.provenance);
 
     const auto running = BuildStudioDebuggerStatusLine(snapshot, true, true, "Local Debug", 0.62f);
     Check(running.outcome == StudioDebuggerOutcome::Running, "running outcome");

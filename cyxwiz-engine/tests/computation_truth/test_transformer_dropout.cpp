@@ -22,7 +22,6 @@ using cyxwiz::Tensor;
 using json = nlohmann::json;
 size_t hosts = 0, fallbacks = 0;
 void Host(const cyxwiz::ArrayFireHostSyncEvent&) { ++hosts; }
-void Fallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) { ++fallbacks; }
 void Check(bool ok, const std::string& message) { if (!ok) throw std::runtime_error(message); }
 void Near(float a, float b, const std::string& message) {
     Check(std::isfinite(a) && std::isfinite(b) && std::abs(a-b) < 7e-4f + 3e-3f * std::abs(b), message);
@@ -78,7 +77,6 @@ json Verify(Layer& layer,std::map<std::string,Tensor>& params,Tensor& x,
     layer.SetTraining(true); Reseed(81); hosts=fallbacks=0;
     {
         cyxwiz::ScopedArrayFireHostSyncObserver h(Host);
-        cyxwiz::ScopedArrayFireNativeCpuFallbackObserver f(Fallback);
         y=forward(); dx=layer.Backward(upstream); af::sync();
         Check(hosts==0 && fallbacks==0,"dropout forward/backward residency");
     }
@@ -172,7 +170,6 @@ void CompatibilityAndCombinedDropout() {
         combined.SetTraining(true);Reseed(81);hosts=fallbacks=0;
         {
             cyxwiz::ScopedArrayFireHostSyncObserver h(Host);
-            cyxwiz::ScopedArrayFireNativeCpuFallbackObserver f(Fallback);
             combined.Forward(x);const auto dx=combined.Backward(upstream);af::sync();
             Check(hosts==0 && fallbacks==0,"combined dropout residency");
         }
@@ -213,11 +210,10 @@ int main(int argc,char**argv) {
         auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:
             backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
         Check(activation.success && activation.execution_validated,activation.message);
-        auto policy=cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+        auto policy=cyxwiz::ExecutionPolicy::Strict;
         auto context=cyxwiz::CaptureCurrentExecutionDeviceContext(policy);
         cyxwiz::ScopedActiveExecutionDeviceContext active;
         cyxwiz::ScopedExecutionDeviceContext binding(context);
-        cyxwiz::ScopedArrayFireFallbackPolicy strict(policy);
         json cases=json::array();
         cases.push_back(AttentionCase(true)); cases.push_back(AttentionCase(false));
         for(bool pre:{false,true}) {

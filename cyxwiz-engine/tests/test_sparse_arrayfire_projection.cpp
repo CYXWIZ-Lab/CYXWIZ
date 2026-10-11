@@ -202,8 +202,6 @@ void TestLinearAndSequentialSparseParity(
         fixture.grad_output.data(),
         cyxwiz::DataType::Float32);
 
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
 
     cyxwiz::LinearLayer layer(in_features, out_features, true);
     layer.SetParameters({{"weight", weight}, {"bias", bias}});

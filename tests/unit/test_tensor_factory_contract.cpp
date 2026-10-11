@@ -218,14 +218,9 @@ void CheckSeedReplay(const json& fixture) {
 }
 
 size_t g_factory_host_sync_count = 0;
-size_t g_factory_fallback_count = 0;
 
 void CountFactoryHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_factory_host_sync_count;
-}
-
-void CountFactoryFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_factory_fallback_count;
 }
 
 void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
@@ -238,20 +233,14 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             test_case.at("operation").get<std::string>();
         CAPTURE(test_case.at("name").get<std::string>());
         g_factory_host_sync_count = 0;
-        g_factory_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountFactoryHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountFactoryFallback);
             actual = ApplyFactory(operation, shape, dtype);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_factory_host_sync_count == 0);
-        REQUIRE(g_factory_fallback_count == 0);
         CheckExact(actual, dtype, test_case.at("expected"));
     }
 
@@ -265,17 +254,12 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
         for (const std::string operation : {"random", "random_seeded"}) {
             CAPTURE(operation, static_cast<int>(dtype));
             g_factory_host_sync_count = 0;
-            g_factory_fallback_count = 0;
             cyxwiz::Tensor actual;
             cyxwiz::Tensor replay;
             cyxwiz::Tensor different;
             {
-                const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                    cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
                 const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                     &CountFactoryHostSync);
-                const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                    &CountFactoryFallback);
                 actual = ApplyFactory(operation, {2, 1, 257}, dtype);
                 actual.GetSemanticArray().eval();
                 if (operation == "random_seeded") {
@@ -289,7 +273,6 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             }
             REQUIRE(actual.Shape() == std::vector<size_t>{2, 1, 257});
             REQUIRE(g_factory_host_sync_count == 0);
-            REQUIRE(g_factory_fallback_count == 0);
             if (operation == "random_seeded") {
                 REQUIRE(TensorValuesEqual(actual, replay));
                 REQUIRE_FALSE(TensorValuesEqual(actual, different));
@@ -363,22 +346,16 @@ TEST_CASE("Tensor rank-five factories run on the device",
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
     const std::vector<size_t> shape{2, 1, 3, 1, 4};
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
     std::vector<cyxwiz::Tensor> outputs;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountFactoryHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFactoryFallback);
         for (const std::string operation : {"zeros", "ones", "range_n", "random", "random_seeded"}) {
             outputs.push_back(ApplyFactory(operation, shape, cyxwiz::DataType::Int32));
             REQUIRE(outputs.back().Shape() == shape);
         }
     }
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == 0);
 
     const auto* zeros = outputs[0].ReadData<int32_t>();
     const auto* ones = outputs[1].ReadData<int32_t>();
@@ -407,14 +384,9 @@ TEST_CASE("Tensor empty factories require no compute or fallback",
           "[tensor][tensor_factory][arrayfire]") {
     const std::vector<size_t> empty_rank_five{1, 0, 1, 1, 1};
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountFactoryHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFactoryFallback);
         for (const std::string operation : {
                  "zeros", "ones", "random", "random_seeded", "range_n"}) {
             const cyxwiz::Tensor output = ApplyFactory(
@@ -424,7 +396,6 @@ TEST_CASE("Tensor empty factories require no compute or fallback",
         }
     }
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == 0);
 }
 
 TEST_CASE("Tensor factory shape overflow fails before compute",
@@ -432,13 +403,8 @@ TEST_CASE("Tensor factory shape overflow fails before compute",
     const std::vector<size_t> shape{
         (std::numeric_limits<size_t>::max)(), 2};
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
         &CountFactoryHostSync);
-    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &CountFactoryFallback);
     for (const std::string operation : {
              "zeros", "ones", "random", "random_seeded", "range_n"}) {
         REQUIRE_THROWS_AS(
@@ -446,5 +412,4 @@ TEST_CASE("Tensor factory shape overflow fails before compute",
             std::overflow_error);
     }
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == 0);
 }

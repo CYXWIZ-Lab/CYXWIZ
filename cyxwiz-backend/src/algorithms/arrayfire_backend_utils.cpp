@@ -6,8 +6,6 @@
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
-#include <mutex>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -73,12 +71,6 @@ std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
 
 namespace {
 
-std::mutex g_backend_fallback_log_mutex;
-std::set<std::string> g_backend_fallback_log_keys;
-thread_local ArrayFireFallbackPolicy g_arrayfire_fallback_policy =
-    ArrayFireFallbackPolicy::AllowNativeCpuFallback;
-thread_local ArrayFireNativeCpuFallbackObserver
-    g_arrayfire_native_cpu_fallback_observer = nullptr;
 thread_local ArrayFireHostSyncObserver
     g_arrayfire_host_sync_observer = nullptr;
 thread_local ArrayFireHostSyncAttribution
@@ -103,36 +95,6 @@ bool ContainsAny(const std::string& text,
 
 } // namespace
 
-ArrayFireFallbackPolicy GetArrayFireFallbackPolicy() {
-    return g_arrayfire_fallback_policy;
-}
-
-void SetArrayFireFallbackPolicy(ArrayFireFallbackPolicy policy) {
-    g_arrayfire_fallback_policy = policy;
-}
-
-ScopedArrayFireFallbackPolicy::ScopedArrayFireFallbackPolicy(
-    ArrayFireFallbackPolicy policy)
-    : previous_(GetArrayFireFallbackPolicy()) {
-    SetArrayFireFallbackPolicy(policy);
-}
-
-ScopedArrayFireFallbackPolicy::~ScopedArrayFireFallbackPolicy() {
-    SetArrayFireFallbackPolicy(previous_);
-}
-
-ScopedArrayFireNativeCpuFallbackObserver::
-    ScopedArrayFireNativeCpuFallbackObserver(
-        ArrayFireNativeCpuFallbackObserver observer)
-    : previous_(GetArrayFireNativeCpuFallbackObserver()) {
-    SetArrayFireNativeCpuFallbackObserver(observer);
-}
-
-ScopedArrayFireNativeCpuFallbackObserver::
-    ~ScopedArrayFireNativeCpuFallbackObserver() {
-    SetArrayFireNativeCpuFallbackObserver(previous_);
-}
-
 ScopedArrayFireHostSyncObserver::ScopedArrayFireHostSyncObserver(
     ArrayFireHostSyncObserver observer)
     : previous_(GetArrayFireHostSyncObserver()) {
@@ -152,21 +114,6 @@ ScopedArrayFireHostSyncAttribution::ScopedArrayFireHostSyncAttribution(
 
 ScopedArrayFireHostSyncAttribution::~ScopedArrayFireHostSyncAttribution() {
     SetArrayFireHostSyncAttribution(previous_);
-}
-
-bool IsArrayFireNativeCpuFallbackForbidden() {
-    return GetArrayFireFallbackPolicy() ==
-           ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
-}
-
-ArrayFireNativeCpuFallbackObserver
-GetArrayFireNativeCpuFallbackObserver() {
-    return g_arrayfire_native_cpu_fallback_observer;
-}
-
-void SetArrayFireNativeCpuFallbackObserver(
-    ArrayFireNativeCpuFallbackObserver observer) {
-    g_arrayfire_native_cpu_fallback_observer = observer;
 }
 
 ArrayFireHostSyncObserver GetArrayFireHostSyncObserver() {
@@ -359,134 +306,6 @@ bool IsCurrentArrayFireBackendAvailable() {
     } catch (...) {
         return false;
     }
-}
-
-std::string BuildArrayFireBackendFallbackContext(
-    const std::string& shape_or_node_context,
-    const std::string& backend_name) {
-    std::string context = "backend=";
-    context += backend_name.empty() ? "unknown" : backend_name;
-    if (!shape_or_node_context.empty()) {
-        context += "; ";
-        context += shape_or_node_context;
-    }
-    return context;
-}
-
-std::string BuildArrayFireBackendFallbackMessage(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    bool include_error_text,
-    const char* error_message,
-    const std::string& context) {
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); falling back to native CPU. Training continues, but this path may be slower.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (include_error_text && error_message != nullptr &&
-        error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    return message;
-}
-
-void ThrowIfArrayFireNativeCpuFallbackForbidden(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    const char* error_message,
-    const std::string& context) {
-    if (const auto observer = GetArrayFireNativeCpuFallbackObserver()) {
-        ArrayFireNativeCpuFallbackEvent event;
-        event.operation_name = operation_name ? operation_name : "operation";
-        event.reason_code = BackendFallbackReasonName(reason);
-        event.selected_backend = CurrentArrayFireBackendName();
-        event.context = context;
-        event.error_message = error_message ? error_message : "";
-        event.fallback_forbidden = IsArrayFireNativeCpuFallbackForbidden();
-        observer(event);
-    }
-
-    if (!IsArrayFireNativeCpuFallbackForbidden()) {
-        return;
-    }
-
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); native CPU fallback is forbidden by the current execution policy.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (error_message != nullptr && error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    throw std::runtime_error(message);
-}
-
-bool ShouldLogArrayFireBackendFallbackOnce(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    const std::string& context) {
-    std::string key = operation_name ? operation_name : "unknown";
-    key += ":";
-    key += BackendFallbackReasonName(reason);
-    if (!context.empty()) {
-        key += ":";
-        key += context;
-    }
-    std::lock_guard<std::mutex> lock(g_backend_fallback_log_mutex);
-    return g_backend_fallback_log_keys.insert(key).second;
-}
-
-bool ShouldForceArrayFireBackendFallbackForTesting(
-    const char* operation_name) {
-#ifdef NDEBUG
-    (void)operation_name;
-    return false;
-#else
-    const char* value = std::getenv("CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK");
-    if (value == nullptr || value[0] == '\0') {
-        return false;
-    }
-    const std::string requested(value);
-    size_t start = 0;
-    while (start <= requested.size()) {
-        const size_t separator = requested.find_first_of(",;", start);
-        const size_t end = separator == std::string::npos
-            ? requested.size()
-            : separator;
-        const size_t first =
-            end > start ? requested.find_first_not_of(" \t\r\n", start) :
-                          std::string::npos;
-        const size_t last =
-            first != std::string::npos && first < end
-                ? requested.find_last_not_of(" \t\r\n", end - 1)
-                : std::string::npos;
-        if (first != std::string::npos && first < end &&
-            last != std::string::npos) {
-            const std::string token =
-                requested.substr(first, last - first + 1);
-            if (token == "*" ||
-                token == (operation_name ? operation_name : "")) {
-                return true;
-            }
-        }
-        if (separator == std::string::npos) {
-            break;
-        }
-        start = separator + 1;
-    }
-    return false;
-#endif
 }
 
 } // namespace cyxwiz

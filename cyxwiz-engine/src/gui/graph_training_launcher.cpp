@@ -485,7 +485,7 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
             const std::string device = preview.route_name.empty()
                 ? std::string("the selected device") : "'" + preview.route_name + "'";
             const bool can_fall_back =
-                !config.forbid_native_cpu_fallback && preview.cpu_recovery_qualified;
+                !config.strict_execution && preview.cpu_recovery_qualified;
             if (can_fall_back) {
                 issues.push_back({cyxwiz::IssueLevel::Warning, -1, "",
                     "Training device " + device + " is not qualified for training (" +
@@ -500,7 +500,7 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
             }
         } else if (preview.route_available && preview.authorized &&
                    preview.type != cyxwiz::DeviceType::CPU &&
-                   !config.forbid_native_cpu_fallback && !preview.cpu_recovery_qualified) {
+                   !config.strict_execution && !preview.cpu_recovery_qualified) {
             const std::string device = preview.route_name.empty()
                 ? std::string("the selected device") : "'" + preview.route_name + "'";
             issues.push_back({cyxwiz::IssueLevel::Info, -1, "",

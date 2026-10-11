@@ -37,7 +37,6 @@ int main(int argc, char** argv) {
             auto fixture = Json::parse(source);
             const auto activated=cyxwiz::Device(cyxwiz::DeviceType::CUDA,0).ActivateExact(true);
             Check(activated.success && activated.execution_validated,"CUDA activation");
-            cyxwiz::ScopedArrayFireFallbackPolicy policy(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             arrow::StringBuilder tokens, groups;
             for(const auto& row:fixture.at("rows")) {
                 Check(tokens.Append(row.at("tokens").get<std::string>()).ok(),"tokens");
@@ -58,7 +57,7 @@ int main(int argc, char** argv) {
             config.output_size=config.sequence_batch.expected_token_vocabulary.size();
             config.has_data_split=true; config.train_ratio=fixture.at("train_ratio");
             config.val_ratio=fixture.at("val_ratio"); config.test_ratio=fixture.at("test_ratio");
-            config.shuffle=false; config.drop_last=false; config.forbid_native_cpu_fallback=true;
+            config.shuffle=false; config.drop_last=false; config.strict_execution=true;
             config.loss_type=gui::NodeType::CrossEntropyLoss;
             config.loss_params["ignore_index"]="-100"; config.loss_params["reduction"]="mean";
             for(const auto& entry:fixture.at("layers")) {

@@ -403,22 +403,17 @@ void Viewport::Render() {
                             "%llu",
                             static_cast<unsigned long long>(
                                 trace.placement_entry_count));
-                        if (!trace.fallback_policy.empty()) {
-                            const bool run_is_strict =
-                                trace.fallback_policy ==
-                                "forbid_native_cpu_fallback";
+                        if (!trace.execution_policy.empty()) {
                             SummaryRow(
                                 "Run policy",
-                                run_is_strict
-                                    ? "Strict ArrayFire residency"
-                                    : "Compatibility with recorded fallback");
+                                cyxwiz::RecordedExecutionPolicyDisplayName(
+                                    trace.execution_policy));
                         }
                     }
 
                     const auto selected_policy =
                         next_run_policy.value_or(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     const std::string next_policy_label =
                         std::string(cyxwiz::ExecutionPolicyDisplayName(
                             selected_policy)) +
@@ -563,8 +558,7 @@ void Viewport::Render() {
                 "backend/device when a run exists. Process runtime is shown "
                 "only when no run-bound trace is available. Preferences "
                 "selection is shown separately as Next run and is applied at "
-                "training start. Native CPU fallback is reported separately "
-                "by run diagnostics.");
+                "training start.");
         } catch (const std::exception& error) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                                "Device query failed: %s",

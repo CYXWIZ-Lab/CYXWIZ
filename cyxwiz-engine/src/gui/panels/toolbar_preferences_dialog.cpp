@@ -494,10 +494,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
 
                     if (has_run_bound_device &&
-                        !active_run_trace.fallback_policy.empty()) {
+                        !active_run_trace.execution_policy.empty()) {
                         const bool run_is_strict =
-                            active_run_trace.fallback_policy ==
-                            "forbid_native_cpu_fallback";
+                            active_run_trace.execution_policy ==
+                            "strict";
                         ImGui::TextDisabled(
                             training_active ? "Current run" : "Last run");
                         ImGui::SameLine(130.0f);
@@ -506,17 +506,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
                                 : ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
                             "%s",
-                            run_is_strict
-                                ? "Strict ArrayFire residency"
-                                : "Compatibility with recorded fallback");
+                            cyxwiz::RecordedExecutionPolicyDisplayName(
+                                active_run_trace.execution_policy));
                     }
 
                     const auto next_run_policy =
                         cyxwiz::GetNextRunExecutionPolicy();
                     const auto selected_policy =
                         next_run_policy.value_or(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     ImGui::TextDisabled("Next runs");
                     ImGui::SameLine(130.0f);
                     if (training_active) {
@@ -525,21 +523,22 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const bool compatibility_clicked = ImGui::RadioButton(
                         "Compatibility##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Allow declared native CPU compatibility paths and record observed fallback");
+                            "May finish on ArrayFire's CPU backend when the selected GPU is not verified,\n"
+                            "runs stages the placement plan does not put on the device, and dumps the\n"
+                            "first batch's debug samples.");
                     }
                     ImGui::SameLine();
                     const bool strict_clicked = ImGui::RadioButton(
                         "Strict residency##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Strict);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Reject non-ArrayFire placement before training and terminate on unexpected fallback");
+                            "Stays on the selected device: no ArrayFire CPU recovery, and the run is\n"
+                            "refused before training if any stage is not placed on the device.");
                     }
                     if (training_active) {
                         ImGui::EndDisabled();
@@ -547,7 +546,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const auto persist_policy = [&](auto policy,
                                                     const char* description) {
                         std::string persistence_error;
-                        if (!cyxwiz::UpdateDefaultFallbackPolicyAtomic(
+                        if (!cyxwiz::UpdateDefaultExecutionPolicyAtomic(
                                 cyxwiz::GetComputeRuntimeConfigPath(),
                                 policy,
                                 persistence_error)) {
@@ -565,14 +564,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     };
                     if (!training_active && compatibility_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback,
+                            cyxwiz::ExecutionPolicy::Compatibility,
                             "compatibility execution policy");
                     } else if (!training_active && strict_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback,
-                            "strict ArrayFire residency policy");
+                            cyxwiz::ExecutionPolicy::Strict,
+                            "strict execution policy");
                     }
 
                     ImGui::Spacing();
@@ -596,7 +593,6 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextDisabled(
                             "The candidate remains local until you click OK.");
                     }
-                    ImGui::TextDisabled("Operator fallbacks are reported as native CPU fallback events.");
                     ImGui::Spacing();
 
                     // Initialize device list if needed
