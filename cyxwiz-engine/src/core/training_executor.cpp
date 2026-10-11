@@ -397,62 +397,7 @@ void RecordDeclaredScalarLossOutputBoundary() {
         message);
 }
 
-std::string BuildRegressionMetricFallbackContext(
-    const Tensor& predictions,
-    const Tensor& targets,
-    size_t batch_size,
-    size_t output_width) {
-    return BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext("predictions", predictions.Shape()) +
-        "; " +
-        BuildTensorShapeContext("targets", targets.Shape()) +
-        fmt::format("; batch_size={}; output_width={}",
-                    batch_size,
-                    output_width));
-}
-
-void AddRegressionMetricsNativeCpuFallback(
-    RegressionMetricAccumulator& regression,
-    const Tensor& predictions,
-    const Tensor& targets,
-    size_t batch_size,
-    size_t output_width) {
-    const float* pred_data = predictions.ReadData<float>();
-    const float* target_data = targets.ReadData<float>();
-    regression.Add(
-        pred_data,
-        target_data,
-        batch_size * output_width,
-        output_width);
-}
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-bool CanUseArrayFireRegressionMetrics(const Tensor& predictions,
-                                      const Tensor& targets,
-                                      size_t batch_size,
-                                      size_t output_width,
-                                      BackendFallbackReason& reason) {
-    if (predictions.GetDataType() != DataType::Float32 ||
-        targets.GetDataType() != DataType::Float32) {
-        reason = BackendFallbackReason::UnsupportedDtype;
-        return false;
-    }
-
-    const auto& pred_shape = predictions.Shape();
-    const auto& target_shape = targets.Shape();
-    if (batch_size == 0 || output_width == 0 ||
-        batch_size > std::numeric_limits<unsigned>::max() ||
-        output_width > std::numeric_limits<unsigned>::max() ||
-        pred_shape.size() != 2 || target_shape.size() != 2 ||
-        pred_shape[0] != batch_size || pred_shape[1] != output_width ||
-        target_shape[0] != batch_size || target_shape[1] != output_width) {
-        reason = BackendFallbackReason::UnsupportedShape;
-        return false;
-    }
-
-    return true;
-}
-
 void AddRegressionMetricsArrayFire(
     RegressionMetricAccumulator& regression,
     const Tensor& predictions,
@@ -460,8 +405,16 @@ void AddRegressionMetricsArrayFire(
     size_t batch_size,
     size_t output_width,
     const RegressionTargetTransform& transform) {
-    af::array error =
-        predictions.GetArrayRowMajor2D() - targets.GetArrayRowMajor2D();
+    // [batch, width] rows on the device from any layout with that element count.
+    const auto rows = [batch_size, output_width](const Tensor& values, const char* what) {
+        if (values.NumElements() != batch_size * output_width) {
+            throw std::invalid_argument(std::string("RegressionMetricAccumulator: ") + what + " hold " +
+                                        std::to_string(values.NumElements()) + " values, expected " +
+                                        std::to_string(batch_size) + " x " + std::to_string(output_width));
+        }
+        return values.Reshape({batch_size, output_width}).GetArrayRowMajor2D().as(f32);
+    };
+    af::array error = rows(predictions, "predictions") - rows(targets, "targets");
 
     const bool restore_original_units =
         transform.enabled && transform.resolved &&
@@ -528,35 +481,6 @@ void AddRegressionMetricScalars(
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    BackendFallbackReason unsupported_reason =
-        BackendFallbackReason::UnsupportedShape;
-    const std::string context = BuildRegressionMetricFallbackContext(
-        predictions, targets, batch_size, output_width);
-    if (!CanUseArrayFireRegressionMetrics(
-            predictions, targets, batch_size, output_width,
-            unsupported_reason)) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "RegressionMetricAccumulator",
-            unsupported_reason,
-            "unsupported regression metric tensor layout",
-            context);
-        if (ShouldLogArrayFireBackendFallbackOnce(
-                "RegressionMetricAccumulator",
-                unsupported_reason,
-                context)) {
-            spdlog::warn("{}",
-                         BuildArrayFireBackendFallbackMessage(
-                             "RegressionMetricAccumulator",
-                             unsupported_reason,
-                             true,
-                             "unsupported regression metric tensor layout",
-                             context));
-        }
-        AddRegressionMetricsNativeCpuFallback(
-            regression, predictions, targets, batch_size, output_width);
-        return;
-    }
-
     try {
         AddRegressionMetricsArrayFire(
             regression,
@@ -565,40 +489,17 @@ void AddRegressionMetricScalars(
             batch_size,
             output_width,
             config.regression_target_transform);
-        return;
     } catch (const af::exception& e) {
-        const BackendFallbackReason reason =
-            ClassifyArrayFireBackendFallbackReason(e.what());
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "RegressionMetricAccumulator",
-            reason,
-            e.what(),
-            context);
-        if (ShouldLogArrayFireBackendFallbackOnce(
-                "RegressionMetricAccumulator",
-                reason,
-                context)) {
-            spdlog::warn("{}",
-                         BuildArrayFireBackendFallbackMessage(
-                             "RegressionMetricAccumulator",
-                             reason,
-                             true,
-                             e.what(),
-                             context));
-        }
+        throw std::runtime_error(std::string("RegressionMetricAccumulator failed on the ArrayFire device: ") +
+                                 e.what());
     }
 #else
-    const std::string context = BuildRegressionMetricFallbackContext(
-        predictions, targets, batch_size, output_width);
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "RegressionMetricAccumulator",
-        BackendFallbackReason::BackendInternalError,
-        "ArrayFire support is unavailable",
-        context);
+    (void)regression;
+    (void)predictions;
+    (void)targets;
+    (void)config;
+    throw std::runtime_error("RegressionMetricAccumulator runs on ArrayFire, and this build has no ArrayFire");
 #endif
-
-    AddRegressionMetricsNativeCpuFallback(
-        regression, predictions, targets, batch_size, output_width);
 }
 
 } // namespace

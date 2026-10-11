@@ -12,7 +12,7 @@
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
+#include "algorithms/arrayfire_host_values.h"
 #endif
 
 namespace cyxwiz {
@@ -29,7 +29,6 @@ ClassificationDecisionScalar BuildTripletOrderScalar(
         predictions.GetDataType() != DataType::Float32) {
         return {};
     }
-    const size_t width = shape[1];
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array all = predictions.GetArrayRowMajor2D();
@@ -45,31 +44,11 @@ ClassificationDecisionScalar BuildTripletOrderScalar(
         counts.eval();
         return {Tensor::FromSemanticArray(counts, {2})};
     } catch (const af::exception& e) {
-        const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        const std::string context = BuildArrayFireBackendFallbackContext(
-            BuildTensorShapeContext("predictions", predictions.Shape()));
-        ThrowIfArrayFireNativeCpuFallbackForbidden("TripletDecisionCount", reason, e.what(), context);
-        spdlog::warn("{}", BuildArrayFireBackendFallbackMessage(
-                               "TripletDecisionCount", reason,
-                               reason != BackendFallbackReason::CudaJitParamOverflow, e.what(), context));
+        throw std::runtime_error(DeviceError("TripletDecisionCount", e));
     }
+#else
+    throw std::runtime_error("TripletDecisionCount runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    const float* values = predictions.ReadData<float>();
-    size_t correct = 0;
-    for (size_t t = 0; t < triplets; ++t) {
-        const float* a = values + t * width;
-        const float* p = values + (triplets + t) * width;
-        const float* n = values + (2 * triplets + t) * width;
-        double d_ap = 0.0;
-        double d_an = 0.0;
-        for (size_t j = 0; j < width; ++j) {
-            d_ap += static_cast<double>(a[j] - p[j]) * (a[j] - p[j]);
-            d_an += static_cast<double>(a[j] - n[j]) * (a[j] - n[j]);
-        }
-        if (d_ap < d_an) ++correct;
-    }
-    const float counts[] = {static_cast<float>(correct), static_cast<float>(triplets)};
-    return {Tensor({2}, counts, DataType::Float32)};
 }
 
 // predictions [2P, D]: rows 0..P-1 firsts, P..2P-1 seconds; similar [P] is 1
@@ -89,7 +68,6 @@ ClassificationDecisionScalar BuildPairDecisionScalar(
     const bool by_distance = mode == ClassificationDecisionMode::PairDistance;
     // As the backend Cosine Embedding loss.
     constexpr float kCosineEpsilon = 1.0e-12f;
-    const size_t width = shape[1];
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array all = predictions.GetArrayRowMajor2D();
@@ -106,35 +84,13 @@ ClassificationDecisionScalar BuildPairDecisionScalar(
         counts.eval();
         return {Tensor::FromSemanticArray(counts, {2})};
     } catch (const af::exception& e) {
-        const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(e.what());
-        const std::string context = BuildArrayFireBackendFallbackContext(
-            BuildTensorShapeContext("predictions", predictions.Shape()));
-        ThrowIfArrayFireNativeCpuFallbackForbidden("PairDecisionCount", reason, e.what(), context);
-        spdlog::warn("{}", BuildArrayFireBackendFallbackMessage(
-                               "PairDecisionCount", reason,
-                               reason != BackendFallbackReason::CudaJitParamOverflow, e.what(), context));
+        throw std::runtime_error(DeviceError("PairDecisionCount", e));
     }
+#else
+    (void)by_distance;
+    (void)threshold;
+    throw std::runtime_error("PairDecisionCount runs on ArrayFire, and this build has no ArrayFire");
 #endif
-    const float* values = predictions.ReadData<float>();
-    const float* flags = similar.ReadData<float>();
-    size_t correct = 0;
-    for (size_t i = 0; i < pairs; ++i) {
-        const float* a = values + i * width;
-        const float* b = values + (pairs + i) * width;
-        double dot = 0.0, aa = 0.0, bb = 0.0, dd = 0.0;
-        for (size_t j = 0; j < width; ++j) {
-            dot += static_cast<double>(a[j]) * b[j];
-            aa += static_cast<double>(a[j]) * a[j];
-            bb += static_cast<double>(b[j]) * b[j];
-            dd += static_cast<double>(a[j] - b[j]) * (a[j] - b[j]);
-        }
-        const bool called_similar = by_distance
-            ? std::sqrt(dd) < threshold
-            : dot / std::sqrt((aa + kCosineEpsilon) * (bb + kCosineEpsilon)) > threshold;
-        if (called_similar == (flags[i] == 1.0f)) ++correct;
-    }
-    const float counts[] = {static_cast<float>(correct), static_cast<float>(pairs)};
-    return {Tensor({2}, counts, DataType::Float32)};
 }
 
 // predictions [N, D] and the batch's class ids: the triplets / pairs the loss
@@ -177,71 +133,25 @@ ClassificationDecisionScalar BuildMinedDecisionScalar(
     return {Tensor({2}, counts, DataType::Float32)};
 }
 
-ClassificationDecisionCount CountClassificationDecisionsCpu(
-    const Tensor& predictions,
-    const Tensor& targets,
-    size_t batch_size,
-    size_t output_width,
-    ClassificationDecisionMode mode,
-    std::optional<int> ignore_index) {
-    if (mode == ClassificationDecisionMode::MulticlassScores &&
-        (targets.GetDataType() == DataType::Int32 ||
-         targets.GetDataType() == DataType::Int64) &&
-        targets.Shape() == std::vector<size_t>{batch_size}) {
-        const float* scores = predictions.ReadData<float>();
-        const int32_t* labels32 = targets.GetDataType() == DataType::Int32
-            ? targets.ReadData<int32_t>()
-            : nullptr;
-        const int64_t* labels64 = targets.GetDataType() == DataType::Int64
-            ? targets.ReadData<int64_t>()
-            : nullptr;
-        ClassificationDecisionCount result;
-        for (size_t row = 0; row < batch_size; ++row) {
-            const int64_t label = labels32
-                ? static_cast<int64_t>(labels32[row])
-                : labels64[row];
-            if (ignore_index && label == *ignore_index) {
-                continue;
-            }
-            if (ClassificationPredictedClass(
-                    scores + row * output_width,
-                    output_width,
-                    mode) == label) {
-                ++result.correct;
-            }
-            ++result.total;
-        }
-        return result;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+// [batch, width] rows on the device from any layout with that element count.
+af::array DecisionRows(const Tensor& values, size_t batch, size_t width, const char* what) {
+    if (values.NumElements() != batch * width) {
+        throw std::invalid_argument(std::string("ClassificationDecisionCount: ") + what + " hold " +
+                                    std::to_string(values.NumElements()) + " values, expected " +
+                                    std::to_string(batch) + " x " + std::to_string(width));
     }
-    return CountClassificationDecisions(
-        predictions.ReadData<float>(), targets.ReadData<float>(),
-        batch_size, output_width, mode);
+    return values.Reshape({batch, width}).GetArrayRowMajor2D().as(f32);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-bool CanUseArrayFireDecisionCount(const Tensor& predictions,
-                                  const Tensor& targets,
-                                  size_t batch_size,
-                                  size_t output_width) {
-    if (batch_size == 0 || output_width == 0) {
-        return false;
-    }
-    if (predictions.GetDataType() != DataType::Float32) {
-        return false;
-    }
-    const auto& pred_shape = predictions.Shape();
-    const auto& target_shape = targets.Shape();
-    const bool probability_targets =
-        targets.GetDataType() == DataType::Float32 &&
-        target_shape == pred_shape;
-    const bool class_index_targets =
-        (targets.GetDataType() == DataType::Int32 ||
-         targets.GetDataType() == DataType::Int64) &&
-        target_shape == std::vector<size_t>{batch_size};
-    return pred_shape.size() == 2 &&
-           pred_shape[0] == batch_size &&
-           pred_shape[1] == output_width &&
-           (probability_targets || class_index_targets);
+// First index of each row's maximum (std::max_element order); a row without a
+// maximum (all NaN) gives 0.
+af::array FirstArgmaxRows(const af::array& rows) {
+    const unsigned width = static_cast<unsigned>(rows.dims(1));
+    const af::array maximum = af::tile((af::max)(rows, 1), 1, width);
+    const af::array index = af::range(rows.dims(), 1, s32);
+    const af::array first = (af::min)(af::select(rows == maximum, index, static_cast<double>(width)), 1);
+    return af::select(first >= static_cast<double>(width), 0.0, first).as(s32);
 }
 
 ClassificationDecisionScalar BuildClassificationDecisionScalarArrayFire(
@@ -251,49 +161,33 @@ ClassificationDecisionScalar BuildClassificationDecisionScalarArrayFire(
     size_t output_width,
     ClassificationDecisionMode mode,
     std::optional<int> ignore_index) {
-    (void)output_width;
-    const af::array pred = predictions.GetArrayRowMajor2D();
-    const bool class_index_targets = targets.Shape().size() == 1;
-    const af::array target = class_index_targets
-        ? targets.GetSemanticArray()
-        : targets.GetArrayRowMajor2D();
-
+    const af::array pred = DecisionRows(predictions, batch_size, output_width, "predictions");
+    const bool class_index_targets =
+        (targets.GetDataType() == DataType::Int32 || targets.GetDataType() == DataType::Int64) &&
+        targets.NumElements() == batch_size;
     af::array correct_mask;
-    af::array valid_mask = af::constant(1.0f, batch_size);
-    if (mode == ClassificationDecisionMode::BinaryLogit) {
-        correct_mask = (pred >= 0.0f) == (target >= 0.5f);
-    } else if (mode == ClassificationDecisionMode::BinaryProbability) {
-        correct_mask = (pred >= 0.5f) == (target >= 0.5f);
+    af::array valid_mask = af::constant(1.0f, static_cast<dim_t>(batch_size));
+    if (mode == ClassificationDecisionMode::BinaryLogit ||
+        mode == ClassificationDecisionMode::BinaryProbability) {
+        // Column 0 decides, as the host helpers do.
+        const float cut = mode == ClassificationDecisionMode::BinaryLogit ? 0.0f : 0.5f;
+        const af::array target = class_index_targets
+            ? af::flat(targets.GetRowMajorFlatArray()).as(f32)
+            : DecisionRows(targets, batch_size, output_width, "targets").col(0);
+        correct_mask = (pred.col(0) >= cut) == (target >= 0.5f);
     } else if (class_index_targets) {
-        af::array pred_values;
-        af::array pred_indices;
-        af::max(pred_values, pred_indices, pred, 1);
-        const af::array target_indices = af::flat(target).as(s32);
+        const af::array target_indices = af::flat(targets.GetRowMajorFlatArray()).as(s32);
         if (ignore_index) {
             valid_mask = (target_indices != *ignore_index).as(f32);
         }
-        correct_mask =
-            (pred_indices.as(s32) == target_indices).as(f32) * valid_mask;
+        correct_mask = (FirstArgmaxRows(pred) == target_indices).as(f32) * valid_mask;
     } else {
-        af::array pred_values;
-        af::array pred_indices;
-        af::array target_values;
-        af::array target_indices;
-        af::max(pred_values, pred_indices, pred, 1);
-        af::max(target_values, target_indices, target, 1);
-        correct_mask = pred_indices == target_indices;
+        const af::array target = DecisionRows(targets, batch_size, output_width, "targets");
+        correct_mask = FirstArgmaxRows(pred) == FirstArgmaxRows(target);
     }
-    correct_mask.eval();
-
-    af::array correct_scalar = af::sum(af::flat(correct_mask.as(f32)));
-    correct_scalar.eval();
-    af::array valid_scalar = af::sum(af::flat(valid_mask));
-    valid_scalar.eval();
-    af::array counts = af::join(0, correct_scalar, valid_scalar);
+    af::array counts = af::join(0, af::sum(af::flat(correct_mask.as(f32))), af::sum(af::flat(valid_mask)));
     counts.eval();
-    return {
-        Tensor::FromSemanticArray(counts, {2}),
-    };
+    return {Tensor::FromSemanticArray(counts, {2})};
 }
 #endif
 
@@ -322,46 +216,16 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (CanUseArrayFireDecisionCount(
-            predictions, targets, batch_size, output_width)) {
-        try {
-            return BuildClassificationDecisionScalarArrayFire(
-                predictions, targets, batch_size, output_width, mode,
-                ignore_index);
-        } catch (const af::exception& e) {
-            const BackendFallbackReason reason =
-                ClassifyArrayFireBackendFallbackReason(e.what());
-            const std::string context = BuildArrayFireBackendFallbackContext(
-                BuildTensorShapeContext("predictions", predictions.Shape()) +
-                "; " +
-                BuildTensorShapeContext("targets", targets.Shape()));
-            ThrowIfArrayFireNativeCpuFallbackForbidden(
-                "ClassificationDecisionCount",
-                reason,
-                e.what(),
-                context);
-            spdlog::warn("{}",
-                         BuildArrayFireBackendFallbackMessage(
-                             "ClassificationDecisionCount",
-                             reason,
-                             reason !=
-                                 BackendFallbackReason::CudaJitParamOverflow,
-                             e.what(),
-                             context));
-        }
+    try {
+        return BuildClassificationDecisionScalarArrayFire(
+            predictions, targets, batch_size, output_width, mode, ignore_index);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("ClassificationDecisionCount", e));
     }
+#else
+    (void)ignore_index;
+    throw std::runtime_error("ClassificationDecisionCount runs on ArrayFire, and this build has no ArrayFire");
 #endif
-
-    const ClassificationDecisionCount cpu_count =
-        CountClassificationDecisionsCpu(
-        predictions, targets, batch_size, output_width, mode, ignore_index);
-    const float counts[] = {
-        static_cast<float>(cpu_count.correct),
-        static_cast<float>(cpu_count.total),
-    };
-    return {
-        Tensor({2}, counts, DataType::Float32),
-    };
 }
 
 ClassificationDecisionCount ReadClassificationDecisionScalar(

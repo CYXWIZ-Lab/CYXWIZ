@@ -1290,6 +1290,28 @@ int main(int argc, char** argv) {
           "class-index accuracy must exclude ignored targets from both "
           "the numerator and denominator");
 
+    // TOFIX140 F6: the device count takes any layout with batch x width
+    // values ([batch, 1, width] here), breaks argmax ties at the first class
+    // like std::max_element, and refuses a mismatched element count.
+    const float tied_scores[] = {0.5f, 0.5f, 0.1f, 0.2f, 0.9f, 0.9f};
+    const int32_t tied_targets[] = {0, 1};
+    const auto tied_accuracy = cyxwiz::CountClassificationDecisionScalars(
+        cyxwiz::Tensor({2, 1, 3}, tied_scores, cyxwiz::DataType::Float32),
+        cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+        2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(tied_accuracy.correct == 2 && tied_accuracy.total == 2,
+          "argmax ties must resolve to the first class on the device");
+    bool mismatch_refused = false;
+    try {
+        (void)cyxwiz::CountClassificationDecisionScalars(
+            cyxwiz::Tensor({2, 2}, tied_scores, cyxwiz::DataType::Float32),
+            cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+            2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    } catch (const std::invalid_argument&) {
+        mismatch_refused = true;
+    }
+    Check(mismatch_refused, "a prediction element count that is not batch x width must be refused");
+
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeTimeSeriesConfig(),
