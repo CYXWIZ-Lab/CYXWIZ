@@ -93,12 +93,6 @@ CYXWIZ_API std::string BuildLossPlacementShapeSignature(
     const std::string& reduction,
     const std::string& dtype);
 
-CYXWIZ_API std::string BuildTensorOpPlacementShapeSignature(
-    const std::vector<std::vector<size_t>>& input_shapes,
-    const std::vector<size_t>& output_shape,
-    const std::string& dtype,
-    const std::string& attributes);
-
 // Input-shape-only by design (tofix67 slice 7 key redesign): runtime
 // Forward failures happen BEFORE an output exists, so an output-bearing key
 // could never be formed by the writers that matter. Compiler lookups pass

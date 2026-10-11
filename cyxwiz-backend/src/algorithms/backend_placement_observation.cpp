@@ -230,28 +230,6 @@ std::string BuildLossPlacementShapeSignature(
     return out.str();
 }
 
-std::string BuildTensorOpPlacementShapeSignature(
-    const std::vector<std::vector<size_t>>& input_shapes,
-    const std::vector<size_t>& output_shape,
-    const std::string& dtype,
-    const std::string& attributes) {
-    std::ostringstream out;
-    out << "inputs=[";
-    for (size_t i = 0; i < input_shapes.size(); ++i) {
-        if (i > 0) {
-            out << ",";
-        }
-        AppendShape(out, input_shapes[i]);
-    }
-    out << "];output=";
-    AppendShape(out, output_shape);
-    out << ";dtype=" << dtype;
-    if (!attributes.empty()) {
-        out << ";" << attributes;
-    }
-    return out.str();
-}
-
 std::string BuildTensorLayerPlacementShapeSignature(
     const std::vector<size_t>& input_shape) {
     std::ostringstream out;

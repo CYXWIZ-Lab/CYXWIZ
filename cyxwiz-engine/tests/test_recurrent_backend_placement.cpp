@@ -481,12 +481,6 @@ int main() {
     Check(loss_signature ==
               "prediction=[4x3];target=[4];reduction=mean;dtype=float32",
           "loss signature should include prediction, target, reduction, and dtype");
-    const std::string tensor_op_signature =
-        cyxwiz::BuildTensorOpPlacementShapeSignature(
-            {{2, 3}, {2, 3}}, {2, 6}, "float32", "dim=1");
-    Check(tensor_op_signature ==
-              "inputs=[[2x3],[2x3]];output=[2x6];dtype=float32;dim=1",
-          "tensor-op signature should include inputs, output, dtype, and attributes");
 
     cyxwiz::ClearBackendPlacementObservationCacheForTesting();
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
@@ -508,6 +502,9 @@ int main() {
     Check(loss_observation.reason_code ==
               cyxwiz::BackendPlacementObservationReason::ArrayFireJitCompileFailure,
           "Loss fallback observation should preserve structured reason");
+    // Any signature string keys the cache; this one names a concat.
+    const std::string tensor_op_signature =
+        "inputs=[[2x3],[2x3]];output=[2x6];dtype=float32;dim=1";
     cyxwiz::ClearBackendPlacementObservationCacheForTesting();
     cyxwiz::RecordBackendPlacementObservationForActiveDevice(
         "Tensor::Cat",
