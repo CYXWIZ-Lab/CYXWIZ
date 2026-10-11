@@ -5035,6 +5035,24 @@ set_target_properties(test_dataset_picker_presentation PROPERTIES
 )
 add_test(NAME dataset_picker_presentation COMMAND test_dataset_picker_presentation)
 
+# ===== Test: hypothesis-test distributions against scipy (TOFIX140 analysis panels) =====
+add_executable(test_data_analyzer_distributions
+    tests/test_data_analyzer_distributions.cpp
+    src/core/data_analyzer.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_data_analyzer_distributions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_analyzer_distributions PRIVATE spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_data_analyzer_distributions PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_analyzer_distributions PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_analyzer_distributions COMMAND test_data_analyzer_distributions)
+
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/linear_algebra_pytorch.json"
