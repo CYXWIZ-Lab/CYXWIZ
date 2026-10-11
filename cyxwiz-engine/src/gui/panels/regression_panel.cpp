@@ -507,13 +507,16 @@ void RegressionPanel::RunRegression() {
 
     compute_thread_ = std::make_unique<std::thread>([this, table, x_idx, y_idx, type, degree]() {
         try {
-            auto x_vals = DataAnalyzer::GetNumericValues(*table, x_idx);
-            auto y_vals = DataAnalyzer::GetNumericValues(*table, y_idx);
-
-            // Align data (ensure same length)
-            size_t n = std::min(x_vals.size(), y_vals.size());
-            x_vals.resize(n);
-            y_vals.resize(n);
+            // Pairs from the same row: a row is used only when both cells are
+            // numbers (filtering each column alone shifts the pairs).
+            std::vector<double> x_vals, y_vals;
+            for (size_t row = 0; row < table->GetRowCount(); ++row) {
+                const auto x = DataAnalyzer::ToDouble(table->GetCell(row, x_idx));
+                const auto y = DataAnalyzer::ToDouble(table->GetCell(row, y_idx));
+                if (!x || !y) continue;
+                x_vals.push_back(*x);
+                y_vals.push_back(*y);
+            }
 
             RegressionResult res;
 
