@@ -57,7 +57,7 @@
       {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3250, 300],
        "params": {"learning_rate": "0.001"}},
       {"id": "output", "type": "Output", "name": "Output", "pos": [3500, 300],
-       "params": {"classes": "7"}}
+       "params": {"num_classes": "7"}}
     ],
     "links": [
       {"from": "data_input", "to": "text_tokenizer"},

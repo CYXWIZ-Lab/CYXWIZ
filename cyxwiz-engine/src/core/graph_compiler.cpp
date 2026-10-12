@@ -5802,10 +5802,6 @@ TrainingConfiguration GraphCompiler::Compile(
                 output_node->type == gui::NodeType::SequenceTagOutput
                     ? "num_tags"
                     : "num_classes");
-            if (output_node->type == gui::NodeType::Output &&
-                it == output_node->parameters.end()) {
-                it = output_node->parameters.find("classes");
-            }
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
                     config.preprocessing.num_classes = std::stoul(it->second);

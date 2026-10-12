@@ -2847,7 +2847,7 @@ int main() {
                        "Output",
                        {Pin(1601, gui::PinType::Tensor, "Input", true)},
                        {Pin(1602, gui::PinType::Tensor, "Predictions", false)});
-    output.parameters["classes"] = "3";
+    output.parameters["num_classes"] = "3";
 
     auto class_dense = dense;
     class_dense.parameters["units"] = "2";
@@ -2880,12 +2880,6 @@ int main() {
           "Output canonical num_classes should drive CrossEntropy class count");
     Check(!HasIssueText(config, "class count"),
           "Output canonical num_classes should satisfy class-count validation");
-
-    output.parameters["classes"] = "3";
-    nodes = {data, class_dense, output, class_loss, optimizer};
-    config = compiler.Compile(nodes, links, true);
-    Check(config.is_valid && config.preprocessing.num_classes == 2,
-          "Output canonical num_classes should win over a conflicting legacy classes alias");
 
     auto sequence_tag_output = Node(
         18,

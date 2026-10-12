@@ -1966,9 +1966,6 @@ void NodeEditor::RenderNodes() {
             }
             case NodeType::Output: {
                 auto it = node.parameters.find("num_classes");
-                if (it == node.parameters.end()) {
-                    it = node.parameters.find("classes");
-                }
                 if (it != node.parameters.end() && !it->second.empty()) {
                     ImGui::TextColored(t.accent_text, "Classes: %s", it->second.c_str());
                 }

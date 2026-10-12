@@ -75,7 +75,7 @@
 
       {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [4500, 300]},
       {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [4750, 300], "params": {"learning_rate": "$learning_rate"}},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [5000, 300], "params": {"classes": "$num_classes"}}
+      {"id": "output", "type": "Output", "name": "Output", "pos": [5000, 300], "params": {"num_classes": "$num_classes"}}
     ],
     "links": [
       {"from": "data_input", "to": "data_split"},

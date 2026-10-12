@@ -3329,7 +3329,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             node,
             "Output classes",
             "num_classes",
-            {"classes"},
+            {},
             "10",
             TruthOwner::Compiler,
             true,
@@ -3405,10 +3405,6 @@ void WriteCanonicalAndAliases(MLNode& node,
         node.parameters["label_column"] = value;
     } else if (canonical_key == "label_column") {
         node.parameters["text_label_column"] = value;
-    } else if (canonical_key == "num_classes") {
-        node.parameters["classes"] = value;
-    } else if (canonical_key == "classes") {
-        node.parameters["num_classes"] = value;
     } else if (canonical_key == "file_path") {
         node.parameters.erase("path");
     } else if (canonical_key == "file_type") {

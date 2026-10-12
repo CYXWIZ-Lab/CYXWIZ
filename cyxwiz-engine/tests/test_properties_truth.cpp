@@ -1484,39 +1484,6 @@ int main() {
 
     {
         auto output = MakeNode(3, gui::NodeType::Output, "Output");
-        output.parameters["classes"] = "4";
-
-        const auto report = gui::properties_truth::ResolveNodeTruth(output);
-        const auto* classes = FindProperty(report, "num_classes");
-        Check(classes != nullptr,
-              "Output should surface canonical num_classes truth");
-        Check(classes->source_key == "classes",
-              "legacy classes key should feed Output class truth");
-        Check(classes->effective_value == "4",
-              "legacy classes key should resolve as effective Output classes");
-        Check(HasStatus(*classes,
-                        gui::properties_truth::TruthStatus::AliasUsed),
-              "legacy classes key should be marked alias-used");
-    }
-
-    {
-        auto output = MakeNode(3, gui::NodeType::Output, "Output");
-        output.parameters["num_classes"] = "5";
-        output.parameters["classes"] = "4";
-
-        const auto report = gui::properties_truth::ResolveNodeTruth(output);
-        const auto* classes = FindProperty(report, "num_classes");
-        Check(classes != nullptr,
-              "Output should surface class truth when both keys exist");
-        Check(classes->effective_value == "5",
-              "canonical num_classes should win over classes alias");
-        Check(HasStatus(*classes,
-                        gui::properties_truth::TruthStatus::Conflicting),
-              "conflicting Output class aliases should be visible");
-    }
-
-    {
-        auto output = MakeNode(3, gui::NodeType::Output, "Output");
         output.parameters["num_classes"] = "10";
 
         gui::properties_truth::DatasetTruthFact fact;
@@ -1587,8 +1554,6 @@ int main() {
             output, "num_classes", "7");
         Check(output.parameters["num_classes"] == "7",
               "canonical Output num_classes should be written");
-        Check(output.parameters["classes"] == "7",
-              "compat Output classes alias should be written");
 
         auto export_node = MakeNode(3, gui::NodeType::DataOutput, "Data Output");
         export_node.parameters["path"] = "old.csv";
