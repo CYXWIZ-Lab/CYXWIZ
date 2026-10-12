@@ -3,6 +3,7 @@
 #include "arrow_dataset.h"
 #include "graph_compiler.h"
 #include "graph_compiler_dataset_hooks.h"
+#include "graph_node_factory.h"
 #include "graph_training_prep.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
@@ -37,21 +38,16 @@ std::string Parameter(const gui::MLNode& node, const char* key) {
     return it == node.parameters.end() ? std::string() : it->second;
 }
 
-gui::NodeCategory CategoryOf(const gui::MLNode& node) {
-    if (node.category != gui::NodeCategory::Unknown) return node.category;
-    auto& registry = NodeMetadataRegistry::Instance();
-    if (!registry.IsInitialized()) registry.Initialize();
-    const NodeMetadata* metadata = registry.GetMetadata(node.type);
-    return metadata ? metadata->category : gui::NodeCategory::Unknown;
-}
-
 // Data-path steps a headless run cannot perform yet: the Engine applies them
 // through its preparation pipeline (every operator-backed node) before
 // training. Inspection nodes (SampleRows, DescribeStats...) do not change the
-// training data and pass.
+// training data and pass. Image transforms (Resize, crops, flips,
+// augmentation) compile into the trainer's image batcher, which applies them
+// here too.
 bool NeedsPreparation(const gui::MLNode& node) {
     if (ResolvePipelineRuntimeSupport(node.type).mode == PipelineRuntimeSupportMode::OperatorBacked) return true;
-    switch (CategoryOf(node)) {
+    if (GraphCompiler::GetPreprocessingNodeDomain(node.type) == PreprocessingDomain::Image) return false;
+    switch (gui::GetNodeCategoryForType(node.type)) {
     case gui::NodeCategory::DataTransform:
     case gui::NodeCategory::Preprocessing:
     case gui::NodeCategory::TextProcessing:

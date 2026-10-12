@@ -4,6 +4,7 @@
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
+#include "../src/core/graph_node_factory.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -396,7 +397,6 @@ int main() {
         scaler["id"] = 99;
         scaler["type"] = static_cast<int>(gui::NodeType::StandardScaler);
         scaler["name"] = "Scale tokens";
-        scaler["category"] = static_cast<int>(gui::NodeCategory::Preprocessing);
         scaler["parameters"] = nlohmann::json::object();
         graph["nodes"].push_back(scaler);
         cyxwiz::GraphTrainingJobRequest request;
@@ -407,20 +407,31 @@ int main() {
               "preprocessing node refused: " + result.error);
     }
     {
-        nlohmann::json graph = LoadTokenWindowGraph(root);
-        nlohmann::json scaler = NodeNamed(graph, 3);
-        scaler["id"] = 98;
-        scaler["type"] = static_cast<int>(gui::NodeType::StandardScaler);
-        scaler["name"] = "Scale tokens (uncategorized)";
-        scaler.erase("category");
-        scaler["parameters"] = nlohmann::json::object();
-        graph["nodes"].push_back(scaler);
-        cyxwiz::GraphTrainingJobRequest request;
-        request.graph_json = graph.dump();
-        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
-        const auto result = cyxwiz::RunGraphTrainingJob(request);
-        Check(!result.ok && Contains(result.error, "data preparation step"),
-              "operator node without a category refused: " + result.error);
+        // Categories come from the Node Browser's registry (TOFIX140): image
+        // transforms compile into the trainer and inspection nodes do not
+        // change the data, so neither is a preparation step; the refusal
+        // check runs before the (missing) file is opened.
+        Check(gui::GetNodeCategoryForType(gui::NodeType::ThresholdFilter) == gui::NodeCategory::DNN,
+              "Threshold Filter is a DNN output filter");
+        Check(gui::GetNodeCategoryForType(gui::NodeType::Resize) == gui::NodeCategory::Preprocessing,
+              "Resize has the registry's category");
+        for (const auto type : {gui::NodeType::Resize, gui::NodeType::HorizontalFlip,
+                                gui::NodeType::AugmentationPreset, gui::NodeType::DataValidator}) {
+            nlohmann::json graph = LoadTokenWindowGraph(root);
+            nlohmann::json extra = NodeNamed(graph, 3);
+            extra["id"] = 98;
+            extra["type"] = static_cast<int>(type);
+            extra["name"] = "Extra step";
+            extra["parameters"] = nlohmann::json::object();
+            graph["nodes"].push_back(extra);
+            cyxwiz::GraphTrainingJobRequest request;
+            request.graph_json = graph.dump();
+            request.dataset_files["tiny_causal_lm_tokens"] = (work / "missing.parquet").string();
+            const auto result = cyxwiz::RunGraphTrainingJob(request);
+            Check(!Contains(result.error, "data preparation step"),
+                  "node type " + std::to_string(static_cast<int>(type)) + " is not a preparation step: " +
+                      result.error);
+        }
     }
     {
         cyxwiz::GraphTrainingJobRequest request;

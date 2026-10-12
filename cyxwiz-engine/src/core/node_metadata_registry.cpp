@@ -1144,7 +1144,7 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::NonMaxSuppression, NodeCategory::DNN, "Non-Max Suppression", {"detection", "nms"}},
         {NodeType::ArgMax, NodeCategory::Utility, "ArgMax", {"tensor", "argmax"}},
         {NodeType::TopK, NodeCategory::Utility, "Top K", {"tensor", "topk"}},
-        {NodeType::ThresholdFilter, NodeCategory::Preprocessing, "Threshold Filter", {"threshold", "filter"}},
+        {NodeType::ThresholdFilter, NodeCategory::DNN, "Threshold Filter", {"threshold", "filter"}},
         {NodeType::AudioAugmentation, NodeCategory::Audio, "Audio Augmentation", {"audio", "augmentation"}},
         {NodeType::RLTraining, NodeCategory::RL, "RL Training", {"reinforcement", "training"}},
         {NodeType::PivotTable, NodeCategory::DataTransform, "Pivot Table", {"table", "pivot"}},

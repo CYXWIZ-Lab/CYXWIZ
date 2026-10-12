@@ -751,6 +751,10 @@ public:
         std::string& error
     );
 
+    // The data domain of a preprocessing node the trainer applies itself
+    // (Normalize, image transforms, audio features...), or nullopt.
+    static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
+
 private:
     // Topological sort for execution order
     std::vector<int> TopologicalSort(
@@ -789,7 +793,6 @@ private:
 
     // Check if node is preprocessing
     bool IsPreprocessing(gui::NodeType type) const;
-    std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type) const;
 
     // Extract layer parameters from node
     CompiledLayer ExtractLayerConfig(const gui::MLNode& node) const;

@@ -465,7 +465,6 @@ public:
                                     int& next_pin_id);
 
     // Unified Canvas Phase 1: Get category for a node type
-    static NodeCategory GetCategoryForNodeType(NodeType type);
 
     // ===== Menu Operations (Public API for Toolbar) =====
 

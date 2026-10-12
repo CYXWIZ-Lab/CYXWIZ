@@ -7170,7 +7170,7 @@ bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
     return false;
 }
 
-std::optional<PreprocessingDomain> GraphCompiler::GetPreprocessingNodeDomain(gui::NodeType type) const {
+std::optional<PreprocessingDomain> GraphCompiler::GetPreprocessingNodeDomain(gui::NodeType type) {
     for (const auto& spec : kPreprocessingSpecs) {
         if (spec.type == type) {
             return spec.domain;

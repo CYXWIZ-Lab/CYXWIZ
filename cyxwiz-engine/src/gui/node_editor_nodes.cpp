@@ -12,10 +12,6 @@
 
 namespace gui {
 
-NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
-    return GetNodeCategoryForType(type);
-}
-
 #ifndef CYXWIZ_NODE_FACTORY_ONLY
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
     if (!CanAddNodeToGraph(type, name)) {
@@ -305,12 +301,7 @@ ImVec4 NodeCategoryColour(NodeCategory category) {
 }
 
 unsigned int NodeEditor::GetNodeColor(NodeType type) {
-    // Colour by the category the Node Browser shows (the metadata registry);
-    // GetNodeCategoryForType misses or disagrees on 126 of 317 types, which
-    // drew e.g. Robust Scaler in the neutral colour (TOFIX140 follow-up).
-    const auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-    const cyxwiz::NodeMetadata* metadata = registry.IsInitialized() ? registry.GetMetadata(type) : nullptr;
-    return cyxwiz::ui::ToU32(NodeCategoryColour(metadata ? metadata->category : GetCategoryForNodeType(type)));
+    return cyxwiz::ui::ToU32(NodeCategoryColour(GetNodeCategoryForType(type)));
 }
 #endif
 
