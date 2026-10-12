@@ -118,26 +118,38 @@ void CorrelationMatrixPanel::RenderHeatmap() {
 
     ImGui::Spacing();
 
-    // Calculate content size
-    float matrix_width = cell_size_ * n + 100;  // +100 for row labels
-    float matrix_height = cell_size_ * n + 50;   // +50 for header
+    // Size the grid from the text it holds: a cell fits "-0.00", the label
+    // column fits the longest name, and column headers alternate between two
+    // lines so each has two cells of width.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float gap = 2.0f;
+    const float value_width = ImGui::CalcTextSize("-0.00").x + 2.0f * style.FramePadding.x;
+    const float cell = show_values_ ? std::max(cell_size_, value_width + gap) : cell_size_;
+    const float line = ImGui::GetTextLineHeight();
+    float label_width = 0.0f;
+    for (const std::string& name : correlation_.column_names) {
+        label_width = std::max(label_width, ImGui::CalcTextSize(name.c_str()).x);
+    }
+    label_width += style.ItemSpacing.x * 2.0f;
+    const float header_height = 2.0f * line + style.ItemSpacing.y * 2.0f;
 
-    ImGui::BeginChild("HeatmapScroll", ImVec2(0, 0), true,
+    float matrix_width = label_width + cell * n;
+    float matrix_height = header_height + cell * n;
+
+    ImGui::BeginChild("HeatmapScroll", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-    // Draw column headers (rotated or abbreviated)
-    float header_x = canvas_pos.x + 100;
+    // Column headers, clipped to two cells so neighbours on the same line
+    // never overlap (the full name is in the hover details).
+    const float header_x = canvas_pos.x + label_width;
     for (size_t j = 0; j < n; j++) {
-        std::string label = correlation_.column_names[j];
-        if (label.length() > 6) {
-            label = label.substr(0, 5) + "..";
-        }
-
-        ImVec2 text_pos(header_x + j * cell_size_ + 2, canvas_pos.y + 5);
-        draw_list->AddText(text_pos, ui::ToU32(t.text_dim), label.c_str());
+        const char* label = correlation_.column_names[j].c_str();
+        ImVec2 text_pos(header_x + j * cell, canvas_pos.y + (j % 2) * (line + style.ItemSpacing.y));
+        ImVec4 clip(text_pos.x, text_pos.y, text_pos.x + 2.0f * cell - style.ItemSpacing.x, text_pos.y + line);
+        draw_list->AddText(nullptr, 0.0f, text_pos, ui::ToU32(t.text_dim), label, nullptr, 0.0f, &clip);
     }
 
     // Reset hover state
@@ -145,30 +157,24 @@ void CorrelationMatrixPanel::RenderHeatmap() {
     hovered_j_ = -1;
 
     // Draw matrix cells
-    float start_y = canvas_pos.y + 40;
+    float start_y = canvas_pos.y + header_height;
 
     for (size_t i = 0; i < n; i++) {
-        // Row label
-        std::string row_label = correlation_.column_names[i];
-        if (row_label.length() > 12) {
-            row_label = row_label.substr(0, 11) + "..";
-        }
-
-        ImVec2 label_pos(canvas_pos.x + 5, start_y + i * cell_size_ + cell_size_ / 2 - 6);
-        draw_list->AddText(label_pos, ui::ToU32(t.text_dim), row_label.c_str());
+        ImVec2 label_pos(canvas_pos.x, start_y + i * cell + (cell - gap - line) / 2);
+        draw_list->AddText(label_pos, ui::ToU32(t.text_dim), correlation_.column_names[i].c_str());
 
         for (size_t j = 0; j < n; j++) {
             double corr = correlation_.Get(i, j);
             ImVec4 color = ui::DivergingAt(t, static_cast<float>(corr));
 
-            ImVec2 cell_min(canvas_pos.x + 100 + j * cell_size_, start_y + i * cell_size_);
-            ImVec2 cell_max(cell_min.x + cell_size_ - 2, cell_min.y + cell_size_ - 2);
+            ImVec2 cell_min(header_x + j * cell, start_y + i * cell);
+            ImVec2 cell_max(cell_min.x + cell - gap, cell_min.y + cell - gap);
 
             // Fill cell
             draw_list->AddRectFilled(cell_min, cell_max, ui::ToU32(color));
 
             // Value text
-            if (show_values_ && cell_size_ >= 25) {
+            if (show_values_) {
                 char buf[16];
                 snprintf(buf, sizeof(buf), "%.2f", corr);
 
@@ -176,8 +182,8 @@ void CorrelationMatrixPanel::RenderHeatmap() {
                 ImU32 text_color = ui::ToU32(ui::ReadableOn(t, color));
 
                 ImVec2 text_size = ImGui::CalcTextSize(buf);
-                ImVec2 text_pos(cell_min.x + (cell_size_ - 2 - text_size.x) / 2,
-                                cell_min.y + (cell_size_ - 2 - text_size.y) / 2);
+                ImVec2 text_pos(cell_min.x + (cell - gap - text_size.x) / 2,
+                                cell_min.y + (cell - gap - text_size.y) / 2);
 
                 draw_list->AddText(text_pos, text_color, buf);
             }
