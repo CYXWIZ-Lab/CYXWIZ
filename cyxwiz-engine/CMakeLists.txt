@@ -5145,6 +5145,41 @@ set_target_properties(test_computation_truth_data_transform PROPERTIES
 )
 add_test(NAME data_transform_pytorch_parity COMMAND test_computation_truth_data_transform)
 
+# ===== Test: ROC / precision-recall curves against scikit-learn (TOFIX140 ROC / PR on the device) =====
+set(CYXWIZ_ROC_PR_SKLEARN_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/roc_pr_sklearn.json"
+)
+add_executable(test_computation_truth_roc_pr
+    tests/computation_truth/test_computation_truth_roc_pr.cpp
+)
+target_include_directories(test_computation_truth_roc_pr PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_roc_pr PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_roc_pr PRIVATE
+    CYXWIZ_ROC_PR_FIXTURE="${CYXWIZ_ROC_PR_SKLEARN_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_roc_pr_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_roc_pr>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_ROC_PR_SKLEARN_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_roc_pr>/computation_truth_fixtures/roc_pr_sklearn.json"
+    SOURCES "${CYXWIZ_ROC_PR_SKLEARN_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_roc_pr copy_test_computation_truth_roc_pr_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_roc_pr PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_roc_pr PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME roc_pr_sklearn_parity COMMAND test_computation_truth_roc_pr)
+
 # ===== Test: Clustering against PyTorch / scipy references (TOFIX140 clustering on the device) =====
 set(CYXWIZ_CLUSTERING_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/clustering_pytorch.json"
