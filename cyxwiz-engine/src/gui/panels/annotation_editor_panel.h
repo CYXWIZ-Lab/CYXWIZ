@@ -128,17 +128,6 @@ private:
     // ===== Helpers =====
     void UpdateTexture();
     void ReleaseTexture();
-    static constexpr ImVec4 CLASS_COLORS[] = {
-        {0.2f, 0.8f, 0.2f, 1.0f},  // Green
-        {0.8f, 0.2f, 0.2f, 1.0f},  // Red
-        {0.2f, 0.2f, 0.8f, 1.0f},  // Blue
-        {0.8f, 0.8f, 0.2f, 1.0f},  // Yellow
-        {0.8f, 0.2f, 0.8f, 1.0f},  // Magenta
-        {0.2f, 0.8f, 0.8f, 1.0f},  // Cyan
-        {0.8f, 0.5f, 0.2f, 1.0f},  // Orange
-        {0.5f, 0.2f, 0.8f, 1.0f},  // Purple
-    };
-    static constexpr int NUM_CLASS_COLORS = 8;
 };
 
 } // namespace cyxwiz

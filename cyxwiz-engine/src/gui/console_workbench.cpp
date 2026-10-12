@@ -1,5 +1,6 @@
 #include "console_workbench.h"
 #include "icons.h"
+#include "ui_tokens.h"
 
 #include <algorithm>
 #include <imgui.h>
@@ -219,9 +220,11 @@ void ConsoleWorkbench::RenderSessionNavigation() {
       const float h = text_size.y + 2.0f;
       const float y = (tab_min.y + tab_max.y - h) * 0.5f;
       ImDrawList *draw = ImGui::GetWindowDrawList();
+      const cyxwiz::ui::Tokens &t = cyxwiz::ui::CurrentTokens();
       draw->AddRectFilled(ImVec2(x, y), ImVec2(x + text_size.x + 10.0f, y + h),
-                          IM_COL32(217, 83, 79, 255), h * 0.5f);
-      draw->AddText(ImVec2(x + 5.0f, y + 1.0f), IM_COL32(255, 255, 255, 255),
+                          cyxwiz::ui::ToU32(t.error), h * 0.5f);
+      draw->AddText(ImVec2(x + 5.0f, y + 1.0f),
+                    cyxwiz::ui::ToU32(cyxwiz::ui::ReadableOn(t, t.error)),
                     badge_text.c_str());
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%u new error%s", session.problem_badge,

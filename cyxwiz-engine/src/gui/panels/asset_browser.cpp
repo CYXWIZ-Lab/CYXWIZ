@@ -1,5 +1,6 @@
 #include "asset_browser.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../data_preview_table_renderer.h"
 #include "../../core/project_manager.h"
 #include <imgui.h>
@@ -649,7 +650,7 @@ void AssetBrowserPanel::RenderDirectoryView() {
     // Show the loading indicator only for the first scan; a rescan keeps the
     // existing tree on screen without shifting it.
     if (is_scanning_directory_.load() && !directory_root_) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_SPINNER " Scanning project files...");
+        ImGui::TextColored(ui::CurrentTokens().running, ICON_FA_SPINNER " Scanning project files...");
         return;
     }
 
@@ -977,8 +978,8 @@ void AssetBrowserPanel::RenderStatusBar() {
         !asset_action_message_.empty()) {
         ImGui::SameLine();
         const ImVec4 color = asset_action_status_ == AssetActionStatus::Error
-            ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
-            : ImVec4(0.5f, 0.9f, 0.5f, 1.0f);
+            ? ui::CurrentTokens().error
+            : ui::CurrentTokens().success;
         ImGui::TextColored(color, "| %s", asset_action_message_.c_str());
     }
 }
@@ -1061,7 +1062,7 @@ void AssetBrowserPanel::RenderDeleteConfirmDialog() {
         }
 
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "This action cannot be undone");
+        ImGui::TextColored(ui::CurrentTokens().error, "This action cannot be undone");
 
         ImGui::Separator();
 
@@ -1089,7 +1090,7 @@ void AssetBrowserPanel::RenderNewFolderDialog() {
         ImGui::OpenPopup("No Project Open##Folder");
 
         if (ImGui::BeginPopupModal("No Project Open##Folder", &show_new_folder_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Warning");
+            ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION " Warning");
             ImGui::Separator();
             ImGui::Text("Cannot create a new folder without an open project.");
             ImGui::Text("Please create or open a project first.");
@@ -1687,7 +1688,7 @@ void AssetBrowserPanel::RenderQuickPreviewPopup() {
     if (ImGui::Begin(title.c_str(), &show_quick_preview_, ImGuiWindowFlags_NoDocking)) {
         // File info bar
         auto content_type = gui::PreviewRenderer::DetectFileType(quick_preview_path_);
-        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", quick_preview_path_.c_str());
+        ImGui::TextColored(ui::CurrentTokens().accent_text, "%s", quick_preview_path_.c_str());
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
 
         // Type indicator
@@ -1759,7 +1760,7 @@ void AssetBrowserPanel::RenderDatasetPreview() {
     // Render preview in a side panel
     ImGui::BeginChild("DatasetPreviewPane", ImVec2(200, 0), true);
 
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_DATABASE " Dataset Preview");
+    ImGui::TextColored(ui::CurrentTokens().accent_text, ICON_FA_DATABASE " Dataset Preview");
     ImGui::Separator();
 
     ImGui::TextWrapped("File: %s", dataset_item->name.c_str());

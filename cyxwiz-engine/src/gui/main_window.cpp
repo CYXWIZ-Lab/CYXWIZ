@@ -18,6 +18,7 @@
 #include "panel_memory.h"
 #include "../core/live_graph_compile.h"
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
@@ -3890,8 +3891,8 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
             kPopupTitle, nullptr, ImGuiWindowFlags_NoResize)) {
         const bool risky = materialization_memory_confirmation_risk_ == "risky";
         const ImVec4 risk_color = risky
-            ? ImVec4(1.0f, 0.48f, 0.30f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+            ? cyxwiz::ui::CurrentTokens().caution
+            : cyxwiz::ui::CurrentTokens().warning;
         ImGui::TextColored(
             risk_color, "%s memory estimate",
             risky ? "Risky" : "Warning");
@@ -5499,7 +5500,7 @@ void MainWindow::RenderOperationErrorPopup() {
     }
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", operation_error_title_.c_str());
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", operation_error_title_.c_str());
         ImGui::Separator();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 540.0f);
         ImGui::TextUnformatted(operation_error_message_.c_str());
@@ -5533,6 +5534,7 @@ void MainWindow::RenderCompileResultPopup() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(760, 540), ImVec2(FLT_MAX, FLT_MAX));
 
     if (ImGui::BeginPopupModal(popup_title, nullptr)) {
+        const cyxwiz::ui::Tokens& tok = cyxwiz::ui::CurrentTokens();
         // === Header line: overall status ===
         size_t error_count = 0, warn_count = 0, info_count = 0;
         for (const auto& issue : compile_result_issues_) {
@@ -5544,36 +5546,36 @@ void MainWindow::RenderCompileResultPopup() {
         }
 
         if (compile_result_mode_ == CompileResultMode::BlockedTrain) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[BLOCKED]  Training cannot start - fix the errors below");
         } else if (compile_result_mode_ == CompileResultMode::BlockedDebug) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[BLOCKED]  Local Debug cannot run - fix the errors below");
         } else if (compile_result_mode_ == CompileResultMode::Debug) {
             // The Local Debug subtitle mirrors the compile-mode header
             // shape but makes it clear the tensors that produced these
             // findings were synthetic, not the user's dataset.
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.75f, 1.0f),
+            ImGui::TextColored(tok.text_dim,
                                "1 forward + 1 backward pass, synthetic data");
             ImGui::Spacing();
             if (compile_result_success_ && warn_count == 0) {
-                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                ImGui::TextColored(tok.success,
                                    "[OK]  Debug pass succeeded");
             } else if (compile_result_success_) {
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                ImGui::TextColored(tok.warning,
                                    "[OK with warnings]  Debug pass succeeded - %zu warning(s)", warn_count);
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                ImGui::TextColored(tok.error,
                                    "[FAIL]  Debug pass hit %zu error(s)", error_count);
             }
         } else if (compile_result_success_ && warn_count == 0) {
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.success,
                                "[OK]  Graph is valid and ready to train");
         } else if (compile_result_success_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+            ImGui::TextColored(tok.warning,
                                "[OK with warnings]  Graph is valid - %zu warning(s)", warn_count);
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[FAIL]  Graph has %zu error(s)", error_count);
         }
         ImGui::Separator();
@@ -5607,20 +5609,20 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::PopStyleColor();
         };
 
-        render_metric("Errors", error_count, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        render_metric("Errors", error_count, tok.error);
         ImGui::SameLine();
-        render_metric("Warnings", warn_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+        render_metric("Warnings", warn_count, tok.warning);
         ImGui::SameLine();
-        render_metric("Info", info_count, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+        render_metric("Info", info_count, tok.info);
         if (!compile_result_backend_placements_.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            render_metric("GPU", gpu_count, ImVec4(0.45f, 0.9f, 0.5f, 1.0f));
+            render_metric("GPU", gpu_count, tok.success);
             ImGui::SameLine();
-            render_metric("CPU", cpu_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+            render_metric("CPU", cpu_count, tok.warning);
             ImGui::SameLine();
-            render_metric("Unknown", unknown_count, ImVec4(0.75f, 0.75f, 0.78f, 1.0f));
+            render_metric("Unknown", unknown_count, tok.pending);
         }
         ImGui::Spacing();
 
@@ -5633,19 +5635,19 @@ void MainWindow::RenderCompileResultPopup() {
                 } else {
                     ImGui::PushTextWrapPos(0.0f);
                     for (const auto& issue : compile_result_issues_) {
-                        ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                        ImVec4 color = tok.text;
                         const char* tag = "INFO";
                         switch (issue.level) {
                             case cyxwiz::IssueLevel::Error:
-                                color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                                color = tok.error;
                                 tag = "ERROR";
                                 break;
                             case cyxwiz::IssueLevel::Warning:
-                                color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                                color = tok.warning;
                                 tag = "WARNING";
                                 break;
                             case cyxwiz::IssueLevel::Info:
-                                color = ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+                                color = tok.info;
                                 tag = "INFO";
                                 break;
                         }
@@ -5703,15 +5705,15 @@ void MainWindow::RenderCompileResultPopup() {
                         ImGui::TableHeadersRow();
 
                         for (const auto& placement : compile_result_backend_placements_) {
-                            ImVec4 status_color(0.75f, 0.75f, 0.75f, 1.0f);
+                            ImVec4 status_color = tok.pending;
                             if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
-                                status_color = ImVec4(0.45f, 0.9f, 0.5f, 1.0f);
+                                status_color = tok.success;
                             } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu ||
                                        placement.status == cyxwiz::BackendPlacementStatus::Mixed ||
                                        placement.status == cyxwiz::BackendPlacementStatus::Risk) {
-                                status_color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                                status_color = tok.warning;
                             } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
-                                status_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                                status_color = tok.error;
                             }
 
                             std::string node_label = placement.node_type;
@@ -6236,18 +6238,18 @@ void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
     ImGui::SameLine(0.0f, 16.0f);
     switch (status.state) {
         case SetupState::Pending:
-            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s %s", ICON_FA_SPINNER,
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().running, "%s %s", ICON_FA_SPINNER,
                                status.message.c_str());
             break;
         case SetupState::Ready:
             // Confirm briefly, then get out of the way.
             if (age < std::chrono::seconds(8)) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s %s",
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "%s %s",
                                    ICON_FA_CIRCLE_CHECK, status.message.c_str());
             }
             break;
         case SetupState::Failed:
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "%s Python environment setup failed",
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s Python environment setup failed",
                                ICON_FA_TRIANGLE_EXCLAMATION);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", status.message.c_str());

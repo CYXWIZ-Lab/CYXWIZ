@@ -1,5 +1,6 @@
 #include "code_editor.h"
 
+#include "console_palette.h"
 #include "ui_tokens.h"
 
 #include <imgui_internal.h>
@@ -86,8 +87,10 @@ CodeEditor::Palette CodeEditor::BuildPalette() const {
     p.scroll = ui::ToU32(ui::Mix(bg, t.light ? black : white, 0.07f));
     p.scroll_hover = ui::ToU32(ui::Mix(bg, t.light ? black : white, 0.13f));
     p.change_bar = ui::ToU32(ui::WithAlpha(t.accent_text, 0.55f));
-    const ImVec4 fn = t.light ? ImVec4(0.0f, 0.42f, 0.58f, 1.0f) : ImVec4(0.50f, 0.78f, 0.91f, 1.0f);
-    const ImVec4 konst = t.light ? ImVec4(0.52f, 0.20f, 0.72f, 1.0f) : ImVec4(0.85f, 0.63f, 1.0f, 1.0f);
+    // Function and constant colours come from the theme's syntax palette.
+    const ::gui::ConsolePalette& syntax = ::gui::CurrentConsolePalette();
+    const ImVec4 fn = syntax.builtin;
+    const ImVec4 konst = syntax.decorator;
     p.tokens[static_cast<int>(TokenKind::Default)] = ui::ToU32(t.text);
     p.tokens[static_cast<int>(TokenKind::Keyword)] = ui::ToU32(t.accent_text);
     p.tokens[static_cast<int>(TokenKind::Builtin)] = ui::ToU32(t.success);

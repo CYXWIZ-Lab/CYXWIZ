@@ -1,6 +1,7 @@
 #include "local_shell_session.h"
 
 #include "../editor_fonts.h"
+#include "../ui_tokens.h"
 
 #include <imgui.h>
 
@@ -67,12 +68,13 @@ void LocalShellSession::RenderContent() {
   const char *state_text = starting               ? "Starting..."
                            : process_.IsRunning() ? "Running"
                                                   : "Stopped";
-  const ImVec4 state_color = starting ? ImVec4(0.92f, 0.72f, 0.30f, 1.0f)
+  const ui::Tokens &t = ui::CurrentTokens();
+  const ImVec4 state_color = starting ? t.running
                              : process_.IsRunning()
-                                 ? ImVec4(0.45f, 0.82f, 0.55f, 1.0f)
-                                 : ImVec4(0.95f, 0.45f, 0.40f, 1.0f);
+                                 ? t.success
+                                 : t.error;
 
-  ImGui::TextColored(ImVec4(0.55f, 0.72f, 0.95f, 1.0f), "%s",
+  ImGui::TextColored(t.accent_text, "%s",
                      LocalShellProcess::DisplayName(process_.Kind()).data());
   ImGui::SameLine();
   ImGui::TextColored(state_color, "| %s", state_text);
@@ -101,7 +103,7 @@ void LocalShellSession::RenderContent() {
 
   if (!status_message_.empty()) {
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s",
+    ImGui::TextColored(t.error, "%s",
                        status_message_.c_str());
   }
 

@@ -9,6 +9,7 @@
 #include "panels/python_repl_session.h"
 #include "panels/local_shell_session.h"
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 #include "separate_windows.h"
 #include <algorithm>
 #include <cctype>
@@ -351,8 +352,8 @@ void Console::RenderRuntimeLogExportStatus() {
     ImGui::TextDisabled("Exporting frozen runtime-log slice...");
   } else if (!message.empty()) {
     ImGui::PushStyleColor(ImGuiCol_Text, success
-                                             ? ImVec4(0.24f, 0.84f, 0.55f, 1.0f)
-                                             : ImVec4(1.0f, 0.48f, 0.45f, 1.0f));
+                                             ? cyxwiz::ui::CurrentTokens().success
+                                             : cyxwiz::ui::CurrentTokens().error);
     ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x * 0.75f +
                            ImGui::GetCursorPosX());
     ImGui::TextUnformatted(message.c_str());
@@ -470,7 +471,7 @@ void Console::RenderRuntimeLogExportDialog() {
                              inspector_export_redaction_.query_text ||
                              inspector_export_redaction_.python_output;
   if (!any_redaction) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.2f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().warning);
     ImGui::TextWrapped(
         "Raw export may contain credentials, local paths, dataset names, "
         "queries, or Python/package output.");
@@ -1045,19 +1046,20 @@ const char *Console::GetLevelPrefix(LogLevel level) const {
 }
 
 ImVec4 Console::GetLevelColor(LogLevel level) const {
+  const cyxwiz::ui::Tokens &t = cyxwiz::ui::CurrentTokens();
   switch (level) {
   case LogLevel::Info:
-    return ImVec4(0.8f, 0.8f, 0.8f, 1.0f); // Gray
+    return t.text;
   case LogLevel::Warning:
-    return ImVec4(1.0f, 0.8f, 0.0f, 1.0f); // Yellow
+    return t.warning;
   case LogLevel::Error:
-    return ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
+    return t.error;
   case LogLevel::Success:
-    return ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green
+    return t.success;
   case LogLevel::Debug:
-    return ImVec4(0.6f, 0.6f, 1.0f, 1.0f); // Blue
+    return t.info;
   default:
-    return ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White
+    return t.text_bright;
   }
 }
 

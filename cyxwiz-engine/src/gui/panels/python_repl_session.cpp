@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -67,7 +68,7 @@ void RefreshPalette() {
   kString = p.string;
   kNumber = p.number;
   kDecorator = p.decorator;
-  kError = (p.light ? ImVec4(0.72f, 0.36f, 0.05f, 1.0f) : ImVec4(0.96f, 0.63f, 0.29f, 1.0f));
+  kError = ui::CurrentTokens().caution;  // tracebacks: orange "failed" status
   kWarning = p.warning;
   kReady = p.success;
   kInputBg = p.input;
@@ -887,7 +888,7 @@ void PythonReplSession::RenderInput() {
   ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
   ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, ImVec4(0.357f, 0.239f, 0.961f, 0.35f));
+  ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, ui::WithAlpha(ui::CurrentTokens().accent, 0.35f));
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, pad_y));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
   if (focus_input_) {

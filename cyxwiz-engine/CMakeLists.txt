@@ -4407,6 +4407,8 @@ add_executable(test_console_session_model
     tests/test_console_session_model.cpp
     src/gui/console_session_model.cpp
     src/gui/console_workbench.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
     src/gui/panels/local_shell_process.cpp
     src/gui/panels/terminal_buffer.cpp
 )

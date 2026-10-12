@@ -164,14 +164,14 @@ bool ToggleChip(const char* id, const char* label, const char* count, bool on,
     };
     dl->AddRectFilled(pos, max, faded(fill), height * 0.5f);
     // Emphasis is a red tint, not an outline (no outlines on buttons).
-    if (emphasise && on) dl->AddRectFilled(pos, max, ImGui::GetColorU32(ImVec4(0.42f, 0.16f, 0.16f, 0.55f)), height * 0.5f);
+    if (emphasise && on) dl->AddRectFilled(pos, max, ImGui::GetColorU32(WithAlpha(Mix(CurrentTokens().bg_window, kDanger, 0.45f), 0.55f)), height * 0.5f);
     ImVec4 accent = ImGui::ColorConvertU32ToFloat4(accent_rgba);
     accent.w *= alpha;
     const float text_y = pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
     const ImVec2 label_size = ImGui::CalcTextSize(label, nullptr, true);
     const char* label_end = ImGui::FindRenderedTextEnd(label);
     dl->AddText(ImVec2(pos.x + 9.0f, text_y), ImGui::GetColorU32(accent), label, label_end);
-    const ImVec4 count_color = emphasise && on ? accent : ImVec4(0.55f, 0.58f, 0.65f, alpha);
+    const ImVec4 count_color = emphasise && on ? accent : WithAlpha(CurrentTokens().text_dim, alpha);
     dl->AddText(ImVec2(pos.x + 9.0f + label_size.x + 5.0f, text_y),
                 ImGui::GetColorU32(count_color), count);
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

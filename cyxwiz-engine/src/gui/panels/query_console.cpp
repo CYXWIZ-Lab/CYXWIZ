@@ -1,6 +1,7 @@
 #include "query_console.h"
 #include "../node_editor.h"
 #include "../IconsFontAwesome6.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -221,12 +222,12 @@ void QueryConsolePanel::RenderToolbar() {
         // Status
         if (has_result_) {
             if (current_result_.success) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                ImGui::TextColored(ui::CurrentTokens().success,
                                    "%zu rows in %.2f ms",
                                    current_result_.rows.size(),
                                    current_result_.executionTimeMs);
             } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Error");
+                ImGui::TextColored(ui::CurrentTokens().error, "Error");
             }
         }
 
@@ -277,7 +278,7 @@ void QueryConsolePanel::RenderResults() {
 
     if (!current_result_.success) {
         // Show error
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, current_result_.error.c_str());
         ImGui::PopStyleColor();
 
@@ -296,7 +297,7 @@ void QueryConsolePanel::RenderResults() {
         current_result_.linksDeleted > 0 ||
         current_result_.propertiesSet > 0) {
 
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Query executed successfully");
+        ImGui::TextColored(ui::CurrentTokens().success, ICON_FA_CHECK " Query executed successfully");
 
         if (current_result_.nodesCreated > 0) {
             ImGui::Text("  Nodes created: %d", current_result_.nodesCreated);
@@ -439,7 +440,7 @@ void QueryConsolePanel::RenderExamples() {
                 ImGui::Spacing();
 
                 // Query text
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.9f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
                 ImGui::TextWrapped("%s", example.query);
                 ImGui::PopStyleColor();
 

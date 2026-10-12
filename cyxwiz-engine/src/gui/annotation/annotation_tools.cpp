@@ -1,4 +1,5 @@
 #include "annotation_tools.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -266,8 +267,9 @@ void RectangleSelectTool::RenderOverlay(void* draw_list_ptr, float offset_x, flo
                   offset_y + (selection_.y + selection_.height) * scale);
 
         // Draw selection rectangle
-        draw_list->AddRect(p1, p2, IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.0f);
-        draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 30));
+        const ui::Tokens& t = ui::CurrentTokens();
+        draw_list->AddRect(p1, p2, ui::ToU32(t.accent_text), 0.0f, 0, 2.0f);
+        draw_list->AddRectFilled(p1, p2, ui::ToU32(ui::WithAlpha(t.accent_text, 30.0f / 255.0f)));
     }
 }
 
@@ -338,8 +340,10 @@ void BrushTool::RenderOverlay(void* draw_list_ptr, float offset_x, float offset_
     ImVec2 center(offset_x + cursor_pos_.x * scale, offset_y + cursor_pos_.y * scale);
     float radius = brush_radius_ * scale;
 
+    // Foreground / background labels: success / error tokens.
+    const ui::Tokens& t = ui::CurrentTokens();
     ImU32 color = (current_label_ == AnnotationLabel::Foreground) ?
-        IM_COL32(0, 255, 0, 200) : IM_COL32(255, 0, 0, 200);
+        ui::ToU32(ui::WithAlpha(t.success, 200.0f / 255.0f)) : ui::ToU32(ui::WithAlpha(t.error, 200.0f / 255.0f));
 
     draw_list->AddCircle(center, radius, color, 32, 2.0f);
 }
@@ -429,13 +433,14 @@ void PointMarkerTool::OnMouseMove(float x, float y, bool) {
 void PointMarkerTool::RenderOverlay(void* draw_list_ptr, float offset_x, float offset_y, float scale) {
     auto* draw_list = static_cast<ImDrawList*>(draw_list_ptr);
 
-    // Draw all markers
+    // Draw all markers (foreground / background labels: success / error tokens)
+    const ui::Tokens& t = ui::CurrentTokens();
     for (size_t i = 0; i < markers_.size(); ++i) {
         const auto& marker = markers_[i];
         ImVec2 center(offset_x + marker.position.x * scale, offset_y + marker.position.y * scale);
 
         ImU32 color = (marker.label == AnnotationLabel::Foreground) ?
-            IM_COL32(0, 255, 0, 255) : IM_COL32(255, 0, 0, 255);
+            ui::ToU32(t.success) : ui::ToU32(t.error);
 
         bool is_selected = (static_cast<int>(i) == selected_marker_);
         float radius = is_selected ? 8.0f : 6.0f;
@@ -452,7 +457,7 @@ void PointMarkerTool::RenderOverlay(void* draw_list_ptr, float offset_x, float o
     // Draw cursor
     ImVec2 cursor(offset_x + cursor_pos_.x * scale, offset_y + cursor_pos_.y * scale);
     ImU32 cursor_color = (current_label_ == AnnotationLabel::Foreground) ?
-        IM_COL32(0, 255, 0, 128) : IM_COL32(255, 0, 0, 128);
+        ui::ToU32(ui::WithAlpha(t.success, 128.0f / 255.0f)) : ui::ToU32(ui::WithAlpha(t.error, 128.0f / 255.0f));
     draw_list->AddCircle(cursor, 6.0f, cursor_color, 12, 2.0f);
 }
 
@@ -544,14 +549,15 @@ void PolygonTool::OnKeyDown(int key) {
 void PolygonTool::RenderOverlay(void* draw_list_ptr, float offset_x, float offset_y, float scale) {
     auto* draw_list = static_cast<ImDrawList*>(draw_list_ptr);
 
-    // Draw completed polygons
+    // Draw completed polygons (foreground / background labels: success / error tokens)
+    const ui::Tokens& t = ui::CurrentTokens();
     for (const auto& poly : polygons_) {
         if (poly.vertices.size() < 3) continue;
 
         ImU32 color = (poly.label == AnnotationLabel::Foreground) ?
-            IM_COL32(0, 255, 0, 100) : IM_COL32(255, 0, 0, 100);
+            ui::ToU32(ui::WithAlpha(t.success, 100.0f / 255.0f)) : ui::ToU32(ui::WithAlpha(t.error, 100.0f / 255.0f));
         ImU32 outline = (poly.label == AnnotationLabel::Foreground) ?
-            IM_COL32(0, 255, 0, 255) : IM_COL32(255, 0, 0, 255);
+            ui::ToU32(t.success) : ui::ToU32(t.error);
 
         std::vector<ImVec2> points;
         for (const auto& v : poly.vertices) {
@@ -565,7 +571,7 @@ void PolygonTool::RenderOverlay(void* draw_list_ptr, float offset_x, float offse
     // Draw current polygon being drawn
     if (is_drawing_ && !current_polygon_.vertices.empty()) {
         ImU32 color = (current_polygon_.label == AnnotationLabel::Foreground) ?
-            IM_COL32(0, 255, 0, 200) : IM_COL32(255, 0, 0, 200);
+            ui::ToU32(ui::WithAlpha(t.success, 200.0f / 255.0f)) : ui::ToU32(ui::WithAlpha(t.error, 200.0f / 255.0f));
 
         // Draw vertices
         for (const auto& v : current_polygon_.vertices) {
@@ -592,7 +598,7 @@ void PolygonTool::RenderOverlay(void* draw_list_ptr, float offset_x, float offse
             const auto& last = current_polygon_.vertices.back();
             ImVec2 p1(offset_x + last.x * scale, offset_y + last.y * scale);
             ImVec2 p2(offset_x + cursor_pos_.x * scale, offset_y + cursor_pos_.y * scale);
-            draw_list->AddLine(p1, p2, IM_COL32(255, 255, 0, 200), 1.0f);
+            draw_list->AddLine(p1, p2, ui::ToU32(ui::WithAlpha(t.warning, 200.0f / 255.0f)), 1.0f);
         }
     }
 }

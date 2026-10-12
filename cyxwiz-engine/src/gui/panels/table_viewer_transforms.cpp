@@ -1,4 +1,5 @@
 ﻿#include "table_viewer.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -152,7 +153,7 @@ ImVec4 TableViewerPanel::GetColorMapColor(double normalized, ColorMapType type) 
         }
 
         default:
-            return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+            return ui::SequentialAt(ui::CurrentTokens(), t);
     }
 }
 

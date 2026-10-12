@@ -1,6 +1,7 @@
 // Bounded, read-only rendering for text files that are too large for TextEditor.
 
 #include "script_editor.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <climits>
@@ -225,7 +226,7 @@ void ScriptEditorPanel::RenderLargeFileViewer(EditorTab& tab) {
 
     if (!tab.large_error.empty()) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+            ui::CurrentTokens().error,
             "%s",
             tab.large_error.c_str());
     }
