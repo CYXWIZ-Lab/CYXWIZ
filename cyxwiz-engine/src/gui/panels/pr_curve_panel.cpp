@@ -1,6 +1,9 @@
 #include "pr_curve_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -21,14 +24,16 @@ void PRCurvePanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_LINE) + " Precision-Recall Curve###PRCurvePanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("pr_curve", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (pr_result_.success) {
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::Text("AP %.4f", pr_result_.average_precision);
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "%d points", static_cast<int>(pr_result_.precision.size()));
             if (ImGui::BeginTabBar("PRTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " PR Curve")) {
                     RenderPRCurve();
@@ -45,49 +50,38 @@ void PRCurvePanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select true labels and prediction scores, then click Compute.");
+            ui::EmptyState(ICON_FA_CHART_LINE, "No PR curve yet",
+                           "Pick the true labels and the prediction scores, then Compute PR Curve.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void PRCurvePanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("pr_curve_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_TAGS " Column Selection");
-        ImGui::Spacing();
-
+        ui::SettingsSection("Columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("True Labels (0/1)", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Prediction Scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("True labels (0 / 1)");
+        ImGui::Combo("##true_labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Prediction scores");
+        ImGui::Combo("##scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_CALCULATOR " Compute PR Curve", ImVec2(-1, 30))) {
+        if (ui::PrimaryButton("Compute PR Curve", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             ComputePRCurve();
         }
     }
 
-    if (pr_result_.success) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_CIRCLE_INFO " Results");
-        ImGui::BulletText("Avg Precision: %.4f", pr_result_.average_precision);
-        ImGui::BulletText("Points: %d", static_cast<int>(pr_result_.precision.size()));
-    }
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
@@ -95,9 +89,6 @@ void PRCurvePanel::RenderPRCurve() {
     if (!pr_result_.success) return;
 
     const ui::Tokens& t = ui::CurrentTokens();
-
-    ImGui::Text("Precision-Recall Curve (AP = %.4f)", pr_result_.average_precision);
-    ImGui::Spacing();
 
     if (ImPlot::BeginPlot("##PRCurve", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("Recall", "Precision");

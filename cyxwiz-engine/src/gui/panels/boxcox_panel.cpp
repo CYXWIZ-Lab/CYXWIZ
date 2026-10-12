@@ -1,6 +1,8 @@
 #include "boxcox_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -16,20 +18,13 @@ BoxCoxPanel::BoxCoxPanel() : Panel("Box-Cox Transform", true) {}
 void BoxCoxPanel::Render() {
     if (!visible_) return;
 
-    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(850, 650), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_WAND_MAGIC_SPARKLES) + " Box-Cox Transform###BoxCoxPanel").c_str(), &visible_)) {
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("boxcox", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (transform_result_.success) {
             if (ImGui::BeginTabBar("BoxCoxTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Lambda")) {
@@ -43,100 +38,94 @@ void BoxCoxPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select data and configure settings, then click 'Apply'.");
-            ImGui::Spacing();
-            ImGui::TextWrapped("Box-Cox transform achieves normality for positive data.");
-            ImGui::Spacing();
-            ImGui::Text("Formula:");
-            ImGui::BulletText("y = (x^lambda - 1) / lambda  if lambda != 0");
-            ImGui::BulletText("y = log(x)                   if lambda == 0");
-            ImGui::Spacing();
-            ImGui::Text("Common lambda values:");
-            ImGui::BulletText("lambda = -1: Reciprocal (1/x)");
-            ImGui::BulletText("lambda = -0.5: Reciprocal sqrt");
-            ImGui::BulletText("lambda = 0: Log transform");
-            ImGui::BulletText("lambda = 0.5: Square root");
-            ImGui::BulletText("lambda = 1: No transform");
-            ImGui::BulletText("lambda = 2: Square");
-
-            if (!can_transform_) {
-                ImGui::Spacing();
-                ImGui::TextColored(t.caution,
-                    "Warning: Data contains non-positive values.");
-                ImGui::TextWrapped("Box-Cox requires strictly positive data. Try Yeo-Johnson instead.");
-            }
+            ui::EmptyState(ICON_FA_WAND_MAGIC_SPARKLES, "No transform yet",
+                           "Pick a dataset and a column, then Apply Transform.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void BoxCoxPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("boxcox_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Spacing();
-
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("Column", &selected_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Column");
+        ImGui::Combo("##column", &selected_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+    }
+
+    if (!can_transform_) {
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::TextColored(t.caution, "Data contains non-positive values.");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Box-Cox requires strictly positive data. Try Yeo-Johnson instead.");
+        ImGui::PopStyleColor();
     }
 }
 
 void BoxCoxPanel::RenderSettings() {
-    ImGui::Text(ICON_FA_COG " Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("Transform");
+    ImGui::TextWrapped("Box-Cox transform achieves normality for positive data.");
+    ImGui::SameLine();
+    ui::HelpMarker("Formula:\n"
+                   "  y = (x^lambda - 1) / lambda  if lambda != 0\n"
+                   "  y = log(x)                   if lambda == 0\n\n"
+                   "Common lambda values:\n"
+                   "  -1: Reciprocal (1/x)\n"
+                   "  -0.5: Reciprocal sqrt\n"
+                   "  0: Log transform\n"
+                   "  0.5: Square root\n"
+                   "  1: No transform\n"
+                   "  2: Square");
 
     ImGui::Checkbox("Use Yeo-Johnson", &use_yeo_johnson_);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Yeo-Johnson supports negative values.\nBox-Cox requires strictly positive data.");
     }
 
-    ImGui::Spacing();
     ImGui::Checkbox("Auto-find optimal lambda", &auto_lambda_);
 
     if (!auto_lambda_) {
-        ImGui::SliderFloat("Lambda", &manual_lambda_, -5.0f, 5.0f, "%.2f");
+        ui::FieldLabel("Lambda");
+        ImGui::SliderFloat("##lambda", &manual_lambda_, -5.0f, 5.0f, "%.2f");
 
         // Quick presets
-        if (ImGui::Button("-1", ImVec2(30, 0))) manual_lambda_ = -1.0f;
+        if (ui::SecondaryButton("-1")) manual_lambda_ = -1.0f;
         ImGui::SameLine();
-        if (ImGui::Button("-0.5", ImVec2(35, 0))) manual_lambda_ = -0.5f;
+        if (ui::SecondaryButton("-0.5")) manual_lambda_ = -0.5f;
         ImGui::SameLine();
-        if (ImGui::Button("0", ImVec2(30, 0))) manual_lambda_ = 0.0f;
+        if (ui::SecondaryButton("0")) manual_lambda_ = 0.0f;
         ImGui::SameLine();
-        if (ImGui::Button("0.5", ImVec2(35, 0))) manual_lambda_ = 0.5f;
+        if (ui::SecondaryButton("0.5")) manual_lambda_ = 0.5f;
         ImGui::SameLine();
-        if (ImGui::Button("1", ImVec2(30, 0))) manual_lambda_ = 1.0f;
+        if (ui::SecondaryButton("1")) manual_lambda_ = 1.0f;
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     bool can_apply = current_table_ != nullptr && (can_transform_ || use_yeo_johnson_);
-
-    if (!can_apply) ImGui::BeginDisabled();
+    const char* disabled_reason = current_table_ == nullptr
+        ? "Pick a dataset first"
+        : "Box-Cox needs strictly positive data; turn on Yeo-Johnson";
 
     if (auto_lambda_) {
-        if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find Optimal Lambda", ImVec2(-1, 25))) {
+        if (ui::SecondaryButton("Find Optimal Lambda", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
             FindOptimalLambda();
         }
     }
 
-    if (ImGui::Button(ICON_FA_PLAY " Apply Transform", ImVec2(-1, 30))) {
+    if (ui::PrimaryButton("Apply Transform", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyBoxCox();
     }
 
-    if (!can_apply) ImGui::EndDisabled();
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 

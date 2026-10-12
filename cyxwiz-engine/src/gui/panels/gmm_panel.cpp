@@ -2,7 +2,9 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -24,57 +26,60 @@ void GMMPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(950, 750), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_PIE) + " Gaussian Mixture Models###GMMPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(320, 0), true);
+        ui::BeginSettingsColumn("gmm", 320.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::Separator();
         RenderModelSelection();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         RenderResults();
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void GMMPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("gmm_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 100), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 100);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
     }
 }
 
 void GMMPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
-    ImGui::SliderInt("Components", &n_components_, 2, 20);
-    ImGui::SliderInt("Max Iterations", &max_iter_, 10, 500);
-    ImGui::SliderInt("Initializations", &n_init_, 1, 10);
+    ui::FieldLabel("Components");
+    ImGui::SliderInt("##n_components", &n_components_, 2, 20);
+    ui::FieldLabel("Max iterations");
+    ImGui::SliderInt("##max_iter", &max_iter_, 10, 500);
+    ui::FieldLabel("Initializations");
+    ImGui::SliderInt("##n_init", &n_init_, 1, 10);
 
     const char* cov_types[] = {"Full", "Tied", "Diagonal", "Spherical"};
-    ImGui::Combo("Covariance Type", &covariance_type_, cov_types, 4);
+    ui::FieldLabel("Covariance type");
+    ImGui::Combo("##covariance_type", &covariance_type_, cov_types, 4);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Full: Each component has its own covariance matrix\n"
                          "Tied: All components share the same covariance\n"
@@ -85,43 +90,48 @@ void GMMPanel::RenderParameters() {
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run GMM", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "GMM is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run GMM", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (is_computing_) {
-        ImGui::Text("Computing... Iteration %d", progress_iteration_.load());
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Computing... Iteration %d", progress_iteration_.load());
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void GMMPanel::RenderModelSelection() {
-    ImGui::Text(ICON_FA_CHART_LINE " Model Selection");
-    ImGui::Spacing();
+    ui::SettingsSection("Model selection");
 
-    ImGui::SliderInt("Min Components", &model_select_min_, 1, 10);
-    ImGui::SliderInt("Max Components", &model_select_max_, model_select_min_ + 1, 20);
-
-    bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Find Optimal Components", ImVec2(-1, 25))) {
-        RunModelSelection();
+    if (ImGui::BeginTable("##component_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min components");
+        ImGui::SliderInt("##model_select_min", &model_select_min_, 1, 10);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max components");
+        ImGui::SliderInt("##model_select_max", &model_select_max_, model_select_min_ + 1, 20);
+        ImGui::EndTable();
     }
 
-    if (!can_run) ImGui::EndDisabled();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "GMM is running" : "Pick a dataset first";
+    if (ui::SecondaryButton("Find Optimal Components", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
+        RunModelSelection();
+    }
 
     if (!model_k_values_.empty()) {
         ImGui::Text("Suggested: %d components", suggested_components_);
 
-        if (ImGui::Button("Use Suggested")) {
+        if (ui::SecondaryButton("Use Suggested")) {
             n_components_ = suggested_components_;
         }
 
@@ -140,7 +150,8 @@ void GMMPanel::RenderModelSelection() {
 
 void GMMPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run GMM clustering to see results.");
+        ui::EmptyState(ICON_FA_CHART_PIE, "No mixture model yet",
+                       "Pick a dataset and feature columns, then Run GMM.");
         return;
     }
 

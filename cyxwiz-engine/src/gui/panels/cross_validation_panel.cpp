@@ -1,6 +1,8 @@
 #include "cross_validation_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/table_class_labels.h"
@@ -25,15 +27,10 @@ void CrossValidationPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_REPEAT) + " Cross-Validation###CrossValidationPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("cross_validation", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderCVSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (!fold_splits_.empty()) {
             if (ImGui::BeginTabBar("CVTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Results")) {
@@ -47,28 +44,28 @@ void CrossValidationPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Configure settings and click 'Generate Folds' or 'Run CV'.");
+            ui::EmptyState(ICON_FA_REPEAT, "No folds yet",
+                           "Pick a dataset, set the CV settings, then Generate Folds.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void CrossValidationPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("cross_validation_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
+        ui::SettingsSection("Columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("Target Column", &target_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Target column");
+        ImGui::Combo("##target_column", &target_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
-        ImGui::Spacing();
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("FeatureSelect", ImVec2(0, 120), true);
+        ui::FieldLabel("Feature columns");
+        ui::BeginInsetList("##columns", 120.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             if (static_cast<int>(i) == target_column_) continue;  // Skip target
             bool selected = selected_features_[i];
@@ -76,15 +73,15 @@ void CrossValidationPanel::RenderDataSelector() {
                 selected_features_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
     }
 }
 
 void CrossValidationPanel::RenderCVSettings() {
-    ImGui::Text(ICON_FA_COG " CV Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("CV settings");
 
-    ImGui::SliderInt("K Folds", &n_folds_, 2, 20);
+    ui::FieldLabel("K folds");
+    ImGui::SliderInt("##k_folds", &n_folds_, 2, 20);
 
     ImGui::Checkbox("Stratified", &stratified_);
     if (ImGui::IsItemHovered()) {
@@ -94,30 +91,27 @@ void CrossValidationPanel::RenderCVSettings() {
     ImGui::Checkbox("Shuffle", &shuffle_);
 
     if (shuffle_) {
-        ImGui::InputInt("Random Seed", &random_seed_);
+        ui::FieldLabel("Random seed");
+        ImGui::InputInt("##random_seed", &random_seed_);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_LAYER_GROUP " Generate Folds", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "Generating folds" : "Pick a dataset first";
+    if (ui::PrimaryButton("Generate Folds", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunCrossValidation();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::TextWrapped("Computing...");
     }
 
     if (!status_message_.empty()) {
-        ImGui::Spacing();
         ImGui::TextWrapped("%s", status_message_.c_str());
     }
+    ImGui::PopStyleColor();
 }
 
 void CrossValidationPanel::RenderResults() {

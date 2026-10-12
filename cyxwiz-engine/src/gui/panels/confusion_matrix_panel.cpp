@@ -1,6 +1,8 @@
 #include "confusion_matrix_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/table_class_labels.h"
@@ -22,13 +24,9 @@ void ConfusionMatrixPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_TABLE_CELLS) + " Confusion Matrix###ConfusionMatrixPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("confusion_matrix", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (result_.success) {
             if (ImGui::BeginTabBar("MatrixTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_TABLE " Matrix")) {
@@ -46,41 +44,38 @@ void ConfusionMatrixPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select true and predicted label columns, then click Compute.");
+            ui::EmptyState(ICON_FA_TABLE_CELLS, "No confusion matrix yet",
+                           "Pick the true and the predicted label columns, then Compute Matrix.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void ConfusionMatrixPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("confusion_matrix_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_TAGS " Label Columns");
-        ImGui::Spacing();
-
+        ui::SettingsSection("Label columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("True Labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Predicted Labels", &pred_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("True labels");
+        ImGui::Combo("##true_labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Predicted labels");
+        ImGui::Combo("##predicted_labels", &pred_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_CALCULATOR " Compute Matrix", ImVec2(-1, 30))) {
+        if (ui::PrimaryButton("Compute Matrix", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             ComputeMatrix();
         }
     }
 
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 

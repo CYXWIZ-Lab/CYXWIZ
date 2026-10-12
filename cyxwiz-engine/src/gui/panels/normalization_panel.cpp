@@ -1,6 +1,8 @@
 #include "normalization_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -18,15 +20,10 @@ void NormalizationPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_ARROWS_LEFT_RIGHT) + " Normalization (Min-Max)###NormalizationPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("normalization", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (transform_result_.success) {
             if (ImGui::BeginTabBar("NormTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Preview")) {
@@ -40,74 +37,77 @@ void NormalizationPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select data and configure settings, then click 'Apply'.");
+            ui::EmptyState(ICON_FA_ARROWS_LEFT_RIGHT, "No normalization yet",
+                           "Pick a dataset and the columns, then Apply Normalization.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void NormalizationPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("normalization_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Select Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 150), true);
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::AlignTextToFramePadding();  // level with the links beside it
+        ImGui::TextColored(t.text_dim, "Columns");
+        ImGui::SameLine();
+        if (ui::LinkButton("Select all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
+        }
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
+        }
+        ui::BeginInsetList("##columns", 150.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
-
-        if (ImGui::Button("Select All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
-        }
+        ui::EndInsetList();
     }
 }
 
 void NormalizationPanel::RenderSettings() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_COG " Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("Output range");
 
-    ImGui::Text("Output Range:");
-    ImGui::SliderFloat("Min", &range_min_, -10.0f, 10.0f, "%.2f");
-    ImGui::SliderFloat("Max", &range_max_, -10.0f, 10.0f, "%.2f");
+    if (ImGui::BeginTable("##range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min");
+        ImGui::SliderFloat("##range_min", &range_min_, -10.0f, 10.0f, "%.2f");
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max");
+        ImGui::SliderFloat("##range_max", &range_max_, -10.0f, 10.0f, "%.2f");
+        ImGui::EndTable();
+    }
 
     if (range_min_ >= range_max_) {
         ImGui::TextColored(t.caution, "Warning: Min must be less than Max");
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     bool can_apply = current_table_ != nullptr && range_min_ < range_max_;
     int selected_count = 0;
     for (bool sel : selected_columns_) if (sel) selected_count++;
     can_apply = can_apply && selected_count > 0;
+    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first"
+                                : selected_count == 0       ? "Select at least one column"
+                                                            : "Min must be less than Max";
 
-    if (!can_apply) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Normalization", ImVec2(-1, 30))) {
+    if (ui::PrimaryButton("Apply Normalization", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyNormalization();
     }
 
-    if (!can_apply) ImGui::EndDisabled();
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 

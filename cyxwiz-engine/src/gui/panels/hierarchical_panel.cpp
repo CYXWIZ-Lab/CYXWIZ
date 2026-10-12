@@ -2,7 +2,9 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -25,75 +27,75 @@ void HierarchicalPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_SITEMAP) + " Hierarchical Clustering###HierarchicalPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
+        ui::BeginSettingsColumn("hierarchical", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         RenderResults();
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void HierarchicalPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("hierarchical_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 120), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 120);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
     }
 }
 
 void HierarchicalPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
-    ImGui::SliderInt("Number of Clusters", &n_clusters_, 2, 20);
+    ui::FieldLabel("Number of clusters");
+    ImGui::SliderInt("##n_clusters", &n_clusters_, 2, 20);
 
     const char* linkage_methods[] = {"Ward", "Complete", "Average", "Single"};
-    ImGui::Combo("Linkage", &linkage_method_, linkage_methods, 4);
+    ui::FieldLabel("Linkage");
+    ImGui::Combo("##linkage", &linkage_method_, linkage_methods, 4);
 
     const char* metrics[] = {"Euclidean", "Manhattan", "Cosine"};
-    ImGui::Combo("Distance Metric", &metric_idx_, metrics, 3);
+    ui::FieldLabel("Distance metric");
+    ImGui::Combo("##metric", &metric_idx_, metrics, 3);
 
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run Clustering", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "Clustering is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run Clustering", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
     // Cut height slider (after clustering)
     if (result_.success && !result_.linkage_matrix.empty()) {
-        ImGui::Separator();
-        ImGui::Text("Cut Dendrogram:");
+        ui::SettingsSection("Cut dendrogram");
 
         const double cut_min = 0.0;
-        if (ImGui::SliderScalar("Cut Height", ImGuiDataType_Double, &cut_height_, &cut_min, &max_height_, "%.2f")) {
+        ui::FieldLabel("Cut height");
+        if (ImGui::SliderScalar("##cut_height", ImGuiDataType_Double, &cut_height_, &cut_min, &max_height_, "%.2f")) {
             // Recompute labels based on cut height
             result_.labels = Clustering::CutDendrogram(result_.linkage_matrix, cut_height_, static_cast<int>(input_data_.size()));
             std::set<int> unique_labels(result_.labels.begin(), result_.labels.end());
@@ -102,18 +104,24 @@ void HierarchicalPanel::RenderParameters() {
         }
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Computing...");
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void HierarchicalPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run hierarchical clustering to see results.");
+        ui::EmptyState(ICON_FA_SITEMAP, "No clusters yet",
+                       "Pick a dataset and feature columns, then Run Clustering.");
         return;
     }
 

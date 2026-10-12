@@ -2,7 +2,9 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -24,97 +26,98 @@ void DBSCANPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CIRCLE_NODES) + " DBSCAN Clustering###DBSCANPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
+        ui::BeginSettingsColumn("dbscan", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::Separator();
         RenderKDistanceAnalysis();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         RenderResults();
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void DBSCANPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("dbscan_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 120), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 120);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
     }
 }
 
 void DBSCANPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
     const double eps_min = 0.01, eps_max = 10.0;
-    ImGui::SliderScalar("Epsilon (eps)", ImGuiDataType_Double, &eps_, &eps_min, &eps_max, "%.3f");
-    ImGui::SliderInt("Min Samples", &min_samples_, 1, 50);
+    ui::FieldLabel("Epsilon (eps)");
+    ImGui::SliderScalar("##eps", ImGuiDataType_Double, &eps_, &eps_min, &eps_max, "%.3f");
+    ui::FieldLabel("Min samples");
+    ImGui::SliderInt("##min_samples", &min_samples_, 1, 50);
 
     const char* metrics[] = {"Euclidean", "Manhattan", "Cosine"};
-    ImGui::Combo("Distance Metric", &metric_idx_, metrics, 3);
+    ui::FieldLabel("Distance metric");
+    ImGui::Combo("##metric", &metric_idx_, metrics, 3);
 
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run DBSCAN", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "DBSCAN is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run DBSCAN", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Computing...");
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void DBSCANPanel::RenderKDistanceAnalysis() {
-    ImGui::Text(ICON_FA_CHART_LINE " K-Distance Graph");
-    ImGui::Spacing();
+    ui::SettingsSection("K-distance graph");
 
-    ImGui::SliderInt("K", &k_distance_k_, 1, 20);
+    ui::FieldLabel("K");
+    ImGui::SliderInt("##k_distance_k", &k_distance_k_, 1, 20);
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Compute K-Distances", ImVec2(-1, 25))) {
+    const char* run_reason = is_computing_ ? "DBSCAN is running" : "Pick a dataset first";
+    if (ui::SecondaryButton("Compute K-Distances", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ComputeKDistances();
     }
-
-    if (!can_run) ImGui::EndDisabled();
 
     if (!k_distances_.empty()) {
         ImGui::Text("Suggested eps: %.3f", suggested_eps_);
 
-        if (ImGui::Button("Use Suggested eps")) {
+        if (ui::SecondaryButton("Use Suggested eps")) {
             eps_ = suggested_eps_;
         }
 
@@ -131,7 +134,8 @@ void DBSCANPanel::RenderKDistanceAnalysis() {
 
 void DBSCANPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run DBSCAN clustering to see results.");
+        ui::EmptyState(ICON_FA_CIRCLE_NODES, "No clusters yet",
+                       "Pick a dataset and feature columns, then Run DBSCAN.");
         return;
     }
 

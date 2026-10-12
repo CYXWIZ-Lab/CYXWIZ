@@ -1,6 +1,8 @@
 #include "log_transform_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -15,19 +17,13 @@ LogTransformPanel::LogTransformPanel() : Panel("Log Transform", true) {}
 void LogTransformPanel::Render() {
     if (!visible_) return;
 
-    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_LINE) + " Log Transform###LogTransformPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("log_transform", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (transform_result_.success) {
             if (ImGui::BeginTabBar("LogTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Preview")) {
@@ -41,87 +37,85 @@ void LogTransformPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select data and configure settings, then click 'Apply'.");
-            ImGui::Spacing();
-            ImGui::TextWrapped("Log transform is useful for:");
-            ImGui::BulletText("Right-skewed distributions");
-            ImGui::BulletText("Multiplicative relationships");
-            ImGui::BulletText("Reducing variance heterogeneity");
-
-            if (!can_transform_) {
-                ImGui::Spacing();
-                ImGui::TextColored(t.caution,
-                    "Warning: Some columns have non-positive values.");
-                ImGui::TextWrapped("Enable 'Use log1p' or check your data.");
-            }
+            ui::EmptyState(ICON_FA_CHART_LINE, "No transform yet",
+                           "Pick a dataset and the columns, then Apply Log Transform.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void LogTransformPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("log_transform_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Select Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 150), true);
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::AlignTextToFramePadding();  // level with the links beside it
+        ImGui::TextColored(t.text_dim, "Columns");
+        ImGui::SameLine();
+        if (ui::LinkButton("Select all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
+        }
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
+        }
+        ui::BeginInsetList("##columns", 150.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
-
-        if (ImGui::Button("Select All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
-        }
+        ui::EndInsetList();
     }
 }
 
 void LogTransformPanel::RenderSettings() {
-    ImGui::Text(ICON_FA_COG " Settings");
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::SettingsSection("Transform");
+    ImGui::TextWrapped("Log transform is useful for right-skewed distributions.");
+    ImGui::SameLine();
+    ui::HelpMarker("Log transform is useful for:\n"
+                   "  Right-skewed distributions\n"
+                   "  Multiplicative relationships\n"
+                   "  Reducing variance heterogeneity");
 
-    ImGui::Text("Logarithm Base:");
+    ui::FieldLabel("Logarithm base");
     ImGui::RadioButton("Natural (ln)", &log_base_, 0);
     ImGui::RadioButton("Base 10 (log10)", &log_base_, 1);
     ImGui::RadioButton("Base 2 (log2)", &log_base_, 2);
 
-    ImGui::Spacing();
     ImGui::Checkbox("Use log1p (log(1 + x))", &use_log1p_);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Safer for values close to zero.\nAllows x >= -1 instead of x > 0.");
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
+    if (!can_transform_) {
+        ImGui::TextColored(t.caution, "Some columns have non-positive values.");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Enable 'Use log1p' or check your data.");
+        ImGui::PopStyleColor();
+    }
+
     ImGui::Spacing();
 
     int selected_count = 0;
     for (bool sel : selected_columns_) if (sel) selected_count++;
     bool can_apply = current_table_ != nullptr && selected_count > 0 && can_transform_;
+    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first"
+                                : selected_count == 0       ? "Select at least one column"
+                                                            : "Some columns have values the log cannot take";
 
-    if (!can_apply) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Log Transform", ImVec2(-1, 30))) {
+    if (ui::PrimaryButton("Apply Log Transform", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyLogTransform();
     }
 
-    if (!can_apply) ImGui::EndDisabled();
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 

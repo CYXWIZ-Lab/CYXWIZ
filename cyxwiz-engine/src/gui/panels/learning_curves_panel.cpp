@@ -1,6 +1,9 @@
 #include "learning_curves_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -21,15 +24,18 @@ void LearningCurvesPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_GRADUATION_CAP) + " Learning Curves###LearningCurvesPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("learning_curves", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         bool has_data = !result_.train_sizes.empty() || !manual_train_sizes_.empty();
         if (has_data) {
+            size_t total_points = result_.train_sizes.empty() ? manual_train_sizes_.size() : result_.train_sizes.size();
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::Text("%d", static_cast<int>(total_points));
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "data points");
             if (ImGui::BeginTabBar("LearningCurveTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Learning Curve")) {
                     RenderLearningCurve();
@@ -46,60 +52,46 @@ void LearningCurvesPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("No learning curve data available.");
-            ImGui::Text("Learning curves are populated during training.");
-            ImGui::Spacing();
-            ImGui::Text("Or load data from a CSV with columns:");
-            ImGui::BulletText("train_size");
-            ImGui::BulletText("train_score");
-            ImGui::BulletText("val_score");
+            ui::EmptyState(ICON_FA_GRADUATION_CAP, "No learning curve data yet",
+                           "Learning curves are populated during training. Or load a CSV with the columns "
+                           "train_size, train_score and val_score, or add points by hand.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void LearningCurvesPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Source");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data source");
     source_.Render("learning_curves_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Manual data entry
-    ImGui::Text(ICON_FA_KEYBOARD " Manual Entry");
-    ImGui::Spacing();
+    ui::SettingsSection("Manual entry");
 
     static int new_train_size = 100;
     static float new_train_score = 0.9f;
     static float new_val_score = 0.8f;
 
-    ImGui::InputInt("Train Size", &new_train_size);
-    ImGui::SliderFloat("Train Score", &new_train_score, 0.0f, 1.0f);
-    ImGui::SliderFloat("Val Score", &new_val_score, 0.0f, 1.0f);
+    ui::FieldLabel("Train size");
+    ImGui::InputInt("##train_size", &new_train_size);
+    ui::FieldLabel("Train score");
+    ImGui::SliderFloat("##train_score", &new_train_score, 0.0f, 1.0f);
+    ui::FieldLabel("Val score");
+    ImGui::SliderFloat("##val_score", &new_val_score, 0.0f, 1.0f);
 
-    if (ImGui::Button(ICON_FA_PLUS " Add Point", ImVec2(-1, 25))) {
+    ImGui::Spacing();
+    if (ui::PrimaryButton("Add Point", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         AddDataPoint(new_train_size, new_train_score, new_val_score);
     }
 
-    if (ImGui::Button(ICON_FA_TRASH " Clear Data", ImVec2(-1, 25))) {
+    if (ui::SecondaryButton("Clear Data", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         ClearData();
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Show data summary
-    size_t total_points = result_.train_sizes.empty() ? manual_train_sizes_.size() : result_.train_sizes.size();
-    ImGui::Text("Data Points: %d", static_cast<int>(total_points));
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 

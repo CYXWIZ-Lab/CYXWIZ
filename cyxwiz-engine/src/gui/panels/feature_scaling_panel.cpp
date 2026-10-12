@@ -1,6 +1,8 @@
 #include "feature_scaling_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -25,15 +27,10 @@ void FeatureScalingPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_LAYER_GROUP) + " Feature Scaling (All Methods)###FeatureScalingPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
+        ui::BeginSettingsColumn("feature_scaling", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderMethodTabs();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         // Either action has results to show: Apply fills Preview, Compare All
         // fills Comparison on its own.
         if (transform_result_.success || show_comparison_) {
@@ -52,55 +49,55 @@ void FeatureScalingPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select data, choose a method, and click 'Apply'.");
-            ImGui::Spacing();
-            ImGui::Text("Available Scaling Methods:");
-            ImGui::BulletText("Min-Max: Scale to [0,1] or custom range");
-            ImGui::BulletText("Z-Score: Mean=0, Std=1");
-            ImGui::BulletText("Robust: Use median/IQR (outlier resistant)");
-            ImGui::BulletText("Max-Abs: Scale by max absolute value");
-            ImGui::BulletText("Quantile: Uniform or normal distribution");
+            ui::EmptyState(ICON_FA_LAYER_GROUP, "No scaling yet",
+                           "Pick a dataset, the columns and a method, then Apply Scaling.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void FeatureScalingPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
+    ui::SettingsSection("Data");
     source_.Render("feature_scaling_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Select Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 120), true);
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::AlignTextToFramePadding();  // level with the links beside it
+        ImGui::TextColored(t.text_dim, "Columns");
+        ImGui::SameLine();
+        if (ui::LinkButton("All")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
+        }
+        ImGui::SameLine();
+        if (ui::LinkButton("None")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
+        }
+        ui::BeginInsetList("##columns", 120.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
-
-        if (ImGui::Button("All", ImVec2(50, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("None", ImVec2(50, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
-        }
+        ui::EndInsetList();
     }
 }
 
 void FeatureScalingPanel::RenderMethodTabs() {
-    ImGui::Text(ICON_FA_COG " Scaling Method");
-    ImGui::Spacing();
+    ui::SettingsSection("Scaling");
 
     // A combo, not tabs: five tabs in the settings column were clipped to
     // "Min-M...", "Z-Scor...".
     int method_index = static_cast<int>(selected_method_);
+    // Label with the overview of all methods (the old empty-results list).
+    ImGui::TextColored(ui::CurrentTokens().text_dim, "Method");
+    ImGui::SameLine();
+    ui::HelpMarker("Min-Max: scale to [0, 1] or a custom range\n"
+                   "Z-Score: mean 0, std 1\n"
+                   "Robust: median / IQR, resistant to outliers\n"
+                   "Max-Abs: divide by the largest absolute value\n"
+                   "Quantile: map to a uniform or normal distribution");
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::Combo("##method", &method_index, kMethodNames, kMethodCount)) {
         selected_method_ = static_cast<ScalingMethod>(method_index);
@@ -114,22 +111,17 @@ void FeatureScalingPanel::RenderMethodTabs() {
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     int selected_count = 0;
     for (bool sel : selected_columns_) if (sel) selected_count++;
     bool can_apply = current_table_ != nullptr && selected_count > 0;
+    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first" : "Select at least one column";
 
-    if (!can_apply) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Scaling", ImVec2(-1, 30))) {
+    if (ui::PrimaryButton("Apply Scaling", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyScaling();
     }
 
-    ImGui::Spacing();
-
-    if (ImGui::Button(ICON_FA_CHART_SIMPLE " Compare All Methods", ImVec2(-1, 25))) {
+    if (ui::SecondaryButton("Compare All Methods", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         // Apply all methods for comparison
         show_comparison_ = true;
         select_comparison_tab_ = true;
@@ -161,11 +153,10 @@ void FeatureScalingPanel::RenderMethodTabs() {
         }
     }
 
-    if (!can_apply) ImGui::EndDisabled();
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
@@ -173,9 +164,15 @@ void FeatureScalingPanel::RenderMinMaxTab() {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::TextWrapped("Scale features to a given range.");
     ImGui::Spacing();
-    ImGui::Text("Output Range:");
-    ImGui::SliderFloat("Min##mm", &minmax_range_min_, -10.0f, 10.0f, "%.2f");
-    ImGui::SliderFloat("Max##mm", &minmax_range_max_, -10.0f, 10.0f, "%.2f");
+    if (ImGui::BeginTable("##mm_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min");
+        ImGui::SliderFloat("##mm_min", &minmax_range_min_, -10.0f, 10.0f, "%.2f");
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max");
+        ImGui::SliderFloat("##mm_max", &minmax_range_max_, -10.0f, 10.0f, "%.2f");
+        ImGui::EndTable();
+    }
 
     if (minmax_range_min_ >= minmax_range_max_) {
         ImGui::TextColored(t.caution, "Min must be < Max");
@@ -210,13 +207,13 @@ void FeatureScalingPanel::RenderQuantileTab() {
     ImGui::TextWrapped("Transform to uniform or normal distribution.");
     ImGui::Spacing();
 
-    ImGui::Text("Output Distribution:");
+    ui::FieldLabel("Output distribution");
     bool is_normal = quantile_normal_output_;
     if (ImGui::RadioButton("Uniform [0, 1]", !is_normal)) quantile_normal_output_ = false;
     if (ImGui::RadioButton("Normal (Gaussian)", is_normal)) quantile_normal_output_ = true;
 
-    ImGui::Spacing();
-    ImGui::SliderInt("Quantiles", &quantile_n_quantiles_, 100, 10000);
+    ui::FieldLabel("Quantiles");
+    ImGui::SliderInt("##quantiles", &quantile_n_quantiles_, 100, 10000);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Number of quantiles to compute. Higher = smoother transform.");
     }

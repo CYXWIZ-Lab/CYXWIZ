@@ -2,7 +2,9 @@
 #include <cyxwiz/device.h>
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include "../../core/table_class_labels.h"
@@ -26,13 +28,9 @@ void ClusterEvalPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &visible_)) {
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("cluster_eval", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
 
         if (ImGui::BeginTabBar("EvalTabs")) {
             if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Metrics")) {
@@ -53,33 +51,35 @@ void ClusterEvalPanel::Render() {
             ImGui::EndTabBar();
         }
 
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void ClusterEvalPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
 
+    ui::SettingsSection("Data");
     source_.Render("cluster_eval_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 100), true);
+        ui::SettingsSection("Columns");
+        ui::FieldLabel("Feature columns");
+        ui::BeginInsetList("##columns", 100.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         // Label column selector
         std::vector<const char*> label_options = {"None"};
         for (const auto& name : column_names_) label_options.push_back(name.c_str());
         int label_idx = label_column_idx_ + 1;
-        if (ImGui::Combo("Label Column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
+        ui::FieldLabel("Label column");
+        if (ImGui::Combo("##label_column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
             label_column_idx_ = label_idx - 1;
         }
     }
@@ -87,29 +87,31 @@ void ClusterEvalPanel::RenderDataSelector() {
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr && label_column_idx_ >= 0;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_CALCULATOR " Compute Metrics", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "Computing metrics"
+                           : current_table_ == nullptr ? "Pick a dataset first"
+                           : "Pick the label column first";
+    if (ui::PrimaryButton("Compute Metrics", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ComputeMetrics();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::TextWrapped("Computing...");
     }
 
     if (!status_message_.empty()) {
         ImGui::TextWrapped("%s", status_message_.c_str());
     }
+    ImGui::PopStyleColor();
 
     // Save to history
     if (metrics_.success) {
-        ImGui::Spacing();
+        ui::SettingsSection("Comparison");
         static char name_buf[64] = "";
-        ImGui::InputText("Name", name_buf, sizeof(name_buf));
+        ui::FieldLabel("Name");
+        ImGui::InputText("##run_name", name_buf, sizeof(name_buf));
 
-        if (ImGui::Button(ICON_FA_PLUS " Add to Comparison", ImVec2(-1, 25))) {
+        if (ui::SecondaryButton("Add to Comparison", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             EvalRecord record;
             record.name = strlen(name_buf) > 0 ? name_buf : ("Run " + std::to_string(eval_history_.size() + 1));
             record.n_clusters = metrics_.n_clusters;
@@ -299,7 +301,7 @@ void ClusterEvalPanel::RenderComparison() {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_TRASH " Clear History")) {
+    if (ui::DangerButton(ICON_FA_TRASH " Clear History")) {
         eval_history_.clear();
     }
 }
