@@ -19,6 +19,19 @@ std::string QuoteIdentifier(const std::string& identifier) {
     return quoted;
 }
 
+// "VIEW", "BASE TABLE", or empty when no object in the main schema has this
+// name. DROP VIEW IF EXISTS fails when the name is a table (and DROP TABLE
+// when it is a view), so callers drop by the kind found here.
+std::string ExistingObjectKind(duckdb::Connection& conn, const std::string& name) {
+    auto lookup = conn.Prepare(
+        "SELECT table_type FROM information_schema.tables WHERE table_schema = 'main' AND table_name = $1");
+    if (lookup->HasError()) return {};
+    auto found = lookup->Execute(name);
+    if (found->HasError()) return {};
+    auto chunk = found->Fetch();
+    return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).ToString() : std::string();
+}
+
 std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
     switch (type->id()) {
         case arrow::Type::BOOL:
@@ -393,17 +406,17 @@ bool DuckDBConnector::RegisterTable(
 
     try {
         const std::string quoted_table_name = QuoteIdentifier(table_name);
-        auto drop_view = conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
-        if (drop_view->HasError()) {
-            last_error_ = drop_view->GetError();
-            spdlog::error("Failed to drop existing view '{}': {}", table_name, last_error_);
-            return false;
-        }
-        auto drop_table = conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
-        if (drop_table->HasError()) {
-            last_error_ = drop_table->GetError();
-            spdlog::error("Failed to drop existing table '{}': {}", table_name, last_error_);
-            return false;
+        // Replace whatever holds the name (a table registered earlier on
+        // this connection, or a view).
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            const char* kind = existing == "VIEW" ? "VIEW" : "TABLE";
+            auto drop = conn_->Query(std::string("DROP ") + kind + " " + quoted_table_name);
+            if (drop->HasError()) {
+                last_error_ = drop->GetError();
+                spdlog::error("Failed to drop existing {} '{}': {}", existing, table_name, last_error_);
+                return false;
+            }
         }
 
         std::ostringstream create_sql;
@@ -459,9 +472,11 @@ bool DuckDBConnector::RegisterTable(
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
     try {
-        const std::string quoted_table_name = QuoteIdentifier(table_name);
-        conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
-        conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            conn_->Query(std::string(existing == "VIEW" ? "DROP VIEW " : "DROP TABLE ") +
+                         QuoteIdentifier(table_name));
+        }
 
         // Remove from tracking
         registered_tables_.erase(table_name);
