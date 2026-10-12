@@ -38,17 +38,6 @@ struct Operation {
     nlohmann::json params = nlohmann::json::object();
 };
 
-struct GuidedStep {
-    std::vector<Operation> ops;
-};
-
-// Defaults a new operation starts with; `column` (may be empty) is a likely
-// column for it (the first text column of its input).
-nlohmann::json DefaultParams(std::string_view type, const std::string& column);
-
-std::string ToJson(const GuidedStep& step);
-std::optional<GuidedStep> FromJson(std::string_view text, std::string* error = nullptr);
-
 // What the operations know about their inputs: the step's input names in
 // pin order and, when known, each input's columns.
 struct Context {
@@ -59,6 +48,20 @@ struct Context {
     // number is HUGEINT, which a SQL step cannot return).
     std::set<std::string> whole_number_columns;
 };
+
+struct GuidedStep {
+    std::vector<Operation> ops;
+    // The inputs' columns when the step was last saved, so the query can be
+    // written again where the inputs are not loaded (Properties' on/off).
+    Context saved_context;
+};
+
+// Defaults a new operation starts with; `column` (may be empty) is a likely
+// column for it (the first text column of its input).
+nlohmann::json DefaultParams(std::string_view type, const std::string& column);
+
+std::string ToJson(const GuidedStep& step);
+std::optional<GuidedStep> FromJson(std::string_view text, std::string* error = nullptr);
 
 // Columns after each operation, tracked without running anything.
 struct Columns {

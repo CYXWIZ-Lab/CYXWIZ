@@ -50,6 +50,14 @@ void TestJson() {
     Check(back && back->ops.size() == 2 && back->ops[1].type == "sort_rows" && !back->ops[1].on &&
               back->ops[0].params == step.ops[0].params,
           "round trip");
+    // The inputs' columns travel with the operations.
+    step.saved_context = SermonContext();
+    step.saved_context.whole_number_columns = {"word_count"};
+    const auto with_context = guided::FromJson(guided::ToJson(step));
+    Check(with_context && with_context->saved_context.inputs.size() == 2 &&
+              with_context->saved_context.columns.at("manifest").size() == 2 &&
+              with_context->saved_context.whole_number_columns.count("word_count") == 1,
+          "the saved context round-trips");
     std::string error;
     Check(!guided::FromJson("{\"version\":1,\"ops\":[{\"type\":\"drop_table\"}]}", &error) && error.find("drop_table") != std::string::npos,
           "unknown operations are refused: " + error);

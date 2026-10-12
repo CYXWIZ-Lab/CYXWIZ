@@ -1040,7 +1040,7 @@ void CheckGuidedOperations() {
         {strings({"S1", "S2", "S3", "S4", "S5"}),
          strings({"The Immutability of God", "The Remembrance of Christ", "Two Coverings", "Sons of Jacob", "The Sin of Unbelief"}),
          strings({"MAL", "1CO", "PRO", "MAL", "2KI"}), ints({3, 11, 38, 3, 7}),
-         strings({"First para _italic_ [1].\n\nSecond para.\n\n\nThird", "One\n\nTwo", "START body END tail", "Only one", "A. B! C?"}),
+         strings({"First para _italic_ [1].\n\nSecond para.\n\n\nThird", "One\r\n\r\nTwo", "START body END tail", "Only one", "A. B! C?"}),
          ints({6459, 4000, 7000, 5200, 6000}), strings({"unassigned", "unassigned", "unassigned", "unassigned", "unassigned"})});
     auto manifest = arrow::Table::Make(
         arrow::schema({arrow::field("partition_document_id", arrow::utf8()), arrow::field("split", arrow::utf8())}),
@@ -1153,7 +1153,8 @@ void CheckGuidedOperations() {
     t = one("keep_between", {{"column", "text"}, {"start", "START"}, {"end", "END"}, {"keep_markers", false}, {"if_missing", "keep"}});
     Check(t && cell(t, "text", 2) == " body " && cell(t, "text", 3) == "Only one", "keep between markers; rows without them kept");
     t = one("split_into_rows", {{"column", "text"}, {"by", "paragraphs"}, {"index_name", "text_index"}, {"drop_empty", true}});
-    Check(t && t->num_rows() == 8 && cell(t, "text_index", 2) == "3", "split into paragraphs: 3 + 2 + 1 + 1 + 1");
+    Check(t && t->num_rows() == 8 && cell(t, "text_index", 2) == "3" && cell(t, "text", 3) == "One",
+          "split into paragraphs, Windows line breaks too: 3 + 2 + 1 + 1 + 1");
     t = one("split_into_rows", {{"column", "text"}, {"by", "sentences"}, {"index_name", "n"}, {"drop_empty", true}});
     Check(t && t->num_rows() >= 9, "split into sentences");
     t = one("extract_pattern", {{"column", "sermon_id"}, {"pattern", "[0-9]+"}, {"group", "0"}, {"name", "number"}});

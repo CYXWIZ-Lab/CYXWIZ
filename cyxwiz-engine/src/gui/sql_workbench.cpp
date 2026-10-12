@@ -12,6 +12,7 @@
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 
+#include <arrow/compute/api.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <ctime>
 #include <iterator>
+#include <random>
 #include <thread>
 
 namespace gui {
@@ -133,6 +135,7 @@ SqlWorkbenchDialog::SqlWorkbenchDialog(MLNode* node)
     editor_.SetLanguage(cyxwiz::editor::Language::Sql);
     editor_.SetTabSize(4);
     editor_.SetText(saved_query_);
+    if (node) LoadGuided(*node);
 }
 
 SqlWorkbenchDialog::~SqlWorkbenchDialog() {
@@ -153,13 +156,30 @@ void SqlWorkbenchDialog::Apply() {
     if (!node) return;
     saved_query_ = editor_.GetText();
     node->parameters["query"] = saved_query_;
-    AddMessage("Saved the query to the step.", false);
+    if (guided_active_) {
+        // A guided step keeps its operations next to the query they wrote.
+        guided_saved_json_ = cyxwiz::guided::ToJson(guided_);
+        node->parameters[cyxwiz::guided::kGuidedOpsParameter] = guided_saved_json_;
+        AddMessage("Saved the operations and their query to the step.", false);
+    } else {
+        // Written in SQL now: no operations stay behind.
+        node->parameters.erase(cyxwiz::guided::kGuidedOpsParameter);
+        guided_saved_json_.clear();
+        AddMessage("Saved the query to the step.", false);
+    }
 }
 
 void SqlWorkbenchDialog::Reset() {
     MLNode* node = CurrentNode();
     if (node) saved_query_ = Param(*node, "query");
+    editor_.SetReadOnly(false);
     editor_.SetText(saved_query_);
+    if (node) {
+        LoadGuided(*node);
+        guided_generated_ = cyxwiz::guided::GenerateSql(guided_, GuidedContext());
+        guided_columns_ = cyxwiz::guided::TrackColumns(guided_, GuidedContext());
+        guided_inputs_key_.clear();
+    }
     AddMessage("Back to the step's saved query.", false);
 }
 
@@ -191,7 +211,7 @@ void SqlWorkbenchDialog::RefreshInputs() {
     }
 }
 
-void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index) {
+void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sample) {
     if (run_) return;
     if (node_editor_ && node_editor_->IsDataPipelineRunning()) {
         AddMessage("A pipeline run is in progress; run again when it ends.", true);
@@ -206,6 +226,26 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index) {
             return;
         }
         inputs.push_back({input.alias, input.table});
+    }
+    // The Guided preview's sample: the main input only (look-up tables stay whole).
+    if (on_sample && sample_mode_ != 0 && !inputs.empty() && inputs.front().table->num_rows() > 1000) {
+        auto& main = inputs.front().table;
+        if (sample_mode_ == 1) {
+            main = main->Slice(0, 1000);
+        } else {
+            std::vector<int64_t> rows(static_cast<size_t>(main->num_rows()));
+            for (size_t r = 0; r < rows.size(); ++r) rows[r] = static_cast<int64_t>(r);
+            std::mt19937_64 random(42);
+            std::shuffle(rows.begin(), rows.end(), random);
+            rows.resize(1000);
+            std::sort(rows.begin(), rows.end());
+            arrow::Int64Builder builder;
+            std::shared_ptr<arrow::Array> indices;
+            if (builder.AppendValues(rows).ok() && builder.Finish(&indices).ok()) {
+                auto taken = arrow::compute::Take(main, indices);
+                if (taken.ok()) main = taken->table();
+            }
+        }
     }
     if (inputs.empty()) {
         AddMessage("Nothing is connected to this step's input.", true);
@@ -338,7 +378,7 @@ void SqlWorkbenchDialog::PollRun() {
                 }
                 part_rows_draft_ = run->draft;
                 part_rows_seconds_ = run->seconds;
-                if (side_tab_ == 0) side_tab_ = 1;
+                if (side_tab_ == 0 && mode_ == 1) side_tab_ = 1;
                 entry.outcome = std::to_string(part_rows_.size()) + " parts, " + Seconds(run->seconds);
                 AddMessage("Counted the rows after each part (" + Seconds(run->seconds) + ").", false);
                 break;
@@ -394,6 +434,15 @@ void SqlWorkbenchDialog::PollRun() {
     }
     history_.push_back(std::move(entry));
     if (history_.size() > kHistoryLimit) history_.erase(history_.begin());
+    // A Guided preview runs the selected operation once the counts are in.
+    if (preview_part_after_counts_ && run->kind == RunKind::Counts) {
+        preview_part_after_counts_ = false;
+        if (result.ok) {
+            int part = GuidedPartIndex(guided_picked_);
+            if (part < 0) part = static_cast<int>(outline_.parts.size()) - 1;
+            StartRun(RunKind::ToPart, static_cast<size_t>(std::max(0, part)), true);
+        }
+    }
 }
 
 void SqlWorkbenchDialog::EvaluateChecks() {
@@ -476,8 +525,11 @@ void SqlWorkbenchDialog::RenderContent() {
     const std::string step_query = Param(*node, "query");
     if (step_query != saved_query_ && draft_ == saved_query_) {
         saved_query_ = step_query;
+        editor_.SetReadOnly(false);
         editor_.SetText(saved_query_);
         outline_version_ = ~0ull;
+        LoadGuided(*node);
+        guided_inputs_key_.clear();
     }
 
     // Ctrl+Enter runs the step, Ctrl+Shift+Enter the selection.
@@ -488,18 +540,45 @@ void SqlWorkbenchDialog::RenderContent() {
 
     const ui::Tokens& t = ui::CurrentTokens();
     RenderHeader(*node);
-    RenderToolbar();
+    if (mode_ == 0) RenderGuidedToolbar();
+    else RenderToolbar();
     ImGui::Dummy(ImVec2(0.0f, t.space_xs));
 
     const float status_h = ImGui::GetFrameHeight();
     const float body_h = std::max(200.0f, ImGui::GetContentRegionAvail().y - status_h - t.space_sm);
-    RenderSidePanel(body_h);
+    if (mode_ == 0) {
+        RenderGuided(body_h);
+        RenderStatusBar();
+        RenderCompare();
+        return;
+    }
+    if (guided_active_) {
+        // SQL mode on a guided step: the query is read-only.
+        Coloured(ICON_FA_CIRCLE_INFO " Written from the guided operations (read-only).", t.info);
+        ImGui::SameLine();
+        if (!confirm_edit_as_sql_) {
+            if (ui::LinkButton("Edit as SQL")) confirm_edit_as_sql_ = true;
+        } else {
+            Coloured("Editing turns this step into an SQL step; the operations go when you save.", t.warning);
+            ImGui::SameLine();
+            if (ui::LinkButton("Edit as SQL")) {
+                confirm_edit_as_sql_ = false;
+                guided_active_ = false;
+                editor_.SetReadOnly(false);
+                AddMessage("The query is yours to edit; Save to step keeps it as an SQL step (Reset to saved undoes this).", false);
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Cancel")) confirm_edit_as_sql_ = false;
+        }
+    }
+    const float content_h = body_h - (guided_active_ ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
+    RenderSidePanel(content_h);
     ImGui::SameLine();
     ImGui::BeginGroup();
     // Editor, a splitter (drag to move), then the bottom panel.
     const float splitter_h = 6.0f;
     const float spacing_y = ImGui::GetStyle().ItemSpacing.y;
-    const float usable = body_h - splitter_h - spacing_y * 2.0f;
+    const float usable = content_h - splitter_h - spacing_y * 2.0f;
     const float editor_h = std::floor(usable * editor_share_);
     RenderEditor(editor_h);
     {
@@ -531,6 +610,10 @@ void SqlWorkbenchDialog::RenderContent() {
 
 void SqlWorkbenchDialog::RenderHeader(MLNode& node) {
     const ui::Tokens& t = ui::CurrentTokens();
+    static const char* const kModes[] = {"Guided", "SQL"};
+    ui::SegmentedControl("##wb_mode", kModes, 2, &mode_);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Guided: build the step from operations. SQL: the query itself.");
+    ImGui::SameLine();
     if (!context_.recipe_name.empty()) {
         Dim("recipe " + context_.recipe_name + "  " ICON_FA_ANGLE_RIGHT "  step");
     } else {

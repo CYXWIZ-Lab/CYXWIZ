@@ -238,7 +238,8 @@ std::string SplitExpr(const json& p, const std::string& column) {
     if (by == "lines") return "regexp_split_to_array(" + c + ", '\\r?\\n')";
     if (by == "sentences") return "regexp_extract_all(" + c + ", '[^.!?]+[.!?]*')";
     if (by == "separator") return "string_split(" + c + ", " + Lit(Str(p, "separator", ",")) + ")";
-    return "regexp_split_to_array(" + c + ", '\\n[ \\t]*\\n+')";
+    // Two or more line breaks, Windows (\r\n) or Unix (\n), spaces between.
+    return "regexp_split_to_array(" + c + ", '(\\r?\\n[ \\t]*){2,}')";
 }
 
 const char* MeasureFunction(const std::string& fn) {
@@ -339,7 +340,14 @@ json DefaultParams(std::string_view type, const std::string& column) {
 std::string ToJson(const GuidedStep& step) {
     json ops = json::array();
     for (const auto& op : step.ops) ops.push_back({{"type", op.type}, {"on", op.on}, {"params", op.params}});
-    return json{{"version", 1}, {"ops", ops}}.dump();
+    json out{{"version", 1}, {"ops", ops}};
+    const Context& c = step.saved_context;
+    if (!c.inputs.empty()) {
+        out["inputs"] = c.inputs;
+        out["columns"] = c.columns;
+        out["whole_number_columns"] = c.whole_number_columns;
+    }
+    return out.dump();
 }
 
 std::optional<GuidedStep> FromJson(std::string_view text, std::string* error) {
@@ -363,6 +371,17 @@ std::optional<GuidedStep> FromJson(std::string_view text, std::string* error) {
         op.on = item.value("on", true);
         op.params = item.contains("params") && item["params"].is_object() ? item["params"] : json::object();
         step.ops.push_back(std::move(op));
+    }
+    if (j.contains("inputs") && j["inputs"].is_array()) {
+        try {
+            step.saved_context.inputs = j["inputs"].get<std::vector<std::string>>();
+            if (j.contains("columns")) step.saved_context.columns = j["columns"].get<std::map<std::string, std::vector<std::string>>>();
+            if (j.contains("whole_number_columns")) {
+                step.saved_context.whole_number_columns = j["whole_number_columns"].get<std::set<std::string>>();
+            }
+        } catch (const std::exception&) {
+            step.saved_context = Context{};
+        }
     }
     return step;
 }
@@ -494,8 +513,10 @@ std::string Summarise(const Operation& op) {
         return "Keep the part of " + column + " between '" + Str(p, "start", "(start)") + "' and '" + Str(p, "end", "(end)") + "'.";
     }
     if (t == "split_into_rows") {
-        return "Split " + column + " into rows: one per " + Str(p, "by", "paragraphs") +
-               (Str(p, "by") == "separator" ? " '" + Str(p, "separator") + "'" : "") + ", numbered in " + Str(p, "index_name", "?") + ".";
+        const std::string by = Str(p, "by", "paragraphs");
+        const std::string piece = by == "separator" ? "piece between '" + Str(p, "separator") + "'"
+                                                    : by.substr(0, by.size() - 1);  // paragraphs -> paragraph
+        return "Split " + column + " into rows: one per " + piece + ", numbered in " + Str(p, "index_name", "?") + ".";
     }
     if (t == "extract_pattern") return "Extract " + Str(p, "name", "?") + " from " + column + " with a pattern.";
     if (t == "look_up") {

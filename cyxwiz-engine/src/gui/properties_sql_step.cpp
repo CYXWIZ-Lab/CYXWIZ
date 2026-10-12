@@ -6,6 +6,7 @@
 
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
+#include "../core/guided_sql.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/sql_step_presentation.h"
 #include "../data/arrow_data_table.h"
@@ -19,6 +20,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <optional>
 #include <cctype>
 #include <cstdio>
 #include <string>
@@ -352,17 +354,46 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
         }
     } else {
         ImGui::Dummy(ImVec2(0.0f, t.space_xs));
-        if (BeginCard("##sql_guided_note")) {
+        const std::string guided_json = Param(node, cyxwiz::guided::kGuidedOpsParameter);
+        auto guided_step = guided_json.empty() ? std::nullopt : cyxwiz::guided::FromJson(guided_json);
+        if (guided_step) {
+            // A guided step: its operations, one line each, switchable here.
+            const auto generated = cyxwiz::guided::GenerateSql(*guided_step, guided_step->saved_context);
+            bool toggled = false;
+            for (size_t i = 0; i < guided_step->ops.size(); ++i) {
+                auto& op = guided_step->ops[i];
+                ImGui::PushID(static_cast<int>(i));
+                bool on = op.on;
+                if (ImGui::Checkbox("##on", &on)) {
+                    op.on = on;
+                    toggled = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(on ? "Switch this operation off" : "Switch this operation on");
+                ImGui::SameLine();
+                WrappedText(std::to_string(i + 1) + ". " + cyxwiz::guided::Summarise(op), op.on ? t.text : t.text_dim);
+                if (i < generated.errors.size() && !generated.errors[i].empty() && op.on) {
+                    WrappedText(ICON_FA_TRIANGLE_EXCLAMATION " " + generated.errors[i], t.caution);
+                }
+                ImGui::PopID();
+            }
+            if (guided_step->ops.empty()) DimText("No operations yet.");
+            if (toggled) {
+                // Write the query again from the operations, as the editor would.
+                const auto again = cyxwiz::guided::GenerateSql(*guided_step, guided_step->saved_context);
+                node.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(*guided_step);
+                node.parameters["query"] = again.sql;
+                InvalidateShapes();
+            }
+            if (ui::SecondaryButton("Edit in guided editor")) ConfigureNode(&node);
+        } else if (BeginCard("##sql_guided_note")) {
             ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
             ImGui::TextUnformatted("This step was written in SQL");
             ImGui::PopStyleColor();
-            DimText("Guided mode shows what each part does in plain words (below). To change it without SQL, add a "
-                    "guided step after it, or open the SQL Workbench.");
-            ui::SecondaryButton("See a guided step", false, "The guided step editor is the last part of TOFIX146");
-            ImGui::SameLine();
+            DimText("Guided mode shows what each part does in plain words (below). To build it from operations "
+                    "instead, open the SQL Workbench and choose Guided.");
             if (ui::SecondaryButton("Open SQL Workbench")) ConfigureNode(&node);
         }
-        EndCard();
+        if (!guided_step) EndCard();
     }
 
     // ---- Part by part.
@@ -385,7 +416,10 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
         const float lines_w = ImGui::CalcTextSize(lines.c_str()).x;
         const float name_w = std::max(90.0f, ImGui::CalcTextSize(part.name.c_str()).x + t.space_lg);
-        const float text_w = std::max(40.0f, width - name_w - lines_w - t.space_lg * 2.0f);
+        // A narrow panel puts the description under the name instead of
+        // squeezing it into a sliver beside it.
+        const bool stacked = width - name_w - lines_w - t.space_lg * 2.0f < 180.0f;
+        const float text_w = stacked ? width : std::max(40.0f, width - name_w - lines_w - t.space_lg * 2.0f);
         // Its comment, else where it starts from.
         std::string description = part.description;
         if (description.empty()) {
@@ -394,8 +428,8 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
         if (description.empty()) description = "values written in the query";
         const ImU32 description_colour = ui::ToU32(part.description.empty() ? t.text_dim : t.text);
         const float text_h = ImGui::CalcTextSize(description.c_str(), nullptr, false, text_w).y;
-        if (ImGui::Selectable("##part", picked, ImGuiSelectableFlags_AllowOverlap,
-                              ImVec2(width, std::max(text_h, ImGui::GetTextLineHeight())))) {
+        const float row_h = stacked ? ImGui::GetTextLineHeight() + text_h : std::max(text_h, ImGui::GetTextLineHeight());
+        if (ImGui::Selectable("##part", picked, ImGuiSelectableFlags_AllowOverlap, ImVec2(width, row_h))) {
             view.picked_part = picked ? -1 : i;
             if (view.picked_part >= 0 && view.mode == 1) {
                 const int count = std::max(1, view.editor.Doc().LineCount());
@@ -417,8 +451,8 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
         ImGui::PopStyleColor(3);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddText(start, ui::ToU32(t.accent_text), part.name.c_str());
-        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(start.x + name_w, start.y), description_colour,
-                    description.c_str(), nullptr, text_w);
+        const ImVec2 text_at = stacked ? ImVec2(start.x, start.y + ImGui::GetTextLineHeight()) : ImVec2(start.x + name_w, start.y);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_at, description_colour, description.c_str(), nullptr, text_w);
         dl->AddText(ImVec2(start.x + width - lines_w, start.y), ui::ToU32(t.text_dim), lines.c_str());
         ImGui::PopID();
     }

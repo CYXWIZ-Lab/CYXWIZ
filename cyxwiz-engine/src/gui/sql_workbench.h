@@ -7,6 +7,7 @@
 // DuckDB, the step's own contract), without touching the graph until "Save
 // to step".
 
+#include "../core/guided_sql.h"
 #include "../core/sql_editing.h"
 #include "../core/sql_plan.h"
 #include "../core/sql_step_presentation.h"
@@ -76,7 +77,8 @@ private:
 
     MLNode* CurrentNode();
     void RefreshInputs();
-    void StartRun(RunKind kind, size_t part_index = 0);
+    // `on_sample`: run on the Guided preview's sample of the inputs.
+    void StartRun(RunKind kind, size_t part_index = 0, bool on_sample = false);
     void StopRun();
     void PollRun();
     void AddMessage(std::string text, bool error);
@@ -104,6 +106,21 @@ private:
     void RenderCompletion();
     void FormatDraft();
     void RenderCompare();
+
+    // Guided mode (TOFIX146 step 5, board 3), gui/sql_workbench_guided.cpp.
+    void LoadGuided(const MLNode& node);
+    cyxwiz::guided::Context GuidedContext() const;
+    void GuidedChanged(const std::string& before_json);  // regenerate, undo point, preview
+    void RenderGuided(float height);
+    void RenderGuidedToolbar();
+    void RenderGuidedLibrary(float height);
+    void RenderGuidedCards(float height);
+    void RenderGuidedEditor(float height);
+    bool RenderOperationFields(cyxwiz::guided::Operation& op, const cyxwiz::guided::Columns& in);
+    void RenderGuidedPreview(float height);
+    void RenderSqlStepInGuidedMode(float height);
+    void StartGuidedPreview();
+    int GuidedPartIndex(int op) const;
     void RenderBottomPanel(float height);
     void RenderResults();
     void RenderProfile();
@@ -193,6 +210,25 @@ private:
     cyxwiz::editor::Pos completion_start_;
     uint64_t completion_version_ = ~0ull;
     float editor_line_height_ = 18.0f;
+
+    // Guided mode.
+    int mode_ = 1;                 // 0 Guided, 1 SQL
+    bool guided_active_ = false;   // the step is (or becomes, on save) a guided step
+    cyxwiz::guided::GuidedStep guided_;
+    cyxwiz::guided::Generated guided_generated_;
+    std::vector<cyxwiz::guided::Columns> guided_columns_;
+    std::string guided_saved_json_;  // guided_ops as last loaded or saved
+    std::vector<std::string> guided_undo_;
+    std::vector<std::string> guided_redo_;
+    int guided_picked_ = -1;
+    int guided_view_ = 0;          // 0 After this operation, 1 Summary, 2 SQL
+    int sample_mode_ = 1;          // 0 all rows, 1 first 1,000, 2 random 1,000
+    char guided_search_[64] = {};
+    double guided_changed_at_ = -1.0;  // ImGui time of the last change not yet previewed
+    bool preview_part_after_counts_ = false;
+    bool confirm_edit_as_sql_ = false;
+    bool confirm_start_guided_ = false;
+    std::string guided_inputs_key_;  // inputs the SQL was last written for
     // Compare with saved.
     bool compare_open_ = false;
     uint64_t compare_version_ = ~0ull;
