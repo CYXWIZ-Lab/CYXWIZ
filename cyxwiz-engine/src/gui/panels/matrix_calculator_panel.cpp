@@ -14,6 +14,12 @@
 
 namespace cyxwiz {
 
+// Operations that take a second matrix (derived each frame: a stored flag
+// started false, so the default Add hid Matrix B until the operation changed).
+bool MatrixCalculatorPanel::NeedsMatrixB(Operation op) {
+    return op == Operation::Add || op == Operation::Subtract || op == Operation::Multiply;
+}
+
 MatrixCalculatorPanel::MatrixCalculatorPanel() {
     std::memset(export_path_, 0, sizeof(export_path_));
     ResizeMatrix(matrix_a_, rows_a_, cols_a_);
@@ -50,7 +56,7 @@ void MatrixCalculatorPanel::Render() {
             // Split view: Left for input, Right for results
             ui::BeginSettingsColumn("matrix_calculator", ImGui::GetContentRegionAvail().x * 0.5f);
             RenderMatrixA();
-            if (show_matrix_b_) {
+            if (NeedsMatrixB(selected_op_)) {
                 RenderMatrixB();
             }
             ui::SettingsSection("Operation");
@@ -195,11 +201,6 @@ void MatrixCalculatorPanel::RenderOperationSelector() {
         selected_op_ = static_cast<Operation>(op_index);
         has_matrix_result_ = false;
         has_scalar_result_ = false;
-
-        // Show matrix B for binary operations
-        show_matrix_b_ = (selected_op_ == Operation::Add ||
-                          selected_op_ == Operation::Subtract ||
-                          selected_op_ == Operation::Multiply);
     }
 }
 
