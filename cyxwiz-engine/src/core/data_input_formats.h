@@ -29,8 +29,8 @@ inline constexpr std::array<SourceFormatCapability, 12> kSourceFormats{{
     {0, "auto", "Auto", {"auto"}, {}, true, SourcePreview::Unsupported},
     {1, "csv", "CSV", {"csv"}, {"csv"}, true, SourcePreview::Delimited},
     {2, "tsv", "TSV", {"tsv"}, {"tsv", "tab"}, true, SourcePreview::Delimited},
-    {3, "json", "JSON", {"json"}, {"json", "jsonl"}, false, SourcePreview::Unsupported,
-     SourceDependency::None, "Tabular JSON loading is not supported yet"},
+    // Executable as JSON Lines (json_lines=true, or a .jsonl file); plain JSON is rejected at load.
+    {3, "json", "JSON Lines", {"json", "jsonl"}, {"jsonl", "json"}, true, SourcePreview::RegisteredDataset},
     {4, "parquet", "Parquet", {"parquet"}, {"parquet", "pq"}, true, SourcePreview::RegisteredDataset},
     {5, "excel", "Excel", {"excel"}, {"xlsx", "xls"}, false, SourcePreview::Unsupported,
      SourceDependency::None, "Tabular Excel loading is not supported yet"},

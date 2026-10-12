@@ -11,6 +11,7 @@
 #include <arrow/io/file.h>
 #include <arrow/ipc/writer.h>
 #include <arrow/json/api.h>
+#include "json_lines_reader.h"
 #include <arrow/scalar.h>
 #include <nlohmann/json.hpp>
 #include <parquet/arrow/writer.h>
@@ -293,38 +294,9 @@ std::shared_ptr<ArrowDataset> LoadDelimited(
 
 std::shared_ptr<ArrowDataset> LoadJsonLines(const DataConvertOptions& options,
                                             std::string& error) {
-    auto maybe_input = arrow::io::ReadableFile::Open(options.input_path);
-    if (!maybe_input.ok()) {
-        error = "Could not open JSON Lines input '" + options.input_path +
-                "': " + maybe_input.status().ToString();
-        return nullptr;
-    }
-
-    auto read_options = arrow::json::ReadOptions::Defaults();
-    auto parse_options = arrow::json::ParseOptions::Defaults();
-    parse_options.newlines_in_values = options.allow_newlines_in_values;
-
-    auto maybe_reader = arrow::json::TableReader::Make(
-        arrow::default_memory_pool(),
-        maybe_input.ValueOrDie(),
-        read_options,
-        parse_options);
-    if (!maybe_reader.ok()) {
-        error = "JSON Lines reader creation failed for '" + options.input_path +
-                "': " + maybe_reader.status().ToString();
-        return nullptr;
-    }
-
-    auto maybe_table = maybe_reader.ValueOrDie()->Read();
-    if (!maybe_table.ok()) {
-        error = "JSON Lines input read failed for '" + options.input_path +
-                "'. Expected newline-delimited JSON objects. Error: " +
-                maybe_table.status().ToString();
-        return nullptr;
-    }
-
-    return std::make_shared<ArrowDataset>(maybe_table.ValueOrDie(),
-                                          "data_convert_input");
+    auto table = ReadJsonLinesTable(options.input_path, options.allow_newlines_in_values, error);
+    if (!table) return nullptr;
+    return std::make_shared<ArrowDataset>(table, "data_convert_input");
 }
 
 std::shared_ptr<ArrowDataset> LoadText(const DataConvertOptions& options,

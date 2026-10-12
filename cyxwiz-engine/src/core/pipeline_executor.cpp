@@ -4287,6 +4287,15 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 }
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+            } else if (file_type == "json") {
+                const auto lines = node.parameters.find("json_lines");
+                const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
+                    std::filesystem::path(file_path).extension() == ".jsonl";
+                if (!json_lines) {
+                    ReportError("DataInput JSON: only JSON Lines is supported; set json_lines=true or use a .jsonl file");
+                    return false;
+                }
+                arrow_dataset = registry.LoadJSONToArrow(file_path, dataset_name, true);
             } else if (file_type == "auto" || file_type == "feather" ||
                        file_type == "arrow" || file_type == "ipc") {
                 // Default: try auto-detect via LoadArrowTable

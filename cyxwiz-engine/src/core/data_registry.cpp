@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "json_lines_reader.h"
 #include "dataset_base.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
@@ -1761,11 +1762,24 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadJSONToArrow(
     const std::string& path, const std::string& name, bool json_lines) {
-    const char* format = json_lines ? "JSON Lines" : "JSON";
-    spdlog::error(
-        "LoadJSONToArrow: {} ingestion is not implemented for '{}' (requested name '{}')",
-        format, path, name);
-    return nullptr;
+    if (!json_lines) {
+        spdlog::error(
+            "LoadJSONToArrow: '{}' is plain JSON; tabular input reads JSON Lines (one object per line, .jsonl)",
+            path);
+        return nullptr;
+    }
+    std::string error;
+    auto table = ReadJsonLinesTable(path, false, error);
+    if (!table) {
+        spdlog::error("LoadJSONToArrow: {}", error);
+        return nullptr;
+    }
+    auto dataset = RegisterArrowTable(table, name.empty() ? fs::path(path).stem().string() : name);
+    if (dataset) {
+        spdlog::info("LoadJSONToArrow: loaded JSON Lines '{}' ({} rows, {} cols)",
+                     path, dataset->GetNumRows(), dataset->GetNumColumns());
+    }
+    return dataset;
 }
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(

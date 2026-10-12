@@ -25,6 +25,16 @@ bool IsExactRoundTripType(const arrow::DataType& type) {
     case arrow::Type::STRING:
     case arrow::Type::LARGE_STRING:
         return true;
+    // Nested input (e.g. JSON Lines records, TOFIX143): Arrow lists and structs
+    // map one-to-one onto DuckDB LIST and STRUCT, so they are exact when every
+    // element/field type is. Results stay scalar (UnsupportedResultColumns).
+    case arrow::Type::LIST:
+        return IsExactRoundTripType(*static_cast<const arrow::ListType&>(type).value_type());
+    case arrow::Type::STRUCT:
+        for (const auto& field : type.fields()) {
+            if (!IsExactRoundTripType(*field->type())) return false;
+        }
+        return true;
     default:
         return false;
     }

@@ -41,9 +41,65 @@ std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type)
         case arrow::Type::STRING:
         case arrow::Type::LARGE_STRING:
             return "VARCHAR";
+        // Nested columns (TOFIX143): lists and structs keep their structure so
+        // SQL can read them; previously they arrived as their text form.
+        case arrow::Type::LIST:
+            return DuckDBTypeForArrowType(
+                std::static_pointer_cast<arrow::ListType>(type)->value_type()) + "[]";
+        case arrow::Type::STRUCT: {
+            std::string sql = "STRUCT(";
+            for (int i = 0; i < type->num_fields(); ++i) {
+                if (i > 0) sql += ", ";
+                sql += QuoteIdentifier(type->field(i)->name()) + " " +
+                       DuckDBTypeForArrowType(type->field(i)->type());
+            }
+            return sql + ")";
+        }
         default:
             return "VARCHAR";
     }
+}
+
+duckdb::LogicalType DuckDBLogicalTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    switch (type->id()) {
+        case arrow::Type::BOOL:
+            return duckdb::LogicalType::BOOLEAN;
+        case arrow::Type::INT8:
+        case arrow::Type::UINT8:
+        case arrow::Type::INT16:
+        case arrow::Type::UINT16:
+        case arrow::Type::INT32:
+            return duckdb::LogicalType::INTEGER;
+        case arrow::Type::UINT32:
+        case arrow::Type::INT64:
+            return duckdb::LogicalType::BIGINT;
+        case arrow::Type::UINT64:
+            return duckdb::LogicalType::HUGEINT;
+        case arrow::Type::FLOAT:
+            return duckdb::LogicalType::FLOAT;
+        case arrow::Type::DOUBLE:
+            return duckdb::LogicalType::DOUBLE;
+        case arrow::Type::LIST:
+            return duckdb::LogicalType::LIST(DuckDBLogicalTypeForArrowType(
+                std::static_pointer_cast<arrow::ListType>(type)->value_type()));
+        case arrow::Type::STRUCT: {
+            duckdb::child_list_t<duckdb::LogicalType> children;
+            for (const auto& field : type->fields())
+                children.emplace_back(field->name(), DuckDBLogicalTypeForArrowType(field->type()));
+            return duckdb::LogicalType::STRUCT(std::move(children));
+        }
+        default:
+            return duckdb::LogicalType::VARCHAR;
+    }
+}
+
+duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& scalar);
+
+// Elements and fields carry typed NULLs so a list/struct value matches its column type.
+duckdb::Value DuckDBNestedValue(const std::shared_ptr<arrow::Scalar>& scalar,
+                                const std::shared_ptr<arrow::DataType>& type) {
+    if (!scalar || !scalar->is_valid) return duckdb::Value(DuckDBLogicalTypeForArrowType(type));
+    return DuckDBValueFromArrowScalar(scalar);
 }
 
 duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& scalar) {
@@ -88,6 +144,27 @@ duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& s
         case arrow::Type::STRING:
         case arrow::Type::LARGE_STRING:
             return duckdb::Value(scalar->ToString());
+        case arrow::Type::LIST: {
+            const auto& list = static_cast<const arrow::ListScalar&>(*scalar);
+            const auto child_type = std::static_pointer_cast<arrow::ListType>(scalar->type)->value_type();
+            std::vector<duckdb::Value> values;
+            values.reserve(static_cast<size_t>(list.value->length()));
+            for (int64_t i = 0; i < list.value->length(); ++i) {
+                auto element = list.value->GetScalar(i);
+                if (!element.ok()) throw std::runtime_error(element.status().ToString());
+                values.push_back(DuckDBNestedValue(*element, child_type));
+            }
+            return duckdb::Value::LIST(DuckDBLogicalTypeForArrowType(child_type), std::move(values));
+        }
+        case arrow::Type::STRUCT: {
+            const auto& item = static_cast<const arrow::StructScalar&>(*scalar);
+            duckdb::child_list_t<duckdb::Value> children;
+            for (int i = 0; i < scalar->type->num_fields(); ++i)
+                children.emplace_back(scalar->type->field(i)->name(),
+                                      DuckDBNestedValue(item.value[static_cast<size_t>(i)],
+                                                        scalar->type->field(i)->type()));
+            return duckdb::Value::STRUCT(std::move(children));
+        }
         default:
             return duckdb::Value(scalar->ToString());
     }
