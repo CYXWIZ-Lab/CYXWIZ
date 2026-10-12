@@ -27,13 +27,18 @@ void FeatureScalingPanel::Render() {
         ImGui::SameLine();
 
         ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
-        if (transform_result_.success) {
+        // Either action has results to show: Apply fills Preview, Compare All
+        // fills Comparison on its own.
+        if (transform_result_.success || show_comparison_) {
             if (ImGui::BeginTabBar("ScalingResultTabs")) {
-                if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Preview")) {
+                if (transform_result_.success && ImGui::BeginTabItem(ICON_FA_CHART_BAR " Preview")) {
                     RenderPreview();
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Comparison")) {
+                const ImGuiTabItemFlags comparison_flags =
+                    select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                select_comparison_tab_ = false;
+                if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Comparison", nullptr, comparison_flags)) {
                     RenderComparison();
                     ImGui::EndTabItem();
                 }
@@ -134,6 +139,7 @@ void FeatureScalingPanel::RenderMethodTabs() {
     if (ImGui::Button(ICON_FA_CHART_SIMPLE " Compare All Methods", ImVec2(-1, 25))) {
         // Apply all methods for comparison
         show_comparison_ = true;
+        select_comparison_tab_ = true;
 
         std::vector<std::vector<double>> data;
         for (size_t col = 0; col < selected_columns_.size(); ++col) {

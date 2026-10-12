@@ -67,6 +67,7 @@ private:
     std::map<ScalingMethod, TransformResult> method_results_;
     std::map<ScalingMethod, ColumnStats> method_stats_;  // first column of each result, computed once
     bool show_comparison_ = false;
+    bool select_comparison_tab_ = false;  // bring the Comparison tab forward after Compare All
 
     std::string status_message_;
 };
