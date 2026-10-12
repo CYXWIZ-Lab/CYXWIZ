@@ -830,29 +830,10 @@ DescriptiveStats DataAnalyzer::ComputeDescriptiveStats(const std::vector<double>
 
 // ========== Hypothesis Testing Implementations ==========
 
-// Approximation of the error function
-static double erf_approx(double x) {
-    // Horner form coefficients for erf
-    double a1 =  0.254829592;
-    double a2 = -0.284496736;
-    double a3 =  1.421413741;
-    double a4 = -1.453152027;
-    double a5 =  1.061405429;
-    double p  =  0.3275911;
-
-    int sign = (x < 0) ? -1 : 1;
-    x = std::abs(x);
-
-    double t = 1.0 / (1.0 + p * x);
-    double y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * std::exp(-x * x);
-
-    return sign * y;
-}
-
 double DataAnalyzer::NormalCDF(double x, double mu, double sigma) {
     if (sigma <= 0) return 0.0;
     double z = (x - mu) / sigma;
-    return 0.5 * (1.0 + erf_approx(z / std::sqrt(2.0)));
+    return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
 }
 
 // Continued fraction of the regularized incomplete beta function, evaluated
@@ -1278,6 +1259,14 @@ HypothesisTestResult DataAnalyzer::ChiSquareTest(const std::vector<std::vector<d
 
 // ========== Distribution Fitting ==========
 
+// Maximum-likelihood standard deviation: the root mean squared deviation
+// (divides by n, not n - 1).
+static double MaximumLikelihoodSigma(const std::vector<double>& values, double mean) {
+    double sum_sq = 0.0;
+    for (double v : values) sum_sq += (v - mean) * (v - mean);
+    return std::sqrt(sum_sq / static_cast<double>(values.size()));
+}
+
 DistributionFitResult DataAnalyzer::FitNormal(const std::vector<double>& data) {
     DistributionFitResult result;
     result.type = DistributionType::Normal;
@@ -1285,8 +1274,9 @@ DistributionFitResult DataAnalyzer::FitNormal(const std::vector<double>& data) {
 
     if (data.size() < 3) return result;
 
+    // Maximum-likelihood estimates (scipy.stats.norm.fit): sigma divides by n.
     double mu = Mean(data);
-    double sigma = StdDev(data, mu);
+    double sigma = MaximumLikelihoodSigma(data, mu);
 
     result.parameters["mu"] = mu;
     result.parameters["sigma"] = sigma;
@@ -1395,8 +1385,9 @@ DistributionFitResult DataAnalyzer::FitLogNormal(const std::vector<double>& data
         log_data.push_back(std::log(x));
     }
 
+    // Maximum-likelihood estimates (scipy.stats.lognorm.fit, floc=0).
     double mu = Mean(log_data);
-    double sigma = StdDev(log_data, mu);
+    double sigma = MaximumLikelihoodSigma(log_data, mu);
 
     result.parameters["mu"] = mu;
     result.parameters["sigma"] = sigma;
@@ -1495,12 +1486,23 @@ std::pair<double, double> DataAnalyzer::KolmogorovSmirnovTest(const std::vector<
         D = std::max(D, std::max(d1, d2));
     }
 
-    // Approximate p-value using Kolmogorov distribution
-    // Using asymptotic formula
+    // p-value from the asymptotic Kolmogorov distribution with Stephens'
+    // small-sample correction: Q(l) = 2 sum_k (-1)^(k-1) exp(-2 k^2 l^2)
+    // (scipy.stats.kstwobign.sf). Summing the whole series, not only its
+    // first term, keeps large p-values right; near l = 0 the series stops
+    // converging and Q is 1 to double precision.
     double sqrt_n = std::sqrt(n);
     double lambda_ks = (sqrt_n + 0.12 + 0.11 / sqrt_n) * D;
-    double p_value = 2.0 * std::exp(-2.0 * lambda_ks * lambda_ks);
-    p_value = std::max(0.0, std::min(1.0, p_value));
+    double p_value = 1.0;
+    if (lambda_ks > 0.2) {
+        double sum = 0.0;
+        for (int k = 1; k <= 100; ++k) {
+            const double term = std::exp(-2.0 * k * k * lambda_ks * lambda_ks);
+            sum += (k % 2 == 1) ? term : -term;
+            if (term < 1e-17) break;
+        }
+        p_value = std::max(0.0, std::min(1.0, 2.0 * sum));
+    }
 
     return {D, p_value};
 }
