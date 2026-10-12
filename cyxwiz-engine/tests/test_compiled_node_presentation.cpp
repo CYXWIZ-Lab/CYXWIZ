@@ -222,6 +222,8 @@ void CheckDataOnlyGraph() {
     const auto card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
     Check(card.status == "No model to compile" && card.kind == cyxwiz::CompiledStatusKind::None,
           "a data step in a data-only graph is not shown as a failed compile: " + card.status);
+    Check(card.issues.empty() && card.no_shapes_text.find("rejected") == std::string::npos,
+          "training-graph complaints are not listed as the data step's errors");
 }
 
 }  // namespace
