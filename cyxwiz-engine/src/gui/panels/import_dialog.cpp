@@ -1,6 +1,7 @@
 #include "import_dialog.h"
 #include "../icons.h"
 #include "../../core/file_dialogs.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -49,6 +50,7 @@ void ImportDialog::Close() {
 }
 
 void ImportDialog::Render() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (completion_pending_.exchange(false)) {
         show_result_ = true;
         if (import_complete_callback_) {
@@ -75,7 +77,7 @@ void ImportDialog::Render() {
         } else if (show_result_) {
             // Show import result
             if (last_result_.success) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CHECK " Inspection Complete");
                 ImGui::Separator();
 
@@ -90,7 +92,7 @@ void ImportDialog::Render() {
 
                 if (!last_result_.warnings.empty()) {
                     ImGui::Separator();
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+                    ImGui::TextColored(t.warning,
                         ICON_FA_TRIANGLE_EXCLAMATION " Warnings:");
                     for (const auto& warning : last_result_.warnings) {
                         ImGui::BulletText("%s", warning.c_str());
@@ -111,7 +113,7 @@ void ImportDialog::Render() {
                     input_path_[0] = '\0';
                 }
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
+                ImGui::TextColored(t.error,
                     ICON_FA_XMARK " Import Failed");
                 ImGui::Separator();
 
@@ -176,6 +178,7 @@ void ImportDialog::RenderFileSelection() {
 }
 
 void ImportDialog::RenderProbeInfo() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CIRCLE_INFO " Model Information");
     ImGui::Spacing();
 
@@ -185,12 +188,12 @@ void ImportDialog::RenderProbeInfo() {
     }
 
     if (!file_probed_ || strlen(input_path_) == 0) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Select a file to view model information");
+        ImGui::TextColored(t.text_dim, "Select a file to view model information");
         return;
     }
 
     if (!probe_result_.valid) {
-        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
+        ImGui::TextColored(t.error,
             ICON_FA_XMARK " Invalid file: %s", probe_result_.error_message.c_str());
         return;
     }
@@ -199,7 +202,7 @@ void ImportDialog::RenderProbeInfo() {
     ImGui::Text("Format: %s", GetFormatName(probe_result_.format).c_str());
     if (!probe_result_.format_version.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(v%s)", probe_result_.format_version.c_str());
+        ImGui::TextColored(t.text_dim, "(v%s)", probe_result_.format_version.c_str());
     }
 
     // Model info

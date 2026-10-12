@@ -12,6 +12,7 @@
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_platform.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <chrono>
@@ -147,6 +148,7 @@ bool SameRuntimeIdentity(
 }  // namespace
 
 bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
+    const ui::Tokens& t = ui::CurrentTokens();
     const auto qualification_task =
         route_qualification_task_id_ == 0
             ? std::shared_ptr<AsyncTask>{}
@@ -308,7 +310,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
 
     if (!next_runtime_error.empty()) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+            t.error,
             "%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
             next_runtime_error.c_str());
     } else if (!next_runtime_available) {
@@ -323,15 +325,15 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     }
     if (!identity_error.empty()) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+            t.error,
             "%s Current process identity: %s",
             ICON_FA_TRIANGLE_EXCLAMATION, identity_error.c_str());
     }
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(
         backend_pack_catalog_available_
-            ? ImVec4(0.45f, 0.8f, 1.0f, 1.0f)
-            : ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+            ? t.info
+            : t.warning,
         "%s %s", ICON_FA_CIRCLE_INFO,
         backend_pack_catalog_message_.empty()
             ? "Signed catalog has not been loaded."
@@ -356,7 +358,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     }
     if (maintenance_pending) {
         ImGui::TextColored(
-            ImVec4(0.45f, 0.8f, 1.0f, 1.0f),
+            t.info,
             "%s Queued for exit: %s%s%s",
             ICON_FA_CLOCK,
             runtime::BackendPackMaintenanceActionName(
@@ -365,7 +367,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             pending_request.pack_id.c_str());
     } else if (pending_file_present) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+            t.error,
             "%s Pending maintenance request is invalid: %s",
             ICON_FA_TRIANGLE_EXCLAMATION, pending_error.c_str());
     }
@@ -410,8 +412,8 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                        ? "Update available" : "Available");
             ImGui::TextColored(
                 record.active
-                    ? ImVec4(0.35f, 0.95f, 0.45f, 1.0f)
-                    : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                    ? t.success
+                    : t.text_dim,
                 "%s", state);
             ImGui::SameLine();
             ImGui::TextDisabled(
@@ -419,10 +421,10 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             if (!record.qualification_evidence_available) {
                 ImGui::TextDisabled("Routes not verified yet");
             } else if (record.training_authorized) {
-                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f),
+                ImGui::TextColored(t.success,
                                    "At least one route verified");
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                ImGui::TextColored(t.warning,
                                    "No verified route");
             }
 
@@ -567,7 +569,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         const bool removing = backend_pack_maintenance_action_ == 0;
         const bool repairing = backend_pack_maintenance_action_ == 2;
         ImGui::TextColored(
-            ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+            t.warning,
             "%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
             removing ? "Remove backend pack after exit?"
                 : repairing ? "Repair backend pack after exit?"

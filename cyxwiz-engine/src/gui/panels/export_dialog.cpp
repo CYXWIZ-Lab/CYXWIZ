@@ -6,6 +6,7 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/optimizer.h>
 #include "../../core/training_executor.h"
+#include "../ui_tokens.h"
 
 namespace cyxwiz {
 
@@ -61,6 +62,7 @@ void ExportDialog::SetModelData(
 }
 
 void ExportDialog::Render() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (completion_pending_.exchange(false)) {
         show_result_ = true;
         if (export_complete_callback_) {
@@ -88,7 +90,7 @@ void ExportDialog::Render() {
         } else if (show_result_) {
             // Show export result
             if (last_result_.success) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                ImGui::TextColored(t.success,
                     ICON_FA_CHECK " Export Successful!");
                 ImGui::Separator();
 
@@ -110,7 +112,7 @@ void ExportDialog::Render() {
                     show_result_ = false;
                 }
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
+                ImGui::TextColored(t.error,
                     ICON_FA_XMARK " Export Failed");
                 ImGui::Separator();
 
@@ -131,7 +133,7 @@ void ExportDialog::Render() {
         } else {
             // Check if model is available
             if (!model_) {
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+                ImGui::TextColored(t.warning,
                     ICON_FA_TRIANGLE_EXCLAMATION " No trained model available");
                 ImGui::TextWrapped(
                     "Please train a model first before exporting. "
@@ -157,6 +159,7 @@ void ExportDialog::Render() {
 }
 
 void ExportDialog::RenderFormatSelection() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_DOWNLOAD " Export Format");
     ImGui::Spacing();
 
@@ -213,7 +216,7 @@ void ExportDialog::RenderFormatSelection() {
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(format_descriptions[i]);
             if (!format_supported[i]) {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Not available");
+                ImGui::TextColored(t.warning, "Not available");
             }
             ImGui::EndTooltip();
         }
@@ -341,10 +344,11 @@ void ExportDialog::RenderProgress() {
 }
 
 void ExportDialog::RenderButtons() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Model info
     if (model_) {
         // Note: GetParameters() is not const, so we display basic info
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
+        ImGui::TextColored(t.info,
             ICON_FA_CIRCLE_INFO " Model: %zu layers",
             model_->Size());
     }

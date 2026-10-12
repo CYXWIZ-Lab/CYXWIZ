@@ -2,6 +2,7 @@
 
 #include "toolbar.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 
 #include <cstring>
 #include <filesystem>
@@ -11,6 +12,7 @@
 
 namespace cyxwiz {
 void ToolbarPanel::RenderSearchDialogs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // ========== Find in Files Dialog ==========
     if (show_find_in_files_dialog_) {
         ImGui::OpenPopup("Find in Files");
@@ -100,7 +102,7 @@ void ToolbarPanel::RenderSearchDialogs() {
                         // Display relative path if in project
                         std::filesystem::path file_path(result.file_path);
                         std::string display_path = file_path.filename().string();
-                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::TextColored(t.accent_text, ICON_FA_FILE_CODE " %s", display_path.c_str());
                         ImGui::SameLine();
                         ImGui::TextDisabled("(%s)", result.file_path.c_str());
                     }
@@ -237,7 +239,7 @@ void ToolbarPanel::RenderSearchDialogs() {
                         ImGui::Spacing();
                         std::filesystem::path file_path(result.file_path);
                         std::string display_path = file_path.filename().string();
-                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::TextColored(t.accent_text, ICON_FA_FILE_CODE " %s", display_path.c_str());
                         ImGui::SameLine();
                         ImGui::TextDisabled("(%s)", result.file_path.c_str());
                     }

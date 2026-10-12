@@ -3,6 +3,7 @@
 #include "../../core/engine_config.h"
 #include <spdlog/spdlog.h>
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <cstring>
 #include <ctime>
@@ -28,6 +29,7 @@ CloudDatasetManagerPanel::CloudDatasetManagerPanel()
 CloudDatasetManagerPanel::~CloudDatasetManagerPanel() = default;
 
 void CloudDatasetManagerPanel::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!visible_) return;
     
     // Try auto-connect on first render
@@ -40,7 +42,7 @@ void CloudDatasetManagerPanel::Render() {
 
         // Check connection
         if (!datastream_client_ || !datastream_client_->IsConnected()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+            ImGui::TextColored(t.warning,
                 ICON_FA_TRIANGLE_EXCLAMATION " Not connected to CyxCloud Gateway");
             ImGui::End();
             return;
@@ -71,7 +73,7 @@ void CloudDatasetManagerPanel::Render() {
 
         // Main content
         if (!has_dataset_) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "No dataset selected. Use the Cloud Browser to select a dataset.");
         } else {
             // Tabs for different sections
@@ -104,7 +106,7 @@ void CloudDatasetManagerPanel::Render() {
         if (!last_error_.empty() && error_time_ > 0) {
             error_time_ -= ImGui::GetIO().DeltaTime;
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+            ImGui::TextColored(t.error,
                 ICON_FA_CIRCLE_EXCLAMATION " %s", last_error_.c_str());
         }
 
@@ -126,7 +128,7 @@ void CloudDatasetManagerPanel::Render() {
             ImGui::Text("Node ID (optional):");
             ImGui::InputText("##token_node", token_node_id_, sizeof(token_node_id_));
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(Leave empty for any node)");
+            ImGui::TextColored(t.text_dim, "(Leave empty for any node)");
 
             ImGui::Text("Expires in (hours):");
             ImGui::SliderInt("##token_ttl", &token_ttl_hours_, 1, 720, "%d hours");
@@ -171,12 +173,13 @@ void CloudDatasetManagerPanel::ClearDataset() {
 }
 
 void CloudDatasetManagerPanel::RenderDatasetInfo() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text(ICON_FA_DATABASE " %s", current_dataset_.name.c_str());
 
     ImGui::Columns(2, nullptr, false);
 
     ImGui::Text("ID:"); ImGui::NextColumn();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", current_dataset_.id.c_str());
+    ImGui::TextColored(t.text_dim, "%s", current_dataset_.id.c_str());
     ImGui::NextColumn();
 
     ImGui::Text("Owner:"); ImGui::NextColumn();
@@ -220,7 +223,7 @@ void CloudDatasetManagerPanel::RenderDatasetInfo() {
             for (const auto& f : current_files_) {
                 ImGui::Text(ICON_FA_FILE " %s", f.path.c_str());
                 ImGui::SameLine(300);
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                ImGui::TextColored(t.text_dim,
                     "(%lld bytes)", static_cast<long long>(f.size_bytes));
             }
         }
@@ -229,8 +232,9 @@ void CloudDatasetManagerPanel::RenderDatasetInfo() {
 }
 
 void CloudDatasetManagerPanel::RenderSchemaEditor() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text("Dataset Schema (JSON):");
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "Define the schema for parsing dataset items");
 
     ImGui::Separator();
@@ -247,7 +251,7 @@ void CloudDatasetManagerPanel::RenderSchemaEditor() {
 
     if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save Schema")) {
         // TODO: Update dataset schema via API
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             "Schema update not implemented yet");
     }
     ImGui::SameLine();
@@ -297,8 +301,9 @@ void CloudDatasetManagerPanel::RenderSchemaEditor() {
 }
 
 void CloudDatasetManagerPanel::RenderAccessTokens() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text("Access Tokens");
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "Tokens allow server nodes to stream data from this dataset");
 
     ImGui::Separator();
@@ -314,7 +319,7 @@ void CloudDatasetManagerPanel::RenderAccessTokens() {
     ImGui::Separator();
 
     if (tokens_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "No access tokens created");
     } else {
         ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg;
@@ -357,8 +362,9 @@ void CloudDatasetManagerPanel::RenderAccessTokens() {
 }
 
 void CloudDatasetManagerPanel::RenderStreamingConfig() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text("Streaming Configuration");
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "Configure how data is streamed to training nodes");
 
     ImGui::Separator();
@@ -382,6 +388,7 @@ void CloudDatasetManagerPanel::RenderStreamingConfig() {
 }
 
 void CloudDatasetManagerPanel::RenderStreamingStatus() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text("Streaming Status:");
 
     if (datastream_client_ && datastream_client_->IsStreaming()) {
@@ -389,7 +396,7 @@ void CloudDatasetManagerPanel::RenderStreamingStatus() {
         uint64_t total = datastream_client_->GetTotalBatches();
         uint64_t current = static_cast<uint64_t>(progress * total);
 
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.running,
             ICON_FA_PLAY " Streaming active");
 
         ImGui::ProgressBar(progress, ImVec2(-1, 0));
@@ -400,7 +407,7 @@ void CloudDatasetManagerPanel::RenderStreamingStatus() {
             datastream_client_->StopStreaming();
         }
     } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(t.pending,
             ICON_FA_CIRCLE_PAUSE " Not streaming");
 
         if (ImGui::Button(ICON_FA_PLAY " Test Stream")) {
@@ -427,6 +434,7 @@ void CloudDatasetManagerPanel::RenderStreamingStatus() {
 }
 
 void CloudDatasetManagerPanel::RenderCreateDatasetWizard() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     if (!ImGui::Begin("Create Dataset", &show_create_wizard_)) {
@@ -452,7 +460,7 @@ void CloudDatasetManagerPanel::RenderCreateDatasetWizard() {
 
         case 1:  // File selection
             ImGui::Text("Select files to include:");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            ImGui::TextColored(t.text_dim,
                 "Upload files first using the Upload dialog, then select their IDs here");
 
             // TODO: Show list of uploaded files to select from

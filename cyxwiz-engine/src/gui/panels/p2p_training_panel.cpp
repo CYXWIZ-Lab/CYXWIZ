@@ -5,6 +5,7 @@
 #include "../../core/model_exporter.h"
 #include "../../core/formats/cyxmodel_format.h"
 #include "../../core/project_manager.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <implot.h>
@@ -245,24 +246,25 @@ void P2PTrainingPanel::Render() {
 }
 
 void P2PTrainingPanel::RenderConnectionStatus() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Job ID: %s", job_id_.empty() ? "N/A" : job_id_.c_str());
     ImGui::SameLine();
 
     if (is_monitoring_) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[ACTIVE]");
+        ImGui::TextColored(t.running, "[ACTIVE]");
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[IDLE]");
+        ImGui::TextColored(t.pending, "[IDLE]");
     }
 
     ImGui::Text("Node: %s", node_address_.empty() ? "N/A" : node_address_.c_str());
 
     if (p2p_client_ && p2p_client_->IsConnected()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+        ImGui::TextColored(t.success, "Connected");
     }
 
     if (has_error_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", error_message_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", error_message_.c_str());
     }
 }
 
@@ -339,25 +341,26 @@ void P2PTrainingPanel::RenderTrainingControls() {
 }
 
 void P2PTrainingPanel::RenderModelExport() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Model Export");
 
     // Check if project is open
     auto& project = ProjectManager::Instance();
     if (!project.HasActiveProject()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             "No project open.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Please create or open a project to export models.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "File > New Project or File > Open Project");
         return;
     }
 
     // Check if model is available
     if (!model_available_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             "No model weights available for export.");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Training may have been stopped before any weights were saved.");
         return;
     }
@@ -411,16 +414,16 @@ void P2PTrainingPanel::RenderModelExport() {
 
     // Show info about .cyxmodel format
     if (export_format_ == 1) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "CyxModel includes: graph, weights, training config, and history");
         if (graph_json_.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
+            ImGui::TextColored(t.warning,
                 "Warning: Graph JSON not available. Export will include weights only.");
         }
     }
 
     if (!download_error_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", download_error_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", download_error_.c_str());
     }
 }
 
@@ -516,6 +519,7 @@ void P2PTrainingPanel::RenderMetricsPlots() {
 }
 
 void P2PTrainingPanel::RenderLogs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     ImGui::Checkbox("Auto-scroll", &auto_scroll_logs_);
@@ -528,11 +532,11 @@ void P2PTrainingPanel::RenderLogs() {
 
     if (ImGui::BeginChild("LogsScrollArea", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar)) {
         for (const auto& entry : log_entries_) {
-            ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // White for INFO
+            ImVec4 color = t.text;  // White for INFO
             if (entry.level == "WARN") {
-                color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // Yellow for warnings
+                color = t.warning;  // Yellow for warnings
             } else if (entry.level == "ERROR") {
-                color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);  // Red for errors
+                color = t.error;  // Red for errors
             }
 
             ImGui::TextColored(color, "[%s] [%s] [%s] %s",
@@ -615,6 +619,7 @@ void P2PTrainingPanel::RenderCheckpoints() {
 }
 
 void P2PTrainingPanel::RenderStopConfirmPopup() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Open popup if requested
     if (show_stop_confirm_popup_) {
         ImGui::OpenPopup("Stop Training?");
@@ -638,8 +643,8 @@ void P2PTrainingPanel::RenderStopConfirmPopup() {
         float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
         if (ImGui::Button("Yes, Stop", ImVec2(button_width, 0))) {
             if (p2p_client_ && p2p_client_->StopTraining()) {
                 AddLogEntry("WARN", "Training stopped by user");

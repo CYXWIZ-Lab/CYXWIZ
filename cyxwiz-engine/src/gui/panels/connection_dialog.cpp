@@ -12,6 +12,7 @@
 #include "core/engine_config.h"
 #include "common.pb.h"
 #include "job.pb.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -82,16 +83,17 @@ void ConnectionDialog::Render() {
 }
 
 void ConnectionDialog::RenderConnectionPanel() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SeparatorText("Connection Settings");
 
     bool is_connected = client_ && client_->IsConnected();
 
     if (is_connected) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+        ImGui::TextColored(t.success, "Connected");
         ImGui::SameLine();
         ImGui::Text("to %s", client_->GetServerAddress().c_str());
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
+        ImGui::TextColored(t.error, "Disconnected");
     }
 
     ImGui::Spacing();
@@ -152,7 +154,7 @@ void ConnectionDialog::RenderConnectionPanel() {
     // Show connection error if any
     if (!connection_error_.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", connection_error_.c_str());
+        ImGui::TextColored(t.error, "Error: %s", connection_error_.c_str());
     }
 }
 
@@ -202,6 +204,7 @@ void ConnectionDialog::RenderNodeDiscoveryPanel() {
 }
 
 void ConnectionDialog::RenderNodeTable() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGuiTableFlags table_flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                    ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
 
@@ -228,9 +231,9 @@ void ConnectionDialog::RenderNodeTable() {
             // Status
             ImGui::TableNextColumn();
             if (node.is_online) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CIRCLE " On");
+                ImGui::TextColored(t.success, ICON_FA_CIRCLE " On");
             } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE " Off");
+                ImGui::TextColored(t.pending, ICON_FA_CIRCLE " Off");
             }
 
             // Name (selectable)
@@ -243,9 +246,9 @@ void ConnectionDialog::RenderNodeTable() {
             // Device type
             ImGui::TableNextColumn();
             if (node.device_type == "CUDA") {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.2f, 1.0f), "%s", node.device_type.c_str());
+                ImGui::TextColored(t.series[1], "%s", node.device_type.c_str());
             } else if (node.device_type == "OpenCL") {
-                ImGui::TextColored(ImVec4(0.2f, 0.6f, 0.9f, 1.0f), "%s", node.device_type.c_str());
+                ImGui::TextColored(t.series[2], "%s", node.device_type.c_str());
             } else {
                 ImGui::Text("%s", node.device_type.c_str());
             }
@@ -265,7 +268,7 @@ void ConnectionDialog::RenderNodeTable() {
             float rep_check = static_cast<float>(node.reputation_score);
             if (rep_check < 0.5f) {
                 // Low reputation node - must do free work to rebuild
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Free*");
+                ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Free*");
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Low reputation node - free work tier");
                 }
@@ -284,11 +287,11 @@ void ConnectionDialog::RenderNodeTable() {
             float rep = static_cast<float>(node.reputation_score);
             ImVec4 rep_color;
             if (rep >= 0.9f) {
-                rep_color = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+                rep_color = t.success;
             } else if (rep >= 0.7f) {
-                rep_color = ImVec4(0.8f, 0.8f, 0.0f, 1.0f);
+                rep_color = t.warning;
             } else {
-                rep_color = ImVec4(1.0f, 0.4f, 0.0f, 1.0f);
+                rep_color = t.error;
             }
             ImGui::TextColored(rep_color, "%.0f%%", rep * 100);
 
@@ -348,6 +351,7 @@ void ConnectionDialog::RenderNodeSearchFilters() {
 }
 
 void ConnectionDialog::RenderSelectedNodeInfo() {
+    const ui::Tokens& t = ui::CurrentTokens();
     const auto* selected = SelectedNode();
     if (!selected) {
         return;
@@ -384,7 +388,7 @@ void ConnectionDialog::RenderSelectedNodeInfo() {
     float rep_score = static_cast<float>(node.reputation_score);
     if (rep_score < 0.5f) {
         // Low reputation - free work tier (must rebuild reputation)
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+        ImGui::TextColored(t.warning,
             ICON_FA_TRIANGLE_EXCLAMATION " Free Tier (Reputation Recovery)");
         ImGui::TextDisabled("This node has low reputation and must complete");
         ImGui::TextDisabled("free jobs to rebuild trust.");
