@@ -678,6 +678,7 @@ MainWindow::MainWindow()
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
+    feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
