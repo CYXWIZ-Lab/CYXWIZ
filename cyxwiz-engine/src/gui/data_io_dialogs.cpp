@@ -1140,7 +1140,7 @@ void DataLoaderDialog::RenderContent() {
         if (ImGui::InputInt("Every N completed epochs", &generation_preview_every_epochs_)) has_changes_ = true;
         if (ImGui::InputInt("Maximum new tokens (1-128)", &generation_preview_max_new_tokens_)) has_changes_ = true;
         if (ImGui::InputTextMultiline("Prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_), ImVec2(-1,100))) has_changes_ = true;
-        ImGui::TextWrapped("One prompt per line (1-8). Greedy previews use the causal token-window vocabulary. Training pauses between epochs; results appear in the Console and run artifacts.");
+        ImGui::TextWrapped("One prompt per line (1-8); for multi-line chat prompts put a line of --- between prompts (an empty line before --- keeps a trailing newline). Greedy previews use the causal token-window vocabulary. Training pauses between epochs; results appear in the Console and run artifacts.");
         ImGui::EndDisabled();
     }
 

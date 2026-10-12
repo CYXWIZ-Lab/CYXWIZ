@@ -38,6 +38,15 @@ void TestTrainingGenerationPreview() {
         catch(const std::invalid_argument&) {rejected=true;}
         Require(rejected,"invalid cadence must fail");
     }
+    // Chat-template prompts span lines: "---" lines separate prompts (TOFIX143).
+    const auto chat=TrainingPreviewPrompts("System: s\r\nUser: q\r\nBerean:\r\n\r\n---\r\nUser: r\r\nBerean:");
+    Require(chat.size()==2&&chat[0]=="System: s\nUser: q\nBerean:\n"&&chat[1]=="User: r\nBerean:",
+            "--- separates multi-line prompts; an empty last line keeps the trailing newline");
+    Require(TrainingPreviewPrompts("one\n\ntwo").size()==2,"without --- each nonempty line is one prompt");
+    Require(TrainingPreviewPrompts("---\none\n---\n---\ntwo\n---").size()==2,"empty sections are skipped");
+    bool too_long=false;
+    try {TrainingPreviewPrompts("a\n---\n"+std::string(2049,'x'));} catch(const std::invalid_argument&) {too_long=true;}
+    Require(too_long,"each separated prompt keeps the 2048-byte limit");
     auto settings=ParseTrainingGenerationPreview({{"generation_preview_enabled","true"},{"generation_preview_prompts","one\r\ntwo"},{"generation_preview_every_epochs","2"},{"generation_preview_max_new_tokens","2"}});
     Require(!ShouldRunTrainingPreview(settings,0)&&!ShouldRunTrainingPreview(settings,1)&&ShouldRunTrainingPreview(settings,2)&&!ShouldRunTrainingPreview(settings,3),"completed epoch cadence");
     Vocabulary vocab;vocab.SetVocabulary({"[PAD]","[UNK]","[BOS]","[EOS]","one","two"});

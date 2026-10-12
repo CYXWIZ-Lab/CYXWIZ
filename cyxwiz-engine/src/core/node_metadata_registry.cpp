@@ -1289,7 +1289,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"generation_preview_enabled", "bool", "false", "Generate samples between training epochs", {}, "", "", "Generation previews", false, false},
          {"generation_preview_every_epochs", "int", "20", "Generate every N completed epochs", {}, "1-10000", "", "Generation previews", false, false},
          {"generation_preview_max_new_tokens", "int", "32", "Maximum generated tokens per prompt", {}, "1-128", "", "Generation previews", false, false},
-         {"generation_preview_prompts", "string", "", "One prompt per line; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
+         {"generation_preview_prompts", "string", "", "One prompt per line, or multi-line prompts separated by lines of ---; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
          {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
          {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
          {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},

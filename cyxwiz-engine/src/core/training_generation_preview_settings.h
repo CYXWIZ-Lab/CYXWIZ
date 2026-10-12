@@ -11,7 +11,7 @@ struct TrainingGenerationPreviewSettings {
     bool enabled = false;
     int every_epochs = 20;
     int max_new_tokens = 32;
-    std::string prompts; // One nonempty prompt per line; no hidden chat template.
+    std::string prompts; // See TrainingPreviewPrompts; no hidden chat template.
     // Resolved from the selected training dataset, never entered independently.
     std::string vocabulary_artifact;
     int tokenizer_type = -1;
@@ -19,20 +19,44 @@ struct TrainingGenerationPreviewSettings {
     int context = 0;
 };
 
+// One prompt per line. When some line is exactly "---", prompts are instead
+// separated by such lines and keep their line breaks, for chat-template prompts
+// (TOFIX143); an empty last line before "---" gives the prompt a trailing newline.
 inline std::vector<std::string> TrainingPreviewPrompts(const std::string& text) {
     if (text.size() > 8192) throw std::invalid_argument("Generation preview prompts exceed 8192 bytes");
-    std::istringstream input(text);
+    std::vector<std::string> lines;
+    {
+        std::istringstream input(text);
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.empty() && line.back()=='\r') line.pop_back();
+            lines.push_back(line);
+        }
+    }
     std::vector<std::string> prompts;
-    std::string line;
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back()=='\r') line.pop_back();
-        if (line.find_first_not_of(" \t") == std::string::npos) continue;
-        if (line.size()>2048 || line.find('\0')!=std::string::npos)
+    const auto add = [&prompts](const std::string& prompt) {
+        if (prompt.find_first_not_of(" \t\n") == std::string::npos) return;
+        if (prompt.size()>2048 || prompt.find('\0')!=std::string::npos)
             throw std::invalid_argument("Each generation preview prompt must be at most 2048 bytes without NUL");
-        prompts.push_back(line);
+        prompts.push_back(prompt);
+    };
+    bool separated = false;
+    for (const auto& line : lines) separated = separated || line == "---";
+    if (separated) {
+        std::string prompt;
+        bool first = true;
+        for (const auto& line : lines) {
+            if (line == "---") { add(prompt); prompt.clear(); first = true; continue; }
+            if (!first) prompt += '\n';
+            prompt += line;
+            first = false;
+        }
+        add(prompt);
+    } else {
+        for (const auto& line : lines) add(line);
     }
     if (prompts.empty() || prompts.size()>8)
-        throw std::invalid_argument("Generation previews require 1 to 8 nonempty prompts, one per line");
+        throw std::invalid_argument("Generation previews require 1 to 8 nonempty prompts: one per line, or separated by --- lines");
     return prompts;
 }
 
