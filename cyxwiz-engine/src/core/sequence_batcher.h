@@ -16,6 +16,9 @@ struct SequenceSample {
     std::vector<int64_t> word_ids;
     std::vector<int64_t> pos_ids;
     std::vector<int64_t> tag_ids;
+    // Causal LM only, optional: one entry per target (word_ids.size() - 1);
+    // 0 excludes that target from the loss (prompt tokens in supervised windows).
+    std::vector<uint8_t> target_mask;
 };
 
 struct SequenceBatcherConfig {
@@ -87,8 +90,8 @@ public:
         for (size_t row = 0; row < actual_size; ++row) {
             const auto& sample = samples_[active_indices[current_index_ + row]];
             if (config_.create_causal_lm_targets) {
-                CopyCausalLmSequence(sample.word_ids, word_data, target_data,
-                                     mask_data, row);
+                CopyCausalLmSequence(sample.word_ids, sample.target_mask,
+                                     word_data, target_data, mask_data, row);
             } else {
                 CopySequence(sample.word_ids, word_data, row);
             }
@@ -233,6 +236,7 @@ private:
     }
 
     void CopyCausalLmSequence(const std::vector<int64_t>& source,
+                              const std::vector<uint8_t>& target_mask,
                               std::vector<int64_t>& word_dest,
                               std::vector<int64_t>& target_dest,
                               std::vector<int64_t>& mask_dest,
@@ -247,7 +251,8 @@ private:
             const size_t target_col = col + 1;
             if (input_id != config_.word_pad_id &&
                 target_col < source.size() &&
-                source[target_col] != config_.word_pad_id) {
+                source[target_col] != config_.word_pad_id &&
+                (target_mask.empty() || target_mask[col] != 0)) {
                 target_dest[offset] = source[target_col];
             }
         }

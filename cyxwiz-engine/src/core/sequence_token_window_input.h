@@ -38,6 +38,15 @@ inline bool ReadTokenWindowSamples(const std::shared_ptr<arrow::Table>& table,
     const auto start_col=table->GetColumnByName("__token_start");
     const auto end_col=table->GetColumnByName("__token_end");
     const auto valid_col=table->GetColumnByName("__valid_targets");
+    // Supervised windows (TextTokenizer target_text_col) carry a per-target mask;
+    // the metadata and the column must agree so a mask is never silently dropped.
+    const auto supervision=get("cyxwiz.token_windows.supervision");
+    if(!supervision.empty() && supervision!="response_only") return fail("unsupported supervision '"+supervision+"'");
+    const auto mask_col=table->GetColumnByName("__target_mask");
+    if((supervision=="response_only")!=(mask_col!=nullptr)) return fail("supervision metadata and __target_mask column disagree");
+    if(mask_col && (mask_col->type()->id()!=arrow::Type::LIST ||
+        std::static_pointer_cast<arrow::ListType>(mask_col->type())->value_type()->id()!=arrow::Type::INT8))
+        return fail("__target_mask must be list<int8>");
     if(!start_col || !end_col || !valid_col || start_col->type()->id()!=arrow::Type::INT64 ||
        end_col->type()->id()!=arrow::Type::INT64 || valid_col->type()->id()!=arrow::Type::INT64)
         return fail("missing int64 window bounds/target counts");
@@ -52,8 +61,22 @@ inline bool ReadTokenWindowSamples(const std::shared_ptr<arrow::Table>& table,
         const int64_t finish=std::static_pointer_cast<arrow::Int64Scalar>(*end)->value;
         const int64_t targets=std::static_pointer_cast<arrow::Int64Scalar>(*valid)->value;
         if(ids->length()<2 || ids->length()>static_cast<int64_t>(context)+1 || begin<0 || finish<begin ||
-            finish-begin!=ids->length() || targets!=ids->length()-1) return fail("invalid window length, offsets or target count");
+            finish-begin!=ids->length() || (!mask_col && targets!=ids->length()-1)) return fail("invalid window length, offsets or target count");
         SequenceSample sample;
+        if(mask_col) {
+            const auto cell=mask_col->GetScalar(row);
+            if(!cell.ok() || !(*cell)->is_valid) return fail("null or unreadable target mask");
+            const auto bits=std::static_pointer_cast<arrow::Int8Array>(std::static_pointer_cast<arrow::ListScalar>(*cell)->value);
+            if(bits->length()!=ids->length()-1) return fail("target mask length differs from the window's target count");
+            int64_t supervised=0;
+            sample.target_mask.reserve(static_cast<size_t>(bits->length()));
+            for(int64_t i=0;i<bits->length();++i) {
+                if(bits->IsNull(i) || (bits->Value(i)!=0 && bits->Value(i)!=1)) return fail("target mask values must be 0 or 1");
+                supervised+=bits->Value(i);
+                sample.target_mask.push_back(static_cast<uint8_t>(bits->Value(i)));
+            }
+            if(supervised==0 || supervised!=targets) return fail("supervised target count differs from __valid_targets or is zero");
+        }
         sample.word_ids.reserve(static_cast<size_t>(ids->length()));
         for(int64_t i=0;i<ids->length();++i) {
             const int64_t id=ids->Value(i);

@@ -327,6 +327,15 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
                         return result;
                     }
                 }
+                // Optional key: both roles must use the same supervision (absent = every target).
+                auto supervision = [](const std::shared_ptr<const arrow::KeyValueMetadata>& m) {
+                    auto value = m ? m->Get("cyxwiz.token_windows.supervision") : arrow::Result<std::string>(std::string{});
+                    return value.ok() ? *value : std::string{};
+                };
+                if (supervision(train_metadata) != supervision(metadata)) {
+                    result.error_message = "External sequence role metadata differs from Train: cyxwiz.token_windows.supervision";
+                    return result;
+                }
                 const int column = source->schema()->GetFieldIndex(token_column);
                 if (column < 0 || source->field(column)->type()->id() != arrow::Type::LIST) {
                     result.error_message = "External sequence role requires the same token_ids list column";

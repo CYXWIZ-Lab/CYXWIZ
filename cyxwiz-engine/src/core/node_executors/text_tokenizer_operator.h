@@ -45,6 +45,10 @@ namespace cyxwiz {
  *   vocab_file        (optional)        — load vocabulary instead of training
  *   vocab_build_if_missing (default false) — train and save vocab_file if absent
  *   output_mode       (default wide)     — wide, causal_windows, decode, roundtrip
+ *   target_text_col   (optional)         — causal_windows only: response text per row. Each row
+ *                                          becomes one window (text_col, then this column plus
+ *                                          EOS) whose loss covers only the response targets
+ *                                          (__target_mask); rows longer than one window fail.
  *   token_ids_col     (default token_ids)— decode input column containing id text
  */
 class Tokenizer;
@@ -70,7 +74,8 @@ public:
 private:
     arrow::Status ValidateWindowInput(const std::shared_ptr<arrow::Table>& input) const;
     arrow::Result<std::shared_ptr<arrow::Table>> BuildTokenWindows(
-        const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer);
+        const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer,
+        const std::vector<std::string>* targets = nullptr);
     arrow::Result<std::shared_ptr<arrow::Table>> DecodeTokenRows(
         const std::shared_ptr<arrow::Table>& input, Tokenizer& tokenizer);
     arrow::Result<std::shared_ptr<arrow::Table>> RoundTripTextRows(
@@ -79,6 +84,7 @@ private:
     std::string document_id_col_;
     std::string split_col_ = "split";
     std::string text_col_;
+    std::string target_text_col_;
     std::string token_ids_col_ = "token_ids";
     std::string label_col_;
     int max_length_ = 256;
