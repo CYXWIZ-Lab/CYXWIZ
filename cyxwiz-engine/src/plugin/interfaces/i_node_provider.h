@@ -33,7 +33,7 @@ struct PluginNodeTypeInfo {
     std::string category;               // Menu category (e.g. "Image Processing")
     std::string description;
 
-    uint32_t color = 0xFF4488AAUL;      // Node header color (ABGR)
+    uint32_t color = 0;                 // Node header color (ABGR); 0: the theme's plugin colour
     std::string icon;                   // FontAwesome icon codepoint
 
     struct PinInfo {

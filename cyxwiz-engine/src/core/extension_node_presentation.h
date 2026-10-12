@@ -55,11 +55,10 @@ struct ExtensionCanvasStyle {
     std::string status_line;     // under the box; empty when installed
 };
 
-inline constexpr uint32_t kExtensionMissingBoxColor = 0xFF483D3AU;    // IM_COL32(58, 61, 72)
-inline constexpr uint32_t kExtensionMissingOutlineColor = 0xFF4AA1F5U;  // IM_COL32(245, 161, 74)
-
 // descriptor: the registered descriptor, or nullptr when not registered.
-// fallback_color: the colour the canvas used before (steel blue).
+// fallback_color: the theme's plugin colour, for a node that declares none.
+// A missing node leaves box and outline 0: the canvas draws the
+// not-installed look in theme colours.
 ExtensionCanvasStyle BuildExtensionCanvasStyle(const gui::MLNode& node,
                                                const ExtensionNodeDescriptor* descriptor,
                                                uint32_t fallback_color);
