@@ -657,8 +657,14 @@ void TestExecutor::ComputeCurves() {
         m.pr = std::move(curves.pr);
         m.curves_note = std::move(curves.note);
     }
-    if (!m.roc->success) m.curves_note = "ROC: " + m.roc->error_message;  // else a note on skipped classes
-    else if (!m.pr->success) m.curves_note = "PR: " + m.pr->error_message;
+    // Say which curves failed unless the message already does ("ROC / PR
+    // need ...", "Precision-recall requires ..."); a successful multi-class
+    // run may carry a note on skipped classes.
+    const auto why = [](const std::string& error) {
+        return error.rfind("ROC", 0) == 0 || error.rfind("Precision", 0) == 0 ? error : "ROC / PR: " + error;
+    };
+    if (!m.roc->success) m.curves_note = why(m.roc->error_message);
+    else if (!m.pr->success) m.curves_note = why(m.pr->error_message);
 }
 
 void TestExecutor::ComputeAggregateMetrics() {
