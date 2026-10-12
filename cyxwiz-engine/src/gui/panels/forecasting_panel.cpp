@@ -162,7 +162,11 @@ void ForecastingPanel::RenderInputPanel() {
     ImGui::Checkbox("Use Test Split", &use_test_split_);
     if (use_test_split_) {
         ui::FieldLabel("Train %");
-        ImGui::SliderFloat("##train_ratio", &train_ratio_, 0.5f, 0.95f, "%.0f%%");
+        // Edit as a percentage: the ratio with "%.0f%%" showed "1%" for 0.5 - 0.95.
+        int train_percent = static_cast<int>(train_ratio_ * 100.0f + 0.5f);
+        if (ImGui::SliderInt("##train_ratio", &train_percent, 50, 95, "%d%%")) {
+            train_ratio_ = static_cast<float>(train_percent) / 100.0f;
+        }
     }
 }
 
