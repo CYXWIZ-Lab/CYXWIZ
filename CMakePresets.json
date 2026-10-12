@@ -103,21 +103,6 @@
         "lhs": "${hostSystemName}",
         "rhs": "Darwin"
       }
-    },
-    {
-      "name": "android-release",
-      "inherits": "default",
-      "generator": "Ninja",
-      "displayName": "Android Release",
-      "description": "Release build for Android (backend only)",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CYXWIZ_ANDROID_BUILD": "ON",
-        "CYXWIZ_BUILD_ENGINE": "OFF",
-        "CYXWIZ_BUILD_SERVER_NODE": "OFF",
-        "ANDROID_ABI": "arm64-v8a",
-        "ANDROID_PLATFORM": "android-24"
-      }
     }
   ],
   "buildPresets": [
@@ -144,10 +129,6 @@
     {
       "name": "macos-release",
       "configurePreset": "macos-release"
-    },
-    {
-      "name": "android-release",
-      "configurePreset": "android-release"
     }
   ],
   "testPresets": [

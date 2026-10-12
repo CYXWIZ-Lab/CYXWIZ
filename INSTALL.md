@@ -107,7 +107,7 @@ CMakeLists.txt                         root options, dependencies, output paths
 
 Supporting files:
 
-- [CMakePresets.json](CMakePresets.json): platform/configuration presets (`windows-debug`, `windows-release`, `linux-debug`, `linux-release`, `macos-debug`, `macos-release`, `android-release`) and the direct-preset build directory `build`;
+- [CMakePresets.json](CMakePresets.json): platform/configuration presets (`windows-debug`, `windows-release`, `linux-debug`, `linux-release`, `macos-debug`, `macos-release`) and the direct-preset build directory `build`;
 - `cmake/Find*.cmake`: dependency discovery not covered by standard package configuration;
 - [vcpkg.json](vcpkg.json): the normal dependency manifest;
 - [vcpkg-ci.json](vcpkg-ci.json): the broader dependency-validation manifest used by CI;
@@ -146,7 +146,7 @@ The vcpkg binary cache and the CMake object tree solve different problems: the c
 
 `--parallel N` (or `-j N`) sets the number of build jobs. `--parallel 1` or MSBuild `/m:1` builds serially, which helps diagnose errors or limit memory, but is slow. Pick a count that suits your CPU cores and memory.
 
-For a Release Engine, use `windows-release`, `--config Release`, and the `cyxwiz-engine` target. The Linux and macOS presets work the same way with Ninja (no `--config`). The Android preset builds the backend only.
+For a Release Engine, use `windows-release`, `--config Release`, and the `cyxwiz-engine` target. The Linux and macOS presets work the same way with Ninja (no `--config`).
 
 Other useful builds:
 
