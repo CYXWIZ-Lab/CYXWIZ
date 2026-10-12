@@ -121,7 +121,8 @@ void LearningCurvesPanel::RenderLearningCurve() {
     std::vector<double> sizes_d(train_sizes.begin(), train_sizes.end());
 
     if (ImPlot::BeginPlot("##LearningCurve", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("Training Set Size", "Score");
+        // Refit x as points are added or loaded; it kept the first point's range.
+        ImPlot::SetupAxes("Training Set Size", "Score", ImPlotAxisFlags_AutoFit);
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
 
         // Training score curve
