@@ -122,6 +122,10 @@ public:
 private:
     // Tab structure
     struct TableTab {
+        // Stable tab identity: two tabs may show the same name (the same
+        // table opened twice), and ImGui keys tabs by this, not the label.
+        static int NewUid() { static int next = 0; return ++next; }
+        const int uid = NewUid();
         std::string filename;           // Display name
         std::string filepath;           // Full path
         std::shared_ptr<DataTable> table;
