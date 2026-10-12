@@ -14,6 +14,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "loaders/audio_loader.h"
 #include "loaders/data_loader.h"
 #include "loaders/image_loader.h"
@@ -491,9 +492,10 @@ void DataInputDialog::RenderContent() {
 
         // Fade out effect
         float alpha = std::min(1.0f, apply_status_timer_);
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
         ImVec4 color = apply_success_
-            ? ImVec4(0.2f, 0.8f, 0.2f, alpha)  // Green for success
-            : ImVec4(0.9f, 0.3f, 0.3f, alpha); // Red for error
+            ? cyxwiz::ui::WithAlpha(t.success, alpha)
+            : cyxwiz::ui::WithAlpha(t.error, alpha);
 
         ImGui::PushStyleColor(ImGuiCol_Text, color);
 

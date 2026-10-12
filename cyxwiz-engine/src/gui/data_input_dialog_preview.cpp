@@ -3,6 +3,7 @@
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
 #include "data_preview_table_renderer.h"
+#include "ui_tokens.h"
 #include "../core/async_task_manager.h"
 
 #include <algorithm>
@@ -53,7 +54,7 @@ void DataInputDialog::RenderPreviewPanel() {
         ImGui::TextDisabled("Configure source and click\nLoad Preview to see data");
     } else if (!preview_error_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", preview_error_.c_str());
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Error: %s", preview_error_.c_str());
         ImGui::PopTextWrapPos();
         if (preview_is_paged_ && preview_failed_offset_ >= 0) {
             ImGui::SameLine();
@@ -190,7 +191,7 @@ void DataInputDialog::RenderTabularPreview() {
 
     if (!preview_page_error_.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().caution,
                            "%s", preview_page_error_.c_str());
         ImGui::SameLine();
         if (ImGui::SmallButton("Retry page")) {
@@ -239,6 +240,7 @@ void DataInputDialog::RenderAudioPreview() {
 void DataInputDialog::RenderTextPreview() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     if (text_layout_ == TextLayout::CorpusSubdirs && !preview_is_paged_) {
         if (strlen(folder_path_) == 0) {
@@ -246,7 +248,7 @@ void DataInputDialog::RenderTextPreview() {
             return;
         }
         if (!fs::exists(folder_path_)) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(t.error,
                                "Folder does not exist");
             return;
         }
@@ -293,8 +295,8 @@ void DataInputDialog::RenderTextPreview() {
 
     std::string text_col_str = text_column_;
     std::string label_col_str = text_label_column_;
-    ImVec4 ok_color  = ImVec4(0.6f, 0.9f, 0.6f, 1.0f);
-    ImVec4 err_color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+    ImVec4 ok_color  = t.success;
+    ImVec4 err_color = t.error;
 
     ImGui::Text("Text:  ");
     ImGui::SameLine();

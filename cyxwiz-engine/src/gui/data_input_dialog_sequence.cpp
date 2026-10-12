@@ -6,6 +6,7 @@
 
 #include "../core/sequence_fusion_presentation.h"
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 
 #include <imgui.h>
 
@@ -82,7 +83,7 @@ void DataInputDialog::RenderSequenceColumns() {
         if (!sentence.empty()) found += ", " + sentence;
         ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x -
                                cyxwiz::ui::ButtonWidth("Use", cyxwiz::ui::ButtonSize::Small) - 12.0f);
-        ImGui::TextColored(ImVec4(0.81f, 0.78f, 1.0f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text,
                            "Suggestion: %s look like the token, POS, tag and sentence columns.",
                            found.c_str());
         ImGui::PopTextWrapPos();
@@ -119,10 +120,10 @@ void DataInputDialog::RenderSequenceColumns() {
                              std::find(available_columns_.begin(), available_columns_.end(), value) ==
                                  available_columns_.end();
         if (missing) {
-            ImGui::TextColored(ImVec4(0.96f, 0.63f, 0.29f, 1.0f), "'%s' is not a column of this file.",
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "'%s' is not a column of this file.",
                                value.c_str());
         } else if (value.empty() && hint_none[0] != '\0') {
-            ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.29f, 1.0f), "%s", hint_none);
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, "%s", hint_none);
         } else {
             ImGui::TextColored(muted, "%s", hint_set);
         }

@@ -6,6 +6,7 @@
 #include "markdown_preview.h"
 #include "hex_preview.h"
 #include "hdf5_preview.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -148,22 +149,23 @@ void PreviewRenderer::EnsureContent(const std::string& filepath) {
 
 void PreviewRenderer::RenderFilePreview(const std::string& filepath) {
     EnsureContent(filepath);
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     // Info bar
     auto fname = fs::path(filepath).filename().string();
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", fname.c_str());
+    ImGui::TextColored(t.accent_text, "%s", fname.c_str());
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(%s)", GetTypeName(current_type_));
+    ImGui::TextColored(t.text_dim, "(%s)", GetTypeName(current_type_));
 
     if (fs::exists(filepath)) {
         auto fsize = fs::file_size(filepath);
         ImGui::SameLine();
         if (fsize < 1024)
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "- %zu B", fsize);
+            ImGui::TextColored(t.text_dim, "- %zu B", fsize);
         else if (fsize < 1024 * 1024)
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "- %.1f KB", fsize / 1024.0f);
+            ImGui::TextColored(t.text_dim, "- %.1f KB", fsize / 1024.0f);
         else
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "- %.1f MB", fsize / 1024.0f / 1024.0f);
+            ImGui::TextColored(t.text_dim, "- %.1f MB", fsize / 1024.0f / 1024.0f);
     }
 
     ImGui::Separator();

@@ -5,6 +5,7 @@
 #include "../../core/data_input_parameters.h"
 #include "../../core/project_manager.h"
 #include "gui/icons.h"
+#include "../ui_tokens.h"
 #include "core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -727,13 +728,14 @@ void PipelineCanvas::RenderToolbar() {
     const bool execution_active = execution_task &&
         (execution_task->GetState() == TaskState::Pending ||
          execution_task->GetState() == TaskState::Running);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Execute or Cancel button depending on task state.
     if (execution_active) {
         // Cancel button (red style)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::Mix(t.error, t.bg_window, 0.2f));
         if (ImGui::Button(ICON_FA_STOP " Cancel")) {
             AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
         }
@@ -757,9 +759,9 @@ void PipelineCanvas::RenderToolbar() {
         ImGui::SameLine();
         ImGui::Spacing();
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, t.success);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.success, t.text_bright, 0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::Mix(t.success, t.bg_window, 0.2f));
         if (ImGui::Button(ICON_FA_ROCKET " Deploy to Node Editor")) {
             // Signal to DataStudioPanel that deployment should happen
             deployment_requested_ = true;

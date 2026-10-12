@@ -2,6 +2,7 @@
 
 #include "node_config_dialog.h"
 #include "../core/file_dialogs.h"
+#include "ui_tokens.h"
 
 #include <algorithm>
 #include <cstring>
@@ -317,7 +318,7 @@ void DataInputDialog::RenderTabularOptions() {
             !legacy_role->second.empty()) {
             ImGui::Spacing();
             ImGui::TextColored(
-                ImVec4(1.0f, 0.70f, 0.25f, 1.0f),
+                cyxwiz::ui::CurrentTokens().warning,
                 "Legacy role hint '%s' is ignored.",
                 legacy_role->second.c_str());
             ImGui::TextWrapped(
@@ -373,7 +374,7 @@ void DataInputDialog::RenderTabularOptions() {
         // Hint for common label column names
         if (label_column_idx_ < 0 && !available_columns_.empty()) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "!");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, "!");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Select the target column for training.\nCommon names: 'label', 'class', 'target', 'y'");
             }
@@ -386,7 +387,7 @@ void DataInputDialog::RenderTabularOptions() {
                 std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
                 if (lower == "label" || lower == "labels" || lower == "class" || lower == "target" || lower == "y") {
                     // Found a common label column - suggest it
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
+                    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text,
                         "Suggestion: '%s' looks like a label column", available_columns_[i].c_str());
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Use")) {
@@ -651,11 +652,11 @@ void DataInputDialog::RenderAudioOptions() {
                 }
             } catch (...) { /* permission error etc., ignore */ }
             if (subdir_count > 0) {
-                ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().success,
                                    "Detected: %d classes, %d audio files",
                                    subdir_count, audio_file_count);
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f),
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                                    "No class subdirectories found");
             }
         } else {
@@ -673,7 +674,7 @@ void DataInputDialog::RenderAudioOptions() {
                     }
                 }
             } catch (...) { }
-            ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success,
                                "Detected: %d audio files in folder tree", flat_count);
         }
     }
@@ -809,11 +810,11 @@ void DataInputDialog::RenderTextOptions() {
                 }
             } catch (...) { /* permission errors etc., ignore */ }
             if (subdir_count > 0) {
-                ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f),
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().success,
                                    "Detected: %d classes, %d text files",
                                    subdir_count, file_count);
             } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f),
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                                    "No class subdirectories found — corpus "
                                    "layout expects folder/<class>/*.txt");
             }
