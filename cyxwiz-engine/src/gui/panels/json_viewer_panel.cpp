@@ -1,5 +1,8 @@
 #include "json_viewer_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -29,17 +32,10 @@ void JSONViewerPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            // Left panel: Input
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.4f, 0), true);
+            // Left: input, right: results
+            ui::BeginSettingsColumn("json_viewer", ImGui::GetContentRegionAvail().x * 0.4f);
             RenderInputSection();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            // Right panel: Results
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
 
             if (ImGui::BeginTabBar("JSONTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_ALIGN_LEFT " Formatted")) {
@@ -61,7 +57,7 @@ void JSONViewerPanel::Render() {
                 ImGui::EndTabBar();
             }
 
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -115,8 +111,7 @@ void JSONViewerPanel::RenderToolbar() {
 }
 
 void JSONViewerPanel::RenderInputSection() {
-    ImGui::Text(ICON_FA_KEYBOARD " Input JSON");
-    ImGui::Separator();
+    ui::FieldLabel("Input JSON");
 
     float available_height = ImGui::GetContentRegionAvail().y - 30;
     ImGui::InputTextMultiline("##JSONInput", input_buffer_, sizeof(input_buffer_),
@@ -130,19 +125,19 @@ void JSONViewerPanel::RenderInputSection() {
 
 void JSONViewerPanel::RenderFormattedView() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter JSON and click 'Validate' or 'Format'");
+        ui::EmptyState(ICON_FA_CODE, "Nothing formatted yet", "Enter JSON, then Validate or Format.");
         return;
     }
 
     if (!result_.is_valid) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::Text("Error at line %d, column %d:", result_.error_line, result_.error_column);
         ImGui::TextWrapped("%s", result_.error_detail.c_str());
         ImGui::PopStyleColor();
@@ -150,11 +145,11 @@ void JSONViewerPanel::RenderFormattedView() {
     }
 
     // Copy buttons
-    if (ImGui::Button(ICON_FA_COPY " Copy Formatted")) {
+    if (ui::SecondaryButton("Copy Formatted")) {
         CopyFormatted();
     }
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_COPY " Copy Minified")) {
+    if (ui::SecondaryButton("Copy Minified")) {
         CopyMinified();
     }
 

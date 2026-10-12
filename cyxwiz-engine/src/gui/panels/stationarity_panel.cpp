@@ -1,5 +1,7 @@
 #include "stationarity_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -30,17 +32,11 @@ void StationarityPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("stationarity", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -82,42 +78,42 @@ void StationarityPanel::RenderToolbar() {
 }
 
 void StationarityPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = { "Random Walk", "Trend + Noise", "Stationary", "AR(1)" };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
     static const double kNoiseMin = 0.1, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
     if (signal_type_ == SignalType::TrendNoise) {
         static const double kSlopeMin = -0.5, kSlopeMax = 0.5;
-        ImGui::SliderScalar("Trend Slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
+        ui::FieldLabel("Trend slope");
+        ImGui::SliderScalar("##trend_slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " Test Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Test");
 
-    ImGui::DragInt("Max Lags", &max_lags_, 1.0f, -1, 50);
+    ui::FieldLabel("Max lags");
+    ImGui::DragInt("##max_lags", &max_lags_, 1.0f, -1, 50);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("-1 = automatic selection");
     }
 
+    ui::SettingsSection("Differencing");
+
+    ui::FieldLabel("Order");
+    ImGui::DragInt("##diff_order", &diff_order_, 1.0f, 1, 3);
+
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_ARROW_DOWN " Differencing");
-    ImGui::Separator();
-
-    ImGui::DragInt("Order", &diff_order_, 1.0f, 1, 3);
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Differencing")) {
+    if (ui::SecondaryButton("Apply Differencing", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyDifferencing();
     }
 }

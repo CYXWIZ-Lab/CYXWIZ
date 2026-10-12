@@ -1,5 +1,8 @@
 #include "embeddings_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -30,17 +33,11 @@ void EmbeddingsPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.3f, 0), true);
+            ui::BeginSettingsColumn("embeddings", ImGui::GetContentRegionAvail().x * 0.3f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -79,64 +76,65 @@ void EmbeddingsPanel::RenderToolbar() {
 }
 
 void EmbeddingsPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_SLIDERS " Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Parameters");
 
     const char* methods[] = { "One-Hot", "Random" };
-    ImGui::Combo("Method", &method_idx_, methods, IM_ARRAYSIZE(methods));
+    ui::FieldLabel("Method");
+    ImGui::Combo("##method", &method_idx_, methods, IM_ARRAYSIZE(methods));
 
     if (method_idx_ == 1) {
-        ImGui::DragInt("Dimensions", &embedding_dim_, 1.0f, 10, 300);
+        ui::FieldLabel("Dimensions");
+        ImGui::DragInt("##dimensions", &embedding_dim_, 1.0f, 10, 300);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_DATABASE " Sample Vocabulary");
-    ImGui::Separator();
+    ui::SettingsSection("Sample vocabulary");
 
     const char* domains[] = { "General", "Tech", "Science" };
-    if (ImGui::Combo("Domain", &vocab_domain_idx_, domains, IM_ARRAYSIZE(domains))) {
+    ui::FieldLabel("Domain");
+    if (ImGui::Combo("##domain", &vocab_domain_idx_, domains, IM_ARRAYSIZE(domains))) {
         GenerateSampleVocabulary();
         has_result_ = false;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_KEYBOARD " Vocabulary (one word per line)");
-    ImGui::Separator();
+    ui::SettingsSection("Vocabulary");
+    ui::FieldLabel("One word per line");
 
-    float vocab_height = ImGui::GetContentRegionAvail().y - 120;
+    // Leave room below the box for Create and the Find similar group.
+    const float reserve = 5.0f * ImGui::GetFrameHeightWithSpacing() +
+                          4.0f * ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    float vocab_height = std::max(ImGui::GetContentRegionAvail().y - reserve, 3.0f * ImGui::GetFrameHeight());
     ImGui::InputTextMultiline("##VocabInput", vocab_buffer_, sizeof(vocab_buffer_),
                               ImVec2(-1, vocab_height),
                               ImGuiInputTextFlags_AllowTabInput);
 
-    if (ImGui::Button(ICON_FA_PLAY " Create", ImVec2(-1, 0))) {
+    if (ui::PrimaryButton("Create Embeddings", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         CreateEmbeddingsAsync();
     }
 
+    ui::SettingsSection("Find similar words");
+
+    ui::FieldLabel("Query");
+    ImGui::InputText("##query", query_word_, sizeof(query_word_));
+    ui::FieldLabel("Top N");
+    ImGui::DragInt("##top_n", &top_n_similar_, 1.0f, 1, 20);
+
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_MAGNIFYING_GLASS " Find Similar Words");
-    ImGui::Separator();
-
-    ImGui::InputText("Query", query_word_, sizeof(query_word_));
-    ImGui::DragInt("Top N", &top_n_similar_, 1.0f, 1, 20);
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Find", has_result_, "Create embeddings first", ui::ButtonSize::Regular, -FLT_MIN)) {
         FindSimilarAsync();
     }
 }
 
 void EmbeddingsPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Enter vocabulary and click 'Create Embeddings'");
+        ui::EmptyState(ICON_FA_CUBE, "No embeddings yet",
+                       "Enter a vocabulary, then Create Embeddings.");
         return;
     }
 

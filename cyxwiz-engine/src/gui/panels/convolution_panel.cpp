@@ -1,10 +1,14 @@
 #include "convolution_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numeric>
 
 namespace cyxwiz {
@@ -33,17 +37,11 @@ void ConvolutionPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("convolution", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderInputs();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -95,10 +93,9 @@ void ConvolutionPanel::RenderInputs() {
 
 void ConvolutionPanel::RenderSignalInput() {
     // Signal type selector
-    ImGui::Text("Type:");
     const char* signal_types[] = { "Step", "Impulse", "Ramp", "Sine", "Custom" };
     int current_type = static_cast<int>(signal_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Type");
     if (ImGui::Combo("##SignalType", &current_type, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(current_type);
         if (signal_type_ != SignalType::Custom) {
@@ -107,20 +104,20 @@ void ConvolutionPanel::RenderSignalInput() {
     }
 
     if (signal_type_ != SignalType::Custom) {
-        ImGui::Text("Size:");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Size");
         if (ImGui::SliderInt("##SignalSize", &signal_size_, 8, 64)) {
             GenerateSignal();
         }
 
-        if (ImGui::Button("Regenerate", ImVec2(-1, 0))) {
+        if (ui::SecondaryButton("Regenerate", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             GenerateSignal();
             has_result_ = false;
         }
     }
 
-    ImGui::Spacing();
-    ImGui::Text("Values (%d samples):", static_cast<int>(signal_.size()));
+    char values_label[48];
+    snprintf(values_label, sizeof(values_label), "Values (%d samples)", static_cast<int>(signal_.size()));
+    ui::FieldLabel(values_label);
 
     // Editable table of values
     if (ImGui::BeginTable("SignalTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY,
@@ -142,10 +139,9 @@ void ConvolutionPanel::RenderSignalInput() {
 
 void ConvolutionPanel::RenderKernelInput() {
     // Kernel preset selector
-    ImGui::Text("Preset:");
     const char* presets[] = { "Custom", "Moving Avg", "Gaussian", "Derivative", "Laplacian", "Edge" };
     int current_preset = static_cast<int>(kernel_preset_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Preset");
     if (ImGui::Combo("##KernelPreset", &current_preset, presets, IM_ARRAYSIZE(presets))) {
         kernel_preset_ = static_cast<KernelPreset>(current_preset);
         if (kernel_preset_ != KernelPreset::Custom) {
@@ -154,16 +150,16 @@ void ConvolutionPanel::RenderKernelInput() {
     }
 
     if (kernel_preset_ == KernelPreset::MovingAverage || kernel_preset_ == KernelPreset::Gaussian) {
-        ImGui::Text("Size:");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Size");
         if (ImGui::SliderInt("##KernelSize", &kernel_size_, 3, 15)) {
             if (kernel_size_ % 2 == 0) kernel_size_++;  // Keep odd
             ApplyKernelPreset();
         }
     }
 
-    ImGui::Spacing();
-    ImGui::Text("Values (%d taps):", static_cast<int>(kernel_.size()));
+    char values_label[48];
+    snprintf(values_label, sizeof(values_label), "Values (%d taps)", static_cast<int>(kernel_.size()));
+    ui::FieldLabel(values_label);
 
     // Editable table of kernel values
     if (ImGui::BeginTable("KernelTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY,
@@ -184,10 +180,11 @@ void ConvolutionPanel::RenderKernelInput() {
 
     // Kernel sum info
     double kernel_sum = std::accumulate(kernel_.begin(), kernel_.end(), 0.0);
-    ImGui::Text("Sum: %.4f", kernel_sum);
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TextColored(t.text_dim, "Sum: %.4f", kernel_sum);
     if (std::abs(kernel_sum - 1.0) > 0.01 && std::abs(kernel_sum) > 0.01) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1, 0.5, 0, 1), "(not normalized)");
+        ImGui::TextColored(t.caution, "(not normalized)");
     }
 }
 
@@ -198,14 +195,15 @@ void ConvolutionPanel::RenderLoadingIndicator() {
 
 void ConvolutionPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (signal_.empty() || kernel_.empty()) {
-        ImGui::TextDisabled("Configure signal and kernel first");
+        ui::EmptyState(ICON_FA_ASTERISK, "No signal or kernel",
+                       "Set up the signal and the kernel, then Convolve.");
         return;
     }
 

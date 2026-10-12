@@ -1,6 +1,8 @@
 #include "cholesky_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -37,17 +39,11 @@ void CholeskyPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.4f, 0), true);
+            ui::BeginSettingsColumn("cholesky", ImGui::GetContentRegionAvail().x * 0.4f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -77,9 +73,7 @@ void CholeskyPanel::RenderToolbar() {
 
 void CholeskyPanel::RenderMatrixInput() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix A");
-    ImGui::Separator();
-
+    ui::SettingsSection("Input matrix A");
     ImGui::TextDisabled("Must be symmetric positive definite");
     ImGui::Spacing();
 
@@ -152,7 +146,7 @@ void CholeskyPanel::RenderMatrixInput() {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_ROTATE " Symmetrize")) {
+    if (ui::SecondaryButton("Symmetrize", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         // Make symmetric: A = (A + A^T) / 2
         for (int i = 0; i < size_; i++) {
             for (int j = i + 1; j < size_; j++) {
@@ -172,9 +166,6 @@ void CholeskyPanel::RenderLoadingIndicator() {
 
 void CholeskyPanel::RenderResults() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
     if (!error_message_.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
@@ -183,7 +174,8 @@ void CholeskyPanel::RenderResults() {
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to perform Cholesky: A = L * L^T");
+        ui::EmptyState(ICON_FA_SQUARE_ROOT_VARIABLE, "No decomposition yet",
+                       "Enter a symmetric positive definite matrix, then Compute (A = L * L^T).");
         return;
     }
 

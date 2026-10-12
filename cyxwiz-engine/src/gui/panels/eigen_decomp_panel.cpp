@@ -1,6 +1,8 @@
 #include "eigen_decomp_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <implot.h>
@@ -37,17 +39,11 @@ void EigenDecompPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.4f, 0), true);
+            ui::BeginSettingsColumn("eigen_decomp", ImGui::GetContentRegionAvail().x * 0.4f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -67,9 +63,7 @@ void EigenDecompPanel::RenderToolbar() {
 }
 
 void EigenDecompPanel::RenderMatrixInput() {
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix (Square)");
-    ImGui::Separator();
-
+    ui::SettingsSection("Input matrix (square)");
     ImGui::Text("Size:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
@@ -108,7 +102,7 @@ void EigenDecompPanel::RenderMatrixInput() {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_EYE " Identity")) {
+    if (ui::SecondaryButton("Identity")) {
         for (int i = 0; i < size_; i++) {
             for (int j = 0; j < size_; j++) {
                 matrix_[i][j] = (i == j) ? 1.0 : 0.0;
@@ -116,7 +110,7 @@ void EigenDecompPanel::RenderMatrixInput() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_ROTATE " Symmetric")) {
+    if (ui::SecondaryButton("Symmetric")) {
         // Make symmetric: A = (A + A^T) / 2
         for (int i = 0; i < size_; i++) {
             for (int j = i + 1; j < size_; j++) {
@@ -135,9 +129,6 @@ void EigenDecompPanel::RenderLoadingIndicator() {
 
 void EigenDecompPanel::RenderResults() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
     if (!error_message_.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
@@ -146,7 +137,8 @@ void EigenDecompPanel::RenderResults() {
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to find eigenvalues and eigenvectors");
+        ui::EmptyState(ICON_FA_CHART_LINE, "No decomposition yet",
+                       "Enter a square matrix, then Compute to find eigenvalues and eigenvectors.");
         return;
     }
 

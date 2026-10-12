@@ -1,5 +1,8 @@
 #include "filter_designer_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -32,17 +35,11 @@ void FilterDesignerPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("SettingsPanel", ImVec2(panel_width * 0.30f, 0), true);
+            ui::BeginSettingsColumn("filter_designer", ImGui::GetContentRegionAvail().x * 0.30f);
             RenderFilterSettings();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -69,122 +66,100 @@ void FilterDesignerPanel::RenderToolbar() {
 }
 
 void FilterDesignerPanel::RenderFilterSettings() {
-    ImGui::Text(ICON_FA_SLIDERS " Filter Settings");
-    ImGui::Separator();
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::SettingsSection("Filter");
 
     // Filter type
-    ImGui::Text("Filter Type:");
     const char* filter_types[] = { "Lowpass", "Highpass", "Bandpass", "Bandstop" };
     int current_type = static_cast<int>(filter_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Filter type");
     if (ImGui::Combo("##FilterType", &current_type, filter_types, IM_ARRAYSIZE(filter_types))) {
         filter_type_ = static_cast<FilterType>(current_type);
         has_filter_ = false;
     }
 
-    ImGui::Spacing();
-
     // Sample rate
-    ImGui::Text("Sample Rate (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Sample rate (Hz)");
     if (ImGui::InputDouble("##samplerate", &sample_rate_, 100.0, 500.0, "%.0f")) {
         sample_rate_ = std::clamp(sample_rate_, 100.0, 48000.0);
         has_filter_ = false;
     }
 
-    ImGui::Spacing();
-
     // Cutoff frequencies
     double nyquist = sample_rate_ / 2.0;
 
-    ImGui::Text("Cutoff Frequency 1 (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Cutoff frequency 1 (Hz)");
     if (ImGui::InputDouble("##cutoff1", &cutoff1_, 10.0, 50.0, "%.1f")) {
         cutoff1_ = std::clamp(cutoff1_, 1.0, nyquist - 1.0);
         has_filter_ = false;
     }
 
     if (filter_type_ == FilterType::Bandpass || filter_type_ == FilterType::Bandstop) {
-        ImGui::Text("Cutoff Frequency 2 (Hz):");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Cutoff frequency 2 (Hz)");
         if (ImGui::InputDouble("##cutoff2", &cutoff2_, 10.0, 50.0, "%.1f")) {
             cutoff2_ = std::clamp(cutoff2_, cutoff1_ + 1.0, nyquist - 1.0);
             has_filter_ = false;
         }
     }
 
-    ImGui::Spacing();
-
     // Filter order
-    ImGui::Text("Filter Order (taps):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Filter order (taps)");
     if (ImGui::SliderInt("##order", &filter_order_, 11, 201)) {
         // Keep odd for symmetric FIR
         if (filter_order_ % 2 == 0) filter_order_++;
         has_filter_ = false;
     }
-    ImGui::TextDisabled("(Higher = sharper cutoff, more delay)");
+    ImGui::TextColored(t.text_dim, "(Higher = sharper cutoff, more delay)");
 
-    ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
 
     // Nyquist info
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Nyquist: %.1f Hz", nyquist);
+    ImGui::TextColored(t.text_dim, "Nyquist: %.1f Hz", nyquist);
 
     // Normalized cutoff
     if (filter_type_ == FilterType::Lowpass || filter_type_ == FilterType::Highpass) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Norm. cutoff: %.3f", cutoff1_ / nyquist);
+        ImGui::TextColored(t.text_dim, "Norm. cutoff: %.3f", cutoff1_ / nyquist);
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Norm. cutoffs: %.3f - %.3f",
+        ImGui::TextColored(t.text_dim, "Norm. cutoffs: %.3f - %.3f",
                           cutoff1_ / nyquist, cutoff2_ / nyquist);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Test signal settings
-    ImGui::Text(ICON_FA_WAVE_SQUARE " Test Signal");
-    ImGui::Spacing();
+    ui::SettingsSection("Test signal");
 
-    ImGui::Text("Frequency 1 (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Frequency 1 (Hz)");
     ImGui::InputDouble("##testfreq1", &test_freq1_, 10.0, 50.0, "%.1f");
     test_freq1_ = std::clamp(test_freq1_, 1.0, sample_rate_ / 2.0);
 
-    ImGui::Text("Frequency 2 (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Frequency 2 (Hz)");
     ImGui::InputDouble("##testfreq2", &test_freq2_, 10.0, 50.0, "%.1f");
     test_freq2_ = std::clamp(test_freq2_, 1.0, sample_rate_ / 2.0);
 
     ImGui::Spacing();
 
-    if (ImGui::Button(ICON_FA_ROTATE " Regenerate Signal", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Regenerate Signal", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         GenerateTestSignal();
         has_filtered_ = false;
     }
 
     // Presets
-    ImGui::Spacing();
-    ImGui::Text("Filter Presets:");
+    ui::SettingsSection("Presets");
 
-    if (ImGui::Button("LP 200Hz", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("LP 200Hz", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         filter_type_ = FilterType::Lowpass;
         cutoff1_ = 200.0;
         filter_order_ = 51;
         sample_rate_ = 2000.0;
         has_filter_ = false;
     }
-    if (ImGui::Button("HP 300Hz", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("HP 300Hz", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         filter_type_ = FilterType::Highpass;
         cutoff1_ = 300.0;
         filter_order_ = 51;
         sample_rate_ = 2000.0;
         has_filter_ = false;
     }
-    if (ImGui::Button("BP 200-400Hz", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("BP 200-400Hz", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         filter_type_ = FilterType::Bandpass;
         cutoff1_ = 200.0;
         cutoff2_ = 400.0;
@@ -208,7 +183,8 @@ void FilterDesignerPanel::RenderResults() {
     }
 
     if (!has_filter_) {
-        ImGui::TextDisabled("Click 'Design Filter' to create filter coefficients");
+        ui::EmptyState(ICON_FA_FILTER, "No filter yet",
+                       "Set the filter type, cutoff and order, then Design Filter.");
         return;
     }
 

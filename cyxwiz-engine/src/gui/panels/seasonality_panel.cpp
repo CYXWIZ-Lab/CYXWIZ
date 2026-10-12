@@ -1,5 +1,6 @@
 #include "seasonality_panel.h"
 #include "../icons.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -30,17 +31,11 @@ void SeasonalityPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("seasonality", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -83,39 +78,48 @@ void SeasonalityPanel::RenderToolbar() {
 }
 
 void SeasonalityPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = { "Seasonal", "Multi-Seasonal", "Trend+Seasonal", "No Seasonality" };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
 
     if (signal_type_ != SignalType::NoSeason) {
-        ImGui::DragInt("Period", &primary_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Period");
+        ImGui::DragInt("##period", &primary_period_, 1.0f, 2, 52);
         static const double kAmpMin = 0.1, kAmpMax = 10.0;
-        ImGui::SliderScalar("Amplitude", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
+        ui::FieldLabel("Amplitude");
+        ImGui::SliderScalar("##amplitude", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
     }
 
     if (signal_type_ == SignalType::MultiSeasonal) {
-        ImGui::DragInt("Period 2", &secondary_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Period 2");
+        ImGui::DragInt("##period_2", &secondary_period_, 1.0f, 2, 52);
     }
 
     static const double kNoiseMin = 0.0, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " Detection Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Detection");
 
-    ImGui::DragInt("Min Period", &min_period_, 1.0f, 2, 20);
-    ImGui::DragInt("Max Period", &max_period_, 1.0f, -1, 100);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("-1 = automatic (n/2)");
+    if (ImGui::BeginTable("##period_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min period");
+        ImGui::DragInt("##min_period", &min_period_, 1.0f, 2, 20);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max period");
+        ImGui::DragInt("##max_period", &max_period_, 1.0f, -1, 100);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("-1 = automatic (n/2)");
+        }
+        ImGui::EndTable();
     }
 }
 

@@ -1,5 +1,6 @@
 #include "acf_pacf_panel.h"
 #include "../icons.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -30,17 +31,11 @@ void ACFPACFPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("acf_pacf", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -78,44 +73,48 @@ void ACFPACFPanel::RenderToolbar() {
 }
 
 void ACFPACFPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* signal_types[] = {
         "AR(1)", "AR(2)", "MA(1)", "MA(2)", "ARMA(1,1)",
         "White Noise", "Random Walk"
     };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Model", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Model");
+    if (ImGui::Combo("##model", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
     static const double kNoiseMin = 0.1, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
     static const double kCoeffMin = -0.99, kCoeffMax = 0.99;
     if (signal_type_ == SignalType::AR1 || signal_type_ == SignalType::AR2 ||
         signal_type_ == SignalType::ARMA) {
-        ImGui::SliderScalar("AR1 Coeff", ImGuiDataType_Double, &ar1_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
+        ui::FieldLabel("AR1 coefficient");
+        ImGui::SliderScalar("##ar1_coeff", ImGuiDataType_Double, &ar1_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
     }
 
     if (signal_type_ == SignalType::AR2) {
-        ImGui::SliderScalar("AR2 Coeff", ImGuiDataType_Double, &ar2_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
+        ui::FieldLabel("AR2 coefficient");
+        ImGui::SliderScalar("##ar2_coeff", ImGuiDataType_Double, &ar2_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
     }
 
     if (signal_type_ == SignalType::MA1 || signal_type_ == SignalType::MA2 ||
         signal_type_ == SignalType::ARMA) {
-        ImGui::SliderScalar("MA1 Coeff", ImGuiDataType_Double, &ma1_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
+        ui::FieldLabel("MA1 coefficient");
+        ImGui::SliderScalar("##ma1_coeff", ImGuiDataType_Double, &ma1_coeff_, &kCoeffMin, &kCoeffMax, "%.2f");
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_SLIDERS " ACF Settings");
-    ImGui::Separator();
+    ui::SettingsSection("ACF");
 
-    ImGui::DragInt("Max Lag", &max_lag_, 1.0f, 5, 100);
-    ImGui::SliderFloat("Confidence", reinterpret_cast<float*>(&confidence_level_), 0.90f, 0.99f, "%.2f");
+    ui::FieldLabel("Max lag");
+    ImGui::DragInt("##max_lag", &max_lag_, 1.0f, 5, 100);
+    ui::FieldLabel("Confidence");
+    ImGui::SliderFloat("##confidence", reinterpret_cast<float*>(&confidence_level_), 0.90f, 0.99f, "%.2f");
 }
 
 void ACFPACFPanel::RenderLoadingIndicator() {
@@ -134,7 +133,8 @@ void ACFPACFPanel::RenderResults() {
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click 'Compute' to calculate ACF/PACF");
+        ui::EmptyState(ICON_FA_CHART_BAR, "No correlogram yet",
+                       "Pick a model and the ACF settings, then Compute.");
         return;
     }
 

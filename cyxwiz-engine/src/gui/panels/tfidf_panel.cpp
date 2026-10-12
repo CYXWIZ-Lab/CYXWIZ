@@ -1,5 +1,8 @@
 #include "tfidf_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -30,17 +33,11 @@ void TFIDFPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("tfidf", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -76,34 +73,32 @@ void TFIDFPanel::RenderToolbar() {
 }
 
 void TFIDFPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_SLIDERS " Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Parameters");
 
     ImGui::Checkbox("Use IDF", &use_idf_);
     ImGui::Checkbox("Smooth IDF", &smooth_idf_);
 
     const char* norms[] = { "None", "L2", "L1" };
-    ImGui::Combo("Normalization", &norm_idx_, norms, IM_ARRAYSIZE(norms));
+    ui::FieldLabel("Normalization");
+    ImGui::Combo("##normalization", &norm_idx_, norms, IM_ARRAYSIZE(norms));
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_DATABASE " Sample Documents");
-    ImGui::Separator();
+    ui::SettingsSection("Sample documents");
 
     const char* doc_types[] = { "News", "Reviews", "Technical" };
-    if (ImGui::Combo("Type", &doc_type_idx_, doc_types, IM_ARRAYSIZE(doc_types))) {
+    ui::FieldLabel("Type");
+    if (ImGui::Combo("##doc_type", &doc_type_idx_, doc_types, IM_ARRAYSIZE(doc_types))) {
         GenerateSampleDocuments();
         has_result_ = false;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text(ICON_FA_FILE_LINES " Documents (%d)", static_cast<int>(documents_.size()));
-    ImGui::Separator();
+    char documents_title[48];
+    snprintf(documents_title, sizeof(documents_title), "Documents (%d)", static_cast<int>(documents_.size()));
+    ui::SettingsSection(documents_title);
 
-    // Document list
-    float list_height = ImGui::GetContentRegionAvail().y - 80;
-    ImGui::BeginChild("DocList", ImVec2(-1, list_height), true);
+    // Document list; leave room below it for Add and Remove Selected.
+    const float reserve = 2.0f * ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    float list_height = std::max(ImGui::GetContentRegionAvail().y - reserve, 3.0f * ImGui::GetFrameHeight());
+    ui::BeginInsetList("##documents", list_height);
 
     for (size_t i = 0; i < documents_.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
@@ -126,30 +121,31 @@ void TFIDFPanel::RenderInputPanel() {
         ImGui::PopID();
     }
 
-    ImGui::EndChild();
+    ui::EndInsetList();
 
     // Document controls
-    if (ImGui::Button(ICON_FA_PLUS " Add", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Add", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         AddDocument();
     }
 
-    if (selected_doc_ >= 0 && selected_doc_ < static_cast<int>(documents_.size())) {
-        if (ImGui::Button(ICON_FA_TRASH " Remove Selected", ImVec2(-1, 0))) {
-            RemoveDocument(selected_doc_);
-        }
+    const bool has_selection = selected_doc_ >= 0 && selected_doc_ < static_cast<int>(documents_.size());
+    if (ui::SecondaryButton("Remove Selected", has_selection, "Select a document first",
+                            ui::ButtonSize::Regular, -FLT_MIN)) {
+        RemoveDocument(selected_doc_);
     }
 }
 
 void TFIDFPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Add documents and click 'Compute TF-IDF' to see results");
+        ui::EmptyState(ICON_FA_TABLE, "No TF-IDF results yet",
+                       "Add or generate documents, then Compute TF-IDF.");
         return;
     }
 

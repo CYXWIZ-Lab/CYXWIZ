@@ -1,5 +1,7 @@
 #include "decomposition_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -31,17 +33,11 @@ void DecompositionPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.25f, 0), true);
+            ui::BeginSettingsColumn("decomposition", ImGui::GetContentRegionAvail().x * 0.25f);
             RenderInputPanel();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -87,12 +83,12 @@ void DecompositionPanel::RenderToolbar() {
 }
 
 void DecompositionPanel::RenderInputPanel() {
-    ImGui::Text(ICON_FA_DATABASE " Data Source");
-    ImGui::Separator();
+    ui::SettingsSection("Data");
 
     const char* data_types[] = { "Generate", "Manual" };
     int data_type_idx = static_cast<int>(data_type_);
-    if (ImGui::Combo("Source", &data_type_idx, data_types, IM_ARRAYSIZE(data_types))) {
+    ui::FieldLabel("Source");
+    if (ImGui::Combo("##source", &data_type_idx, data_types, IM_ARRAYSIZE(data_types))) {
         data_type_ = static_cast<DataType>(data_type_idx);
     }
 
@@ -100,17 +96,11 @@ void DecompositionPanel::RenderInputPanel() {
         RenderGenerateOptions();
     }
 
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    ImGui::Text(ICON_FA_SLIDERS " Decomposition Settings");
-    ImGui::Separator();
+    ui::SettingsSection("Decomposition");
     RenderDecompositionOptions();
 }
 
 void DecompositionPanel::RenderGenerateOptions() {
-    ImGui::Spacing();
-
     const char* signal_types[] = {
         "Trend + Seasonal",
         "Random Walk",
@@ -119,25 +109,32 @@ void DecompositionPanel::RenderGenerateOptions() {
         "Pure Seasonal"
     };
     int signal_idx = static_cast<int>(signal_type_);
-    if (ImGui::Combo("Signal Type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
+    ui::FieldLabel("Signal type");
+    if (ImGui::Combo("##signal_type", &signal_idx, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(signal_idx);
     }
 
-    ImGui::DragInt("Samples (n)", &num_samples_, 1.0f, 50, 1000);
+    ui::FieldLabel("Samples (n)");
+    ImGui::DragInt("##samples", &num_samples_, 1.0f, 50, 1000);
 
     if (signal_type_ == SignalType::TrendSeasonal ||
         signal_type_ == SignalType::Seasonal) {
         static const double kSlopeMin = -1.0, kSlopeMax = 1.0;
         static const double kAmpMin = 0.0, kAmpMax = 10.0;
-        ImGui::SliderScalar("Trend Slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
-        ImGui::SliderScalar("Seasonal Amp", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
-        ImGui::DragInt("Period", &seasonal_period_, 1.0f, 2, 52);
+        ui::FieldLabel("Trend slope");
+        ImGui::SliderScalar("##trend_slope", ImGuiDataType_Double, &trend_slope_, &kSlopeMin, &kSlopeMax, "%.3f");
+        ui::FieldLabel("Seasonal amplitude");
+        ImGui::SliderScalar("##seasonal_amp", ImGuiDataType_Double, &seasonal_amplitude_, &kAmpMin, &kAmpMax, "%.2f");
+        ui::FieldLabel("Seasonal period");
+        ImGui::DragInt("##seasonal_period", &seasonal_period_, 1.0f, 2, 52);
     }
 
     static const double kNoiseMin = 0.0, kNoiseMax = 5.0;
-    ImGui::SliderScalar("Noise Std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
+    ui::FieldLabel("Noise std");
+    ImGui::SliderScalar("##noise_std", ImGuiDataType_Double, &noise_std_, &kNoiseMin, &kNoiseMax, "%.2f");
 
-    if (ImGui::Button(ICON_FA_ROTATE " Regenerate")) {
+    ImGui::Spacing();
+    if (ui::SecondaryButton("Regenerate", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         GenerateData();
         has_result_ = false;
     }
@@ -146,25 +143,30 @@ void DecompositionPanel::RenderGenerateOptions() {
 void DecompositionPanel::RenderDecompositionOptions() {
     const char* methods[] = { "Classical", "STL" };
     int method_idx = static_cast<int>(decomp_method_);
-    if (ImGui::Combo("Method", &method_idx, methods, IM_ARRAYSIZE(methods))) {
+    ui::FieldLabel("Method");
+    if (ImGui::Combo("##method", &method_idx, methods, IM_ARRAYSIZE(methods))) {
         decomp_method_ = static_cast<DecompMethod>(method_idx);
     }
 
     if (decomp_method_ == DecompMethod::Classical) {
         const char* types[] = { "Additive", "Multiplicative" };
         int type_idx = (seasonal_type_ == "multiplicative") ? 1 : 0;
-        if (ImGui::Combo("Type", &type_idx, types, IM_ARRAYSIZE(types))) {
+        ui::FieldLabel("Type");
+        if (ImGui::Combo("##type", &type_idx, types, IM_ARRAYSIZE(types))) {
             seasonal_type_ = (type_idx == 1) ? "multiplicative" : "additive";
         }
     }
 
-    ImGui::DragInt("Period", &period_, 1.0f, 2, 52);
+    ui::FieldLabel("Period");
+    ImGui::DragInt("##period", &period_, 1.0f, 2, 52);
 
     if (decomp_method_ == DecompMethod::STL) {
-        ImGui::DragInt("Seasonal Window", &stl_seasonal_window_, 1.0f, 3, 51);
+        ui::FieldLabel("Seasonal window");
+        ImGui::DragInt("##seasonal_window", &stl_seasonal_window_, 1.0f, 3, 51);
         if (stl_seasonal_window_ % 2 == 0) stl_seasonal_window_++;
 
-        ImGui::DragInt("Trend Window", &stl_trend_window_, 1.0f, -1, 101);
+        ui::FieldLabel("Trend window");
+        ImGui::DragInt("##trend_window", &stl_trend_window_, 1.0f, -1, 101);
         if (stl_trend_window_ > 0 && stl_trend_window_ % 2 == 0) stl_trend_window_++;
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("-1 = auto");
@@ -195,7 +197,8 @@ void DecompositionPanel::RenderResults() {
     }
 
     if (!has_result_ && time_series_.empty()) {
-        ImGui::TextDisabled("Generate data and click 'Decompose' to see results");
+        ui::EmptyState(ICON_FA_CHART_LINE, "No data yet",
+                       "Generate a series, then Decompose.");
         return;
     }
 

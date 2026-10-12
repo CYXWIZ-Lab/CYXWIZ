@@ -1,6 +1,7 @@
 #include "qr_panel.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -37,17 +38,11 @@ void QRPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("qr", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -67,9 +62,7 @@ void QRPanel::RenderToolbar() {
 }
 
 void QRPanel::RenderMatrixInput() {
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix A");
-    ImGui::Separator();
-
+    ui::SettingsSection("Input matrix A");
     ImGui::Text("Size:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(50);
@@ -127,9 +120,6 @@ void QRPanel::RenderLoadingIndicator() {
 
 void QRPanel::RenderResults() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
     if (!error_message_.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
@@ -138,7 +128,8 @@ void QRPanel::RenderResults() {
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to perform QR decomposition");
+        ui::EmptyState(ICON_FA_TABLE_COLUMNS, "No decomposition yet",
+                       "Enter matrix A, then Compute QR.");
         return;
     }
 

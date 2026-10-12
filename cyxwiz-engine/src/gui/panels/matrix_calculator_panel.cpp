@@ -1,6 +1,8 @@
 #include "matrix_calculator_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -46,38 +48,19 @@ void MatrixCalculatorPanel::Render() {
             RenderLoadingIndicator();
         } else {
             // Split view: Left for input, Right for results
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.5f, 0), true);
-            {
-                if (ImGui::CollapsingHeader(ICON_FA_TABLE_CELLS " Matrix A", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    RenderMatrixA();
-                }
-
-                if (show_matrix_b_) {
-                    ImGui::Spacing();
-                    if (ImGui::CollapsingHeader(ICON_FA_TABLE " Matrix B", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        RenderMatrixB();
-                    }
-                }
-
-                ImGui::Spacing();
-                if (ImGui::CollapsingHeader(ICON_FA_SLIDERS " Operation", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    RenderOperationSelector();
-                    if (selected_op_ == Operation::ScalarMultiply) {
-                        RenderScalarInput();
-                    }
-                }
+            ui::BeginSettingsColumn("matrix_calculator", ImGui::GetContentRegionAvail().x * 0.5f);
+            RenderMatrixA();
+            if (show_matrix_b_) {
+                RenderMatrixB();
             }
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
-            {
-                RenderResults();
+            ui::SettingsSection("Operation");
+            RenderOperationSelector();
+            if (selected_op_ == Operation::ScalarMultiply) {
+                RenderScalarInput();
             }
-            ImGui::EndChild();
+            ui::BeginResultsArea();
+            RenderResults();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -121,7 +104,7 @@ void MatrixCalculatorPanel::RenderMatrixB() {
 void MatrixCalculatorPanel::RenderMatrixEditor(const char* label, std::vector<std::vector<double>>& matrix,
                                                 int& rows, int& cols, const char* id_prefix) {
     ImGui::PushID(id_prefix);
-    ImGui::TextUnformatted(label);
+    ui::SettingsSection(label);
 
     // Size controls
     ImGui::Text("Size:");
@@ -141,7 +124,7 @@ void MatrixCalculatorPanel::RenderMatrixEditor(const char* label, std::vector<st
     }
 
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_EYE " Identity")) {
+    if (ui::SecondaryButton("Identity")) {
         int n = std::min(rows, cols);
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < cols; j++) {
@@ -151,7 +134,7 @@ void MatrixCalculatorPanel::RenderMatrixEditor(const char* label, std::vector<st
     }
 
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_ROTATE " Zero")) {
+    if (ui::SecondaryButton("Zero")) {
         for (auto& row : matrix) {
             std::fill(row.begin(), row.end(), 0.0);
         }
@@ -207,7 +190,7 @@ void MatrixCalculatorPanel::RenderOperationSelector() {
     };
 
     int op_index = static_cast<int>(selected_op_);
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::Combo("##Operation", &op_index, operations, IM_ARRAYSIZE(operations))) {
         selected_op_ = static_cast<Operation>(op_index);
         has_matrix_result_ = false;
@@ -221,9 +204,7 @@ void MatrixCalculatorPanel::RenderOperationSelector() {
 }
 
 void MatrixCalculatorPanel::RenderScalarInput() {
-    ImGui::Text("Scalar (k):");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ui::FieldLabel("Scalar (k)");
     ImGui::InputDouble("##scalar", &scalar_value_, 0.1, 1.0, "%.4f");
 }
 
@@ -234,9 +215,6 @@ void MatrixCalculatorPanel::RenderLoadingIndicator() {
 
 void MatrixCalculatorPanel::RenderResults() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
     if (!error_message_.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
@@ -253,7 +231,7 @@ void MatrixCalculatorPanel::RenderResults() {
     }
 
     if (!has_matrix_result_ && !has_scalar_result_) {
-        ImGui::TextDisabled("Select an operation and click Compute");
+        ui::EmptyState(ICON_FA_CALCULATOR, "No result yet", "Pick an operation, then Compute.");
     }
 }
 
@@ -292,7 +270,7 @@ void MatrixCalculatorPanel::RenderMatrixResult() {
 
     // Copy result to Matrix A button
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_COPY " Copy to Matrix A")) {
+    if (ui::SecondaryButton("Copy to Matrix A")) {
         matrix_a_ = matrix_result_.matrix;
         rows_a_ = matrix_result_.rows;
         cols_a_ = matrix_result_.cols;
