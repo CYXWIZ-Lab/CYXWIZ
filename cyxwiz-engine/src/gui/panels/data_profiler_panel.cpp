@@ -425,7 +425,9 @@ void DataProfilerPanel::RenderHistogram(const ColumnProfile& profile) {
             (profile.histogram[1].low - profile.histogram[0].low) * 0.9 : 1.0;
 
         if (ImPlot::BeginPlot("##Histogram", ImVec2(-1, 200))) {
-            ImPlot::SetupAxes("Value", "Count");
+            // Fit to the selected column; the plot id is shared, so without
+            // this the previous column's limits stay.
+            ImPlot::SetupAxes("Value", "Count", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
             ImPlot::PlotBars("##bars", bin_centers.data(), counts.data(),
                              static_cast<int>(bin_centers.size()), bar_width);
             ImPlot::EndPlot();
