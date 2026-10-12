@@ -138,59 +138,31 @@ void ClusterEvalPanel::RenderMetrics() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Metrics cards
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("Silhouette", ImVec2(200, 100), true);
+    // Metric cards: three columns sharing the width (fixed 200 px cards ran
+    // past the right edge), text wrapped inside each.
+    if (ImGui::BeginTable("MetricCards", 3, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_CHART_AREA " Silhouette Score");
-        ImGui::Separator();
-
-        float silhouette = static_cast<float>(metrics_.silhouette_score);
-        ImVec4 color;
-        if (silhouette > 0.5) color = t.success;
-        else if (silhouette > 0.25) color = t.warning;
-        else color = t.error;
-
-        ImGui::TextColored(color, "%.4f", silhouette);
+        const float silhouette = static_cast<float>(metrics_.silhouette_score);
+        const ImVec4 silhouette_colour =
+            silhouette > 0.5f ? t.success : silhouette > 0.25f ? t.warning : t.error;
+        ImGui::TextColored(silhouette_colour, "%.4f", silhouette);
         ImGui::TextWrapped("Range: -1 to 1. Higher is better.");
-        ImGui::EndChild();
-    }
-    ImGui::EndGroup();
 
-    ImGui::SameLine();
-
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("DaviesBouldin", ImVec2(200, 100), true);
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_BULLSEYE " Davies-Bouldin");
-        ImGui::Separator();
-
-        float db = static_cast<float>(metrics_.davies_bouldin_index);
-        ImVec4 color;
-        if (db < 0.5) color = t.success;
-        else if (db < 1.0) color = t.warning;
-        else color = t.error;
-
-        ImGui::TextColored(color, "%.4f", db);
+        const float db = static_cast<float>(metrics_.davies_bouldin_index);
+        const ImVec4 db_colour = db < 0.5f ? t.success : db < 1.0f ? t.warning : t.error;
+        ImGui::TextColored(db_colour, "%.4f", db);
         ImGui::TextWrapped("Lower is better.");
-        ImGui::EndChild();
-    }
-    ImGui::EndGroup();
 
-    ImGui::SameLine();
-
-    ImGui::BeginGroup();
-    {
-        ImGui::BeginChild("CalinskiHarabasz", ImVec2(200, 100), true);
+        ImGui::TableNextColumn();
         ImGui::Text(ICON_FA_CHART_COLUMN " Calinski-Harabasz");
-        ImGui::Separator();
-
-        float ch = static_cast<float>(metrics_.calinski_harabasz_score);
-        ImGui::Text("%.2f", ch);
+        ImGui::Text("%.2f", static_cast<float>(metrics_.calinski_harabasz_score));
         ImGui::TextWrapped("Higher is better.");
-        ImGui::EndChild();
+
+        ImGui::EndTable();
     }
-    ImGui::EndGroup();
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -387,13 +359,9 @@ void ClusterEvalPanel::ComputeMetrics() {
             else { valid = false; break; }
         }
 
-        // Get label
-        auto label_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, label_column_idx_));
-        if (!label_val.has_value()) valid = false;
-
         if (valid) {
-            input_data_.push_back(row_data);
-            cluster_labels_.push_back(static_cast<int>(label_val.value()));
+            input_data_.push_back(std::move(row_data));
+            cluster_labels_.push_back(*labels[row]);
         }
     }
 
