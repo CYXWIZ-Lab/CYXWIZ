@@ -101,8 +101,10 @@ void ROCAUCPanel::RenderROCCurve() {
 
     if (ImPlot::BeginPlot("##ROCCurve", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("False Positive Rate", "True Positive Rate");
-        ImPlot::SetupAxisLimits(ImAxis_X1, 0, 1);
-        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1);
+        // A little past [0, 1], so curve segments along x = 0 and y = 1 are
+        // not hidden under the plot frame.
+        ImPlot::SetupAxisLimits(ImAxis_X1, -0.02, 1.02);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.02, 1.02);
 
         // Random classifier line (diagonal)
         double diag_x[] = {0.0, 1.0};
