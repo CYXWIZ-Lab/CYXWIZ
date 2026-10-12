@@ -534,13 +534,41 @@ TEST_CASE("Core Tensor ops have no native fallback",
     REQUIRE(hits.empty());
 }
 
+TEST_CASE("ROC / PR curves run on the device without a fallback",
+          "[arrayfire][roc_pr][device_only][source_scan]") {
+    // TOFIX140: the sorted cumulative counts behind ROC / PR run on the
+    // selected ArrayFire device for every input size; there is no native
+    // path or size switch to fall back to.
+    const fs::path repo_root = FindRepoRoot();
+    const auto lines = ReadLines(repo_root / "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp");
+    REQUIRE_FALSE(lines.empty());
+    const std::vector<std::string> forbidden_needles = {
+        "CYXWIZ_HAS_ARRAYFIRE",
+        "ArrayFireHostSyncCategory",
+        "LogEvaluationFallbackOnce",
+        "ArgSort",
+    };
+    std::vector<RawFallbackHit> hits;
+    bool sorts_on_device = false;
+    for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+        if (lines[line_index].find("af::sort(") != std::string::npos) sorts_on_device = true;
+        for (const auto& needle : forbidden_needles) {
+            if (lines[line_index].find(needle) != std::string::npos) {
+                hits.push_back(RawFallbackHit{"roc_pr_curves.cpp", line_index + 1, needle, lines[line_index]});
+            }
+        }
+    }
+    INFO("ROC / PR must stay device-only:" + FormatHits(hits));
+    REQUIRE(hits.empty());
+    REQUIRE(sorts_on_device);
+}
+
 TEST_CASE("Host-vector model evaluation has one native execution owner",
           "[arrayfire][classification_metrics][ownership][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
     const std::vector<std::string> relative_paths = {
         "cyxwiz-backend/src/algorithms/evaluation/classification_metrics.cpp",
         "cyxwiz-backend/src/algorithms/evaluation/cross_validation.cpp",
-        "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp",
         "cyxwiz-backend/src/algorithms/model_evaluation.cpp",
     };
     const std::vector<std::string> forbidden_needles = {
