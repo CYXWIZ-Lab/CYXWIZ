@@ -275,4 +275,8 @@ float ButtonWidth(const char* label, ButtonSize size) {
     return ImGui::CalcTextSize(label, nullptr, true).x + Padding(size).x * 2.0f + 2.0f;
 }
 
+float ButtonHeight(ButtonSize size) {
+    return ImGui::GetTextLineHeight() + Padding(size).y * 2.0f;
+}
+
 }  // namespace cyxwiz::ui

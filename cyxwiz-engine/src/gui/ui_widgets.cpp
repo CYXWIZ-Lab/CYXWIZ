@@ -350,7 +350,32 @@ void EmptyState(const char* icon, const char* title, const char* hint) {
     };
     if (icon && icon[0]) centred(icon, t.text_faint, 2.0f);
     centred(title, t.text_dim, 1.0f);
-    if (hint && hint[0]) centred(hint, t.text_faint, 1.0f);
+    if (!hint || !hint[0]) return;
+    // The hint wraps into centred lines that fit the area (a single line ran
+    // past the edge of a narrow results area).
+    const float max_width = std::min(std::max(avail.x - ImGui::GetStyle().ItemSpacing.x * 2.0f, 80.0f), 420.0f);
+    std::string line;
+    std::string word;
+    const auto flush = [&]() {
+        if (!line.empty()) centred(line.c_str(), t.text_faint, 1.0f);
+        line.clear();
+    };
+    for (const char* c = hint;; ++c) {
+        if (*c == ' ' || *c == '\0') {
+            const std::string candidate = line.empty() ? word : line + " " + word;
+            if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > max_width) {
+                flush();
+                line = word;
+            } else {
+                line = candidate;
+            }
+            word.clear();
+            if (*c == '\0') break;
+        } else {
+            word += *c;
+        }
+    }
+    flush();
 }
 
 // ---------------------------------------------------------------------------

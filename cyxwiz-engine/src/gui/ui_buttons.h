@@ -56,5 +56,7 @@ float FilterChipWidth(const char* label, const char* count);
 
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
+// Height a button will take, for reserving room below a growing widget.
+float ButtonHeight(ButtonSize size);
 
 }  // namespace cyxwiz::ui
