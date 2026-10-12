@@ -4,6 +4,8 @@
 #include "../dataset_source.h"
 #include <cyxwiz/model_evaluation.h>
 #include <imgui.h>
+#include <functional>
+#include <utility>
 #include <vector>
 #include <string>
 #include <memory>
@@ -24,6 +26,8 @@ private:
     void RenderMatrixHeatmap();
     void RenderMetricsTable();
     void RenderNormalizedMatrix();
+    // One heatmap grid; cell_at(true, predicted) gives the colour position [0, 1] and the text.
+    void RenderGrid(const std::function<std::pair<float, std::string>(int, int)>& cell_at);
     void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
     void ComputeMatrix();
 

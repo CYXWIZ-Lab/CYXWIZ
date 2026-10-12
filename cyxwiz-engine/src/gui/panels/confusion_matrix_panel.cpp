@@ -87,69 +87,18 @@ void ConfusionMatrixPanel::RenderDataSelector() {
 void ConfusionMatrixPanel::RenderMatrixHeatmap() {
     if (!result_.success || result_.matrix.empty()) return;
 
-    int n = result_.n_classes;
-
-    // Find max value for color scaling
+    // Colour by count relative to the largest cell.
     int max_val = 0;
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (result_.matrix[i][j] > max_val) max_val = result_.matrix[i][j];
-        }
+    for (const auto& row : result_.matrix) {
+        for (int value : row) max_val = std::max(max_val, value);
     }
-
-    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text("Confusion Matrix (Rows: True, Columns: Predicted)");
     ImGui::Spacing();
-
-    float cell_size = 50.0f;
-    float label_width = 80.0f;
-
-    // Draw header row
-    ImGui::Dummy(ImVec2(label_width, 0));
-    ImGui::SameLine();
-    for (int j = 0; j < n; ++j) {
-        ImGui::BeginGroup();
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 2));
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cell_size - ImGui::CalcTextSize(result_.class_names[j].c_str()).x) / 2);
-        ImGui::Text("%s", result_.class_names[j].c_str());
-        ImGui::PopStyleVar();
-        ImGui::EndGroup();
-        if (j < n - 1) ImGui::SameLine(0, 2);
-    }
-
-    // Draw matrix cells
-    for (int i = 0; i < n; ++i) {
-        // Row label
-        ImGui::Text("%-10s", result_.class_names[i].c_str());
-        ImGui::SameLine(label_width);
-
-        for (int j = 0; j < n; ++j) {
-            int val = result_.matrix[i][j];
-            float ratio = (max_val > 0) ? static_cast<float>(val) / max_val : 0.0f;
-
-            // Sequential scale colour, with text that reads on it
-            ImVec4 fill = ui::SequentialAt(t, ratio);
-            ImU32 bg_color = ui::ToU32(fill);
-            ImU32 text_color = ui::ToU32(ui::ReadableOn(t, fill));
-
-            ImVec2 pos = ImGui::GetCursorScreenPos();
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-            // Draw cell background
-            draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-
-            // Draw cell value
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%d", val);
-            ImVec2 text_size = ImGui::CalcTextSize(buf);
-            ImVec2 text_pos = ImVec2(pos.x + (cell_size - text_size.x) / 2, pos.y + (cell_size - text_size.y) / 2);
-            draw_list->AddText(text_pos, text_color, buf);
-
-            ImGui::Dummy(ImVec2(cell_size, cell_size));
-            if (j < n - 1) ImGui::SameLine(0, 2);
-        }
-    }
+    RenderGrid([&](int i, int j) {
+        const int value = result_.matrix[i][j];
+        return std::make_pair(max_val > 0 ? static_cast<float>(value) / max_val : 0.0f, std::to_string(value));
+    });
 
     ImGui::Spacing();
     ImGui::Text("Total Samples: %d | Accuracy: %.2f%%", result_.total_samples, result_.accuracy * 100);
@@ -158,56 +107,71 @@ void ConfusionMatrixPanel::RenderMatrixHeatmap() {
 void ConfusionMatrixPanel::RenderNormalizedMatrix() {
     if (!result_.success || result_.matrix.empty()) return;
 
-    int n = result_.n_classes;
-
-    const ui::Tokens& t = ui::CurrentTokens();
-
     ImGui::TextUnformatted("Normalized Confusion Matrix (Row-wise %)");
     ImGui::Spacing();
+    RenderGrid([&](int i, int j) {
+        const int row_sum = result_.support[i];
+        const float ratio = row_sum > 0 ? static_cast<float>(result_.matrix[i][j]) / row_sum : 0.0f;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f%%", ratio * 100);
+        return std::make_pair(ratio, std::string(buf));
+    });
+}
 
-    float cell_size = 60.0f;
-    float label_width = 80.0f;
+void ConfusionMatrixPanel::RenderGrid(const std::function<std::pair<float, std::string>(int, int)>& cell_at) {
+    const int n = result_.n_classes;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImGuiStyle& style = ImGui::GetStyle();
 
-    // Draw header row
-    ImGui::Dummy(ImVec2(label_width, 0));
-    ImGui::SameLine();
+    // Sized from the text it holds (fixed 50 px cells and an 80 px label
+    // column clipped "tested_negative"): cells fit their widest value, the
+    // label column the longest class name, and column names alternate between
+    // two lines so each has two cells of width.
+    const float gap = 2.0f;
+    const float line = ImGui::GetTextLineHeight();
+    float value_width = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) value_width = std::max(value_width, ImGui::CalcTextSize(cell_at(i, j).second.c_str()).x);
+    }
+    const float cell = std::max(50.0f, value_width + 2.0f * style.FramePadding.x + gap);
+    float label_width = 0.0f;
+    for (const std::string& name : result_.class_names) label_width = std::max(label_width, ImGui::CalcTextSize(name.c_str()).x);
+    label_width += style.ItemSpacing.x * 2.0f;
+    const float header_height = (n > 1 ? 2.0f : 1.0f) * line + style.ItemSpacing.y * 2.0f;
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImU32 label_colour = ui::ToU32(t.text_dim);
+    const float grid_x = origin.x + label_width;
+    const float grid_y = origin.y + header_height;
+
     for (int j = 0; j < n; ++j) {
-        ImGui::BeginGroup();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cell_size - ImGui::CalcTextSize(result_.class_names[j].c_str()).x) / 2);
-        ImGui::Text("%s", result_.class_names[j].c_str());
-        ImGui::EndGroup();
-        if (j < n - 1) ImGui::SameLine(0, 2);
+        const char* name = result_.class_names[j].c_str();
+        const float width = ImGui::CalcTextSize(name).x;
+        const float room = (n > 1 ? 2.0f * cell : cell) - style.ItemSpacing.x;
+        // Centred over the column when it fits, otherwise left-aligned and clipped to its room.
+        const float x = width <= cell - gap ? grid_x + j * cell + (cell - gap - width) / 2 : grid_x + j * cell;
+        const ImVec2 pos(x, origin.y + (n > 1 ? (j % 2) * (line + style.ItemSpacing.y) : 0.0f));
+        const ImVec4 clip(pos.x, pos.y, grid_x + j * cell + room, pos.y + line);
+        draw_list->AddText(nullptr, 0.0f, pos, label_colour, name, nullptr, 0.0f, &clip);
     }
 
-    // Draw matrix cells
     for (int i = 0; i < n; ++i) {
-        int row_sum = result_.support[i];
-
-        ImGui::Text("%-10s", result_.class_names[i].c_str());
-        ImGui::SameLine(label_width);
-
+        draw_list->AddText(ImVec2(origin.x, grid_y + i * cell + (cell - gap - line) / 2), label_colour,
+                           result_.class_names[i].c_str());
         for (int j = 0; j < n; ++j) {
-            float ratio = (row_sum > 0) ? static_cast<float>(result_.matrix[i][j]) / row_sum : 0.0f;
-
-            ImVec4 fill = ui::SequentialAt(t, ratio);
-            ImU32 bg_color = ui::ToU32(fill);
-            ImU32 text_color = ui::ToU32(ui::ReadableOn(t, fill));
-
-            ImVec2 pos = ImGui::GetCursorScreenPos();
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-            draw_list->AddRectFilled(pos, ImVec2(pos.x + cell_size, pos.y + cell_size), bg_color);
-
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%.1f%%", ratio * 100);
-            ImVec2 text_size = ImGui::CalcTextSize(buf);
-            ImVec2 text_pos = ImVec2(pos.x + (cell_size - text_size.x) / 2, pos.y + (cell_size - text_size.y) / 2);
-            draw_list->AddText(text_pos, text_color, buf);
-
-            ImGui::Dummy(ImVec2(cell_size, cell_size));
-            if (j < n - 1) ImGui::SameLine(0, 2);
+            const auto [ratio, text] = cell_at(i, j);
+            const ImVec4 fill = ui::SequentialAt(t, ratio);
+            const ImVec2 min(grid_x + j * cell, grid_y + i * cell);
+            const ImVec2 max(min.x + cell - gap, min.y + cell - gap);
+            draw_list->AddRectFilled(min, max, ui::ToU32(fill));
+            const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+            draw_list->AddText(ImVec2(min.x + (cell - gap - text_size.x) / 2, min.y + (cell - gap - text_size.y) / 2),
+                               ui::ToU32(ui::ReadableOn(t, fill)), text.c_str());
         }
     }
+
+    ImGui::Dummy(ImVec2(label_width + cell * n, header_height + cell * n));
 }
 
 void ConfusionMatrixPanel::RenderMetricsTable() {
