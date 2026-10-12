@@ -42,8 +42,19 @@ struct LineState {
 // Colours one line given the state it starts in; returns the end state.
 LineState HighlightLine(std::string_view line, LineState in, std::vector<Span>& spans);
 
+// Which colouring a Highlighter applies.
+enum class Language : uint8_t { Plain, Python, Sql };
+
 class Highlighter {
 public:
+    // Changing the language recolours every line on the next Update.
+    void SetLanguage(Language language) {
+        if (language == language_) return;
+        language_ = language;
+        lines_.clear();
+        primed_ = false;
+    }
+    Language GetLanguage() const { return language_; }
     // Brings the cache up to date with the document; cheap when little changed.
     void Update(const Document& document);
     // A line the cache does not hold yet has no spans (drawn plain).
@@ -66,6 +77,7 @@ private:
     uint64_t version_ = 0;
     bool primed_ = false;
     int recoloured_ = 0;
+    Language language_ = Language::Python;
 };
 
 }  // namespace cyxwiz::editor

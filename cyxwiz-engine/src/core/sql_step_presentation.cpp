@@ -132,6 +132,23 @@ size_t MatchingClose(const std::vector<Token>& tokens, size_t open) {
     return tokens.size();
 }
 
+// Names after FROM / JOIN in tokens [begin, end): not a function call
+// (unnest(...)) or a subquery, not a keyword such as LATERAL.
+std::vector<std::string> ReadsIn(const std::vector<Token>& tokens, size_t begin, size_t end) {
+    std::vector<std::string> reads;
+    for (size_t k = begin; k + 1 < end; ++k) {
+        if (tokens[k].kind != TokenKind::Word || (tokens[k].text != "from" && tokens[k].text != "join")) continue;
+        size_t n = k + 1;
+        if (tokens[n].kind == TokenKind::Word && tokens[n].text == "lateral") ++n;
+        if (n >= end || tokens[n].kind != TokenKind::Word) continue;
+        if (n + 1 < end && tokens[n + 1].kind == TokenKind::Open) continue;
+        const std::string& name = tokens[n].text;
+        if (name == "select" || name == "values") continue;
+        if (std::find(reads.begin(), reads.end(), name) == reads.end()) reads.push_back(name);
+    }
+    return reads;
+}
+
 std::string CommentAbove(const Scan& scan, int line, int header_end_line) {
     std::vector<std::string> lines;
     for (int l = line - 1; l > header_end_line; --l) {
@@ -226,6 +243,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
             }
             part.last_line = tokens[close].line;
             part.description = CommentAbove(scan, part.first_line, header_end_line);
+            part.reads = ReadsIn(tokens, k + 1, close);
             outline.parts.push_back(std::move(part));
             k = close + 1;
             if (k < tokens.size() && tokens[k].kind == TokenKind::Comma) {
@@ -238,6 +256,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
     if (k < tokens.size()) {
         SqlPart result{"result", tokens[k].line, last_line, ""};
         result.description = CommentAbove(scan, result.first_line, header_end_line);
+        result.reads = ReadsIn(tokens, k, tokens.size());
         outline.parts.push_back(std::move(result));
     }
     return outline;

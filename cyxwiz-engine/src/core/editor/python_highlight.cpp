@@ -1,6 +1,7 @@
 #include "python_highlight.h"
 
 #include "../python_tokenizer.h"
+#include "sql_highlight.h"
 #include "text_document.h"
 
 #include <algorithm>
@@ -177,7 +178,14 @@ void Highlighter::Update(const Document& document) {
         }
         line.text = text;
         line.in = state;
-        line.out = HighlightLine(text, state, line.spans);
+        if (language_ == Language::Sql) {
+            line.out = HighlightSqlLine(text, state, line.spans);
+        } else if (language_ == Language::Python) {
+            line.out = HighlightLine(text, state, line.spans);
+        } else {
+            line.spans.clear();
+            line.out = {};
+        }
         line.valid = true;
         state = line.out;
         ++recoloured_;

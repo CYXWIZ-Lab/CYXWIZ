@@ -3,6 +3,7 @@
 #include "../src/core/editor/folding.h"
 #include "../src/core/editor/outline.h"
 #include "../src/core/editor/python_highlight.h"
+#include "../src/core/editor/sql_highlight.h"
 #include "../src/core/editor/text_document.h"
 
 #include <cstdlib>
@@ -51,6 +52,41 @@ int main() {
     Check(KindAt(spans, 4) == TokenKind::String && KindAt(spans, 13) == TokenKind::String, "prefixed strings");
     HighlightLine("# %% Training", {}, spans);
     Check(KindAt(spans, 0) == TokenKind::CellMarker, "cell marker line");
+
+    // SQL (TOFIX146): keywords in any case, functions, types, constants,
+    // quoted names stay plain, '' inside a string, comments.
+    const std::string sql = "select replace(t, chr(13), 'it''s') AS t::VARCHAR, NULL FROM \"input\" i -- note";
+    HighlightSqlLine(sql, {}, spans);
+    Check(KindAt(spans, 0) == TokenKind::Keyword, "select is a keyword");
+    Check(KindAt(spans, 7) == TokenKind::Function, "replace( is a function");
+    Check(KindAt(spans, 18) == TokenKind::Function, "chr( is a function");
+    Check(KindAt(spans, static_cast<int>(sql.find("it''s"))) == TokenKind::String &&
+              KindAt(spans, static_cast<int>(sql.find("s')"))) == TokenKind::String,
+          "'' stays inside the string");
+    Check(KindAt(spans, static_cast<int>(sql.find("AS"))) == TokenKind::Keyword, "AS");
+    Check(KindAt(spans, static_cast<int>(sql.find("VARCHAR"))) == TokenKind::Builtin, "a type");
+    Check(KindAt(spans, static_cast<int>(sql.find("NULL"))) == TokenKind::Constant, "NULL");
+    Check(KindAt(spans, static_cast<int>(sql.find("input"))) == TokenKind::Default, "a quoted name is plain");
+    Check(KindAt(spans, static_cast<int>(sql.find("-- note"))) == TokenKind::Comment, "-- comment");
+    s = HighlightSqlLine("SELECT 1 /* a block", {}, spans);
+    Check(s.triple == '*' && KindAt(spans, 7) == TokenKind::Number, "open block comment");
+    s = HighlightSqlLine("still -- inside */ WHERE x = 'open", s, spans);
+    Check(KindAt(spans, 0) == TokenKind::Comment && KindAt(spans, 19) == TokenKind::Keyword && s.triple == '\'',
+          "block comment ends; a string stays open");
+    s = HighlightSqlLine("text' OR y", s, spans);
+    Check(s.triple == 0 && KindAt(spans, 0) == TokenKind::String && KindAt(spans, 6) == TokenKind::Keyword,
+          "string ends on the next line");
+    {
+        Document q;
+        q.SetText("SELECT 1\n-- c\n");
+        Highlighter hq;
+        hq.SetLanguage(Language::Sql);
+        hq.Update(q);
+        Check(!hq.Spans(1).empty() && hq.Spans(1)[0].kind == TokenKind::Comment, "Highlighter uses SQL colouring");
+        hq.SetLanguage(Language::Plain);
+        hq.Update(q);
+        Check(hq.Spans(0).empty(), "plain text has no colours");
+    }
 
     // Cache: typing on one line recolours that line, not the file.
     Document d;

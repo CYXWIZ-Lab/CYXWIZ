@@ -49,7 +49,7 @@ public:
     void SetColorize(bool colorize) { colorize_ = colorize; }
     void SetTabSize(int size) { doc_.Settings().tab_size = size; }
     void SetKeyboardEnabled(bool enabled) { keyboard_enabled_ = enabled; }
-    void SetLanguageIsPython(bool python) { python_ = python; }
+    void SetLanguage(editor::Language language) { highlighter_.SetLanguage(language); }
     // Soft wrap at the view's width (Up/Down still move by document lines).
     void SetWordWrap(bool wrap) { wrap_ = wrap; }
 
@@ -171,7 +171,6 @@ private:
     bool read_only_ = false;
     bool show_whitespace_ = false;
     bool colorize_ = true;
-    bool python_ = true;
     bool wrap_ = false;
     bool keyboard_enabled_ = true;
     bool focused_ = false;

@@ -56,12 +56,20 @@ public:
     // reads it. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
 
+    // Opens a registered dataset (a step's output) in the Table Viewer
+    // (TOFIX146 "Open in Table Viewer"); `title` names the tab.
+    using OpenTableCallback = std::function<void(const std::string& dataset_name, const std::string& title)>;
+    void SetOpenTableCallback(OpenTableCallback callback) { open_table_ = std::move(callback); }
+
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
     void ClearBackendPlacementFacts();
 
 private:
     void RenderNodeProperties(MLNode& node);
+    // General, Compiled, Fusion, Truth, then (unless dialog-only) Parameters,
+    // Advanced, Presets and Executor.
+    void RenderGenericSections(MLNode& node, const cyxwiz::NodeMetadata* metadata, bool is_dialog_only);
 
     // Enhanced property sections (Phase 3)
     void RenderGeneralSection(MLNode& node);
@@ -106,6 +114,14 @@ private:
     // KNIME-style configuration dialogs
     std::unique_ptr<NodeConfigDialog> active_dialog_;
     void RenderOpenDialogButton(MLNode& node);
+
+    // SQL step (TOFIX146 board 1, gui/properties_sql_step.cpp): replaces the
+    // generic sections for SQLQuery nodes; they stay under its Details.
+    struct SqlStepView;
+    std::unique_ptr<SqlStepView> sql_view_;
+    OpenTableCallback open_table_;
+    void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
+    void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 };
 
 } // namespace gui

@@ -309,6 +309,7 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_sequence_fusion.cpp
+    src/gui/properties_sql_step.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -342,6 +343,7 @@ set(ENGINE_SOURCES
     src/core/editor/text_document.cpp
     src/core/editor/breakpoint_lines.cpp
     src/core/editor/python_highlight.cpp
+    src/core/editor/sql_highlight.cpp
     src/core/editor/folding.cpp
     src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
@@ -572,6 +574,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
+    src/data/arrow_data_table.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp

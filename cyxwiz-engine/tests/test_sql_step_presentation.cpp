@@ -61,6 +61,14 @@ void TestRealQuery(const std::string& path) {
               part.name + " lines " + std::to_string(part.first_line) + "-" + std::to_string(part.last_line));
         Check(part.description.empty(), part.name + " has no comment above it, so no description");
     }
+    // What each part reads (FROM / JOIN); unnest(...) and VALUES are not tables.
+    const std::vector<std::string> reads = {
+        "", "input,meta", "src", "body", "lead_note", "trail_note", "checked", "parts", "stripped", "kept", "cleaned"};
+    for (size_t i = 0; i < reads.size() && i < outline.parts.size(); ++i) {
+        std::string joined;
+        for (const auto& name : outline.parts[i].reads) joined += (joined.empty() ? "" : ",") + name;
+        Check(joined == reads[i], outline.parts[i].name + " reads " + joined);
+    }
 }
 
 void TestTrickyText() {

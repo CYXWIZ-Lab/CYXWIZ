@@ -20,6 +20,9 @@ struct SqlPart {
     int first_line = 0;        // 1-based line of the part's name (or of the final SELECT)
     int last_line = 0;         // 1-based line where the part ends
     std::string description;   // "-- ..." comment lines right above the part, joined; may be empty
+    // Tables and earlier parts it reads (FROM / JOIN), in first-use order,
+    // lower-cased; for a part without a comment this says where it starts.
+    std::vector<std::string> reads;
 };
 
 struct SqlOutline {

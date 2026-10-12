@@ -264,7 +264,7 @@ void CodeEditor::RenderMinimap(const Palette& pal, float height) {
                 i = j;
             }
         };
-        if (colorize_ && python_) {
+        if (colorize_ && highlighter_.GetLanguage() != editor::Language::Plain) {
             for (const auto& span : highlighter_.Spans(line_no)) {
                 if (span.start > at) plain(at, span.start);
                 bar(span.start, span.start + span.length, pal.tokens[static_cast<int>(span.kind)]);
@@ -462,7 +462,7 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
         TrackChanges(edits);
         MoveBreakpointsWith(edits);
     }
-    if (colorize_ && python_) highlighter_.Update(doc_);
+    if (colorize_ && highlighter_.GetLanguage() != editor::Language::Plain) highlighter_.Update(doc_);
     Palette pal = BuildPalette();
     if (background_ != 0) pal.bg = background_;
 
@@ -520,7 +520,7 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
             TrackChanges(edits);
             MoveBreakpointsWith(edits);
         }
-        if (colorize_ && python_) highlighter_.Update(doc_);
+        if (colorize_ && highlighter_.GetLanguage() != editor::Language::Plain) highlighter_.Update(doc_);
     }
 
     // Rows: lines, or wrapped pieces of them.
@@ -632,7 +632,7 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
             }
         };
         int at = row.start;
-        if (colorize_ && python_) {
+        if (colorize_ && highlighter_.GetLanguage() != editor::Language::Plain) {
             for (const auto& span : highlighter_.Spans(line_no)) {
                 if (span.start + span.length <= row.start) continue;
                 if (span.start >= row.end) break;

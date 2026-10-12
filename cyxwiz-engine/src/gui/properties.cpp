@@ -5,6 +5,7 @@
 #include "properties_metadata_editor.h"
 #include "properties_node_editors.h"
 #include "properties_presets.h"
+#include "properties_sql_step.h"
 #include "properties_truth.h"
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
@@ -274,40 +275,12 @@ void Properties::Render() {
             // changes writes its buffer into the newly selected node.
             ImGui::PushID(selected_node_->id);
 
-            // Phase 3: Section-based rendering
-            RenderGeneralSection(*selected_node_);
-            RenderCompiledSection(*selected_node_);
-            RenderSequenceFusionSection(*selected_node_);
-
-            ImGui::Spacing();
-            RenderTruthSummarySection(*selected_node_);
-
-            // Skip other sections for dialog-only nodes
-            if (!is_dialog_only) {
-                ImGui::Spacing();
-
-                // Parameters section - use metadata-driven rendering if available
-                RenderParametersSection(*selected_node_, metadata);
-
-                // Shapes, memory and parameters are in the AS COMPILED card
-                // above, from the compiler (the editor-side Shape Info guess
-                // is retired, TOFIX123).
-
-                ImGui::Spacing();
-
-                // Advanced section
-                section_advanced_open_ = properties_advanced::RenderAdvancedSection(
-                    node_editor_, *selected_node_, section_advanced_open_);
-
-                ImGui::Spacing();
-
-                // Presets section
-                RenderPresetsSection(*selected_node_);
-
-                ImGui::Spacing();
-
-                // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
-                RenderExecutorSection(*selected_node_);
+            // SQL steps have their own view; the generic sections are under
+            // its Details (TOFIX146).
+            if (selected_node_->type == NodeType::SQLQuery) {
+                RenderSqlStep(*selected_node_, metadata);
+            } else {
+                RenderGenericSections(*selected_node_, metadata, is_dialog_only);
             }
             ImGui::PopID();
         }
@@ -320,6 +293,44 @@ void Properties::Render() {
             // Dialog was closed
             active_dialog_.reset();
         }
+    }
+}
+
+void Properties::RenderGenericSections(MLNode& node, const cyxwiz::NodeMetadata* metadata, bool is_dialog_only) {
+    // Phase 3: Section-based rendering
+    RenderGeneralSection(node);
+    RenderCompiledSection(node);
+    RenderSequenceFusionSection(node);
+
+    ImGui::Spacing();
+    RenderTruthSummarySection(node);
+
+    // Skip other sections for dialog-only nodes
+    if (!is_dialog_only) {
+        ImGui::Spacing();
+
+        // Parameters section - use metadata-driven rendering if available
+        RenderParametersSection(node, metadata);
+
+        // Shapes, memory and parameters are in the AS COMPILED card
+        // above, from the compiler (the editor-side Shape Info guess
+        // is retired, TOFIX123).
+
+        ImGui::Spacing();
+
+        // Advanced section
+        section_advanced_open_ = properties_advanced::RenderAdvancedSection(
+            node_editor_, node, section_advanced_open_);
+
+        ImGui::Spacing();
+
+        // Presets section
+        RenderPresetsSection(node);
+
+        ImGui::Spacing();
+
+        // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
+        RenderExecutorSection(node);
     }
 }
 

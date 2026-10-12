@@ -189,7 +189,7 @@ struct Cell {
 
     // Setup code editor with Python syntax
     void SetupCodeEditor() {
-        editor.SetLanguageIsPython(type == CellType::Code);
+        editor.SetLanguage(type == CellType::Code ? cyxwiz::editor::Language::Python : cyxwiz::editor::Language::Plain);
         editor.SetShowWhitespace(false);
         editor.SetTabSize(4);
         editor.SetText(source);
@@ -205,7 +205,7 @@ struct Cell {
     // Sync editor from source
     void SyncEditorFromSource() {
         if (type == CellType::Code || type == CellType::Markdown) {
-            editor.SetLanguageIsPython(type == CellType::Code);
+            editor.SetLanguage(type == CellType::Code ? cyxwiz::editor::Language::Python : cyxwiz::editor::Language::Plain);
             editor.SetText(source);
         }
     }
