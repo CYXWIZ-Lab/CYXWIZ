@@ -109,6 +109,7 @@ set(ENGINE_SOURCES
     src/core/runtime_log_presentation.cpp
     src/core/console_commands_presentation.cpp
     src/core/sql_step_presentation.cpp
+    src/core/table_profile.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_publication.cpp
@@ -2838,6 +2839,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/pipeline_executor.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
+    src/core/table_profile.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp

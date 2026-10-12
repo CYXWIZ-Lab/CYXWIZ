@@ -305,6 +305,28 @@ std::string PartCountsQuery(std::string_view sql, const SqlOutline& outline) {
     return "SELECT part, row_count FROM (\n" + query + "\n) ORDER BY ord";
 }
 
+std::string RemovedRowsQuery(std::string_view sql, const SqlOutline& outline, size_t index) {
+    if (!outline.structured || index == 0 || index >= outline.parts.size()) return {};
+    const SqlPart& previous = outline.parts[index - 1];
+    const SqlPart& part = outline.parts[index];
+    if (index + 1 == outline.parts.size()) {
+        // The final statement: the WITH chain, then the difference.
+        return std::string(sql.substr(0, previous.end_offset)) + "\nSELECT * FROM " + previous.name +
+               "\nEXCEPT ALL\nSELECT * FROM (\n" + FinalStatement(sql, part) + "\n)";
+    }
+    return std::string(sql.substr(0, part.end_offset)) + "\nSELECT * FROM " + previous.name +
+           "\nEXCEPT ALL\nSELECT * FROM " + part.name;
+}
+
+int ErrorLine(std::string_view error) {
+    const size_t at = error.find("LINE ");
+    if (at == std::string_view::npos) return 0;
+    int line = 0;
+    const char* begin = error.data() + at + 5;
+    const auto parsed = std::from_chars(begin, error.data() + error.size(), line);
+    return parsed.ec == std::errc{} && parsed.ptr < error.data() + error.size() && *parsed.ptr == ':' ? line : 0;
+}
+
 std::string FormatCount(int64_t value) {
     const bool negative = value < 0;
     std::string digits = std::to_string(negative ? -value : value);

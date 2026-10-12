@@ -38,7 +38,15 @@ struct SqlTransformResult {
     bool cancelled = false;
     std::string error;
     std::shared_ptr<arrow::Table> table;
+    std::string plan;  // SqlRunMode::Explain: DuckDB's physical plan as text
 };
+
+// What Run does after the same checks (TOFIX146 SQL Workbench):
+//   Run     - execute and return the table;
+//   Check   - parse and bind against the inputs (tables, columns, result
+//             types) without executing; ok means the query would run;
+//   Explain - also return DuckDB's plan (EXPLAIN) without executing.
+enum class SqlRunMode { Run, Check, Explain };
 
 class SqlTransform {
 public:
@@ -48,7 +56,8 @@ public:
     SqlTransform& operator=(const SqlTransform&) = delete;
 
     SqlTransformResult Run(const std::string& query,
-                           const std::vector<SqlTransformInput>& inputs);
+                           const std::vector<SqlTransformInput>& inputs,
+                           SqlRunMode mode = SqlRunMode::Run);
 
     // Thread-safe: asks DuckDB to stop the running query. Run then returns
     // with cancelled = true.

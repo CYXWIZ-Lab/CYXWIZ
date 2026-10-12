@@ -70,7 +70,8 @@ void SqlTransform::Interrupt() {
 }
 
 SqlTransformResult SqlTransform::Run(const std::string& query,
-                                     const std::vector<SqlTransformInput>& inputs) {
+                                     const std::vector<SqlTransformInput>& inputs,
+                                     SqlRunMode mode) {
     SqlTransformResult result;
     const auto fail = [&result](std::string message) {
         result.error = "SQL: " + std::move(message);
@@ -113,6 +114,26 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
     // types are reported without executing the query.
     if (const auto why = connector_->UnsupportedResultColumns(query); !why.empty()) {
         return fail(why);
+    }
+    if (mode == SqlRunMode::Check) {
+        result.ok = true;
+        return result;
+    }
+    if (mode == SqlRunMode::Explain) {
+        // The query passed the read-only single-SELECT check above; EXPLAIN
+        // plans it without running it.
+        auto plan = connector_->Query("EXPLAIN " + query);
+        if (!plan) return fail(connector_->GetLastError());
+        for (int64_t row = 0; row < plan->num_rows(); ++row) {
+            for (int column = 0; column < plan->num_columns(); ++column) {
+                auto value = plan->column(column)->GetScalar(row);
+                if (value.ok() && (*value)->is_valid && plan->schema()->field(column)->name() != "explain_key") {
+                    result.plan += (*value)->ToString() + "\n";
+                }
+            }
+        }
+        result.ok = true;
+        return result;
     }
 
     auto table = connector_->Query(query);

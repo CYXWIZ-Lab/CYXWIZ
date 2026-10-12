@@ -56,6 +56,15 @@ std::string QueryThroughPart(std::string_view sql, const SqlOutline& outline, si
 // is not structured (nothing to split).
 std::string PartCountsQuery(std::string_view sql, const SqlOutline& outline);
 
+// The rows part `index` dropped from the part before it:
+// "<prev> EXCEPT ALL <part>". DuckDB refuses it when the two parts have
+// different columns. Empty for the first part, an out-of-range index or an
+// unstructured outline.
+std::string RemovedRowsQuery(std::string_view sql, const SqlOutline& outline, size_t index);
+
+// The 1-based query line a DuckDB error points at ("LINE 57: ..."), or 0.
+int ErrorLine(std::string_view error);
+
 // "15349" -> "15,349"
 std::string FormatCount(int64_t value);
 

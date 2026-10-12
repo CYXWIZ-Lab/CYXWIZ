@@ -28,6 +28,7 @@ void Check(bool condition, const std::string& message) {
 
 using cyxwiz::sqlstep::OutlineSqlQuery;
 using cyxwiz::sqlstep::SqlOutline;
+using cyxwiz::sqlstep::ErrorLine;
 
 std::string Names(const SqlOutline& outline) {
     std::string out;
@@ -83,6 +84,19 @@ void TestRealQuery(const std::string& path) {
               counts.rfind("ORDER BY ord") == counts.size() - 12,
           "counts query names every part and keeps their order");
     Check(PartCountsQuery("SELECT 1", OutlineSqlQuery("SELECT 1")).empty(), "a single part has nothing to count");
+    // Rows a part removed: kept (index 9) against stripped.
+    const std::string removed = RemovedRowsQuery(text, outline, 9);
+    const std::string removed_tail = "\nSELECT * FROM stripped\nEXCEPT ALL\nSELECT * FROM kept";
+    Check(removed.size() > removed_tail.size() &&
+              removed.compare(removed.size() - removed_tail.size(), removed_tail.size(), removed_tail) == 0,
+          "kept removed = stripped EXCEPT ALL kept");
+    const std::string removed_result = RemovedRowsQuery(text, outline, 11);
+    Check(removed_result.find("SELECT * FROM cleaned\nEXCEPT ALL\nSELECT * FROM (") != std::string::npos,
+          "result removed = cleaned EXCEPT ALL the final statement");
+    Check(RemovedRowsQuery(text, outline, 0).empty() && RemovedRowsQuery(text, outline, 12).empty(),
+          "nothing before the first part or past the end");
+    Check(ErrorLine("Parser Error: syntax error at or near \"FORM\"\n\nLINE 57: SELECT * FORM x") == 57, "error line 57");
+    Check(ErrorLine("Binder Error: column not found") == 0, "no line in the error");
 }
 
 void TestTrickyText() {

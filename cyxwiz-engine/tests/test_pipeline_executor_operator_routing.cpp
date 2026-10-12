@@ -11,6 +11,7 @@
 #include "core/sql_step_contract.h"
 #include "core/sql_step_presentation.h"
 #include "core/sql_transform.h"
+#include "core/table_profile.h"
 #include "core/plot/node_result_plan.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
@@ -967,6 +968,32 @@ void CheckSqlPartQueries() {
                   rows->Value(2) == 2,
               "rows after each part: a 3, b 2, result 2");
     }
+    // Rows a part removed: b drops id 4 from a.
+    const auto removed = transform.Run(cyxwiz::sqlstep::RemovedRowsQuery(sql, outline, 1), {{"input", input}});
+    Check(removed.ok && removed.table->num_rows() == 1, "b removed one row from a: " + removed.error);
+    // Check binds without running; a wrong column is reported with its line.
+    const auto checked = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(checked.ok && !checked.table, "check passes without a result table: " + checked.error);
+    const auto wrong = transform.Run("SELECT id,\n nothing FROM input", {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(!wrong.ok && wrong.error.find("nothing") != std::string::npos, "check names the unknown column: " + wrong.error);
+    Check(cyxwiz::sqlstep::ErrorLine(wrong.error) == 2, "the error points at line 2: " + wrong.error);
+    // A parse error reads as text, not DuckDB's JSON, and keeps its line.
+    const auto typo = transform.Run("SELECT id\nFORM input", {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(!typo.ok && typo.error.find("syntax error") != std::string::npos &&
+              typo.error.find("exception_type") == std::string::npos,
+          "a parse error is readable: " + typo.error);
+    Check(cyxwiz::sqlstep::ErrorLine(typo.error) == 2, "the parse error points at line 2: " + typo.error);
+    // Explain plans without running and refuses what Run refuses.
+    const auto plan = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Explain);
+    Check(plan.ok && plan.plan.find("SEQ_SCAN") != std::string::npos && plan.plan.find("id>1") != std::string::npos,
+          "explain gives a plan with the scan and its filter: " + plan.plan);
+    const auto copy = transform.Run("COPY input TO 'x.csv'", {{"input", input}}, cyxwiz::SqlRunMode::Explain);
+    Check(!copy.ok, "explain refuses a statement that is not a SELECT");
+    // Column profile of the whole result.
+    const auto profiles = cyxwiz::ProfileArrowTable(*whole.table);
+    Check(profiles.size() == 2 && profiles[0].numeric && profiles[0].min == 2 && profiles[0].max == 3 &&
+              profiles[0].median == 2.5 && profiles[1].distinct == 2 && profiles[1].repeated == 0,
+          "profile: id 2..3 median 2.5, word 2 distinct");
     std::cout << "SQL part queries passed\n";
 }
 

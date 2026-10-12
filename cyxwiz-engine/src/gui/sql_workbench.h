@@ -8,6 +8,7 @@
 // to step".
 
 #include "../core/sql_step_presentation.h"
+#include "../core/table_profile.h"
 #include "../data/arrow_data_table.h"
 #include "code_editor.h"
 #include "node_config_dialog.h"
@@ -44,7 +45,8 @@ protected:
 
 private:
     struct Run;  // one background DuckDB run
-    enum class RunKind { Step, ToPart, Counts };
+    enum class RunKind { Step, Selection, ToPart, Counts, Removed, Check, Explain };
+    enum BottomTab { kResults, kProfile, kRemoved, kChecks, kPlan, kMessages, kBottomTabs };
     struct Message {
         std::string time;
         std::string text;
@@ -56,6 +58,19 @@ private:
         int node_id = -1;
         std::shared_ptr<arrow::Table> table;  // null when not in memory
     };
+    struct HistoryEntry {
+        std::string time;
+        std::string label;
+        std::string outcome;  // "15,349 rows, 2.1 s" or the error
+        bool error = false;
+        std::string draft;    // the query text it ran
+    };
+    struct CheckOutcome {
+        std::string name;
+        std::string rule;
+        bool passed = false;
+        std::string detail;
+    };
 
     MLNode* CurrentNode();
     void RefreshInputs();
@@ -63,13 +78,24 @@ private:
     void PollRun();
     void AddMessage(std::string text, bool error);
     void MarkPart(size_t index);
+    void MarkError(const std::string& error);
+    void EvaluateChecks();
+    void ExportResult(bool parquet);
 
     void RenderHeader(MLNode& node);
-    void RenderToolbar(MLNode& node);
+    void RenderToolbar();
     void RenderSidePanel(float height);
+    void RenderInputsTab();
+    void RenderPartsTab();
+    void RenderHistoryTab();
+    void RenderSnippetsTab();
     void RenderEditor(float height);
     void RenderBottomPanel(float height);
     void RenderResults();
+    void RenderProfile();
+    void RenderRemoved();
+    void RenderChecks();
+    void RenderPlan();
     void RenderMessages();
     void RenderStatusBar();
 
@@ -89,7 +115,9 @@ private:
     std::unique_ptr<Run> run_;
     std::shared_ptr<arrow::Table> result_;
     cyxwiz::ArrowPreview result_preview_;
-    std::string result_label_;  // "result", "part kept"
+    std::vector<cyxwiz::ArrowColumnProfile> result_profile_;
+    std::string result_label_;  // "result", "part kept", "rows kept removed"
+    bool result_is_step_ = false;  // the whole draft's result (checks apply)
     double result_seconds_ = 0.0;
     std::string result_dataset_;  // registry name of the shown result
 
@@ -98,9 +126,16 @@ private:
     std::string part_rows_draft_;
     double part_rows_seconds_ = 0.0;
 
+    std::vector<CheckOutcome> check_outcomes_;
+    std::string plan_;
+    std::string plan_draft_;
+    std::string syntax_state_;  // "Syntax OK", "Error on line 57", ...
+    bool syntax_error_ = false;
+
     std::vector<Message> messages_;
-    int side_tab_ = 0;    // 0 Inputs, 1 Parts
-    int bottom_tab_ = 0;  // 0 Results, 1 Messages
+    std::vector<HistoryEntry> history_;
+    int side_tab_ = 0;    // 0 Inputs, 1 Parts, 2 History, 3 Snippets
+    int bottom_tab_ = kResults;
     int marked_part_ = -1;
     OpenTableCallback open_table_;
 };
