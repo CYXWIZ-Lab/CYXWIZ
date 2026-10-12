@@ -49,6 +49,11 @@ struct CheckpointMetadata {
     // Timestamp
     std::string timestamp;
     std::string version = "1.0";
+
+    // Provenance (optional; empty/0 in checkpoints written before TOFIX143)
+    std::string tokenizer_sha256;   // sha256 of the training token-window vocabulary
+    int context = 0;                // training sequence length
+    std::string initialized_from;   // warm-start checkpoint this run started from
 };
 
 /**
@@ -188,12 +193,20 @@ public:
      */
     void SetAutoSaveBest(bool enable) { auto_save_best_ = enable; }
 
+    /** Provenance written into every checkpoint saved after this call. */
+    void SetProvenance(std::string tokenizer_sha256, int context, std::string initialized_from) {
+        provenance_.tokenizer_sha256 = std::move(tokenizer_sha256);
+        provenance_.context = context;
+        provenance_.initialized_from = std::move(initialized_from);
+    }
+
 private:
     std::filesystem::path checkpoint_dir_;
     float best_val_loss_ = std::numeric_limits<float>::infinity();
     size_t max_to_keep_ = 5;  // Keep last 5 checkpoints by default
     bool auto_save_best_ = true;
     std::string last_error_;
+    CheckpointMetadata provenance_;  // only the provenance fields are used
 
     // Internal helpers
 
@@ -242,5 +255,19 @@ private:
      */
     std::filesystem::path GetCheckpointPath(const std::string& name) const;
 };
+
+/**
+ * Warm start (TOFIX143): load only the model parameters of one checkpoint
+ * folder into a new run's model. Optimizer, schedule, RNG, data cursor and
+ * epochs stay fresh. Names, shapes and dtypes must match exactly. When
+ * expected_tokenizer_sha256 is set (language-model runs) the checkpoint's
+ * tokenizer must match it: from metadata.json, or for checkpoints written
+ * before TOFIX143 from the same run's generation_previews/*.json.
+ */
+std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
+    const std::filesystem::path& checkpoint,
+    SequentialModel& model,
+    const std::string& expected_tokenizer_sha256,
+    std::string& error);
 
 } // namespace cyxwiz

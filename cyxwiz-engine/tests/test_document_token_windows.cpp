@@ -196,9 +196,101 @@ void CheckExternalRolesAndMetadata() {
     external_test.batcher->SetPhase(BatcherPhase::Test);REQUIRE(external_test.batcher->GetNumSamples()==1);
 }
 
+// Supervised windows (TOFIX143): prompt + response + EOS in one window; only the
+// response targets are supervised. Byte BPE ids here are byte + 4; EOS is 3.
+void CheckSupervisedWindows() {
+    auto vocabulary=std::filesystem::temp_directory_path()/"cyxwiz_supervised_window_vocab.txt";
+    std::filesystem::remove(vocabulary);
+    auto p=Params(); p["vocab_file"]=vocabulary.string(); p["vocab_build_if_missing"]="true";
+    std::string error;
+    { TextTokenizerOperator fit; REQUIRE(fit.Configure(p,error)); REQUIRE(fit.Apply(Input()).ok()); }
+    auto input=arrow::Table::Make(arrow::schema({arrow::field("document_id",arrow::utf8()),
+        arrow::field("split",arrow::utf8()),arrow::field("prompt",arrow::utf8()),arrow::field("response",arrow::utf8()),
+        arrow::field("family",arrow::utf8())}),
+        {Strings({"S1","S2"}),Strings({"train","train"}),Strings({"ab",""}),Strings({"cd","x"}),Strings({"f1","f2"})});
+    p["vocab_build_if_missing"]="false"; p["text_col"]="prompt"; p["target_text_col"]="response"; p["max_length"]="8";
+    TextTokenizerOperator op; REQUIRE(op.Configure(p,error));
+    auto result=op.Apply(input); INFO(result.status().ToString()); REQUIRE(result.ok());
+    auto table=*result;
+    REQUIRE(table->num_rows()==2);
+    REQUIRE(table->GetColumnByName("prompt")==nullptr); REQUIRE(table->GetColumnByName("response")==nullptr);
+    REQUIRE(table->GetColumnByName("family")->GetScalar(1).ValueOrDie()->ToString()=="f2");
+    REQUIRE(*table->schema()->metadata()->Get("cyxwiz.token_windows.supervision")=="response_only");
+    auto tokens=std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("token_ids")->chunk(0));
+    REQUIRE(tokens->value_length(0)==5); REQUIRE(tokens->value_length(1)==2);
+    auto ids=std::static_pointer_cast<arrow::Int64Array>(tokens->values());
+    const int64_t expected_ids[]={101,102,103,104,3,124,3};
+    for(int i=0;i<7;++i) REQUIRE(ids->Value(i)==expected_ids[i]);
+    auto masks=std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("__target_mask")->chunk(0));
+    REQUIRE(masks->value_type()->id()==arrow::Type::INT8);
+    REQUIRE(masks->value_length(0)==4); REQUIRE(masks->value_length(1)==1);
+    auto bits=std::static_pointer_cast<arrow::Int8Array>(masks->values());
+    const int8_t expected_bits[]={0,1,1,1,1};
+    for(int i=0;i<5;++i) REQUIRE(bits->Value(i)==expected_bits[i]);
+    REQUIRE(table->GetColumnByName("__valid_targets")->GetScalar(0).ValueOrDie()->ToString()=="3");
+    REQUIRE(table->GetColumnByName("__valid_targets")->GetScalar(1).ValueOrDie()->ToString()=="1");
+
+    // Parquet round trip keeps the mask and metadata; the batcher masks prompt targets.
+    ArrowDataset data(table,"supervised");
+    auto path=std::filesystem::temp_directory_path()/"cyxwiz_supervised_windows_test.parquet";
+    REQUIRE(data.ExportParquet(path.string(),true));
+    auto loaded=ArrowDataset::FromParquet(path.string(),"supervised_reloaded"); REQUIRE(loaded!=nullptr);
+    REQUIRE(table->Equals(*loaded->GetArrowTable(),true));
+    auto cfg=Config(); cfg.sequence_batch.max_sequence_length=8;
+    auto built=BuildSequenceBatcherFromArrowDataset(loaded,cfg,2);
+    INFO(built.error_message); REQUIRE(built.success());
+    auto batch=built.batcher->GetNextSequenceBatch(); REQUIRE(batch.size==2);
+    REQUIRE(batch.sequence_length==8);
+    const auto* target=static_cast<const Tensor&>(batch.target_ids).Data<int64_t>();
+    const int64_t expected_targets[]={-100,103,104,3,-100,-100,-100,-100, 3,-100,-100,-100,-100,-100,-100,-100};
+    for(int i=0;i<16;++i) REQUIRE(target[i]==expected_targets[i]);
+    const auto* word=static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
+    REQUIRE(word[0]==101); REQUIRE(word[4]==3); REQUIRE(word[8]==124);
+    const auto* attention=static_cast<const Tensor&>(batch.attention_mask).Data<int64_t>();
+    REQUIRE(attention[0]==1); REQUIRE(attention[4]==1); REQUIRE(attention[5]==0);
+
+    // Reader: column without metadata, metadata without column, and a wrong count all fail.
+    auto no_key=table->schema()->metadata()->Copy(); REQUIRE(no_key->Delete("cyxwiz.token_windows.supervision").ok());
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(
+        std::make_shared<ArrowDataset>(table->ReplaceSchemaMetadata(no_key),"no_key"),cfg,2).success());
+    auto no_mask=table->RemoveColumn(table->schema()->GetFieldIndex("__target_mask")).ValueOrDie();
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(no_mask,"no_mask"),cfg,2).success());
+    arrow::Int64Builder wrong; REQUIRE(wrong.AppendValues(std::vector<int64_t>{4,1}).ok());
+    auto wrong_count=table->SetColumn(table->schema()->GetFieldIndex("__valid_targets"),
+        table->schema()->GetFieldByName("__valid_targets"),
+        std::make_shared<arrow::ChunkedArray>(wrong.Finish().ValueOrDie())).ValueOrDie();
+    REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(wrong_count,"wrong"),cfg,2).success());
+    // Train and an external role must agree on supervision.
+    // Same windows as an ordinary (all-target) table: counts 4 and 1, no mask, no key.
+    auto plain_table=wrong_count->RemoveColumn(wrong_count->schema()->GetFieldIndex("__target_mask")).ValueOrDie();
+    auto plain=std::make_shared<ArrowDataset>(plain_table->ReplaceSchemaMetadata(no_key),"plain");
+    REQUIRE(BuildSequenceBatcherFromArrowDataset(plain,cfg,2).success());
+    auto mixed_roles=BuildSequenceBatcherFromArrowDataset(loaded,cfg,2,plain);
+    REQUIRE_FALSE(mixed_roles.success());
+    REQUIRE(mixed_roles.error_message.find("supervision")!=std::string::npos);
+
+    // A record longer than one window fails with its id instead of being split.
+    p["max_length"]="3"; TextTokenizerOperator small; REQUIRE(small.Configure(p,error));
+    auto overflow=small.Apply(input); REQUIRE_FALSE(overflow.ok());
+    REQUIRE(overflow.status().ToString().find("'S1'")!=std::string::npos);
+    // Empty responses, fitting a vocabulary and misuse of the parameter are rejected.
+    auto empty_response=input->SetColumn(3,arrow::field("response",arrow::utf8()),
+        std::make_shared<arrow::ChunkedArray>(Strings({"cd",""}))).ValueOrDie();
+    p["max_length"]="8"; TextTokenizerOperator strict; REQUIRE(strict.Configure(p,error));
+    REQUIRE_FALSE(strict.Apply(empty_response).ok());
+    std::filesystem::remove(vocabulary);
+    auto fit_params=p; fit_params["vocab_build_if_missing"]="true";
+    TextTokenizerOperator fitting; REQUIRE(fitting.Configure(fit_params,error));
+    auto fitted=fitting.Apply(input); REQUIRE_FALSE(fitted.ok());
+    REQUIRE(fitted.status().ToString().find("require an existing vocab_file")!=std::string::npos);
+    auto bad=p; bad["target_text_col"]="prompt"; TextTokenizerOperator same; REQUIRE_FALSE(same.Configure(bad,error));
+    bad=p; bad["output_mode"]="wide"; TextTokenizerOperator wide; REQUIRE_FALSE(wide.Configure(bad,error));
+    std::filesystem::remove(path);
+}
+
 int main() {
     try {
-        CheckCoverage(); CheckReloadAndTargets(); CheckInvalidInput(); CheckExternalRolesAndMetadata();
+        CheckCoverage(); CheckReloadAndTargets(); CheckInvalidInput(); CheckExternalRolesAndMetadata(); CheckSupervisedWindows();
         std::cout << "Document token windows passed: " << checks << " checks\n";
         return 0;
     } catch(const std::exception& e) {

@@ -490,6 +490,7 @@ struct TrainingConfiguration {
     bool save_best_checkpoint = true;   // keep best validation epoch
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
     std::string checkpoint_dir;         // optional override, defaults to run-local path
+    std::string initialize_from_checkpoint; // warm start: model weights only (TOFIX143)
     PinMemoryTransferStatus pin_memory_transfer;
 
     // Preprocessing — tabular config (backward-compatible)

@@ -929,6 +929,65 @@ void CheckDocumentWindowPipeline() {
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
 }
 
+void CheckJsonLinesInput() {
+    // TOFIX143 P1b: DataInput reads JSON Lines into Arrow (nested objects become
+    // structs, arrays lists, keys missing in some rows become nulls).
+    namespace fs=std::filesystem;
+    const auto dir=fs::temp_directory_path()/"cyxwiz_json_lines_input";
+    fs::create_directories(dir);
+    const auto jsonl=dir/"records.jsonl", plain=dir/"records.json";
+    { std::ofstream file(jsonl,std::ios::binary); file <<
+        R"({"id":"r1","split":"train","messages":[{"role":"user","content":"Q1"},{"role":"assistant","content":"A1"}],"evidence":[{"kind":"scripture","reference":"John 3:16"}]})" "\n"
+        R"({"id":"r2","split":"validation","messages":[{"role":"user","content":"Q2"},{"role":"assistant","content":"A2"}],"evidence":[{"kind":"teaching","author":"Maclaren"}]})" "\n"; }
+    { std::ofstream file(plain,std::ios::binary); file << R"([{"id":"r1"}])"; }
+    auto graph=[&](int id,const fs::path& path,const std::string& extra) {
+        return R"({"nodes":[{"id":)"+std::to_string(id)+R"(,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json",)"+extra+R"("file_path":")"+
+            JsonEscapePath(path.string())+R"("}}],"links":[]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(graph(92001,jsonl,"")),"JSON Lines input: "+executor.GetLastError());
+    auto loaded=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_datainput_92001");
+    Check(loaded!=nullptr,"JSON Lines dataset registered");
+    const auto table=loaded->GetArrowTable();
+    Check(table->num_rows()==2 && table->num_columns()==4,"JSON Lines rows and columns");
+    const auto messages=table->GetColumnByName("messages");
+    Check(messages && messages->type()->id()==arrow::Type::LIST &&
+          std::static_pointer_cast<arrow::ListType>(messages->type())->value_type()->id()==arrow::Type::STRUCT,
+          "JSON Lines arrays of objects become list<struct>");
+    const auto evidence=std::static_pointer_cast<arrow::ListType>(table->GetColumnByName("evidence")->type());
+    const auto fields=std::static_pointer_cast<arrow::StructType>(evidence->value_type());
+    Check(fields->GetFieldByName("reference") && fields->GetFieldByName("author"),
+          "keys from every row are kept: "+evidence->ToString());
+    Check(table->GetColumnByName("split")->GetScalar(1).ValueOrDie()->ToString()=="validation","JSON Lines values");
+    cyxwiz::PipelineExecutor plain_executor;
+    Check(!plain_executor.ExecutePipeline(graph(92002,plain,"")),"plain JSON must be refused");
+    Check(plain_executor.GetLastError().find("JSON Lines")!=std::string::npos,
+          "plain JSON error names JSON Lines: "+plain_executor.GetLastError());
+    cyxwiz::PipelineExecutor flagged;
+    Check(!flagged.ExecutePipeline(graph(92003,plain,R"("json_lines":"true",)")),"a JSON array is not JSON Lines");
+    // SQL reads the nested JSON Lines columns (lists of structs) and returns flat columns.
+    const std::string sql_graph =
+        R"({"nodes":[{"id":92011,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json","json_lines":"true","file_path":")"+
+        JsonEscapePath(jsonl.string())+
+        R"("}},{"id":92012,"type":"SQLQuery","name":"Answers","parameters":{"sql_contract_version":"1","input_alias":"records","query":"SELECT id, list_filter(messages, m -> m.role = 'assistant')[1].content AS answer, CAST(len(evidence) AS BIGINT) AS n_evidence, evidence[1].kind AS first_kind FROM records ORDER BY id"}}],"links":[{"start_node":92011,"end_node":92012}]})";
+    cyxwiz::PipelineExecutor sql_executor;
+    Check(sql_executor.ExecutePipeline(sql_graph),"SQL over JSON Lines: "+sql_executor.GetLastError());
+    auto answers=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_sql_92012");
+    Check(answers && answers->GetArrowTable()->num_rows()==2,"SQL over JSON Lines rows");
+    const auto answer_table=answers->GetArrowTable();
+    Check(answer_table->GetColumnByName("answer")->GetScalar(1).ValueOrDie()->ToString()=="A2" &&
+          answer_table->GetColumnByName("first_kind")->GetScalar(0).ValueOrDie()->ToString()=="scripture",
+          "SQL reads nested list<struct> fields");
+    const std::string nested_result =
+        R"({"nodes":[{"id":92013,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json","json_lines":"true","file_path":")"+
+        JsonEscapePath(jsonl.string())+
+        R"("}},{"id":92014,"type":"SQLQuery","name":"Nested out","parameters":{"sql_contract_version":"1","input_alias":"records","query":"SELECT messages FROM records"}}],"links":[{"start_node":92013,"end_node":92014}]})";
+    cyxwiz::PipelineExecutor nested_executor;
+    Check(!nested_executor.ExecutePipeline(nested_result),"nested SQL results stay refused (results are flat)");
+    fs::remove_all(dir);
+    std::cout<<"JSON Lines input passed\n";
+}
+
 void CheckTokenizerProjectVocabulary() {
     // A saved graph stores the vocabulary project-relative. The executor must
     // resolve it against the project root (like Data Input paths); without a
@@ -1816,6 +1875,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
     if(argc==2 && std::string(argv[1])=="--tokenizer-project-vocab") { CheckTokenizerProjectVocabulary(); return 0; }
     if(argc==2 && std::string(argv[1])=="--export-path-base") { CheckExportPathBase(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
+    if(argc==1) CheckJsonLinesInput();
     if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&
@@ -3040,11 +3101,11 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor bad_data_input_json_type_executor;
     Check(!bad_data_input_json_type_executor.ExecutePipeline(
               bad_data_input_json_type_json),
-          "DataInput json type should fail validation until JSON loading is real");
+          "DataInput plain JSON (not JSON Lines) must fail");
     Check(bad_data_input_json_type_executor.GetLastError().find(
-              "DataInput type 'json' is not supported") !=
+              "only JSON Lines is supported") !=
               std::string::npos,
-          "DataInput json type validation should be specific: " +
+          "DataInput plain JSON error should point to JSON Lines: " +
               bad_data_input_json_type_executor.GetLastError());
 
     const std::string bad_data_input_excel_type_json =
@@ -3103,7 +3164,7 @@ int main(int argc, char** argv) {
     const std::string bad_data_input_file_type_alias_json =
         R"({"nodes":[)"
         R"({"id":430,"type":"DataInput","name":"BadFileTypeAlias","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.json","file_type":"json"}})"
+        R"("source_type":"file","file_path":"ignored.xlsx","file_type":"excel"}})"
         R"(],"links":[]})";
 
     cyxwiz::PipelineExecutor bad_data_input_file_type_alias_executor;
@@ -3111,7 +3172,7 @@ int main(int argc, char** argv) {
               bad_data_input_file_type_alias_json),
           "DataInput unsupported file_type alias should fail validation");
     Check(bad_data_input_file_type_alias_executor.GetLastError().find(
-              "DataInput file_type 'json' is not supported") !=
+              "DataInput file_type 'excel' is not supported") !=
               std::string::npos,
           "DataInput unsupported file_type alias error should be specific: " +
               bad_data_input_file_type_alias_executor.GetLastError());

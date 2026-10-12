@@ -103,11 +103,9 @@ int main() {
               validation_error.find("exact member path") != std::string::npos,
           "Auto ZIP must require a document selection before worker launch");
 
-    Check(cyxwiz::loaders::IsUnsupportedTabularFileType("json"),
-          "JSON should fail closed before async tabular load");
-    Check(cyxwiz::loaders::UnsupportedTabularFileTypeMessage("json").find(
-              "JSON loading is not supported") != std::string::npos,
-          "JSON failure should explain unsupported loader");
+    // JSON Lines is a supported tabular source since TOFIX143.
+    Check(!cyxwiz::loaders::IsUnsupportedTabularFileType("json"),
+          "JSON Lines should load on the tabular path");
 
     Check(cyxwiz::loaders::IsUnsupportedTabularFileType("excel"),
           "Excel should fail closed before async tabular load");
@@ -130,8 +128,8 @@ int main() {
     Check(cyxwiz::loaders::IsUnsupportedTabularFileType("arff"),
           "ARFF should fail closed before async tabular load");
 
-    Check(cyxwiz::loaders::IsUnsupportedTabularFileType("JSON"),
-          "JSON validation should be case-insensitive");
+    Check(cyxwiz::loaders::IsUnsupportedTabularFileType("EXCEL"),
+          "Unsupported-type validation should be case-insensitive");
 
     return 0;
 }

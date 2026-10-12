@@ -1296,7 +1296,8 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"balance_seed", "int", "42", "Class balancing seed", {}, "0-2147483647", "", "Balancing", false, true},
          {"save_best_checkpoint", "bool", "true", "Save best validation checkpoint", {}, "", "", "Checkpoint", false, true},
          {"early_stopping_patience", "int", "5", "Early stopping patience in validation checks", {}, "0-10000", "", "Checkpoint", false, true},
-         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true}},
+         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true},
+         {"initialize_from_checkpoint", "directory", "", "Start from checkpoint weights (fine-tuning)", {}, "", "A checkpoint folder (e.g. .../train-<id>/best). Loads model weights only; optimizer, learning-rate schedule and epochs start fresh. Parameter names and shapes, and for language models the tokenizer, must match.", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // DataSplit is a graph-level training configuration node. It has a
@@ -3534,6 +3535,7 @@ void NodeMetadataRegistry::InitializeTextNodes() {
          {"output_mode", "enum", "wide", "Token output", {"wide", "causal_windows", "decode", "roundtrip"}, ""},
          {"document_id_col", "string", "", "Unique document ID column (windows)", {}, ""},
          {"split_col", "string", "split", "Source split column (windows)", {}, ""},
+         {"target_text_col", "string", "", "Response column (supervised windows)", {}, "Optional, causal_windows only. Each row becomes one window: Text column, then this column plus EOS; the loss covers only this column's tokens. Needs an existing vocab_file; rows longer than one window fail."},
          {"token_ids_col", "string", "token_ids", "Token ID list column (decode)", {}, "String column containing IDs separated by spaces or commas; decode mode falls back to tok_0..tok_n when absent."},
          {"label_col", "string", "", "Label column", {}, ""},
          {"max_length", "int", "256", "Max sequence length", {}, ""},

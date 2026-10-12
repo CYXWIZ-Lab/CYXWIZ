@@ -151,6 +151,7 @@ private:
     std::string bpe_piece_policy_;
     char document_id_col_[128] = "document_id";
     char split_col_[128] = "split";
+    char target_text_col_[128] = "";
     char token_ids_col_[128] = "token_ids";
     int max_length_ = 256;
     int max_vocab_size_ = 10000;
@@ -714,6 +715,7 @@ private:
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
+    char initialize_from_checkpoint_[512] = "";
     bool generation_preview_enabled_ = false;
     int generation_preview_every_epochs_ = 20;
     int generation_preview_max_new_tokens_ = 32;

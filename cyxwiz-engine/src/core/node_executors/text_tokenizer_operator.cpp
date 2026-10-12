@@ -336,6 +336,8 @@ bool TextTokenizerOperator::Configure(
     if (auto p=params.find("document_id_col");p!=params.end()) document_id_col_=p->second;
     if (auto p=params.find("split_col");p!=params.end()) split_col_=p->second;
     if (auto p=params.find("token_ids_col");p!=params.end()) token_ids_col_=p->second;
+    target_text_col_.clear();
+    if (auto p=params.find("target_text_col");p!=params.end()) target_text_col_=p->second;
     if (output_mode_!="wide" && output_mode_!="causal_windows" &&
         output_mode_!="decode" && output_mode_!="roundtrip") {
         error="TextTokenizer: output_mode must be wide, causal_windows, decode, or roundtrip"; return false;
@@ -453,6 +455,10 @@ bool TextTokenizerOperator::Configure(
     if (output_mode_=="causal_windows" && (document_id_col_.empty() || split_col_.empty() ||
         document_id_col_==text_col_ || split_col_==text_col_ || document_id_col_==split_col_ || !label_col_.empty())) {
         error="Causal windows require distinct text/document_id_col/split_col and no classification label_col"; return false;
+    }
+    if (!target_text_col_.empty() && (output_mode_!="causal_windows" || target_text_col_==text_col_ ||
+        target_text_col_==document_id_col_ || target_text_col_==split_col_)) {
+        error="TextTokenizer: target_text_col requires causal_windows and a column distinct from text/document_id_col/split_col"; return false;
     }
     if ((output_mode_ == "decode" || output_mode_ == "roundtrip") &&
         !label_col_.empty()) {
@@ -714,6 +720,17 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return RoundTripTextRows(texts, tokenizer);
     }
 
+    if (output_mode_=="causal_windows" && !target_text_col_.empty()) {
+        auto target_column = input->GetColumnByName(target_text_col_);
+        if (!target_column) return arrow::Status::KeyError("TextTokenizer: target text column '" + target_text_col_ + "' not found");
+        std::vector<std::string> targets;
+        if (!ReadColumnAsStrings(target_column, targets, bad_type, GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            return arrow::Status::TypeError("TextTokenizer: target text column '" + target_text_col_ +
+                                            "' must be string/large_string, got '" + bad_type + "'");
+        }
+        return BuildTokenWindows(input,texts,tokenizer,&targets);
+    }
     if (output_mode_=="causal_windows") return BuildTokenWindows(input,texts,tokenizer);
 
     // Encode + pad. EncodeBatch then PadBatch produces the final

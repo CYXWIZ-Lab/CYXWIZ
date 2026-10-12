@@ -860,6 +860,7 @@ void TokenizerDialog::LoadFromNode() {
     token_output_mode_ = 0;
     std::copy_n("document_id", sizeof("document_id"), document_id_col_);
     std::copy_n("split", sizeof("split"), split_col_);
+    target_text_col_[0] = '\0';
     std::copy_n("token_ids", sizeof("token_ids"), token_ids_col_);
     max_length_ = IsPaddingNode() ? 512 : 256;
     max_vocab_size_ = IsVocabularyNode() ? -1 : 10000;
@@ -905,6 +906,7 @@ void TokenizerDialog::LoadFromNode() {
     }
     CopyParam(node_, "document_id_col", document_id_col_, sizeof(document_id_col_));
     CopyParam(node_, "split_col", split_col_, sizeof(split_col_));
+    CopyParam(node_, "target_text_col", target_text_col_, sizeof(target_text_col_));
     CopyParam(node_, "token_ids_col", token_ids_col_, sizeof(token_ids_col_));
     ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
     if (const auto policy = node_->parameters.find("bpe_piece_policy"); policy != node_->parameters.end())
@@ -947,6 +949,10 @@ void TokenizerDialog::Apply() {
             node_->parameters.erase("bpe_initial_unit");
         node_->parameters["document_id_col"] = document_id_col_;
         node_->parameters["split_col"] = split_col_;
+        if (token_output_mode_ == 1 && target_text_col_[0] != '\0')
+            node_->parameters["target_text_col"] = target_text_col_;
+        else
+            node_->parameters.erase("target_text_col");
         node_->parameters["token_ids_col"] = token_ids_col_;
         node_->parameters["text_col"] = text_col_;
         node_->parameters["label_col"] = label_col_;
@@ -1302,6 +1308,8 @@ void TokenizerDialog::RenderPaddingTab() {
     if (token_output_mode_ == 1) {
         if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
         if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
+        if (ImGui::InputText("Response column (optional)", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
+        ImGui::TextWrapped("With a response column, each row is one window (text, then response + EOS) and only the response tokens are trained; it needs an existing vocabulary file.");
         ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
     } else if (token_output_mode_ == 2) {
         if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
