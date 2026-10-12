@@ -8,6 +8,7 @@
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
 #include "separate_windows.h"
+#include "ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <imnodes.h>
@@ -265,6 +266,7 @@ void NodeEditor::UpdateNodeAddSearchResults() {
 
 // Render the node add search UI (top-right of canvas)
 void NodeEditor::ShowNodeAddSearch() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Initialize searchable nodes on first call
     if (!searchable_nodes_initialized_) {
         InitializeSearchableNodes();
@@ -295,7 +297,7 @@ void NodeEditor::ShowNodeAddSearch() {
     ImGui::SetNextWindowSize(ImVec2(search_width, search_height));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.18f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, cyxwiz::ui::WithAlpha(t.bg_panel, 0.95f));
 
     ImGuiWindowFlags search_window_flags =
         ImGuiWindowFlags_NoTitleBar |
@@ -314,13 +316,13 @@ void NodeEditor::ShowNodeAddSearch() {
         // Push style for search input
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.24f, 0.5f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.25f, 0.25f, 0.3f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, cyxwiz::ui::WithAlpha(t.bg_input, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, t.hover);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, t.selection);
 
         // Search icon
         ImGui::SetCursorPos(ImVec2(8, 6));
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_MAGNIFYING_GLASS);
+        ImGui::TextColored(t.text_dim, ICON_FA_MAGNIFYING_GLASS);
 
         // Input field
         ImGui::SetCursorPos(ImVec2(28, 0));
@@ -443,8 +445,8 @@ void NodeEditor::ShowNodeAddSearch() {
         ImGui::SetNextWindowSize(ImVec2(dropdown_width, dropdown_height));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.14f, 0.96f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.24f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, cyxwiz::ui::WithAlpha(t.bg_panel, 0.96f));
+        ImGui::PushStyleColor(ImGuiCol_Border, t.border);
 
         ImGuiWindowFlags dropdown_flags =
             ImGuiWindowFlags_NoTitleBar |
@@ -470,7 +472,7 @@ void NodeEditor::ShowNodeAddSearch() {
                     draw_list->AddRectFilled(
                         item_pos,
                         ImVec2(item_pos.x + item_size.x, item_pos.y + item_size.y),
-                        IM_COL32(60, 100, 180, 200),
+                        cyxwiz::ui::ToU32(t.selection),
                         3.0f
                     );
                 }
@@ -512,24 +514,24 @@ void NodeEditor::ShowNodeAddSearch() {
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 4));
                 if (!can_add) {
                     // Grayed out name for unavailable nodes.
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", node->name.c_str());
+                    ImGui::TextColored(t.text_faint, "%s", node->name.c_str());
                     ImGui::SameLine();
                     const ImVec4 badge_color = is_template
-                        ? ImVec4(0.9f, 0.6f, 0.2f, 1.0f)
-                        : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
+                        ? t.pending
+                        : t.error;
                     ImGui::PushStyleColor(ImGuiCol_Text, badge_color);
                     ImGui::TextUnformatted(is_template ? " [Coming Soon]" : " [Blocked]");
                     ImGui::PopStyleColor();
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", node->name.c_str());
+                    ImGui::TextColored(t.text_bright, "%s", node->name.c_str());
                 }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 18));
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.6f, 1.0f), "%s", node->category.c_str());
+                ImGui::TextColored(t.text_dim, "%s", node->category.c_str());
 
                 if (is_blocked && !node->support_reason.empty()) {
                     ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 31));
-                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                    ImGui::TextColored(t.error,
                                        "%s", node->support_reason.c_str());
                 }
 

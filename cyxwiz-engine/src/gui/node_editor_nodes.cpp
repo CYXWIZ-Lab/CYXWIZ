@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "../core/graph_node_factory.h"
 #include "properties.h"
 #include "../core/node_metadata_registry.h"

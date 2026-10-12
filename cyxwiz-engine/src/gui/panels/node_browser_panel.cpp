@@ -4,6 +4,7 @@
 #include "../../core/extension_node_registry.h"
 #include "../../plugin/plugin_manager.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../patterns/pattern_library.h"
 #include "../icons.h"
 #include <imgui.h>
@@ -12,6 +13,8 @@
 #include <cmath>
 
 namespace gui {
+
+namespace ui = cyxwiz::ui;
 
 namespace {
 
@@ -74,11 +77,13 @@ std::string FirstUnsupportedSupportReason(
     return {};
 }
 
-ImU32 SupportStateBadgeColor(const std::string& state) {
-    if (state == "real") return IM_COL32(45, 140, 80, 235);
-    if (state == "partial") return IM_COL32(185, 125, 35, 235);
-    if (state == "blocked") return IM_COL32(170, 65, 55, 235);
-    return IM_COL32(85, 95, 115, 235);
+ImVec4 SupportStateBadgeColor(const std::string& state) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float alpha = 235.0f / 255.0f;
+    if (state == "real") return ui::WithAlpha(t.success, alpha);
+    if (state == "partial") return ui::WithAlpha(t.warning, alpha);
+    if (state == "blocked") return ui::WithAlpha(t.error, alpha);
+    return ui::WithAlpha(t.pending, alpha);
 }
 
 std::string SupportStateLabel(const std::string& state) {
@@ -225,7 +230,7 @@ void NodeBrowserPanel::Render() {
 
 void NodeBrowserPanel::RenderHeader() {
     // Breadcrumb navigation: "Nodes" or "Nodes > CategoryName"
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
 
     if (showing_all_in_category_) {
         // Clickable "Nodes" to go back
@@ -328,8 +333,9 @@ bool NodeBrowserPanel::HandleKeyboardShortcuts() {
 }
 
 void NodeBrowserPanel::RenderStudioSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // CyxWiz Studio section header (same style as category headers)
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     ImGui::TextUnformatted("Studio Tools");
 
     // Horizontal separator line
@@ -338,7 +344,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     float text_width = ImGui::CalcTextSize("Studio Tools").x + 8;
     ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
     line_start.x += text_width;
-    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, ui::ToU32(t.border_soft), 1.0f);
     ImGui::PopStyleColor();
 
     // Calculate card dimensions (same as node cards)
@@ -373,7 +379,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_COMMENT " Annotation");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_COMMENT " Annotation");
             ImGui::TextWrapped("Add a sticky note to the canvas for documentation");
             ImGui::Separator();
             ImGui::TextDisabled("Drag to canvas or double-click to add");
@@ -388,9 +394,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Yellow background for note
-        ImU32 bg_color = IM_COL32(200, 180, 100, 255);
-        ImU32 border_color = IM_COL32(150, 130, 70, 255);
+        // The canvas note colour
+        ImU32 bg_color = DefaultAnnotationColour();
+        ImU32 border_color = ui::ToU32(ui::Mix(ImGui::ColorConvertU32ToFloat4(bg_color), t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -401,20 +407,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Note";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -440,7 +446,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_OBJECT_GROUP " Group");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_OBJECT_GROUP " Group");
             ImGui::TextWrapped("Group selected nodes together for organization");
             ImGui::Separator();
             ImGui::TextDisabled("Select nodes first, then double-click");
@@ -455,9 +461,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Blue background for group
-        ImU32 bg_color = IM_COL32(100, 140, 180, 255);
-        ImU32 border_color = IM_COL32(70, 100, 140, 255);
+        // Group card: a series colour of the theme
+        ImU32 bg_color = ui::ToU32(t.series[1]);
+        ImU32 border_color = ui::ToU32(ui::Mix(t.series[1], t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -468,20 +474,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Group";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -506,7 +512,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         // Tooltip
         if (hovered && !ImGui::GetDragDropPayload()) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), ICON_FA_SQUARE " Frame");
+            ImGui::TextColored(ui::CurrentTokens().text_bright, ICON_FA_SQUARE " Frame");
             ImGui::TextWrapped("Visual organization box for arranging nodes");
             ImGui::Separator();
             ImGui::TextDisabled("Drag to canvas to create");
@@ -520,9 +526,9 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_pos(icon_x, icon_y);
         ImVec2 p_max(icon_pos.x + NODE_ICON_SIZE, icon_pos.y + NODE_ICON_SIZE);
 
-        // Teal background for frame
-        ImU32 bg_color = IM_COL32(70, 140, 130, 255);
-        ImU32 border_color = IM_COL32(50, 100, 95, 255);
+        // Frame card: a series colour of the theme
+        ImU32 bg_color = ui::ToU32(t.series[3]);
+        ImU32 border_color = ui::ToU32(ui::Mix(t.series[3], t.bg_window, 0.3f));
         draw_list->AddRectFilled(icon_pos, p_max, bg_color, 6.0f);
         draw_list->AddRect(icon_pos, p_max, border_color, 6.0f, 0, 2.0f);
 
@@ -533,20 +539,20 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImVec2 icon_text_size = icon_font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
         ImVec2 icon_text_pos(icon_pos.x + (NODE_ICON_SIZE - icon_text_size.x) * 0.5f,
                             icon_pos.y + (NODE_ICON_SIZE - icon_text_size.y) * 0.5f);
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
         // Label
         const char* label = "Frame";
         ImVec2 text_size = ImGui::CalcTextSize(label);
         float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
         float text_y = icon_y + NODE_ICON_SIZE + 4;
-        draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(220, 220, 220, 255), label);
+        draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(t.text), label);
 
         // Hover highlight
         if (hovered) {
             draw_list->AddRect(cursor_start,
                 ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                IM_COL32(100, 150, 255, 100), 4.0f);
+                ui::ToU32(ui::WithAlpha(t.accent_text, 100.0f / 255.0f)), 4.0f);
         }
         ImGui::PopID();
     }
@@ -555,7 +561,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     ImGui::Spacing();
 
     // === Examples Section ===
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     ImGui::TextUnformatted("Examples");
 
     // Horizontal separator line
@@ -564,7 +570,7 @@ void NodeBrowserPanel::RenderStudioSection() {
     float examples_text_width = ImGui::CalcTextSize("Examples").x + 8;
     ImVec2 examples_line_end = ImVec2(examples_line_start.x + ImGui::GetContentRegionAvail().x, examples_line_start.y);
     examples_line_start.x += examples_text_width;
-    ImGui::GetWindowDrawList()->AddLine(examples_line_start, examples_line_end, IM_COL32(100, 100, 100, 128), 1.0f);
+    ImGui::GetWindowDrawList()->AddLine(examples_line_start, examples_line_end, ui::ToU32(t.border_soft), 1.0f);
     ImGui::PopStyleColor();
 
     // Get pattern library
@@ -615,7 +621,7 @@ void NodeBrowserPanel::RenderStudioSection() {
                 // Tooltip
                 if (ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", pattern.name.c_str());
+                    ImGui::TextColored(ui::CurrentTokens().text_bright, "%s", pattern.name.c_str());
                     if (!pattern.description.empty()) {
                         ImGui::TextWrapped("%s", pattern.description.c_str());
                     }
@@ -710,8 +716,9 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
 
     if (nodes.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     // Category header with horizontal line
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
 
     std::string cat_name = cyxwiz::GetCategoryDisplayName(category);
     ImGui::TextUnformatted(cat_name.c_str());
@@ -723,7 +730,7 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
     line_start.x += text_width;
     ImGui::GetWindowDrawList()->AddLine(line_start, line_end,
-                                        IM_COL32(100, 100, 100, 128), 1.0f);
+                                        ui::ToU32(t.border_soft), 1.0f);
 
     ImGui::PopStyleColor();
 
@@ -739,7 +746,7 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
 
         if (ImGui::SmallButton(("Show all##" + cat_name).c_str())) {
             NavigateToCategory(category);
@@ -824,7 +831,7 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
 
     // Section header, as other categories draw it, with the summary.
     const std::string cat_name = cyxwiz::GetCategoryDisplayName(cyxwiz::NodeCategory::Plugin);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     ImGui::TextUnformatted(cat_name.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("%s", cyxwiz::ExtensionPaletteSummary(entries, provider_names).c_str());
@@ -988,6 +995,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     }
 
     // Draw the card
+    const ui::Tokens& t = ui::CurrentTokens();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Icon position (centered horizontally)
@@ -1008,14 +1016,15 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         const float badge_x = cursor_start.x + 2.0f;
         const float badge_y = cursor_start.y + 2.0f;
 
+        const ImVec4 badge_fill = SupportStateBadgeColor(support_state->value);
         draw_list->AddRectFilled(
             ImVec2(badge_x, badge_y),
             ImVec2(badge_x + badge_width, badge_y + badge_height),
-            SupportStateBadgeColor(support_state->value),
+            ui::ToU32(badge_fill),
             3.0f);
         draw_list->AddText(
             ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
-            IM_COL32(255, 255, 255, 255),
+            ui::ToU32(ui::ReadableOn(t, badge_fill)),
             state_label.c_str());
     }
 
@@ -1034,7 +1043,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     // Dim text for nodes that cannot currently be added.
     ImU32 text_color = !can_add_to_graph ?
-        IM_COL32(150, 150, 150, 255) : IM_COL32(220, 220, 220, 255);
+        ui::ToU32(t.text_faint) : ui::ToU32(t.text);
 
     draw_list->AddText(ImVec2(text_x, text_y), text_color, display_name.c_str());
 
@@ -1056,18 +1065,18 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         float badge_x = cursor_start.x + card_width - badge_width - 2;
         float badge_y = cursor_start.y + 2;
 
-        // Badge background (amber/yellow for "Coming Soon")
+        // Badge background (pending: "Coming Soon")
         draw_list->AddRectFilled(
             ImVec2(badge_x, badge_y),
             ImVec2(badge_x + badge_width, badge_y + badge_height),
-            IM_COL32(180, 140, 40, 230),
+            ui::ToU32(ui::WithAlpha(t.pending, 230.0f / 255.0f)),
             3.0f
         );
 
         // Badge text
         draw_list->AddText(
             ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
-            IM_COL32(255, 255, 255, 255),
+            ui::ToU32(ui::ReadableOn(t, t.pending)),
             badge_display.c_str()
         );
     }
@@ -1077,12 +1086,12 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     if (pinned) {
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                          IM_COL32(91, 61, 245, 255), 4.0f, 0, 2.0f);
+                          ui::ToU32(t.accent), 4.0f, 0, 2.0f);
     }
     if (hovered) {
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                          IM_COL32(179, 166, 255, 110), 4.0f);
+                          ui::ToU32(ui::WithAlpha(t.accent_text, 110.0f / 255.0f)), 4.0f);
         if (extension) {
             if (on_extension_hover_) on_extension_hover_(extension->type_id);
         } else if (on_node_hover_) {
@@ -1101,6 +1110,7 @@ void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVe
     ImVec2 p_min = icon_pos;
     ImVec2 p_max(icon_pos.x + size.x, icon_pos.y + size.y);
 
+    const ui::Tokens& t = ui::CurrentTokens();
     // Get category color
     ImU32 bg_color = GetNodeColor(metadata->category);
     ImU32 border_color = GetNodeColorDark(metadata->category);
@@ -1111,8 +1121,8 @@ void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVe
 
     // Template nodes are grayed out
     if (metadata->IsTemplate()) {
-        bg_color = IM_COL32(120, 120, 120, 255);
-        border_color = IM_COL32(80, 80, 80, 255);
+        bg_color = ui::ToU32(t.bg_raised);
+        border_color = ui::ToU32(t.border);
     }
 
     // Draw rounded rectangle background
@@ -1129,7 +1139,7 @@ void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVe
             p_min.x + (size.x - icon_text_size.x) * 0.5f,
             p_min.y + (size.y - icon_text_size.y) * 0.5f
         );
-        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), metadata->icon.c_str());
+        draw_list->AddText(icon_font, scaled_icon_size, icon_text_pos, ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), metadata->icon.c_str());
     }
 }
 
@@ -1147,7 +1157,7 @@ void NodeBrowserPanel::RenderPortIndicators(const cyxwiz::NodeMetadata* metadata
         ImVec2 p2(icon_pos.x + tri_size - 1, y_center - tri_size);
         ImVec2 p3(icon_pos.x + tri_size - 1, y_center + tri_size);
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, ui::ToU32(ui::CurrentTokens().text_faint));
     }
 
     // Output ports (right side triangles pointing RIGHT - out of the node)
@@ -1161,15 +1171,16 @@ void NodeBrowserPanel::RenderPortIndicators(const cyxwiz::NodeMetadata* metadata
         ImVec2 p2(x_right - tri_size + 1, y_center + tri_size);
         ImVec2 p3(x_right + 1, y_center);  // tip points right
 
-        draw_list->AddTriangleFilled(p1, p2, p3, IM_COL32(80, 80, 80, 255));
+        draw_list->AddTriangleFilled(p1, p2, p3, ui::ToU32(ui::CurrentTokens().text_faint));
     }
 }
 
 void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::BeginTooltip();
 
     // Header with icon and name
-    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s %s",
+    ImGui::TextColored(ui::CurrentTokens().text_bright, "%s %s",
                        metadata->icon.c_str(), metadata->name.c_str());
 
     // Brief description
@@ -1181,14 +1192,14 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
     // Inputs/Outputs
     if (!metadata->inputs.empty()) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Inputs:");
+        ImGui::TextColored(t.series[3], "Inputs:");
         for (const auto& input : metadata->inputs) {
             ImGui::BulletText("%s", input.name.c_str());
         }
     }
 
     if (!metadata->outputs.empty()) {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Outputs:");
+        ImGui::TextColored(t.series[4], "Outputs:");
         for (const auto& output : metadata->outputs) {
             ImGui::BulletText("%s", output.name.c_str());
         }
@@ -1198,8 +1209,8 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
         ImGui::Separator();
         if (const auto* support_state = FindSupportState(metadata)) {
             const ImVec4 state_color = support_state->supported
-                ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-                : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+                ? t.success
+                : t.error;
             ImGui::TextColored(
                 state_color,
                 "Support state: %s",
@@ -1208,11 +1219,11 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
                 ImGui::TextWrapped("%s", support_state->reason.c_str());
             }
         }
-        ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Support details:");
+        ImGui::TextColored(t.text_bright, "Support details:");
         for (const auto& axis : metadata->support_axes) {
             const ImVec4 axis_color = axis.supported
-                ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-                : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+                ? t.success
+                : t.error;
             const char* icon = axis.supported
                 ? ICON_FA_CIRCLE_CHECK
                 : ICON_FA_TRIANGLE_EXCLAMATION;
@@ -1241,7 +1252,7 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
     // Status info for template nodes
     if (metadata->IsTemplate()) {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f),
+        ImGui::TextColored(t.pending,
                           ICON_FA_CLOCK " Coming Soon");
         if (metadata->user_votes > 0) {
             ImGui::SameLine();
@@ -1255,7 +1266,7 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
         ImGui::TextDisabled("Template node: not addable yet");
     } else if (IsSupportBlocked(metadata)) {
         const std::string reason = FirstUnsupportedSupportReason(metadata);
-        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+        ImGui::TextColored(t.error,
                            ICON_FA_TRIANGLE_EXCLAMATION " Blocked from graph add");
         if (!reason.empty()) {
             ImGui::TextWrapped("%s", reason.c_str());
@@ -1300,79 +1311,7 @@ void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
 }
 
 ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
-    if (category == cyxwiz::NodeCategory::DataSources) {
-        return IM_COL32(100, 181, 246, 255);  // Light Blue
-    }
-    if (category == cyxwiz::NodeCategory::DataTransform) {
-        return IM_COL32(38, 166, 154, 255);   // Teal
-    }
-    if (category == cyxwiz::NodeCategory::Analytics) {
-        return IM_COL32(156, 39, 176, 255);   // Purple
-    }
-    if (category == cyxwiz::NodeCategory::Preprocessing) {
-        return IM_COL32(129, 199, 132, 255);  // Light Green
-    }
-    if (category == cyxwiz::NodeCategory::Layers) {
-        return IM_COL32(39, 174, 96, 255);    // Green
-    }
-    if (category == cyxwiz::NodeCategory::Activation) {
-        return IM_COL32(243, 156, 18, 255);   // Orange
-    }
-    if (category == cyxwiz::NodeCategory::Pooling) {
-        return IM_COL32(155, 89, 182, 255);   // Light Purple
-    }
-    if (category == cyxwiz::NodeCategory::Normalization) {
-        return IM_COL32(236, 112, 99, 255);   // Coral
-    }
-    if (category == cyxwiz::NodeCategory::Attention) {
-        return IM_COL32(103, 58, 183, 255);   // Deep Purple
-    }
-    if (category == cyxwiz::NodeCategory::Recurrent) {
-        return IM_COL32(63, 81, 181, 255);    // Indigo
-    }
-    if (category == cyxwiz::NodeCategory::ShapeOps) {
-        return IM_COL32(26, 188, 156, 255);   // Turquoise
-    }
-    if (category == cyxwiz::NodeCategory::MergeOps) {
-        return IM_COL32(139, 195, 74, 255);   // Lime Green
-    }
-    if (category == cyxwiz::NodeCategory::Training) {
-        return IM_COL32(52, 73, 94, 255);     // Dark Blue Gray
-    }
-    if (category == cyxwiz::NodeCategory::Regularization) {
-        return IM_COL32(233, 30, 99, 255);    // Pink
-    }
-    if (category == cyxwiz::NodeCategory::Utility) {
-        return IM_COL32(96, 125, 139, 255);   // Blue Gray
-    }
-    if (category == cyxwiz::NodeCategory::Signal) {
-        return IM_COL32(0, 150, 136, 255);    // Teal
-    }
-    if (category == cyxwiz::NodeCategory::DataPipeline) {
-        return IM_COL32(0, 188, 212, 255);    // Cyan
-    }
-    if (category == cyxwiz::NodeCategory::DNN) {
-        return IM_COL32(41, 98, 255, 255);    // Deep Blue
-    }
-    if (category == cyxwiz::NodeCategory::TextProcessing) {
-        return IM_COL32(0, 121, 107, 255);    // Dark Teal
-    }
-    if (category == cyxwiz::NodeCategory::Upsampling) {
-        return IM_COL32(92, 107, 192, 255);   // Indigo
-    }
-    if (category == cyxwiz::NodeCategory::TimeSeries) {
-        return IM_COL32(255, 160, 0, 255);    // Amber
-    }
-    if (category == cyxwiz::NodeCategory::Audio) {
-        return IM_COL32(126, 87, 194, 255);   // Purple
-    }
-    if (category == cyxwiz::NodeCategory::RL) {
-        return IM_COL32(229, 57, 53, 255);    // Red
-    }
-    if (category == cyxwiz::NodeCategory::Plugin) {
-        return IM_COL32(68, 136, 170, 255);   // Steel Blue
-    }
-    return IM_COL32(127, 140, 141, 255);      // Gray
+    return ui::ToU32(NodeCategoryColour(category));
 }
 
 std::vector<const cyxwiz::NodeMetadata*> NodeBrowserPanel::ApplySupportFilter(
@@ -1466,12 +1405,8 @@ const char* NodeBrowserPanel::GetSupportFilterLabel(
 }
 
 ImU32 NodeBrowserPanel::GetNodeColorDark(cyxwiz::NodeCategory category) const {
-    // Darken the node color for borders
-    ImU32 color = GetNodeColor(category);
-    int r = (color >> 0) & 0xFF;
-    int g = (color >> 8) & 0xFF;
-    int b = (color >> 16) & 0xFF;
-    return IM_COL32(r * 0.7f, g * 0.7f, b * 0.7f, 255);
+    // The category colour a step toward the window, for borders
+    return ui::ToU32(ui::Mix(NodeCategoryColour(category), ui::CurrentTokens().bg_window, 0.3f));
 }
 
 } // namespace gui

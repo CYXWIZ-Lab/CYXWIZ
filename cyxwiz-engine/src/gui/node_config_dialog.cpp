@@ -1,6 +1,7 @@
 #include "node_config_dialog.h"
 #include "quality_analyzer_dialog.h"
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
@@ -216,7 +217,8 @@ bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const 
 }
 
 void NodeConfigDialog::ValidationMessage(const std::string& message, bool is_error) {
-    ImVec4 color = is_error ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    ImVec4 color = is_error ? t.error : t.success;
     ImGui::TextColored(color, "%s", message.c_str());
 }
 
@@ -372,7 +374,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
             auto size = test_file.tellg();
             test_file.close();
 
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "File found");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "File found");
             ImGui::Text("Size: %.2f KB", static_cast<float>(size) / 1024.0f);
         } else {
             ValidationMessage("File not found or cannot be opened");
@@ -382,7 +384,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
 
 void CSVReaderDialog::RenderTransformationTab() {
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Column transformation options will be available here.");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "Column transformation options will be available here.");
     ImGui::Spacing();
 
     ImGui::Text("Available transformations:");
@@ -458,7 +460,7 @@ void CSVReaderDialog::RenderLimitRowsTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim,
         "Note: Row limits are useful for:\n"
         "- Testing pipelines with large files\n"
         "- Memory management\n"
@@ -1404,9 +1406,9 @@ void TokenizerDialog::RenderPreviewTab() {
 
             // Draw token chip
             ImGui::PushID(static_cast<int>(i));
-            ImVec4 bg_color = ImVec4(0.2f, 0.4f, 0.6f, 1.0f);
+            ImVec4 bg_color = cyxwiz::ui::CurrentTokens().bg_raised;
             ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
             ImGui::SmallButton(token.c_str());
             ImGui::PopStyleColor(2);
             ImGui::PopID();

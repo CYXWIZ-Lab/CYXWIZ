@@ -159,6 +159,18 @@ struct NodeGroup {
     float padding = 20.0f;  // Padding around contained nodes
 };
 
+// Default colour of a new canvas annotation, from the active theme tokens
+// (the colour itself is user data saved with the graph).
+ImU32 DefaultAnnotationColour();
+
+// The colour of a node category on the canvas, in the Node Browser and in
+// the node documentation: one series colour of the theme tokens per category.
+ImVec4 NodeCategoryColour(NodeCategory category);
+
+// The colour of a pin data type (Node Info panel, pin legends): one series
+// colour of the theme tokens per type.
+ImVec4 PinTypeColour(PinType type);
+
 // Canvas annotation (KNIME-style sticky note)
 struct CanvasAnnotation {
     int id;
@@ -173,7 +185,7 @@ struct CanvasAnnotation {
         : id(-1)
         , position(0, 0)
         , size(200, 100)
-        , color(IM_COL32(255, 255, 200, 255))  // Default yellow
+        , color(0)  // set by the creator: DefaultAnnotationColour() or the saved colour
         , is_minimized(false) {}
 };
 
@@ -193,15 +205,6 @@ struct CanvasFrame {
         , position(0, 0)
         , size(300, 200)
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
-};
-
-// Annotation color presets
-enum class AnnotationColor {
-    Yellow,   // Default - IM_COL32(255, 255, 200, 255)
-    Blue,     // Info - IM_COL32(200, 220, 255, 255)
-    Green,    // Done - IM_COL32(200, 255, 200, 255)
-    Orange,   // TODO - IM_COL32(255, 230, 200, 255)
-    Pink      // Important - IM_COL32(255, 200, 220, 255)
 };
 
 // Validation warning severity levels
@@ -590,9 +593,6 @@ private:
     ImU32 GetLinkColor(LinkType type) const;
     ImU32 GetLinkHoverColor(LinkType type) const;
 
-    // Get visual color for pins and links based on data type
-    ImU32 GetPinTypeColor(PinType type) const;
-    ImU32 GetPinTypeHoverColor(PinType type) const;
 
     // Connection tracking for variadic pins
     int GetConnectionCount(int pin_id) const;
@@ -698,7 +698,6 @@ private:
     CanvasAnnotation* FindAnnotationById(int annotation_id);
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
-    ImU32 GetAnnotationColorValue(AnnotationColor color) const;
 
     // Subgraph encapsulation
     void CreateSubgraphFromSelection(const std::string& name);

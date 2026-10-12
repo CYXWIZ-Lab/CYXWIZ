@@ -1,6 +1,6 @@
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 #include "../core/pipeline_type_names.h"
-#include "console_palette.h"
 #include "node_editor.h"
 #include "../core/live_graph_compile.h"
 #include "../core/graph_node_factory.h"
@@ -55,6 +55,8 @@
 
 namespace gui {
 
+namespace ui = cyxwiz::ui;
+
 // Forward declaration (used in Render before definition)
 static std::string GetPinTypeName(PinType type);
 
@@ -104,6 +106,13 @@ void NodeEditor::AddAnnotation() {
     AddAnnotationAt(center_pos);
 }
 
+ImU32 DefaultAnnotationColour() {
+    // A sticky-note tint of the panel colour; the user may change it and
+    // the chosen colour is saved with the graph.
+    const ui::Tokens& t = ui::CurrentTokens();
+    return ui::ToU32(ui::Mix(t.bg_panel, t.warning, 0.35f));
+}
+
 void NodeEditor::AddAnnotationAt(const ImVec2& position) {
     CanvasAnnotation annotation;
     annotation.id = next_annotation_id_++;
@@ -111,7 +120,7 @@ void NodeEditor::AddAnnotationAt(const ImVec2& position) {
     annotation.content = "Enter description here...";
     annotation.position = position;
     annotation.size = ImVec2(200.0f, 100.0f);
-    annotation.color = IM_COL32(255, 255, 200, 255);  // Yellow
+    annotation.color = DefaultAnnotationColour();
     annotation.is_minimized = false;
     annotations_.push_back(annotation);
 }
@@ -465,7 +474,7 @@ void NodeEditor::Render() {
                         const MLNode* end_node = FindNodeById(end);
                         if (reason.empty() || !end_node) continue;
                         ImGui::BeginTooltip();
-                        ImGui::TextColored(ImVec4(0.96f, 0.63f, 0.29f, 1.0f), "%s: will not compile",
+                        ImGui::TextColored(ui::CurrentTokens().caution, "%s: will not compile",
                                            end_node->name.c_str());
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
                         ImGui::TextUnformatted(reason.c_str());
@@ -891,7 +900,7 @@ void NodeEditor::Render() {
     }
 
     if (ImGui::BeginPopupModal("Empty Graph Warning", &show_empty_graph_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION);
         ImGui::SameLine();
         ImGui::Text("Cannot Save Empty Graph");
         ImGui::Separator();
@@ -924,7 +933,7 @@ void NodeEditor::Render() {
                               &show_auto_insert_flatten_dialog_,
                               ImGuiWindowFlags_AlwaysAutoResize)) {
 
-        ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().warning,
                          ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
         ImGui::Separator();
         ImGui::Spacing();
@@ -1015,7 +1024,7 @@ void NodeEditor::Render() {
 void NodeEditor::RenderMinimap() {
     // Drawn whenever it is switched on; an empty canvas (new graph, Clear All)
     // shows an empty overview instead of hiding the minimap.
-    const auto& palette = ::gui::CurrentConsolePalette();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Get parent window position and size for calculating minimap position
     ImVec2 parent_window_pos = ImGui::GetWindowPos();
@@ -1057,10 +1066,10 @@ void NodeEditor::RenderMinimap() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg,
-                          ImVec4(palette.panel.x, palette.panel.y, palette.panel.z, 0.94f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, palette.bar);
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, palette.bar);
-    ImGui::PushStyleColor(ImGuiCol_Border, palette.border);
+                          ui::WithAlpha(t.bg_panel, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, t.bg_bar);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.bg_bar);
+    ImGui::PushStyleColor(ImGuiCol_Border, t.border);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                     ImGuiWindowFlags_NoScrollbar |
@@ -1075,8 +1084,7 @@ void NodeEditor::RenderMinimap() {
         ImVec2 win_pos = ImGui::GetWindowPos();
         ImVec2 win_size = ImGui::GetWindowSize();
         const float grid_step = 20.0f;
-        ImU32 grid_color = ImGui::GetColorU32(ImVec4(palette.border.x, palette.border.y,
-                                                    palette.border.z, 0.35f));
+        ImU32 grid_color = ImGui::GetColorU32(ui::WithAlpha(t.border, 0.35f));
         for (float x = win_pos.x; x < win_pos.x + win_size.x; x += grid_step) {
             bg_draw_list->AddLine(ImVec2(x, win_pos.y), ImVec2(x, win_pos.y + win_size.y), grid_color);
         }
@@ -1089,12 +1097,12 @@ void NodeEditor::RenderMinimap() {
         bg_draw_list->AddRectFilled(
             win_pos,
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            ImGui::GetColorU32(palette.bar), 6.0f, ImDrawFlags_RoundCornersTop
+            ImGui::GetColorU32(t.bg_bar), 6.0f, ImDrawFlags_RoundCornersTop
         );
         bg_draw_list->AddLine(
             ImVec2(win_pos.x, win_pos.y + header_height),
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            ImGui::GetColorU32(palette.inner_border)
+            ImGui::GetColorU32(t.border_soft)
         );
 
         // Stats (or an empty-canvas note) and a close button in the header.
@@ -1108,7 +1116,7 @@ void NodeEditor::RenderMinimap() {
         bg_draw_list->AddText(
             ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f,
                    win_pos.y + (header_height - text_size.y) * 0.5f),
-            ImGui::GetColorU32(palette.muted),
+            ImGui::GetColorU32(t.text_dim),
             stats_text
         );
         {
@@ -1120,7 +1128,7 @@ void NodeEditor::RenderMinimap() {
                 ImVec2(close_pos.x - 3.0f, win_pos.y),
                 ImVec2(win_pos.x + win_size.x, win_pos.y + header_height));
             bg_draw_list->AddText(close_pos,
-                                  ImGui::GetColorU32(close_hovered ? palette.text : palette.faint),
+                                  ImGui::GetColorU32(close_hovered ? t.text : t.text_faint),
                                   close_icon);
             if (close_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 show_minimap_ = false;
@@ -1238,8 +1246,8 @@ void NodeEditor::RenderMinimap() {
             ImVec2 mm_to = gridToMinimap(to_pos);
             // Use a gradient-like effect: brighter in middle
             ImU32 link_color = is_training_ ?
-                IM_COL32(200, 220, 100, 180) :  // Amber-ish during training
-                IM_COL32(130, 160, 200, 160);   // Blue-gray normally
+                ui::ToU32(ui::WithAlpha(t.running, 180.0f / 255.0f)) :  // training in progress
+                ui::ToU32(ui::WithAlpha(t.text_dim, 160.0f / 255.0f));
             draw_list->AddLine(mm_from, mm_to, link_color, 1.5f);
         }
     }
@@ -1258,12 +1266,7 @@ void NodeEditor::RenderMinimap() {
 
         // Get node color based on type
         unsigned int color = GetNodeColor(node.type);
-        ImU32 fill_color = IM_COL32(
-            (color >> 0) & 0xFF,
-            (color >> 8) & 0xFF,
-            (color >> 16) & 0xFF,
-            200
-        );
+        ImU32 fill_color = ui::ToU32(ui::WithAlpha(ImGui::ColorConvertU32ToFloat4(color), 200.0f / 255.0f));
 
         // Check if node is selected (support multi-selection)
         bool is_selected = ImNodes::IsNodeSelected(node.id);
@@ -1273,7 +1276,7 @@ void NodeEditor::RenderMinimap() {
 
         // Draw subtle border for all nodes
         draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
-            IM_COL32(255, 255, 255, 40), 3.0f, 0, 1.0f);
+            ui::ToU32(ui::WithAlpha(t.text, 40.0f / 255.0f)), 3.0f, 0, 1.0f);
 
         if (is_selected) {
             // Blue glow effect matching main editor
@@ -1283,12 +1286,12 @@ void NodeEditor::RenderMinimap() {
                 draw_list->AddRect(
                     ImVec2(mm_pos.x - offset, mm_pos.y - offset),
                     ImVec2(mm_pos.x + mm_size.x + offset, mm_pos.y + mm_size.y + offset),
-                    IM_COL32(100, 180, 255, alpha), 3.0f, 0, 1.5f
+                    ui::ToU32(ui::WithAlpha(t.accent_text, alpha / 255.0f)), 3.0f, 0, 1.5f
                 );
             }
             // Bright selection border
             draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
-                IM_COL32(100, 180, 255, 255), 3.0f, 0, 2.0f);
+                ui::ToU32(t.accent_text), 3.0f, 0, 2.0f);
         }
     }
 
@@ -1310,14 +1313,14 @@ void NodeEditor::RenderMinimap() {
     viewport_mm_max.y = std::min(viewport_mm_max.y, window_pos.y + window_size.y);
 
     // Draw semi-transparent viewport indicator with enhanced styling
-    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(80, 140, 255, 35));
+    draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, ui::ToU32(ui::WithAlpha(t.accent, 35.0f / 255.0f)));
 
     // Draw viewport border with rounded corners
-    draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 160, 255, 220), 2.0f, 0, 2.0f);
+    draw_list->AddRect(viewport_mm_min, viewport_mm_max, ui::ToU32(ui::WithAlpha(t.accent_text, 220.0f / 255.0f)), 2.0f, 0, 2.0f);
 
     // Draw corner handles for visual emphasis
     const float handle_size = 4.0f;
-    ImU32 handle_color = IM_COL32(130, 180, 255, 255);
+    ImU32 handle_color = ui::ToU32(t.accent_text);
 
     // Top-left corner
     draw_list->AddRectFilled(
@@ -1375,7 +1378,7 @@ void NodeEditor::RenderMinimap() {
 
         // Draw crosshair at mouse position
         const float crosshair_size = 8.0f;
-        ImU32 crosshair_color = IM_COL32(255, 255, 255, 200);
+        ImU32 crosshair_color = ui::ToU32(ui::WithAlpha(t.text_bright, 200.0f / 255.0f));
 
         draw_list->AddLine(
             ImVec2(mouse_pos.x - crosshair_size, mouse_pos.y),
@@ -1449,7 +1452,7 @@ void NodeEditor::RenderMinimap() {
     if (!mouse_in_minimap) {
         const float arrow_size = 6.0f;
         const float arrow_padding = 6.0f;
-        ImU32 arrow_color = IM_COL32(120, 120, 130, 150);
+        ImU32 arrow_color = ui::ToU32(ui::WithAlpha(t.text_dim, 150.0f / 255.0f));
 
         // Draw 4-way arrow icon at bottom right corner
         ImVec2 icon_pos = ImVec2(
@@ -1516,6 +1519,7 @@ void NodeEditor::RebuildPinLookup() {
 }
 
 void NodeEditor::RenderNodes() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Update execution pulse animation
     execution_pulse_time_ += ImGui::GetIO().DeltaTime;
 
@@ -1549,22 +1553,16 @@ void NodeEditor::RenderNodes() {
         // Set node color based on execution state OR type
         ImU32 title_color;
         if (exec_state == NodeExecutionState::Executing) {
-            // Pulsing blue for executing node
+            // Pulsing running colour for the executing node
             float pulse = 0.5f + 0.5f * std::sin(execution_pulse_time_ * 4.0f);
-            ImU32 base = IM_COL32(30, 100, 200, 255);
-            ImU32 highlight = IM_COL32(60, 150, 255, 255);
-            title_color = ImGui::ColorConvertFloat4ToU32(ImVec4(
-                (base & 0xFF) / 255.0f * (1 - pulse) + (highlight & 0xFF) / 255.0f * pulse,
-                ((base >> 8) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 8) & 0xFF) / 255.0f * pulse,
-                ((base >> 16) & 0xFF) / 255.0f * (1 - pulse) + ((highlight >> 16) & 0xFF) / 255.0f * pulse,
-                1.0f
-            ));
+            const ImVec4 base = ui::Mix(t.running, t.bg_window, 0.35f);
+            title_color = ui::ToU32(ui::Mix(base, t.running, pulse));
         } else if (exec_state == NodeExecutionState::Completed) {
-            // Green for completed
-            title_color = IM_COL32(50, 150, 70, 255);
+            // Success colour for completed
+            title_color = ui::ToU32(t.success);
         } else if (exec_state == NodeExecutionState::Error) {
-            // Red for error
-            title_color = IM_COL32(200, 50, 50, 255);
+            // Error colour for a failed node
+            title_color = ui::ToU32(t.error);
         } else {
             // Normal color based on type
             title_color = GetNodeColor(node.type);
@@ -1577,6 +1575,12 @@ void NodeEditor::RenderNodes() {
                 cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
             extension_style = cyxwiz::BuildExtensionCanvasStyle(
                 node, descriptor ? &*descriptor : nullptr, GetNodeColor(node.type));
+            if (extension_style->missing) {
+                // The not-installed look in theme colours: a raised box with
+                // a caution outline and status line.
+                extension_style->box_color = ui::ToU32(t.bg_raised);
+                extension_style->outline_color = ui::ToU32(t.caution);
+            }
             if (exec_state == NodeExecutionState::Idle) {
                 title_color = extension_style->box_color;
             }
@@ -1650,36 +1654,36 @@ void NodeEditor::RenderNodes() {
                     ImNodesPinShape pin_shape;
                     switch (GetNodePinState(node.id)) {
                         case NodePinState::CompileFailed:
-                            pin_color = IM_COL32(245, 161, 74, 255);
-                            pin_hover = IM_COL32(255, 190, 120, 255);
+                            pin_color = ui::ToU32(t.caution);
+                            pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_CircleFilled;
                             break;
                         case NodePinState::CompilePassed:
-                            pin_color = IM_COL32(50, 200, 50, 255);
-                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_Circle;
                             break;
                         case NodePinState::Trained:
-                            pin_color = IM_COL32(50, 200, 50, 255);
-                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_CircleFilled;
                             break;
                         case NodePinState::Default:
                         default:
-                            pin_color = IM_COL32(150, 160, 180, 255);
-                            pin_hover = IM_COL32(190, 198, 215, 255);
+                            pin_color = ui::ToU32(t.pending);
+                            pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_Circle;
                             break;
                     }
 
                     // Execution state takes highest priority
                     if (has_error) {
-                        pin_color = IM_COL32(220, 180, 50, 255);
-                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_color = ui::ToU32(t.error);
+                        pin_hover = ui::ToU32(ui::Mix(t.error, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     } else if (is_running) {
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     }
 
@@ -1718,36 +1722,36 @@ void NodeEditor::RenderNodes() {
                     ImNodesPinShape pin_shape;
                     switch (GetNodePinState(node.id)) {
                         case NodePinState::CompileFailed:
-                            pin_color = IM_COL32(245, 161, 74, 255);
-                            pin_hover = IM_COL32(255, 190, 120, 255);
+                            pin_color = ui::ToU32(t.caution);
+                            pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_CircleFilled;
                             break;
                         case NodePinState::CompilePassed:
-                            pin_color = IM_COL32(50, 200, 50, 255);
-                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_Circle;
                             break;
                         case NodePinState::Trained:
-                            pin_color = IM_COL32(50, 200, 50, 255);
-                            pin_hover = IM_COL32(80, 230, 80, 255);
+                            pin_color = ui::ToU32(t.success);
+                            pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_CircleFilled;
                             break;
                         case NodePinState::Default:
                         default:
-                            pin_color = IM_COL32(150, 160, 180, 255);
-                            pin_hover = IM_COL32(190, 198, 215, 255);
+                            pin_color = ui::ToU32(t.pending);
+                            pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
                             pin_shape = ImNodesPinShape_Circle;
                             break;
                     }
 
                     // Execution state takes highest priority
                     if (has_error) {
-                        pin_color = IM_COL32(220, 180, 50, 255);
-                        pin_hover = IM_COL32(240, 200, 80, 255);
+                        pin_color = ui::ToU32(t.error);
+                        pin_hover = ui::ToU32(ui::Mix(t.error, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     } else if (is_running) {
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                     }
 
@@ -1772,7 +1776,7 @@ void NodeEditor::RenderNodes() {
             ImU32 bg_color = title_color;
             draw_list->AddRectFilled(icon_pos, icon_max, bg_color, CORNER_RADIUS);
             // Add rounded border around the icon box
-            ImU32 border_color = IM_COL32(80, 80, 90, 200);
+            ImU32 border_color = ui::ToU32(ui::WithAlpha(t.border, 200.0f / 255.0f));
             draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
 
             // A missing extension: orange outline and "Not installed" under
@@ -1791,8 +1795,8 @@ void NodeEditor::RenderNodes() {
             if (node.type == NodeType::Subgraph) {
                 const bool recipe = IsPreparationRecipeNode(node.id);
                 const char* role = recipe ? "Preparation Recipe" : "Visual group (does not run)";
-                const ImU32 role_color = recipe ? IM_COL32(110, 200, 120, 255)
-                                                : IM_COL32(150, 150, 150, 255);
+                const ImU32 role_color = recipe ? ui::ToU32(t.success)
+                                                : ui::ToU32(t.text_dim);
                 if (recipe) {
                     draw_list->AddRect(icon_pos, icon_max, role_color, CORNER_RADIUS, 0, 2.5f);
                 }
@@ -1807,7 +1811,7 @@ void NodeEditor::RenderNodes() {
                 ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
                 float name_x = icon_pos.x + (ICON_BOX_SIZE - name_size.x) * 0.5f;
                 float name_y = icon_pos.y - name_size.y - 4.0f;
-                draw_list->AddText(ImVec2(name_x, name_y), IM_COL32(200, 200, 200, 255), node.name.c_str());
+                draw_list->AddText(ImVec2(name_x, name_y), ui::ToU32(t.text), node.name.c_str());
             }
 
             // Draw centered icon (55% of box height, like Node Browser)
@@ -1819,7 +1823,8 @@ void NodeEditor::RenderNodes() {
                 icon_pos.x + (ICON_BOX_SIZE - icon_text_size.x) * 0.5f,
                 icon_pos.y + (ICON_BOX_SIZE - icon_text_size.y) * 0.5f
             );
-            draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
+            draw_list->AddText(font, scaled_icon_size, icon_text_pos,
+                               ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
 
             // Drag handle: icon box only (keeps pin drag separate from node move)
             ImVec2 cursor_backup = ImGui::GetCursorScreenPos();
@@ -1871,7 +1876,7 @@ void NodeEditor::RenderNodes() {
             ImGui::TextUnformatted(node.name.c_str());
             if (node.type == NodeType::Subgraph) {
                 if (IsPreparationRecipeNode(node.id)) {
-                    ImGui::TextColored(ImVec4(0.43f, 0.78f, 0.47f, 1.0f), "Preparation Recipe");
+                    ImGui::TextColored(t.success, "Preparation Recipe");
                 } else {
                     ImGui::TextDisabled("Visual group (does not run)");
                 }
@@ -1885,24 +1890,24 @@ void NodeEditor::RenderNodes() {
                 ImNodesPinShape pin_shape;
                 switch (GetNodePinState(node.id)) {
                     case NodePinState::CompileFailed:
-                        pin_color = IM_COL32(245, 161, 74, 255);
-                        pin_hover = IM_COL32(255, 190, 120, 255);
+                        pin_color = ui::ToU32(t.caution);
+                        pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                         break;
                     case NodePinState::CompilePassed:
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_Circle;
                         break;
                     case NodePinState::Trained:
-                        pin_color = IM_COL32(50, 200, 50, 255);
-                        pin_hover = IM_COL32(80, 230, 80, 255);
+                        pin_color = ui::ToU32(t.success);
+                        pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_CircleFilled;
                         break;
                     case NodePinState::Default:
                     default:
-                        pin_color = IM_COL32(150, 160, 180, 255);
-                        pin_hover = IM_COL32(190, 198, 215, 255);
+                        pin_color = ui::ToU32(t.pending);
+                        pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
                         pin_shape = ImNodesPinShape_Circle;
                         break;
                 }
@@ -1922,35 +1927,35 @@ void NodeEditor::RenderNodes() {
             case NodeType::Dense: {
                 auto it = node.parameters.find("units");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Units: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Units: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::Conv2D: {
                 auto it = node.parameters.find("filters");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Filters: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Filters: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::MaxPool2D: {
                 auto it = node.parameters.find("pool_size");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Pool: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Pool: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::Dropout: {
                 auto it = node.parameters.find("rate");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Rate: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Rate: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::BatchNorm: {
                 auto it = node.parameters.find("momentum");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Momentum: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Momentum: %s", it->second.c_str());
                 }
                 break;
             }
@@ -1960,7 +1965,7 @@ void NodeEditor::RenderNodes() {
                     it = node.parameters.find("classes");
                 }
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Classes: %s", it->second.c_str());
                 }
                 break;
             }
@@ -1969,24 +1974,24 @@ void NodeEditor::RenderNodes() {
             case NodeType::DatasetInput: {
                 auto it = node.parameters.find("dataset_name");
                 if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Dataset: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Dataset: %s", it->second.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 0.7f), "Dataset: <select>");
+                    ImGui::TextColored(t.text_faint, "Dataset: <select>");
                 }
                 auto split_it = node.parameters.find("split");
                 if (split_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s", split_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Split: %s", split_it->second.c_str());
                 }
                 break;
             }
             case NodeType::DataLoader: {
                 auto it = node.parameters.find("batch_size");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Batch: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Batch: %s", it->second.c_str());
                 }
                 auto shuffle_it = node.parameters.find("shuffle");
                 if (shuffle_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Shuffle: %s", shuffle_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Shuffle: %s", shuffle_it->second.c_str());
                 }
                 break;
             }
@@ -1995,7 +2000,7 @@ void NodeEditor::RenderNodes() {
                 auto val_it = node.parameters.find("val_ratio");
                 auto test_it = node.parameters.find("test_ratio");
                 if (train_it != node.parameters.end() && val_it != node.parameters.end() && test_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Split: %s/%s/%s",
+                    ImGui::TextColored(t.accent_text, "Split: %s/%s/%s",
                         train_it->second.c_str(), val_it->second.c_str(), test_it->second.c_str());
                 }
                 break;
@@ -2004,15 +2009,15 @@ void NodeEditor::RenderNodes() {
                 auto mean_it = node.parameters.find("mean");
                 auto std_it = node.parameters.find("std");
                 if (mean_it != node.parameters.end() && std_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Mean: %s", mean_it->second.c_str());
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Std: %s", std_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Mean: %s", mean_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Std: %s", std_it->second.c_str());
                 }
                 break;
             }
             case NodeType::OneHotEncode: {
                 auto it = node.parameters.find("num_classes");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Classes: %s", it->second.c_str());
                 }
                 break;
             }
@@ -2023,25 +2028,25 @@ void NodeEditor::RenderNodes() {
                 auto type_it = node.parameters.find("tokenizer_type");
                 int type_idx = type_it != node.parameters.end() ? std::stoi(type_it->second) : 1;
                 if (type_idx >= 0 && type_idx < 4) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Type: %s", types[type_idx]);
+                    ImGui::TextColored(t.accent_text, "Type: %s", types[type_idx]);
                 }
                 auto len_it = node.parameters.find("max_length");
                 if (len_it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Len: %s", len_it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Max Len: %s", len_it->second.c_str());
                 }
                 break;
             }
             case NodeType::TextVocabulary: {
                 auto it = node.parameters.find("max_vocab_size");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Max Vocab: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Max Vocab: %s", it->second.c_str());
                 }
                 break;
             }
             case NodeType::TextPadding: {
                 auto it = node.parameters.find("max_length");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.8f, 1.0f), "Pad to: %s", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Pad to: %s", it->second.c_str());
                 }
                 break;
             }
@@ -2052,10 +2057,10 @@ void NodeEditor::RenderNodes() {
                 auto k = node.parameters.find("kernel_size");
                 auto s = node.parameters.find("stride");
                 if (out_ch != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Out: %s ch", out_ch->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Out: %s ch", out_ch->second.c_str());
                 }
                 if (k != node.parameters.end() && s != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "K:%s S:%s", k->second.c_str(), s->second.c_str());
+                    ImGui::TextColored(t.accent_text, "K:%s S:%s", k->second.c_str(), s->second.c_str());
                 }
                 break;
             }
@@ -2064,18 +2069,18 @@ void NodeEditor::RenderNodes() {
                 auto sf = node.parameters.find("scale_factor");
                 auto mode = node.parameters.find("mode");
                 if (sf != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Scale: %sx", sf->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Scale: %sx", sf->second.c_str());
                 }
                 int m = mode != node.parameters.end() ? std::stoi(mode->second) : 0;
                 if (m >= 0 && m < 2) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Mode: %s", modes[m]);
+                    ImGui::TextColored(t.accent_text, "Mode: %s", modes[m]);
                 }
                 break;
             }
             case NodeType::PixelShuffle: {
                 auto it = node.parameters.find("upscale_factor");
                 if (it != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.7f, 1.0f, 1.0f), "Factor: %sx", it->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Factor: %sx", it->second.c_str());
                 }
                 break;
             }
@@ -2085,21 +2090,21 @@ void NodeEditor::RenderNodes() {
                 auto iw = node.parameters.find("input_width");
                 auto shift = node.parameters.find("shift");
                 if (iw != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Width: %s", iw->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Width: %s", iw->second.c_str());
                 }
                 if (shift != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Shift: %s", shift->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Shift: %s", shift->second.c_str());
                 }
                 break;
             }
             case NodeType::TimeSeriesFeatures: {
                 auto lag = node.parameters.find("lag_values");
                 if (lag != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Lags: %s", lag->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Lags: %s", lag->second.c_str());
                 }
                 auto rolling = node.parameters.find("rolling_windows");
                 if (rolling != node.parameters.end() && !rolling->second.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Rolling: %s", rolling->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Rolling: %s", rolling->second.c_str());
                 }
                 break;
             }
@@ -2107,7 +2112,7 @@ void NodeEditor::RenderNodes() {
                 auto tr = node.parameters.find("train_ratio");
                 auto vr = node.parameters.find("val_ratio");
                 if (tr != node.parameters.end() && vr != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Train: %s  Val: %s", tr->second.c_str(), vr->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Train: %s  Val: %s", tr->second.c_str(), vr->second.c_str());
                 }
                 break;
             }
@@ -2116,7 +2121,7 @@ void NodeEditor::RenderNodes() {
             case NodeType::AudioInput: {
                 auto sr = node.parameters.find("sample_rate");
                 if (sr != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "SR: %s Hz", sr->second.c_str());
+                    ImGui::TextColored(t.accent_text, "SR: %s Hz", sr->second.c_str());
                 }
                 break;
             }
@@ -2124,23 +2129,23 @@ void NodeEditor::RenderNodes() {
             case NodeType::MelSpectrogram: {
                 auto nfft = node.parameters.find("n_fft");
                 if (nfft != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "FFT: %s", nfft->second.c_str());
+                    ImGui::TextColored(t.accent_text, "FFT: %s", nfft->second.c_str());
                 }
                 auto mels = node.parameters.find("n_mels");
                 if (mels != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Mels: %s", mels->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Mels: %s", mels->second.c_str());
                 }
                 break;
             }
             case NodeType::MFCC: {
                 auto n = node.parameters.find("n_mfcc");
                 if (n != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "MFCC: %s", n->second.c_str());
+                    ImGui::TextColored(t.accent_text, "MFCC: %s", n->second.c_str());
                 }
                 break;
             }
             case NodeType::AudioAugmentation: {
-                ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "Audio Augment");
+                ImGui::TextColored(t.accent_text, "Audio Augment");
                 break;
             }
 
@@ -2148,14 +2153,14 @@ void NodeEditor::RenderNodes() {
             case NodeType::GymEnvironment: {
                 auto env = node.parameters.find("env_name");
                 if (env != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Env: %s", env->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Env: %s", env->second.c_str());
                 }
                 break;
             }
             case NodeType::ReplayBufferNode: {
                 auto cap = node.parameters.find("capacity");
                 if (cap != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Cap: %s", cap->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Cap: %s", cap->second.c_str());
                 }
                 break;
             }
@@ -2163,7 +2168,7 @@ void NodeEditor::RenderNodes() {
             case NodeType::ValueNetwork: {
                 auto hs = node.parameters.find("hidden_size");
                 if (hs != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Hidden: %s", hs->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Hidden: %s", hs->second.c_str());
                 }
                 break;
             }
@@ -2171,10 +2176,10 @@ void NodeEditor::RenderNodes() {
                 auto algo = node.parameters.find("algorithm");
                 auto eps = node.parameters.find("episodes");
                 if (algo != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Algo: %s", algo->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Algo: %s", algo->second.c_str());
                 }
                 if (eps != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Episodes: %s", eps->second.c_str());
+                    ImGui::TextColored(t.accent_text, "Episodes: %s", eps->second.c_str());
                 }
                 break;
             }
@@ -2192,24 +2197,24 @@ void NodeEditor::RenderNodes() {
             ImNodesPinShape pin_shape;
             switch (GetNodePinState(node.id)) {
                 case NodePinState::CompileFailed:
-                    pin_color = IM_COL32(245, 161, 74, 255);
-                    pin_hover = IM_COL32(255, 190, 120, 255);
+                    pin_color = ui::ToU32(t.caution);
+                    pin_hover = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
                     pin_shape = ImNodesPinShape_CircleFilled;
                     break;
                 case NodePinState::CompilePassed:
-                    pin_color = IM_COL32(50, 200, 50, 255);
-                    pin_hover = IM_COL32(80, 230, 80, 255);
+                    pin_color = ui::ToU32(t.success);
+                    pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                     pin_shape = ImNodesPinShape_Circle;
                     break;
                 case NodePinState::Trained:
-                    pin_color = IM_COL32(50, 200, 50, 255);
-                    pin_hover = IM_COL32(80, 230, 80, 255);
+                    pin_color = ui::ToU32(t.success);
+                    pin_hover = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                     pin_shape = ImNodesPinShape_CircleFilled;
                     break;
                 case NodePinState::Default:
                 default:
-                    pin_color = IM_COL32(150, 160, 180, 255);
-                    pin_hover = IM_COL32(190, 198, 215, 255);
+                    pin_color = ui::ToU32(t.pending);
+                    pin_hover = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
                     pin_shape = ImNodesPinShape_Circle;
                     break;
             }
@@ -2245,7 +2250,7 @@ void NodeEditor::RenderNodes() {
             for (int i = 3; i >= 0; --i) {
                 float offset = glow_size * (i + 1) * 0.4f;
                 int alpha = 15 * (4 - i);  // Fade out: 60, 45, 30, 15
-                ImU32 glow_color = IM_COL32(100, 180, 255, alpha);
+                ImU32 glow_color = ui::ToU32(ui::WithAlpha(t.accent_text, alpha / 255.0f));
                 draw_list->AddRect(
                     ImVec2(node_pos.x - offset, node_pos.y - offset),
                     ImVec2(node_pos.x + node_dims.x + offset, node_pos.y + node_dims.y + offset),
@@ -2260,7 +2265,7 @@ void NodeEditor::RenderNodes() {
             draw_list->AddRect(
                 ImVec2(node_pos.x - 1, node_pos.y - 1),
                 ImVec2(node_pos.x + node_dims.x + 1, node_pos.y + node_dims.y + 1),
-                IM_COL32(100, 180, 255, 180),
+                ui::ToU32(ui::WithAlpha(t.accent_text, 180.0f / 255.0f)),
                 6.0f * zoom_,
                 0,
                 2.0f
@@ -2322,19 +2327,19 @@ void NodeEditor::RenderNodes() {
             ImVec2 box_min(text_x - padding_x, desc_y - padding_y);
             ImVec2 box_max(text_x + text_size.x + padding_x, desc_y + text_size.y + padding_y);
 
-            draw_list->AddRectFilled(box_min, box_max, IM_COL32(30, 35, 50, 245), 5.0f * zoom_);
-            draw_list->AddRect(box_min, box_max, IM_COL32(80, 100, 130, 220), 5.0f * zoom_, 0, 1.2f * zoom_);
+            draw_list->AddRectFilled(box_min, box_max, ui::ToU32(ui::WithAlpha(t.bg_panel, 245.0f / 255.0f)), 5.0f * zoom_);
+            draw_list->AddRect(box_min, box_max, ui::ToU32(ui::WithAlpha(t.border, 220.0f / 255.0f)), 5.0f * zoom_, 0, 1.2f * zoom_);
 
             // Left accent line
             draw_list->AddRectFilled(
                 ImVec2(box_min.x + 2.0f * zoom_, box_min.y + 3.0f * zoom_),
                 ImVec2(box_min.x + 5.0f * zoom_, box_max.y - 3.0f * zoom_),
-                IM_COL32(100, 149, 237, 255)
+                ui::ToU32(t.accent)
             );
 
             // Draw text
             draw_list->AddText(font, font_size, ImVec2(text_x + 4.0f * zoom_, desc_y),
-                IM_COL32(230, 235, 245, 255), wrapped.c_str());
+                ui::ToU32(t.text), wrapped.c_str());
         }
 
         // Apply any pending position AFTER the node has been created
@@ -2362,7 +2367,7 @@ void NodeEditor::RenderNodes() {
                 ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
                 // Draw warning icon (yellow triangle with exclamation mark)
-                ImU32 warning_color = IM_COL32(255, 193, 7, 255);  // Amber/yellow
+                ImU32 warning_color = ui::ToU32(t.warning);
                 draw_list->AddText(icon_pos, warning_color, ICON_FA_TRIANGLE_EXCLAMATION);
 
                 // Show tooltip when hovering over icon area
@@ -2376,7 +2381,7 @@ void NodeEditor::RenderNodes() {
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 
                     // Warning header
-                    ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.03f, 1.0f),
+                    ImGui::TextColored(ui::CurrentTokens().warning,
                                      ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
                     ImGui::Separator();
 
@@ -2386,10 +2391,10 @@ void NodeEditor::RenderNodes() {
                     // Suggested fix
                     if (warning.has_auto_fix && !warning.suggested_fix.empty()) {
                         ImGui::Spacing();
-                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                        ImGui::TextColored(t.success,
                                          ICON_FA_LIGHTBULB " Suggestion:");
                         ImGui::TextWrapped("%s", warning.suggested_fix.c_str());
-                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                        ImGui::TextColored(t.text_dim,
                                          "(Try connecting the nodes to see auto-fix dialog)");
                     }
 
@@ -2433,25 +2438,26 @@ void NodeEditor::RenderNodes() {
                 ImVec2 badge_max(
                     badge_min.x + text_size.x + pad_x * 2.0f,
                     badge_min.y + text_size.y + pad_y * 2.0f);
+                const ImVec4 badge_fill = is_active_trace_node
+                    ? ui::WithAlpha(t.accent, 225.0f / 255.0f)
+                    : ui::WithAlpha(t.bg_raised, 210.0f / 255.0f);
                 draw_list->AddRectFilled(
                     badge_min,
                     badge_max,
-                    is_active_trace_node
-                        ? IM_COL32(255, 155, 45, 225)
-                        : IM_COL32(40, 125, 255, 210),
+                    ui::ToU32(badge_fill),
                     7.0f * zoom_);
                 draw_list->AddRect(
                     badge_min,
                     badge_max,
                     is_active_trace_node
-                        ? IM_COL32(255, 220, 120, 245)
-                        : IM_COL32(130, 190, 255, 230),
+                        ? ui::ToU32(ui::WithAlpha(t.accent_text, 245.0f / 255.0f))
+                        : ui::ToU32(ui::WithAlpha(t.border, 230.0f / 255.0f)),
                     7.0f * zoom_,
                     0,
                     1.0f * zoom_);
                 draw_list->AddText(
                     ImVec2(badge_min.x + pad_x, badge_min.y + pad_y),
-                    IM_COL32(245, 250, 255, 255),
+                    ui::ToU32(ui::ReadableOn(t, badge_fill)),
                     badge_text);
 
                 if (is_active_trace_node && active_trace_progress > 0.0f) {
@@ -2464,10 +2470,10 @@ void NodeEditor::RenderNodes() {
                         bar_min.x + (bar_max.x - bar_min.x) * clamped_progress,
                         bar_max.y);
                     draw_list->AddRectFilled(
-                        bar_min, bar_max, IM_COL32(60, 70, 85, 210),
+                        bar_min, bar_max, ui::ToU32(ui::WithAlpha(t.bg_input, 210.0f / 255.0f)),
                         2.0f * zoom_);
                     draw_list->AddRectFilled(
-                        bar_min, fill_max, IM_COL32(120, 255, 170, 240),
+                        bar_min, fill_max, ui::ToU32(ui::WithAlpha(t.running, 240.0f / 255.0f)),
                         2.0f * zoom_);
                 }
             }
@@ -2486,16 +2492,16 @@ void NodeEditor::RenderNodes() {
 
             switch (exec_state) {
                 case NodeExecutionState::Completed:
-                    indicator_color = IM_COL32(76, 175, 80, 255);   // Green
+                    indicator_color = ui::ToU32(t.success);
                     break;
                 case NodeExecutionState::Pending:
-                    indicator_color = IM_COL32(255, 193, 7, 255);   // Yellow/Amber
+                    indicator_color = ui::ToU32(t.pending);
                     break;
                 case NodeExecutionState::Executing:
                     is_executing = true;
                     break;
                 case NodeExecutionState::Error:
-                    indicator_color = IM_COL32(244, 67, 54, 255);   // Red
+                    indicator_color = ui::ToU32(t.error);
                     break;
                 default:
                     show_indicator = false;  // Idle - no indicator
@@ -2510,21 +2516,21 @@ void NodeEditor::RenderNodes() {
 
                     // Draw background circle (faded)
                     draw_list->AddCircle(indicator_pos, indicator_radius,
-                                        IM_COL32(60, 150, 255, 60), 0, 2.0f * zoom_);
+                                        ui::ToU32(ui::WithAlpha(t.running, 60.0f / 255.0f)), 0, 2.0f * zoom_);
 
                     // Draw spinning arc
                     draw_list->PathArcTo(indicator_pos, indicator_radius, angle, angle + arc_length, 12);
-                    draw_list->PathStroke(IM_COL32(60, 150, 255, 255), false, 2.5f * zoom_);
+                    draw_list->PathStroke(ui::ToU32(t.running), false, 2.5f * zoom_);
                 } else {
                     // Static filled circle for other states
                     draw_list->AddCircleFilled(indicator_pos, indicator_radius, indicator_color);
                     draw_list->AddCircle(indicator_pos, indicator_radius,
-                                        IM_COL32(0, 0, 0, 80), 0, 1.0f * zoom_);
+                                        ui::ToU32(ui::WithAlpha(t.bg_window, 80.0f / 255.0f)), 0, 1.0f * zoom_);
 
                     // Add X overlay for error state
                     if (exec_state == NodeExecutionState::Error) {
                         float x_size = indicator_radius * 0.5f;
-                        ImU32 x_color = IM_COL32(255, 255, 255, 255);
+                        ImU32 x_color = ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(indicator_color)));
                         draw_list->AddLine(
                             ImVec2(indicator_pos.x - x_size, indicator_pos.y - x_size),
                             ImVec2(indicator_pos.x + x_size, indicator_pos.y + x_size),
@@ -2540,7 +2546,7 @@ void NodeEditor::RenderNodes() {
                     // Add checkmark for completed state
                     if (exec_state == NodeExecutionState::Completed) {
                         float check_size = indicator_radius * 0.5f;
-                        ImU32 check_color = IM_COL32(255, 255, 255, 255);
+                        ImU32 check_color = ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(indicator_color)));
                         // Draw checkmark: short line down-left, then long line down-right
                         ImVec2 p1 = ImVec2(indicator_pos.x - check_size * 0.5f, indicator_pos.y);
                         ImVec2 p2 = ImVec2(indicator_pos.x - check_size * 0.1f, indicator_pos.y + check_size * 0.4f);
@@ -2576,29 +2582,24 @@ void NodeEditor::RenderNodes() {
             dst_exec == NodeExecutionState::Completed;
 
         if (training_animation_active) {
-            // Create pulsing amber/green effect during training
+            // Pulse between warning and success colours during training
             // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
             float pulse = (std::sin(training_animation_time_ * 12.0f + link.id * 0.5f) + 1.0f) * 0.5f;
 
-            // Interpolate between amber (255, 191, 0) and green (0, 255, 100)
-            float r = 255.0f * (1.0f - pulse) + 0.0f * pulse;
-            float g = 191.0f * (1.0f - pulse) + 255.0f * pulse;
-            float b = 0.0f * (1.0f - pulse) + 100.0f * pulse;
-
-            link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
-            link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
-            link_selected = IM_COL32(255, 255, 255, 255);
+            const ImVec4 pulse_colour = ui::Mix(t.warning, t.success, pulse);
+            link_color = ui::ToU32(pulse_colour);
+            link_hovered = ui::ToU32(ui::WithAlpha(pulse_colour, 200.0f / 255.0f));
+            link_selected = ui::ToU32(t.text_bright);
         } else if (pipeline_link_flowing) {
             const float pulse =
                 (std::sin(execution_pulse_time_ * 10.0f + link.id * 0.35f) + 1.0f) * 0.5f;
-            const int green = static_cast<int>(150.0f + 90.0f * pulse);
-            link_color = IM_COL32(45, green, 255, 255);
-            link_hovered = IM_COL32(90, 230, 255, 255);
-            link_selected = IM_COL32(255, 255, 255, 255);
+            link_color = ui::ToU32(ui::Mix(t.running, t.text_bright, 0.35f * pulse));
+            link_hovered = ui::ToU32(ui::Mix(t.running, t.text_bright, 0.4f));
+            link_selected = ui::ToU32(t.text_bright);
         } else if (pipeline_link_completed) {
-            link_color = IM_COL32(50, 200, 90, 240);
-            link_hovered = IM_COL32(80, 230, 120, 255);
-            link_selected = IM_COL32(255, 255, 255, 255);
+            link_color = ui::ToU32(ui::WithAlpha(t.success, 240.0f / 255.0f));
+            link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
+            link_selected = ui::ToU32(t.text_bright);
         } else {
             // Standard data-flow links follow the latest compile (TOFIX123):
             // grey until compiled, orange when the node at either end has a
@@ -2611,28 +2612,28 @@ void NodeEditor::RenderNodes() {
                 }
                 switch (src_state) {
                     case NodePinState::CompileFailed:
-                        link_color   = IM_COL32(245, 161, 74, 255);
-                        link_hovered = IM_COL32(255, 190, 120, 255);
+                        link_color   = ui::ToU32(t.caution);
+                        link_hovered = ui::ToU32(ui::Mix(t.caution, t.text_bright, 0.3f));
                         break;
                     case NodePinState::CompilePassed:
-                        link_color   = IM_COL32(80, 200, 80, 200);  // green, slightly translucent
-                        link_hovered = IM_COL32(120, 230, 120, 255);
+                        link_color   = ui::ToU32(ui::WithAlpha(t.success, 200.0f / 255.0f));  // slightly translucent
+                        link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         break;
                     case NodePinState::Trained:
-                        link_color   = IM_COL32(50, 200, 50, 255);  // solid green
-                        link_hovered = IM_COL32(80, 230, 80, 255);
+                        link_color   = ui::ToU32(t.success);  // solid green
+                        link_hovered = ui::ToU32(ui::Mix(t.success, t.text_bright, 0.3f));
                         break;
                     case NodePinState::Default:
                     default:
-                        link_color   = IM_COL32(150, 160, 180, 170);  // grey: not compiled yet
-                        link_hovered = IM_COL32(190, 198, 215, 255);
+                        link_color   = ui::ToU32(ui::WithAlpha(t.pending, 170.0f / 255.0f));  // not compiled yet
+                        link_hovered = ui::ToU32(ui::Mix(t.pending, t.text_bright, 0.3f));
                         break;
                 }
             } else {
                 link_color = GetLinkColor(link.type);
                 link_hovered = GetLinkHoverColor(link.type);
             }
-            link_selected = IM_COL32(255, 255, 255, 255);
+            link_selected = ui::ToU32(t.text_bright);
         }
 
         ImNodes::PushColorStyle(ImNodesCol_Link, link_color);
@@ -2658,6 +2659,7 @@ void NodeEditor::RenderNodes() {
 }
 
 void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
+    const ui::Tokens& t = ui::CurrentTokens();
     const auto node_it = std::find_if(
         nodes_.begin(), nodes_.end(),
         [hovered_node_id](const MLNode& node) {
@@ -2677,13 +2679,13 @@ void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
     if (has_exec_state && exec_state != NodeExecutionState::Idle) {
         ImGui::BeginTooltip();
         if (exec_state == NodeExecutionState::Executing) {
-            ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f),
+            ImGui::TextColored(t.running,
                                ICON_FA_SPINNER " Executing...");
         } else if (exec_state == NodeExecutionState::Completed) {
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f),
+            ImGui::TextColored(t.success,
                                ICON_FA_CHECK " Completed");
         } else if (exec_state == NodeExecutionState::Error) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+            ImGui::TextColored(t.error,
                                ICON_FA_TIMES " Error");
             const auto error_it = node_execution_errors_.find(node.id);
             if (error_it != node_execution_errors_.end()) {
@@ -2691,7 +2693,7 @@ void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
                 ImGui::TextWrapped("%s", error_it->second.c_str());
             }
         } else if (exec_state == NodeExecutionState::Pending) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            ImGui::TextColored(t.pending,
                                ICON_FA_CLOCK " Pending...");
         }
         ImGui::Separator();
@@ -2706,7 +2708,7 @@ void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
         if (active_it != trace.recent_events.rend() &&
             active_it->node_id == hovered_node_id) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+            ImGui::TextColored(t.accent_text,
                                "Active training node");
             if (!active_it->task_name.empty()) {
                 ImGui::Text("Task: %s", active_it->task_name.c_str());
@@ -2884,7 +2886,7 @@ void NodeEditor::ShowSearchBar() {
             ImGui::Text("%d/%zu", search_state_.current_match_index + 1,
                        search_state_.matching_node_ids.size());
         } else if (strlen(search_state_.search_buffer) > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No matches");
+            ImGui::TextColored(ui::CurrentTokens().caution, "No matches");
         }
 
         // Navigation buttons
@@ -3277,6 +3279,7 @@ NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
 
 void NodeEditor::RenderAnnotations() {
     if (annotations_.empty()) return;
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 editor_origin = ImGui::GetWindowPos();
@@ -3357,13 +3360,12 @@ void NodeEditor::RenderAnnotations() {
         }
 
         // Colors
+        // The note colour is user data; ink and outlines are derived from it.
         ImU32 bg_color = annotation.color;
-        ImU32 title_color = IM_COL32(
-            static_cast<int>((bg_color & 0xFF) * 0.75f),
-            static_cast<int>(((bg_color >> 8) & 0xFF) * 0.75f),
-            static_cast<int>(((bg_color >> 16) & 0xFF) * 0.75f),
-            255
-        );
+        const ImVec4 bg_vec = ImGui::ColorConvertU32ToFloat4(bg_color);
+        const ImVec4 title_vec(bg_vec.x * 0.75f, bg_vec.y * 0.75f, bg_vec.z * 0.75f, 1.0f);
+        ImU32 title_color = ui::ToU32(title_vec);
+        const ImVec4 ink = ui::ReadableOn(t, bg_vec);
 
         // Draw title bar
         ImDrawFlags corners = annotation.is_minimized ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop;
@@ -3378,11 +3380,17 @@ void NodeEditor::RenderAnnotations() {
         }
 
         // Draw border
-        ImU32 border_color = (is_hovered || is_active) ? IM_COL32(130, 130, 110, 255) : IM_COL32(100, 100, 80, 200);
+        ImU32 border_color = (is_hovered || is_active)
+            ? ui::ToU32(ui::WithAlpha(ui::Mix(bg_vec, ink, 0.45f), 1.0f))
+            : ui::ToU32(ui::WithAlpha(ui::Mix(bg_vec, ink, 0.3f), 200.0f / 255.0f));
         draw_list->AddRect(p_min, p_max, border_color, 4.0f * zoom_, 0, 1.5f * zoom_);
 
         // Draw minimize button
-        ImU32 min_btn_color = mouse_on_min_btn ? IM_COL32(80, 70, 50, 255) : IM_COL32(100, 90, 70, 200);
+        const ImVec4 min_btn_vec = mouse_on_min_btn
+            ? ui::WithAlpha(ui::Mix(title_vec, ink, 0.35f), 1.0f)
+            : ui::WithAlpha(ui::Mix(title_vec, ink, 0.2f), 200.0f / 255.0f);
+        ImU32 min_btn_color = ui::ToU32(min_btn_vec);
+        const ImU32 min_btn_ink = ui::ToU32(ui::ReadableOn(t, min_btn_vec));
         draw_list->AddRectFilled(min_btn_min, min_btn_max, min_btn_color, 3.0f * zoom_);
         // Draw - or + symbol
         float sym_y = (min_btn_min.y + min_btn_max.y) * 0.5f;
@@ -3390,7 +3398,7 @@ void NodeEditor::RenderAnnotations() {
         draw_list->AddLine(
             ImVec2(min_btn_min.x + sym_margin, sym_y),
             ImVec2(min_btn_max.x - sym_margin, sym_y),
-            IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+            min_btn_ink, 2.0f * zoom_
         );
         if (annotation.is_minimized) {
             // Draw + (add vertical line)
@@ -3398,7 +3406,7 @@ void NodeEditor::RenderAnnotations() {
             draw_list->AddLine(
                 ImVec2(sym_x, min_btn_min.y + sym_margin),
                 ImVec2(sym_x, min_btn_max.y - sym_margin),
-                IM_COL32(220, 210, 180, 255), 2.0f * zoom_
+                min_btn_ink, 2.0f * zoom_
             );
         }
 
@@ -3407,7 +3415,7 @@ void NodeEditor::RenderAnnotations() {
         float title_font_size = 13.0f * zoom_;
         std::string display_title = annotation.title.empty() ? "Note" : annotation.title;
         ImVec2 title_pos(p_min.x + 8.0f * zoom_, p_min.y + 5.0f * zoom_);
-        draw_list->AddText(font, title_font_size, title_pos, IM_COL32(50, 40, 20, 255), display_title.c_str());
+        draw_list->AddText(font, title_font_size, title_pos, ui::ToU32(ui::ReadableOn(t, title_vec)), display_title.c_str());
 
         // Draw content text (only if not minimized)
         if (!annotation.is_minimized && !annotation.content.empty()) {
@@ -3416,7 +3424,7 @@ void NodeEditor::RenderAnnotations() {
             float content_y = p_min.y + title_height + 6.0f * zoom_;
             float max_width = size.x - 16.0f * zoom_;
             draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
-                IM_COL32(40, 35, 20, 255), annotation.content.c_str(), nullptr, max_width);
+                ui::ToU32(ink), annotation.content.c_str(), nullptr, max_width);
         }
 
         // Placeholder text if empty and not minimized
@@ -3425,7 +3433,7 @@ void NodeEditor::RenderAnnotations() {
             float content_x = p_min.x + 8.0f * zoom_;
             float content_y = p_min.y + title_height + 8.0f * zoom_;
             draw_list->AddText(font, content_font_size, ImVec2(content_x, content_y),
-                IM_COL32(120, 110, 90, 180), "Double-click to edit...");
+                ui::ToU32(ui::WithAlpha(ink, 180.0f / 255.0f)), "Double-click to edit...");
         }
 
         // Selection highlight
@@ -3433,7 +3441,7 @@ void NodeEditor::RenderAnnotations() {
             draw_list->AddRect(
                 ImVec2(p_min.x - 2, p_min.y - 2),
                 ImVec2(p_max.x + 2, p_max.y + 2),
-                IM_COL32(100, 150, 255, 200),
+                ui::ToU32(ui::WithAlpha(t.accent_text, 200.0f / 255.0f)),
                 6.0f * zoom_, 0, 2.0f * zoom_
             );
         }
@@ -3521,7 +3529,7 @@ void NodeEditor::RenderAnnotationEditPopup() {
         }
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 130);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui::CurrentTokens().error);
         if (ImGui::Button("Delete", ImVec2(120, 0))) {
             // Remove annotation
             annotations_.erase(
@@ -3598,7 +3606,9 @@ void NodeEditor::RenderGroups() {
 
         // Draw group label
         ImVec2 label_pos = ImVec2(screen_min.x + 8.0f, screen_min.y + 4.0f);
-        draw_list->AddText(label_pos, IM_COL32(255, 255, 255, 220), group.name.c_str());
+        draw_list->AddText(label_pos,
+            ui::ToU32(ui::WithAlpha(ui::ReadableOn(ui::CurrentTokens(), group.color), 220.0f / 255.0f)),
+            group.name.c_str());
     }
 }
 
@@ -3606,6 +3616,7 @@ void NodeEditor::RenderGroups() {
 
 void NodeEditor::RenderFrames() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Reset frame right-click flag each frame
     frame_right_clicked_ = false;
@@ -3634,8 +3645,9 @@ void NodeEditor::RenderFrames() {
             ImVec4(frame.color.x * 0.2f, frame.color.y * 0.2f, frame.color.z * 0.2f, 0.15f));
         ImU32 border_color = ImGui::ColorConvertFloat4ToU32(
             ImVec4(frame.color.x, frame.color.y, frame.color.z, frame.is_selected ? 1.0f : 0.6f));
-        ImU32 text_color = IM_COL32(255, 255, 255, 230);
-        ImU32 desc_color = IM_COL32(200, 200, 200, 180);
+        ImU32 text_color = ui::ToU32(ui::WithAlpha(
+            ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(header_color)), 230.0f / 255.0f));
+        ImU32 desc_color = ui::ToU32(ui::WithAlpha(t.text_dim, 180.0f / 255.0f));
 
         // Draw body background
         ImVec2 body_min = ImVec2(screen_min.x, screen_min.y + HEADER_HEIGHT);
@@ -3682,7 +3694,7 @@ void NodeEditor::RenderFrames() {
             ImVec2(screen_max.x, screen_max.y - RESIZE_HANDLE),
             ImVec2(screen_max.x - RESIZE_HANDLE, screen_max.y),
             screen_max,
-            IM_COL32(200, 200, 200, 120));
+            ui::ToU32(ui::WithAlpha(t.text_dim, 120.0f / 255.0f)));
 
         // Handle interactions - header for drag, resize corner for resize
         ImGui::SetCursorScreenPos(screen_min);

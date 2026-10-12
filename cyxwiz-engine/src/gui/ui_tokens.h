@@ -62,6 +62,11 @@ struct Tokens {
     ImVec4 scale_sequential[4];  // low to high
     ImVec4 scale_diverging[3];   // negative, middle, positive
 
+    // Node canvas: one fill per node family (NodeHue); text on a node uses
+    // ReadableOn. The same set on light and dark windows - they are fills.
+    static constexpr int kNodeHueCount = 24;
+    ImVec4 node[kNodeHueCount];
+
     // Spacing (px at 1x density)
     float space_xs = 4.0f;
     float space_sm = 6.0f;
@@ -95,6 +100,9 @@ unsigned int ToU32(const ImVec4& colour);
 // Category colour i: the six series colours, then the same six faded one
 // and two steps toward the window, so 18 categories stay apart.
 ImVec4 SeriesColour(const Tokens& tokens, size_t index);
+// Node families on the node canvas, in Tokens::node order.
+enum class NodeHue { DataSources, DataTransform, Analytics, Layers, Activation, Pooling, Normalization, Attention, Recurrent, ShapeOps, MergeOps, Upsampling, Training, Regularization, Preprocessing, DataPipeline, TextProcessing, TimeSeries, Audio, DNN, RL, Signal, Plugin, Neutral, Count };
+ImVec4 NodeColour(const Tokens& tokens, NodeHue hue);
 // The sequential scale at v in [0, 1] (low to high).
 ImVec4 SequentialAt(const Tokens& tokens, float v);
 // The diverging scale at v in [-1, 1] (negative, middle, positive).

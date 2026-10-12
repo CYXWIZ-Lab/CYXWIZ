@@ -29,6 +29,11 @@ ImVec4 ScaleAt(const ImVec4* stops, int count, float v) {
 
 }  // namespace
 
+ImVec4 NodeColour(const Tokens& t, NodeHue hue) {
+    const int i = static_cast<int>(hue);
+    return t.node[i >= 0 && i < Tokens::kNodeHueCount ? i : static_cast<int>(NodeHue::Neutral)];
+}
+
 ImVec4 SeriesColour(const Tokens& t, size_t index) {
     const ImVec4 base = t.series[index % Tokens::kSeriesCount];
     const size_t round = (index / Tokens::kSeriesCount) % 3;
@@ -117,6 +122,36 @@ Tokens BuildTokens(const ImGuiStyle& style) {
                                  {1.000f, 0.478f, 0.451f, 1.0f}, {0.949f, 0.482f, 0.769f, 1.0f}};
         for (int i = 0; i < Tokens::kSeriesCount; ++i) t.series[i] = series[i];
     }
+    // Node families: each one's most-used colour from the old per-type node
+    // table, so the canvas keeps its look (Data Input blue, Dense green, ...).
+    static_assert(static_cast<int>(NodeHue::Count) == Tokens::kNodeHueCount);
+    const ImVec4 node[] = {
+        {0.118f, 0.533f, 0.898f, 1.0f}  /* DataSources */,
+        {1.000f, 0.596f, 0.000f, 1.0f}  /* DataTransform */,
+        {0.612f, 0.153f, 0.690f, 1.0f}  /* Analytics */,
+        {0.153f, 0.682f, 0.376f, 1.0f}  /* Layers */,
+        {0.953f, 0.612f, 0.071f, 1.0f}  /* Activation */,
+        {0.608f, 0.349f, 0.714f, 1.0f}  /* Pooling */,
+        {0.925f, 0.439f, 0.388f, 1.0f}  /* Normalization */,
+        {0.404f, 0.227f, 0.718f, 1.0f}  /* Attention */,
+        {0.247f, 0.318f, 0.710f, 1.0f}  /* Recurrent */,
+        {0.102f, 0.737f, 0.612f, 1.0f}  /* ShapeOps */,
+        {0.545f, 0.765f, 0.290f, 1.0f}  /* MergeOps */,
+        {0.361f, 0.420f, 0.753f, 1.0f}  /* Upsampling */,
+        {0.753f, 0.224f, 0.169f, 1.0f}  /* Training */,
+        {0.914f, 0.118f, 0.388f, 1.0f}  /* Regularization */,
+        {0.506f, 0.780f, 0.518f, 1.0f}  /* Preprocessing */,
+        {0.000f, 0.675f, 0.757f, 1.0f}  /* DataPipeline */,
+        {0.000f, 0.588f, 0.533f, 1.0f}  /* TextProcessing */,
+        {1.000f, 0.702f, 0.251f, 1.0f}  /* TimeSeries */,
+        {0.494f, 0.341f, 0.761f, 1.0f}  /* Audio */,
+        {0.161f, 0.384f, 1.000f, 1.0f}  /* DNN */,
+        {0.957f, 0.443f, 0.424f, 1.0f}  /* RL */,
+        {0.188f, 0.247f, 0.624f, 1.0f}  /* Signal */,
+        {0.267f, 0.533f, 0.667f, 1.0f}  /* Plugin */,
+        {0.376f, 0.490f, 0.545f, 1.0f}  /* Neutral */};
+    for (int i = 0; i < Tokens::kNodeHueCount; ++i) t.node[i] = node[i];
+
     // The plot area is the window colour, a shade deeper (lighter on light).
     t.plot_bg = Mix(t.bg_window, t.light ? ImVec4(1, 1, 1, 1) : ImVec4(0, 0, 0, 1), t.light ? 0.5f : 0.08f);
     t.plot_grid = WithAlpha(t.text_dim, t.light ? 0.18f : 0.14f);

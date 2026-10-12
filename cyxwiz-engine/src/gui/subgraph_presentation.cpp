@@ -19,6 +19,13 @@ int ExpandedOwner(int id, const std::vector<SubgraphData>& subgraphs) {
     }
     return -1;
 }
+// Frame colours come from the theme's ImNodes style (Theme::ApplyImNodesStyle),
+// so this file needs no token tables and its test links ImGui and ImNodes only.
+ImU32 NodeStyleColour(ImNodesCol colour, float alpha) {
+    ImVec4 value = ImGui::ColorConvertU32ToFloat4(ImNodes::GetStyle().Colors[colour]);
+    value.w = alpha;
+    return ImGui::ColorConvertFloat4ToU32(value);
+}
 bool ProjectEndpoint(int& node_id, int& pin_id, bool input,
     const std::vector<MLNode>& nodes, const std::vector<SubgraphData>& subgraphs) {
     for (const auto& data : subgraphs) {
@@ -111,12 +118,12 @@ int DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
         const float button_width = ImGui::CalcTextSize("Collapse").x + 24.0f * zoom;
         maximum.x = std::max(maximum.x, minimum.x + ImGui::CalcTextSize(title.c_str()).x + button_width + 42.0f * zoom);
         const ImVec2 header_end(maximum.x, minimum.y + header);
-        draw->AddRectFilled(minimum, maximum, IM_COL32(25, 85, 95, 30), 7.0f * zoom);
-        draw->AddRectFilled(minimum, header_end, IM_COL32(25, 85, 95, 235), 7.0f * zoom,
+        draw->AddRectFilled(minimum, maximum, NodeStyleColour(ImNodesCol_TitleBar, 30.0f / 255.0f), 7.0f * zoom);
+        draw->AddRectFilled(minimum, header_end, NodeStyleColour(ImNodesCol_TitleBar, 235.0f / 255.0f), 7.0f * zoom,
                             ImDrawFlags_RoundCornersTop);
-        draw->AddRect(minimum, maximum, IM_COL32(65, 170, 185, 210), 7.0f * zoom, 0, 1.5f * zoom);
+        draw->AddRect(minimum, maximum, NodeStyleColour(ImNodesCol_TitleBarSelected, 210.0f / 255.0f), 7.0f * zoom, 0, 1.5f * zoom);
         draw->AddText(ImVec2(minimum.x + 10.0f * zoom, minimum.y + 6.0f * zoom),
-                      IM_COL32(235, 245, 250, 255), title.c_str());
+                      ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
         ImGui::PushID(data.subgraph_node_id);
         ImGui::SetCursorScreenPos(ImVec2(maximum.x - button_width - 6.0f * zoom, minimum.y + 6.0f * zoom));
         ImGui::BeginDisabled(!busy_reason.empty());

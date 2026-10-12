@@ -1,5 +1,6 @@
 #include "node_documentation.h"
 #include "../core/node_metadata_registry.h"
+#include "ui_tokens.h"
 #include <imgui.h>
 
 namespace gui {
@@ -42,10 +43,11 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
         ? metadata->example_usage
         : doc->usage;
 
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::BeginTooltip();
 
     // Title with category
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", title.c_str());
+    ImGui::TextColored(t.accent_text, "%s", title.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("[%s]", category.c_str());
 
@@ -65,7 +67,7 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
     // Parameters
     if (metadata && !metadata->parameters.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
+        ImGui::TextColored(t.text_bright, "Parameters:");
         for (const auto& param : metadata->parameters) {
             const std::string& label = param.display_name.empty()
                 ? param.name
@@ -77,7 +79,7 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
         }
     } else if (doc && !doc->parameters.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
+        ImGui::TextColored(t.text_bright, "Parameters:");
         for (const auto& param : doc->parameters) {
             ImGui::BulletText("%s", param.first.c_str());
             ImGui::SameLine();
@@ -89,7 +91,7 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
     // the authoritative metadata registry.
     if (!metadata && doc && !doc->tips.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Tips:");
+        ImGui::TextColored(t.text_bright, "Tips:");
         for (const auto& tip : doc->tips) {
             ImGui::BulletText("%s", tip.c_str());
         }
@@ -98,7 +100,7 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
     // Usage example
     if (!usage.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Usage:");
+        ImGui::TextColored(t.text_bright, "Usage:");
         ImGui::TextDisabled("%s", usage.c_str());
     }
 
@@ -301,30 +303,6 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         default:
             return "Other";
     }
-}
-
-unsigned int NodeDocumentationManager::GetCategoryColor(NodeType type) {
-    const char* category = GetCategoryName(type);
-
-    // Return ImU32 colors for each category
-    if (strcmp(category, "Core Layers") == 0) return IM_COL32(100, 150, 200, 255);
-    if (strcmp(category, "Convolutional") == 0) return IM_COL32(150, 100, 200, 255);
-    if (strcmp(category, "Pooling") == 0) return IM_COL32(100, 200, 150, 255);
-    if (strcmp(category, "Normalization") == 0) return IM_COL32(200, 150, 100, 255);
-    if (strcmp(category, "Regularization") == 0) return IM_COL32(200, 100, 150, 255);
-    if (strcmp(category, "Recurrent") == 0) return IM_COL32(150, 200, 100, 255);
-    if (strcmp(category, "Attention") == 0) return IM_COL32(200, 200, 100, 255);
-    if (strcmp(category, "Activation") == 0) return IM_COL32(100, 200, 200, 255);
-    if (strcmp(category, "Shape Operations") == 0) return IM_COL32(180, 180, 180, 255);
-    if (strcmp(category, "Merge Operations") == 0) return IM_COL32(200, 150, 200, 255);
-    if (strcmp(category, "Output") == 0) return IM_COL32(100, 200, 100, 255);
-    if (strcmp(category, "Loss Functions") == 0) return IM_COL32(200, 100, 100, 255);
-    if (strcmp(category, "Optimizers") == 0) return IM_COL32(100, 100, 200, 255);
-    if (strcmp(category, "LR Schedulers") == 0) return IM_COL32(150, 150, 200, 255);
-    if (strcmp(category, "Utility") == 0) return IM_COL32(150, 150, 150, 255);
-    if (strcmp(category, "Data Pipeline") == 0) return IM_COL32(100, 180, 180, 255);
-
-    return IM_COL32(128, 128, 128, 255);  // Default gray
 }
 
 void NodeDocumentationManager::InitializeDocumentation() {

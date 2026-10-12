@@ -39,8 +39,6 @@ public:
     // Get category name for a node type
     static const char* GetCategoryName(NodeType type);
 
-    // Get category color for visual styling
-    static unsigned int GetCategoryColor(NodeType type);
 
 private:
     NodeDocumentationManager();
