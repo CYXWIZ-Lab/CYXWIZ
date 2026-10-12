@@ -1,10 +1,45 @@
 #pragma once
 
+#include "../core/hdf5_table_adapter.h"
+
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <memory>
 
 namespace cyxwiz {
+
+enum class Hdf5ObjectKind { Group, Dataset, IndirectLink, Other };
+
+struct Hdf5BrowseRequest {
+    std::string group_path = "/";
+    uint64_t offset = 0;
+    uint32_t limit = 64;
+    std::function<bool()> cancel_requested;
+};
+
+struct Hdf5BrowseEntry {
+    std::string name;
+    std::string path;
+    Hdf5ObjectKind kind = Hdf5ObjectKind::Other;
+    Hdf5TableDatasetInfo dataset;
+    // Dataset compatibility with the default full-load memory policy. Groups
+    // use Ok to indicate they can be opened, not that they are numeric tables.
+    Hdf5TableStatus status = Hdf5TableStatus::UnsupportedLayout;
+    std::string reason;
+    uint64_t estimated_materialized_bytes = 0;
+};
+
+struct Hdf5BrowsePage {
+    Hdf5TableStatus status = Hdf5TableStatus::ReadFailed;
+    std::string error;
+    std::string group_path;
+    uint64_t total_entries = 0;
+    uint64_t offset = 0;
+    uint64_t next_offset = 0;
+    bool has_next = false;
+    std::vector<Hdf5BrowseEntry> entries;
+};
 
 /**
  * Describes an HDF5 dataset or group
@@ -82,6 +117,14 @@ struct HDF5NodeInfo {
  */
 class HDF5Browser {
 public:
+    // Metadata-only, non-recursive name-ordered page: 1-128 entries, paths at
+    // most 4096 bytes. Indirect links are listed but never followed. A hard
+    // group alias/cycle is safe because each request opens only one group.
+    // Offsets apply to an unchanged file; callers invalidate pages on changes.
+    // Failure/cancellation returns no partial entries.
+    static Hdf5BrowsePage BrowsePage(const std::string& path,
+                                    const Hdf5BrowseRequest& request);
+
     /**
      * Browse an HDF5 file and return its structure
      * @param path Path to HDF5 file

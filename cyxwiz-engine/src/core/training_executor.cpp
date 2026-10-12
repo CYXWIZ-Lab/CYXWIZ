@@ -15,6 +15,7 @@
 #include "algorithms/arrayfire_host_materialization.h"
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
+#include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
 #include "execution_placement_plan.h"
@@ -1192,6 +1193,39 @@ void TrainingExecutor::Train(
         : std::filesystem::path(config_.checkpoint_dir);
     checkpoint_root /= last_run ? last_run->run_id : "training-run";
     checkpoint_manager = std::make_unique<CheckpointManager>(checkpoint_root.string());
+
+    // Warm start (TOFIX143): a new run that begins from another run's weights.
+    // Unlike resume, the optimizer, schedule, data order and epochs start fresh.
+    const std::string& tokenizer_artifact = config_.sequence_batch.tokenizer_vocabulary_artifact;
+    const std::string tokenizer_sha256 = tokenizer_artifact.empty()
+        ? std::string{} : Utilities::HashText(tokenizer_artifact, "sha256").sha256_hash;
+    std::string initialized_from;
+    if (!config_.initialize_from_checkpoint.empty()) {
+        if (!resume_from_.empty()) {
+            fail_run("warm_start_failed: a run either resumes a checkpoint or starts from one, not both");
+            return;
+        }
+        SequentialModel* sequential = model_->AsSequentialModel();
+        if (!sequential) {
+            fail_run("warm_start_failed: starting from a checkpoint needs a sequential model");
+            return;
+        }
+        const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_checkpoint);
+        std::string warm_error;
+        const auto loaded = LoadWarmStartCheckpoint(source, *sequential, tokenizer_sha256, warm_error);
+        if (!loaded) {
+            fail_run("warm_start_failed: " + warm_error);
+            return;
+        }
+        initialized_from = source.lexically_normal().string();
+        UpdateMetrics([&](TrainingMetrics& m) { m.initialized_from = initialized_from; });
+        spdlog::info("TrainingExecutor: initialized model weights from {} (source epoch {}, val_loss {}); "
+                     "optimizer, schedule and epochs start fresh", initialized_from, loaded->epoch, loaded->val_loss);
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("WarmStart", initialized_from);
+    }
+    checkpoint_manager->SetProvenance(tokenizer_sha256,
+                                      static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
+                                      initialized_from);
 
     std::unique_ptr<TrainingGenerationPreview> generation_preview;
     if (config_.generation_preview.enabled) {

@@ -55,7 +55,8 @@ bool TestManager::StartTesting(
     ExternalTestSource source,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     // Check if already testing
     if (is_testing_.load()) {
@@ -75,7 +76,7 @@ bool TestManager::StartTesting(
 
     // Set model if provided
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     // Set state
@@ -136,7 +137,8 @@ bool TestManager::StartTestingArrow(
     TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     // Check if already testing
     if (is_testing_.load()) {
@@ -158,7 +160,7 @@ bool TestManager::StartTestingArrow(
 
     // Set model if provided
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     // Set state
@@ -219,7 +221,8 @@ bool TestManager::StartTestingParquet(
     TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     if (is_testing_.load()) {
         spdlog::warn("TestManager: Cannot start Parquet testing - already testing");
@@ -235,7 +238,7 @@ bool TestManager::StartTestingParquet(
         std::move(config), std::move(dataset), std::move(label_column),
         dataset_scope);
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     is_testing_.store(true);

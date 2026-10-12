@@ -54,6 +54,7 @@ set(SHARED_CORE_SOURCES
     src/core/metrics_storage.cpp
     src/core/device_pool.cpp
     src/api/api_key_manager.cpp
+    src/auth/token_refresh.cpp
 )
 
 # ========== IPC Sources ==========
@@ -164,6 +165,9 @@ if(CYXWIZ_BUILD_DAEMON)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-daemon PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(cyxwiz-server-daemon PRIVATE
         cyxwiz-training-core
         fmt::fmt
@@ -267,6 +271,9 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     endif()
 
     # Core libraries
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-gui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(cyxwiz-server-gui PRIVATE
         fmt::fmt
         spdlog::spdlog
@@ -381,6 +388,9 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_job_execution_service PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_job_execution_service PRIVATE
         cyxwiz-training-core
         Catch2::Catch2
@@ -396,6 +406,7 @@ if(CYXWIZ_BUILD_TESTS)
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        httplib::httplib
     )
 
     target_compile_definitions(test_job_execution_service PRIVATE
@@ -513,6 +524,9 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_security PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_security PRIVATE
         Catch2::Catch2
         Catch2::Catch2WithMain

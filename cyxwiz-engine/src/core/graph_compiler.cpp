@@ -4965,6 +4965,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.early_stopping_patience = std::stoi(loader_node->parameters.at("early_stopping_patience"));
             if (loader_node->parameters.count("checkpoint_dir"))
                 config.checkpoint_dir = loader_node->parameters.at("checkpoint_dir");
+            if (loader_node->parameters.count("initialize_from_checkpoint"))
+                config.initialize_from_checkpoint = loader_node->parameters.at("initialize_from_checkpoint");
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
         }

@@ -11,8 +11,11 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h> // Before Parquet/gRPC headers undefine Windows OPTIONAL.
 #endif
 
+#include "../core/legacy_dataset_batchers.h"
+#include "../core/training_export_metadata.h"
 #include "main_window.h"
 #include "appearance_settings.h"
 #include "panel_memory.h"
@@ -2836,15 +2839,6 @@ void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobM
         spdlog::info("P2PTrainingPanel wired to ConnectionDialog");
     }
 
-    // Wire up WalletPanel to ConnectionDialog for wallet address
-    if (connection_dialog_ && wallet_panel_) {
-        connection_dialog_->SetWalletPanel(wallet_panel_.get());
-        spdlog::info("WalletPanel wired to ConnectionDialog (ptr={:p})", (void*)wallet_panel_.get());
-    } else {
-        spdlog::warn("Failed to wire WalletPanel: connection_dialog_={}, wallet_panel_={}",
-            (bool)connection_dialog_, (bool)wallet_panel_);
-    }
-
     // Set JobManager for JobStatusPanel
     if (job_status_panel_) {
         job_status_panel_->SetJobManager(job_manager);
@@ -3757,6 +3751,12 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 (std::filesystem::path(project.GetProjectRoot()) / config.embedding_output_path)
                     .lexically_normal()
                     .string();
+        }
+        // Like DataInput paths, a relative warm-start checkpoint is project-relative.
+        if (!config.initialize_from_checkpoint.empty() && project.HasActiveProject() &&
+            std::filesystem::path(config.initialize_from_checkpoint).is_relative()) {
+            config.initialize_from_checkpoint =
+                (std::filesystem::path(project.GetProjectRoot()) / config.initialize_from_checkpoint).string();
         }
 
         auto& registry = cyxwiz::DataRegistry::Instance();
@@ -5829,7 +5829,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     auto model = training.GetActiveModel();
     if (!model) {
         ShowOperationError("Cannot run test",
-            "No model is active. Train the graph, or use Tools > Checkpoints > Load Checkpoint "
+            "No model is active. Train the graph, or use Train > Test > Load Checkpoint "
             "for Testing with the graph the checkpoint was trained with open.");
         return;
     }
@@ -5872,7 +5872,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
     auto& tm = cyxwiz::TrainingManager::Instance();
     if (!tm.HasTrainedModel()) {
         ShowOperationError("Cannot run test",
-            "No model is active. Train a model, or use Tools > Checkpoints > Load "
+            "No model is active. Train a model, or use Train > Test > Load "
             "Checkpoint for Testing before running Test.");
         return;
     }
@@ -5948,17 +5948,23 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         return;
     }
 
+    if (!active_model_info.model_device) {
+        spdlog::error("StartTestingFromGraph: active model has no device ownership. "
+                      "Reload it through Train > Test > Load Checkpoint for Testing.");
+        return;
+    }
+
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
     if (auto arrow_dataset = registry.GetArrowDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingArrow(
             std::move(config), std::move(arrow_dataset), label_column,
-            test_selection.scope, test_batch_size, model, nullptr);
+            test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
     } else if (auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
-            test_selection.scope, test_batch_size, model, nullptr);
+            test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
     } else if (registry.IsTextDataset(dataset_name)) {
         const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
         if (!text_entry) {
@@ -5967,7 +5973,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr);
+            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
@@ -5977,7 +5983,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), cyxwiz::LegacyTestSource(dataset), test_batch_size, model, nullptr);
+            std::move(config), cyxwiz::LegacyTestSource(dataset), test_batch_size, model, nullptr, active_model_info.model_device);
     }
 
     if (started) {

@@ -174,39 +174,7 @@ std::shared_ptr<arrow::Table> LoadSequenceSourceTable(
 
 bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
                                          std::string& err) const {
-    if (ctx.source_path.empty()) {
-        err = "Tabular load needs a file path";
-        return false;
-    }
-    if (ctx.dataset_name.empty()) {
-        err = "Dataset name is empty";
-        return false;
-    }
-    const std::string file_type =
-        NormalizeTabularFileType(ctx.detected_file_type);
-    if (file_type == "zip_text" && ctx.archive_member.empty()) {
-        err = "ZIP text requires an exact member path inside the archive";
-        return false;
-    }
-    if (file_type == "zip_text" && ctx.force_disk_backed) {
-        err = "ZIP text uses a bounded in-memory document table; disable Force disk-backed";
-        return false;
-    }
-    if (IsUnsupportedTabularFileType(file_type)) {
-        err = UnsupportedTabularFileTypeMessage(file_type);
-        return false;
-    }
-    if ((file_type == "csv" || file_type == "tsv") &&
-        (ctx.delimiter == '\0' || ctx.decimal_point == '\0')) {
-        err = "CSV delimiter and decimal separator must each be one character";
-        return false;
-    }
-    if ((file_type == "csv" || file_type == "tsv") &&
-        ctx.delimiter == ctx.decimal_point) {
-        err = "CSV delimiter and decimal separator must be different";
-        return false;
-    }
-    return true;
+    return ValidateTabularApplyContext(ctx, err);
 }
 
 uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
@@ -221,6 +189,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string file_type =
         ResolveTabularFileType(ctx.detected_file_type, path);
     const auto archive_member = ctx.archive_member;
+    const bool json_lines        = ctx.json_lines;
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
     const char decimal_point     = ctx.decimal_point;
@@ -253,7 +222,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading " + name,
-        [path, name, file_type, archive_member, has_header, delim, decimal_point, use_threads,
+        [path, name, file_type, archive_member, json_lines, has_header, delim, decimal_point, use_threads,
          missing_tokens, skip_rows, max_rows, force_disk, label_col,
          selected_columns, ingestion_cache_directory, state]
         (cyxwiz::LambdaTask& task) {
@@ -348,6 +317,9 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                 [&task] { return task.ShouldStop(); }), name);
                     } else if (file_type == "parquet") {
                         dataset = reg.LoadParquetToArrow(path, name);
+                    } else if (file_type == "json") {
+                        dataset = reg.LoadJSONToArrow(path, name,
+                            json_lines || std::filesystem::path(path).extension() == ".jsonl");
                     } else {
                         // auto/feather/arrow/ipc use Arrow's table loader.
                         dataset = reg.LoadArrowTable(path, name);

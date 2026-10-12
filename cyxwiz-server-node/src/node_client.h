@@ -87,9 +87,25 @@ public:
     bool IsRegistered() const { return is_registered_; }
 
     // Set authentication token (JWT from user login)
-    void SetAuthToken(const std::string& token) { auth_token_ = token; }
-    void ClearAuthToken() { auth_token_.clear(); }
-    bool HasAuthToken() const { return !auth_token_.empty(); }
+    // The owner's sign-in token. Set from the GUI (Apply / Retry); the
+    // heartbeat loop refreshes it through the web API before it expires,
+    // because the central server refuses expired tokens (TOFIX136 E2d).
+    void SetAuthToken(const std::string& token) {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        auth_token_ = token;
+    }
+    void ClearAuthToken() {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        auth_token_.clear();
+    }
+    bool HasAuthToken() const { return !CurrentToken().empty(); }
+    std::string CurrentToken() const {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        return auth_token_;
+    }
+    // Refresh when less than the refresh margin remains; true when the token
+    // is still usable afterwards.
+    bool RefreshAuthTokenIfDue();
 
     // Callback for when Central Server connection is lost
     using ConnectionLostCallback = std::function<void()>;
@@ -163,7 +179,8 @@ private:
     std::string node_id_;
     mutable std::mutex node_id_mutex_;  // guards node_id_ writes vs GetNodeId
     std::string session_token_;
-    std::string auth_token_;  // JWT token for authentication
+    std::string auth_token_;  // JWT token for authentication (token_mutex_)
+    mutable std::mutex token_mutex_;
     bool is_registered_;
 
     std::unique_ptr<protocol::NodeService::Stub> stub_;

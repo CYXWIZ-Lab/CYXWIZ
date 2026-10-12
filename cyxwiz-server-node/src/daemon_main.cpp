@@ -70,6 +70,7 @@ void PrintUsage(const char* program) {
               << "  --http-port=PORT     HTTP REST API port (default: 8082)\n"
               << "  --inference-addr=ADDR gRPC InferenceService address (default: 0.0.0.0:50057)\n"
               << "  --config=PATH        Path to config file (default: ~/.cyxwiz/daemon.yaml)\n"
+              << "  --p2p-secret=SECRET  Secret the central server signs Engine tokens with ([jwt].p2p_secret)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
               << "  --tls-cert=PATH      Path to TLS certificate file\n"
               << "  --tls-key=PATH       Path to TLS private key file\n"

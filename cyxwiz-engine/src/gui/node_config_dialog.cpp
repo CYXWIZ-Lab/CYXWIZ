@@ -112,6 +112,7 @@ void NodeConfigDialog::Open() {
 
 void NodeConfigDialog::Close() {
     is_open_ = false;
+    OnClose();
 }
 
 bool NodeConfigDialog::Render() {
@@ -145,7 +146,7 @@ bool NodeConfigDialog::Render() {
     }
     ImGui::End();
 
-    if (should_close) {
+    if (should_close || !is_open_) {
         Close();
     }
 
@@ -169,7 +170,7 @@ void NodeConfigDialog::RenderFooter(bool& should_close) {
     // Grey out OK/Apply while a subclass reports it's busy (e.g. async
     // data load in DataInputDialog). Cancel stays enabled so the user
     // can always bail out.
-    bool busy = IsBusy();
+    bool busy = IsBusy() || !CanApply();
 
     ImGui::BeginDisabled(busy);
     if (ImGui::Button("OK", ImVec2(button_width, 0))) {
@@ -865,9 +866,12 @@ void TokenizerDialog::LoadFromNode() {
     if (!node_) return;
 
     tokenizer_type_ = 1;
+    bpe_piece_policy_.clear();
+    bpe_initial_unit_.clear();
     token_output_mode_ = 0;
     std::copy_n("document_id", sizeof("document_id"), document_id_col_);
     std::copy_n("split", sizeof("split"), split_col_);
+    target_text_col_[0] = '\0';
     std::copy_n("token_ids", sizeof("token_ids"), token_ids_col_);
     max_length_ = IsPaddingNode() ? 512 : 256;
     max_vocab_size_ = IsVocabularyNode() ? -1 : 10000;
@@ -913,8 +917,13 @@ void TokenizerDialog::LoadFromNode() {
     }
     CopyParam(node_, "document_id_col", document_id_col_, sizeof(document_id_col_));
     CopyParam(node_, "split_col", split_col_, sizeof(split_col_));
+    CopyParam(node_, "target_text_col", target_text_col_, sizeof(target_text_col_));
     CopyParam(node_, "token_ids_col", token_ids_col_, sizeof(token_ids_col_));
     ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
+    if (const auto policy = node_->parameters.find("bpe_piece_policy"); policy != node_->parameters.end())
+        bpe_piece_policy_ = policy->second;
+    if (const auto unit = node_->parameters.find("bpe_initial_unit"); unit != node_->parameters.end())
+        bpe_initial_unit_ = unit->second;
     ReadIntParam(node_, "max_length", max_length_);
     ReadIntParam(node_, "max_vocab_size", max_vocab_size_);
     ReadIntParam(node_, "min_word_freq", min_word_freq_);
@@ -941,8 +950,20 @@ void TokenizerDialog::Apply() {
         else if (token_output_mode_ == 2) output_mode = "decode";
         else if (token_output_mode_ == 3) output_mode = "roundtrip";
         node_->parameters["output_mode"] = output_mode;
+        if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty())
+            node_->parameters["bpe_piece_policy"] = bpe_piece_policy_;
+        else
+            node_->parameters.erase("bpe_piece_policy");
+        if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty())
+            node_->parameters["bpe_initial_unit"] = bpe_initial_unit_;
+        else
+            node_->parameters.erase("bpe_initial_unit");
         node_->parameters["document_id_col"] = document_id_col_;
         node_->parameters["split_col"] = split_col_;
+        if (token_output_mode_ == 1 && target_text_col_[0] != '\0')
+            node_->parameters["target_text_col"] = target_text_col_;
+        else
+            node_->parameters.erase("target_text_col");
         node_->parameters["token_ids_col"] = token_ids_col_;
         node_->parameters["text_col"] = text_col_;
         node_->parameters["label_col"] = label_col_;
@@ -1147,7 +1168,7 @@ void TokenizerDialog::RenderTokenizerTab() {
 
     ImGui::Text("Tokenizer:");
     HelpTooltip("Controls how raw text is split before vocabulary lookup: whitespace splits on spaces, word keeps words and punctuation, character emits one token per character.");
-    const char* methods[] = { "Whitespace", "Word", "Character", "Byte BPE", "WordPiece" };
+    const char* methods[] = { "Whitespace", "Word", "Character", "BPE", "WordPiece" };
     ImGui::SetNextItemWidth(200.0f);
     if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 5)) {
         if (tokenizer_type_ == 3) lowercase_ = false;
@@ -1160,7 +1181,52 @@ void TokenizerDialog::RenderTokenizerTab() {
         has_changes_ = true;
     }
     ImGui::EndDisabled();
-    if (tokenizer_type_ == 3) ImGui::TextWrapped("Byte BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
+    if (tokenizer_type_ == 3) ImGui::TextWrapped("BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
+    if (IsTokenizerNode() && tokenizer_type_ == 3) {
+        ImGui::Spacing();
+        ImGui::Text("BPE starting units:");
+        HelpTooltip("Bytes starts with all 256 byte values. Unicode characters starts with each observed code point, not grapheme clusters. Unseen characters become [UNK]; invalid UTF-8 is rejected. Neither mode normalizes text. Saved artifacts own encoding; use a new file to refit.");
+        const char* unit_values[] = {"", "byte", "unicode_character"};
+        const char* unit_labels[] = {"Follow saved vocabulary", "Bytes (256)", "Unicode characters"};
+        const char* unit_label = "Unsupported unit - select a valid option";
+        for (int i = 0; i < 3; ++i) if (bpe_initial_unit_ == unit_values[i]) unit_label = unit_labels[i];
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::BeginCombo("##bpe_initial_unit", unit_label)) {
+            for (int i = 0; i < 3; ++i) {
+                if (ImGui::Selectable(unit_labels[i], bpe_initial_unit_ == unit_values[i])) {
+                    bpe_initial_unit_ = unit_values[i];
+                    has_changes_ = true;
+                    preview_tokens_.clear();
+                    preview_token_ids_.clear();
+                    preview_decoded_text_.clear();
+                    preview_has_roundtrip_ = false;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary starts from bytes. Character mode preserves known characters; unknown characters decode as [UNK].");
+        ImGui::Spacing();
+        ImGui::Text("Space handling:");
+        HelpTooltip("Controls where BPE may learn merges. A saved vocabulary owns its policy; an explicit selection must match it. Use a new vocabulary file to refit. Changing token IDs requires new windows and a compatible model.");
+        const char* values[] = {"", "whitespace_v1", "leading_space_v2"};
+        const char* labels[] = {"Follow saved vocabulary", "Separate spaces (v1)", "Merge leading space (v2)"};
+        const char* selected = "Unsupported policy - select a valid option";
+        for (int i = 0; i < 3; ++i) if (bpe_piece_policy_ == values[i]) selected = labels[i];
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::BeginCombo("##bpe_piece_policy", selected)) {
+            for (int i = 0; i < 3; ++i) {
+                if (ImGui::Selectable(labels[i], bpe_piece_policy_ == values[i])) {
+                    bpe_piece_policy_ = values[i];
+                    has_changes_ = true;
+                    preview_tokens_.clear();
+                    preview_token_ids_.clear();
+                    preview_has_roundtrip_ = false;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary fits with separate spaces. Merge leading space can learn pieces such as ' word'; byte mode preserves arbitrary bytes; character mode requires known Unicode characters.");
+    }
     if (tokenizer_type_ == 4) ImGui::TextWrapped("WordPiece uses ## continuation pieces and greedy longest-match encoding. Fit and save the vocabulary before using it for training or generation.");
     if (tokenizer_type_ == 5 || tokenizer_type_ == 6) ImGui::TextWrapped("SentencePiece is reserved for the optional provider path and is not enabled in this build yet. Run Pipeline will fail clearly instead of silently falling back.");
     HelpTooltip("Lowercasing reduces duplicate vocabulary entries like 'Happy' and 'happy'. Disable it when capitalization carries meaning.");
@@ -1185,8 +1251,10 @@ void TokenizerDialog::RenderVocabularyTab() {
         ImGui::Spacing();
     }
 
-    ImGui::Text("Minimum token frequency:");
-    HelpTooltip("Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
+    ImGui::Text(tokenizer_type_ == 3 ? "Minimum pair frequency:" : "Minimum token frequency:");
+    HelpTooltip(tokenizer_type_ == 3
+        ? "Minimum occurrence count for a BPE merge. All starting bytes or observed characters are retained regardless of frequency."
+        : "Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##min_word_freq", &min_word_freq_)) {
         if (min_word_freq_ < 1) min_word_freq_ = 1;
@@ -1196,14 +1264,16 @@ void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
     ImGui::Text("Maximum vocabulary size:");
-    HelpTooltip("Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
+    HelpTooltip(tokenizer_type_ == 3
+        ? "BPE requires an explicit cap covering the starting alphabet plus 4 specials: bytes needs at least 260; characters depends on the fitting text. The cap includes learned merges."
+        : "Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_vocab", &max_vocab_size_)) {
         if (max_vocab_size_ < -1) max_vocab_size_ = -1;
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("-1 = unlimited");
+    ImGui::TextDisabled(tokenizer_type_ == 3 ? "explicit cap required" : "-1 = unlimited");
 
     if (IsTokenizerNode() || IsVocabularyNode()) {
         ImGui::Spacing();
@@ -1249,6 +1319,8 @@ void TokenizerDialog::RenderPaddingTab() {
     if (token_output_mode_ == 1) {
         if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
         if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
+        if (ImGui::InputText("Response column (optional)", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
+        ImGui::TextWrapped("With a response column, each row is one window (text, then response + EOS) and only the response tokens are trained; it needs an existing vocabulary file.");
         ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
     } else if (token_output_mode_ == 2) {
         if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
@@ -1335,9 +1407,22 @@ void TokenizerDialog::RenderPreviewTab() {
                     throw std::runtime_error("Could not load tokenizer vocabulary: " + vocab_file);
                 }
                 tokenizer.ValidateVocabulary();
+                if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty()) {
+                    const auto actual = tokenizer.GetVocabulary().GetBPEInitialUnit();
+                    if (!((bpe_initial_unit_ == "byte" && actual == cyxwiz::BPEInitialUnit::Byte) ||
+                          (bpe_initial_unit_ == "unicode_character" && actual == cyxwiz::BPEInitialUnit::UnicodeCharacter)))
+                        throw std::runtime_error("BPE starting units differ from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
+                }
+                if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty()) {
+                    const auto actual = tokenizer.GetVocabulary().GetBPEPiecePolicy();
+                    const bool matches =
+                        (bpe_piece_policy_ == "whitespace_v1" && actual == cyxwiz::ByteBPEPiecePolicy::WhitespaceV1) ||
+                        (bpe_piece_policy_ == "leading_space_v2" && actual == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+                    if (!matches) throw std::runtime_error("Space handling differs from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
+                }
             } else {
                 if (tokenizer_type_ == 3) {
-                    throw std::runtime_error("Build and select a Byte BPE vocabulary before previewing. Byte BPE preview uses the exact saved backend artifact.");
+                    throw std::runtime_error("Build and select a BPE vocabulary before previewing. BPE preview uses the exact saved backend artifact.");
                 }
                 tokenizer.Train({std::string(sample_text_)}, min_word_freq_, max_vocab_size_);
                 tokenizer.ValidateVocabulary();

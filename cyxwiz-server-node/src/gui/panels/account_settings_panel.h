@@ -18,7 +18,6 @@ private:
     void RenderLoginForm();
     void RenderProfileSection();
     void RenderAccountDetails();
-    void RenderWalletSection();
     void RenderSecuritySection();
     void RenderPreferencesSection();
 

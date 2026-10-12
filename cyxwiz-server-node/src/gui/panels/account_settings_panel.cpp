@@ -70,11 +70,6 @@ void AccountSettingsPanel::Render() {
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem(ICON_FA_WALLET " Wallet")) {
-            RenderWalletSection();
-            ImGui::EndTabItem();
-        }
-
         if (ImGui::BeginTabItem(ICON_FA_SHIELD_HALVED " Security")) {
             RenderSecuritySection();
             ImGui::EndTabItem();
@@ -415,97 +410,6 @@ void AccountSettingsPanel::RenderAccountDetails() {
             break;
     }
     ImGui::TextColored(state_color, "%s %s", state_icon, state_text);
-
-    // Copy notification
-    if (show_copy_notification_) {
-        ImGui::Spacing();
-        float alpha = std::min(1.0f, copy_notification_timer_ / 0.5f);
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, alpha),
-            ICON_FA_CHECK " Copied %s to clipboard", copied_item_.c_str());
-    }
-}
-
-void AccountSettingsPanel::RenderWalletSection() {
-    auto& auth = auth::AuthManager::Instance();
-    auto user_info = auth.GetUserInfo();
-
-    ImGui::Spacing();
-    ImGui::Text("%s Linked Wallet", ICON_FA_WALLET);
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (!user_info.wallet_address.empty()) {
-        // Wallet is linked
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f),
-            ICON_FA_LINK " Wallet Connected");
-        ImGui::Spacing();
-
-        ImGui::Text("Wallet Address (Solana)");
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-        ImGui::BeginChild("WalletAddressBox", ImVec2(-1, 50), true);
-        {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s", user_info.wallet_address.c_str());
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-
-        // Action buttons
-        if (ImGui::Button(ICON_FA_COPY " Copy Address")) {
-            CopyToClipboard(user_info.wallet_address, "Wallet Address");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE " View on Solscan")) {
-            // Open Solscan URL in browser
-            std::string url = "https://solscan.io/account/" + user_info.wallet_address;
-#ifdef _WIN32
-            std::string cmd = "start " + url;
-#elif __APPLE__
-            std::string cmd = "open " + url;
-#else
-            std::string cmd = "xdg-open " + url;
-#endif
-            std::system(cmd.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-            "This wallet is linked to your CyxWiz account and will be used for:");
-        ImGui::BulletText("Receiving training job earnings");
-        ImGui::BulletText("Marketplace transactions");
-        ImGui::BulletText("Pool mining rewards");
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("To change your wallet, visit the CyxWiz web dashboard.");
-    } else {
-        // No wallet linked
-        ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.2f, 1.0f),
-            ICON_FA_TRIANGLE_EXCLAMATION " No Wallet Linked");
-        ImGui::Spacing();
-
-        ImGui::TextWrapped(
-            "You haven't linked a Solana wallet to your account yet. "
-            "A wallet is required to receive earnings from training jobs "
-            "and participate in the marketplace.");
-
-        ImGui::Spacing();
-
-        if (ImGui::Button(ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE " Link Wallet on Web Dashboard")) {
-            // Open web dashboard
-#ifdef _WIN32
-            std::system("start https://cyxwiz.com/dashboard/wallet");
-#elif __APPLE__
-            std::system("open https://cyxwiz.com/dashboard/wallet");
-#else
-            std::system("xdg-open https://cyxwiz.com/dashboard/wallet");
-#endif
-        }
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Supported wallets: Phantom, Solflare, Backpack");
-    }
 
     // Copy notification
     if (show_copy_notification_) {

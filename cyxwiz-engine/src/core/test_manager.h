@@ -62,7 +62,8 @@ public:
         ExternalTestSource source,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
-        TestCompleteCallback on_complete = nullptr
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
     bool StartTestingArrow(
@@ -72,7 +73,8 @@ public:
         TestDatasetScope dataset_scope,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
-        TestCompleteCallback on_complete = nullptr
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
     bool StartTestingParquet(
         TrainingConfiguration config,
@@ -81,7 +83,8 @@ public:
         TestDatasetScope dataset_scope,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
-        TestCompleteCallback on_complete = nullptr
+        TestCompleteCallback on_complete = nullptr,
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
     /**

@@ -29,7 +29,15 @@ struct ReservationInfo {
 
 // Callback types
 using ReservationCallback = std::function<void(bool success, const ReservationInfo& info, const std::string& error)>;
-using HeartbeatCallback = std::function<void(int64_t time_remaining, bool should_extend)>;
+// One heartbeat reply. gone: the central server no longer knows the
+// reservation (restarted, or ended on its side); the words say why.
+struct HeartbeatReport {
+    bool gone = false;
+    std::string message;
+    int64_t time_remaining = 0;
+    bool should_extend = false;
+};
+using HeartbeatCallback = std::function<void(const HeartbeatReport&)>;
 using ReleaseCallback = std::function<void(bool success, int64_t payment_released, int64_t refund_amount)>;
 
 /**
@@ -39,12 +47,12 @@ using ReleaseCallback = std::function<void(bool success, int64_t payment_release
  * 1. ReserveNode - Reserve a node for a duration, creates escrow
  * 2. EngineHeartbeat - Send periodic heartbeats during reservation
  * 3. ConfirmJobComplete - Confirm job completion to release payment
- * 4. ReleaseReservation - Release early with proportional refund
+ * 4. (Leaving a node does not end the reservation: the reserved time is the user's)
  *
  * Usage:
  *   ReservationClient client;
  *   client.Connect("localhost:50051");
- *   auto info = client.ReserveNode(node_id, wallet, duration_minutes, job_config);
+ *   auto info = client.ReserveNode(node_id, duration_minutes, job_config);
  *   if (info.has_value()) {
  *       // Connect to node via P2P
  *       client.StartHeartbeat(info->reservation_id);
@@ -72,14 +80,12 @@ public:
     // Returns nullopt on failure, reservation info on success
     std::optional<ReservationInfo> ReserveNode(
         const std::string& node_id,
-        const std::string& user_wallet,
         int32_t duration_minutes,
         const cyxwiz::protocol::JobConfig& job_config);
 
     // Async version with callback
     void ReserveNodeAsync(
         const std::string& node_id,
-        const std::string& user_wallet,
         int32_t duration_minutes,
         const cyxwiz::protocol::JobConfig& job_config,
         ReservationCallback callback);
@@ -101,28 +107,19 @@ public:
         int64_t& additional_escrow,
         std::string& p2p_auth_token);
 
-    // Release reservation early (proportional refund)
-    bool ReleaseReservation(
-        const std::string& reservation_id,
-        const std::string& reason,
-        int64_t& time_used,
-        int64_t& payment_released,
-        int64_t& refund_amount);
-
     // Get reservation details
     bool GetReservation(
         const std::string& reservation_id,
         cyxwiz::protocol::ReservationInfo& out_info);
 
-    // Check for active reservations (for reconnection after Engine restart)
+    // The signed-in user's active reservations (for reconnecting after an
+    // Engine restart); the central server takes the user from the token.
     bool GetActiveReservations(
-        const std::string& user_wallet,
         std::vector<cyxwiz::protocol::ActiveReservationInfo>& out_reservations);
 
     // Get new P2P token for reconnecting to an active reservation
     bool GetReconnectionToken(
         const std::string& reservation_id,
-        const std::string& user_wallet,
         std::string& out_p2p_token,
         int64_t& out_token_expires,
         std::string& out_node_endpoint,

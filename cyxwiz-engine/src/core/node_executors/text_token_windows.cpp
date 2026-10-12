@@ -13,7 +13,7 @@ namespace cyxwiz {
 arrow::Status TextTokenizerOperator::ValidateWindowInput(const std::shared_ptr<arrow::Table>& input) const {
     if (input->schema()->HasDistinctFieldNames() == false)
         return arrow::Status::Invalid("Token windows require distinct column names");
-    for (const auto* name : {"token_ids", "__window_index", "__token_start", "__token_end", "__valid_targets"})
+    for (const auto* name : {"token_ids", "__window_index", "__token_start", "__token_end", "__valid_targets", "__target_mask"})
         if (input->GetColumnByName(name)) return arrow::Status::Invalid("Token window output name collision: ", name);
     auto documents = input->GetColumnByName(document_id_col_);
     auto splits = input->GetColumnByName(split_col_);
@@ -29,6 +29,10 @@ arrow::Status TextTokenizerOperator::ValidateWindowInput(const std::shared_ptr<a
         return arrow::Status::Invalid("TextTokenizer: vocab_file '", vocab_file_,
             "' does not exist. Enable vocab_build_if_missing, build it from the TextTokenizer dialog, or remove vocab_file to train in memory.");
     const bool fitting = vocab_file_.empty() || vocab_missing;
+    // A vocabulary fitted here would see only the prompt column; supervised
+    // windows encode with the frozen tokenizer of the base model.
+    if (fitting && !target_text_col_.empty())
+        return arrow::Status::Invalid("Supervised token windows (target_text_col) require an existing vocab_file");
     std::unordered_set<std::string> seen;
     for (int64_t r=0; r<input->num_rows(); ++r) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
@@ -47,7 +51,13 @@ arrow::Status TextTokenizerOperator::ValidateWindowInput(const std::shared_ptr<a
 }
 
 arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWindows(
-    const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer) {
+    const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer,
+    const std::vector<std::string>* targets) {
+    // targets: supervised mode. Each row is one window, prompt (texts) then response
+    // (targets) plus EOS; only response positions are prediction targets.
+    const bool supervised = targets != nullptr;
+    if (supervised && targets->size() != texts.size())
+        return arrow::Status::Invalid("Supervised token windows: prompt and response row counts differ");
     tokenizer.SetPadding(false);
     tokenizer.SetTruncation(false);
     tokenizer.SetAddBos(false);
@@ -58,11 +68,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
     uint64_t row_bound=0, metadata_bytes=0;
     std::vector<int> retained;
     for (int col=0;col<input->num_columns();++col)
-        if (input->field(col)->name()!=text_col_) retained.push_back(col);
+        if (input->field(col)->name()!=text_col_ && (!supervised || input->field(col)->name()!=target_text_col_)) retained.push_back(col);
     for (int64_t r=0;r<input->num_rows();++r) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         const uint64_t bytes=texts[static_cast<size_t>(r)].size();
-        const uint64_t count=bytes/context+(bytes%context!=0);
+        const uint64_t count=supervised ? 1 : bytes/context+(bytes%context!=0);
         if (!CheckedAddU64(row_bound,count,row_bound)) return arrow::Status::CapacityError("Token window row count overflow");
         for (int col:retained) {
             ARROW_ASSIGN_OR_RAISE(auto value,input->column(col)->GetScalar(r));
@@ -90,13 +100,40 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
     // Use Parquet's canonical nested field name for exact schema round trips.
     arrow::ListBuilder ids(arrow::default_memory_pool(),values,arrow::list(arrow::field("element",arrow::int64())));
     arrow::Int64Builder indices,starts,ends,valid;
+    auto mask_values=std::make_shared<arrow::Int8Builder>();
+    arrow::ListBuilder masks(arrow::default_memory_pool(),mask_values,arrow::list(arrow::field("element",arrow::int8())));
     int64_t emitted=0, total_ids=0;
     for (size_t r=0;r<texts.size();++r) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        if (texts[r].empty()) continue;
         std::vector<int> tokens;
-        try { tokens=tokenizer.Encode(texts[r]); }
-        catch (const std::exception& e) { ARROW_RETURN_NOT_OK(CheckCancellation(GetName())); return arrow::Status::Invalid(e.what()); }
+        size_t prompt_tokens=0;
+        if (supervised) {
+            if ((*targets)[r].empty())
+                return arrow::Status::Invalid("Supervised token windows: empty response in row ", r);
+            try {
+                tokenizer.SetAddEos(false);
+                tokens=texts[r].empty() ? std::vector<int>{} : tokenizer.Encode(texts[r]);
+                tokenizer.SetAddEos(true);
+                const auto response=tokenizer.Encode((*targets)[r]);
+                prompt_tokens=tokens.size();
+                tokens.insert(tokens.end(),response.begin(),response.end());
+            } catch (const std::exception& e) {
+                tokenizer.SetAddEos(true);
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName())); return arrow::Status::Invalid(e.what());
+            }
+            if (tokens.size()<prompt_tokens+1 || tokens.size()<2)
+                return arrow::Status::Invalid("Supervised token windows: response in row ", r, " encodes to no tokens");
+            if (tokens.size()>static_cast<size_t>(context)+1) {
+                ARROW_ASSIGN_OR_RAISE(auto id,input->GetColumnByName(document_id_col_)->GetScalar(static_cast<int64_t>(r)));
+                return arrow::Status::Invalid("Supervised token windows: document '", id->ToString(), "' needs ",
+                    tokens.size(), " ids but one window holds ", context+1, " (context ", context,
+                    "); records are never split. Raise max_length or shorten the record");
+            }
+        } else {
+            if (texts[r].empty()) continue;
+            try { tokens=tokenizer.Encode(texts[r]); }
+            catch (const std::exception& e) { ARROW_RETURN_NOT_OK(CheckCancellation(GetName())); return arrow::Status::Invalid(e.what()); }
+        }
         std::vector<std::shared_ptr<arrow::Scalar>> source_values;
         for (int col:retained) {
             ARROW_ASSIGN_OR_RAISE(auto value,input->column(col)->GetScalar(static_cast<int64_t>(r)));
@@ -118,7 +155,14 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
             ARROW_RETURN_NOT_OK(indices.Append(window));
             ARROW_RETURN_NOT_OK(starts.Append(static_cast<int64_t>(start)));
             ARROW_RETURN_NOT_OK(ends.Append(static_cast<int64_t>(end)));
-            ARROW_RETURN_NOT_OK(valid.Append(static_cast<int64_t>(end-start-1)));
+            if (supervised) {
+                // Target i predicts token i+1: supervised when that token is in the response.
+                ARROW_RETURN_NOT_OK(masks.Append());
+                for(size_t i=start;i+1<end;++i) ARROW_RETURN_NOT_OK(mask_values->Append(i+1>=prompt_tokens ? 1 : 0));
+                ARROW_RETURN_NOT_OK(valid.Append(static_cast<int64_t>(end-std::max(start+1,prompt_tokens))));
+            } else {
+                ARROW_RETURN_NOT_OK(valid.Append(static_cast<int64_t>(end-start-1)));
+            }
             ++emitted;
         }
         if(progress_callback_ && (r%256==0 || r+1==texts.size())) {
@@ -140,6 +184,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
     ARROW_RETURN_NOT_OK(finish("__token_start",starts));
     ARROW_RETURN_NOT_OK(finish("__token_end",ends));
     ARROW_RETURN_NOT_OK(finish("__valid_targets",valid));
+    if (supervised) ARROW_RETURN_NOT_OK(finish("__target_mask",masks));
     std::ostringstream artifact;
     if(!tokenizer.GetVocabulary().SaveToStream(artifact)) return arrow::Status::IOError("Cannot serialize token window vocabulary");
     auto metadata=input->schema()->metadata()?input->schema()->metadata()->Copy():std::make_shared<arrow::KeyValueMetadata>();
@@ -148,6 +193,9 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
     ARROW_RETURN_NOT_OK(metadata->Set("cyxwiz.token_windows.vocabulary",artifact.str()));
     ARROW_RETURN_NOT_OK(metadata->Set("cyxwiz.token_windows.tokenizer_type",std::to_string(tokenizer_type_)));
     ARROW_RETURN_NOT_OK(metadata->Set("cyxwiz.token_windows.lowercase",tokenizer.GetLowercase()?"true":"false"));
+    if (supervised) ARROW_RETURN_NOT_OK(metadata->Set("cyxwiz.token_windows.supervision","response_only"));
+    else if (metadata->FindKey("cyxwiz.token_windows.supervision")>=0)
+        ARROW_RETURN_NOT_OK(metadata->Delete("cyxwiz.token_windows.supervision"));
     last_vocab_size_=tokenizer.GetVocabulary().Size();
     return arrow::Table::Make(arrow::schema(fields,metadata),arrays,emitted);
 }

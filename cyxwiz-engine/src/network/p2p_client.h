@@ -139,7 +139,6 @@ public:
 
     // Reservation-based job management
     bool SendNewJobConfig(const cyxwiz::protocol::JobConfig& config);
-    bool SendReservationEnd();
     // Hand the node ExtendReservation's token: it takes the reservation's new
     // end from it (TOFIX118 gap 5).
     bool SendReservationExtension(const std::string& p2p_auth_token);

@@ -442,7 +442,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
 
             // DON'T stop streaming - keep connection open for new jobs
             // The stream will be closed when:
-            // 1. SendReservationEnd() is called (timer expires)
+            // 1. The node ends the reservation (its deadline)
             // 2. Server Node closes the stream
             // 3. User explicitly disconnects
 
@@ -593,23 +593,6 @@ bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
     cmd.set_reservation_extension_token(p2p_auth_token);
     const bool success = SendTrainingCommand(cmd);
     if (!success) spdlog::error("P2PClient: Failed to send the reservation extension");
-    return success;
-}
-
-bool P2PClient::SendReservationEnd() {
-    spdlog::debug("P2PClient: Sending reservation end signal");
-
-    cyxwiz::protocol::TrainingCommand cmd;
-    cmd.set_reservation_end(true);
-
-    bool success = SendTrainingCommand(cmd);
-    if (success) {
-        waiting_for_new_job_ = false;
-        streaming_ = false;
-        spdlog::debug("P2PClient: Reservation end sent successfully");
-    } else {
-        spdlog::error("P2PClient: Failed to send reservation end");
-    }
     return success;
 }
 

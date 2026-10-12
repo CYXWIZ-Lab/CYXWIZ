@@ -124,6 +124,7 @@ set(ENGINE_SOURCES
     src/core/console_commands_presentation.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_publication.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
@@ -283,6 +284,7 @@ set(ENGINE_SOURCES
     src/utils/dataset_analyzer.cpp
     src/utils/image_deduplicator.cpp
     src/utils/hdf5_browser.cpp
+    src/utils/hdf5_browser_page.cpp
     # Dataset utilities (Phase 2)
     src/utils/segmentation_utils.cpp
     src/utils/shape_utils.cpp
@@ -393,8 +395,18 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
     src/gui/data_input_dialog_apply.cpp
+    src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
     src/core/data_convert_task.cpp
+    src/core/hdf5_inspection_task.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_apply_preparation.cpp
+    src/core/hdf5_registered_source.cpp
+    src/gui/hdf5_loaded_source_verifier.cpp
+    src/gui/hdf5_source_inspector.cpp
+    src/gui/hdf5_source_inspector_render.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp
     src/gui/loaders/data_loader.cpp
@@ -1924,6 +1936,19 @@ endif()
 set_target_properties(test_text_tokenizer_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ByteBPE artifact policy through the existing Arrow pipeline operator.
+find_package(Catch2 CONFIG REQUIRED)
+add_executable(test_bpe_piece_policy_operator tests/test_bpe_piece_policy_operator.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp)
+target_include_directories(test_bpe_piece_policy_operator PRIVATE src)
+target_link_libraries(test_bpe_piece_policy_operator PRIVATE Arrow::arrow_shared
+    Parquet::parquet_shared spdlog::spdlog fmt::fmt cyxwiz-backend Catch2::Catch2WithMain)
+if(WIN32)
+    target_compile_definitions(test_bpe_piece_policy_operator PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_bpe_piece_policy_operator PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
@@ -4112,6 +4137,29 @@ endforeach()
 
 target_sources(test_excel_table_adapter PRIVATE tests/test_xlsx_archive_guard.cpp)
 
+# The same adapter contract is exercised with and without the optional reader.
+foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_table_adapter_unavailable
+                          test_hdf5_browser_page test_hdf5_browser_page_unavailable)
+    add_executable(${hdf5_test} src/core/hdf5_table_adapter.cpp)
+    if(hdf5_test MATCHES "^test_hdf5_browser_page")
+        target_sources(${hdf5_test} PRIVATE tests/test_hdf5_browser_page.cpp src/utils/hdf5_browser_page.cpp)
+    else()
+        target_sources(${hdf5_test} PRIVATE tests/test_hdf5_table_adapter.cpp)
+    endif()
+    target_include_directories(${hdf5_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(${hdf5_test} PRIVATE Arrow::arrow_shared)
+    if(WIN32)
+        target_compile_definitions(${hdf5_test} PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+    set_target_properties(${hdf5_test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endforeach()
+if(HighFive_FOUND)
+    foreach(hdf5_test IN ITEMS test_hdf5_table_adapter test_hdf5_browser_page)
+        target_link_libraries(${hdf5_test} PRIVATE HighFive)
+        target_compile_definitions(${hdf5_test} PRIVATE CYXWIZ_HAS_HDF5)
+    endforeach()
+endif()
+
 add_executable(test_data_convert_task
     tests/test_data_convert_task.cpp
     src/core/data_convert_task.cpp
@@ -4128,6 +4176,59 @@ if(WIN32)
     target_compile_definitions(test_data_convert_task PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_data_convert_task PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_hdf5_input_settings
+    tests/test_hdf5_input_settings.cpp src/core/hdf5_input_settings.cpp)
+target_include_directories(test_hdf5_input_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_hdf5_input_settings PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+foreach(hdf5_inspection_test IN ITEMS test_hdf5_inspection_task test_hdf5_inspection_task_unavailable
+                                     test_hdf5_source_inspector test_hdf5_source_load_task
+                                     test_hdf5_source_load_task_unavailable)
+    add_executable(${hdf5_inspection_test}
+        src/core/hdf5_source_identity.cpp
+        src/core/hdf5_input_settings.cpp
+        src/core/hdf5_table_adapter.cpp
+        src/core/async_task_manager.cpp
+        src/core/training_trace_collector.cpp
+        src/core/crash_run_recorder.cpp)
+    if(hdf5_inspection_test MATCHES "^test_hdf5_source_load_task")
+        target_sources(${hdf5_inspection_test} PRIVATE
+            src/core/hdf5_source_load_task.cpp tests/test_hdf5_source_load_task.cpp)
+    else()
+        target_sources(${hdf5_inspection_test} PRIVATE
+            src/core/hdf5_inspection_task.cpp src/utils/hdf5_browser_page.cpp)
+    endif()
+    if(hdf5_inspection_test STREQUAL "test_hdf5_source_inspector")
+        target_sources(${hdf5_inspection_test} PRIVATE
+            tests/test_hdf5_source_inspector.cpp
+            src/gui/hdf5_source_inspector.cpp
+            src/gui/hdf5_source_inspector_render.cpp
+            src/gui/data_preview_table_renderer.cpp
+            src/gui/ui_buttons.cpp src/gui/ui_tokens.cpp src/core/appearance_options.cpp)
+        target_link_libraries(${hdf5_inspection_test} PRIVATE imgui::imgui)
+    elseif(hdf5_inspection_test MATCHES "^test_hdf5_inspection_task")
+        target_sources(${hdf5_inspection_test} PRIVATE tests/test_hdf5_inspection_task.cpp)
+    endif()
+    target_include_directories(${hdf5_inspection_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(${hdf5_inspection_test} PRIVATE
+        cyxwiz-backend Arrow::arrow_shared spdlog::spdlog nlohmann_json::nlohmann_json)
+    if(HighFive_FOUND AND NOT hdf5_inspection_test MATCHES "_unavailable$")
+        target_link_libraries(${hdf5_inspection_test} PRIVATE HighFive)
+        target_compile_definitions(${hdf5_inspection_test} PRIVATE CYXWIZ_HAS_HDF5)
+        if(hdf5_inspection_test STREQUAL "test_hdf5_source_load_task")
+            target_sources(${hdf5_inspection_test} PRIVATE
+                src/core/arrow_dataset.cpp src/core/dataset_audit.cpp
+                src/core/image_utils.cpp src/core/parquet_backed_dataset.cpp)
+            target_link_libraries(${hdf5_inspection_test} PRIVATE
+                Parquet::parquet_shared ${OpenCV_LIBS})
+        endif()
+    endif()
+    if(WIN32)
+        target_compile_definitions(${hdf5_inspection_test} PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    endif()
+    set_target_properties(${hdf5_inspection_test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endforeach()
 
 add_executable(test_data_convert_format_controls tests/test_data_convert_format_controls.cpp)
 target_link_libraries(test_data_convert_format_controls PRIVATE imgui::imgui)
@@ -4199,6 +4300,86 @@ endif()
 set_target_properties(test_data_preview_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+add_executable(test_hdf5_prepared_source
+    tests/test_hdf5_prepared_source.cpp
+    tests/test_hdf5_apply_preparation.cpp
+    src/core/hdf5_apply_preparation.cpp
+    src/core/hdf5_registered_source.cpp
+    src/core/data_registry_publication.cpp
+    src/core/dataset_audit.cpp
+    src/core/image_utils.cpp
+    src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_table_adapter.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/data_preview_service.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/dataset_base.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_hdf5_prepared_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_hdf5_prepared_source PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared ${OpenCV_LIBS}
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(HighFive_FOUND)
+    target_link_libraries(test_hdf5_prepared_source PRIVATE HighFive)
+    target_compile_definitions(test_hdf5_prepared_source PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+if(WIN32)
+    target_compile_definitions(test_hdf5_prepared_source PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_hdf5_prepared_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_hdf5_loaded_source_verifier
+    tests/test_hdf5_loaded_source_verifier.cpp
+    src/core/hdf5_registered_source.cpp
+    src/gui/hdf5_loaded_source_verifier.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_hdf5_loaded_source_verifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_hdf5_loaded_source_verifier PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_hdf5_loaded_source_verifier PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_hdf5_loaded_source_verifier PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_tabular_publication
+    tests/test_tabular_publication.cpp
+    tests/test_tabular_publication_staged.cpp
+    src/core/data_registry_publication.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/data_registry_sparse.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/dataset_base.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp)
+target_include_directories(test_tabular_publication PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_tabular_publication PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_tabular_publication PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_tabular_publication PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Stable error-code catalog and formatting =====
 add_executable(test_error_codes
@@ -4483,14 +4664,33 @@ function(configure_training_executor_harness target_name)
     )
 endfunction()
 
+# Regression: checkpoint weights retain their owner across testing workers.
+add_executable(test_testing_device_handoff
+    tests/test_testing_device_handoff.cpp
+    src/core/test_executor.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_testing_device_handoff)
+target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
 # ===== Test: TrainingExecutor Arrow/Parquet Parity =====
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/test_executor.cpp
     src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp)
 configure_training_executor_harness(test_causal_lm_testing)
 target_sources(test_causal_lm_testing PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
+
+# Warm start from a checkpoint (TOFIX143 P2)
+add_executable(test_warm_start_checkpoint
+    tests/test_warm_start_checkpoint.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_warm_start_checkpoint)
+add_test(NAME WarmStartCheckpoint COMMAND test_warm_start_checkpoint)
 
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp

@@ -70,6 +70,7 @@ bool DataRegistry::RegisterSparseFeatureDataset(
     // A dataset name identifies exactly one tabular representation. Publish
     // the already-validated immutable CSR object while holding the same lock
     // used to retire any prior dense representation.
+    InvalidateTabularPublicationUnlocked(name);
     sparse_feature_datasets_[name] = std::move(dataset);
     arrow_datasets_.erase(name);
     parquet_backed_datasets_.erase(name);
@@ -126,11 +127,17 @@ DataRegistry::ListSparseFeatureDatasets() const {
 
 bool DataRegistry::UnregisterSparseFeatureDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (sparse_feature_datasets_.count(name)) {
+        InvalidateTabularPublicationUnlocked(name);
+    }
     bool removed = sparse_feature_datasets_.erase(name) > 0;
 
     if (!HasMaterializedSuffix(name)) {
-        removed = sparse_feature_datasets_.erase(
-                      name + kMaterializedSuffix) > 0 || removed;
+        const std::string mat_name = name + kMaterializedSuffix;
+        if (sparse_feature_datasets_.count(mat_name)) {
+            InvalidateTabularPublicationUnlocked(mat_name);
+        }
+        removed = sparse_feature_datasets_.erase(mat_name) > 0 || removed;
     }
     if (removed) {
         spdlog::debug("Unregistered sparse feature dataset '{}'", name);
@@ -141,6 +148,9 @@ bool DataRegistry::UnregisterSparseFeatureDataset(const std::string& name) {
 size_t DataRegistry::ClearAllSparseFeatureDatasets() {
     std::lock_guard<std::mutex> lock(mutex_);
     const size_t count = sparse_feature_datasets_.size();
+    for (const auto& entry : sparse_feature_datasets_) {
+        InvalidateTabularPublicationUnlocked(entry.first);
+    }
     sparse_feature_datasets_.clear();
     if (count > 0) {
         spdlog::info("Cleared {} sparse feature datasets", count);

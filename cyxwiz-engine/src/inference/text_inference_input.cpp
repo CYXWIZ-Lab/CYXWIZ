@@ -178,6 +178,33 @@ bool LoadTextTokenizerPackage(
         error = "Byte BPE requires a fitted vocabulary artifact";
         return false;
     }
+    if (effective.contains("bpe_piece_policy")) {
+        if (tokenizer->GetType() != TokenizerType::ByteBPE ||
+            !effective["bpe_piece_policy"].is_string()) {
+            error = "bpe_piece_policy requires ByteBPE and a supported string policy";
+            return false;
+        }
+        const auto policy = effective["bpe_piece_policy"].get<std::string>();
+        const auto actual = tokenizer->GetVocabulary().GetBPEPiecePolicy();
+        if (!((policy == "whitespace_v1" && actual == ByteBPEPiecePolicy::WhitespaceV1) ||
+              (policy == "leading_space_v2" && actual == ByteBPEPiecePolicy::LeadingSpaceV2))) {
+            error = "ByteBPE package piece policy differs from its vocabulary artifact";
+            return false;
+        }
+    }
+    if (effective.contains("bpe_initial_unit")) {
+        if (tokenizer->GetType() != TokenizerType::ByteBPE || !effective["bpe_initial_unit"].is_string()) {
+            error = "bpe_initial_unit requires BPE and byte or unicode_character";
+            return false;
+        }
+        const auto unit = effective["bpe_initial_unit"].get<std::string>();
+        const auto actual = tokenizer->GetVocabulary().GetBPEInitialUnit();
+        if (!((unit == "byte" && actual == BPEInitialUnit::Byte) ||
+              (unit == "unicode_character" && actual == BPEInitialUnit::UnicodeCharacter))) {
+            error = "BPE package initial unit differs from its vocabulary artifact";
+            return false;
+        }
+    }
     out.tokenizer = std::move(tokenizer);
     out.has_vocabulary = has_vocabulary;
     out.has_model_artifact = !model_artifact.empty();

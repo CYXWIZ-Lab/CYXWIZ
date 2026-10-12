@@ -2,7 +2,6 @@
 #include "sequence_arrow_batcher.h"
 #include "sequence_model_input.h"
 #include "sequence_tag_metrics.h"
-#include "execution_device_context.h"
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
@@ -46,13 +45,6 @@ void TestExecutor::TestCausalSequence(int batch_size,
     built.batcher->Reset();
     if (built.batcher->GetNumBatches() == 0)
         throw std::runtime_error("Sequence Run Test has no test windows.");
-    const auto policy = config_.strict_execution
-        ? ExecutionPolicy::Strict
-        : ExecutionPolicy::Compatibility;
-    const auto context = CaptureCurrentExecutionDeviceContext(policy);
-    if (!context.valid) throw std::runtime_error("Sequence test execution context is invalid.");
-    ScopedActiveExecutionDeviceContext active;
-    ScopedExecutionDeviceContext binding(context);
     if (!Initialize(batch_size)) throw std::runtime_error("Sequence test initialization failed.");
     if (loss_->GetReduction() == Reduction::None)
         throw std::runtime_error("Sequence Run Test requires a scalar loss reduction.");

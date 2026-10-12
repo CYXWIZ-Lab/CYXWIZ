@@ -1,57 +1,25 @@
 #pragma once
 
 #include "data_loader.h"
+#include "../../core/data_input_formats.h"
 
-#include <algorithm>
-#include <cctype>
 #include <string>
+#include <utility>
 
 namespace cyxwiz::loaders {
 
 inline std::string NormalizeTabularFileType(std::string file_type) {
-    std::transform(file_type.begin(), file_type.end(), file_type.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return file_type.empty() ? "auto" : file_type;
+    return NormalizeDataInputFormat(std::move(file_type));
 }
 
 inline std::string ResolveTabularFileType(
     const std::string& file_type,
     const std::string& source_path) {
-    const std::string normalized = NormalizeTabularFileType(file_type);
-    if (normalized != "auto") {
-        return normalized;
-    }
-
-    std::string path = source_path;
-    std::transform(path.begin(), path.end(), path.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    const std::size_t separator = path.find_last_of("/\\");
-    const std::size_t dot = path.find_last_of('.');
-    if (dot == std::string::npos ||
-        (separator != std::string::npos && dot < separator)) {
-        return normalized;
-    }
-
-    const std::string extension = path.substr(dot + 1);
-    if (extension == "csv") return "csv";
-    if (extension == "tsv" || extension == "tab") return "tsv";
-    if (extension == "parquet" || extension == "pq") return "parquet";
-    if (extension == "feather" || extension == "fea") return "feather";
-    if (extension == "arrow") return "arrow";
-    if (extension == "ipc") return "ipc";
-    return normalized;
+    return data_input::ResolveFormat(file_type, source_path);
 }
 
 inline bool IsSupportedTabularFileType(const std::string& file_type) {
-    const std::string normalized = NormalizeTabularFileType(file_type);
-    return normalized == "auto" || normalized == "csv" ||
-           normalized == "tsv" || normalized == "parquet" ||
-           normalized == "feather" || normalized == "arrow" ||
-           normalized == "ipc" || normalized == "zip_text";
+    return data_input::IsExecutable(file_type);
 }
 
 inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
@@ -60,23 +28,43 @@ inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
 
 inline std::string UnsupportedTabularFileTypeMessage(
     const std::string& file_type) {
-    const std::string normalized = NormalizeTabularFileType(file_type);
-    if (normalized == "json") {
-        return "Tabular JSON loading is not supported yet";
+    return data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable);
+}
+
+inline bool ValidateTabularApplyContext(const ApplyContext& ctx, std::string& err) {
+    if (ctx.source_path.empty()) {
+        err = "Tabular load needs a file path";
+        return false;
     }
-    if (normalized == "excel") {
-        return "Tabular Excel loading is not supported yet";
+    if (ctx.dataset_name.empty()) {
+        err = "Dataset name is empty";
+        return false;
     }
-    if (normalized == "hdf5") {
-        return "Tabular HDF5 loading is not supported yet";
+    const auto file_type = ResolveTabularFileType(ctx.detected_file_type, ctx.source_path);
+    if (file_type == "zip_text" && ctx.archive_member.empty()) {
+        err = "ZIP text requires an exact member path inside the archive";
+        return false;
     }
-    if (normalized == "txt") {
-        return "Tabular TXT loading is not supported on this path; use Text source for text files";
+    if (file_type == "zip_text" && ctx.force_disk_backed) {
+        err = "ZIP text uses a bounded in-memory document table; disable Force disk-backed";
+        return false;
     }
-    if (normalized == "arff") {
-        return "Tabular ARFF loading is not supported yet";
+    if (IsUnsupportedTabularFileType(file_type)) {
+        err = UnsupportedTabularFileTypeMessage(file_type);
+        return false;
     }
-    return "Tabular file type is not supported yet";
+    const char delimiter = file_type == "tsv" ? '\t' : ctx.delimiter;
+    if ((file_type == "csv" || file_type == "tsv") &&
+        (delimiter == '\0' || ctx.decimal_point == '\0')) {
+        err = "CSV delimiter and decimal separator must each be one character";
+        return false;
+    }
+    if ((file_type == "csv" || file_type == "tsv") && delimiter == ctx.decimal_point) {
+        err = "CSV delimiter and decimal separator must be different";
+        return false;
+    }
+    err.clear();
+    return true;
 }
 
 // Handles FileCategory::Tabular (and FileCategory::TimeSeries, which

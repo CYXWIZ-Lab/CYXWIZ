@@ -3,6 +3,7 @@
 #include "node_config_dialog.h"
 #include "../core/file_dialogs.h"
 #include "ui_tokens.h"
+#include "../core/data_input_formats.h"
 
 #include <algorithm>
 #include <cstring>
@@ -14,30 +15,6 @@
 namespace fs = std::filesystem;
 
 namespace gui {
-
-namespace {
-
-struct TabularFormatOption {
-    const char* label;
-    int detected_type;
-};
-
-bool IsRuntimeSupportedTabularFormat(int detected_type) {
-    switch (detected_type) {
-        case 0: // Auto
-        case 1: // CSV
-        case 2: // TSV
-        case 4: // Parquet
-        case 7: // Feather
-        case 11: // ZIP UTF-8 document
-        case 8: // Arrow / IPC
-            return true;
-        default:
-            return false;
-    }
-}
-
-} // namespace
 
 void DataInputDialog::RenderSourceSelector() {
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -95,6 +72,7 @@ void DataInputDialog::RenderFileSource() {
         file_category_ = category;
         sequence_tagging_ = sequence;
         has_changes_ = true;
+        SyncHdf5InspectorSource();
     };
     if (ImGui::RadioButton("Tabular", &cat_idx, 0)) pick(FileCategory::Tabular, false);
     ImGui::SameLine();
@@ -199,19 +177,11 @@ void DataInputDialog::RenderTabularOptions() {
         ImGui::SameLine(100);
         ImGui::SetNextItemWidth(120);
         if (ImGui::BeginCombo("##format", GetFileTypeName())) {
-            static constexpr TabularFormatOption kFormats[] = {
-                {"Auto", 0},
-                {"CSV", 1},
-                {"TSV", 2},
-                {"Parquet", 4},
-                {"Feather", 7},
-                {"Arrow / IPC", 8},
-                {"ZIP text document", 11},
-            };
-            for (const auto& option : kFormats) {
-                const bool selected = detected_type_ == option.detected_type;
+            for (const auto& option : cyxwiz::data_input::kSourceFormats) {
+                if (!option.executable) continue;
+                const bool selected = detected_type_ == option.id;
                 if (ImGui::Selectable(option.label, selected)) {
-                    detected_type_ = option.detected_type;
+                    detected_type_ = option.id;
                     RefreshColumnList();
                     has_changes_ = true;
                 }
@@ -222,11 +192,10 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::EndCombo();
         }
 
-        if (!IsRuntimeSupportedTabularFormat(detected_type_)) {
-            ImGui::TextDisabled(
-                "%s is not supported by PipelineExecutor. Choose CSV, TSV, "
-                "Parquet, Feather, or Arrow/IPC for executable graphs.",
-                GetFileTypeName());
+        const auto file_type = data_input::FileTypeParam(detected_type_);
+        if (!cyxwiz::data_input::IsExecutable(file_type)) {
+            ImGui::TextDisabled("%s", cyxwiz::data_input::UnsupportedReason(
+                file_type, cyxwiz::data_input::kHdf5BuildAvailable));
         }
 
         if (detected_type_ == 11) {
@@ -294,6 +263,12 @@ void DataInputDialog::RenderTabularOptions() {
                     "Example: na,?,missing. Arrow standard null spellings remain enabled.");
             }
         }
+    }
+
+    if (IsHdf5Source()) {
+        SyncHdf5InspectorSource();
+        hdf5_inspector_.RenderSettings();
+        return;
     }
 
     if (ImGui::CollapsingHeader(

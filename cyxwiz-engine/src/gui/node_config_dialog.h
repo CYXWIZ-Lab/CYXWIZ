@@ -25,6 +25,8 @@
 #include "data_input_capabilities.h"
 #include "data_preview_page_cache.h"
 #include "data_preview_table_renderer.h"
+#include "hdf5_source_inspector.h"
+#include "hdf5_loaded_source_verifier.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
@@ -56,6 +58,7 @@ public:
     // and Apply while busy so the user can't fire two concurrent loads.
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
+    virtual bool CanApply() const { return true; }
 
     // Optional graph context. Properties.cpp sets this right after
     // constructing a dialog so visualization / inspection dialogs can
@@ -70,6 +73,7 @@ protected:
     // with its own footer overrides both; should_close asks Render to close.
     virtual float FooterHeight() const;
     virtual void RenderFooter(bool& should_close);
+    virtual void OnClose() {}
     void RenderSettingsTab();
     void RenderAdvancedTab();
     void RenderPreviewTab();
@@ -147,8 +151,11 @@ private:
 
     int tokenizer_type_ = 1;
     int token_output_mode_ = 0;
+    std::string bpe_initial_unit_;
+    std::string bpe_piece_policy_;
     char document_id_col_[128] = "document_id";
     char split_col_[128] = "split";
+    char target_text_col_[128] = "";
     char token_ids_col_[128] = "token_ids";
     int max_length_ = 256;
     int max_vocab_size_ = 10000;
@@ -249,10 +256,12 @@ public:
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
-    bool IsBusy() const override { return is_loading_async_; }
+    bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
+    bool CanApply() const override { return !IsHdf5Source(); }
 
 protected:
     void RenderContent() override;
+    void OnClose() override;
 
 private:
     // Data source types
@@ -281,6 +290,21 @@ private:
 
     // File source sub-renderers
     void RenderTabularOptions();
+    bool IsHdf5Source() const;
+    void SyncHdf5InspectorSource();
+    void RestoreOriginalHdf5Source();
+    Hdf5SourceInspector hdf5_inspector_;
+    Hdf5LoadedSourceVerifier hdf5_loaded_source_;
+    std::map<std::string, std::string> hdf5_restore_parameters_;
+    void BeginHdf5LoadedSourceVerification();
+    void PollHdf5LoadedSourceVerification();
+    bool BuildHdf5RestoreRequest(cyxwiz::Hdf5RegisteredSourceRequest& request,
+                               std::string& error) const;
+    std::string hdf5_source_path_;
+    std::string hdf5_source_project_root_;
+    std::string hdf5_source_graph_directory_;
+    std::string hdf5_source_launch_directory_;
+    std::string hdf5_source_resolved_path_;
     // Sequence (token tagging): a tabular file carrying the tagging contract
     // (data_input_dialog_sequence.cpp, TOFIX112).
     void LoadSequenceSettings();
@@ -695,6 +719,7 @@ private:
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
+    char initialize_from_checkpoint_[512] = "";
     bool generation_preview_enabled_ = false;
     int generation_preview_every_epochs_ = 20;
     int generation_preview_max_new_tokens_ = 32;

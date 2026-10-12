@@ -496,7 +496,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     job_executor_->CancelJob(session->job_config.job_id());
                 }
                 spdlog::info("Job {} stop requested", session->job_config.job_id());
-                // Don't break - keep reading for new_job_config or reservation_end
+                // Keep reading for new_job_config; the node ends the reservation itself
             } else if (command.has_request_checkpoint()) {
                 spdlog::info("Job {} checkpoint requested", job_id);
             } else if (command.has_update_params()) {
@@ -536,12 +536,6 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     spdlog::warn("[RESERVATION] Extension token refused (invalid, another reservation or node, "
                                  "or not later)");
                 }
-            }
-            else if (command.has_reservation_end()) {
-                spdlog::info("[RESERVATION] Reservation end signal received");
-                reservation_ended = true;
-                new_job_cv.notify_one();
-                break;
             }
         }
         // No more chunks can arrive: a dataset download in progress ends now.
