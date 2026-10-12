@@ -285,6 +285,7 @@ set(ENGINE_SOURCES
     src/utils/shape_utils.cpp
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
+    src/core/test_predictions_table.cpp
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
@@ -5092,6 +5093,21 @@ set_target_properties(test_classification_probabilities PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME classification_probabilities COMMAND test_classification_probabilities)
+
+# ===== Test: the test run's per-sample results as a table (TOFIX140 ROC / PR) =====
+add_executable(test_test_predictions_table
+    tests/test_test_predictions_table.cpp
+    src/core/test_predictions_table.cpp
+)
+target_link_libraries(test_test_predictions_table PRIVATE Arrow::arrow_shared)
+if(WIN32)
+    target_compile_definitions(test_test_predictions_table PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_test_predictions_table PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_predictions_table COMMAND test_test_predictions_table)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE

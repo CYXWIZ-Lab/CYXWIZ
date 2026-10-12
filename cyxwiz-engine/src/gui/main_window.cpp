@@ -183,6 +183,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
 #include "../core/model_converter.h"
@@ -1169,6 +1170,19 @@ MainWindow::MainWindow()
     const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
     cyxwiz::TestManager::Instance().SetOnTestingEnd([this, test_window_lifetime](bool success, const cyxwiz::TestingMetrics& metrics) {
         if (test_window_lifetime.expired()) return;
+        if (success && !metrics.regression_mode && !metrics.causal_lm_mode && !metrics.ground_truth.empty()) {
+            // The run's per-sample results as the "test_predictions" table, so
+            // the ROC / PR nodes and panels can read them like any dataset.
+            std::vector<std::string> class_names;
+            for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
+            if (auto table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions,
+                                                               metrics.confidences, metrics.class_probabilities,
+                                                               metrics.probability_classes, class_names)) {
+                cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, cyxwiz::kTestPredictionsDataset);
+                spdlog::info("Published {} test predictions as '{}'", table->num_rows(),
+                             cyxwiz::kTestPredictionsDataset);
+            }
+        }
         if (test_results_panel_) {
             test_results_panel_->SetResults(metrics);
             test_results_panel_->Show();
