@@ -1037,6 +1037,11 @@ void NodeEditor::RenderMinimap() {
     float content_bottom = parent_window_pos.y + content_max.y;
     float content_left = parent_window_pos.x + content_min.x;
     float content_right = parent_window_pos.x + content_max.x;
+    // A window of its own: on a canvas smaller than the minimap it drew over
+    // the panels beside, so it waits until the canvas has room.
+    if (content_right - content_left < minimap_size_.x + 20.0f ||
+        content_bottom - content_top < minimap_size_.y + 20.0f)
+        return;
 
     // Define corner positions
     const float padding = 10.0f;

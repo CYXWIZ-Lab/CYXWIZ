@@ -284,10 +284,13 @@ void NodeEditor::ShowNodeAddSearch() {
 
     // Position search box in top-right corner of the canvas content area
     // Add offset to position below the toolbar rows (approx 70px for two rows of buttons)
-    float search_width = 250.0f;
     float search_height = 28.0f;
     float margin = 10.0f;
     float toolbar_offset = 70.0f;  // Offset to position below the toolbars
+    // The box is a window of its own: in a narrow Studio a fixed 250 px drew
+    // it over the panel beside. It fits the canvas, or is left out.
+    float search_width = std::min(250.0f, canvas_size.x - 2.0f * margin);
+    if (search_width < 140.0f) return;
 
     ImVec2 search_pos(canvas_pos.x + canvas_size.x - search_width - margin, canvas_pos.y + toolbar_offset + margin);
 
