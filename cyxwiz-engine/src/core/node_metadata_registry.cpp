@@ -1296,7 +1296,8 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"balance_seed", "int", "42", "Class balancing seed", {}, "0-2147483647", "", "Balancing", false, true},
          {"save_best_checkpoint", "bool", "true", "Save best validation checkpoint", {}, "", "", "Checkpoint", false, true},
          {"early_stopping_patience", "int", "5", "Early stopping patience in validation checks", {}, "0-10000", "", "Checkpoint", false, true},
-         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true}},
+         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true},
+         {"initialize_from_checkpoint", "directory", "", "Start from checkpoint weights (fine-tuning)", {}, "", "A checkpoint folder (e.g. .../train-<id>/best). Loads model weights only; optimizer, learning-rate schedule and epochs start fresh. Parameter names and shapes, and for language models the tokenizer, must match.", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // DataSplit is a graph-level training configuration node. It has a

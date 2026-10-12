@@ -5071,6 +5071,13 @@ add_executable(test_causal_lm_testing
 configure_training_executor_harness(test_causal_lm_testing)
 target_sources(test_causal_lm_testing PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
 
+# Warm start from a checkpoint (TOFIX143 P2)
+add_executable(test_warm_start_checkpoint
+    tests/test_warm_start_checkpoint.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_warm_start_checkpoint)
+add_test(NAME WarmStartCheckpoint COMMAND test_warm_start_checkpoint)
+
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}

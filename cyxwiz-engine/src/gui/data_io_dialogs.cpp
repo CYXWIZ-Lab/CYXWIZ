@@ -1000,6 +1000,8 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                      ReadStringParamValue(node_->parameters, "checkpoint_dir"));
+        CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
+                     ReadStringParamValue(node_->parameters, "initialize_from_checkpoint"));
     }
     if (node_) {
     generation_preview_enabled_ = false;
@@ -1037,6 +1039,10 @@ void DataLoaderDialog::Apply() {
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
+    if (initialize_from_checkpoint_[0] != '\0')
+        node_->parameters["initialize_from_checkpoint"] = initialize_from_checkpoint_;
+    else
+        node_->parameters.erase("initialize_from_checkpoint");
     node_->parameters["generation_preview_enabled"] = generation_preview_enabled_ ? "true" : "false";
     node_->parameters["generation_preview_every_epochs"] = std::to_string(generation_preview_every_epochs_);
     node_->parameters["generation_preview_max_new_tokens"] = std::to_string(generation_preview_max_new_tokens_);
@@ -1074,6 +1080,7 @@ void DataLoaderDialog::Reset() {
     save_best_checkpoint_ = true;
     early_stopping_patience_ = 5;
     checkpoint_dir_[0] = '\0';
+    initialize_from_checkpoint_[0] = '\0';
     ReadIntParam(original_params_, "epochs", epochs_);
     ReadIntParam(original_params_, "batch_size", batch_size_);
     ReadBoolParam(original_params_, "shuffle", shuffle_);
@@ -1112,6 +1119,8 @@ void DataLoaderDialog::Reset() {
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                  ReadStringParamValue(original_params_, "checkpoint_dir"));
+    CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
+                 ReadStringParamValue(original_params_, "initialize_from_checkpoint"));
     has_changes_ = false;
     generation_preview_enabled_ = false;
     generation_preview_every_epochs_ = 20;
@@ -1336,6 +1345,14 @@ void DataLoaderDialog::RenderContent() {
         has_changes_ = true;
     }
     ImGui::TextDisabled("  Empty uses the active project's checkpoints folder; without a project, runtime uses .cyxwiz/checkpoints.");
+
+    ImGui::Text("Start from:");
+    ImGui::SameLine(150);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_))) {
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("  Optional checkpoint folder (e.g. .../train-<id>/best): fine-tune from its weights; optimizer, schedule and epochs start fresh.");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Performance");

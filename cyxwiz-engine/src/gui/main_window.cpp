@@ -3873,6 +3873,12 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "StartTrainingFromGraph: using project checkpoint directory '{}'",
                 config.checkpoint_dir);
         }
+        // Like DataInput paths, a relative warm-start checkpoint is project-relative.
+        if (!config.initialize_from_checkpoint.empty() && project.HasActiveProject() &&
+            std::filesystem::path(config.initialize_from_checkpoint).is_relative()) {
+            config.initialize_from_checkpoint =
+                (std::filesystem::path(project.GetProjectRoot()) / config.initialize_from_checkpoint).string();
+        }
 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();

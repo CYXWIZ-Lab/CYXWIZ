@@ -715,6 +715,7 @@ private:
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
+    char initialize_from_checkpoint_[512] = "";
     bool generation_preview_enabled_ = false;
     int generation_preview_every_epochs_ = 20;
     int generation_preview_max_new_tokens_ = 32;
