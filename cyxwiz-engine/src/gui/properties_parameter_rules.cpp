@@ -160,6 +160,11 @@ bool ValidateParameter(
     const std::string& value,
     const cyxwiz::ParameterDefinition& param,
     std::string& error) {
+    if (param.type == "fixed" && value != param.default_value) {
+        error = "Unsupported value; expected " + param.default_value;
+        return false;
+    }
+
     if (value.empty()) {
         if (param.required) {
             error = "Required";

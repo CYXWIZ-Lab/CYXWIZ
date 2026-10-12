@@ -80,6 +80,7 @@ bool IsSupportedParameterType(const std::string& type) {
         "dropdown",
         "enum",
         "file",
+        "fixed",
         "float",
         "folder",
         "int",

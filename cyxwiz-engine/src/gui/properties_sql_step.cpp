@@ -600,11 +600,18 @@ void Properties::RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* 
     std::string raw;
     for (const auto& [key, value] : node.parameters) raw += (raw.empty() ? "" : ", ") + key;
     rows.emplace_back("Parameters", raw);
-    if (ImGui::BeginTable("##sql_details", 4, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("k1", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+    // Two pairs per line when the panel is wide; one pair per line, with the
+    // key column sized to the longest key, when it is docked narrow.
+    float key_w = 0.0f;
+    for (const auto& row : rows) key_w = std::max(key_w, ImGui::CalcTextSize(row.first.c_str()).x);
+    const bool two_pairs = ImGui::GetContentRegionAvail().x >= 520.0f;
+    if (ImGui::BeginTable("##sql_details", two_pairs ? 4 : 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("k1", ImGuiTableColumnFlags_WidthFixed, key_w);
         ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("k2", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-        ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        if (two_pairs) {
+            ImGui::TableSetupColumn("k2", ImGuiTableColumnFlags_WidthFixed, key_w);
+            ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        }
         for (const auto& [key, value] : rows) {
             if (value.empty()) continue;
             ImGui::TableNextColumn();

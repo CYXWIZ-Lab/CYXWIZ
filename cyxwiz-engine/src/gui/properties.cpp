@@ -15,10 +15,11 @@
 #include "node_editor.h"
 #include "node_config_dialog.h"
 #include <imgui.h>
+#include <imgui_stdlib.h>
 #include <spdlog/spdlog.h>
-#include <array>
 #include <algorithm>
 #include <cstring>
+#include <set>
 #include <vector>
 
 namespace gui {
@@ -465,6 +466,11 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
     if (!dataset_facts.empty()) {
         truth_context.dataset_facts = &dataset_facts;
     }
+    std::set<std::string> declared_parameters;
+    if (const auto* metadata = cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(node.type)) {
+        for (const auto& param : metadata->parameters) declared_parameters.insert(param.name);
+    }
+    truth_context.declared_parameters = &declared_parameters;
 
     auto report = properties_truth::ResolveNodeTruth(node, truth_context);
     if (report.properties.empty() && report.raw_parameters.empty()) {
@@ -479,24 +485,37 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
         ImGui::TextDisabled("No specialized effective-property rules for this node yet.");
     }
 
+    // Values can be long (a whole SQL query): wrap them to the panel instead of
+    // one line running off the edge, and put multi-line values under the label.
+    const auto wrapped_value = [](const std::string& value) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(value.c_str(), value.c_str() + value.size());
+        ImGui::PopTextWrapPos();
+    };
+    const auto dim_wrapped = [&](const std::string& value) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        wrapped_value(value);
+        ImGui::PopStyleColor();
+    };
+
     for (const auto& property : report.properties) {
         ImGui::PushID(property.canonical_key.c_str());
         ImGui::Text("%s:", property.label.c_str());
-        ImGui::SameLine();
+        const bool own_line = property.effective_value.find('\n') != std::string::npos;
+        if (!own_line) ImGui::SameLine();
 
         if (property.quick_editable) {
-            std::array<char, 256> buffer{};
-            std::strncpy(buffer.data(), property.effective_value.c_str(), buffer.size() - 1);
+            std::string edited = property.effective_value;
             ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::InputText("##effective", buffer.data(), buffer.size())) {
+            if (ImGui::InputText("##effective", &edited)) {
                 if (!property.canonical_key.empty()) {
                     properties_truth::WriteCanonicalAndAliases(
-                        node, property.canonical_key, buffer.data());
+                        node, property.canonical_key, edited);
                 }
                 InvalidateShapes();
             }
         } else {
-            ImGui::Text("%s", property.effective_value.c_str());
+            wrapped_value(property.effective_value);
         }
 
         RenderStatusBadges(property.statuses);
@@ -505,9 +524,7 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
                             properties_truth::TruthOwnerName(property.owner));
 
         for (const auto& alias : property.aliases_present) {
-            ImGui::TextDisabled("  Alias: %s=%s",
-                                alias.key.c_str(),
-                                alias.value.c_str());
+            dim_wrapped("  Alias: " + alias.key + "=" + alias.value);
         }
 
         if (!property.message.empty()) {
@@ -520,7 +537,7 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
         std::vector<std::string> raw_keys_to_remove;
         for (const auto& raw : report.raw_parameters) {
             ImGui::PushID(raw.key.c_str());
-            ImGui::Text("%s: %s", raw.key.c_str(), raw.value.c_str());
+            wrapped_value(raw.key + ": " + raw.value);
             RenderStatusBadges(raw.statuses);
             if (raw.cleanup_allowed) {
                 ImGui::SameLine();
@@ -533,13 +550,15 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
                     ImGui::EndTooltip();
                 }
             }
-            if (!raw.maps_to.empty()) {
-                ImGui::TextDisabled("  Maps to: %s", raw.maps_to.c_str());
+            if (raw.maps_to == raw.key) {
+                dim_wrapped("  Declared by this node type.");
+            } else if (!raw.maps_to.empty()) {
+                dim_wrapped("  Maps to: " + raw.maps_to);
             } else {
-                ImGui::TextDisabled("  Not mapped by the current truth slice.");
+                dim_wrapped("  Not mapped by the current truth slice.");
             }
             if (raw.cleanup_allowed && !raw.cleanup_reason.empty()) {
-                ImGui::TextDisabled("  Cleanup: %s", raw.cleanup_reason.c_str());
+                dim_wrapped("  Cleanup: " + raw.cleanup_reason);
             }
             ImGui::PopID();
         }

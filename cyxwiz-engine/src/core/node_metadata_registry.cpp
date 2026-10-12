@@ -1367,7 +1367,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"input_aliases", "string", "",
           "Several inputs: comma-separated table names, one input pin each (e.g. chapters, manifest)",
           {}, ""},
-         {"sql_contract_version", "string", "1", "SQL step contract version", {}, ""}},
+         {"sql_contract_version", "fixed", "1", "SQL step contract version (set by the engine)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====

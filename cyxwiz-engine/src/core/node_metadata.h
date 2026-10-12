@@ -93,7 +93,8 @@ struct ParameterDefinition {
           consumption(consumption_value) {}
 
     std::string name;
-    std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory"
+    std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory",
+                                // "fixed" (set by the engine, read-only in Properties, must equal default_value)
     std::string default_value;
     std::string description;
     std::vector<std::string> enum_values;  // For enum type
