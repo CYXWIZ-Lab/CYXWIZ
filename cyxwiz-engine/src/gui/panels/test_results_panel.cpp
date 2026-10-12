@@ -2,7 +2,10 @@
 #include "../../core/test_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../theme.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -59,6 +62,7 @@ void TestResultsPanel::Render() {
             std::string failure_message;
             bool regression_mode = false;
             bool causal_lm_mode = false;
+            bool metric_learning_mode = false;
             {
                 std::lock_guard<std::mutex> lock(results_mutex_);
                 failed = !results_.is_complete &&
@@ -66,6 +70,7 @@ void TestResultsPanel::Render() {
                 failure_message = results_.status_message;
                 regression_mode = results_.regression_mode;
                 causal_lm_mode = results_.causal_lm_mode;
+                metric_learning_mode = results_.metric_learning_mode;
             }
             if (failed) {
                 ImGui::TextColored(ui::CurrentTokens().error,
@@ -103,6 +108,13 @@ void TestResultsPanel::Render() {
                     ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
                     selected_tab_ = 2;
                     RenderPerClassTab();
+                    ImGui::EndTabItem();
+                }
+
+                if (!regression_mode && !causal_lm_mode && !metric_learning_mode &&
+                    ImGui::BeginTabItem(ICON_FA_CHART_AREA " Curves")) {
+                    selected_tab_ = 5;
+                    RenderCurvesTab();
                     ImGui::EndTabItem();
                 }
 
@@ -521,6 +533,79 @@ void TestResultsPanel::RenderPerClassTab() {
 
         ImGui::EndTable();
     }
+}
+
+void TestResultsPanel::RenderCurvesTab() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto& roc = results_.roc;
+    const auto& pr = results_.pr;
+    if (!roc || !roc->success || !pr || !pr->success) {
+        ui::EmptyState(ICON_FA_CHART_AREA, "No curves for this run",
+                       results_.curves_note.empty() ? "Run the test again to compute ROC and precision-recall."
+                                                    : results_.curves_note.c_str());
+        return;
+    }
+
+    const bool multiclass = !roc->class_auc.empty();
+    const auto class_name = [this](size_t c) {
+        return c < results_.per_class_metrics.size() && !results_.per_class_metrics[c].class_name.empty()
+                   ? results_.per_class_metrics[c].class_name
+                   : "Class " + std::to_string(c);
+    };
+
+    // Headline: AUC and AP (macro over classes for multi-class).
+    {
+        ui::FontScope heading(ui::Font::Heading);
+        ImGui::Text("AUC %.4f", roc->auc);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::Text("AP %.4f", pr->average_precision);
+    }
+    ImGui::TextColored(t.text_dim, "%s",
+                       multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
+                                  : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
+    ImGui::Spacing();
+
+    const float plot_height = std::max(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
+    if (!ImGui::BeginTable("##curves", 2, ImGuiTableFlags_SizingStretchSame)) return;
+    ImGui::TableNextColumn();
+    if (ImPlot::BeginPlot("ROC", ImVec2(-1, plot_height), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("False positive rate", "True positive rate");
+        ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.02, ImPlotCond_Always);
+        const double diagonal[] = {0.0, 1.0};
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.6f));
+        ImPlot::PlotLine("##chance", diagonal, diagonal, 2);
+        if (multiclass) {
+            for (size_t c = 0; c < roc->class_fpr.size(); ++c) {
+                const std::string label = class_name(c) + " (AUC " + std::to_string(roc->class_auc[c]).substr(0, 5) + ")";
+                ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
+                ImPlot::PlotLine(label.c_str(), roc->class_fpr[c].data(), roc->class_tpr[c].data(),
+                                 static_cast<int>(roc->class_fpr[c].size()));
+            }
+        } else {
+            ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+            ImPlot::PlotLine("ROC", roc->fpr.data(), roc->tpr.data(), static_cast<int>(roc->fpr.size()));
+        }
+        ImPlot::EndPlot();
+    }
+    ImGui::TableNextColumn();
+    if (ImPlot::BeginPlot("Precision-recall", ImVec2(-1, plot_height), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("Recall", "Precision");
+        ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.02, ImPlotCond_Always);
+        if (multiclass) {
+            for (size_t c = 0; c < pr->class_recall.size(); ++c) {
+                const std::string label = class_name(c) + " (AP " + std::to_string(pr->class_ap[c]).substr(0, 5) + ")";
+                ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
+                ImPlot::PlotLine(label.c_str(), pr->class_recall[c].data(), pr->class_precision[c].data(),
+                                 static_cast<int>(pr->class_recall[c].size()));
+            }
+        } else {
+            ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+            ImPlot::PlotLine("PR", pr->recall.data(), pr->precision.data(), static_cast<int>(pr->recall.size()));
+        }
+        ImPlot::EndPlot();
+    }
+    ImGui::EndTable();
 }
 
 void TestResultsPanel::RenderPredictionsTab() {
