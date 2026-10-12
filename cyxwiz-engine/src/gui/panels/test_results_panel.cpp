@@ -564,6 +564,11 @@ void TestResultsPanel::RenderCurvesTab() {
     ImGui::TextColored(t.text_dim, "%s",
                        multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
                                   : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
+    if (!results_.curves_note.empty()) {  // classes left out
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.caution, "%s", results_.curves_note.c_str());
+        ImGui::PopTextWrapPos();
+    }
     ImGui::Spacing();
 
     const float plot_height = std::max(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
@@ -577,6 +582,7 @@ void TestResultsPanel::RenderCurvesTab() {
         ImPlot::PlotLine("##chance", diagonal, diagonal, 2);
         if (multiclass) {
             for (size_t c = 0; c < roc->class_fpr.size(); ++c) {
+                if (roc->class_fpr[c].empty()) continue;  // skipped: no test sample of the class
                 const std::string label = class_name(c) + " (AUC " + std::to_string(roc->class_auc[c]).substr(0, 5) + ")";
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
                 ImPlot::PlotLine(label.c_str(), roc->class_fpr[c].data(), roc->class_tpr[c].data(),
@@ -594,6 +600,7 @@ void TestResultsPanel::RenderCurvesTab() {
         ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.02, ImPlotCond_Always);
         if (multiclass) {
             for (size_t c = 0; c < pr->class_recall.size(); ++c) {
+                if (pr->class_recall[c].empty()) continue;
                 const std::string label = class_name(c) + " (AP " + std::to_string(pr->class_ap[c]).substr(0, 5) + ")";
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
                 ImPlot::PlotLine(label.c_str(), pr->class_recall[c].data(), pr->class_precision[c].data(),

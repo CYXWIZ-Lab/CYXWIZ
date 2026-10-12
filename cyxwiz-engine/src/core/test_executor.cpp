@@ -4,6 +4,7 @@
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
+#include "one_vs_rest_curves.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
 
@@ -648,14 +649,15 @@ void TestExecutor::ComputeCurves() {
         m.roc = ModelEvaluation::ComputeROC(m.ground_truth, positive);
         m.pr = ModelEvaluation::ComputePRCurve(m.ground_truth, positive);
     } else {
-        std::vector<std::vector<double>> rows(samples, std::vector<double>(classes));
-        for (size_t i = 0; i < samples; ++i) {
-            for (size_t c = 0; c < classes; ++c) rows[i][c] = m.class_probabilities[i * classes + c];
-        }
-        m.roc = ModelEvaluation::ComputeMulticlassROC(m.ground_truth, rows);
-        m.pr = ModelEvaluation::ComputeMulticlassPRCurve(m.ground_truth, rows);
+        // One-vs-rest; a class the test set has no sample of is skipped, not fatal.
+        std::vector<std::string> names;
+        for (const auto& c : m.per_class_metrics) names.push_back(c.class_name);
+        OneVsRestCurves curves = ComputeOneVsRestCurves(m.ground_truth, m.class_probabilities, classes, names);
+        m.roc = std::move(curves.roc);
+        m.pr = std::move(curves.pr);
+        m.curves_note = std::move(curves.note);
     }
-    if (!m.roc->success) m.curves_note = "ROC: " + m.roc->error_message;
+    if (!m.roc->success) m.curves_note = "ROC: " + m.roc->error_message;  // else a note on skipped classes
     else if (!m.pr->success) m.curves_note = "PR: " + m.pr->error_message;
 }
 

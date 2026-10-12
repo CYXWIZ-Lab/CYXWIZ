@@ -101,7 +101,9 @@ struct TestingMetrics {
     std::vector<float> class_probabilities;
     int probability_classes = 0;
     // ROC and precision-recall over the test set, on the device at the end:
-    // binary - the positive class (1); multi-class - one-vs-rest per class.
+    // binary - the positive class (1); multi-class - one-vs-rest per class,
+    // skipping a class the test set has no sample of. curves_note says why
+    // there are no curves, or which classes were skipped.
     std::optional<ROCCurveData> roc;
     std::optional<PRCurveData> pr;
     std::string curves_note;

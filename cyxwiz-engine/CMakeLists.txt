@@ -226,6 +226,7 @@ set(ENGINE_SOURCES
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
+    src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
     src/core/node_executors/kmeans_executor.cpp
@@ -4486,6 +4487,7 @@ endfunction()
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp
     src/core/test_executor.cpp
+    src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp)
 configure_training_executor_harness(test_causal_lm_testing)
 target_sources(test_causal_lm_testing PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
@@ -4498,6 +4500,7 @@ target_sources(test_training_executor_arrow_parquet PRIVATE tests/test_training_
 target_sources(test_training_executor_arrow_parquet PRIVATE
     tests/test_training_spatial_ingress.cpp
     src/core/test_executor.cpp
+    src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp)
 
@@ -5095,6 +5098,26 @@ set_target_properties(test_classification_probabilities PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME classification_probabilities COMMAND test_classification_probabilities)
+
+# ===== Test: multi-class ROC / PR skip a class with no test sample (TOFIX140) =====
+add_executable(test_one_vs_rest_curves
+    tests/test_one_vs_rest_curves.cpp
+    src/core/one_vs_rest_curves.cpp
+)
+target_include_directories(test_one_vs_rest_curves PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_one_vs_rest_curves PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_one_vs_rest_curves PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_one_vs_rest_curves PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME one_vs_rest_curves COMMAND test_one_vs_rest_curves)
 
 # ===== Test: the test run's per-sample results as a table (TOFIX140 ROC / PR) =====
 add_executable(test_test_predictions_table
@@ -5698,6 +5721,7 @@ set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
 add_executable(test_metric_graph_training
     tests/test_metric_graph_training.cpp
     src/core/test_executor.cpp
+    src/core/one_vs_rest_curves.cpp
     src/core/test_executor_sequence.cpp
 )
 configure_training_executor_harness(test_metric_graph_training)
