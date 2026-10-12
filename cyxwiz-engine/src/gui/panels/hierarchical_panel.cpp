@@ -98,6 +98,7 @@ void HierarchicalPanel::RenderParameters() {
             result_.labels = Clustering::CutDendrogram(result_.linkage_matrix, cut_height_, static_cast<int>(input_data_.size()));
             std::set<int> unique_labels(result_.labels.begin(), result_.labels.end());
             result_.n_clusters = static_cast<int>(unique_labels.size());
+            status_message_ = std::to_string(result_.n_clusters) + " clusters at this cut.";
         }
     }
 
@@ -293,12 +294,24 @@ void HierarchicalPanel::RunClustering() {
         AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
             result_ = std::move(result);
             if (result_.success) {
-                // Find max height for slider
-                max_height_ = 0.0;
-                for (const auto& link : result_.linkage_matrix) {
-                    if (link[2] > max_height_) max_height_ = link[2];
+                // Slider range, and a starting cut that gives the requested
+                // clusters: halfway between the merge heights that bracket
+                // undoing the last k - 1 merges (half the top height cut
+                // somewhere unrelated to k).
+                std::vector<double> heights;
+                heights.reserve(result_.linkage_matrix.size());
+                for (const auto& link : result_.linkage_matrix) heights.push_back(link[2]);
+                std::sort(heights.begin(), heights.end());
+                max_height_ = heights.empty() ? 0.0 : heights.back();
+                const int merges = static_cast<int>(heights.size());
+                const int below = merges + 1 - result_.n_clusters;  // merges kept under the cut
+                if (below < 0 || merges == 0) {
+                    cut_height_ = 0.0;
+                } else if (below >= merges) {
+                    cut_height_ = max_height_;
+                } else {
+                    cut_height_ = below == 0 ? heights[0] * 0.5 : 0.5 * (heights[below - 1] + heights[below]);
                 }
-                cut_height_ = max_height_ * 0.5;
                 status_message_ = std::to_string(result_.n_clusters) + " clusters found.";
             } else {
                 status_message_ = "Failed: " + result_.error_message;
