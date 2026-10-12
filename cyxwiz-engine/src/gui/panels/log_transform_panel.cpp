@@ -87,7 +87,9 @@ void LogTransformPanel::RenderSettings() {
     ImGui::RadioButton("Base 10 (log10)", &log_base_, 1);
     ImGui::RadioButton("Base 2 (log2)", &log_base_, 2);
 
-    ImGui::Checkbox("Use log1p (log(1 + x))", &use_log1p_);
+    if (ImGui::Checkbox("Use log1p (log(1 + x))", &use_log1p_)) {
+        can_transform_ = true;  // the last check was for the other setting
+    }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Safer for values close to zero.\nAllows x >= -1 instead of x > 0.");
     }
@@ -103,10 +105,10 @@ void LogTransformPanel::RenderSettings() {
 
     int selected_count = 0;
     for (bool sel : selected_columns_) if (sel) selected_count++;
-    bool can_apply = current_table_ != nullptr && selected_count > 0 && can_transform_;
-    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first"
-                                : selected_count == 0       ? "Select at least one column"
-                                                            : "Some columns have values the log cannot take";
+    // Apply re-checks the data; a failed check only explains the last attempt
+    // (it used to keep Apply disabled until a new table, even after log1p was turned on).
+    bool can_apply = current_table_ != nullptr && selected_count > 0;
+    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first" : "Select at least one column";
 
     if (ui::PrimaryButton("Apply Log Transform", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyLogTransform();
