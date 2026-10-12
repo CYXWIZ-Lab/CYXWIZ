@@ -1,5 +1,6 @@
 #include "pipeline_executor.h"
 #include <cyxwiz/device.h>
+#include <cyxwiz/model_evaluation.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
 #include "archive_text_source.h"
@@ -8514,47 +8515,34 @@ bool PipelineExecutor::ExecuteROCCurve(const Node& node, ExecutionContext& ctx) 
             return false;
         }
 
-        std::sort(samples.begin(), samples.end(),
-                  [](const RocPointInput& a, const RocPointInput& b) {
-                      return a.score > b.score;
-                  });
+        // The curve itself comes from ModelEvaluation, on the device (one
+        // implementation for the node, the ROC panel and test results).
+        std::vector<int> y_true;
+        std::vector<double> y_scores;
+        y_true.reserve(samples.size());
+        y_scores.reserve(samples.size());
+        for (const auto& sample : samples) {
+            y_true.push_back(sample.positive ? 1 : 0);
+            y_scores.push_back(sample.score);
+        }
+        const ROCCurveData roc = ModelEvaluation::ComputeROC(y_true, y_scores);
+        if (!roc.success) {
+            ReportError("ROCCurveNode: " + roc.error_message);
+            return false;
+        }
 
         struct RocPoint {
             double threshold = 0.0;
             double fpr = 0.0;
             double tpr = 0.0;
         };
+        // One row per distinct threshold, high to low (the curve's leading
+        // (0, 0) point at +infinity is not a threshold row).
         std::vector<RocPoint> points;
-        int64_t tp = 0;
-        int64_t fp = 0;
-        size_t index = 0;
-        while (index < samples.size()) {
-            const double threshold = samples[index].score;
-            while (index < samples.size() && samples[index].score == threshold) {
-                if (samples[index].positive) {
-                    ++tp;
-                } else {
-                    ++fp;
-                }
-                ++index;
-            }
-            points.push_back(
-                {threshold,
-                 static_cast<double>(fp) / static_cast<double>(negative_count),
-                 static_cast<double>(tp) / static_cast<double>(positive_count)});
+        for (size_t i = 1; i < roc.fpr.size(); ++i) {
+            points.push_back({roc.thresholds[i], roc.fpr[i], roc.tpr[i]});
         }
-
-        double auc = 0.0;
-        double prev_fpr = 0.0;
-        double prev_tpr = 0.0;
-        for (const auto& point : points) {
-            auc += (point.fpr - prev_fpr) * (point.tpr + prev_tpr) / 2.0;
-            prev_fpr = point.fpr;
-            prev_tpr = point.tpr;
-        }
-        if (prev_fpr < 1.0 || prev_tpr < 1.0) {
-            auc += (1.0 - prev_fpr) * (1.0 + prev_tpr) / 2.0;
-        }
+        const double auc = roc.auc;
 
         arrow::DoubleBuilder threshold_builder;
         arrow::DoubleBuilder fpr_builder;
@@ -8756,48 +8744,33 @@ bool PipelineExecutor::ExecutePRCurve(const Node& node, ExecutionContext& ctx) {
             return false;
         }
 
-        std::sort(samples.begin(), samples.end(),
-                  [](const PRPointInput& a, const PRPointInput& b) {
-                      return a.score > b.score;
-                  });
+        // The curve itself comes from ModelEvaluation, on the device.
+        std::vector<int> y_true;
+        std::vector<double> y_scores;
+        y_true.reserve(samples.size());
+        y_scores.reserve(samples.size());
+        for (const auto& sample : samples) {
+            y_true.push_back(sample.positive ? 1 : 0);
+            y_scores.push_back(sample.score);
+        }
+        const PRCurveData pr = ModelEvaluation::ComputePRCurve(y_true, y_scores);
+        if (!pr.success) {
+            ReportError("PRCurveNode: " + pr.error_message);
+            return false;
+        }
 
         struct PRPoint {
             double threshold = 0.0;
             double precision = 0.0;
             double recall = 0.0;
         };
+        // One row per distinct threshold, high to low: ModelEvaluation reports
+        // thresholds ascending with a closing (precision 1, recall 0) point.
         std::vector<PRPoint> points;
-        int64_t tp = 0;
-        int64_t fp = 0;
-        size_t index = 0;
-        while (index < samples.size()) {
-            const double threshold = samples[index].score;
-            while (index < samples.size() && samples[index].score == threshold) {
-                if (samples[index].positive) {
-                    ++tp;
-                } else {
-                    ++fp;
-                }
-                ++index;
-            }
-            const double predicted_positive = static_cast<double>(tp + fp);
-            points.push_back(
-                {threshold,
-                 predicted_positive > 0.0
-                     ? static_cast<double>(tp) / predicted_positive
-                     : 1.0,
-                 static_cast<double>(tp) / static_cast<double>(positive_count)});
+        for (size_t i = pr.thresholds.size(); i-- > 0;) {
+            points.push_back({pr.thresholds[i], pr.precision[i], pr.recall[i]});
         }
-
-        double average_precision = 0.0;
-        double previous_recall = 0.0;
-        for (const auto& point : points) {
-            if (point.recall > previous_recall) {
-                average_precision +=
-                    (point.recall - previous_recall) * point.precision;
-                previous_recall = point.recall;
-            }
-        }
+        const double average_precision = pr.average_precision;
 
         arrow::DoubleBuilder threshold_builder;
         arrow::DoubleBuilder precision_builder;

@@ -1,7 +1,7 @@
 #pragma once
 
 // Device selection for the computation-truth tools, following the existing
-// test conventions: CYXWIZ_TEST_ARRAYFIRE_BACKEND=opencl|cuda|cpu picks the
+// test conventions: CYXWIZ_TEST_ARRAYFIRE_BACKEND=opencl|cuda|oneapi|cpu picks the
 // ArrayFire backend, CYXWIZ_OPENCL_TEST_DEVICE=N picks the OpenCL GPU (0 =
 // the NVIDIA card, 1 = the Intel UHD 630 on the dev box). Unset = default.
 
@@ -26,6 +26,8 @@ inline bool SelectTestDeviceFromEnvironment() {
     } else if (name == "opencl") {
         type = DeviceType::OPENCL;
         if (const char* index = std::getenv("CYXWIZ_OPENCL_TEST_DEVICE")) id = std::atoi(index);
+    } else if (name == "oneapi") {
+        type = DeviceType::ONEAPI;
     } else if (name != "cpu") {
         std::fprintf(stderr, "unknown CYXWIZ_TEST_ARRAYFIRE_BACKEND '%s'\n", backend);
         return false;
