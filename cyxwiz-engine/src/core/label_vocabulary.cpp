@@ -60,6 +60,17 @@ LabelVocabulary BuildLabelVocabulary(const std::vector<std::shared_ptr<arrow::Ch
     return vocabulary;
 }
 
+LabelVocabulary BuildLabelVocabulary(const std::vector<std::string>& values) {
+    std::set<std::string> distinct;
+    for (const auto& value : values)
+        if (!value.empty()) distinct.insert(value);
+    LabelVocabulary vocabulary;
+    vocabulary.names.assign(distinct.begin(), distinct.end());
+    for (size_t i = 0; i < vocabulary.names.size(); ++i)
+        vocabulary.index.emplace(vocabulary.names[i], static_cast<int32_t>(i));
+    return vocabulary;
+}
+
 arrow::Result<std::shared_ptr<arrow::ChunkedArray>> EncodeLabels(const arrow::ChunkedArray& column,
                                                                  const LabelVocabulary& vocabulary) {
     arrow::ArrayVector encoded;

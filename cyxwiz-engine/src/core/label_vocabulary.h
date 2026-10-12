@@ -30,6 +30,9 @@ bool IsTextLabelType(const arrow::DataType& type);
 
 // The distinct non-null values of text label columns, sorted.
 LabelVocabulary BuildLabelVocabulary(const std::vector<std::shared_ptr<arrow::ChunkedArray>>& columns);
+// The same from plain values (a Table Viewer / analysis panel column); empty
+// strings are missing values.
+LabelVocabulary BuildLabelVocabulary(const std::vector<std::string>& values);
 
 // The column as int32 class indices; nulls stay null; a value missing from the
 // vocabulary is an error naming it.

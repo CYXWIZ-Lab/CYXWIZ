@@ -584,6 +584,9 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
     auto table = arrow::Table::Make(schema, {FinishFloatArray({1, 2, 3, 4, 5, 6, 7, 8}), label_array}, 8);
     auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "text_labels");
     const cyxwiz::LabelVocabulary full = cyxwiz::BuildLabelVocabulary({table->GetColumnByName("segment")});
+    Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
+              full.names,
+          "plain values give the same sorted vocabulary (empty = missing)");
 
     auto config = MakeConfig();
     config.output_size = 3;

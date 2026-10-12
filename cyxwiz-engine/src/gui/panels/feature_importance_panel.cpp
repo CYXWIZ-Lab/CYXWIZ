@@ -1,4 +1,5 @@
 #include "feature_importance_panel.h"
+#include "../../core/label_vocabulary.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
 #include <cyxwiz/sequential.h>
@@ -242,24 +243,22 @@ void FeatureImportancePanel::RenderImportanceChart() {
         sorted_names.push_back(result_.feature_names[idx].c_str());
     }
 
-    // Horizontal bar chart
-    if (ImPlot::BeginPlot("Feature Importance", ImVec2(-1, std::max(200.0f, 25.0f * sorted_indices.size())))) {
-        ImPlot::SetupAxes("Importance", "Feature", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+    // Horizontal bar chart, most important at the top; the feature names
+    // are the axis ticks (labels drawn beside the bars sat on the wrong bars
+    // and under the legend).
+    if (ImPlot::BeginPlot("Feature Importance", ImVec2(-1, std::max(200.0f, 28.0f * sorted_indices.size())),
+                          ImPlotFlags_NoLegend)) {
+        ImPlot::SetupAxes("Importance", nullptr, ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 
-        // Plot bars
         std::vector<double> positions(sorted_indices.size());
         for (size_t i = 0; i < positions.size(); i++) {
             positions[i] = static_cast<double>(sorted_indices.size() - 1 - i);
         }
-
-        // Use PlotBars with horizontal flag (ImPlot 0.14+)
-        ImPlot::PlotBars("Importance", sorted_importances.data(), static_cast<int>(sorted_importances.size()), 0.6, 0, ImPlotBarsFlags_Horizontal);
-
-        // Add feature name labels
-        for (size_t i = 0; i < sorted_names.size(); i++) {
-            const double y = static_cast<double>(sorted_indices.size() - 1 - i);
-            ImPlot::PlotText(sorted_names[i], sorted_importances[i] + 0.02, y);
+        if (!positions.empty()) {
+            ImPlot::SetupAxisTicks(ImAxis_Y1, positions.data(), static_cast<int>(positions.size()), sorted_names.data());
         }
+        ImPlot::PlotBars("Importance", sorted_importances.data(), positions.data(),
+                         static_cast<int>(sorted_importances.size()), 0.6, ImPlotBarsFlags_Horizontal);
 
         // Error bars if available
         if (!result_.importances_std.empty() && method_ == 0) {
@@ -435,11 +434,28 @@ void FeatureImportancePanel::PrepareData() {
         }
     }
 
-    // Extract y data
+    // Extract y data. A text target (class names) maps through the sorted
+    // label vocabulary training uses, so the classes match the model's
+    // outputs; reading it as numbers made every target 0 (TOFIX145).
     y_data_.resize(n_rows);
-    for (size_t row = 0; row < n_rows; row++) {
-        auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
-        y_data_[row] = val.value_or(0.0);
+    bool text_target = false;
+    for (size_t row = 0; row < n_rows && !text_target; row++) {
+        const auto cell = current_table_->GetCell(row, target_column_);
+        text_target = !DataAnalyzer::ToDouble(cell).has_value() &&
+                      !current_table_->GetCellAsString(row, static_cast<size_t>(target_column_)).empty();
+    }
+    if (text_target) {
+        std::vector<std::string> names(n_rows);
+        for (size_t row = 0; row < n_rows; row++)
+            names[row] = current_table_->GetCellAsString(row, static_cast<size_t>(target_column_));
+        const LabelVocabulary vocabulary = BuildLabelVocabulary(names);
+        for (size_t row = 0; row < n_rows; row++)
+            y_data_[row] = std::max(0, vocabulary.IndexOf(names[row]));
+    } else {
+        for (size_t row = 0; row < n_rows; row++) {
+            auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
+            y_data_[row] = val.value_or(0.0);
+        }
     }
 }
 
