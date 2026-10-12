@@ -1,5 +1,10 @@
 #include "table_viewer.h"
 #include "../../core/variables_presentation.h"
+#include "../../core/data_registry.h"
+#include "../../core/dataset_catalog.h"
+#include "../../core/dataset_table_slice.h"
+#include "../ui_widgets.h"
+#include "../ui_fonts.h"
 #include "../editor_fonts.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -106,7 +111,7 @@ void TableViewerPanel::Render() {
                 ImGui::TextWrapped("Failed to load table.");
             }
         } else {
-            ImGui::TextWrapped("No table loaded. Registered datasets are previewed from Asset Browser or Data Input through Data Preview.");
+            RenderEmptyState();
         }
 
         // Status bar
@@ -245,10 +250,7 @@ void TableViewerPanel::RenderLiveHeader(TableTab* tab) {
 }
 
 void TableViewerPanel::RenderTabBar() {
-    if (tabs_.empty()) {
-        ImGui::TextDisabled("No tables open");
-        return;
-    }
+    if (tabs_.empty()) return;  // the empty state says what to do
 
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable |
                                       ImGuiTabBarFlags_AutoSelectNewTabs |
@@ -291,6 +293,12 @@ void TableViewerPanel::RenderTabBar() {
 void TableViewerPanel::RenderToolbar() {
     TableTab* active_tab = GetActiveTab();
     if (!active_tab) return;
+
+    // Another loaded dataset, beside the open tabs.
+    if (ui::GhostButton(ICON_FA_DATABASE " Open dataset")) open_dataset_popup_requested_ = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the first rows of a dataset a Data Input loaded");
+    RenderOpenDatasetPopup();
+    ImGui::SameLine();
 
     // Stats sidebar toggle
     if (ui::GhostButton(ICON_FA_CHART_BAR " Stats", true, nullptr, show_stats_sidebar_)) {
@@ -809,10 +817,7 @@ void TableViewerPanel::RenderTable() {
 
 void TableViewerPanel::RenderStatusBar() {
     TableTab* tab = GetActiveTab();
-    if (!tab) {
-        ImGui::TextDisabled("No table loaded");
-        return;
-    }
+    if (!tab) return;
 
     if (!tab->HasData()) {
         ImGui::TextDisabled("Failed to load table");
@@ -841,12 +846,103 @@ void TableViewerPanel::RenderStatusBar() {
     }
 }
 
+bool TableViewerPanel::OpenDataset(const std::string& dataset_name, int64_t max_rows, std::string& error) {
+    auto& registry = DataRegistry::Instance();
+    DatasetSlice slice = ReadDatasetSlice(
+        [&registry](const DataPreviewRequest& request) {
+            return DataPreviewService::PreviewRegisteredTabular(registry, request);
+        },
+        dataset_name, max_rows);
+    if (!slice.table) {
+        error = slice.error;
+        return false;
+    }
+    const size_t shown = slice.table->GetRowCount();
+    if (static_cast<int64_t>(shown) < slice.total_rows)
+        slice.table->SetName(dataset_name + " \xC2\xB7 first " + std::to_string(shown) + " of " +
+                             std::to_string(slice.total_rows) + " rows");
+    SetTable(slice.table);
+    visible_ = true;
+    return true;
+}
+
+void TableViewerPanel::RenderEmptyState() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::Spacing();
+    {
+        ui::FontScope font(ui::Font::Medium);
+        ImGui::TextUnformatted("No table open");
+    }
+    ImGui::PushTextWrapPos(std::min(ImGui::GetContentRegionMax().x, ImGui::GetCursorPosX() + 560.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::TextUnformatted("The Table Viewer shows a table held in memory, to sort, filter, format, edit or plot. "
+                           "Tables come here from:");
+    ImGui::PopStyleColor();
+    for (const char* route : {"a loaded dataset - its first rows, with the button below",
+                              "Data Studio - open a query's result",
+                              "the Variable Explorer - View data on a Python value",
+                              "a notebook or script that shows a table"}) {
+        ImGui::Bullet();
+        ImGui::TextUnformatted(route);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    if (ui::PrimaryButton(ICON_FA_DATABASE " Open a loaded dataset...")) open_dataset_popup_requested_ = true;
+    RenderOpenDatasetPopup();
+}
+
+void TableViewerPanel::RenderOpenDatasetPopup() {
+    if (open_dataset_popup_requested_) {
+        open_dataset_popup_requested_ = false;
+        open_dataset_error_.clear();
+        ImGui::OpenPopup("##open_dataset");
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f), ImVec2(640.0f, 560.0f));
+    if (!ImGui::BeginPopup("##open_dataset")) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+
+    // Tabular datasets the Engine holds (Data Inputs, pipeline results).
+    std::vector<DatasetEntry> tables;
+    for (auto& entry : DatasetCatalog::Instance().List())
+        if (entry.Has(kBackingArrow) || entry.Has(kBackingParquet)) tables.push_back(std::move(entry));
+
+    ui::SettingsSection("Loaded datasets");
+    if (tables.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("No dataset is loaded. Apply a Data Input (or run a pipeline) first.");
+        ImGui::PopTextWrapPos();
+    } else {
+        ImGui::BeginChild("##datasets", ImVec2(0.0f, std::min(240.0f, 28.0f * static_cast<float>(tables.size()) + 8.0f)));
+        for (const auto& entry : tables) {
+            const std::string detail = std::to_string(entry.rows) + " rows \xC2\xB7 " + std::to_string(entry.columns) +
+                                       " columns \xC2\xB7 " + StorageText(entry.storage);
+            if (ImGui::Selectable((entry.Shown() + "##" + entry.name).c_str(), open_dataset_pick_ == entry.name))
+                open_dataset_pick_ = entry.name;
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "%s", detail.c_str());
+        }
+        ImGui::EndChild();
+    }
+
+    ui::FieldLabel("Rows to open");
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::InputInt("##rows", &open_dataset_rows_, 1000, 10000))
+        open_dataset_rows_ = std::clamp(open_dataset_rows_, 1, 1000000);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);
+    ImGui::TextDisabled("Reads only these first rows; the dataset stays where its Data Input loaded it.");
+    ImGui::PopTextWrapPos();
+    if (!open_dataset_error_.empty()) ImGui::TextColored(t.warning, "%s", open_dataset_error_.c_str());
+
+    ImGui::Spacing();
+    const bool can_open = !open_dataset_pick_.empty() &&
+                          std::any_of(tables.begin(), tables.end(),
+                                      [this](const DatasetEntry& e) { return e.name == open_dataset_pick_; });
+    if (ui::PrimaryButton("Open", can_open, "Pick a dataset")) {
+        if (OpenDataset(open_dataset_pick_, open_dataset_rows_, open_dataset_error_)) ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 }  // namespace cyxwiz
-
-
-
-
-
-
-
-

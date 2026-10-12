@@ -108,6 +108,11 @@ public:
     // Clear current table
     void Clear();
 
+    // A loaded dataset's first `max_rows` rows in a new tab (TOFIX140), read
+    // through the data service: the dataset stays where its Data Input put it
+    // (in memory or on disk); false + `error` when it cannot be read.
+    bool OpenDataset(const std::string& dataset_name, int64_t max_rows, std::string& error);
+
     // Data Viewer (TOFIX133 P5, board 10): a tab fed from a Python value. A
     // second open of the same value replaces its tab; "Read again", a slice
     // change or "Read all rows" read it again through the variables worker.
@@ -228,6 +233,13 @@ private:
     void RenderTable();
     void RenderStatusBar();
     void RenderStatsSidebar(TableTab* tab);
+    // No tab: how tables get here, and the loaded-dataset picker.
+    void RenderEmptyState();
+    void RenderOpenDatasetPopup();
+    bool open_dataset_popup_requested_ = false;
+    std::string open_dataset_pick_;
+    int open_dataset_rows_ = 10000;
+    std::string open_dataset_error_;
 
     // Column statistics and sorting
     void ComputeColumnStats(TableTab* tab);

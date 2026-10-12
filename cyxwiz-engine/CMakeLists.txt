@@ -162,6 +162,7 @@ set(ENGINE_SOURCES
     src/core/query_result_cache.cpp
     src/core/arrow_data_table.cpp
     src/core/asset_preview.cpp
+    src/core/dataset_table_slice.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
@@ -5124,6 +5125,24 @@ set_target_properties(test_asset_preview PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME asset_preview COMMAND test_asset_preview)
+
+# ===== Test: a loaded dataset's first rows for the Table Viewer (TOFIX140) =====
+add_executable(test_dataset_table_slice
+    tests/test_dataset_table_slice.cpp
+    src/core/dataset_table_slice.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_dataset_table_slice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_dataset_table_slice PRIVATE spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_dataset_table_slice PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_dataset_table_slice PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME dataset_table_slice COMMAND test_dataset_table_slice)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
