@@ -267,6 +267,11 @@ void TestExecutor::Test(
         m.predictions.clear();
         m.ground_truth.clear();
         m.confidences.clear();
+        m.class_probabilities.clear();
+        m.probability_classes = 0;
+        m.roc.reset();
+        m.pr.reset();
+        m.curves_note.clear();
     });
 
     // Create the test batcher using the dataset type that was trained.
@@ -408,6 +413,7 @@ void TestExecutor::Test(
     if (!regression_mode) {
         ComputePerClassMetrics();
         ComputeAggregateMetrics();
+        ComputeCurves();
     }
 
     TestingMetrics final_metrics = GetMetrics();
@@ -484,8 +490,26 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
         float confidence = ClassificationConfidence(
             sample_pred, output_width, pred_class, decision_mode);
 
+        // Class probabilities for the ROC / PR curves
+        std::vector<float> probabilities;
+        const size_t classes = ClassificationClassProbabilities(
+            sample_pred, output_width, decision_mode, probabilities);
+
         // Update metrics
-        UpdateMetrics([pred_class, true_class, confidence](TestingMetrics& m) {
+        UpdateMetrics([pred_class, true_class, confidence, classes, &probabilities](TestingMetrics& m) {
+            // Kept up to kMaxCurveValues (about 80 MB); past that the curves
+            // are skipped rather than the test running out of memory.
+            constexpr size_t kMaxCurveValues = 20'000'000;
+            if (m.curves_note.empty()) {
+                if (m.class_probabilities.size() + classes > kMaxCurveValues) {
+                    m.class_probabilities.clear();
+                    m.curves_note = "ROC / PR skipped: the test set has too many scores to keep";
+                } else {
+                    m.probability_classes = static_cast<int>(classes);
+                    m.class_probabilities.insert(m.class_probabilities.end(), probabilities.begin(),
+                                                 probabilities.end());
+                }
+            }
             m.total_samples++;
             if (pred_class == true_class) {
                 m.correct_predictions++;
@@ -605,6 +629,34 @@ void TestExecutor::ComputePerClassMetrics() {
         float pr_sum = cm.precision + cm.recall;
         cm.f1_score = pr_sum > 0 ? 2.0f * cm.precision * cm.recall / pr_sum : 0.0f;
     }
+}
+
+void TestExecutor::ComputeCurves() {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    TestingMetrics& m = metrics_;
+    if (m.metric_learning_mode || !m.curves_note.empty()) return;
+    const size_t classes = static_cast<size_t>(std::max(m.probability_classes, 0));
+    const size_t samples = m.ground_truth.size();
+    if (classes < 2 || samples == 0 || m.class_probabilities.size() != samples * classes) {
+        m.curves_note = "ROC / PR need class scores for every test sample";
+        return;
+    }
+    if (classes == 2) {
+        // Binary: the positive class's probability against truth == 1.
+        std::vector<double> positive(samples);
+        for (size_t i = 0; i < samples; ++i) positive[i] = m.class_probabilities[i * 2 + 1];
+        m.roc = ModelEvaluation::ComputeROC(m.ground_truth, positive);
+        m.pr = ModelEvaluation::ComputePRCurve(m.ground_truth, positive);
+    } else {
+        std::vector<std::vector<double>> rows(samples, std::vector<double>(classes));
+        for (size_t i = 0; i < samples; ++i) {
+            for (size_t c = 0; c < classes; ++c) rows[i][c] = m.class_probabilities[i * classes + c];
+        }
+        m.roc = ModelEvaluation::ComputeMulticlassROC(m.ground_truth, rows);
+        m.pr = ModelEvaluation::ComputeMulticlassPRCurve(m.ground_truth, rows);
+    }
+    if (!m.roc->success) m.curves_note = "ROC: " + m.roc->error_message;
+    else if (!m.pr->success) m.curves_note = "PR: " + m.pr->error_message;
 }
 
 void TestExecutor::ComputeAggregateMetrics() {

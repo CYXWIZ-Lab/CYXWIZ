@@ -171,6 +171,22 @@ std::vector<float> Run(const TrainingConfiguration &config,
                   tested.status_message);
       Require(std::isfinite(tested.test_loss),
               "finite held-out evaluation loss");
+      // ROC / PR inputs (TOFIX140): a probability row per test sample, each
+      // summing to 1; the curves either computed or say why not.
+      Require(tested.probability_classes >= 2 &&
+                  tested.class_probabilities.size() ==
+                      static_cast<size_t>(tested.total_samples) *
+                          static_cast<size_t>(tested.probability_classes),
+              "class probabilities kept for every test sample");
+      for (int row = 0; row < tested.total_samples; ++row) {
+        double sum = 0.0;
+        for (int c = 0; c < tested.probability_classes; ++c)
+          sum += tested.class_probabilities[static_cast<size_t>(row * tested.probability_classes + c)];
+        Require(std::abs(sum - 1.0) < 1e-4, "probabilities of a sample sum to 1");
+      }
+      Require((tested.roc && tested.roc->success && tested.pr && tested.pr->success) ||
+                  !tested.curves_note.empty(),
+              "ROC / PR computed, or the reason they were not");
       std::cout << "Spatial ingress passed: " << backend_name << " "
                 << (arrow ? "Arrow" : "Parquet")
                 << " prefetch=" << config.prefetch_factor

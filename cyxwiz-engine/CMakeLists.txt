@@ -5075,6 +5075,24 @@ set_target_properties(test_table_class_labels PROPERTIES
 )
 add_test(NAME table_class_labels COMMAND test_table_class_labels)
 
+# ===== Test: per-class probabilities kept by the Test step for ROC / PR (TOFIX140) =====
+add_executable(test_classification_probabilities
+    tests/test_classification_probabilities.cpp
+)
+target_include_directories(test_classification_probabilities PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_classification_probabilities PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_classification_probabilities PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_classification_probabilities PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME classification_probabilities COMMAND test_classification_probabilities)
+
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/linear_algebra_pytorch.json"

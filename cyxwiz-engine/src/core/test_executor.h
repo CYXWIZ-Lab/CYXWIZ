@@ -9,6 +9,7 @@
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/model_evaluation.h>
 #include <functional>
 #include <atomic>
 #include <cmath>
@@ -93,6 +94,17 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+
+    // Per-sample class probabilities, row-major [total_samples][probability_classes]
+    // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when
+    // the test set is too large to keep them; curves_note then says so.
+    std::vector<float> class_probabilities;
+    int probability_classes = 0;
+    // ROC and precision-recall over the test set, on the device at the end:
+    // binary - the positive class (1); multi-class - one-vs-rest per class.
+    std::optional<ROCCurveData> roc;
+    std::optional<PRCurveData> pr;
+    std::string curves_note;
 
     // Timing
     float total_time_seconds = 0.0f;
@@ -239,6 +251,8 @@ private:
      * Compute macro and weighted averages
      */
     void ComputeAggregateMetrics();
+    // ROC / precision-recall from the kept class probabilities (TOFIX140).
+    void ComputeCurves();
 
     /**
      * Update metrics (thread-safe)

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -197,6 +198,41 @@ inline float ClassificationConfidence(
     return exp_sum > 0.0f
         ? std::exp(scores[predicted_class] - max_score) / exp_sum
         : 0.0f;
+}
+
+// Probability of every class for one sample, appended to `out`; returns the
+// class count. Binary modes give {1 - p, p}. Multi-class scores that already
+// form a distribution (a Softmax output layer) are used as they are -
+// re-applying softmax would reorder samples within a class - and other scores
+// are treated as logits (softmax), as ClassificationConfidence does.
+inline size_t ClassificationClassProbabilities(
+    const float* scores,
+    size_t width,
+    ClassificationDecisionMode mode,
+    std::vector<float>& out) {
+    if (!scores || width == 0) return 0;
+    if (mode == ClassificationDecisionMode::BinaryLogit ||
+        mode == ClassificationDecisionMode::BinaryProbability) {
+        const float positive = ClassificationConfidence(scores, width, 1, mode);
+        out.push_back(1.0f - positive);
+        out.push_back(positive);
+        return 2;
+    }
+    float sum = 0.0f;
+    bool distribution = true;
+    for (size_t i = 0; i < width; ++i) {
+        distribution = distribution && scores[i] >= 0.0f && scores[i] <= 1.0f;
+        sum += scores[i];
+    }
+    if (distribution && std::abs(sum - 1.0f) <= 1e-3f) {
+        out.insert(out.end(), scores, scores + width);
+        return width;
+    }
+    const float max_score = *std::max_element(scores, scores + width);
+    float exp_sum = 0.0f;
+    for (size_t i = 0; i < width; ++i) exp_sum += std::exp(scores[i] - max_score);
+    for (size_t i = 0; i < width; ++i) out.push_back(std::exp(scores[i] - max_score) / exp_sum);
+    return width;
 }
 
 } // namespace cyxwiz
