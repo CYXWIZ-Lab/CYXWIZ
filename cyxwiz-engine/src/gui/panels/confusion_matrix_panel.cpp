@@ -132,7 +132,13 @@ void ConfusionMatrixPanel::RenderGrid(const std::function<std::pair<float, std::
     float label_width = 0.0f;
     for (const std::string& name : result_.class_names) label_width = std::max(label_width, ImGui::CalcTextSize(name.c_str()).x);
     label_width += style.ItemSpacing.x * 2.0f;
-    const float header_height = (n > 1 ? 2.0f : 1.0f) * line + style.ItemSpacing.y * 2.0f;
+    // Stagger the column names over two lines only when one is wider than its cell.
+    bool stagger = false;
+    for (const std::string& name : result_.class_names) {
+        stagger = stagger || ImGui::CalcTextSize(name.c_str()).x > cell - gap;
+    }
+    stagger = stagger && n > 1;
+    const float header_height = (stagger ? 2.0f : 1.0f) * line + style.ItemSpacing.y * 2.0f;
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -143,10 +149,10 @@ void ConfusionMatrixPanel::RenderGrid(const std::function<std::pair<float, std::
     for (int j = 0; j < n; ++j) {
         const char* name = result_.class_names[j].c_str();
         const float width = ImGui::CalcTextSize(name).x;
-        const float room = (n > 1 ? 2.0f * cell : cell) - style.ItemSpacing.x;
+        const float room = (stagger ? 2.0f * cell : cell) - style.ItemSpacing.x;
         // Centred over the column when it fits, otherwise left-aligned and clipped to its room.
         const float x = width <= cell - gap ? grid_x + j * cell + (cell - gap - width) / 2 : grid_x + j * cell;
-        const ImVec2 pos(x, origin.y + (n > 1 ? (j % 2) * (line + style.ItemSpacing.y) : 0.0f));
+        const ImVec2 pos(x, origin.y + (stagger ? (j % 2) * (line + style.ItemSpacing.y) : 0.0f));
         const ImVec4 clip(pos.x, pos.y, grid_x + j * cell + room, pos.y + line);
         draw_list->AddText(nullptr, 0.0f, pos, label_colour, name, nullptr, 0.0f, &clip);
     }

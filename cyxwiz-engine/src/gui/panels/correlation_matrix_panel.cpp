@@ -131,7 +131,13 @@ void CorrelationMatrixPanel::RenderHeatmap() {
         label_width = std::max(label_width, ImGui::CalcTextSize(name.c_str()).x);
     }
     label_width += style.ItemSpacing.x * 2.0f;
-    const float header_height = 2.0f * line + style.ItemSpacing.y * 2.0f;
+    // Stagger the column names over two lines only when one is wider than its cell.
+    bool stagger = false;
+    for (const std::string& name : correlation_.column_names) {
+        stagger = stagger || ImGui::CalcTextSize(name.c_str()).x > cell - gap;
+    }
+    stagger = stagger && n > 1;
+    const float header_height = (stagger ? 2.0f : 1.0f) * line + style.ItemSpacing.y * 2.0f;
 
     float matrix_width = label_width + cell * n;
     float matrix_height = header_height + cell * n;
@@ -147,8 +153,9 @@ void CorrelationMatrixPanel::RenderHeatmap() {
     const float header_x = canvas_pos.x + label_width;
     for (size_t j = 0; j < n; j++) {
         const char* label = correlation_.column_names[j].c_str();
-        ImVec2 text_pos(header_x + j * cell, canvas_pos.y + (j % 2) * (line + style.ItemSpacing.y));
-        ImVec4 clip(text_pos.x, text_pos.y, text_pos.x + 2.0f * cell - style.ItemSpacing.x, text_pos.y + line);
+        ImVec2 text_pos(header_x + j * cell, canvas_pos.y + (stagger ? (j % 2) * (line + style.ItemSpacing.y) : 0.0f));
+        ImVec4 clip(text_pos.x, text_pos.y, text_pos.x + (stagger ? 2.0f : 1.0f) * cell - style.ItemSpacing.x,
+                    text_pos.y + line);
         draw_list->AddText(nullptr, 0.0f, text_pos, ui::ToU32(t.text_dim), label, nullptr, 0.0f, &clip);
     }
 
