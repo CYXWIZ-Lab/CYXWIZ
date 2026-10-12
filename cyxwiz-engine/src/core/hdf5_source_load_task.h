@@ -33,6 +33,12 @@ struct Hdf5SourceLoadTaskResult {
     Hdf5SourceLoadResult result;
 };
 
+// Synchronous worker boundary shared by standalone preparation and Apply staging.
+// Progress callbacks run on the calling worker; failures return no table/source.
+Hdf5SourceLoadResult PrepareHdf5Source(
+    const Hdf5SourceLoadRequest& request,
+    const std::function<void(float, const std::string&)>& progress = {});
+
 // Prepares a private, validated and audited Arrow table; never registers a dataset.
 // Audit scratch and diagnostics are outside the materialization byte cap. The
 // worker publishes terminal state before done (release). Queued cancellation

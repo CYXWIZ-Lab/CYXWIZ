@@ -369,6 +369,7 @@ set(ENGINE_SOURCES
     src/core/hdf5_source_identity.cpp
     src/core/hdf5_input_settings.cpp
     src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_apply_preparation.cpp
     src/core/hdf5_registered_source.cpp
     src/gui/hdf5_loaded_source_verifier.cpp
     src/gui/hdf5_source_inspector.cpp
@@ -4694,6 +4695,8 @@ set_target_properties(test_data_preview_service PROPERTIES
 
 add_executable(test_hdf5_prepared_source
     tests/test_hdf5_prepared_source.cpp
+    tests/test_hdf5_apply_preparation.cpp
+    src/core/hdf5_apply_preparation.cpp
     src/core/hdf5_registered_source.cpp
     src/core/data_registry_publication.cpp
     src/core/dataset_audit.cpp

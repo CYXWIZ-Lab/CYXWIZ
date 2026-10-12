@@ -377,10 +377,13 @@ void TestPreparedSource() {
 } // namespace
 #endif
 
+void TestHdf5ApplyPreparation();
+
 int main() {
 #ifdef CYXWIZ_HAS_HDF5
     try {
         TestPreparedSource();
+        TestHdf5ApplyPreparation();
         std::cout << "HDF5 prepared source test passed: " << checks << " checks\n";
         return 0;
     } catch (const std::exception& error) {

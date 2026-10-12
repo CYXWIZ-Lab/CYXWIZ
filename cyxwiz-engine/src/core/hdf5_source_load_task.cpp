@@ -41,16 +41,20 @@ Hdf5SourceLoadResult ChangedSource() {
                    "HDF5 source changed or became unavailable. Refresh the source and retry loading.", true);
 }
 
-Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& task) {
-    const std::function<bool()> cancelled = [&task, external = request.cancel_requested] {
-        return task.ShouldStop() || (external && external());
+Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request,
+                           const std::function<void(float, const std::string&)>& progress) {
+    const std::function<bool()> cancelled = [&request] {
+        return request.cancel_requested && request.cancel_requested();
+    };
+    const auto report = [&progress](float value, const std::string& message) {
+        if (progress) progress(value, message);
     };
     CheckCancellation(cancelled);
     std::string error;
     if (!ValidateHdf5InputSettings(request.settings, error))
         return Failure(Hdf5TableStatus::InvalidSelection, std::move(error));
 
-    task.ReportProgress(0.05f, "Checking HDF5 source");
+    report(0.05f, "Checking HDF5 source");
     CheckCancellation(cancelled);
     const auto before = ReadHdf5SourceStamp(request.path, error);
     CheckCancellation(cancelled);
@@ -63,7 +67,7 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
     options.numeric_policy = request.settings.numeric_policy;
     options.max_materialized_bytes = request.settings.max_materialized_bytes;
     options.cancel_requested = cancelled;
-    task.ReportProgress(0.15f, "Reading HDF5 table");
+    report(0.15f, "Reading HDF5 table");
     CheckCancellation(cancelled);
     auto read = ReadHdf5Table(request.path, options);
     CheckCancellation(cancelled);
@@ -71,7 +75,7 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
 
     std::shared_ptr<DatasetAuditResult> audit;
     if (read.status == Hdf5TableStatus::Ok) {
-        task.ReportProgress(0.75f, "Validating HDF5 table");
+        report(0.75f, "Validating HDF5 table");
         CheckCancellation(cancelled);
         if (!read.table) throw std::runtime_error("HDF5 read returned no table");
         CheckArrow(read.table->ValidateFull());
@@ -88,8 +92,8 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
         CheckCancellation(cancelled);
         DatasetAuditOptions audit_options;
         audit_options.should_cancel = cancelled;
-        audit_options.report_progress = [&task](float progress, const std::string& message) {
-            task.ReportProgress(0.78f + 0.14f * std::clamp(progress, 0.0f, 1.0f), message);
+        audit_options.report_progress = [&report](float progress, const std::string& message) {
+            report(0.78f + 0.14f * std::clamp(progress, 0.0f, 1.0f), message);
         };
         auto dataset = std::make_shared<ArrowDataset>(read.table, "HDF5 source");
         audit = std::make_shared<DatasetAuditResult>(DatasetAudit::AuditTabular(
@@ -99,7 +103,7 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
     }
 
     // No progress callbacks after the final stamp: callbacks can change the file.
-    task.ReportProgress(0.95f, "Verifying HDF5 source");
+    report(0.95f, "Verifying HDF5 source");
     CheckCancellation(cancelled);
     const auto after = ReadHdf5SourceStamp(request.path, error);
     CheckCancellation(cancelled);
@@ -122,6 +126,30 @@ Hdf5SourceLoadResult Prepare(const Hdf5SourceLoadRequest& request, LambdaTask& t
 
 } // namespace
 
+Hdf5SourceLoadResult PrepareHdf5Source(
+    const Hdf5SourceLoadRequest& request,
+    const std::function<void(float, const std::string&)>& progress) {
+    try {
+#ifdef CYXWIZ_HAS_HDF5
+        return Prepare(request, progress);
+#else
+        (void)request;
+        (void)progress;
+        return Failure(Hdf5TableStatus::DependencyUnavailable,
+                       "HDF5 support is not compiled into this build");
+#endif
+    } catch (const LoadCancelled&) {
+        return Failure(Hdf5TableStatus::Cancelled, "HDF5 source load cancelled");
+    } catch (const std::bad_alloc&) {
+        return Failure(Hdf5TableStatus::ResourceLimit, "HDF5 source load could not allocate memory");
+    } catch (const std::exception& error) {
+        return Failure(Hdf5TableStatus::ReadFailed,
+                       "HDF5 source load failed: " + std::string(error.what()));
+    } catch (...) {
+        return Failure(Hdf5TableStatus::ReadFailed, "HDF5 source load failed with an unknown error");
+    }
+}
+
 std::shared_ptr<AsyncTask> MakeHdf5SourceLoadTask(
     Hdf5SourceLoadRequest request, std::shared_ptr<Hdf5SourceLoadTaskResult> state) {
     if (!state) throw std::invalid_argument("HDF5 source load requires result storage");
@@ -132,7 +160,13 @@ std::shared_ptr<AsyncTask> MakeHdf5SourceLoadTask(
             if (!state) return;
             try {
 #ifdef CYXWIZ_HAS_HDF5
-                state->result = Prepare(request, task);
+                auto external = std::move(request.cancel_requested);
+                request.cancel_requested = [&task, external = std::move(external)] {
+                    return task.ShouldStop() || (external && external());
+                };
+                state->result = PrepareHdf5Source(request, [&task](float value, const std::string& message) {
+                    task.ReportProgress(value, message);
+                });
                 if (task.IsCancelRequested()) throw LoadCancelled{};
 #else
                 state->result = Failure(Hdf5TableStatus::DependencyUnavailable,
