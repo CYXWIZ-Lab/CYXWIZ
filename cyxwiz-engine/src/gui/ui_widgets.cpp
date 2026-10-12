@@ -303,6 +303,9 @@ void SettingsSection(const char* title) {
 void FieldLabel(const char* label) {
     const Tokens& t = CurrentTokens();
     ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    // In a table the next cell inherits the frame baseline of the widget in the
+    // cell before it, which drew this label a frame padding lower; start at the top.
+    ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(label);
     ImGui::PopTextWrapPos();
@@ -315,6 +318,8 @@ void BeginInsetList(const char* id, float height) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_field);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_input);
+    // Checkbox frames on the raised tone, so an unchecked box shows on the list.
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_raised);
     const ImGuiChildFlags flags =
         ImGuiChildFlags_AlwaysUseWindowPadding | (height > 0.0f ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
     ImGui::BeginChild(id, ImVec2(0.0f, height), flags);
@@ -322,7 +327,7 @@ void BeginInsetList(const char* id, float height) {
 
 void EndInsetList() {
     ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 }
 
