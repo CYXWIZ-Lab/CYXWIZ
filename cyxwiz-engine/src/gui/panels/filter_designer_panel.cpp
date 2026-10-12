@@ -175,8 +175,9 @@ void FilterDesignerPanel::RenderLoadingIndicator() {
 }
 
 void FilterDesignerPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -206,6 +207,7 @@ void FilterDesignerPanel::RenderResults() {
 }
 
 void FilterDesignerPanel::RenderFrequencyResponse() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Frequency Response:");
 
     // Magnitude plot
@@ -228,7 +230,7 @@ void FilterDesignerPanel::RenderFrequencyResponse() {
                 double x_range[2] = { filter_.freq_axis.front(), filter_.freq_axis.back() };
                 double y_3db[2] = { -3.0, -3.0 };
                 ImPlot::PushStyleColor(
-                    ImPlotCol_Line, ImVec4(1.0f, 0.5f, 0.0f, 0.7f));
+                    ImPlotCol_Line, ui::WithAlpha(t.series[1], 0.7f));
                 ImPlot::PlotLine("-3dB", x_range, y_3db, 2);
                 ImPlot::PopStyleColor();
             } else {
@@ -240,7 +242,7 @@ void FilterDesignerPanel::RenderFrequencyResponse() {
             double y_min = log_scale ? -60.0 : 0.0;
             double y_max = log_scale ? 5.0 : 1.2;
 
-            ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1, 0, 0, 0.5));
+            ImPlot::PushStyleColor(ImPlotCol_Line, ui::WithAlpha(t.accent_text, 0.5f));
             double cutoff_line_x[2] = { cutoff1_, cutoff1_ };
             double cutoff_line_y[2] = { y_min, y_max };
             ImPlot::PlotLine("##cutoff1", cutoff_line_x, cutoff_line_y, 2);

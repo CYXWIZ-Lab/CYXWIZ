@@ -43,6 +43,7 @@ void SentimentPanel::Render() {
 }
 
 void SentimentPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Analyze")) {
         AnalyzeAsync();
     }
@@ -69,11 +70,11 @@ void SentimentPanel::RenderToolbar() {
     if (has_result_) {
         ImVec4 color;
         if (result_.label == "positive") {
-            color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+            color = t.success;
         } else if (result_.label == "negative") {
-            color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            color = t.error;
         } else {
-            color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            color = t.text_dim;
         }
 
         ImGui::TextColored(color, "%s (%.0f%% confidence)",
@@ -144,19 +145,20 @@ void SentimentPanel::RenderResults() {
 }
 
 void SentimentPanel::RenderScoreView() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Spacing();
 
     // Overall sentiment label
     ImVec4 label_color;
     const char* icon;
     if (result_.label == "positive") {
-        label_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        label_color = t.success;
         icon = ICON_FA_FACE_SMILE;
     } else if (result_.label == "negative") {
-        label_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+        label_color = t.error;
         icon = ICON_FA_FACE_FROWN;
     } else {
-        label_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+        label_color = t.text_dim;
         icon = ICON_FA_FACE_MEH;
     }
 
@@ -181,9 +183,9 @@ void SentimentPanel::RenderScoreView() {
 
     // Custom progress bar for polarity
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-        result_.polarity > 0 ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) :
-        result_.polarity < 0 ? ImVec4(0.9f, 0.3f, 0.3f, 1.0f) :
-        ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        result_.polarity > 0 ? t.success :
+        result_.polarity < 0 ? t.error :
+        t.text_dim);
 
     char polarity_label[32];
     snprintf(polarity_label, sizeof(polarity_label), "%.2f", result_.polarity);
@@ -219,15 +221,15 @@ void SentimentPanel::RenderScoreView() {
 
     ImGui::Columns(3, "word_counts", false);
 
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), ICON_FA_PLUS " Positive");
+    ImGui::TextColored(t.success, ICON_FA_PLUS " Positive");
     ImGui::Text("%d words", result_.positive_count);
     ImGui::NextColumn();
 
-    ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), ICON_FA_MINUS " Negative");
+    ImGui::TextColored(t.error, ICON_FA_MINUS " Negative");
     ImGui::Text("%d words", result_.negative_count);
     ImGui::NextColumn();
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CIRCLE " Neutral");
+    ImGui::TextColored(t.text_dim, ICON_FA_CIRCLE " Neutral");
     ImGui::Text("%d words", result_.neutral_count);
     ImGui::NextColumn();
 
@@ -243,6 +245,7 @@ void SentimentPanel::RenderScoreView() {
 }
 
 void SentimentPanel::RenderWordContributions() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_LIST " Word-Level Sentiment Contributions:");
     ImGui::Separator();
     ImGui::Spacing();
@@ -275,18 +278,18 @@ void SentimentPanel::RenderWordContributions() {
             ImGui::TableNextColumn();
             double score = word_score.second;
             if (score > 0) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "+%.2f", score);
+                ImGui::TextColored(t.success, "+%.2f", score);
             } else if (score < 0) {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%.2f", score);
+                ImGui::TextColored(t.error, "%.2f", score);
             } else {
                 ImGui::TextDisabled("0.00");
             }
 
             ImGui::TableNextColumn();
             if (score > 0.1) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Positive");
+                ImGui::TextColored(t.success, "Positive");
             } else if (score < -0.1) {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "Negative");
+                ImGui::TextColored(t.error, "Negative");
             } else {
                 ImGui::TextDisabled("Neutral");
             }
@@ -297,6 +300,7 @@ void SentimentPanel::RenderWordContributions() {
 }
 
 void SentimentPanel::RenderBatchAnalysis() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_LIST " Batch Analysis Results:");
     ImGui::Separator();
 
@@ -329,11 +333,11 @@ void SentimentPanel::RenderBatchAnalysis() {
             ImGui::TableNextColumn();
             ImVec4 color;
             if (res.label == "positive") {
-                color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                color = t.success;
             } else if (res.label == "negative") {
-                color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+                color = t.error;
             } else {
-                color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                color = t.text_dim;
             }
             ImGui::TextColored(color, "%s", res.label.c_str());
 

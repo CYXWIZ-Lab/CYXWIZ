@@ -43,6 +43,7 @@ void ForecastingPanel::Render() {
 }
 
 void ForecastingPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Forecast")) {
         ForecastAsync();
     }
@@ -67,7 +68,7 @@ void ForecastingPanel::RenderToolbar() {
 
     if (has_result_ && result_.success) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            "| MAPE: %.2f%%", result_.mape);
     }
 }
@@ -178,8 +179,9 @@ void ForecastingPanel::RenderLoadingIndicator() {
 }
 
 void ForecastingPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -205,7 +207,7 @@ void ForecastingPanel::RenderResults() {
                     for (size_t i = 0; i < test_time.size(); i++) {
                         test_time[i] = static_cast<double>(i + train_data_.size());
                     }
-                    ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+                    ImPlot::SetNextLineStyle(t.series[1]);
                     ImPlot::PlotLine("Test", test_time.data(), test_data_.data(),
                                     static_cast<int>(test_data_.size()));
                 } else {
@@ -237,6 +239,7 @@ void ForecastingPanel::RenderResults() {
 }
 
 void ForecastingPanel::RenderForecastPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (result_.forecast.empty()) {
         ImGui::TextDisabled("No forecast data");
         return;
@@ -262,7 +265,7 @@ void ForecastingPanel::RenderForecastPlot() {
                 for (size_t i = 0; i < test_time.size(); i++) {
                     test_time[i] = static_cast<double>(i + train_data_.size());
                 }
-                ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.7f, 0.0f, 1.0f));
+                ImPlot::SetNextLineStyle(t.series[1]);
                 ImPlot::PlotLine("Actual", test_time.data(), test_data_.data(),
                                 static_cast<int>(test_data_.size()));
             }
@@ -279,7 +282,7 @@ void ForecastingPanel::RenderForecastPlot() {
 
         // Prediction intervals
         if (!result_.lower_bound.empty() && !result_.upper_bound.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(1.0f, 0.5f, 0.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[2], 0.2f));
             ImPlot::PlotShaded("95% PI", forecast_time.data(),
                               result_.lower_bound.data(),
                               result_.upper_bound.data(),
@@ -287,7 +290,7 @@ void ForecastingPanel::RenderForecastPlot() {
         }
 
         // Point forecast
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
         ImPlot::PlotLine("Forecast", forecast_time.data(), result_.forecast.data(),
                         static_cast<int>(result_.forecast.size()));
 
@@ -297,7 +300,7 @@ void ForecastingPanel::RenderForecastPlot() {
             for (size_t i = 0; i < fitted_time.size(); i++) {
                 fitted_time[i] = static_cast<double>(i);
             }
-            ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.7f));
+            ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[3], 0.7f));
             ImPlot::PlotLine("Fitted", fitted_time.data(), result_.fitted_values.data(),
                             static_cast<int>(result_.fitted_values.size()));
         }
@@ -307,6 +310,7 @@ void ForecastingPanel::RenderForecastPlot() {
 }
 
 void ForecastingPanel::RenderMetrics() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CHART_BAR " Forecast Accuracy Metrics");
     ImGui::Separator();
     ImGui::Spacing();
@@ -357,16 +361,16 @@ void ForecastingPanel::RenderMetrics() {
     ImGui::Indent();
 
     if (result_.mape < 10.0) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            "Highly accurate forecast (MAPE < 10%%)");
     } else if (result_.mape < 20.0) {
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.warning,
                            "Good forecast (MAPE < 20%%)");
     } else if (result_.mape < 50.0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+        ImGui::TextColored(t.caution,
                            "Reasonable forecast (MAPE < 50%%)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(t.error,
                            "Poor forecast (MAPE > 50%%)");
     }
 

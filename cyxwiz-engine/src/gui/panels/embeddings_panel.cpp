@@ -156,6 +156,7 @@ void EmbeddingsPanel::RenderResults() {
 }
 
 void EmbeddingsPanel::RenderVectorView() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_TABLE " Word Vectors (%d words, %d dims):",
                static_cast<int>(result_.words.size()), result_.embedding_dim);
     ImGui::Separator();
@@ -184,9 +185,9 @@ void EmbeddingsPanel::RenderVectorView() {
                 ImGui::TableNextColumn();
                 double val = result_.embeddings[i][j];
                 if (val > 0) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.6f, 0.2f, 1.0f), "%.2f", val);
+                    ImGui::TextColored(ui::DivergingAt(t, 1.0f), "%.2f", val);
                 } else if (val < 0) {
-                    ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%.2f", val);
+                    ImGui::TextColored(ui::DivergingAt(t, -1.0f), "%.2f", val);
                 } else {
                     ImGui::TextDisabled("0.00");
                 }
@@ -198,6 +199,7 @@ void EmbeddingsPanel::RenderVectorView() {
 }
 
 void EmbeddingsPanel::RenderSimilarWords() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_MAGNIFYING_GLASS " Similar Words:");
     ImGui::Separator();
     ImGui::Spacing();
@@ -226,11 +228,11 @@ void EmbeddingsPanel::RenderSimilarWords() {
 
             double sim = result_.similar_words[i].second;
             if (sim > 0.7) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.4f", sim);
+                ImGui::TextColored(t.success, "%.4f", sim);
             } else if (sim > 0.3) {
                 ImGui::Text("%.4f", sim);
             } else {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%.4f", sim);
+                ImGui::TextColored(t.text_dim, "%.4f", sim);
             }
         }
 

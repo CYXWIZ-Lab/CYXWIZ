@@ -68,6 +68,7 @@ void RegexTesterPanel::Render() {
 }
 
 void RegexTesterPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Test")) {
         TestAsync();
     }
@@ -97,11 +98,11 @@ void RegexTesterPanel::RenderToolbar() {
 
     if (has_result_) {
         if (result_.is_valid_pattern) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.success);
             ImGui::Text(ICON_FA_CHECK " %d matches", result_.match_count);
             ImGui::PopStyleColor();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.error);
             ImGui::Text(ICON_FA_XMARK " Invalid pattern");
             ImGui::PopStyleColor();
         }
@@ -177,6 +178,7 @@ void RegexTesterPanel::RenderResults() {
 }
 
 void RegexTesterPanel::RenderMatches() {
+    const ui::Tokens& t = ui::CurrentTokens();
     RenderResults();
 
     if (!has_result_ || !result_.is_valid_pattern) {
@@ -204,7 +206,7 @@ void RegexTesterPanel::RenderMatches() {
 
         if (node_open) {
             // Full match text
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.series[0]);
             ImGui::TextWrapped("\"%s\"", match.match_text.c_str());
             ImGui::PopStyleColor();
 
@@ -216,7 +218,7 @@ void RegexTesterPanel::RenderMatches() {
             if (!match.groups.empty()) {
                 ImGui::Text("Capture Groups:");
                 for (size_t g = 0; g < match.groups.size(); ++g) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ui::SeriesColour(t, g + 1));
                     ImGui::BulletText("$%d: \"%s\"", static_cast<int>(g + 1), match.groups[g].c_str());
                     ImGui::PopStyleColor();
                 }
@@ -232,6 +234,7 @@ void RegexTesterPanel::RenderMatches() {
 }
 
 void RegexTesterPanel::RenderReplacement() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_ || !result_.is_valid_pattern) {
         ImGui::TextDisabled("Valid pattern required for replacement");
         return;
@@ -262,15 +265,16 @@ void RegexTesterPanel::RenderReplacement() {
 
         ImGui::Spacing();
 
-        ImGui::BeginChild("ReplacedText", ImVec2(0, 0), true);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        ui::BeginInsetList("ReplacedText", ImGui::GetContentRegionAvail().y);
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::TextWrapped("%s", result_.replaced_text.c_str());
         ImGui::PopStyleColor();
-        ImGui::EndChild();
+        ui::EndInsetList();
     }
 }
 
 void RegexTesterPanel::RenderCommonPatterns() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_BOOKMARK " Common Patterns");
     ImGui::Separator();
 
@@ -287,7 +291,7 @@ void RegexTesterPanel::RenderCommonPatterns() {
 
         ImGui::Text("%s:", p.first.c_str());
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
         ImGui::TextWrapped("%s", p.second.c_str());
         ImGui::PopStyleColor();
 

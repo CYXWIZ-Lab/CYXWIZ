@@ -200,6 +200,7 @@ void TFIDFPanel::RenderTopTerms() {
 }
 
 void TFIDFPanel::RenderSimilarityMatrix() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (result_.similarity_matrix.empty()) {
         ImGui::TextDisabled("No similarity data");
         return;
@@ -262,11 +263,11 @@ void TFIDFPanel::RenderSimilarityMatrix() {
                 if (i == j) {
                     ImGui::TextDisabled("1.00");
                 } else if (sim > 0.7) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.2f", sim);
+                    ImGui::TextColored(t.success, "%.2f", sim);
                 } else if (sim > 0.3) {
                     ImGui::Text("%.2f", sim);
                 } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%.2f", sim);
+                    ImGui::TextColored(t.text_dim, "%.2f", sim);
                 }
             }
         }

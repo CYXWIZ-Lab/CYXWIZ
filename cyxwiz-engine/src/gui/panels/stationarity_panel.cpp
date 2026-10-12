@@ -1,6 +1,7 @@
 #include "stationarity_panel.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -43,6 +44,7 @@ void StationarityPanel::Render() {
 }
 
 void StationarityPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (ImGui::Button(ICON_FA_PLAY " Test Stationarity")) {
         TestAsync();
     }
@@ -70,9 +72,9 @@ void StationarityPanel::RenderToolbar() {
     if (has_result_) {
         ImGui::SameLine();
         if (result_.is_stationary) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "| Stationary");
+            ImGui::TextColored(t.success, "| Stationary");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "| Non-stationary (d=%d)", result_.suggested_differencing);
+            ImGui::TextColored(t.caution, "| Non-stationary (d=%d)", result_.suggested_differencing);
         }
     }
 }
@@ -126,8 +128,9 @@ void StationarityPanel::RenderLoadingIndicator() {
 }
 
 void StationarityPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -211,6 +214,7 @@ void StationarityPanel::RenderRollingStats() {
 }
 
 void StationarityPanel::RenderTestResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_FLASK " Statistical Tests");
     ImGui::Separator();
     ImGui::Spacing();
@@ -234,9 +238,9 @@ void StationarityPanel::RenderTestResults() {
 
     ImGui::Text("Result:"); ImGui::NextColumn();
     if (result_.adf_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Reject H0 (Stationary)");
+        ImGui::TextColored(t.success, "Reject H0 (Stationary)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "Fail to reject H0 (Non-stationary)");
+        ImGui::TextColored(t.caution, "Fail to reject H0 (Non-stationary)");
     }
     ImGui::NextColumn();
     ImGui::Columns(1);
@@ -256,9 +260,9 @@ void StationarityPanel::RenderTestResults() {
 
     ImGui::Text("Result:"); ImGui::NextColumn();
     if (result_.kpss_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Fail to reject H0 (Stationary)");
+        ImGui::TextColored(t.success, "Fail to reject H0 (Stationary)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "Reject H0 (Non-stationary)");
+        ImGui::TextColored(t.caution, "Reject H0 (Non-stationary)");
     }
     ImGui::NextColumn();
     ImGui::Columns(1);
@@ -273,10 +277,10 @@ void StationarityPanel::RenderTestResults() {
     ImGui::Indent();
 
     if (result_.is_stationary) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
                            ICON_FA_CHECK " Series is STATIONARY");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f),
+        ImGui::TextColored(t.caution,
                            ICON_FA_XMARK " Series is NON-STATIONARY");
         ImGui::Text("Suggested differencing order: d = %d", result_.suggested_differencing);
     }
@@ -287,6 +291,7 @@ void StationarityPanel::RenderTestResults() {
 }
 
 void StationarityPanel::RenderDifferencedPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (differenced_data_.empty()) return;
 
     ImGui::Text("Differenced Series (order=%d):", diff_order_);
@@ -304,7 +309,7 @@ void StationarityPanel::RenderDifferencedPlot() {
         // Zero line
         double zero_x[] = {0, static_cast<double>(differenced_data_.size())};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 0.5f));
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f));
         ImPlot::PlotLine("##zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();

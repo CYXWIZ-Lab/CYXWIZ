@@ -1,6 +1,7 @@
 #include "decomposition_panel.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -186,11 +187,12 @@ void DecompositionPanel::RenderLoadingIndicator() {
 }
 
 void DecompositionPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CHART_AREA " Decomposition Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -286,6 +288,7 @@ void DecompositionPanel::RenderOriginalPlot() {
 }
 
 void DecompositionPanel::RenderTrendPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_) return;
 
     ImGui::Text("Trend Component (strength: %.2f):", result_.trend_strength);
@@ -294,11 +297,11 @@ void DecompositionPanel::RenderTrendPlot() {
         ImPlot::SetupAxes("Time", "Trend");
 
         // Show original in background
-        ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 0.3f));
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.3f));
         ImPlot::PlotLine("Original", time_axis_.data(), result_.original.data(),
                         static_cast<int>(result_.original.size()));
 
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
         ImPlot::PlotLine("Trend", time_axis_.data(), result_.trend.data(),
                         static_cast<int>(result_.trend.size()));
         ImPlot::EndPlot();
@@ -340,6 +343,7 @@ void DecompositionPanel::RenderSeasonalPlot() {
 }
 
 void DecompositionPanel::RenderResidualPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_) return;
 
     ImGui::Text("Residual Component (variance: %.4f):", result_.residual_variance);
@@ -355,7 +359,7 @@ void DecompositionPanel::RenderResidualPlot() {
         // Zero line
         double zero_x[] = {time_axis_.front(), time_axis_.back()};
         double zero_y[] = {0.0, 0.0};
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.0f, 0.0f, 0.5f), 1.0f);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f), 1.0f);
         ImPlot::PlotLine("##zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();

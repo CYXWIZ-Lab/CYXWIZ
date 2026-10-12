@@ -1,6 +1,7 @@
 #include "fft_panel.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
@@ -237,11 +238,12 @@ void FFTPanel::RenderLoadingIndicator() {
 }
 
 void FFTPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CHART_LINE " Results");
     ImGui::Separator();
 
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -394,6 +396,7 @@ void FFTPanel::RenderPhasePlot() {
 }
 
 void FFTPanel::RenderPeaks() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_) {
         ImGui::TextDisabled("Click 'Compute FFT' to detect peaks");
         return;
@@ -472,7 +475,7 @@ void FFTPanel::RenderPeaks() {
         }
 
         if (!peak_freqs.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2);
             ImPlot::PlotScatter("Peaks", peak_freqs.data(), peak_mags.data(),
                                 static_cast<int>(peak_freqs.size()));
         }

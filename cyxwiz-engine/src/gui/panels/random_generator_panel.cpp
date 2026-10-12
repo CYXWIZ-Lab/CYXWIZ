@@ -209,6 +209,7 @@ void RandomGeneratorPanel::RenderResults() {
 }
 
 void RandomGeneratorPanel::RenderHistogram() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_ || result_.histogram.empty()) {
         ui::EmptyState(ICON_FA_CHART_BAR, "No histogram yet", "Pick a distribution, then Generate.");
         return;
@@ -250,7 +251,7 @@ void RandomGeneratorPanel::RenderHistogram() {
         ImGui::GetWindowDrawList()->AddRectFilled(
             cursor,
             ImVec2(cursor.x + width, cursor.y + bar_height - 2),
-            IM_COL32(100, 150, 200, 255)
+            ui::ToU32(t.series[0])
         );
 
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + width + 5);
@@ -337,6 +338,7 @@ void RandomGeneratorPanel::RenderStatistics() {
 }
 
 void RandomGeneratorPanel::RenderUUIDs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_FINGERPRINT " UUID Generator");
     ImGui::Separator();
 
@@ -373,7 +375,7 @@ void RandomGeneratorPanel::RenderUUIDs() {
         }
         ImGui::SameLine();
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.8f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
         ImGui::TextUnformatted(generated_uuids_[i].c_str());
         ImGui::PopStyleColor();
 

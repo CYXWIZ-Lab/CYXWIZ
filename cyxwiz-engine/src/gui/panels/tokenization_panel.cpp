@@ -151,6 +151,7 @@ void TokenizationPanel::RenderResults() {
 }
 
 void TokenizationPanel::RenderTokenList() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Tokens (%d):", static_cast<int>(processed_tokens_.size()));
     ImGui::Separator();
 
@@ -173,8 +174,8 @@ void TokenizationPanel::RenderTokenList() {
         }
 
         // Token chip
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui::WithAlpha(t.accent, 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::WithAlpha(t.accent, 0.55f));
         ImGui::SmallButton(token.c_str());
         ImGui::PopStyleColor(2);
 

@@ -1,5 +1,6 @@
 #include "acf_pacf_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -125,8 +126,9 @@ void ACFPACFPanel::RenderLoadingIndicator() {
 }
 
 void ACFPACFPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -160,6 +162,7 @@ void ACFPACFPanel::RenderResults() {
 }
 
 void ACFPACFPanel::RenderACFPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Autocorrelation Function (ACF):");
 
     if (ImPlot::BeginPlot("##ACF", ImVec2(-1, -1))) {
@@ -168,7 +171,7 @@ void ACFPACFPanel::RenderACFPlot() {
 
         // Confidence bounds (shaded)
         if (!result_.confidence_upper.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.2f));
             std::vector<double> upper = result_.confidence_upper;
             std::vector<double> lower = result_.confidence_lower;
             ImPlot::PlotShaded("95% CI", result_.lags.data(), upper.data(), lower.data(),
@@ -176,14 +179,14 @@ void ACFPACFPanel::RenderACFPlot() {
         }
 
         // ACF bars
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.8f));
         ImPlot::PlotBars("ACF", result_.lags.data(), result_.acf.data(),
                         static_cast<int>(result_.acf.size()), 0.6);
 
         // Zero line
         double zero_x[] = {0, static_cast<double>(max_lag_)};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 0.5f));
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f));
         ImPlot::PlotLine("##zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();
@@ -191,6 +194,7 @@ void ACFPACFPanel::RenderACFPlot() {
 }
 
 void ACFPACFPanel::RenderPACFPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Partial Autocorrelation Function (PACF):");
 
     if (ImPlot::BeginPlot("##PACF", ImVec2(-1, -1))) {
@@ -199,7 +203,7 @@ void ACFPACFPanel::RenderPACFPlot() {
 
         // Confidence bounds
         if (!result_.confidence_upper.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
             ImPlot::PlotShaded("95% CI", result_.lags.data(),
                               result_.confidence_upper.data(),
                               result_.confidence_lower.data(),
@@ -207,14 +211,14 @@ void ACFPACFPanel::RenderPACFPlot() {
         }
 
         // PACF bars
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.8f, 0.4f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("PACF", result_.lags.data(), result_.pacf.data(),
                         static_cast<int>(result_.pacf.size()), 0.6);
 
         // Zero line
         double zero_x[] = {0, static_cast<double>(max_lag_)};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 0.5f));
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f));
         ImPlot::PlotLine("##zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();
@@ -222,6 +226,7 @@ void ACFPACFPanel::RenderPACFPlot() {
 }
 
 void ACFPACFPanel::RenderBothPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     float height = (ImGui::GetContentRegionAvail().y - 20) / 2;
 
     ImGui::Text("ACF:");
@@ -230,14 +235,14 @@ void ACFPACFPanel::RenderBothPlot() {
         ImPlot::SetupAxisLimits(ImAxis_Y1, -1.1, 1.1);
 
         if (!result_.confidence_upper.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.2f));
             ImPlot::PlotShaded("##ci", result_.lags.data(),
                               result_.confidence_upper.data(),
                               result_.confidence_lower.data(),
                               static_cast<int>(result_.lags.size()));
         }
 
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.8f));
         ImPlot::PlotBars("ACF", result_.lags.data(), result_.acf.data(),
                         static_cast<int>(result_.acf.size()), 0.6);
         ImPlot::EndPlot();
@@ -249,14 +254,14 @@ void ACFPACFPanel::RenderBothPlot() {
         ImPlot::SetupAxisLimits(ImAxis_Y1, -1.1, 1.1);
 
         if (!result_.confidence_upper.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.5f, 0.5f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
             ImPlot::PlotShaded("##ci", result_.lags.data(),
                               result_.confidence_upper.data(),
                               result_.confidence_lower.data(),
                               static_cast<int>(result_.lags.size()));
         }
 
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.8f, 0.4f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("PACF", result_.lags.data(), result_.pacf.data(),
                         static_cast<int>(result_.pacf.size()), 0.6);
         ImPlot::EndPlot();
@@ -264,6 +269,7 @@ void ACFPACFPanel::RenderBothPlot() {
 }
 
 void ACFPACFPanel::RenderAnalysis() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_CIRCLE_INFO " Model Identification");
     ImGui::Separator();
     ImGui::Spacing();
@@ -342,11 +348,11 @@ void ACFPACFPanel::RenderAnalysis() {
     ImGui::BulletText("White noise: No significant lags");
 
     if (result_.ljung_box_pvalue > 0.05) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
         ImGui::Text(ICON_FA_CHECK " Ljung-Box: Cannot reject white noise (p > 0.05)");
         ImGui::PopStyleColor();
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
         ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION " Ljung-Box: Significant autocorrelation (p < 0.05)");
         ImGui::PopStyleColor();
     }
