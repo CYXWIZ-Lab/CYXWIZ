@@ -10,6 +10,12 @@
 namespace cyxwiz {
 namespace {
 
+// DuckDB 1.x exceptions carry their message as JSON in what(); ErrorData
+// turns it back into the readable "Parser Error: ..." text.
+std::string ErrorText(const std::exception& e) {
+    return duckdb::ErrorData(e).Message();
+}
+
 std::string QuoteIdentifier(const std::string& identifier) {
     std::string quoted = "\"";
     for (char c : identifier) {
@@ -317,8 +323,8 @@ DuckDBConnector::DuckDBConnector() {
         spdlog::info("DuckDB connector initialized (in-memory mode)");
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Failed to initialize DuckDB: {}", e.what());
-        last_error_ = e.what();
+        spdlog::error("Failed to initialize DuckDB: {}", ErrorText(e));
+        last_error_ = ErrorText(e);
     }
 }
 
@@ -336,8 +342,8 @@ DuckDBConnector::DuckDBConnector(const DuckDBConnectorPolicy& policy) {
         spdlog::debug("DuckDB connector initialized (in-memory, external access {})",
                       policy.allow_external_access ? "allowed" : "disabled");
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize restricted DuckDB: {}", e.what());
-        last_error_ = e.what();
+        spdlog::error("Failed to initialize restricted DuckDB: {}", ErrorText(e));
+        last_error_ = ErrorText(e);
         conn_.reset();
         db_.reset();
     }
@@ -356,7 +362,7 @@ std::string DuckDBConnector::ReadOnlySelectRejection(const std::string& sql) {
         }
         return {};
     } catch (const std::exception& e) {
-        return std::string("the SQL does not parse: ") + e.what();
+        return std::string("the SQL does not parse: ") + ErrorText(e);
     }
 }
 
@@ -395,7 +401,7 @@ std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
         }
         return {};
     } catch (const std::exception& e) {
-        return e.what();
+        return ErrorText(e);
     }
 }
 
@@ -484,7 +490,7 @@ bool DuckDBConnector::RegisterTable(
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to register table '{}': {}", table_name, last_error_);
         return false;
     }
@@ -505,7 +511,7 @@ bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to unregister table '{}': {}", table_name, last_error_);
         return false;
     }
@@ -548,7 +554,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::Query(const std::string& sql) {
         return arrow_result;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Query exception: {}", last_error_);
         return nullptr;
     }
@@ -573,7 +579,7 @@ bool DuckDBConnector::Execute(const std::string& sql) {
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Execute exception: {}", last_error_);
         return false;
     }
@@ -620,7 +626,7 @@ std::vector<DuckDBConnector::ColumnInfo> DuckDBConnector::GetTableSchema(
         }
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting schema: {}", e.what());
+        spdlog::error("Exception getting schema: {}", ErrorText(e));
     }
 
     return schema;
@@ -642,7 +648,7 @@ int64_t DuckDBConnector::GetRowCount(const std::string& table_name) {
         }
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting row count: {}", e.what());
+        spdlog::error("Exception getting row count: {}", ErrorText(e));
     }
 
     return -1;
@@ -678,7 +684,7 @@ std::string DuckDBConnector::ExplainQuery(const std::string& sql) {
         return plan.str();
 
     } catch (const duckdb::Exception& e) {
-        return "Exception: " + std::string(e.what());
+        return "Exception: " + std::string(ErrorText(e));
     }
 }
 
@@ -711,7 +717,7 @@ void DuckDBConnector::SetProfilingEnabled(bool enabled) {
             conn_->Query("PRAGMA disable_profiling");
         }
     } catch (const duckdb::Exception& e) {
-        spdlog::warn("Failed to set profiling: {}", e.what());
+        spdlog::warn("Failed to set profiling: {}", ErrorText(e));
     }
 }
 
@@ -1028,7 +1034,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         return table;
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception converting result to Arrow: {}", e.what());
+        spdlog::error("Exception converting result to Arrow: {}", ErrorText(e));
         return nullptr;
     }
 }
