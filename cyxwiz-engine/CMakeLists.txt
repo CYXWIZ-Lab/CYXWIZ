@@ -111,6 +111,7 @@ set(ENGINE_SOURCES
     src/core/sql_step_presentation.cpp
     src/core/table_profile.cpp
     src/core/sql_plan.cpp
+    src/core/sql_editing.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_publication.cpp
@@ -314,6 +315,7 @@ set(ENGINE_SOURCES
     src/gui/properties_sql_step.cpp
     src/gui/sql_workbench.cpp
     src/gui/sql_workbench_plan.cpp
+    src/gui/sql_workbench_editing.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -5742,6 +5744,13 @@ target_link_libraries(test_sql_plan PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(test_sql_plan PRIVATE CYXWIZ_SQL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql")
 set_target_properties(test_sql_plan PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME SqlPlan COMMAND test_sql_plan)
+
+# SQL Workbench editing helpers (TOFIX146 4b-2).
+add_executable(test_sql_editing tests/test_sql_editing.cpp src/core/sql_editing.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_editing PRIVATE src)
+target_compile_definitions(test_sql_editing PRIVATE CYXWIZ_SQL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql")
+set_target_properties(test_sql_editing PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlEditing COMMAND test_sql_editing)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp

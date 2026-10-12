@@ -7,6 +7,7 @@
 // DuckDB, the step's own contract), without touching the graph until "Save
 // to step".
 
+#include "../core/sql_editing.h"
 #include "../core/sql_plan.h"
 #include "../core/sql_step_presentation.h"
 #include "../core/table_profile.h"
@@ -91,7 +92,18 @@ private:
     void RenderPartsTab();
     void RenderHistoryTab();
     void RenderSnippetsTab();
+    // Editor, find, completion, Format, Compare (gui/sql_workbench_editing.cpp).
     void RenderEditor(float height);
+    void OpenFind();
+    void CloseFind();
+    void UpdateFind();
+    void FindStep(bool forward);
+    void RenderFindBar();
+    void UpdateCompletion(bool forced);
+    void AcceptCompletion();
+    void RenderCompletion();
+    void FormatDraft();
+    void RenderCompare();
     void RenderBottomPanel(float height);
     void RenderResults();
     void RenderProfile();
@@ -159,6 +171,36 @@ private:
     bool editor_share_set_by_user_ = false;
     int marked_part_ = -1;
     OpenTableCallback open_table_;
+
+    // Find bar (Ctrl+F).
+    struct FindState {
+        bool open = false;
+        bool focus = false;
+        char query[256] = {};
+        bool case_sensitive = false;
+        bool whole_word = false;
+        bool regex = false;
+        uint64_t version = ~0ull;
+        std::string key;
+        std::string error;
+        std::vector<std::pair<cyxwiz::editor::Pos, cyxwiz::editor::Pos>> matches;
+        int current = -1;
+    } find_;
+    // Completion list at the cursor.
+    bool completion_open_ = false;
+    std::vector<cyxwiz::sqledit::Completion> completion_items_;
+    int completion_selected_ = 0;
+    cyxwiz::editor::Pos completion_start_;
+    uint64_t completion_version_ = ~0ull;
+    float editor_line_height_ = 18.0f;
+    // Compare with saved.
+    bool compare_open_ = false;
+    uint64_t compare_version_ = ~0ull;
+    std::string compare_saved_;
+    std::vector<cyxwiz::sqledit::DiffLine> compare_lines_;
+    std::vector<int> compare_rows_;  // shown rows: line index, or -N for "N unchanged lines"
+    int compare_view_ = 0;           // 0 changes with context, 1 whole query
+    int compare_shown_view_ = -1;    // the view compare_rows_ was built for
 };
 
 }  // namespace gui

@@ -526,6 +526,7 @@ void SqlWorkbenchDialog::RenderContent() {
     RenderBottomPanel(usable - editor_h);
     ImGui::EndGroup();
     RenderStatusBar();
+    RenderCompare();
 }
 
 void SqlWorkbenchDialog::RenderHeader(MLNode& node) {
@@ -582,6 +583,14 @@ void SqlWorkbenchDialog::RenderToolbar() {
     ImGui::SameLine();
     if (ui::GhostButton("Check", !running, busy, false, ui::ButtonSize::Regular)) StartRun(RunKind::Check);
     if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("Check the query against its inputs without running it");
+    ImGui::SameLine();
+    if (ui::GhostButton("Format", true, nullptr, false, ui::ButtonSize::Regular)) FormatDraft();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keywords in upper case, trailing spaces removed (Ctrl+Z undoes it)");
+    ImGui::SameLine();
+    if (ui::GhostButton("Compare with saved", draft_ != saved_query_, "The draft is the saved query", compare_open_,
+                        ui::ButtonSize::Regular)) {
+        compare_open_ = !compare_open_;
+    }
     ImGui::SameLine();
     if (ui::GhostButton("Explain plan", !running, busy, false, ui::ButtonSize::Regular)) {
         bottom_tab_ = kPlan;
@@ -759,13 +768,6 @@ void SqlWorkbenchDialog::RenderSnippetsTab() {
         ImGui::SetCursorPos(after);
         ImGui::PopID();
     }
-}
-
-void SqlWorkbenchDialog::RenderEditor(float height) {
-    ImFont* mono = cyxwiz::gui::GetCodeFont();
-    if (mono) ImGui::PushFont(mono);
-    editor_.Render("##wb_editor", ImVec2(ImGui::GetContentRegionAvail().x, height));
-    if (mono) ImGui::PopFont();
 }
 
 void SqlWorkbenchDialog::RenderBottomPanel(float height) {
