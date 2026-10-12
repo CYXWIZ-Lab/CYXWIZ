@@ -108,6 +108,7 @@ set(ENGINE_SOURCES
     src/core/python_repl_presentation.cpp
     src/core/runtime_log_presentation.cpp
     src/core/console_commands_presentation.cpp
+    src/core/sql_step_presentation.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_publication.cpp
@@ -5715,6 +5716,14 @@ add_executable(test_subgraph_presentation tests/test_subgraph_presentation.cpp
 target_include_directories(test_subgraph_presentation PRIVATE src external/imnodes)
 target_link_libraries(test_subgraph_presentation PRIVATE imgui::imgui nlohmann_json::nlohmann_json)
 set_target_properties(test_subgraph_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# SQL step presentation model (TOFIX146): query outline, check rules, input names.
+add_executable(test_sql_step_presentation tests/test_sql_step_presentation.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_step_presentation PRIVATE src)
+target_compile_definitions(test_sql_step_presentation PRIVATE
+    CYXWIZ_SQL_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql/tier1_paragraphs.sql")
+set_target_properties(test_sql_step_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlStepPresentation COMMAND test_sql_step_presentation)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
