@@ -2475,7 +2475,7 @@ MainWindow::MainWindow()
 
             // Open text-based files in script editor
             if (ext == ".py" || ext == ".cyx" || ext == ".txt" ||
-                ext == ".json" || ext == ".md" || ext == ".csv" ||
+                ext == ".json" || ext == ".md" || ext == ".csv" || ext == ".tsv" ||
                 ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
                 ext == ".ini" || ext == ".cfg" || ext == ".conf") {
                 script_editor_->SetVisible(true);  // a closed Script Editor opens
@@ -2487,6 +2487,13 @@ MainWindow::MainWindow()
 
     asset_browser_->SetOnCreateDataInput([this](const std::string& path) {
         if (node_editor_) node_editor_->AddDataInputFromAsset(path);
+    });
+
+    // A loaded dataset opens in Data Studio's Query tab (TOFIX140).
+    asset_browser_->SetOnOpenInDataStudio([this](const std::string& dataset) {
+        if (!data_studio_panel_) return;
+        data_studio_panel_->ShowQuery(dataset, "SELECT * FROM \"" + dataset + "\" LIMIT 100");
+        ImGui::SetWindowFocus("Data Studio");
     });
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)

@@ -161,6 +161,7 @@ set(ENGINE_SOURCES
     src/core/session_query_service.cpp
     src/core/query_result_cache.cpp
     src/core/arrow_data_table.cpp
+    src/core/asset_preview.cpp
     src/core/dataset_contract.cpp
     src/core/column_role_store.cpp
     src/core/dataset_profiler.cpp
@@ -5108,6 +5109,21 @@ set_target_properties(test_test_predictions_table PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME test_predictions_table COMMAND test_test_predictions_table)
+
+# ===== Test: Asset Browser light preview (TOFIX140) =====
+add_executable(test_asset_preview
+    tests/test_asset_preview.cpp
+    src/core/asset_preview.cpp
+)
+target_link_libraries(test_asset_preview PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
+if(WIN32)
+    target_compile_definitions(test_asset_preview PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_asset_preview PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME asset_preview COMMAND test_asset_preview)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
