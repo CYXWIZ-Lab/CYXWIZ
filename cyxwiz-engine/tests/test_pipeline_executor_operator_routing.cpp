@@ -929,6 +929,44 @@ void CheckDocumentWindowPipeline() {
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
 }
 
+void CheckNodeRunFacts() {
+    // TOFIX146: each node's latest run facts (rows, columns, time, outcome)
+    // for the SQL step Properties and Workbench.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_node_run_facts";
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    { std::ofstream file(csv); file << "id,word\n1,alpha\n2,beta\n3,gamma\n4,delta\n"; }
+    auto graph = [&](const std::string& expected) {
+        return R"({"nodes":[{"id":93101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":93102,"type":"SQLQuery","name":"Long words","parameters":{"sql_contract_version":"1","input_alias":"input","query":"SELECT id, word, length(word) AS letters FROM input WHERE length(word) >= 5"}},)"
+            R"({"id":93103,"type":"RowCountCheck","name":"Check: long words","parameters":{"check_name":"long words","expected_rows":")" + expected +
+            R"(","count_column":"letters","count_value":"5","on_failure":"stop"}}],"links":[{"start_node":93101,"end_node":93102},{"start_node":93102,"end_node":93103}]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(graph("3")), "run facts pipeline: " + executor.GetLastError());
+    const auto facts = executor.GetNodeRunFacts();
+    Check(facts.count(93101) && facts.count(93102) && facts.count(93103), "facts for every executed node");
+    const auto& sql = facts.at(93102);
+    Check(sql.output_dataset == "ds_sql_93102", "SQL step output dataset: " + sql.output_dataset);
+    Check(sql.rows == 3 && sql.columns == 3, "SQL step rows/columns: " + std::to_string(sql.rows) + "x" + std::to_string(sql.columns));
+    Check(sql.seconds >= 0.0 && sql.finished_at.size() == 8 && sql.error.empty(), "SQL step time and clock");
+    Check(facts.at(93101).rows == 4, "Data Input rows");
+    const auto& check = facts.at(93103);
+    Check(check.outcome == "passed: 3 rows where letters = '5' (expected exactly 3)", "check outcome: " + check.outcome);
+    Check(check.rows == 3, "check passes its rows through");
+
+    cyxwiz::PipelineExecutor failing;
+    Check(!failing.ExecutePipeline(graph("2")), "a failing check stops the run");
+    const auto failed = failing.GetNodeRunFacts();
+    Check(failed.count(93103) && failed.at(93103).error.find("'long words' failed") != std::string::npos,
+          "the failing check records its error: " + (failed.count(93103) ? failed.at(93103).error : std::string("none")));
+    Check(failed.count(93102) && failed.at(93102).rows == 3, "nodes before the failure keep their facts");
+    fs::remove_all(dir);
+    std::cout << "Node run facts passed\n";
+}
+
 void CheckJsonLinesInput() {
     // TOFIX143 P1b: DataInput reads JSON Lines into Arrow (nested objects become
     // structs, arrays lists, keys missing in some rows become nulls).
@@ -1877,6 +1915,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--export-path-base") { CheckExportPathBase(); return 0; }
     if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
     if(argc==1) CheckJsonLinesInput();
+    if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
+    if(argc==1) CheckNodeRunFacts();
     if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&

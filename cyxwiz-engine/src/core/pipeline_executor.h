@@ -31,6 +31,18 @@ enum class PipelineNodeExecutionEvent : uint8_t {
     Error
 };
 
+// What one node produced in its latest run (TOFIX146: SQL step Properties,
+// Workbench). Kept per node across runs; a cached node keeps its earlier facts.
+struct PipelineNodeRunFacts {
+    std::string output_dataset;   // registry name, e.g. "ds_sql_101"
+    int64_t rows = -1;            // -1 when the output is not a registered table
+    int64_t columns = -1;
+    double seconds = 0.0;         // from start to completion of the node
+    std::string outcome;          // operator summary, e.g. a Row Count Check's "passed: ..."
+    std::string error;            // set when the node failed in its latest run
+    std::string finished_at;      // local time "HH:MM:SS"
+};
+
 /**
  * PipelineExecutor - Executes data transformation pipelines
  *
@@ -144,6 +156,9 @@ public:
     void SetNodeExecutionCallback(
         std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback);
 
+    /** Facts about each node's latest run (thread-safe; readable during a run). */
+    std::map<int, PipelineNodeRunFacts> GetNodeRunFacts() const;
+
     /**
      * Register a completion callback
      * Called when pipeline execution finishes (success or failure)
@@ -192,6 +207,7 @@ private:
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
         std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
+        std::map<int, std::string> node_outcomes;   // Node ID -> operator outcome summary
         std::string input_dataset;                // Initial dataset name
         std::string output_dataset;               // Final result dataset name
         std::string deployment_dataset;           // Dataset ready for Node Editor deployment
@@ -219,6 +235,14 @@ private:
     std::function<void(bool)> completion_callback_;
     std::function<void(int, PipelineNodeExecutionEvent, const std::string&)>
         node_execution_callback_;
+
+    // Latest run facts per node (GetNodeRunFacts); start times of running nodes.
+    mutable std::mutex node_run_facts_mutex_;
+    std::map<int, PipelineNodeRunFacts> node_run_facts_;
+    std::map<int, double> node_started_seconds_;
+    void RecordNodeRunFacts(const Node& node, PipelineNodeExecutionEvent event,
+                            const std::string& output_dataset, const std::string& outcome,
+                            const std::string& error);
 
     // DuckDB connector for SQL transformations
     std::unique_ptr<DuckDBConnector> duckdb_;
