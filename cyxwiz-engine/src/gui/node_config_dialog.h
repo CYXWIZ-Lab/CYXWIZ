@@ -59,6 +59,10 @@ public:
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
     virtual bool CanApply() const { return true; }
+    // False for dialogs that draw their own actions (the SQL Workbench):
+    // the base then gives RenderContent the whole window, with no OK /
+    // Cancel / Apply row.
+    virtual bool UsesStandardButtons() const { return true; }
 
     // Optional graph context. Properties.cpp sets this right after
     // constructing a dialog so visualization / inspection dialogs can

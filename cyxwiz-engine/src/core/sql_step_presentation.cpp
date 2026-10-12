@@ -15,6 +15,7 @@ struct Token {
     TokenKind kind = TokenKind::Other;
     std::string text;  // lower-cased for words
     int line = 1;
+    size_t offset = 0;  // byte position of the token in the text
 };
 
 struct Scan {
@@ -88,7 +89,7 @@ Scan ScanSql(std::string_view sql) {
                 ++k;
             }
             if (!closed) scan.balanced = false;
-            scan.tokens.push_back({TokenKind::Other, c == '"' ? "\"name\"" : "'text'", line});
+            scan.tokens.push_back({TokenKind::Other, c == '"' ? "\"name\"" : "'text'", line, i});
             i = closed ? k + 1 : sql.size();
         } else if (std::isspace(static_cast<unsigned char>(c))) {
             ++i;
@@ -99,7 +100,7 @@ Scan ScanSql(std::string_view sql) {
             std::string word(sql.substr(i, k - i));
             std::transform(word.begin(), word.end(), word.begin(),
                            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-            scan.tokens.push_back({TokenKind::Word, word, line});
+            scan.tokens.push_back({TokenKind::Word, word, line, i});
             i = k;
         } else {
             line_has_code = true;
@@ -113,7 +114,7 @@ Scan ScanSql(std::string_view sql) {
             } else if (c == ',') {
                 kind = TokenKind::Comma;
             }
-            scan.tokens.push_back({kind, std::string(1, c), line});
+            scan.tokens.push_back({kind, std::string(1, c), line, i});
             ++i;
         }
     }
@@ -200,7 +201,10 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
 
     const auto whole_query = [&] {
         outline.structured = false;
-        outline.parts = {{"query", tokens.front().line, last_line, ""}};
+        SqlPart query{"query", tokens.front().line, last_line, ""};
+        query.begin_offset = tokens.front().offset;
+        query.end_offset = sql.size();
+        outline.parts = {std::move(query)};
     };
     if (!scan.balanced) {
         whole_query();
@@ -219,6 +223,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
             SqlPart part;
             part.name = tokens[k].text;
             part.first_line = tokens[k].line;
+            part.begin_offset = tokens[k].offset;
             ++k;
             if (k < tokens.size() && tokens[k].kind == TokenKind::Open) {  // name(column, ...)
                 k = MatchingClose(tokens, k) + 1;
@@ -244,6 +249,7 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
             part.last_line = tokens[close].line;
             part.description = CommentAbove(scan, part.first_line, header_end_line);
             part.reads = ReadsIn(tokens, k + 1, close);
+            part.end_offset = tokens[close].offset + 1;
             outline.parts.push_back(std::move(part));
             k = close + 1;
             if (k < tokens.size() && tokens[k].kind == TokenKind::Comma) {
@@ -257,9 +263,46 @@ SqlOutline OutlineSqlQuery(std::string_view sql) {
         SqlPart result{"result", tokens[k].line, last_line, ""};
         result.description = CommentAbove(scan, result.first_line, header_end_line);
         result.reads = ReadsIn(tokens, k, tokens.size());
+        result.begin_offset = tokens[k].offset;
+        result.end_offset = sql.size();
         outline.parts.push_back(std::move(result));
     }
     return outline;
+}
+
+namespace {
+// The final statement without trailing spaces and semicolons, so it can sit
+// inside a subquery.
+std::string FinalStatement(std::string_view sql, const SqlPart& part) {
+    std::string text(sql.substr(part.begin_offset, part.end_offset - part.begin_offset));
+    while (!text.empty() && (std::isspace(static_cast<unsigned char>(text.back())) || text.back() == ';')) {
+        text.pop_back();
+    }
+    return text;
+}
+}  // namespace
+
+std::string QueryThroughPart(std::string_view sql, const SqlOutline& outline, size_t index) {
+    if (index >= outline.parts.size()) return {};
+    const SqlPart& part = outline.parts[index];
+    if (!outline.structured || index + 1 == outline.parts.size()) return std::string(sql);
+    return std::string(sql.substr(0, part.end_offset)) + "\nSELECT * FROM " + part.name;
+}
+
+std::string PartCountsQuery(std::string_view sql, const SqlOutline& outline) {
+    if (!outline.structured || outline.parts.size() < 2) return {};
+    const SqlPart& last_cte = outline.parts[outline.parts.size() - 2];
+    std::string query(sql.substr(0, last_cte.end_offset));
+    query += "\n";
+    for (size_t i = 0; i < outline.parts.size(); ++i) {
+        const SqlPart& part = outline.parts[i];
+        if (i > 0) query += "\nUNION ALL ";
+        const std::string source = i + 1 == outline.parts.size()
+                                       ? "(\n" + FinalStatement(sql, part) + "\n)"
+                                       : part.name;
+        query += "SELECT " + std::to_string(i) + " AS ord, '" + part.name + "' AS part, CAST(count(*) AS BIGINT) AS row_count FROM " + source;
+    }
+    return "SELECT part, row_count FROM (\n" + query + "\n) ORDER BY ord";
 }
 
 std::string FormatCount(int64_t value) {

@@ -23,6 +23,10 @@ struct SqlPart {
     // Tables and earlier parts it reads (FROM / JOIN), in first-use order,
     // lower-cased; for a part without a comment this says where it starts.
     std::vector<std::string> reads;
+    // Byte range in the query text: from the part's name (or the final
+    // statement) to just after its closing bracket (or the end of the text).
+    size_t begin_offset = 0;
+    size_t end_offset = 0;
 };
 
 struct SqlOutline {
@@ -40,6 +44,17 @@ struct SqlOutline {
 // identifiers, -- and /* */ comments and nested brackets, so commas,
 // brackets and keywords inside them never split a part.
 SqlOutline OutlineSqlQuery(std::string_view sql);
+
+// The query cut after part `index`, returning that part's rows:
+// "WITH ... <part> AS (...) SELECT * FROM <part>". The last part ("result")
+// or an unstructured outline gives the whole query. Empty when `index` is
+// out of range.
+std::string QueryThroughPart(std::string_view sql, const SqlOutline& outline, size_t index);
+
+// One query returning the rows after every part: columns `part` (text) and
+// `row_count` (BIGINT), one row per part in order. Empty when the outline
+// is not structured (nothing to split).
+std::string PartCountsQuery(std::string_view sql, const SqlOutline& outline);
 
 // "15349" -> "15,349"
 std::string FormatCount(int64_t value);

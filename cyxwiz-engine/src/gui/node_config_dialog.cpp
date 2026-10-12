@@ -1,5 +1,6 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "sql_workbench.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
@@ -131,7 +132,10 @@ bool NodeConfigDialog::Render() {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
     // Begin the dialog window
-    if (ImGui::Begin(title_.c_str(), &is_open_, flags)) {
+    const bool visible = ImGui::Begin(title_.c_str(), &is_open_, flags);
+    if (visible && !UsesStandardButtons()) {
+        RenderContent();
+    } else if (visible) {
         // Content area
         ImVec2 avail = ImGui::GetContentRegionAvail();
         float button_height = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
@@ -1859,6 +1863,11 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
 
     RegisterDialog(NT::DataSplit, [](MLNode* node) {
         return std::make_unique<DataSplitDialog>(node);
+    });
+
+    // SQL step: the SQL Workbench (TOFIX146), a dockable window.
+    RegisterDialog(NT::SQLQuery, [](MLNode* node) {
+        return std::make_unique<SqlWorkbenchDialog>(node);
     });
 
     // Visualization framework — chart nodes live in their own TU

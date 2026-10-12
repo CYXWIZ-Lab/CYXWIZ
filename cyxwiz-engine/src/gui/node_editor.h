@@ -354,8 +354,9 @@ public:
     bool ExecuteDataPipeline();
     // Run only what `node_id` needs: its upstream steps and itself, plus the
     // Row Count Checks chained right after it when `with_checks` (TOFIX146
-    // "Run step" / "Preview output").
-    bool ExecuteDataPipelineThrough(int node_id, bool with_checks);
+    // "Run step" / "Preview output"). `include_step` false runs only the
+    // steps before it (the SQL Workbench's "Load inputs").
+    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true);
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to

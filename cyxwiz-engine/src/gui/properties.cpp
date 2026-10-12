@@ -6,6 +6,7 @@
 #include "properties_node_editors.h"
 #include "properties_presets.h"
 #include "properties_sql_step.h"
+#include "sql_workbench.h"
 #include "properties_truth.h"
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
@@ -208,6 +209,9 @@ bool Properties::ConfigureNode(MLNode* node) {
         return false;
     }
     active_dialog_->SetNodeEditor(node_editor_);
+    if (auto* workbench = dynamic_cast<SqlWorkbenchDialog*>(active_dialog_.get())) {
+        workbench->SetOpenTableCallback(open_table_);
+    }
     active_dialog_->Open();
     return true;
 }

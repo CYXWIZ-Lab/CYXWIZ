@@ -4390,7 +4390,7 @@ bool NodeEditor::ExecuteDataPipeline() {
     return SubmitDataPipelineJson(std::move(pipeline_json));
 }
 
-bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks) {
+bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",
                      pipeline_task_id_);
@@ -4429,7 +4429,14 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks) {
         if (!keep.insert(id).second) continue;
         for (int from : upstream[id]) pending.push_back(from);
     }
-    if (with_checks) {
+    if (!include_step) {
+        keep.erase(node_id);
+        if (keep.empty()) {
+            ShowPipelineNotice("Nothing runs before this step.");
+            return false;
+        }
+    }
+    if (with_checks && include_step) {
         int at = node_id;
         for (;;) {
             const auto& next = downstream[at];

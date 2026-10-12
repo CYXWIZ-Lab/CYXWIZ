@@ -9,6 +9,8 @@
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
+#include "core/sql_step_presentation.h"
+#include "core/sql_transform.h"
 #include "core/plot/node_result_plan.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
@@ -927,6 +929,45 @@ void CheckDocumentWindowPipeline() {
     Check(loaded && produced->GetArrowTable()->Equals(*loaded->GetArrowTable(),true),"Pipeline export/reload preserves IDs, references and schema metadata");
     std::cout<<"Document window pipeline export/reload passed\n";
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
+}
+
+void CheckSqlPartQueries() {
+    // TOFIX146 Workbench: "Run to part" and "rows after each part" run in
+    // DuckDB exactly as the step does (read-only SqlTransform).
+    arrow::Int64Builder ids;
+    arrow::StringBuilder words;
+    for (int64_t i = 1; i <= 4; ++i) {
+        Check(ids.Append(i).ok() && words.Append("w" + std::to_string(i)).ok(), "build input");
+    }
+    std::shared_ptr<arrow::Array> id_array, word_array;
+    Check(ids.Finish(&id_array).ok() && words.Finish(&word_array).ok(), "finish input");
+    auto input = arrow::Table::Make(
+        arrow::schema({arrow::field("id", arrow::int64()), arrow::field("word", arrow::utf8())}),
+        {id_array, word_array});
+    const std::string sql =
+        "-- Two parts\n"
+        "WITH a AS (SELECT * FROM input WHERE id > 1),\n"
+        "-- keep two\n"
+        "b AS (SELECT * FROM a WHERE id < 4)\n"
+        "SELECT id, word FROM b ORDER BY id DESC;\n";
+    const auto outline = cyxwiz::sqlstep::OutlineSqlQuery(sql);
+    Check(outline.structured && outline.parts.size() == 3, "three parts");
+    cyxwiz::SqlTransform transform;
+    const auto through_a = transform.Run(cyxwiz::sqlstep::QueryThroughPart(sql, outline, 0), {{"input", input}});
+    Check(through_a.ok && through_a.table->num_rows() == 3, "run to part a: " + through_a.error);
+    const auto whole = transform.Run(cyxwiz::sqlstep::QueryThroughPart(sql, outline, 2), {{"input", input}});
+    Check(whole.ok && whole.table->num_rows() == 2, "run to result is the whole query: " + whole.error);
+    const auto counts = transform.Run(cyxwiz::sqlstep::PartCountsQuery(sql, outline), {{"input", input}});
+    Check(counts.ok, "part counts query: " + counts.error);
+    if (counts.ok) {
+        const auto parts = std::static_pointer_cast<arrow::StringArray>(counts.table->GetColumnByName("part")->chunk(0));
+        const auto rows = std::static_pointer_cast<arrow::Int64Array>(counts.table->GetColumnByName("row_count")->chunk(0));
+        Check(counts.table->num_rows() == 3 && parts->GetString(0) == "a" && rows->Value(0) == 3 &&
+                  parts->GetString(1) == "b" && rows->Value(1) == 2 && parts->GetString(2) == "result" &&
+                  rows->Value(2) == 2,
+              "rows after each part: a 3, b 2, result 2");
+    }
+    std::cout << "SQL part queries passed\n";
 }
 
 void CheckNodeRunFacts() {
@@ -1916,7 +1957,8 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
     if(argc==1) CheckJsonLinesInput();
     if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
-    if(argc==1) CheckNodeRunFacts();
+    if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
+    if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); }
     if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&

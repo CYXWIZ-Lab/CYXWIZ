@@ -8,6 +8,7 @@
 #include "../core/data_registry.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/sql_step_presentation.h"
+#include "../data/arrow_data_table.h"
 #include "editor_fonts.h"
 #include "icons.h"
 #include "properties_contract.h"
@@ -48,33 +49,6 @@ std::string SpacedType(const std::string& type) {
         out += type[i];
     }
     return out;
-}
-
-// One line of a cell: newlines shown as spaces, long text cut with an ellipsis.
-std::string CellText(std::string text) {
-    for (char& c : text) {
-        if (c == '\n' || c == '\r' || c == '\t') c = ' ';
-    }
-    if (text.size() > kPreviewCellChars) text = text.substr(0, kPreviewCellChars) + "...";
-    return text;
-}
-
-std::string ArrowCell(const arrow::ChunkedArray& column, int64_t row) {
-    int64_t offset = row;
-    for (const auto& chunk : column.chunks()) {
-        if (offset < chunk->length()) {
-            if (chunk->IsNull(offset)) return "";
-            auto scalar = chunk->GetScalar(offset);
-            if (!scalar.ok()) return "";
-            const auto& value = *scalar;
-            if (value->type->id() == arrow::Type::STRING || value->type->id() == arrow::Type::LARGE_STRING) {
-                return CellText(static_cast<const arrow::BaseBinaryScalar&>(*value).value->ToString());
-            }
-            return CellText(value->ToString());
-        }
-        offset -= chunk->length();
-    }
-    return "";
 }
 
 std::shared_ptr<arrow::Table> RegisteredTable(const std::string& dataset) {
@@ -300,8 +274,11 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
     static const char* const kModes[] = {"Guided", "SQL"};
     ui::SegmentedControl("##sql_mode", kModes, 2, &view.mode);
     {
-        const char* busy = running ? "A pipeline run is in progress" : nullptr;
-        const bool can_run = node_editor_ && !running;
+        // One DuckDB run at a time: the SQL Workbench's query counts too.
+        const bool query_running = active_dialog_ && active_dialog_->IsOpen() && active_dialog_->IsBusy();
+        const char* busy = running ? "A pipeline run is in progress"
+                           : query_running ? "The SQL Workbench is running a query" : nullptr;
+        const bool can_run = node_editor_ && !running && !query_running;
         const float run_w = ui::ButtonWidth(ICON_FA_PLAY " Run step", ui::ButtonSize::Regular);
         const float preview_w = ui::ButtonWidth("Preview output", ui::ButtonSize::Regular);
         const float both = run_w + preview_w + ImGui::GetStyle().ItemSpacing.x;
@@ -318,14 +295,12 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
     }
 
     // ---- The query (SQL) or how it reads (Guided).
-    const char* workbench_reason = "The SQL Workbench is the next part of TOFIX146";
     if (view.mode == 1) {
         SectionTitle("Query");
         ImGui::SameLine();
         DimText(std::to_string(outline.line_count) + " lines  DuckDB  read-only (no file access)", false);
         AlignRight(ImGui::CalcTextSize("Open in SQL Workbench").x);
-        ui::LinkButton("Open in SQL Workbench", false);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", workbench_reason);
+        if (ui::LinkButton("Open in SQL Workbench")) ConfigureNode(&node);
 
         ImFont* mono = cyxwiz::gui::GetEditorMonoFont(1.0f);
         if (mono) ImGui::PushFont(mono);
@@ -385,7 +360,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
                     "guided step after it, or open the SQL Workbench.");
             ui::SecondaryButton("See a guided step", false, "The guided step editor is the last part of TOFIX146");
             ImGui::SameLine();
-            ui::SecondaryButton("Open SQL Workbench", false, workbench_reason);
+            if (ui::SecondaryButton("Open SQL Workbench")) ConfigureNode(&node);
         }
         EndCard();
     }
@@ -427,7 +402,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
                 const int first = std::clamp(part.first_line - 1, 0, count - 1);
                 const int last = std::clamp(part.last_line - 1, first, count - 1);
                 const cyxwiz::editor::Pos end{last, static_cast<int>(view.editor.Doc().Line(last).size())};
-                view.editor.SetMarks({{{first, 0}, end, true}});
+                view.editor.SetMarks({{{first, 0}, end, false}});
                 // Select the part with the caret at its end, so scrolling
                 // brings the whole part into view.
                 cyxwiz::editor::Selection selection;
@@ -496,28 +471,20 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
             const std::string key = facts->output_dataset + "@" + facts->finished_at;
             if (key != view.preview_key) {
                 view.preview_key = key;
-                view.preview_headers.clear();
-                view.preview_rows.clear();
-                for (const auto& field : table->schema()->fields()) view.preview_headers.push_back(field->name());
-                const int64_t rows = std::min<int64_t>(kPreviewRows, table->num_rows());
-                for (int64_t r = 0; r < rows; ++r) {
-                    std::vector<std::string> row;
-                    for (int c = 0; c < table->num_columns(); ++c) row.push_back(ArrowCell(*table->column(c), r));
-                    view.preview_rows.push_back(std::move(row));
-                }
+                view.preview = cyxwiz::PreviewArrowRows(*table, kPreviewRows, kPreviewCellChars);
             }
-            const int columns = static_cast<int>(view.preview_headers.size());
+            const int columns = static_cast<int>(view.preview.headers.size());
             if (columns > 0 && ImGui::BeginTable("##sql_preview", columns,
                                                  ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
                                                      ImGuiTableFlags_SizingFixedFit,
                                                  ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() *
-                                                                  static_cast<float>(view.preview_rows.size() + 2)))) {
-                for (const auto& header : view.preview_headers) {
+                                                                  static_cast<float>(view.preview.rows.size() + 2)))) {
+                for (const auto& header : view.preview.headers) {
                     ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_None,
                                             header == "text" ? 420.0f : 0.0f);
                 }
                 ImGui::TableHeadersRow();
-                for (const auto& row : view.preview_rows) {
+                for (const auto& row : view.preview.rows) {
                     ImGui::TableNextRow();
                     for (const auto& cell : row) {
                         ImGui::TableNextColumn();

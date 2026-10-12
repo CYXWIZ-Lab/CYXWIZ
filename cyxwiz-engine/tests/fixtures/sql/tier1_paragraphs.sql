@@ -50,9 +50,14 @@ WITH meta(source_id, title, author, work_family, role, format) AS (VALUES
  SELECT *, CASE WHEN length(trim(b)) > 100000 AND strpos(b, 'Transcriber''s') = 0 THEN b
                 ELSE error('Body boundary or transcriber note not resolved for ' || source_id) END AS body
  FROM trail_note
+), split AS (
+ -- Split each book's body into its paragraphs (a list per book).
+ SELECT * EXCLUDE (b, body), regexp_split_to_array(body, '\n[ \t]*\n+') AS paras FROM checked
 ), parts AS (
- SELECT c.* EXCLUDE (b, body), p.raw, p.paragraph_index
- FROM checked c, unnest(regexp_split_to_array(c.body, '\n[ \t]*\n+')) WITH ORDINALITY AS p(raw, paragraph_index)
+ -- One row per paragraph, numbered in reading order. Unnesting in the select
+ -- list keeps the book text out of the paragraph rows (a lateral unnest
+ -- copied it into every row: 4x slower and memory-hungry).
+ SELECT * EXCLUDE (paras), unnest(paras) AS raw, unnest(range(1, len(paras) + 1)) AS paragraph_index FROM split
 ), stripped AS (
  SELECT *, trim(regexp_replace(raw, '(?m)^\s*_{10,}\s*$', '', 'g')) AS p FROM parts
 ), kept AS (

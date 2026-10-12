@@ -310,6 +310,7 @@ set(ENGINE_SOURCES
     src/gui/properties.cpp
     src/gui/properties_sequence_fusion.cpp
     src/gui/properties_sql_step.cpp
+    src/gui/sql_workbench.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -2836,6 +2837,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
     src/core/sql_transform.cpp
+    src/core/sql_step_presentation.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp

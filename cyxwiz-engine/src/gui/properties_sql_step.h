@@ -4,6 +4,7 @@
 // Properties::RenderSqlStep in properties_sql_step.cpp; one view follows the
 // selected SQL step.
 
+#include "../data/arrow_data_table.h"
 #include "code_editor.h"
 #include "node_editor.h"
 #include "properties.h"
@@ -29,8 +30,7 @@ struct Properties::SqlStepView {
 
     // First rows of the output, read from the registry once per run.
     std::string preview_key;  // dataset + finish time
-    std::vector<std::string> preview_headers;
-    std::vector<std::vector<std::string>> preview_rows;
+    cyxwiz::ArrowPreview preview;
     std::vector<std::string> input_columns;
     std::string input_columns_key;
 };

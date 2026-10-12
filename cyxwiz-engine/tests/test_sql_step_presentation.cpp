@@ -45,16 +45,16 @@ void TestRealQuery(const std::string& path) {
     buffer << file.rdbuf();
     const SqlOutline outline = OutlineSqlQuery(buffer.str());
     Check(outline.structured, "tier1 query is a structured WITH chain");
-    Check(outline.line_count == 84, "84 lines, got " + std::to_string(outline.line_count));
+    Check(outline.line_count == 89, "89 lines, got " + std::to_string(outline.line_count));
     Check(outline.header.size() == 17, "17 header comment lines, got " + std::to_string(outline.header.size()));
     Check(!outline.header.empty() &&
               outline.header.front() == "base_corpus_v3, Tier 1 practical teaching books (owner D1, 2026-10-11).",
           "header title without the -- marker");
-    Check(Names(outline) == "meta,src,body,lead_note,trail_note,checked,parts,stripped,kept,cleaned,result",
+    Check(Names(outline) == "meta,src,body,lead_note,trail_note,checked,split,parts,stripped,kept,cleaned,result",
           "parts in order: " + Names(outline));
     const std::vector<std::pair<int, int>> lines = {
         {18, 26}, {26, 29}, {29, 37}, {37, 43}, {43, 49}, {49, 53},
-        {53, 56}, {56, 58}, {58, 67}, {67, 75}, {76, 84}};
+        {53, 56}, {56, 61}, {61, 63}, {63, 72}, {72, 80}, {81, 89}};
     for (size_t i = 0; i < lines.size() && i < outline.parts.size(); ++i) {
         const auto& part = outline.parts[i];
         Check(part.first_line == lines[i].first && part.last_line == lines[i].second,
@@ -63,12 +63,26 @@ void TestRealQuery(const std::string& path) {
     }
     // What each part reads (FROM / JOIN); unnest(...) and VALUES are not tables.
     const std::vector<std::string> reads = {
-        "", "input,meta", "src", "body", "lead_note", "trail_note", "checked", "parts", "stripped", "kept", "cleaned"};
+        "", "input,meta", "src", "body", "lead_note", "trail_note", "checked", "split", "parts", "stripped", "kept",
+        "cleaned"};
     for (size_t i = 0; i < reads.size() && i < outline.parts.size(); ++i) {
         std::string joined;
         for (const auto& name : outline.parts[i].reads) joined += (joined.empty() ? "" : ",") + name;
         Check(joined == reads[i], outline.parts[i].name + " reads " + joined);
     }
+    // Run to part: the text up to the part's closing bracket, then its rows.
+    const std::string text = buffer.str();
+    const std::string through_kept = QueryThroughPart(text, outline, 9);
+    Check(through_kept.size() > 20 && through_kept.substr(through_kept.size() - 19) == "\nSELECT * FROM kept",
+          "run to kept ends with SELECT * FROM kept");
+    Check(through_kept.find("cleaned AS") == std::string::npos, "nothing after kept");
+    Check(QueryThroughPart(text, outline, 11) == text, "run to result is the whole query");
+    Check(QueryThroughPart(text, outline, 12).empty(), "out of range gives nothing");
+    const std::string counts = PartCountsQuery(text, outline);
+    Check(counts.find("'meta' AS part") != std::string::npos && counts.find("'result' AS part") != std::string::npos &&
+              counts.rfind("ORDER BY ord") == counts.size() - 12,
+          "counts query names every part and keeps their order");
+    Check(PartCountsQuery("SELECT 1", OutlineSqlQuery("SELECT 1")).empty(), "a single part has nothing to count");
 }
 
 void TestTrickyText() {
