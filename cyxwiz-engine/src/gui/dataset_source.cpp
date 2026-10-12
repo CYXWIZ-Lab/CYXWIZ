@@ -7,6 +7,7 @@
 #include "../data/data_table.h"
 #include "dataset_picker.h"
 #include "ui_tokens.h"
+#include "ui_widgets.h"
 
 #include <imgui.h>
 
@@ -16,9 +17,7 @@ namespace cyxwiz::ui {
 
 void DatasetSource::Render(const char* id, Loaded on_loaded) {
     const Tokens& t = CurrentTokens();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(t.text_dim, "Dataset");
-    ImGui::SameLine();
+    FieldLabel("Dataset");
     if (DatasetPicker(id, name_)) Read(std::move(on_loaded));
     if (loading_) {
         ImGui::TextColored(t.text_dim, "Reading the dataset...");

@@ -8,6 +8,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace cyxwiz::ui {
@@ -234,6 +235,95 @@ bool FlowRow::Next(float item_width) {
         return false;
     }
     return true;  // the caller draws on the new line ImGui already started
+}
+
+// ---------------------------------------------------------------------------
+// Settings column + results area
+
+namespace {
+constexpr float kHandleWidth = 7.0f;
+constexpr float kMinColumnWidth = 200.0f;
+}  // namespace
+
+void BeginSettingsColumn(const char* id, float default_width) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushID(id);
+    float* width = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##column_width"), default_width);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    *width = std::clamp(*width, kMinColumnWidth, std::max(kMinColumnWidth, avail * 0.6f));
+
+    // Areas are told apart by tone, not outlines (owner rule 2026-10-01): the
+    // column sits one step above the window, so the input-toned fields read on it.
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, Mix(t.bg_window, t.bg_raised, 0.4f));
+    ImGui::BeginChild("##settings", ImVec2(*width, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
+}
+
+void BeginResultsArea() {
+    const Tokens& t = CurrentTokens();
+    ImGui::EndChild();
+
+    // Drag handle between the panes: a short grip in the surface tone.
+    float* width = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##column_width"));
+    ImGui::SameLine(0.0f, 0.0f);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float height = std::max(ImGui::GetContentRegionAvail().y, 1.0f);
+    ImGui::InvisibleButton("##handle", ImVec2(kHandleWidth, height));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (active) *width += ImGui::GetIO().MouseDelta.x;
+    const float grip = 28.0f;
+    const ImVec2 grip_min(pos.x + kHandleWidth * 0.5f - 1.0f, pos.y + (height - grip) * 0.5f);
+    ImGui::GetWindowDrawList()->AddRectFilled(grip_min, ImVec2(grip_min.x + 2.0f, grip_min.y + grip),
+                                              ToU32(hovered || active ? t.border : t.border_soft), 1.0f);
+
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::BeginChild("##results", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+}
+
+void EndResultsArea() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+}
+
+void SettingsSection(const char* title) {
+    const Tokens& t = CurrentTokens();
+    std::string upper(title);
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1.0f) ImGui::Spacing();
+    FontScope font(Font::Medium);
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::TextUnformatted(upper.c_str());
+    ImGui::PopStyleColor();
+}
+
+void FieldLabel(const char* label) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(label);
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+void BeginInsetList(const char* id, float height) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_field);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_input);
+    const ImGuiChildFlags flags =
+        ImGuiChildFlags_AlwaysUseWindowPadding | (height > 0.0f ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+    ImGui::BeginChild(id, ImVec2(0.0f, height), flags);
+}
+
+void EndInsetList() {
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 // ---------------------------------------------------------------------------

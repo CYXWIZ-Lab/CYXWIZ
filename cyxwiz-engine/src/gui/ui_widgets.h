@@ -78,6 +78,28 @@ struct FlowRow {
     bool first = true;
 };
 
+// Two-pane analysis panel: settings at the left on the panel tone, a drag
+// handle, results on the window background; no outlines on either side.
+//   ui::BeginSettingsColumn("roc_auc", 300.0f);
+//   ...settings...
+//   ui::BeginResultsArea();
+//   ...results...
+//   ui::EndResultsArea();
+// The column starts `default_width` wide; dragging the handle changes it for
+// the session (kept per id), between 200 px and 60% of the panel.
+void BeginSettingsColumn(const char* id, float default_width);
+void BeginResultsArea();  // ends the settings column and draws the handle
+void EndResultsArea();
+// Muted upper-case label that starts a group of settings.
+void SettingsSection(const char* title);
+// Field label above the next item; the item then fills the line, so a long
+// label never clips. Give the item a "##" id.
+void FieldLabel(const char* label);
+// Inset list (column checkboxes) on the input tone, no outline. `height` 0
+// grows with the content.
+void BeginInsetList(const char* id, float height = 0.0f);
+void EndInsetList();
+
 // Centred empty state: icon (may be empty), title, muted hint.
 void EmptyState(const char* icon, const char* title, const char* hint = nullptr);
 
