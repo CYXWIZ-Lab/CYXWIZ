@@ -5,6 +5,7 @@
 #include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -372,8 +373,11 @@ void ClusterEvalPanel::ComputeMetrics() {
     input_data_.clear();
     cluster_labels_.clear();
 
-    int n_rows = static_cast<int>(current_table_->GetRowCount());
+    // Text labels ("north", "delta") count as clusters too, not only numbers.
+    const auto labels = ReadTableClassLabels(*current_table_, {label_column_idx_}).columns[0];
+    const int n_rows = static_cast<int>(current_table_->GetRowCount());
     for (int row = 0; row < n_rows; ++row) {
+        if (!labels[row]) continue;
         std::vector<double> row_data;
         bool valid = true;
 

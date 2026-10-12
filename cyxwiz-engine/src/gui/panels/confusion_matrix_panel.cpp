@@ -3,11 +3,14 @@
 #include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
-#include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <functional>
+#include <set>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -283,16 +286,14 @@ void ConfusionMatrixPanel::ComputeMatrix() {
         return;
     }
 
+    // True and predicted labels share one class set; text labels
+    // ("tested_negative") keep their names.
+    const TableClassLabels labels = ReadTableClassLabels(*current_table_, {true_label_column_, pred_label_column_});
     std::vector<int> y_true, y_pred;
-    int n_rows = static_cast<int>(current_table_->GetRowCount());
-
-    for (int row = 0; row < n_rows; ++row) {
-        auto true_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, true_label_column_));
-        auto pred_val = DataAnalyzer::ToDouble(current_table_->GetCell(row, pred_label_column_));
-
-        if (true_val.has_value() && pred_val.has_value()) {
-            y_true.push_back(static_cast<int>(true_val.value()));
-            y_pred.push_back(static_cast<int>(pred_val.value()));
+    for (size_t row = 0; row < labels.columns[0].size(); ++row) {
+        if (labels.columns[0][row] && labels.columns[1][row]) {
+            y_true.push_back(*labels.columns[0][row]);
+            y_pred.push_back(*labels.columns[1][row]);
         }
     }
 
@@ -301,7 +302,14 @@ void ConfusionMatrixPanel::ComputeMatrix() {
         return;
     }
 
-    result_ = ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred);
+    // Names line up with the sorted class ids present in these rows.
+    std::vector<std::string> class_names;
+    if (labels.IsText()) {
+        std::set<int> present(y_true.begin(), y_true.end());
+        present.insert(y_pred.begin(), y_pred.end());
+        for (int id : present) class_names.push_back(labels.Name(id));
+    }
+    result_ = ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred, class_names);
 
     if (result_.success) {
         status_message_ = "Computed: " + std::to_string(result_.n_classes) + " classes, " +

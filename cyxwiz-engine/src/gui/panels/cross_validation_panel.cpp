@@ -3,7 +3,7 @@
 #include "../ui_tokens.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
-#include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
 #include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <implot.h>
@@ -170,28 +170,27 @@ void CrossValidationPanel::RenderResults() {
     ImGui::Text("Average Train Size: %.1f samples", mean_train);
     ImGui::Text("Average Validation Size: %.1f samples", mean_val);
 
-    // If stratified, show class distribution
-    if (stratified_ && current_table_) {
+    // If the folds were stratified, show the class distribution they kept
+    if (!class_labels_.columns.empty()) {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Class Distribution (Stratified):");
 
-        // Count classes in original data
+        const auto& labels = class_labels_.columns[0];
         std::map<int, int> class_counts;
-        int n_rows = static_cast<int>(current_table_->GetRowCount());
-        for (int row = 0; row < n_rows; ++row) {
-            auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
-            if (val.has_value()) {
-                int cls = static_cast<int>(val.value());
-                class_counts[cls]++;
-            }
+        for (const auto& label : labels) {
+            if (label) class_counts[*label]++;
         }
 
         for (const auto& [cls, count] : class_counts) {
-            double ratio = static_cast<double>(count) / n_rows * 100;
-            ImGui::BulletText("Class %d: %d (%.1f%%)", cls, count, ratio);
+            double ratio = static_cast<double>(count) / labels.size() * 100;
+            ImGui::BulletText("%s: %d (%.1f%%)", ClassName(cls).c_str(), count, ratio);
         }
     }
+}
+
+std::string CrossValidationPanel::ClassName(int cls) const {
+    return class_labels_.IsText() ? class_labels_.Name(cls) : "Class " + class_labels_.Name(cls);
 }
 
 void CrossValidationPanel::RenderFoldDetails() {
@@ -226,21 +225,19 @@ void CrossValidationPanel::RenderFoldDetails() {
             ImGui::TextWrapped("%s", indices_str.c_str());
 
             // Class distribution in this fold's validation set
-            if (current_table_) {
+            if (!class_labels_.columns.empty()) {
+                const auto& labels = class_labels_.columns[0];
                 std::map<int, int> val_class_counts;
                 for (int idx : fold_splits_[f].second) {
-                    if (idx < static_cast<int>(current_table_->GetRowCount())) {
-                        auto val = DataAnalyzer::ToDouble(current_table_->GetCell(idx, target_column_));
-                        if (val.has_value()) {
-                            val_class_counts[static_cast<int>(val.value())]++;
-                        }
+                    if (idx < static_cast<int>(labels.size()) && labels[idx]) {
+                        val_class_counts[*labels[idx]]++;
                     }
                 }
 
                 ImGui::Text("Validation Class Distribution:");
                 for (const auto& [cls, count] : val_class_counts) {
                     double ratio = static_cast<double>(count) / fold_splits_[f].second.size() * 100;
-                    ImGui::BulletText("Class %d: %d (%.1f%%)", cls, count, ratio);
+                    ImGui::BulletText("%s: %d (%.1f%%)", ClassName(cls).c_str(), count, ratio);
                 }
             }
 
@@ -261,6 +258,7 @@ void CrossValidationPanel::UseTable(std::shared_ptr<DataTable> table) {
     }
 
     fold_splits_.clear();
+    class_labels_ = TableClassLabels{};
     result_ = CrossValidationResult();
     status_message_ = "Data loaded. Configure CV settings.";
 }
@@ -284,20 +282,22 @@ void CrossValidationPanel::RunCrossValidation() {
     compute_thread_ = std::thread([this, n_samples, table = current_table_, target = target_column_, stratified = stratified_,
                                    folds = n_folds_, shuffle = shuffle_, seed = static_cast<unsigned int>(random_seed_)]() {
         std::vector<std::pair<std::vector<int>, std::vector<int>>> splits;
+        TableClassLabels class_labels;
         if (stratified) {
-            // Get labels for stratified split
+            // Stratify on the target's classes, text ("north") or numbers;
+            // rows without a label form their own stratum.
+            class_labels = ReadTableClassLabels(*table, {target});
             std::vector<int> labels;
             labels.reserve(n_samples);
-            for (int row = 0; row < n_samples; ++row) {
-                auto val = DataAnalyzer::ToDouble(table->GetCell(row, target));
-                labels.push_back(val.has_value() ? static_cast<int>(val.value()) : 0);
-            }
+            for (const auto& label : class_labels.columns[0]) labels.push_back(label.value_or(-1));
             splits = ModelEvaluation::StratifiedKFoldSplit(labels, folds, shuffle, seed);
         } else {
             splits = ModelEvaluation::KFoldSplit(n_samples, folds, shuffle, seed);
         }
-        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, splits = std::move(splits), folds]() mutable {
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, splits = std::move(splits),
+                                                               class_labels = std::move(class_labels), folds]() mutable {
             fold_splits_ = std::move(splits);
+            class_labels_ = std::move(class_labels);
             result_.n_folds = folds;
             status_message_ = std::to_string(folds) + " folds generated successfully.";
             is_computing_ = false;

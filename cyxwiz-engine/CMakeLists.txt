@@ -587,6 +587,7 @@ set(ENGINE_SOURCES
     src/gui/panels/regex_tester_panel.cpp
     src/core/nas_evaluator.cpp
     src/core/data_analyzer.cpp
+    src/core/table_class_labels.cpp
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
@@ -5052,6 +5053,25 @@ set_target_properties(test_data_analyzer_distributions PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME data_analyzer_distributions COMMAND test_data_analyzer_distributions)
+
+# ===== Test: class labels read from table columns (TOFIX140 analysis panels) =====
+add_executable(test_table_class_labels
+    tests/test_table_class_labels.cpp
+    src/core/table_class_labels.cpp
+    src/core/data_analyzer.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_table_class_labels PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_table_class_labels PRIVATE spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_table_class_labels PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_table_class_labels PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME table_class_labels COMMAND test_table_class_labels)
 
 # ===== Test: host LinearAlgebra API against torch.linalg (TOFIX140 linear algebra on the device) =====
 set(CYXWIZ_LINEAR_ALGEBRA_PYTORCH_FIXTURE
