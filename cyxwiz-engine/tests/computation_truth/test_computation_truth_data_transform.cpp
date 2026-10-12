@@ -80,7 +80,8 @@ void RunCase(const json& c, const std::string& name) {
         Check(stats.count == e.at("count").get<int>(), name + ": count (" + stats.error_message + ")");
         for (const auto& [field, value] : std::initializer_list<std::pair<const char*, double>>{
                  {"min", stats.min}, {"max", stats.max}, {"mean", stats.mean}, {"std_dev", stats.std_dev},
-                 {"q1", stats.q1}, {"median", stats.median}, {"q3", stats.q3}, {"iqr", stats.iqr}}) {
+                 {"q1", stats.q1}, {"median", stats.median}, {"q3", stats.q3}, {"iqr", stats.iqr},
+                 {"skewness", stats.skewness}}) {
             CheckValue(value, e.at(field).get<double>(), name + " " + field);
         }
         return;

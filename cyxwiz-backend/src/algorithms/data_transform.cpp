@@ -347,6 +347,10 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
         stats.max = af::max<double>(x);
         stats.mean = af::mean<double>(x);
         stats.std_dev = PopulationStd(x);
+        const af::array d = x - stats.mean;
+        const af::array d2 = d * d;
+        const double m2 = af::mean<double>(d2);
+        stats.skewness = m2 > 0.0 ? af::mean<double>(d2 * d) / std::pow(m2, 1.5) : 0.0;
         const std::vector<double> quartiles =
             PercentilesAt(af::sort(x), {0.25, 0.5, 0.75}, "DataTransform::ComputeColumnStats");
         stats.q1 = quartiles[0];

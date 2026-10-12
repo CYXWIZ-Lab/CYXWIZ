@@ -181,17 +181,10 @@ void LogTransformPanel::RenderPreview() {
         ImGui::TableSetupColumn("Transformed Skew");
         ImGui::TableHeadersRow();
 
-        for (size_t trans_idx = 0; trans_idx < transformed_columns_.size() && trans_idx < transformed_stats_.size(); ++trans_idx) {
-            double orig_skew = 0, trans_skew = 0;
-
-            if (trans_idx < transform_result_.transformed_data.size()) {
-                const auto& orig = original_stats_[trans_idx];
-                const auto& trans = transformed_stats_[trans_idx];
-
-                // Approximate skew from stats
-                orig_skew = (orig.mean - orig.median) / (orig.std_dev + 1e-10) * 3;
-                trans_skew = (trans.mean - trans.median) / (trans.std_dev + 1e-10) * 3;
-            }
+        for (size_t trans_idx = 0; trans_idx < transformed_columns_.size() && trans_idx < transformed_stats_.size() &&
+                           trans_idx < original_stats_.size(); ++trans_idx) {
+            const double orig_skew = original_stats_[trans_idx].skewness;
+            const double trans_skew = transformed_stats_[trans_idx].skewness;
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();

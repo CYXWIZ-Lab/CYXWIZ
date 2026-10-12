@@ -33,6 +33,7 @@ struct CYXWIZ_API ColumnStats {
     double q1 = 0.0;  // 25th percentile
     double q3 = 0.0;  // 75th percentile
     double iqr = 0.0; // Interquartile range
+    double skewness = 0.0;  // Moment skewness m3 / m2^1.5 (scipy.stats.skew); 0 for constant data
     int count = 0;
     std::string error_message;
 };

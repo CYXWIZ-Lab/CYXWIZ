@@ -32,9 +32,12 @@ def percentile(x, fractions):
 
 def column_stats(x):
     q = percentile(x, torch.tensor([0.25, 0.5, 0.75]))
+    d = x - x.mean()
+    # Moment skewness m3 / m2^1.5 (scipy.stats.skew, bias=True).
+    skewness = float((d ** 3).mean() / (d ** 2).mean() ** 1.5)
     return {"min": float(x.min()), "max": float(x.max()), "mean": float(x.mean()),
             "std_dev": float(x.std(unbiased=False)), "q1": float(q[0]), "median": float(q[1]),
-            "q3": float(q[2]), "iqr": float(q[2] - q[0]), "count": x.numel()}
+            "q3": float(q[2]), "iqr": float(q[2] - q[0]), "skewness": skewness, "count": x.numel()}
 
 
 def power(x, lam, family):
@@ -149,7 +152,9 @@ def cross_check(cases):
         return
     for c in cases:
         x = np.array(c["inputs"][0]) if c["inputs"] else None
-        if c["op"] == "boxcox_auto":
+        if c["op"] == "stats":
+            assert abs(stats.skew(x) - c["stats"]["skewness"]) < 1e-10, c["label"]
+        elif c["op"] == "boxcox_auto":
             assert abs(stats.boxcox(x)[1] - c["lambda"]) < 1e-6, c["label"]
         elif c["op"] == "yeojohnson_auto":
             assert abs(stats.yeojohnson(x)[1] - c["lambda"]) < 1e-6, c["label"]
@@ -198,7 +203,8 @@ def main():
     def add(op, label, inputs, **expected):
         cases.append({"op": op, "label": label, "inputs": [vec(c) for c in inputs], **expected})
 
-    for label, x in [("normal", normal), ("ties", ties), ("small", small)]:
+    for label, x in [("normal", normal), ("ties", ties), ("small", small), ("skewed", skewed),
+                     ("exponential", exponential)]:
         add("stats", label, [x], stats=column_stats(x))
 
     cols = [normal, skewed, ties]
