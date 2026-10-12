@@ -50,6 +50,7 @@ public:
     void SetTabSize(int size) { doc_.Settings().tab_size = size; }
     void SetKeyboardEnabled(bool enabled) { keyboard_enabled_ = enabled; }
     void SetLanguageIsPython(bool python) { python_ = python; }
+    bool LanguageIsPython() const { return python_; }
     // Soft wrap at the view's width (Up/Down still move by document lines).
     void SetWordWrap(bool wrap) { wrap_ = wrap; }
 

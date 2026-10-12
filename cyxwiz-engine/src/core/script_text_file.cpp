@@ -104,4 +104,11 @@ bool IsNotebookJson(const std::string& path) {
     return ext == ".ipynb";
 }
 
+bool IsPythonSource(const std::string& path) {
+    if (path.empty()) return true;
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return ext == ".py" || ext == ".pyw" || ext == ".cyx" || ext == ".ipynb";
+}
+
 }  // namespace cyxwiz::scriptfile

@@ -74,6 +74,10 @@ scripting::LanguageService::Request ScriptEditorPanel::LanguageRequest(scripting
 
 bool ScriptEditorPanel::LanguageReady() {
     if (!scripting_engine_) return false;
+    // Python tools only for Python files: a CSV showed Python "problems".
+    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) &&
+        !tabs_[active_tab_index_]->cell_mode && !tabs_[active_tab_index_]->editor.LanguageIsPython())
+        return false;
     if (!scripting_engine_->IsInitialized()) {
         // Python starts only with a project; without one, asking every frame
         // (the problems check polls) only logged a warning each time.
