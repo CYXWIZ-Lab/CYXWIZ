@@ -2478,6 +2478,7 @@ MainWindow::MainWindow()
                 ext == ".json" || ext == ".md" || ext == ".csv" ||
                 ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
                 ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+                script_editor_->SetVisible(true);  // a closed Script Editor opens
                 script_editor_->OpenFile(item.absolute_path);
                 spdlog::info("Opened file in script editor: {}", item.name);
             }
