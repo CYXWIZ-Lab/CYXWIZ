@@ -162,7 +162,8 @@ void TestPreviewSourceContract() {
         for (int selected_type : {0, type}) {
             const auto rejected = gui::data_input::LoadDelimitedPreview(
                 "not-opened." + extension, true, ',', selected_type);
-            const auto* expected_reason = (type == 3 || type == 5 || type == 6)
+            // JSON Lines loads (TOFIX143) and previews once applied, like Parquet.
+            const auto* expected_reason = (type == 5 || type == 6)
                 ? "loading is not supported" : "Apply this source first";
             Check(rejected.error.find(expected_reason) != std::string::npos &&
                       rejected.columns.empty() && rejected.rows.empty(),

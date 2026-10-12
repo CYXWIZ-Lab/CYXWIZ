@@ -8,7 +8,7 @@
 TEST_CASE("Data Input runtime formats follow the production source catalog",
           "[pipeline][capabilities][data_input]") {
     const std::set<std::string> expected{
-        "auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"};
+        "auto", "csv", "tsv", "json", "jsonl", "parquet", "feather", "arrow", "ipc", "zip_text"};
     int checked = 0;
     for (const auto& capability : cyxwiz::ResolvePipelineAllowedParameterValues("DataInput")) {
         if (std::string(capability.parameter_name) != "type" &&
