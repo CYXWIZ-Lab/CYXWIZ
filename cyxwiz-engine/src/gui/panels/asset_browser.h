@@ -201,6 +201,7 @@ private:
     std::string preview_path_;
     std::string preview_modified_;
     std::string preview_dataset_name_;
+    std::string preview_registry_name_;  // the registry's name for the file when last read
     assets::FilePeek file_peek_;
     std::vector<std::string> preview_column_types_;
     float preview_side_width_ = 400.0f;

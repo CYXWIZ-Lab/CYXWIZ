@@ -1825,6 +1825,7 @@ void AssetBrowserPanel::RefreshFilePreview(const AssetItem& item) {
     preview_modified_ = item.modified_time;
     preview_dataset_name_.clear();
     preview_column_types_.clear();
+    preview_registry_name_.clear();
     file_peek_ = assets::FilePeek{};
 
     // A dataset a Data Input already loaded: its first rows through the data
@@ -1832,6 +1833,7 @@ void AssetBrowserPanel::RefreshFilePreview(const AssetItem& item) {
     if (IsDatasetFile(item)) {
         auto& registry = DataRegistry::Instance();
         if (auto name = registry.FindTabularDatasetBySourcePath(preview_path_)) {
+            preview_registry_name_ = *name;
             DataPreviewRequest request;
             request.dataset_name = *name;
             request.row_limit = kPreviewRows;
@@ -1857,7 +1859,13 @@ void AssetBrowserPanel::RefreshFilePreview(const AssetItem& item) {
 }
 
 void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& size) {
-    if (preview_path_ != item.absolute_path || preview_modified_ != item.modified_time) RefreshFilePreview(item);
+    bool stale = preview_path_ != item.absolute_path || preview_modified_ != item.modified_time;
+    // A Data Input loading (or dropping) this file changes what the preview shows.
+    if (!stale && IsDatasetFile(item)) {
+        const auto loaded = DataRegistry::Instance().FindTabularDatasetBySourcePath(item.absolute_path);
+        stale = loaded.value_or(std::string()) != preview_registry_name_;
+    }
+    if (stale) RefreshFilePreview(item);
     const ui::Tokens& t = ui::CurrentTokens();
     const assets::FileKind kind = assets::KindOfPath(item.absolute_path, false);
 
