@@ -553,6 +553,28 @@ public:
     // Select a node in the canvas and frame it into view.
     void FocusNode(int node_id);
 
+    // A Subgraph as its Properties view shows it (TOFIX146 D5): its role and
+    // its steps in run order (the live canvas copies while it is expanded).
+    struct SubgraphStep {
+        int id = -1;
+        NodeType type{};
+        std::string name;
+    };
+    struct SubgraphSummary {
+        bool found = false;
+        bool expanded = false;
+        bool recipe = false;            // a Preparation Recipe, not a visual group
+        std::string recipe_contract;    // recipe_contract_version, when a recipe
+        std::vector<SubgraphStep> steps;
+        size_t inputs = 0;
+        size_t outputs = 0;
+    };
+    SubgraphSummary GetSubgraphSummary(int node_id) const;
+    // Applied at the start of the next canvas frame, so a Properties button
+    // never changes the node list while Properties is drawing one of its nodes.
+    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep };
+    void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
+
 private:
     void ShowToolbar();
     // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
@@ -852,6 +874,14 @@ private:
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
     int pending_focus_node_id_ = -1;
+    struct PendingSubgraphRequest {
+        int subgraph_id = -1;
+        SubgraphRequest request = SubgraphRequest::Expand;
+        int step_id = -1;
+        int frames_to_wait = 0;  // newly expanded steps are drawn before they can be selected
+    };
+    PendingSubgraphRequest pending_subgraph_request_;
+    void ApplySubgraphRequest();
 
     // Training animation state
     std::atomic<bool> is_training_{false};

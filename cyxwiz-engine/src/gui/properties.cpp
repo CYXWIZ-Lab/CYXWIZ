@@ -284,6 +284,8 @@ void Properties::Render() {
             // its Details (TOFIX146).
             if (selected_node_->type == NodeType::SQLQuery) {
                 RenderSqlStep(*selected_node_, metadata);
+            } else if (selected_node_->type == NodeType::Subgraph) {
+                RenderSubgraph(*selected_node_, metadata);
             } else {
                 RenderGenericSections(*selected_node_, metadata, is_dialog_only);
             }

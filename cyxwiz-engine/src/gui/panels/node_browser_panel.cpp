@@ -914,7 +914,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     bool hovered = ImGui::IsItemHovered();
     const bool support_blocked = IsSupportBlocked(metadata);
-    const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked;
+    const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked && metadata->made_by.empty();
 
     // Single click pins the node in the Info Panel.
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
@@ -955,6 +955,10 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
             if (!extension && ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
                 registry.ToggleFavorite(metadata->type);
             }
+        } else if (!metadata->made_by.empty()) {
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+            ImGui::TextUnformatted(metadata->made_by.c_str());
+            ImGui::PopTextWrapPos();
         } else if (metadata->IsTemplate()) {
             ImGui::TextDisabled(ICON_FA_CLOCK " Coming Soon");
             if (ImGui::MenuItem(ICON_FA_THUMBS_UP " Vote for this feature")) {
@@ -1287,7 +1291,7 @@ void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
     if (!node_editor_ || !metadata) return;
 
     // Only create nodes that central support metadata says are graph-addable.
-    if (metadata->IsTemplate() || IsSupportBlocked(metadata)) {
+    if (metadata->IsTemplate() || IsSupportBlocked(metadata) || !metadata->made_by.empty()) {
         return;
     }
 

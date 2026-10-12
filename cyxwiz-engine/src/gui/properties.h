@@ -122,6 +122,12 @@ private:
     OpenTableCallback open_table_;
     void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
+
+    // Subgraph (TOFIX146 D5, gui/properties_subgraph.cpp): role, steps in run
+    // order, Expand / Collapse and the role switch, in place of the generic
+    // sections.
+    std::set<int> subgraph_details_open_;
+    void RenderSubgraph(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 };
 
 } // namespace gui

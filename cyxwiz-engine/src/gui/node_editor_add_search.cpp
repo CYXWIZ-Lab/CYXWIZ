@@ -189,6 +189,11 @@ void NodeEditor::InitializeSearchableNodes() {
             node.support_state = support_state->value;
         }
         node.support_reason = FirstSupportBlockReason(meta);
+        if (!meta->made_by.empty()) {
+            // Made another way (a Subgraph from grouping): listed, not added.
+            node.support_blocked = true;
+            node.support_reason = meta->made_by;
+        }
         if (node.support_blocked && !node.support_reason.empty()) {
             node.tooltip = node.support_reason;
         }

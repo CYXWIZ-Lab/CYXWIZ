@@ -314,6 +314,7 @@ set(ENGINE_SOURCES
     src/gui/properties.cpp
     src/gui/properties_sequence_fusion.cpp
     src/gui/properties_sql_step.cpp
+    src/gui/properties_subgraph.cpp
     src/gui/sql_workbench.cpp
     src/gui/sql_workbench_plan.cpp
     src/gui/sql_workbench_editing.cpp

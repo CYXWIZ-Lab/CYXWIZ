@@ -212,6 +212,9 @@ struct NodeMetadata {
     std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta")
     std::vector<SupportAxisDefinition> support_axes;
     NodePropertiesEditor properties_editor = NodePropertiesEditor::Automatic;
+    // Non-empty: the node is made another way, never added from the palette
+    // (a Subgraph comes from grouping nodes); says how to make it.
+    std::string made_by;
 
     // Helper methods
     bool IsTemplate() const { return status == NodeImplementationStatus::Template; }

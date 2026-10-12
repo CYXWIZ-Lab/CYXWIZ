@@ -6,6 +6,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace gui {
@@ -409,6 +410,109 @@ bool NodeEditor::SetSubgraphPreparationRecipe(int node_id, bool recipe) {
         cyxwiz::kPreparationRecipeContractVersion;
     spdlog::info("Subgraph {} is now a Preparation Recipe", node_id);
     return true;
+}
+
+NodeEditor::SubgraphSummary NodeEditor::GetSubgraphSummary(int node_id) const {
+    SubgraphSummary summary;
+    const MLNode* wrapper = FindNodeById(node_id);
+    const SubgraphData* data = nullptr;
+    for (const auto& candidate : subgraphs_) {
+        if (candidate.subgraph_node_id == node_id) data = &candidate;
+    }
+    if (!wrapper || !data || wrapper->type != NodeType::Subgraph) return summary;
+    summary.found = true;
+    summary.expanded = data->expanded;
+    summary.recipe = IsPreparationRecipeNode(node_id);
+    if (const auto it = wrapper->parameters.find(cyxwiz::kRecipeContractParameter);
+        it != wrapper->parameters.end()) {
+        summary.recipe_contract = it->second;
+    }
+    summary.inputs = wrapper->inputs.size();
+    summary.outputs = wrapper->outputs.size();
+
+    // While expanded the steps live on the canvas and the stored copies are
+    // stale until it collapses.
+    std::vector<const MLNode*> members;
+    std::map<int, int> indegree;
+    for (const auto& internal : data->internal_nodes) {
+        const MLNode* live = data->expanded ? FindNodeById(internal.id) : &internal;
+        if (!live) continue;
+        members.push_back(live);
+        indegree[live->id] = 0;
+    }
+    std::map<int, std::vector<int>> next;
+    for (const auto& link : data->expanded ? links_ : data->internal_links) {
+        if (link.from_node == link.to_node || !indegree.count(link.from_node) || !indegree.count(link.to_node)) {
+            continue;
+        }
+        next[link.from_node].push_back(link.to_node);
+        ++indegree[link.to_node];
+    }
+    // Run order: the internal links sorted topologically, ties in stored order;
+    // a cycle (rejected at run time) keeps the rest in stored order.
+    std::vector<bool> placed(members.size(), false);
+    while (summary.steps.size() < members.size()) {
+        size_t pick = members.size();
+        for (size_t i = 0; i < members.size(); ++i) {
+            if (!placed[i] && indegree[members[i]->id] == 0) {
+                pick = i;
+                break;
+            }
+        }
+        if (pick == members.size()) {
+            pick = static_cast<size_t>(std::find(placed.begin(), placed.end(), false) - placed.begin());
+            indegree[members[pick]->id] = 0;
+        }
+        placed[pick] = true;
+        summary.steps.push_back({members[pick]->id, members[pick]->type, members[pick]->name});
+        for (const int to : next[members[pick]->id]) --indegree[to];
+    }
+    return summary;
+}
+
+void NodeEditor::RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id) {
+    pending_subgraph_request_ = {subgraph_id, request, step_id};
+}
+
+void NodeEditor::ApplySubgraphRequest() {
+    if (pending_subgraph_request_.subgraph_id < 0) return;
+    if (pending_subgraph_request_.frames_to_wait > 0) {
+        --pending_subgraph_request_.frames_to_wait;
+        return;
+    }
+    const auto pending = pending_subgraph_request_;
+    pending_subgraph_request_ = {};
+    const int id = pending.subgraph_id;
+    // Expanding adds the steps to the canvas; select one only once ImNodes
+    // has drawn it, or the selection is dropped.
+    const auto expand_then_show = [&](int step_id) {
+        ExpandSubgraph(id);
+        if (step_id >= 0) pending_subgraph_request_ = {id, SubgraphRequest::ShowStep, step_id, 2};
+    };
+    switch (pending.request) {
+        case SubgraphRequest::Expand: {
+            const auto summary = GetSubgraphSummary(id);
+            expand_then_show(summary.steps.empty() ? -1 : summary.steps.front().id);
+            break;
+        }
+        case SubgraphRequest::Collapse:
+            CollapseSubgraph(id);
+            FocusNode(id);
+            break;
+        case SubgraphRequest::MakeRecipe:
+            SetSubgraphPreparationRecipe(id, true);
+            break;
+        case SubgraphRequest::MakeGroup:
+            SetSubgraphPreparationRecipe(id, false);
+            break;
+        case SubgraphRequest::ShowStep:
+            if (const SubgraphData* data = GetSubgraphData(id); data && !data->expanded) {
+                expand_then_show(pending.step_id);
+            } else {
+                FocusNode(pending.step_id);
+            }
+            break;
+    }
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {
