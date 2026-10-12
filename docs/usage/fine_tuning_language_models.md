@@ -127,6 +127,15 @@ Training graph: Data Input (windows) -> Data Loader (Start from, context)
     -> model -> CrossEntropy (ignore_index -100) -> AdamW
 ```
 
+## Seeing answers during training
+
+Data Loader **Generation previews** generate from the current weights after
+chosen epochs. Chat prompts span several lines, so put a line containing only
+`---` between prompts; each prompt then keeps its line breaks. Leave an empty
+line before `---` when the prompt must end with a newline (as after
+`Berean:` above). Without `---`, every line is its own prompt. Up to 8
+prompts, 2048 bytes each.
+
 ## Checking it worked
 
 - The Text Tokenizer output has `__target_mask`, and `__valid_targets` equals
