@@ -7,8 +7,15 @@
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
+#include <algorithm>
 
 namespace cyxwiz {
+
+namespace {
+// Indexed by ScalingMethod.
+constexpr const char* kMethodNames[] = {"Min-Max", "Z-Score", "Robust", "Max-Abs", "Quantile"};
+constexpr int kMethodCount = static_cast<int>(sizeof(kMethodNames) / sizeof(kMethodNames[0]));
+}  // namespace
 
 FeatureScalingPanel::FeatureScalingPanel() : Panel("Feature Scaling", true) {}
 
@@ -91,33 +98,19 @@ void FeatureScalingPanel::RenderMethodTabs() {
     ImGui::Text(ICON_FA_COG " Scaling Method");
     ImGui::Spacing();
 
-    if (ImGui::BeginTabBar("MethodTabs")) {
-        if (ImGui::BeginTabItem("Min-Max")) {
-            selected_method_ = ScalingMethod::MinMax;
-            RenderMinMaxTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Z-Score")) {
-            selected_method_ = ScalingMethod::ZScore;
-            RenderZScoreTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Robust")) {
-            selected_method_ = ScalingMethod::Robust;
-            RenderRobustTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("MaxAbs")) {
-            selected_method_ = ScalingMethod::MaxAbs;
-            RenderMaxAbsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Quantile")) {
-            selected_method_ = ScalingMethod::Quantile;
-            RenderQuantileTab();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+    // A combo, not tabs: five tabs in the settings column were clipped to
+    // "Min-M...", "Z-Scor...".
+    int method_index = static_cast<int>(selected_method_);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::Combo("##method", &method_index, kMethodNames, kMethodCount)) {
+        selected_method_ = static_cast<ScalingMethod>(method_index);
+    }
+    switch (selected_method_) {
+        case ScalingMethod::MinMax: RenderMinMaxTab(); break;
+        case ScalingMethod::ZScore: RenderZScoreTab(); break;
+        case ScalingMethod::Robust: RenderRobustTab(); break;
+        case ScalingMethod::MaxAbs: RenderMaxAbsTab(); break;
+        case ScalingMethod::Quantile: RenderQuantileTab(); break;
     }
 
     ImGui::Spacing();
@@ -237,8 +230,7 @@ void FeatureScalingPanel::RenderPreview() {
     ImGui::Spacing();
 
     // Method name
-    const char* method_names[] = {"Min-Max", "Z-Score", "Robust", "Max-Abs", "Quantile"};
-    ImGui::Text("Method: %s", method_names[static_cast<int>(selected_method_)]);
+    ImGui::Text("Method: %s", kMethodNames[static_cast<int>(selected_method_)]);
 
     // Stats comparison
     if (ImGui::BeginTable("ScalingStats", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX)) {
@@ -343,30 +335,35 @@ void FeatureScalingPanel::RenderComparison() {
     }
 
     // Plot all methods side by side
-    const char* method_names[] = {"Min-Max", "Z-Score", "Robust", "Max-Abs", "Quantile"};
     ScalingMethod methods[] = {ScalingMethod::MinMax, ScalingMethod::ZScore, ScalingMethod::Robust, ScalingMethod::MaxAbs, ScalingMethod::Quantile};
 
-    // Show original
-    if (ImPlot::BeginPlot("##OrigComp", ImVec2(180, 150))) {
+    // The original plus one plot per method, in as many equal columns as fit
+    // (fixed widths ran past the right edge). The original is drawn in the
+    // neutral tone so the five methods keep the five series colours.
+    const int plot_count = kMethodCount + 1;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const int per_row = std::clamp(static_cast<int>((avail + spacing) / (150.0f + spacing)), 1, plot_count);
+    const float plot_width = (avail - spacing * (per_row - 1)) / per_row;
+    for (int p = 0; p < plot_count; ++p) {
+        if (p % per_row != 0) ImGui::SameLine();
+        if (!ImPlot::BeginPlot(("##Method" + std::to_string(p)).c_str(), ImVec2(plot_width, 150))) continue;
         ImPlot::SetupAxes("", "");
-        if (!original_data.empty()) {
-            ImPlot::PlotHistogram("Original", original_data.data(), static_cast<int>(original_data.size()), 20);
-        }
-        ImPlot::EndPlot();
-    }
-
-    for (int m = 0; m < 5; ++m) {
-        ImGui::SameLine();
-        if (ImPlot::BeginPlot(("##Method" + std::to_string(m)).c_str(), ImVec2(130, 150))) {
-            ImPlot::SetupAxes("", "");
+        if (p == 0) {
+            if (!original_data.empty()) {
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.text_dim, 0.7f));
+                ImPlot::PlotHistogram("Original", original_data.data(), static_cast<int>(original_data.size()), 20);
+            }
+        } else {
+            const int m = p - 1;
             auto it = method_results_.find(methods[m]);
             if (it != method_results_.end() && it->second.success && !it->second.transformed_data.empty()) {
                 const auto& data = it->second.transformed_data[0];
                 ImPlot::SetNextFillStyle(ui::WithAlpha(ui::SeriesColour(t, static_cast<size_t>(m)), 0.7f));
-                ImPlot::PlotHistogram(method_names[m], data.data(), static_cast<int>(data.size()), 20);
+                ImPlot::PlotHistogram(kMethodNames[m], data.data(), static_cast<int>(data.size()), 20);
             }
-            ImPlot::EndPlot();
         }
+        ImPlot::EndPlot();
     }
 
     // Summary table
@@ -383,14 +380,14 @@ void FeatureScalingPanel::RenderComparison() {
         ImGui::TableSetupColumn("Range");
         ImGui::TableHeadersRow();
 
-        for (int m = 0; m < 5; ++m) {
+        for (int m = 0; m < kMethodCount; ++m) {
             auto it = method_stats_.find(methods[m]);
             if (it == method_stats_.end()) continue;
             const ColumnStats& stats = it->second;
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", method_names[m]);
+            ImGui::Text("%s", kMethodNames[m]);
             ImGui::TableNextColumn();
             ImGui::Text("%.3f", stats.min);
             ImGui::TableNextColumn();
