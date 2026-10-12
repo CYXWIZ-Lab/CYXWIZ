@@ -5067,6 +5067,8 @@ target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src
 # ===== Test: TrainingExecutor Arrow/Parquet Parity =====
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/test_executor.cpp
     src/core/test_executor_sequence.cpp
     src/core/sequence_arrow_batcher.cpp
