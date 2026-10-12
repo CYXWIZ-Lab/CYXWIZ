@@ -254,6 +254,7 @@ private:
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
+    void LoadCheckpointForTesting();
     void RenderOperationErrorPopup();
     void RenderMaterializationMemoryConfirmationPopup();
     bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,

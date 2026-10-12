@@ -996,183 +996,7 @@ MainWindow::MainWindow()
         spdlog::info("App theme changed: {}", theme_index);
     });
 
-    toolbar_->SetLoadCheckpointCallback([this]() {
-        auto& training = cyxwiz::TrainingManager::Instance();
-        auto& testing = cyxwiz::TestManager::Instance();
-        if (training.IsTrainingActive() || testing.IsTestingActive()) {
-            ShowOperationError("Cannot load checkpoint",
-                "Stop the active training or testing task first.");
-            return;
-        }
-        if (!node_editor_) {
-            ShowOperationError("Cannot load checkpoint", "The node editor is unavailable.");
-            return;
-        }
-        if (node_editor_->GetNodes().empty()) {
-            // The checkpoint's weights are loaded into the model built from the
-            // graph on the canvas; without that graph there is nothing to load into.
-            ShowOperationError("Cannot load checkpoint",
-                "The canvas is empty. Open the graph this checkpoint was trained with, "
-                "Apply its Data Inputs, then load the checkpoint.");
-            return;
-        }
-
-        auto& project = cyxwiz::ProjectManager::Instance();
-        const std::string default_path = project.HasActiveProject()
-            ? project.GetCheckpointsPath()
-            : std::string();
-        auto selected = cyxwiz::FileDialogs::SelectFolder(
-            "Select Checkpoint or Training Run",
-            default_path.empty() ? nullptr : default_path.c_str());
-        if (!selected) {
-            return;
-        }
-
-        const auto nodes = node_editor_->GetNodes();
-        const auto links = node_editor_->GetLinks();
-        BuildCompileResult(nodes, links);
-        if (!compile_result_success_) {
-            compile_result_mode_ = CompileResultMode::Compile;
-            compile_result_message_ =
-                "Cannot load checkpoint: the open graph must compile first. It should be the "
-                "graph the checkpoint was trained with, with its Data Inputs applied.";
-            show_compile_result_popup_ = true;
-            spdlog::error(
-                "LoadCheckpoint: active graph did not pass the compile gate.");
-            return;
-        }
-
-        cyxwiz::TrainingConfiguration config;
-        try {
-            cyxwiz::GraphCompiler compiler;
-            config = compiler.Compile(nodes, links);
-        } catch (const std::exception& exception) {
-            ShowOperationError("Cannot load checkpoint",
-                std::string("Graph compilation failed: ") + exception.what());
-            return;
-        }
-
-        std::ostringstream fingerprint;
-        fingerprint << std::hex << HashGraphStructure(nodes, links);
-        const std::string graph_fingerprint = fingerprint.str();
-        const std::string selected_path = *selected;
-        const std::string materialization_project_root =
-            project.GetProjectRoot();
-        auto load_result =
-            std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
-        std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
-            training_plot_panel_;
-
-        cyxwiz::AsyncTaskManager::Instance().RunAsync(
-            "Load checkpoint for testing",
-            [config = std::move(config), nodes, links, selected_path,
-             graph_fingerprint, load_result,
-             materialization_project_root](cyxwiz::LambdaTask& task) {
-                auto evaluation_config = config;
-                task.ReportProgress(0.05f,
-                                    "Preparing evaluation dataset...");
-                std::string effective_dataset_name =
-                    evaluation_config.dataset_name;
-                if (effective_dataset_name.empty()) {
-                    effective_dataset_name =
-                        evaluation_config.dataset_roles.train.dataset_name;
-                }
-                if (effective_dataset_name.empty()) {
-                    throw std::runtime_error(
-                        "Checkpoint testing cannot resolve the graph's "
-                        "source dataset. Apply the Data Input node first.");
-                }
-
-                auto& registry = cyxwiz::DataRegistry::Instance();
-                cyxwiz::PipelineOperatorExecutionContext materialization_context;
-                materialization_context.cancellation_requested =
-                    [&task]() { return task.ShouldStop(); };
-                const auto materialized =
-                    cyxwiz::PipelineMaterializer::Materialize(
-                        nodes, links, registry, effective_dataset_name,
-                        GraphMaterializationCacheConfig(
-                            materialization_project_root),
-                        [&task](
-                            const cyxwiz::PipelineOperatorProgress& event) {
-                            const float progress =
-                                0.05f + 0.55f *
-                                    std::clamp(event.progress, 0.0f, 1.0f);
-                            task.ReportProgress(
-                                progress,
-                                event.message.empty()
-                                    ? event.stage
-                                    : event.message);
-                        },
-                        std::move(materialization_context));
-                if (materialized.failure_kind ==
-                    cyxwiz::MaterializationFailureKind::Cancelled) {
-                    return;
-                }
-                if (!materialized.success) {
-                    throw std::runtime_error(
-                        "Checkpoint evaluation preprocessing failed: " +
-                        materialized.error_message);
-                }
-                if (!materialized.effective_dataset_name.empty()) {
-                    effective_dataset_name =
-                        materialized.effective_dataset_name;
-                }
-                std::string effective_label =
-                    evaluation_config.dataset_roles.train.label_column.empty()
-                        ? evaluation_config.target.primary_column
-                        : evaluation_config.dataset_roles.train.label_column;
-                evaluation_config.dataset_name = effective_dataset_name;
-                evaluation_config.dataset_roles.train.dataset_name =
-                    effective_dataset_name;
-                evaluation_config.dataset_roles.train.label_column =
-                    effective_label;
-                task.ReportProgress(0.65f, "Inspecting checkpoint...");
-                *load_result = cyxwiz::TrainingManager::Instance()
-                    .LoadCheckpointForEvaluation(
-                        evaluation_config,
-                        cyxwiz::DataRegistry::Instance().GetArrowDataset(
-                            evaluation_config.dataset_name),
-                        selected_path, graph_fingerprint,
-                        [&task]() { return task.IsCancelRequested(); });
-                if (task.IsCancelRequested()) {
-                    return;
-                }
-                if (!load_result->success) {
-                    throw std::runtime_error(load_result->error_message);
-                }
-                task.ReportProgress(1.0f, "Checkpoint loaded for testing");
-            },
-            nullptr,
-            [this, lifetime = std::weak_ptr<int>(test_callback_lifetime_), dashboard, load_result](
-                bool success, const std::string& error) {
-                if (!success || !load_result->success) {
-                    const std::string reason = error.empty() ? load_result->error_message : error;
-                    if (!lifetime.expired()) {
-                        ShowOperationError("Cannot load checkpoint", reason);
-                    } else {
-                        spdlog::error("LoadCheckpoint: {}", reason);
-                    }
-                    return;
-                }
-
-                const bool has_validation =
-                    !load_result->metadata.val_loss_history.empty() ||
-                    !load_result->metadata.val_accuracy_history.empty() ||
-                    load_result->metadata.val_loss != 0.0f ||
-                    load_result->metadata.val_accuracy != 0.0f;
-                if (auto panel = dashboard.lock()) {
-                    panel->SetActiveCheckpointLoaded(
-                        load_result->resolved_checkpoint_path,
-                        load_result->metadata.epoch,
-                        load_result->metadata.val_loss,
-                        load_result->metadata.val_accuracy,
-                        has_validation);
-                    panel->SetVisible(true);
-                }
-                spdlog::info(
-                    "LoadCheckpoint: active model is ready for Tools > Test");
-            });
-    });
+    toolbar_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
 
 
     // Data enters only through Data Input nodes: both open a new one's dialog.
@@ -6505,6 +6329,186 @@ void MainWindow::RenderStatusBar() {
 
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+}
+
+// Train > Load Checkpoint for Testing, also offered by Feature Importance:
+// compiles the graph, prepares its data and makes the checkpoint the active model.
+void MainWindow::LoadCheckpointForTesting() {
+    auto& training = cyxwiz::TrainingManager::Instance();
+    auto& testing = cyxwiz::TestManager::Instance();
+    if (training.IsTrainingActive() || testing.IsTestingActive()) {
+        ShowOperationError("Cannot load checkpoint",
+            "Stop the active training or testing task first.");
+        return;
+    }
+    if (!node_editor_) {
+        ShowOperationError("Cannot load checkpoint", "The node editor is unavailable.");
+        return;
+    }
+    if (node_editor_->GetNodes().empty()) {
+        // The checkpoint's weights are loaded into the model built from the
+        // graph on the canvas; without that graph there is nothing to load into.
+        ShowOperationError("Cannot load checkpoint",
+            "The canvas is empty. Open the graph this checkpoint was trained with, "
+            "Apply its Data Inputs, then load the checkpoint.");
+        return;
+    }
+
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path = project.HasActiveProject()
+        ? project.GetCheckpointsPath()
+        : std::string();
+    auto selected = cyxwiz::FileDialogs::SelectFolder(
+        "Select Checkpoint or Training Run",
+        default_path.empty() ? nullptr : default_path.c_str());
+    if (!selected) {
+        return;
+    }
+
+    const auto nodes = node_editor_->GetNodes();
+    const auto links = node_editor_->GetLinks();
+    BuildCompileResult(nodes, links);
+    if (!compile_result_success_) {
+        compile_result_mode_ = CompileResultMode::Compile;
+        compile_result_message_ =
+            "Cannot load checkpoint: the open graph must compile first. It should be the "
+            "graph the checkpoint was trained with, with its Data Inputs applied.";
+        show_compile_result_popup_ = true;
+        spdlog::error(
+            "LoadCheckpoint: active graph did not pass the compile gate.");
+        return;
+    }
+
+    cyxwiz::TrainingConfiguration config;
+    try {
+        cyxwiz::GraphCompiler compiler;
+        config = compiler.Compile(nodes, links);
+    } catch (const std::exception& exception) {
+        ShowOperationError("Cannot load checkpoint",
+            std::string("Graph compilation failed: ") + exception.what());
+        return;
+    }
+
+    std::ostringstream fingerprint;
+    fingerprint << std::hex << HashGraphStructure(nodes, links);
+    const std::string graph_fingerprint = fingerprint.str();
+    const std::string selected_path = *selected;
+    const std::string materialization_project_root =
+        project.GetProjectRoot();
+    auto load_result =
+        std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
+        training_plot_panel_;
+
+    cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Load checkpoint for testing",
+        [config = std::move(config), nodes, links, selected_path,
+         graph_fingerprint, load_result,
+         materialization_project_root](cyxwiz::LambdaTask& task) {
+            auto evaluation_config = config;
+            task.ReportProgress(0.05f,
+                                "Preparing evaluation dataset...");
+            std::string effective_dataset_name =
+                evaluation_config.dataset_name;
+            if (effective_dataset_name.empty()) {
+                effective_dataset_name =
+                    evaluation_config.dataset_roles.train.dataset_name;
+            }
+            if (effective_dataset_name.empty()) {
+                throw std::runtime_error(
+                    "Checkpoint testing cannot resolve the graph's "
+                    "source dataset. Apply the Data Input node first.");
+            }
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+            cyxwiz::PipelineOperatorExecutionContext materialization_context;
+            materialization_context.cancellation_requested =
+                [&task]() { return task.ShouldStop(); };
+            const auto materialized =
+                cyxwiz::PipelineMaterializer::Materialize(
+                    nodes, links, registry, effective_dataset_name,
+                    GraphMaterializationCacheConfig(
+                        materialization_project_root),
+                    [&task](
+                        const cyxwiz::PipelineOperatorProgress& event) {
+                        const float progress =
+                            0.05f + 0.55f *
+                                std::clamp(event.progress, 0.0f, 1.0f);
+                        task.ReportProgress(
+                            progress,
+                            event.message.empty()
+                                ? event.stage
+                                : event.message);
+                    },
+                    std::move(materialization_context));
+            if (materialized.failure_kind ==
+                cyxwiz::MaterializationFailureKind::Cancelled) {
+                return;
+            }
+            if (!materialized.success) {
+                throw std::runtime_error(
+                    "Checkpoint evaluation preprocessing failed: " +
+                    materialized.error_message);
+            }
+            if (!materialized.effective_dataset_name.empty()) {
+                effective_dataset_name =
+                    materialized.effective_dataset_name;
+            }
+            std::string effective_label =
+                evaluation_config.dataset_roles.train.label_column.empty()
+                    ? evaluation_config.target.primary_column
+                    : evaluation_config.dataset_roles.train.label_column;
+            evaluation_config.dataset_name = effective_dataset_name;
+            evaluation_config.dataset_roles.train.dataset_name =
+                effective_dataset_name;
+            evaluation_config.dataset_roles.train.label_column =
+                effective_label;
+            task.ReportProgress(0.65f, "Inspecting checkpoint...");
+            *load_result = cyxwiz::TrainingManager::Instance()
+                .LoadCheckpointForEvaluation(
+                    evaluation_config,
+                    cyxwiz::DataRegistry::Instance().GetArrowDataset(
+                        evaluation_config.dataset_name),
+                    selected_path, graph_fingerprint,
+                    [&task]() { return task.IsCancelRequested(); });
+            if (task.IsCancelRequested()) {
+                return;
+            }
+            if (!load_result->success) {
+                throw std::runtime_error(load_result->error_message);
+            }
+            task.ReportProgress(1.0f, "Checkpoint loaded for testing");
+        },
+        nullptr,
+        [this, lifetime = std::weak_ptr<int>(test_callback_lifetime_), dashboard, load_result](
+            bool success, const std::string& error) {
+            if (!success || !load_result->success) {
+                const std::string reason = error.empty() ? load_result->error_message : error;
+                if (!lifetime.expired()) {
+                    ShowOperationError("Cannot load checkpoint", reason);
+                } else {
+                    spdlog::error("LoadCheckpoint: {}", reason);
+                }
+                return;
+            }
+
+            const bool has_validation =
+                !load_result->metadata.val_loss_history.empty() ||
+                !load_result->metadata.val_accuracy_history.empty() ||
+                load_result->metadata.val_loss != 0.0f ||
+                load_result->metadata.val_accuracy != 0.0f;
+            if (auto panel = dashboard.lock()) {
+                panel->SetActiveCheckpointLoaded(
+                    load_result->resolved_checkpoint_path,
+                    load_result->metadata.epoch,
+                    load_result->metadata.val_loss,
+                    load_result->metadata.val_accuracy,
+                    has_validation);
+                panel->SetVisible(true);
+            }
+            spdlog::info(
+                "LoadCheckpoint: active model is ready for Tools > Test");
+        });
 }
 
 } // namespace gui
