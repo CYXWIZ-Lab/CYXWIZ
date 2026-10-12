@@ -285,6 +285,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     const BatchCallback on_batch = [&](int epoch, int batch, int total, float loss, float accuracy) {
         ++batches;
         if (callbacks.on_batch) callbacks.on_batch(epoch, batch, total, loss, accuracy);
+        // A pause asked for now holds the next batch: the executor waits at
+        // the top of each batch. The watcher's 200 ms poll alone let batches
+        // run on after the request.
+        if (callbacks.should_pause && !executor->IsPaused() && callbacks.should_pause()) executor->Pause();
     };
     const auto seconds_since = [](std::chrono::steady_clock::time_point start) {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -293,9 +297,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     std::thread watcher;
     if (callbacks.should_cancel || callbacks.should_pause || callbacks.should_stop_with_checkpoint) {
         // Cancel and pause reach the executor from here; it honours both
-        // between batches (Stop, and Pause/Resume via WaitWhilePaused).
+        // between batches (Stop, and Pause/Resume via WaitWhilePaused). The
+        // batch callback can pause too, so the watcher follows the
+        // executor's state rather than its own.
         watcher = std::thread([&] {
-            bool paused = false;
             while (!finished.load()) {
                 if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
@@ -308,13 +313,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                     return;
                 }
                 const bool pause = callbacks.should_pause && callbacks.should_pause();
-                if (pause != paused) {
-                    paused = pause;
-                    if (paused) {
-                        executor->Pause();
-                    } else {
-                        executor->Resume();
-                    }
+                if (pause && !executor->IsPaused()) {
+                    executor->Pause();
+                } else if (!pause && executor->IsPaused()) {
+                    executor->Resume();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
