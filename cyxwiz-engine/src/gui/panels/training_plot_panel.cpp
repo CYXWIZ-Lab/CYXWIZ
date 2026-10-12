@@ -107,7 +107,7 @@ DashColors CurrentDashColors() {
     DashColors c;
     c.window = t.bg_window;
     c.light = t.light;
-    const ImVec4 lift = c.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
+    const ImVec4 lift = t.text_bright;
     c.text = t.text;
     c.muted = t.text_dim;
     c.faint = t.text_faint;
@@ -486,13 +486,14 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
 }
 
 ImVec4 ResidencyVerdictColor(const std::string& verdict) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (verdict == "strict_arrayfire_declared_boundaries") {
-        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        return t.success;
     }
     if (verdict == "terminal_without_residency_pass") {
-        return ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
+        return t.error;
     }
-    return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+    return t.warning;
 }
 
 void RenderExecutionTruthRow(const char* label, const std::string& value) {
@@ -525,21 +526,40 @@ std::string FormatRouteQualification(
 
 } // namespace
 
+namespace {
+// The curves keep their roles in theme colours (series index): training
+// loss coral, validation loss blue, training accuracy green, validation
+// accuracy amber.
+constexpr int kTrainLossColour = 4;
+constexpr int kValLossColour = 1;
+constexpr int kTrainAccuracyColour = 3;
+constexpr int kValAccuracyColour = 2;
+
+// The series dots (metric cards, stats table) use the same theme colours as
+// the curves. Set every frame: the theme can change at any time.
+template <typename Series>
+void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accuracy,
+                        Series& val_accuracy, std::vector<Series>& custom) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    train_loss.color = cyxwiz::ui::SeriesColour(t, kTrainLossColour);
+    val_loss.color = cyxwiz::ui::SeriesColour(t, kValLossColour);
+    train_accuracy.color = cyxwiz::ui::SeriesColour(t, kTrainAccuracyColour);
+    val_accuracy.color = cyxwiz::ui::SeriesColour(t, kValAccuracyColour);
+    for (size_t i = 0; i < custom.size(); ++i) {
+        custom[i].color = cyxwiz::ui::SeriesColour(t, i % 6);
+    }
+}
+}  // namespace
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 
     // Initialize metric series
+    // Colours come from the theme each frame (ApplySeriesColours).
     train_loss_.name = "Training Loss";
-    train_loss_.color = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);  // Coral
-
     val_loss_.name = "Validation Loss";
-    val_loss_.color = ImVec4(0.42f, 0.66f, 1.0f, 1.0f);  // Blue
-
     train_accuracy_.name = "Training Accuracy";
-    train_accuracy_.color = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);  // Green
-
     val_accuracy_.name = "Validation Accuracy";
-    val_accuracy_.color = ImVec4(0.95f, 0.76f, 0.30f, 1.0f);  // Amber
 
     visible_ = true;
     RecordPanelEvent("TrainingPlotPanel.Created");
@@ -556,6 +576,7 @@ void TrainingPlotPanel::Render() {
             last_render_visible_ = false;
         }
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
@@ -573,12 +594,14 @@ void TrainingPlotPanel::Render() {
     if (!expanded) {
         ImGui::End();
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
 
     // Lock data for reading
     std::lock_guard<std::mutex> lock(data_mutex_);
+    ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
 
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
@@ -976,14 +999,7 @@ void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoc
         // Create new metric series
         MetricSeries new_series;
         new_series.name = metric_name;
-        // Generate a unique color based on index
-        float hue = (custom_metrics_.size() * 0.618034f);  // Golden ratio
-        hue = hue - std::floor(hue);  // Wrap to [0, 1]
-        ImGui::ColorConvertHSVtoRGB(hue, 0.7f, 1.0f,
-                                    new_series.color.x,
-                                    new_series.color.y,
-                                    new_series.color.z);
-        new_series.color.w = 1.0f;
+        // Its colour comes from the theme each frame (ApplySeriesColours).
         custom_metrics_.push_back(new_series);
         it = custom_metrics_.end() - 1;
     }
@@ -1578,16 +1594,6 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
 void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
     DrawChart(2, size, fit, in_window);
 }
-
-namespace {
-// The curves keep their roles in theme colours (series index): training
-// loss coral, validation loss blue, training accuracy green, validation
-// accuracy amber.
-constexpr int kTrainLossColour = 4;
-constexpr int kValLossColour = 1;
-constexpr int kTrainAccuracyColour = 3;
-constexpr int kValAccuracyColour = 2;
-}  // namespace
 
 plot::Series TrainingPlotPanel::ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn,
                                              const std::vector<double>& smooth_x, const std::vector<double>& smooth_y,
@@ -2835,8 +2841,8 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     if (truth_open && transfer) {
         ImGui::SeparatorText("Transfer Detail");
         const ImVec4 color = transfer->status == "warning"
-            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-            : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            ? cyxwiz::ui::CurrentTokens().warning
+            : cyxwiz::ui::CurrentTokens().success;
         ImGui::TextColored(color, "Pin-memory transfer");
         if (ImGui::BeginTable(
                 "##pin_memory_transfer_detail",
@@ -2870,7 +2876,7 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 ImGui::SeparatorText("Warnings");
                 rendered_warning_header = true;
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                                "%s", ClassifyTrainingWarning(warning));
             ImGui::SameLine(155.0f);
             ImGui::TextWrapped("%s", warning.c_str());

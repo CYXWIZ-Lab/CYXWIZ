@@ -9,6 +9,7 @@
 #include "../../inference/text_inference_input.h"
 #include "../../inference/language_model_inference_contract.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
@@ -180,7 +181,7 @@ void LanguageModelGenerationPanel::RenderControls() {
             : "Active model: none");
     ImGui::TextDisabled("%s", active_model_status_.c_str());
     if (!has_model) {
-        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.15f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().warning,
                            "%s No trained or imported model available",
                            ICON_FA_TRIANGLE_EXCLAMATION);
     }

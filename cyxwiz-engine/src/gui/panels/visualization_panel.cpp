@@ -1,5 +1,6 @@
 #include "visualization_panel.h"
 #include "../../core/paired_columns.h"
+#include "../ui_tokens.h"
 #include <cyxwiz/stats_utils.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -178,16 +179,16 @@ void VisualizationPanel::RenderHistogramChart() {
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
         // Plot histogram
-        ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.5f, 0.9f, 0.7f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.7f));
         ImPlot::PlotHistogram(col_name.c_str(), data.data(), (int)data.size(), 30);
 
         // Mean line
         double mean_x[] = {mean, mean};
         double mean_y[] = {0, (double)data.size() / 10.0};
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().accent, 2.0f);
         ImPlot::PlotLine("Mean", mean_x, mean_y, 2);
 
-        ImPlot::Annotation(mean, mean_y[1] * 0.8, ImVec4(1,1,1,1), ImVec2(5, -5), true,
+        ImPlot::Annotation(mean, mean_y[1] * 0.8, ui::CurrentTokens().bg_raised, ImVec2(5, -5), true,
                           "Mean: %.2f", mean);
 
         ImPlot::EndPlot();
@@ -226,7 +227,7 @@ void VisualizationPanel::RenderScatterChart() {
         ImPlot::SetupAxes(x_name.c_str(), y_name.c_str(), ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ImVec4(0.2f, 0.6f, 1.0f, 0.8f), IMPLOT_AUTO, ImVec4(0.2f, 0.6f, 1.0f, 1.0f));
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.8f), IMPLOT_AUTO, ui::SeriesColour(ui::CurrentTokens(), 0));
         ImPlot::PlotScatter("Data Points", x_data.data(), y_data.data(), (int)n);
 
         ImPlot::EndPlot();
@@ -254,7 +255,7 @@ void VisualizationPanel::RenderBarChart() {
     if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1, -1), ImPlotFlags_None)) {
         ImPlot::SetupAxes("Row Index", col_name.c_str(), ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 
-        ImPlot::SetNextFillStyle(ImVec4(0.4f, 0.7f, 0.4f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 1), 0.8f));
         ImPlot::PlotBars(col_name.c_str(), data.data(), n, 0.67);
 
         ImPlot::EndPlot();
@@ -310,31 +311,31 @@ void VisualizationPanel::RenderBoxChart() {
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
         // IQR box
-        ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(0.3f, 0.5f, 0.9f, 0.6f));
-        ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
+        ImPlot::PushStyleColor(ImPlotCol_Fill, ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.6f));
+        ImPlot::PushStyleColor(ImPlotCol_Line, ui::SeriesColour(ui::CurrentTokens(), 0));
         double box_x[] = {-0.3, 0.3, 0.3, -0.3, -0.3};
         double box_y[] = {q1, q1, q3, q3, q1};
         ImPlot::PlotLine("IQR Box", box_x, box_y, 5);
         ImPlot::PopStyleColor(2);
 
         // Median line
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 3.0f);
+        ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 1), 3.0f);
         double med_x[] = {-0.3, 0.3};
         double med_y[] = {median, median};
         ImPlot::PlotLine("Median", med_x, med_y, 2);
 
         // Whiskers
-        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().text_dim, 2.0f);
         double whisker_x[] = {0, 0};
         double whisker_lo[] = {lower_whisker, q1};
         ImPlot::PlotLine("##LowerWhisker", whisker_x, whisker_lo, 2);
 
-        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().text_dim, 2.0f);
         double whisker_hi[] = {q3, upper_whisker};
         ImPlot::PlotLine("##UpperWhisker", whisker_x, whisker_hi, 2);
 
         // Whisker caps
-        ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().text_dim, 2.0f);
         double cap_x[] = {-0.15, 0.15};
         double cap_lo[] = {lower_whisker, lower_whisker};
         double cap_hi[] = {upper_whisker, upper_whisker};
@@ -344,7 +345,7 @@ void VisualizationPanel::RenderBoxChart() {
         // Outliers
         if (!outlier_vals.empty()) {
             std::vector<double> outlier_x(outlier_vals.size(), 0.0);
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ImVec4(1.0f, 0.3f, 0.3f, 0.8f));
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ui::WithAlpha(ui::CurrentTokens().error, 0.8f));
             ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_vals.data(), (int)outlier_vals.size());
         }
 

@@ -5,6 +5,7 @@
 #include "../../core/file_dialogs.h"
 #include "../../core/annotation_manager.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -30,19 +31,10 @@ const char* const TARGETS[] = {
     "CPU", "OpenCL", "OpenCL FP16", "CUDA", "CUDA FP16", "Vulkan", "FPGA"
 };
 
-// Class colors for detections (10 distinct colors)
-const ImU32 DNNInferencePanel::CLASS_COLORS[NUM_COLORS] = {
-    IM_COL32(255, 0, 0, 255),      // Red
-    IM_COL32(0, 255, 0, 255),      // Green
-    IM_COL32(0, 0, 255, 255),      // Blue
-    IM_COL32(255, 255, 0, 255),    // Yellow
-    IM_COL32(255, 0, 255, 255),    // Magenta
-    IM_COL32(0, 255, 255, 255),    // Cyan
-    IM_COL32(255, 128, 0, 255),    // Orange
-    IM_COL32(128, 0, 255, 255),    // Purple
-    IM_COL32(0, 255, 128, 255),    // Spring Green
-    IM_COL32(255, 128, 128, 255),  // Coral
-};
+// Class colours for detections come from the theme's category colours.
+static ImU32 ClassColour(size_t index) {
+    return ui::ToU32(ui::SeriesColour(ui::CurrentTokens(), index));
+}
 
 DNNInferencePanel::DNNInferencePanel()
     : Panel("DNN Inference", false) {
@@ -161,9 +153,9 @@ void DNNInferencePanel::RenderModelConfig() {
     }
     ImGui::SameLine();
     if (model_loaded_) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s %s", ICON_FA_CHECK, model_status_.c_str());
+        ImGui::TextColored(ui::CurrentTokens().success, "%s %s", ICON_FA_CHECK, model_status_.c_str());
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, model_status_.c_str());
+        ImGui::TextColored(ui::CurrentTokens().warning, "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, model_status_.c_str());
     }
 }
 
@@ -200,7 +192,7 @@ void DNNInferencePanel::RenderInputSource() {
         dataset_names_ = registry.GetDatasetNames();
 
         if (dataset_names_.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().warning,
                 "No datasets loaded. Load a dataset first.");
         } else {
             // Dataset dropdown
@@ -285,7 +277,7 @@ void DNNInferencePanel::RenderInferenceSettings() {
 
     ImGui::SameLine();
     if (has_results_) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().success,
             "Inference time: %.2f ms", inference_time_ms_);
     }
 }
@@ -311,7 +303,7 @@ void DNNInferencePanel::RenderResults() {
 
 void DNNInferencePanel::RenderResultsImage() {
     if (!has_image_) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "No image loaded. Select an image from file or dataset.");
         return;
     }
@@ -380,7 +372,7 @@ void DNNInferencePanel::RenderResultsList() {
     ImGui::Separator();
 
     if (!has_results_) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No results yet.");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "No results yet.");
         return;
     }
 
@@ -389,7 +381,7 @@ void DNNInferencePanel::RenderResultsList() {
         if (ImGui::CollapsingHeader("Object Detections", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (size_t i = 0; i < detections_.size(); i++) {
                 const auto& det = detections_[i];
-                ImU32 color = CLASS_COLORS[det.class_id % NUM_COLORS];
+                ImU32 color = ClassColour(static_cast<size_t>(det.class_id));
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
                 ImGui::BulletText("#%zu: %s (%.1f%%)",
                     i + 1,
@@ -477,7 +469,7 @@ void DNNInferencePanel::RenderActions() {
     if (!model_loaded_ || input_source_ != InputSource::Dataset || selected_dataset_idx_ < 0) {
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "(Requires model + dataset)");
     }
 }
@@ -676,7 +668,7 @@ void DNNInferencePanel::DrawDetectionBoxes(ImDrawList* draw_list, ImVec2 img_min
         float x2 = x1 + det.width * img_w;
         float y2 = y1 + det.height * img_h;
 
-        ImU32 color = CLASS_COLORS[det.class_id % NUM_COLORS];
+        ImU32 color = ClassColour(static_cast<size_t>(det.class_id));
 
         // Draw box
         draw_list->AddRect(ImVec2(x1, y1), ImVec2(x2, y2), color, 0.0f, 0, box_thickness_);
@@ -696,10 +688,10 @@ void DNNInferencePanel::DrawDetectionBoxes(ImDrawList* draw_list, ImVec2 img_min
             draw_list->AddRectFilled(
                 ImVec2(x1, y1 - text_size.y - 2),
                 ImVec2(x1 + text_size.x + 4, y1),
-                IM_COL32(0, 0, 0, 180)
+                ui::ToU32(ui::WithAlpha(ui::CurrentTokens().bg_window, 0.7f))
             );
             draw_list->AddText(ImVec2(x1 + 2, y1 - text_size.y - 1),
-                IM_COL32(255, 255, 255, 255), label.c_str());
+                ui::ToU32(ui::CurrentTokens().text_bright), label.c_str());
         }
     }
 }
@@ -716,7 +708,7 @@ void DNNInferencePanel::DrawFaceBoxes(ImDrawList* draw_list, ImVec2 img_min, ImV
         float x2 = x1 + face.width * img_w;
         float y2 = y1 + face.height * img_h;
 
-        ImU32 color = CLASS_COLORS[i % NUM_COLORS];
+        ImU32 color = ClassColour(i);
 
         draw_list->AddRect(ImVec2(x1, y1), ImVec2(x2, y2), color, 0.0f, 0, box_thickness_);
 
@@ -728,10 +720,10 @@ void DNNInferencePanel::DrawFaceBoxes(ImDrawList* draw_list, ImVec2 img_min, ImV
             draw_list->AddRectFilled(
                 ImVec2(x1, y1 - text_size.y - 2),
                 ImVec2(x1 + text_size.x + 4, y1),
-                IM_COL32(0, 0, 0, 180)
+                ui::ToU32(ui::WithAlpha(ui::CurrentTokens().bg_window, 0.7f))
             );
             draw_list->AddText(ImVec2(x1 + 2, y1 - text_size.y - 1),
-                IM_COL32(255, 255, 255, 255), label);
+                ui::ToU32(ui::CurrentTokens().text_bright), label);
         }
 
         // Draw landmarks if available
@@ -740,7 +732,7 @@ void DNNInferencePanel::DrawFaceBoxes(ImDrawList* draw_list, ImVec2 img_min, ImV
             for (size_t j = 0; j < face.landmarks.size(); j += 2) {
                 float lx = img_min.x + face.landmarks[j] * img_w;
                 float ly = img_min.y + face.landmarks[j + 1] * img_h;
-                draw_list->AddCircleFilled(ImVec2(lx, ly), 3.0f, IM_COL32(0, 255, 0, 255));
+                draw_list->AddCircleFilled(ImVec2(lx, ly), 3.0f, ui::ToU32(ui::CurrentTokens().accent));
             }
         }
     }
@@ -752,7 +744,7 @@ void DNNInferencePanel::DrawPoseKeypoints(ImDrawList* draw_list, ImVec2 img_min,
 
     for (size_t p = 0; p < poses_.size(); p++) {
         const auto& pose = poses_[p];
-        ImU32 color = CLASS_COLORS[p % NUM_COLORS];
+        ImU32 color = ClassColour(p);
 
         // Draw keypoints
         for (const auto& kp : pose.keypoints) {

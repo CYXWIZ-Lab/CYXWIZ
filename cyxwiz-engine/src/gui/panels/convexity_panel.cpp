@@ -1,5 +1,6 @@
 #include "convexity_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -87,16 +88,17 @@ void ConvexityPanel::RenderToolbar() {
     ImGui::SameLine();
 
     if (has_result_) {
+        const ui::Tokens& t = ui::CurrentTokens();
         if (result_.is_strictly_convex) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), ICON_FA_CHECK " Strictly Convex");
+            ImGui::TextColored(t.success, ICON_FA_CHECK " Strictly Convex");
         } else if (result_.is_convex) {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Convex");
+            ImGui::TextColored(t.success, ICON_FA_CHECK " Convex");
         } else if (result_.is_strictly_concave) {
-            ImGui::TextColored(ImVec4(0.2f, 0.2f, 0.8f, 1.0f), ICON_FA_ARROW_DOWN " Strictly Concave");
+            ImGui::TextColored(t.info, ICON_FA_ARROW_DOWN " Strictly Concave");
         } else if (result_.is_concave) {
-            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.8f, 1.0f), ICON_FA_ARROW_DOWN " Concave");
+            ImGui::TextColored(t.info, ICON_FA_ARROW_DOWN " Concave");
         } else {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), ICON_FA_XMARK " Non-Convex");
+            ImGui::TextColored(t.warning, ICON_FA_XMARK " Non-Convex");
         }
     }
 }
@@ -218,7 +220,7 @@ void ConvexityPanel::RenderResults() {
 
 void ConvexityPanel::RenderHessianMatrix() {
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Click 'Analyze' to compute Hessian matrix");
         return;
     }
@@ -259,7 +261,7 @@ void ConvexityPanel::RenderHessianMatrix() {
 
     ImGui::Spacing();
     ImGui::Text("Interpretation:");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     ImGui::TextWrapped("The Hessian matrix contains second-order partial derivatives. "
                        "Its eigenvalues determine convexity: all positive = convex, "
                        "all negative = concave, mixed = saddle point.");
@@ -268,7 +270,7 @@ void ConvexityPanel::RenderHessianMatrix() {
 
 void ConvexityPanel::RenderEigenvalues() {
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Click 'Analyze' to compute eigenvalues");
         return;
     }
@@ -280,11 +282,11 @@ void ConvexityPanel::RenderEigenvalues() {
         double ev = result_.eigenvalues[i];
         ImVec4 color;
         if (ev > 1e-10) {
-            color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); // Positive - green
+            color = ui::CurrentTokens().success; // Positive
         } else if (ev < -1e-10) {
-            color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f); // Negative - red
+            color = ui::CurrentTokens().error; // Negative
         } else {
-            color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f); // Zero - yellow
+            color = ui::CurrentTokens().warning; // Zero
         }
 
         ImGui::TextColored(color, "lambda_%zu = %.6f", i + 1, ev);
@@ -315,7 +317,7 @@ void ConvexityPanel::RenderEigenvalues() {
             // Draw zero line
             double zero_x[2] = { -0.5, static_cast<double>(result_.eigenvalues.size()) - 0.5 };
             double zero_y[2] = { 0.0, 0.0 };
-            ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 1.0f);
+            ImPlot::SetNextLineStyle(ui::CurrentTokens().text_faint, 1.0f);
             ImPlot::PlotLine("Zero", zero_x, zero_y, 2);
 
             ImPlot::EndPlot();
@@ -353,7 +355,7 @@ void ConvexityPanel::RenderSurfacePlot() {
 
         // Mark analysis point
         if (has_result_) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 12, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 12, ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotScatter("Analysis Point", &point_x_, &point_y_, 1);
         }
 
@@ -364,7 +366,7 @@ void ConvexityPanel::RenderSurfacePlot() {
                 sx.push_back(pt.first);
                 sy.push_back(pt.second);
             }
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6, ImVec4(1.0f, 1.0f, 0.0f, 0.8f), 1.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6, ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 1), 0.8f), 1.0f);
             ImPlot::PlotScatter("Sample Points", sx.data(), sy.data(), static_cast<int>(sx.size()));
         }
 
@@ -376,7 +378,7 @@ void ConvexityPanel::RenderAnalysisText() {
     ImGui::Text(ICON_FA_CHART_PIE " Analysis:");
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", result_.error_message.c_str());
         return;
     }
 

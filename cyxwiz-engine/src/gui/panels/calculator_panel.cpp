@@ -1,5 +1,6 @@
 #include "calculator_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -130,7 +131,7 @@ void CalculatorPanel::RenderExpressionInput() {
 
 void CalculatorPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -144,7 +145,7 @@ void CalculatorPanel::RenderResults() {
     ImGui::Text(ICON_FA_EQUALS " Result:");
 
     // Display result with large font
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
 
     std::ostringstream oss;
     oss << std::setprecision(precision_) << std::fixed << result_.result;
@@ -345,7 +346,7 @@ void CalculatorPanel::RenderHistory() {
 
         ImGui::Text("%s = ", entry.first.c_str());
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
         ImGui::Text("%.10g", entry.second);
         ImGui::PopStyleColor();
 

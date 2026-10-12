@@ -2,6 +2,7 @@
 #include "../../core/test_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../theme.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -67,7 +68,7 @@ void TestResultsPanel::Render() {
                 causal_lm_mode = results_.causal_lm_mode;
             }
             if (failed) {
-                ImGui::TextColored(ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
+                ImGui::TextColored(ui::CurrentTokens().error,
                                    "Test failed");
                 ImGui::Separator();
                 ImGui::TextWrapped("%s", failure_message.c_str());
@@ -340,12 +341,12 @@ void TestResultsPanel::RenderOverviewTab() {
 
         ImGui::Text("Best Class:");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s (F1: %.4f)",
+        ImGui::TextColored(ui::CurrentTokens().success, "%s (F1: %.4f)",
                            results_.per_class_metrics[best_class].class_name.c_str(), best_f1);
 
         ImGui::Text("Worst Class:");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s (F1: %.4f)",
+        ImGui::TextColored(ui::CurrentTokens().error, "%s (F1: %.4f)",
                            results_.per_class_metrics[worst_class].class_name.c_str(), worst_f1);
     }
 
@@ -402,12 +403,14 @@ void TestResultsPanel::RenderConfusionMatrixTab() {
             ImVec4 bg_color = GetConfusionCellColor(value, max_value);
             if (i == j) {
                 // Diagonal cells - good predictions
-                bg_color = ImVec4(0.1f, 0.5f + 0.5f * (static_cast<float>(value) / max_value), 0.1f, 1.0f);
+                bg_color = ui::Mix(ui::CurrentTokens().bg_raised, ui::CurrentTokens().success,
+                                   0.5f + 0.5f * (static_cast<float>(value) / max_value));
             }
 
             ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg_color);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg_color);
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::ReadableOn(ui::CurrentTokens(), bg_color));
 
             char label[32];
             if (normalize_confusion_) {
@@ -419,7 +422,7 @@ void TestResultsPanel::RenderConfusionMatrixTab() {
             ImGui::SetCursorPosX((j + 1) * (cell_size_ + 5) + 30);
             ImGui::Button(label, ImVec2(cell_size_, cell_size_));
 
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             // Tooltip
             if (ImGui::IsItemHovered()) {
@@ -572,9 +575,9 @@ void TestResultsPanel::RenderPredictionsTab() {
                 // Predicted
                 ImGui::TableNextColumn();
                 if (correct) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%d", pred);
+                    ImGui::TextColored(ui::CurrentTokens().success, "%d", pred);
                 } else {
-                    ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%d", pred);
+                    ImGui::TextColored(ui::CurrentTokens().error, "%d", pred);
                 }
 
                 // Actual
@@ -583,9 +586,10 @@ void TestResultsPanel::RenderPredictionsTab() {
 
                 // Confidence bar
                 ImGui::TableNextColumn();
-                ImVec4 conf_color = conf > 0.8f ? ImVec4(0.2f, 0.7f, 0.2f, 1.0f) :
-                                    conf > 0.5f ? ImVec4(0.7f, 0.7f, 0.2f, 1.0f) :
-                                                  ImVec4(0.7f, 0.3f, 0.2f, 1.0f);
+                const ui::Tokens& t = ui::CurrentTokens();
+                ImVec4 conf_color = conf > 0.8f ? t.success :
+                                    conf > 0.5f ? t.warning :
+                                                  t.caution;
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, conf_color);
                 ImGui::ProgressBar(conf, ImVec2(-1, 0), "");
                 ImGui::PopStyleColor();
@@ -599,24 +603,27 @@ void TestResultsPanel::RenderPredictionsTab() {
 }
 
 ImVec4 TestResultsPanel::GetAccuracyColor(float accuracy) {
-    if (accuracy >= 0.95f) return ImVec4(0.2f, 0.9f, 0.2f, 1.0f);  // Green
-    if (accuracy >= 0.85f) return ImVec4(0.5f, 0.9f, 0.2f, 1.0f);  // Yellow-green
-    if (accuracy >= 0.70f) return ImVec4(0.9f, 0.9f, 0.2f, 1.0f);  // Yellow
-    if (accuracy >= 0.50f) return ImVec4(0.9f, 0.6f, 0.2f, 1.0f);  // Orange
-    return ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (accuracy >= 0.95f) return t.success;
+    if (accuracy >= 0.85f) return ui::Mix(t.success, t.warning, 0.5f);
+    if (accuracy >= 0.70f) return t.warning;
+    if (accuracy >= 0.50f) return t.caution;
+    return t.error;
 }
 
 ImVec4 TestResultsPanel::GetMetricColor(float value) {
-    if (value >= 0.9f) return ImVec4(0.2f, 0.9f, 0.2f, 1.0f);
-    if (value >= 0.7f) return ImVec4(0.9f, 0.9f, 0.2f, 1.0f);
-    if (value >= 0.5f) return ImVec4(0.9f, 0.6f, 0.2f, 1.0f);
-    return ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (value >= 0.9f) return t.success;
+    if (value >= 0.7f) return t.warning;
+    if (value >= 0.5f) return t.caution;
+    return t.error;
 }
 
 ImVec4 TestResultsPanel::GetConfusionCellColor(int value, int max_value) {
-    if (max_value == 0) return ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (max_value == 0) return t.bg_raised;
     float intensity = static_cast<float>(value) / max_value;
-    return ImVec4(0.3f + 0.5f * intensity, 0.2f, 0.2f, 1.0f);
+    return ui::Mix(t.bg_raised, t.error, 0.3f + 0.5f * intensity);
 }
 
 void TestResultsPanel::ExportToCSV() {
@@ -710,7 +717,7 @@ void TestResultsPanel::RenderComparisonTab() {
             const bool better = r.lower_is_better ? delta < 0.0f : delta > 0.0f;
             const bool same = delta == 0.0f;
             const ImVec4 colour = same ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                                       : (better ? ImVec4(0.24f, 0.84f, 0.55f, 1.0f) : ImVec4(0.96f, 0.63f, 0.29f, 1.0f));
+                                       : (better ? ui::CurrentTokens().success : ui::CurrentTokens().caution);
             ImGui::TextColored(colour, r.percent ? "%+.2f%%" : "%+.4f", delta);
         }
         ImGui::EndTable();

@@ -1,5 +1,6 @@
 #include "hyperparam_search_panel.h"
 #include "gui/icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -195,7 +196,7 @@ void HyperparamSearchPanel::RenderSearchConfig() {
     if (config_.strategy == SearchStrategy::Grid && !config_.space.parameters.empty()) {
         ImGui::SameLine();
         size_t total = config_.space.GetTotalCombinations();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Grid search will run %zu trials", total);
     }
 }
@@ -222,7 +223,7 @@ void HyperparamSearchPanel::RenderParameterSpace() {
 
     // Parameter list
     if (config_.space.parameters.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "No parameters defined. Click 'Add Parameter' to start.");
     } else {
         if (ImGui::BeginTable("ParameterTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
@@ -288,11 +289,11 @@ void HyperparamSearchPanel::RenderProgress() {
 
     // Status
     if (is_running_) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_CIRCLE " Running");
+        ImGui::TextColored(ui::CurrentTokens().running, ICON_FA_CIRCLE " Running");
     } else if (search_engine_->IsComplete()) {
-        ImGui::TextColored(ImVec4(0.3f, 0.5f, 0.8f, 1.0f), ICON_FA_CHECK " Complete");
+        ImGui::TextColored(ui::CurrentTokens().success, ICON_FA_CHECK " Complete");
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE " Idle");
+        ImGui::TextColored(ui::CurrentTokens().pending, ICON_FA_CIRCLE " Idle");
     }
 
     ImGui::Spacing();
@@ -337,7 +338,7 @@ void HyperparamSearchPanel::RenderProgress() {
             }
         }
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No results yet");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "No results yet");
     }
 
     ImGui::Spacing();
@@ -376,7 +377,7 @@ void HyperparamSearchPanel::RenderResults() {
     ImGui::Spacing();
 
     if (cached_results_.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "No results yet. Start a search to see results here.");
         return;
     }
@@ -429,7 +430,7 @@ void HyperparamSearchPanel::RenderResults() {
 
             // Highlight best result
             if (result.trial_id == best_trial_id_) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(50, 100, 50, 100));
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ui::ToU32(ui::WithAlpha(ui::CurrentTokens().success, 0.25f)));
             }
 
             ImGui::TableSetColumnIndex(0);
@@ -449,9 +450,9 @@ void HyperparamSearchPanel::RenderResults() {
 
             ImGui::TableSetColumnIndex(5);
             if (result.completed) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_CHECK);
+                ImGui::TextColored(ui::CurrentTokens().success, ICON_FA_CHECK);
             } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), ICON_FA_XMARK);
+                ImGui::TextColored(ui::CurrentTokens().error, ICON_FA_XMARK);
             }
         }
 
