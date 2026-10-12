@@ -10,6 +10,7 @@
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
 #include "core/sql_step_presentation.h"
+#include "core/guided_sql.h"
 #include "core/sql_plan.h"
 #include "core/sql_transform.h"
 #include "core/table_profile.h"
@@ -1013,6 +1014,174 @@ void CheckSqlPartQueries() {
     std::cout << "SQL part queries passed\n";
 }
 
+void CheckGuidedOperations() {
+    // TOFIX146 step 5: every guided operation's SQL runs in the step's
+    // read-only DuckDB and does what its summary says.
+    using json = nlohmann::json;
+    const auto strings = [](std::vector<std::string> values) {
+        arrow::StringBuilder b;
+        for (const auto& v : values) Check(b.Append(v).ok(), "string");
+        std::shared_ptr<arrow::Array> a;
+        Check(b.Finish(&a).ok(), "finish");
+        return a;
+    };
+    const auto ints = [](std::vector<int64_t> values) {
+        arrow::Int64Builder b;
+        for (const auto v : values) Check(b.Append(v).ok(), "int");
+        std::shared_ptr<arrow::Array> a;
+        Check(b.Finish(&a).ok(), "finish");
+        return a;
+    };
+    auto sermons = arrow::Table::Make(
+        arrow::schema({arrow::field("sermon_id", arrow::utf8()), arrow::field("title", arrow::utf8()),
+                       arrow::field("book_code", arrow::utf8()), arrow::field("chapter", arrow::int64()),
+                       arrow::field("text", arrow::utf8()), arrow::field("word_count", arrow::int64()),
+                       arrow::field("split", arrow::utf8())}),
+        {strings({"S1", "S2", "S3", "S4", "S5"}),
+         strings({"The Immutability of God", "The Remembrance of Christ", "Two Coverings", "Sons of Jacob", "The Sin of Unbelief"}),
+         strings({"MAL", "1CO", "PRO", "MAL", "2KI"}), ints({3, 11, 38, 3, 7}),
+         strings({"First para _italic_ [1].\n\nSecond para.\n\n\nThird", "One\n\nTwo", "START body END tail", "Only one", "A. B! C?"}),
+         ints({6459, 4000, 7000, 5200, 6000}), strings({"unassigned", "unassigned", "unassigned", "unassigned", "unassigned"})});
+    auto manifest = arrow::Table::Make(
+        arrow::schema({arrow::field("partition_document_id", arrow::utf8()), arrow::field("split", arrow::utf8())}),
+        {strings({"MAL 3:1", "1CO 11:1", "2KI 7:1"}), strings({"train", "validation", "test"})});
+
+    cyxwiz::guided::Context context;
+    context.inputs = {"sermons", "manifest"};
+    for (const auto& table : {std::make_pair(std::string("sermons"), sermons), std::make_pair(std::string("manifest"), manifest)}) {
+        for (const auto& field : table.second->schema()->fields()) {
+            context.columns[table.first].push_back(field->name());
+            if (arrow::is_integer(field->type()->id())) context.whole_number_columns.insert(field->name());
+        }
+    }
+    cyxwiz::SqlTransform transform;
+    const auto run = [&](const cyxwiz::guided::GuidedStep& step) {
+        const auto generated = cyxwiz::guided::GenerateSql(step, context);
+        Check(generated.ok, "guided step generates");
+        return transform.Run(generated.sql, {{"sermons", sermons}, {"manifest", manifest}});
+    };
+    const auto one = [&](const char* type, json params) {
+        cyxwiz::guided::GuidedStep step;
+        step.ops.push_back({type, true, std::move(params)});
+        const auto result = run(step);
+        Check(result.ok, std::string(type) + " runs: " + result.error);
+        return result.table;
+    };
+    const auto cell = [](const std::shared_ptr<arrow::Table>& table, const char* column, int64_t row) {
+        auto scalar = table->GetColumnByName(column)->GetScalar(row);
+        return scalar.ok() && (*scalar)->is_valid ? (*scalar)->ToString() : std::string("<null>");
+    };
+
+    // Board 3's example: look up the chapter's split, keep matched long
+    // sermons, choose and rename columns, check.
+    {
+        cyxwiz::guided::GuidedStep step;
+        step.ops.push_back({"look_up", true, {{"table", "manifest"},
+                            {"key", json::array({{{"kind", "column"}, {"value", "book_code"}}, {{"kind", "text"}, {"value", " "}},
+                                                 {{"kind", "column"}, {"value", "chapter"}}, {{"kind", "text"}, {"value", ":1"}}})},
+                            {"other_key", "partition_document_id"},
+                            {"bring", json::array({{{"column", "split"}, {"as", "chapter_split"}}})}, {"no_match", "keep"}}});
+        step.ops.push_back({"keep_rows", true, {{"match", "all"}, {"conditions", json::array({
+                            {{"column", "chapter_split"}, {"op", "is not empty"}, {"value", ""}},
+                            {{"column", "word_count"}, {"op", "at least"}, {"value", "5000"}}})}}});
+        step.ops.push_back({"choose_columns", true, {{"columns", json::array({
+                            {{"name", "sermon_id"}, {"keep", true}}, {{"name", "word_count"}, {"keep", true}},
+                            {{"name", "split"}, {"keep", false}}, {{"name", "chapter_split"}, {"keep", true}, {"rename", "split"}}})}}});
+        step.ops.push_back({"add_checks", true, {{"checks", json::array({
+                            {{"kind", "allowed_values"}, {"column", "split"}, {"values", "train, validation, test"}},
+                            {{"kind", "unique"}, {"column", "sermon_id"}}, {{"kind", "row_count"}, {"exact", "3"}}})}}});
+        const auto result = run(step);
+        Check(result.ok && result.table->num_rows() == 3 && result.table->num_columns() == 3,
+              "board 3 example: 3 rows x 3 columns: " + result.error);
+        if (result.ok) {
+            Check(cell(result.table, "sermon_id", 0) == "S1" && cell(result.table, "split", 0) == "train" &&
+                      cell(result.table, "sermon_id", 2) == "S5" && cell(result.table, "split", 2) == "test",
+                  "matched splits");
+        }
+        // Rows after each operation, as the Workbench counts them.
+        const auto generated = cyxwiz::guided::GenerateSql(step, context);
+        const auto outline = cyxwiz::sqlstep::OutlineSqlQuery(generated.sql);
+        const auto counts = transform.Run(cyxwiz::sqlstep::PartCountsQuery(generated.sql, outline), {{"sermons", sermons}, {"manifest", manifest}});
+        Check(counts.ok && counts.table->num_rows() == 5, "rows after each operation: " + counts.error);
+        if (counts.ok) {
+            const auto rows = std::static_pointer_cast<arrow::Int64Array>(counts.table->GetColumnByName("row_count")->chunk(0));
+            Check(rows->Value(0) == 5 && rows->Value(1) == 3 && rows->Value(4) == 3, "5 looked up, 3 kept, 3 out");
+        }
+        // A failing check stops the step with its message.
+        step.ops[3].params["checks"][2]["exact"] = "4";
+        const auto failing = run(step);
+        Check(!failing.ok && failing.error.find("expected exactly 4 rows, found 3") != std::string::npos,
+              "a failing check stops the step: " + failing.error);
+        step.ops[0].params["no_match"] = "stop";
+        step.ops[3].params["checks"][2]["exact"] = "3";
+        const auto stopped = run(step);
+        Check(!stopped.ok && stopped.error.find("1 row(s) have no match in manifest; the first is PRO 38:1") != std::string::npos,
+              "no match stops the step and names the key: " + stopped.error);
+    }
+
+    // Every operation on its own.
+    auto t = one("keep_rows", {{"match", "any"}, {"conditions", json::array({{{"column", "book_code"}, {"op", "is one of"}, {"value", "MAL, PRO"}},
+                                                                              {{"column", "title"}, {"op", "starts with"}, {"value", "The Sin"}}})}});
+    Check(t && t->num_rows() == 4, "keep rows (any): 4");
+    t = one("remove_duplicates", {{"columns", json::array({"book_code"})}});
+    Check(t && t->num_rows() == 4 && cell(t, "sermon_id", 3) == "S5", "remove duplicates by book keeps the first: 4");
+    t = one("sort_rows", {{"keys", json::array({{{"column", "word_count"}, {"descending", true}}})}});
+    Check(t && cell(t, "sermon_id", 0) == "S3", "sort high to low");
+    t = one("keep_first", {{"mode", "first"}, {"count", "2"}});
+    Check(t && t->num_rows() == 2, "first 2");
+    t = one("keep_first", {{"mode", "sample"}, {"count", "2"}});
+    Check(t && t->num_rows() == 2, "sample 2");
+    t = one("keep_first", {{"mode", "every"}, {"count", "2"}});
+    Check(t && t->num_rows() == 3 && cell(t, "sermon_id", 1) == "S3", "every 2nd: S1, S3, S5");
+    t = one("add_column", {{"name", "words"}, {"formula", "word count"}, {"column", "title"}});
+    Check(t && cell(t, "words", 0) == "4", "word count of a title");
+    t = one("add_column", {{"name", "thousands"}, {"formula", "arithmetic"}, {"column", "word_count"}, {"operator", "/"}, {"value", "1000"}});
+    Check(t && cell(t, "thousands", 0).rfind("6.459", 0) == 0, "arithmetic: " + (t ? cell(t, "thousands", 0) : std::string()));
+    t = one("add_column", {{"name", "long"}, {"formula", "condition"}, {"condition", {{"column", "word_count"}, {"op", "at least"}, {"value", "6000"}}},
+                           {"then", "long"}, {"else", "short"}});
+    Check(t && cell(t, "long", 0) == "long" && cell(t, "long", 1) == "short", "condition column");
+    t = one("change_type", {{"column", "chapter"}, {"to", "text"}, {"on_error", "empty"}});
+    Check(t && t->schema()->GetFieldByName("chapter")->type()->id() == arrow::Type::STRING, "change type to text");
+    t = one("split_merge", {{"mode", "split"}, {"column", "title"}, {"separator", " "}, {"names", json::array({"first_word", "second_word"})}});
+    Check(t && cell(t, "second_word", 0) == "Immutability", "split a column");
+    t = one("split_merge", {{"mode", "merge"}, {"columns", json::array({"book_code", "chapter"})}, {"separator", " "}, {"name", "ref"}});
+    Check(t && cell(t, "ref", 0) == "MAL 3", "merge columns");
+    t = one("clean_text", {{"column", "text"}, {"trim", true}, {"collapse_spaces", true}, {"remove_markup", true}, {"remove_footnote_marks", true}, {"case", "unchanged"}});
+    Check(t && cell(t, "text", 0) == "First para italic. Second para. Third", "clean text: " + (t ? cell(t, "text", 0) : std::string()));
+    t = one("find_replace", {{"column", "title"}, {"find", "the"}, {"replace", "a"}, {"pattern", false}, {"match_case", false}});
+    Check(t && cell(t, "title", 0) == "a Immutability of God", "find and replace, any case");
+    t = one("keep_between", {{"column", "text"}, {"start", "START"}, {"end", "END"}, {"keep_markers", false}, {"if_missing", "keep"}});
+    Check(t && cell(t, "text", 2) == " body " && cell(t, "text", 3) == "Only one", "keep between markers; rows without them kept");
+    t = one("split_into_rows", {{"column", "text"}, {"by", "paragraphs"}, {"index_name", "text_index"}, {"drop_empty", true}});
+    Check(t && t->num_rows() == 8 && cell(t, "text_index", 2) == "3", "split into paragraphs: 3 + 2 + 1 + 1 + 1");
+    t = one("split_into_rows", {{"column", "text"}, {"by", "sentences"}, {"index_name", "n"}, {"drop_empty", true}});
+    Check(t && t->num_rows() >= 9, "split into sentences");
+    t = one("extract_pattern", {{"column", "sermon_id"}, {"pattern", "[0-9]+"}, {"group", "0"}, {"name", "number"}});
+    Check(t && cell(t, "number", 4) == "5", "extract a number");
+    t = one("append_rows", {{"table", "manifest"}});
+    Check(t && t->num_rows() == 8, "append rows by name: 5 + 3");
+    t = one("group_summarise", {{"by", json::array({"book_code"})}, {"measures", json::array({{{"function", "count"}},
+                                {{"function", "sum"}, {"column", "word_count"}, {"name", "words"}},
+                                {{"function", "join text"}, {"column", "sermon_id"}, {"separator", "+"}, {"name", "ids"}}})}});
+    Check(t && t->num_rows() == 4, "group by book: 4 groups");
+    t = one("pivot_unpivot", {{"mode", "pivot"}, {"names_from", "book_code"}, {"values", "MAL, 1CO, PRO, 2KI"}, {"values_from", "word_count"}, {"function", "sum"}, {"group_by", json::array()}});
+    Check(t && t->num_rows() == 1 && t->schema()->GetFieldByName("MAL") != nullptr, "pivot: a column per book");
+    t = one("pivot_unpivot", {{"mode", "unpivot"}, {"columns", json::array({"chapter", "word_count"})}, {"name_column", "measure"}, {"value_column", "amount"}});
+    Check(t && t->num_rows() == 10, "unpivot two columns: 10 rows");
+    t = one("assign_split", {{"key", json::array({"sermon_id"})}, {"train", "60"}, {"validation", "20"}, {"test", "20"}, {"salt", "v1"}, {"name", "split"}});
+    bool valid = t != nullptr;
+    for (int64_t r = 0; t && r < t->num_rows(); ++r) {
+        const std::string s = cell(t, "split", r);
+        valid = valid && (s == "train" || s == "validation" || s == "test");
+    }
+    Check(valid && t->num_columns() == 7, "assign split replaces the split column with train/validation/test");
+    const auto again = one("assign_split", {{"key", json::array({"sermon_id"})}, {"train", "60"}, {"validation", "20"}, {"test", "20"}, {"salt", "v1"}, {"name", "split"}});
+    Check(t && again && t->Equals(*again), "the split is stable");
+    t = one("number_rows", {{"name", "n"}, {"partition_by", json::array({"book_code"})}, {"order_by", json::array({{{"column", "word_count"}, {"descending", true}}})}});
+    Check(t && t->num_rows() == 5, "number rows within books");
+    std::cout << "Guided operations passed\n";
+}
+
 void CheckNodeRunFacts() {
     // TOFIX146: each node's latest run facts (rows, columns, time, outcome)
     // for the SQL step Properties and Workbench.
@@ -2001,7 +2170,8 @@ int main(int argc, char** argv) {
     if(argc==1) CheckJsonLinesInput();
     if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
     if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
-    if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); }
+    if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
+    if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }
     if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&
