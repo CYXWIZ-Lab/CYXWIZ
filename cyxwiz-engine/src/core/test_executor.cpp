@@ -285,6 +285,7 @@ void TestExecutor::Test(
             ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildArrowTrainingBatchers(
             test_config, arrow_dataset_, arrow_label_column_, batch_size);
+        ApplyLabelClassNames(batchers.label_classes);
         arrow_test_batcher =
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.arrow_train)
@@ -294,6 +295,7 @@ void TestExecutor::Test(
             ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildParquetTrainingBatchers(
             test_config, parquet_dataset_, parquet_label_column_, batch_size);
+        ApplyLabelClassNames(batchers.label_classes);
         parquet_test_batcher =
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.parquet_train)
@@ -630,6 +632,17 @@ void TestExecutor::ComputePerClassMetrics() {
         float pr_sum = cm.precision + cm.recall;
         cm.f1_score = pr_sum > 0 ? 2.0f * cm.precision * cm.recall / pr_sum : 0.0f;
     }
+}
+
+void TestExecutor::ApplyLabelClassNames(const std::vector<std::string>& names) {
+    // A text label column's classes name the results (TOFIX145); an external
+    // test source's own names win.
+    if (names.empty() || !external_source_.class_names.empty()) return;
+    UpdateMetrics([&names](TestingMetrics& m) {
+        m.confusion_matrix.class_names = names;
+        for (size_t i = 0; i < m.per_class_metrics.size() && i < names.size(); ++i)
+            m.per_class_metrics[i].class_name = names[i];
+    });
 }
 
 void TestExecutor::ComputeCurves() {

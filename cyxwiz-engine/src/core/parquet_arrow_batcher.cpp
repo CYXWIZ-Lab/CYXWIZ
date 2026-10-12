@@ -83,7 +83,8 @@ ParquetArrowBatcher::ParquetArrowBatcher(
     int num_workers,
     BatcherPhase split_phase,
     float val_split,
-    uint32_t seed)
+    uint32_t seed,
+    std::shared_ptr<const LabelVocabulary> label_vocabulary)
     : dataset_(std::move(dataset)),
       label_column_(label_column),
       batch_size_(batch_size),
@@ -95,7 +96,8 @@ ParquetArrowBatcher::ParquetArrowBatcher(
       split_phase_(split_phase),
       partition_column_(partition_column),
       partition_value_(partition_value),
-      rng_(seed) {
+      rng_(seed),
+      label_vocabulary_(std::move(label_vocabulary)) {
 
     if (!dataset_) {
         spdlog::error("ParquetArrowBatcher: null dataset");
@@ -170,6 +172,13 @@ void ParquetArrowBatcher::InitializeColumns() {
     }
     if (label_col_idx_ >= 0) {
         label_col_indices_.push_back(label_col_idx_);
+        // Text class labels need their vocabulary; reading them as numbers
+        // trained every row as class 0 (TOFIX145).
+        if (IsTextLabelType(*schema->field(label_col_idx_)->type()) && !label_vocabulary_) {
+            throw std::invalid_argument("ParquetArrowBatcher: label column '" +
+                                        schema->field(label_col_idx_)->name() +
+                                        "' holds text; build its LabelVocabulary first");
+        }
     }
 
     for (int i = 0; i < num_cols; ++i) {
@@ -741,6 +750,21 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
                             }
+                        }
+                        break;
+                    }
+                    case arrow::Type::STRING:
+                    case arrow::Type::LARGE_STRING: {
+                        // Text class labels through the shared vocabulary.
+                        for (size_t b = 0; b < rows_this_sweep; ++b) {
+                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
+                            const std::string value =
+                                chunk->type_id() == arrow::Type::STRING
+                                    ? std::string(std::static_pointer_cast<arrow::StringArray>(chunk)->GetView(local_row))
+                                    : std::string(std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetView(local_row));
+                            const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
+                            if (index < 0) spdlog::error("ParquetArrowBatcher: label '{}' is not a known class", value);
+                            batch_labels[rows_filled + b] = std::max(0, index);
                         }
                         break;
                     }

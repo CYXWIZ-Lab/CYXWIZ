@@ -4,6 +4,7 @@
 // view is rebuilt only when the node, the graph, the compile or an edit
 // changes; every other frame draws the cached one.
 #include "properties.h"
+#include "../core/label_vocabulary.h"
 #include "properties_contract.h"
 #include "properties_executor.h"
 #include "properties_node_editors.h"
@@ -78,6 +79,11 @@ properties_truth::DatasetTruthFact BuildDatasetTruthFact(const MLNode& node) {
         fact.columns = arrow_dataset->GetColumnNames();
         fact.has_labels = !ParamOrEmpty(node, "label_column").empty() ||
                           !ParamOrEmpty(node, "text_label_column").empty();
+        // Text class labels: their distinct values are the classes (TOFIX145).
+        if (auto text = cyxwiz::TextLabelColumn(arrow_dataset->GetArrowTable(), ParamOrEmpty(node, "label_column"))) {
+            fact.has_class_count = true;
+            fact.class_count = cyxwiz::BuildLabelVocabulary({text}).names.size();
+        }
         return fact;
     }
 

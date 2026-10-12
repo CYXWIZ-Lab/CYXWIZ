@@ -30,6 +30,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/classification_decision.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
+    ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
     ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp

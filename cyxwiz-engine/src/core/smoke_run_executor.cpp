@@ -267,6 +267,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
             const std::string label_column =
                 arrow_dataset->GetSchema()->field(label_idx)->name();
+            if (auto text = TextLabelColumn(arrow_dataset->GetArrowTable(), label_column)) {
+                arrow_dataset = WithEncodedLabels(arrow_dataset, label_column, BuildLabelVocabulary({text}));
+            }
             batcher = std::make_unique<ArrowDatasetBatcher>(
                 arrow_dataset,
                 label_column,

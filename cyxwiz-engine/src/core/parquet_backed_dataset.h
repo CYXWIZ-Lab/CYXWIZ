@@ -119,6 +119,10 @@ public:
      */
     std::shared_ptr<arrow::Table> ReadRowGroups(const std::vector<int>& indices) const;
 
+    // One whole column (e.g. the label column for its class vocabulary);
+    // nullptr when missing or unreadable.
+    std::shared_ptr<arrow::ChunkedArray> ReadColumn(const std::string& name) const;
+
     // Metadata accessors - mirror ArrowDataset's shape where it makes sense,
     // so call sites that only need row/col/schema info can treat the two
     // types interchangeably via templates or small wrappers.

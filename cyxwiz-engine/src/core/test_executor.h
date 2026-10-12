@@ -255,6 +255,7 @@ private:
     void ComputeAggregateMetrics();
     // ROC / precision-recall from the kept class probabilities (TOFIX140).
     void ComputeCurves();
+    void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**
      * Update metrics (thread-safe)

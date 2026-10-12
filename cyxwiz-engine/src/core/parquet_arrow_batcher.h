@@ -1,7 +1,8 @@
 #pragma once
 
 #include "parquet_backed_dataset.h"
-#include "dataset_batcher.h"  // for the shared Batch struct
+#include "dataset_batcher.h"
+#include "label_vocabulary.h"  // for the shared Batch struct
 
 #include <cyxwiz/tensor.h>
 #include <cstdint>
@@ -61,7 +62,8 @@ public:
                         int num_workers = 0,
                         BatcherPhase split_phase = BatcherPhase::Train,
                         float val_split = 0.0f,
-                        uint32_t seed = 42);
+                        uint32_t seed = 42,
+                        std::shared_ptr<const LabelVocabulary> label_vocabulary = nullptr);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -145,6 +147,8 @@ private:
     void ShuffleEpochGroupOrder();
     bool LoadNextRowGroup();  // returns false if no more groups
     size_t CountPartitionRowsInGroup(int row_group_idx) const;
+    // Text class labels map through this (TOFIX145); nullptr for numeric labels.
+    std::shared_ptr<const LabelVocabulary> label_vocabulary_;
 };
 
 } // namespace cyxwiz
