@@ -5967,7 +5967,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
 
 void MainWindow::RenderSidebar() {
     // Render the Unreal-style sidebar (auto-hides, appears on hover)
-    GetDockStyle().RenderSidebarToggles();
+    GetDockStyle().RenderSidebarToggles(StatusBarHeight());
 }
 
 

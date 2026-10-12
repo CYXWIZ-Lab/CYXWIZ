@@ -139,7 +139,8 @@ public:
 
     // Render sidebar panel toggles (call this in your main render loop)
     // Returns true if any panel visibility changed
-    bool RenderSidebarToggles();
+    // bottom_inset: height kept free at the bottom of the work area (status bar).
+    bool RenderSidebarToggles(float bottom_inset);
 
     // Custom dock node rendering hooks
     // Call these to customize dock node appearance
