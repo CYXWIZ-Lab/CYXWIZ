@@ -150,6 +150,7 @@ void CrossValidationPanel::RenderResults() {
     if (ImPlot::BeginPlot("##FoldSizes", ImVec2(-1, 200))) {
         ImPlot::SetupAxes("Fold", "Samples");
         ImPlot::SetupAxisLimits(ImAxis_X1, 0.5, n_folds_ + 0.5);
+        ImPlot::SetupAxisTicks(ImAxis_X1, 1, n_folds_, n_folds_);  // one tick per fold
 
         ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("Train", train_positions.data(), train_sizes.data(),

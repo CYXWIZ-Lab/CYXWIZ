@@ -261,8 +261,14 @@ void ConfusionMatrixPanel::RenderMetricsTable() {
         ImPlot::SetupAxes("Class", "F1 Score");
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
 
+        // One tick per class, named (a numeric axis put ticks at -0.2, 0.2).
         std::vector<double> x_pos(result_.n_classes);
-        for (int i = 0; i < result_.n_classes; ++i) x_pos[i] = i;
+        std::vector<const char*> tick_labels(result_.n_classes);
+        for (int i = 0; i < result_.n_classes; ++i) {
+            x_pos[i] = i;
+            tick_labels[i] = result_.class_names[i].c_str();
+        }
+        ImPlot::SetupAxisTicks(ImAxis_X1, x_pos.data(), result_.n_classes, tick_labels.data());
 
         ImPlot::PlotBars("F1", x_pos.data(), result_.f1_scores.data(), result_.n_classes, 0.6);
         ImPlot::EndPlot();

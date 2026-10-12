@@ -360,15 +360,20 @@ void DimReductionPanel::RenderExplainedVarianceChart() {
         cumulative[i] = sum;
     }
 
-    // Component indices
+    // Component indices, ticked PC1, PC2, ... (a numeric axis put ticks at 0.8, 1.2)
     std::vector<double> indices(pca_result_.explained_variance_ratio.size());
+    std::vector<std::string> tick_names(indices.size());
+    std::vector<const char*> tick_labels(indices.size());
     for (size_t i = 0; i < indices.size(); i++) {
         indices[i] = static_cast<double>(i + 1);
+        tick_names[i] = "PC" + std::to_string(i + 1);
+        tick_labels[i] = tick_names[i].c_str();
     }
 
     if (ImPlot::BeginPlot("Explained Variance", ImVec2(-1, 300))) {
         ImPlot::SetupAxes("Principal Component", "Variance Ratio");
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
+        ImPlot::SetupAxisTicks(ImAxis_X1, indices.data(), static_cast<int>(indices.size()), tick_labels.data());
 
         ImPlot::PlotBars("Individual", indices.data(),
                         pca_result_.explained_variance_ratio.data(),
