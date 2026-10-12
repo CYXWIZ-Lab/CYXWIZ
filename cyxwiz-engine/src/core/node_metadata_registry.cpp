@@ -1338,7 +1338,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"file_path", "file", "", "Parquet file", {}, "*.parquet"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::JSONFile, NodeCategory::DataSources, "JSON Reader", ICON_FA_BRACKETS_CURLY,
+    RegisterNode({NodeType::JSONFile, NodeCategory::DataSources, "JSON Reader", ICON_FA_CODE,
         {"json", "javascript"}, 0, false, "Read JSON file", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
         {{"file_path", "file", "", "JSON file", {}, "*.json"}},
