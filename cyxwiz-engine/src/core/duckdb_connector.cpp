@@ -1,5 +1,9 @@
 #include "duckdb_connector.h"
+#include <arrow/c/bridge.h>
+#include <duckdb/common/arrow/arrow_converter.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <unordered_map>
 #include <chrono>
 #include <sstream>
 
@@ -30,6 +34,22 @@ std::string ExistingObjectKind(duckdb::Connection& conn, const std::string& name
     if (found->HasError()) return {};
     auto chunk = found->Fetch();
     return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).ToString() : std::string();
+}
+
+// Result types Arrow export gives exactly as ArrowTypeForDuckDBType does.
+bool ConvertsNatively(const duckdb::LogicalType& type) {
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN:
+        case duckdb::LogicalTypeId::INTEGER:
+        case duckdb::LogicalTypeId::BIGINT:
+        case duckdb::LogicalTypeId::UBIGINT:
+        case duckdb::LogicalTypeId::FLOAT:
+        case duckdb::LogicalTypeId::DOUBLE:
+        case duckdb::LogicalTypeId::VARCHAR:
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
@@ -928,6 +948,41 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         // Get column count and types
         auto& types = result->types;
         auto& names = result->names;
+
+        // Booleans, integers, floats, doubles and text: export whole chunks
+        // through the Arrow C interface (same Arrow types as below).
+        if (std::all_of(types.begin(), types.end(), ConvertsNatively)) {
+            duckdb::ClientProperties options = result->client_properties;
+            options.arrow_offset_size = duckdb::ArrowOffsetSize::REGULAR;
+            options.produce_arrow_string_view = false;
+            ArrowSchema c_schema;
+            duckdb::ArrowConverter::ToArrowSchema(&c_schema, types, names, options);
+            auto schema = arrow::ImportSchema(&c_schema);
+            if (!schema.ok()) {
+                spdlog::error("Arrow schema import failed: {}", schema.status().ToString());
+                return nullptr;
+            }
+            const std::unordered_map<duckdb::idx_t, const duckdb::shared_ptr<duckdb::ArrowTypeExtensionData>> no_extensions;
+            std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+            while (true) {
+                auto chunk = result->Fetch();
+                if (!chunk || chunk->size() == 0) break;
+                ArrowArray c_array;
+                duckdb::ArrowConverter::ToArrowArray(*chunk, &c_array, options, no_extensions);
+                auto batch = arrow::ImportRecordBatch(&c_array, *schema);
+                if (!batch.ok()) {
+                    spdlog::error("Arrow batch import failed: {}", batch.status().ToString());
+                    return nullptr;
+                }
+                batches.push_back(std::move(*batch));
+            }
+            auto table = arrow::Table::FromRecordBatches(*schema, batches);
+            if (!table.ok()) {
+                spdlog::error("Arrow table assembly failed: {}", table.status().ToString());
+                return nullptr;
+            }
+            return *table;
+        }
 
         // Initialize builders for each column
         std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
