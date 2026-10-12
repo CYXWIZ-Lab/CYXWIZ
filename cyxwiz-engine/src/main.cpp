@@ -24,6 +24,7 @@
 #include <iostream>
 #include <filesystem>
 #include <cstdlib>
+#include <exception>
 #include <cmath>
 #include <string_view>
 #include <vector>
@@ -279,6 +280,24 @@ int main(int argc, char** argv) {
 #ifdef CYXWIZ_DEBUG
     spdlog::set_level(spdlog::level::debug);
 #endif
+
+    // An exception nobody catches used to end the Engine with no trace in
+    // engine_log.txt (TOFIX146); record what it was before the process aborts.
+    std::set_terminate([] {
+        std::string reason = "no active exception";
+        if (const auto current = std::current_exception()) {
+            try {
+                std::rethrow_exception(current);
+            } catch (const std::exception& e) {
+                reason = e.what();
+            } catch (...) {
+                reason = "non-standard exception";
+            }
+        }
+        spdlog::critical("Unhandled exception, the Engine must close: {}", reason);
+        spdlog::shutdown();
+        std::abort();
+    });
 
     if (cwd_set) {
         spdlog::info("Working directory set to executable directory: {}", exe_dir.string());

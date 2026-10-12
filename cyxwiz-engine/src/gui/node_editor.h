@@ -532,6 +532,11 @@ private:
     void DrawClearConfirm();
     void UpdateUnsavedState();
     nlohmann::json GraphDocumentJson();
+    // Fingerprint of a saved-graph document (same text settings for save and check).
+    static size_t FingerprintOf(const nlohmann::json& document);
+    // Fingerprint of the current graph, or nullopt when it cannot be captured (logged once per message).
+    std::optional<size_t> GraphFingerprint();
+    std::string fingerprint_error_;
     size_t saved_fingerprint_ = 0;
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
