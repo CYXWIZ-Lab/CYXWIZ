@@ -110,6 +110,7 @@ set(ENGINE_SOURCES
     src/core/console_commands_presentation.cpp
     src/core/sql_step_presentation.cpp
     src/core/table_profile.cpp
+    src/core/sql_plan.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_publication.cpp
@@ -312,6 +313,7 @@ set(ENGINE_SOURCES
     src/gui/properties_sequence_fusion.cpp
     src/gui/properties_sql_step.cpp
     src/gui/sql_workbench.cpp
+    src/gui/sql_workbench_plan.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -2840,6 +2842,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
     src/core/table_profile.cpp
+    src/core/sql_plan.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
@@ -5731,6 +5734,14 @@ target_compile_definitions(test_sql_step_presentation PRIVATE
     CYXWIZ_SQL_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql/tier1_paragraphs.sql")
 set_target_properties(test_sql_step_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME SqlStepPresentation COMMAND test_sql_step_presentation)
+
+# SQL Workbench plan model (TOFIX146 board 4): DuckDB plan JSON of the real tier1 query.
+add_executable(test_sql_plan tests/test_sql_plan.cpp src/core/sql_plan.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_plan PRIVATE src)
+target_link_libraries(test_sql_plan PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(test_sql_plan PRIVATE CYXWIZ_SQL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql")
+set_target_properties(test_sql_plan PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlPlan COMMAND test_sql_plan)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp

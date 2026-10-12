@@ -10,6 +10,7 @@
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
 #include "core/sql_step_presentation.h"
+#include "core/sql_plan.h"
 #include "core/sql_transform.h"
 #include "core/table_profile.h"
 #include "core/plot/node_result_plan.h"
@@ -985,8 +986,23 @@ void CheckSqlPartQueries() {
     Check(cyxwiz::sqlstep::ErrorLine(typo.error) == 2, "the parse error points at line 2: " + typo.error);
     // Explain plans without running and refuses what Run refuses.
     const auto plan = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Explain);
-    Check(plan.ok && plan.plan.find("SEQ_SCAN") != std::string::npos && plan.plan.find("id>1") != std::string::npos,
-          "explain gives a plan with the scan and its filter: " + plan.plan);
+    Check(plan.ok && plan.plan.find("SEQ_SCAN") != std::string::npos && plan.plan.find("id>1") != std::string::npos &&
+              plan.plan_text.find("SEQ_SCAN") != std::string::npos,
+          "explain gives a JSON plan with the scan and its filter, and its text: " + plan.plan);
+    {
+        auto estimate = cyxwiz::sqlplan::ParsePlanJson(plan.plan);
+        Check(estimate.error.empty() && !estimate.timed && !estimate.ops.empty(), "the estimate plan reads: " + estimate.error);
+        const auto timed = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Profile);
+        Check(timed.ok, "a timed run: " + timed.error);
+        auto profile = cyxwiz::sqlplan::ParsePlanJson(timed.plan);
+        cyxwiz::sqlplan::ExplainPlan(profile, sql, outline);
+        Check(profile.timed && profile.rows_out == 2 && profile.slowest >= 0, "the timed plan has rows and times");
+        bool scan_part = false;
+        for (const auto& op : profile.ops) {
+            scan_part = scan_part || (op.name == "SEQ_SCAN" && !op.parts.empty() && op.parts.front() == "a");
+        }
+        Check(scan_part, "the input scan belongs to part a");
+    }
     const auto copy = transform.Run("COPY input TO 'x.csv'", {{"input", input}}, cyxwiz::SqlRunMode::Explain);
     Check(!copy.ok, "explain refuses a statement that is not a SELECT");
     // Column profile of the whole result.

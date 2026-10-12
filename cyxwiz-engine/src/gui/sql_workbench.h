@@ -7,6 +7,7 @@
 // DuckDB, the step's own contract), without touching the graph until "Save
 // to step".
 
+#include "../core/sql_plan.h"
 #include "../core/sql_step_presentation.h"
 #include "../core/table_profile.h"
 #include "../data/arrow_data_table.h"
@@ -45,7 +46,7 @@ protected:
 
 private:
     struct Run;  // one background DuckDB run
-    enum class RunKind { Step, Selection, ToPart, Counts, Removed, Check, Explain };
+    enum class RunKind { Step, Selection, ToPart, Counts, Removed, Check, Explain, Profile };
     enum BottomTab { kResults, kProfile, kRemoved, kChecks, kPlan, kMessages, kBottomTabs };
     struct Message {
         std::string time;
@@ -75,6 +76,7 @@ private:
     MLNode* CurrentNode();
     void RefreshInputs();
     void StartRun(RunKind kind, size_t part_index = 0);
+    void StopRun();
     void PollRun();
     void AddMessage(std::string text, bool error);
     void MarkPart(size_t index);
@@ -95,7 +97,15 @@ private:
     void RenderProfile();
     void RenderRemoved();
     void RenderChecks();
+    // Plan tab (board 4), gui/sql_workbench_plan.cpp.
     void RenderPlan();
+    void RenderPlanSummary();
+    void RenderPlanTimeBar();
+    void RenderPlanTree();
+    void RenderPlanDiagram();
+    void RenderPlanText();
+    void RenderPlanDetails();
+    int PartIndex(const std::string& name) const;
     void RenderMessages();
     void RenderStatusBar();
 
@@ -113,6 +123,8 @@ private:
     bool pipeline_was_running_ = false;
 
     std::unique_ptr<Run> run_;
+    RunKind running_kind_ = RunKind::Step;  // of run_, while it runs
+    double running_since_ = 0.0;            // ImGui time run_ started
     std::shared_ptr<arrow::Table> result_;
     cyxwiz::ArrowPreview result_preview_;
     std::vector<cyxwiz::ArrowColumnProfile> result_profile_;
@@ -127,8 +139,13 @@ private:
     double part_rows_seconds_ = 0.0;
 
     std::vector<CheckOutcome> check_outcomes_;
-    std::string plan_;
-    std::string plan_draft_;
+    cyxwiz::sqlplan::Plan plan_;
+    std::string plan_text_;   // DuckDB's own text drawing of the plan
+    std::string plan_json_;   // the JSON the plan was read from (Export)
+    std::string plan_draft_;  // the editor text the plan was made for
+    std::string plan_when_;   // clock time of the plan
+    int plan_view_ = 0;       // 0 Tree, 1 Diagram, 2 Text
+    int plan_picked_ = -1;    // selected operator
     std::string syntax_state_;  // "Syntax OK", "Error on line 57", ...
     bool syntax_error_ = false;
 
@@ -136,6 +153,10 @@ private:
     std::vector<HistoryEntry> history_;
     int side_tab_ = 0;    // 0 Inputs, 1 Parts, 2 History, 3 Snippets
     int bottom_tab_ = kResults;
+    // Share of the body the editor takes; the splitter below it moves it.
+    // A plan makes room for itself once, unless the user has dragged.
+    float editor_share_ = 0.55f;
+    bool editor_share_set_by_user_ = false;
     int marked_part_ = -1;
     OpenTableCallback open_table_;
 };

@@ -1,0 +1,534 @@
+{
+ "query_name": "",
+ "blocked_thread_time": 0.0,
+ "system_peak_buffer_memory": 0,
+ "system_peak_temp_dir_size": 0,
+ "cpu_time": 0.0,
+ "extra_info": {},
+ "cumulative_cardinality": 0,
+ "cumulative_rows_scanned": 0,
+ "result_set_size": 0,
+ "latency": 0.0,
+ "rows_returned": 0,
+ "total_bytes_read": 0,
+ "total_bytes_written": 0,
+ "children": [
+  {
+   "cpu_time": 0.0,
+   "extra_info": {},
+   "cumulative_cardinality": 0,
+   "operator_name": "EXPLAIN_ANALYZE",
+   "operator_type": "EXPLAIN_ANALYZE",
+   "operator_cardinality": 0,
+   "cumulative_rows_scanned": 0,
+   "operator_rows_scanned": 0,
+   "operator_timing": 2e-06,
+   "result_set_size": 0,
+   "total_bytes_read": 0,
+   "total_bytes_written": 0,
+   "children": [
+    {
+     "cpu_time": 0.0,
+     "extra_info": {
+      "Projections": [
+       "#0",
+       "#1",
+       "#2",
+       "#3",
+       "#4",
+       "#5",
+       "#6",
+       "#7",
+       "#8",
+       "#9",
+       "#10",
+       "#11",
+       "__internal_decompress_string(#12)"
+      ],
+      "Estimated Cardinality": "0"
+     },
+     "cumulative_cardinality": 0,
+     "operator_name": "PROJECTION",
+     "operator_type": "PROJECTION",
+     "operator_cardinality": 15349,
+     "cumulative_rows_scanned": 0,
+     "operator_rows_scanned": 0,
+     "operator_timing": 0.0002536,
+     "result_set_size": 2716773,
+     "total_bytes_read": 0,
+     "total_bytes_written": 0,
+     "children": [
+      {
+       "cpu_time": 0.0,
+       "extra_info": {
+        "Order By": [
+         "cleaned.source_id ASC",
+         "CAST(cleaned.paragraph_index AS BIGINT) ASC"
+        ]
+       },
+       "cumulative_cardinality": 0,
+       "operator_name": "ORDER_BY",
+       "operator_type": "ORDER_BY",
+       "operator_cardinality": 15349,
+       "cumulative_rows_scanned": 0,
+       "operator_rows_scanned": 0,
+       "operator_timing": 0.014061899999999999,
+       "result_set_size": 2716773,
+       "total_bytes_read": 0,
+       "total_bytes_written": 0,
+       "children": [
+        {
+         "cpu_time": 0.0,
+         "extra_info": {
+          "Projections": [
+           "#0",
+           "#1",
+           "#2",
+           "#3",
+           "#4",
+           "#5",
+           "#6",
+           "#7",
+           "#8",
+           "#9",
+           "#10",
+           "#11",
+           "__internal_compress_string_uhugeint(#12)"
+          ],
+          "Estimated Cardinality": "1"
+         },
+         "cumulative_cardinality": 0,
+         "operator_name": "PROJECTION",
+         "operator_type": "PROJECTION",
+         "operator_cardinality": 15349,
+         "cumulative_rows_scanned": 0,
+         "operator_rows_scanned": 0,
+         "operator_timing": 0.0001209,
+         "result_set_size": 2716773,
+         "total_bytes_read": 0,
+         "total_bytes_written": 0,
+         "children": [
+          {
+           "cpu_time": 0.0,
+           "extra_info": {
+            "Projections": [
+             "source_id",
+             "paragraph_id",
+             "paragraph_index",
+             "title",
+             "author",
+             "work_family",
+             "role",
+             "member_path",
+             "member_sha256",
+             "text",
+             "word_count",
+             "training_admitted",
+             "split"
+            ],
+            "Estimated Cardinality": "1"
+           },
+           "cumulative_cardinality": 0,
+           "operator_name": "PROJECTION",
+           "operator_type": "PROJECTION",
+           "operator_cardinality": 15349,
+           "cumulative_rows_scanned": 0,
+           "operator_rows_scanned": 0,
+           "operator_timing": 0.11171110000000001,
+           "result_set_size": 2716773,
+           "total_bytes_read": 0,
+           "total_bytes_written": 0,
+           "children": [
+            {
+             "cpu_time": 0.0,
+             "extra_info": {
+              "Projections": [
+               "source_id",
+               "title",
+               "author",
+               "work_family",
+               "role",
+               "member_path",
+               "member_sha256",
+               "paragraph_index",
+               "text"
+              ],
+              "Estimated Cardinality": "1"
+             },
+             "cumulative_cardinality": 0,
+             "operator_name": "PROJECTION",
+             "operator_type": "PROJECTION",
+             "operator_cardinality": 15349,
+             "cumulative_rows_scanned": 0,
+             "operator_rows_scanned": 0,
+             "operator_timing": 0.6215682,
+             "result_set_size": 2087464,
+             "total_bytes_read": 0,
+             "total_bytes_written": 0,
+             "children": [
+              {
+               "cpu_time": 0.0,
+               "extra_info": {
+                "Expression": [
+                 "((NOT regexp_matches(p, '(ISBN|P\\.O\\. Box|FAX|www\\.|https?:|Produced by|Distributed Proofreading|Print Basis:|CCEL Subjects|LC Call no|LC Subjects|Creator\\(s\\):|Rights: Public Domain)')) AND (NOT (((format = 'gutenberg') OR (format = 'ccel_law')) AND regexp_matches(p, '^\\[[0-9a-z]+\\]\\s'))) AND ((len(list_filter(string_split(p, '",
+                 "'))) * 2) < len(string_split(p, '",
+                 "'))) AND ((len(p) - len(\"replace\"(p, '{', ''))) < 3))"
+                ],
+                "Estimated Cardinality": "1"
+               },
+               "cumulative_cardinality": 0,
+               "operator_name": "FILTER",
+               "operator_type": "FILTER",
+               "operator_cardinality": 15349,
+               "cumulative_rows_scanned": 0,
+               "operator_rows_scanned": 0,
+               "operator_timing": 0.16673680000000002,
+               "result_set_size": 2333048,
+               "total_bytes_read": 0,
+               "total_bytes_written": 0,
+               "children": [
+                {
+                 "cpu_time": 0.0,
+                 "extra_info": {
+                  "Projections": [
+                   "source_id",
+                   "title",
+                   "author",
+                   "work_family",
+                   "role",
+                   "format",
+                   "member_path",
+                   "member_sha256",
+                   "paragraph_index",
+                   "p"
+                  ],
+                  "Estimated Cardinality": "1"
+                 },
+                 "cumulative_cardinality": 0,
+                 "operator_name": "PROJECTION",
+                 "operator_type": "PROJECTION",
+                 "operator_cardinality": 16999,
+                 "cumulative_rows_scanned": 0,
+                 "operator_rows_scanned": 0,
+                 "operator_timing": 0.1109451,
+                 "result_set_size": 2583848,
+                 "total_bytes_read": 0,
+                 "total_bytes_written": 0,
+                 "children": [
+                  {
+                   "cpu_time": 0.0,
+                   "extra_info": {
+                    "Projections": [
+                     "#0",
+                     "#1",
+                     "#2",
+                     "#3",
+                     "#4",
+                     "#5",
+                     "#6",
+                     "#7",
+                     "#9",
+                     "#10"
+                    ],
+                    "Estimated Cardinality": "1"
+                   },
+                   "cumulative_cardinality": 0,
+                   "operator_name": "PROJECTION",
+                   "operator_type": "PROJECTION",
+                   "operator_cardinality": 16999,
+                   "cumulative_rows_scanned": 0,
+                   "operator_rows_scanned": 0,
+                   "operator_timing": 2.7000000000000002e-05,
+                   "result_set_size": 2583848,
+                   "total_bytes_read": 0,
+                   "total_bytes_written": 0,
+                   "children": [
+                    {
+                     "cpu_time": 0.0,
+                     "extra_info": {
+                      "Expression": "((\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) != '') AND (NOT regexp_full_match(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '(?is)\\s*(footnotes|(table of )?contents)\\.?:?\\s*')) AND (\"trim\"(regexp_replace(regexp_replace(regexp_replace(CASE  WHEN (((format = 'gutenberg') OR (format = 'ccel_law'))) THEN (regexp_replace(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '\\s?\\[[0-9a-z]{1,3}\\]', '', 'g')) ELSE \"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) END, '_([^_\\n]+)_', '\\1', 'g'), '=([^=\\n]+)=', '\\1', 'g'), '\\s+', ' ', 'g')) != '') AND (NOT regexp_full_match(\"trim\"(regexp_replace(regexp_replace(regexp_replace(CASE  WHEN (((format = 'gutenberg') OR (format = 'ccel_law'))) THEN (regexp_replace(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '\\s?\\[[0-9a-z]{1,3}\\]', '', 'g')) ELSE \"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) END, '_([^_\\n]+)_', '\\1', 'g'), '=([^=\\n]+)=', '\\1', 'g'), '\\s+', ' ', 'g')), '([A-Z] ){2,}[A-Z]|Page|Indexes|by|[* ]+|END OF VOL\\. I\\.|JOHN CHILDS AND SON, BUNGAY\\.')))",
+                      "Estimated Cardinality": "1"
+                     },
+                     "cumulative_cardinality": 0,
+                     "operator_name": "FILTER",
+                     "operator_type": "FILTER",
+                     "operator_cardinality": 16999,
+                     "cumulative_rows_scanned": 0,
+                     "operator_rows_scanned": 0,
+                     "operator_timing": 1.8134161,
+                     "result_set_size": 4353544,
+                     "total_bytes_read": 0,
+                     "total_bytes_written": 0,
+                     "children": [
+                      {
+                       "cpu_time": 0.0,
+                       "extra_info": {},
+                       "cumulative_cardinality": 0,
+                       "operator_name": "UNNEST",
+                       "operator_type": "UNNEST",
+                       "operator_cardinality": 17083,
+                       "cumulative_rows_scanned": 0,
+                       "operator_rows_scanned": 0,
+                       "operator_timing": 0.0002404,
+                       "result_set_size": 4400424,
+                       "total_bytes_read": 0,
+                       "total_bytes_written": 0,
+                       "children": [
+                        {
+                         "cpu_time": 0.0,
+                         "extra_info": {
+                          "Projections": [
+                           "source_id",
+                           "title",
+                           "author",
+                           "work_family",
+                           "role",
+                           "format",
+                           "member_path",
+                           "member_sha256",
+                           "paras"
+                          ],
+                          "Estimated Cardinality": "7"
+                         },
+                         "cumulative_cardinality": 0,
+                         "operator_name": "PROJECTION",
+                         "operator_type": "PROJECTION",
+                         "operator_cardinality": 7,
+                         "cumulative_rows_scanned": 0,
+                         "operator_rows_scanned": 0,
+                         "operator_timing": 0.007492,
+                         "result_set_size": 525296,
+                         "total_bytes_read": 0,
+                         "total_bytes_written": 0,
+                         "children": [
+                          {
+                           "cpu_time": 0.0,
+                           "extra_info": {
+                            "Projections": [
+                             "source_id",
+                             "title",
+                             "author",
+                             "work_family",
+                             "role",
+                             "format",
+                             "member_path",
+                             "member_sha256",
+                             "body"
+                            ],
+                            "Estimated Cardinality": "7"
+                           },
+                           "cumulative_cardinality": 0,
+                           "operator_name": "PROJECTION",
+                           "operator_type": "PROJECTION",
+                           "operator_cardinality": 7,
+                           "cumulative_rows_scanned": 0,
+                           "operator_rows_scanned": 0,
+                           "operator_timing": 0.053622,
+                           "result_set_size": 1008,
+                           "total_bytes_read": 0,
+                           "total_bytes_written": 0,
+                           "children": [
+                            {
+                             "cpu_time": 0.0,
+                             "extra_info": {
+                              "Projections": [
+                               "source_id",
+                               "title",
+                               "author",
+                               "work_family",
+                               "role",
+                               "format",
+                               "member_path",
+                               "member_sha256",
+                               "b"
+                              ],
+                              "Estimated Cardinality": "7"
+                             },
+                             "cumulative_cardinality": 0,
+                             "operator_name": "PROJECTION",
+                             "operator_type": "PROJECTION",
+                             "operator_cardinality": 7,
+                             "cumulative_rows_scanned": 0,
+                             "operator_rows_scanned": 0,
+                             "operator_timing": 0.038359,
+                             "result_set_size": 1008,
+                             "total_bytes_read": 0,
+                             "total_bytes_written": 0,
+                             "children": [
+                              {
+                               "cpu_time": 0.0,
+                               "extra_info": {
+                                "Projections": [
+                                 "source_id",
+                                 "title",
+                                 "author",
+                                 "work_family",
+                                 "role",
+                                 "format",
+                                 "member_path",
+                                 "member_sha256",
+                                 "b"
+                                ],
+                                "Estimated Cardinality": "7"
+                               },
+                               "cumulative_cardinality": 0,
+                               "operator_name": "PROJECTION",
+                               "operator_type": "PROJECTION",
+                               "operator_cardinality": 7,
+                               "cumulative_rows_scanned": 0,
+                               "operator_rows_scanned": 0,
+                               "operator_timing": 0.0253913,
+                               "result_set_size": 1008,
+                               "total_bytes_read": 0,
+                               "total_bytes_written": 0,
+                               "children": [
+                                {
+                                 "cpu_time": 0.0,
+                                 "extra_info": {
+                                  "Projections": [
+                                   "source_id",
+                                   "title",
+                                   "author",
+                                   "work_family",
+                                   "role",
+                                   "format",
+                                   "member_path",
+                                   "member_sha256",
+                                   "b"
+                                  ],
+                                  "Estimated Cardinality": "7"
+                                 },
+                                 "cumulative_cardinality": 0,
+                                 "operator_name": "PROJECTION",
+                                 "operator_type": "PROJECTION",
+                                 "operator_cardinality": 7,
+                                 "cumulative_rows_scanned": 0,
+                                 "operator_rows_scanned": 0,
+                                 "operator_timing": 1.1160971,
+                                 "result_set_size": 1008,
+                                 "total_bytes_read": 0,
+                                 "total_bytes_written": 0,
+                                 "children": [
+                                  {
+                                   "cpu_time": 0.0,
+                                   "extra_info": {
+                                    "Projections": [
+                                     "source_id",
+                                     "title",
+                                     "author",
+                                     "work_family",
+                                     "role",
+                                     "format",
+                                     "member_path",
+                                     "member_sha256",
+                                     "t"
+                                    ],
+                                    "Estimated Cardinality": "7"
+                                   },
+                                   "cumulative_cardinality": 0,
+                                   "operator_name": "PROJECTION",
+                                   "operator_type": "PROJECTION",
+                                   "operator_cardinality": 7,
+                                   "cumulative_rows_scanned": 0,
+                                   "operator_rows_scanned": 0,
+                                   "operator_timing": 0.0546413,
+                                   "result_set_size": 1008,
+                                   "total_bytes_read": 0,
+                                   "total_bytes_written": 0,
+                                   "children": [
+                                    {
+                                     "cpu_time": 0.0,
+                                     "extra_info": {
+                                      "Join Type": "INNER",
+                                      "Conditions": "source_id = CASE  WHEN ((member_path IS NOT NULL)) THEN (COALESCE(array_extract(string_split(member_path, '/'), 1), '')) ELSE NULL END",
+                                      "Estimated Cardinality": "7"
+                                     },
+                                     "cumulative_cardinality": 0,
+                                     "operator_name": "HASH_JOIN",
+                                     "operator_type": "HASH_JOIN",
+                                     "operator_cardinality": 7,
+                                     "cumulative_rows_scanned": 0,
+                                     "operator_rows_scanned": 0,
+                                     "operator_timing": 0.0101622,
+                                     "result_set_size": 1008,
+                                     "total_bytes_read": 0,
+                                     "total_bytes_written": 0,
+                                     "children": [
+                                      {
+                                       "cpu_time": 0.0,
+                                       "extra_info": {
+                                        "Estimated Cardinality": "7"
+                                       },
+                                       "cumulative_cardinality": 0,
+                                       "operator_name": "COLUMN_DATA_SCAN",
+                                       "operator_type": "COLUMN_DATA_SCAN",
+                                       "operator_cardinality": 7,
+                                       "cumulative_rows_scanned": 0,
+                                       "operator_rows_scanned": 0,
+                                       "operator_timing": 1.42e-05,
+                                       "result_set_size": 672,
+                                       "total_bytes_read": 0,
+                                       "total_bytes_written": 0,
+                                       "children": []
+                                      },
+                                      {
+                                       "cpu_time": 0.0,
+                                       "extra_info": {
+                                        "Function": "ARROW_SCAN",
+                                        "Projections": [
+                                         "member_path",
+                                         "member_sha256",
+                                         "text"
+                                        ],
+                                        "Estimated Cardinality": "1"
+                                       },
+                                       "cumulative_cardinality": 0,
+                                       "operator_name": "ARROW_SCAN ",
+                                       "operator_type": "TABLE_SCAN",
+                                       "operator_cardinality": 7,
+                                       "cumulative_rows_scanned": 0,
+                                       "operator_rows_scanned": 0,
+                                       "operator_timing": 5.2e-05,
+                                       "result_set_size": 336,
+                                       "total_bytes_read": 0,
+                                       "total_bytes_written": 0,
+                                       "children": []
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -7,6 +7,7 @@
 #include "../core/node_executors/row_count_check_operator.h"
 #include "../core/sql_transform.h"
 #include "editor_fonts.h"
+#include "sql_workbench_ui.h"
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
@@ -28,6 +29,7 @@ namespace gui {
 namespace {
 namespace ui = cyxwiz::ui;
 namespace sqlstep = cyxwiz::sqlstep;
+using namespace sqlwb;
 
 constexpr int64_t kResultRows = 500;    // rows shown in the grid
 constexpr size_t kResultCellChars = 200;
@@ -106,46 +108,6 @@ std::string SpacedType(const std::string& type) {
     return out;
 }
 
-void Dim(const std::string& text) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
-    ImGui::TextUnformatted(text.c_str());
-    ImGui::PopStyleColor();
-}
-
-void DimWrapped(const std::string& text) {
-    ImGui::PushTextWrapPos(0.0f);
-    Dim(text);
-    ImGui::PopTextWrapPos();
-}
-
-void Coloured(const std::string& text, const ImVec4& colour) {
-    ImGui::PushStyleColor(ImGuiCol_Text, colour);
-    ImGui::TextUnformatted(text.c_str());
-    ImGui::PopStyleColor();
-}
-
-// Puts the next item at the right edge of this line, or on the next line
-// when it would overlap what is already there.
-void AlignRight(float width) {
-    ImGui::SameLine();
-    const float x = ImGui::GetContentRegionMax().x - width;
-    if (x < ImGui::GetCursorPosX()) ImGui::NewLine();
-    else ImGui::SetCursorPosX(x);
-}
-
-// A panel one tone off the window, no outline.
-bool BeginPanel(const char* id, const ImVec2& size, const ImVec4& background) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, background);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ui::CurrentTokens().rounding_card);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ui::CurrentTokens().card_padding);
-    return ImGui::BeginChild(id, size, ImGuiChildFlags_AlwaysUseWindowPadding);
-}
-
-void EndPanel() {
-    ImGui::EndChild();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-}
 }  // namespace
 
 // One query on a worker thread; the UI polls `done`.
@@ -157,6 +119,7 @@ struct SqlWorkbenchDialog::Run {
     std::atomic<bool> done{false};
     cyxwiz::SqlTransformResult result;
     std::vector<cyxwiz::ArrowColumnProfile> profile;  // of the result, computed on the worker
+    cyxwiz::sqlplan::Plan plan;                       // Explain / Profile, read on the worker
     double seconds = 0.0;
     std::thread thread;
 };
@@ -287,6 +250,10 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index) {
             mode = cyxwiz::SqlRunMode::Explain;
             label = "plan";
             break;
+        case RunKind::Profile:
+            mode = cyxwiz::SqlRunMode::Profile;
+            label = "timed plan";
+            break;
     }
     if (query.empty()) {
         AddMessage("The query has no parts to use here (no WITH, or it could not be split).", true);
@@ -303,11 +270,21 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index) {
         const auto start = std::chrono::steady_clock::now();
         raw->result = raw->transform.Run(query, inputs, mode);
         if (profile && raw->result.ok && raw->result.table) raw->profile = cyxwiz::ProfileArrowTable(*raw->result.table);
+        if (raw->result.ok && (mode == cyxwiz::SqlRunMode::Explain || mode == cyxwiz::SqlRunMode::Profile)) {
+            raw->plan = cyxwiz::sqlplan::ParsePlanJson(raw->result.plan);
+            cyxwiz::sqlplan::ExplainPlan(raw->plan, query, sqlstep::OutlineSqlQuery(query));
+        }
         raw->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         raw->done = true;
     });
     run_ = std::move(run);
+    running_kind_ = kind;
+    running_since_ = ImGui::GetTime();
     AddMessage("Running " + label + "...", false);
+}
+
+void SqlWorkbenchDialog::StopRun() {
+    if (run_) run_->transform.Interrupt();
 }
 
 void SqlWorkbenchDialog::MarkError(const std::string& error) {
@@ -331,7 +308,7 @@ void SqlWorkbenchDialog::PollRun() {
     // Line numbers in errors refer to the editor text for these kinds (a
     // selection or a part query has other lines).
     const bool lines_match = run->kind == RunKind::Step || run->kind == RunKind::Check ||
-                             run->kind == RunKind::Explain;
+                             run->kind == RunKind::Explain || run->kind == RunKind::Profile;
     HistoryEntry entry{ClockNow(), run->label, "", !result.ok, run->draft};
     if (!result.ok) {
         entry.outcome = result.cancelled ? "stopped" : result.error;
@@ -371,11 +348,30 @@ void SqlWorkbenchDialog::PollRun() {
                 AddMessage("Syntax OK: the query binds against its inputs and its result columns are flat.", false);
                 break;
             case RunKind::Explain:
-                plan_ = result.plan;
+            case RunKind::Profile:
+                plan_ = std::move(run->plan);
+                plan_json_ = result.plan;
+                plan_text_ = result.plan_text;
                 plan_draft_ = run->draft;
+                plan_when_ = ClockNow();
+                plan_picked_ = plan_.slowest >= 0 ? plan_.slowest : (plan_.ops.empty() ? -1 : 0);
                 bottom_tab_ = kPlan;
-                entry.outcome = "planned";
-                AddMessage("Planned the query without running it.", false);
+                if (!editor_share_set_by_user_) editor_share_ = std::min(editor_share_, 0.3f);
+                if (!plan_.error.empty()) {
+                    entry.outcome = plan_.error;
+                    AddMessage("The plan could not be read: " + plan_.error, true);
+                } else if (plan_.timed) {
+                    entry.outcome = cyxwiz::sqlplan::FormatSeconds(plan_.operator_seconds) + " in operators";
+                    AddMessage("Timed run: " + std::to_string(plan_.ops.size()) + " operators, " +
+                                   cyxwiz::sqlplan::FormatSeconds(plan_.operator_seconds) + " in operators (" +
+                                   Seconds(run->seconds) + " in all).",
+                               false);
+                } else {
+                    entry.outcome = std::to_string(plan_.ops.size()) + " operators";
+                    AddMessage("Planned the query without running it: " + std::to_string(plan_.ops.size()) +
+                                   " operators.",
+                               false);
+                }
                 break;
             default:
                 result_ = result.table;
@@ -500,9 +496,34 @@ void SqlWorkbenchDialog::RenderContent() {
     RenderSidePanel(body_h);
     ImGui::SameLine();
     ImGui::BeginGroup();
-    const float editor_h = std::floor(body_h * 0.55f);
+    // Editor, a splitter (drag to move), then the bottom panel.
+    const float splitter_h = 6.0f;
+    const float spacing_y = ImGui::GetStyle().ItemSpacing.y;
+    const float usable = body_h - splitter_h - spacing_y * 2.0f;
+    const float editor_h = std::floor(usable * editor_share_);
     RenderEditor(editor_h);
-    RenderBottomPanel(body_h - editor_h - ImGui::GetStyle().ItemSpacing.y);
+    {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        ImGui::InvisibleButton("##wb_splitter", ImVec2(width, splitter_h));
+        const bool active = ImGui::IsItemActive();
+        if (ImGui::IsItemHovered() || active) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            const float y = at.y + splitter_h * 0.5f;
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(at.x, y), ImVec2(at.x + width, y),
+                                                ui::ToU32(ui::CurrentTokens().border_soft), 2.0f);
+        }
+        if (active && ImGui::GetIO().MouseDelta.y != 0.0f && usable > 0.0f) {
+            editor_share_ = std::clamp(editor_share_ + ImGui::GetIO().MouseDelta.y / usable, 0.12f, 0.88f);
+            editor_share_set_by_user_ = true;
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            editor_share_ = editor_share_ > 0.3f ? 0.25f : 0.55f;
+            editor_share_set_by_user_ = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to resize; double-click to give the panel below more room");
+    }
+    RenderBottomPanel(usable - editor_h);
     ImGui::EndGroup();
     RenderStatusBar();
 }
@@ -556,13 +577,16 @@ void SqlWorkbenchDialog::RenderToolbar() {
     }
     ImGui::SameLine();
     if (ui::DangerButton(ICON_FA_STOP " Stop", run_ != nullptr, "No query is running", ui::ButtonSize::Regular)) {
-        run_->transform.Interrupt();
+        StopRun();
     }
     ImGui::SameLine();
     if (ui::GhostButton("Check", !running, busy, false, ui::ButtonSize::Regular)) StartRun(RunKind::Check);
     if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("Check the query against its inputs without running it");
     ImGui::SameLine();
-    if (ui::GhostButton("Explain plan", !running, busy, false, ui::ButtonSize::Regular)) StartRun(RunKind::Explain);
+    if (ui::GhostButton("Explain plan", !running, busy, false, ui::ButtonSize::Regular)) {
+        bottom_tab_ = kPlan;
+        StartRun(RunKind::Explain);
+    }
     if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("DuckDB's plan for the query, without running it");
 
     const bool edited = draft_ != saved_query_;
@@ -582,6 +606,10 @@ void SqlWorkbenchDialog::RenderSidePanel(float height) {
         static const char* const kTabs[] = {"Inputs", "Parts", "History", "Snippets"};
         ui::SegmentedControl("##wb_side_tab", kTabs, 4, &side_tab_);
         ImGui::Dummy(ImVec2(0.0f, t.space_xs));
+        // Selection and hover in the theme's own tones (not the header colour).
+        ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
         if (ImGui::BeginChild("##wb_side_body", ImGui::GetContentRegionAvail())) {
             switch (side_tab_) {
                 case 0: RenderInputsTab(); break;
@@ -591,6 +619,7 @@ void SqlWorkbenchDialog::RenderSidePanel(float height) {
             }
         }
         ImGui::EndChild();
+        ImGui::PopStyleColor(3);
     }
     EndPanel();
 }
@@ -966,25 +995,6 @@ void SqlWorkbenchDialog::RenderChecks() {
             ImGui::PopTextWrapPos();
         }
     }
-}
-
-void SqlWorkbenchDialog::RenderPlan() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (ui::SecondaryButton("Explain plan", !run_, "A query is running")) StartRun(RunKind::Explain);
-    ImGui::SameLine();
-    if (plan_.empty()) {
-        Dim("DuckDB's plan for the draft, without running it.");
-        return;
-    }
-    Dim(plan_draft_ == draft_ ? "DuckDB's plan for the draft" : "Plan of an older draft");
-    ImFont* mono = cyxwiz::gui::GetCodeFont();
-    if (ImGui::BeginChild("##wb_plan", ImGui::GetContentRegionAvail(), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_HorizontalScrollbar)) {
-        if (mono) ImGui::PushFont(mono);
-        Coloured(plan_, t.text);
-        if (mono) ImGui::PopFont();
-    }
-    ImGui::EndChild();
 }
 
 void SqlWorkbenchDialog::RenderMessages() {
