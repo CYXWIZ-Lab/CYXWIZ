@@ -42,20 +42,47 @@ float Spacing() { return ImGui::GetStyle().ItemSpacing.x; }
 
 }  // namespace
 
+size_t NodeEditor::FingerprintOf(const nlohmann::json& document) {
+    // Invalid UTF-8 (for example a text field cut inside a character) is
+    // replaced instead of throwing.
+    return std::hash<std::string>{}(
+        document.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+}
+
+std::optional<size_t> NodeEditor::GraphFingerprint() {
+    // Runs every half second from the toolbar, so it must never throw: capturing
+    // an expanded subgraph throws on a missing node, pin or boundary target, and
+    // an uncaught exception here could close the Engine without a log line (TOFIX146).
+    try {
+        const size_t fingerprint = FingerprintOf(GraphDocumentJson());
+        fingerprint_error_.clear();
+        return fingerprint;
+    } catch (const std::exception& e) {
+        if (fingerprint_error_ != e.what()) {
+            fingerprint_error_ = e.what();
+            spdlog::error("Unsaved-changes check could not capture the graph: {}", fingerprint_error_);
+        }
+        return std::nullopt;
+    }
+}
+
 void NodeEditor::UpdateUnsavedState() {
     // A cheap check twice a second: the graph as it would be saved, against
     // the last save or load. A load settles for a few frames first.
     if (fingerprint_baseline_frames_ > 0) {
         if (--fingerprint_baseline_frames_ == 0) {
-            saved_fingerprint_ = std::hash<std::string>{}(GraphDocumentJson().dump());
-            unsaved_ = false;
+            const auto fingerprint = GraphFingerprint();
+            saved_fingerprint_ = fingerprint.value_or(0);
+            unsaved_ = !fingerprint.has_value();
         }
         return;
     }
     const double now = ImGui::GetTime();
     if (now - fingerprint_checked_at_ < 0.5) return;
     fingerprint_checked_at_ = now;
-    unsaved_ = std::hash<std::string>{}(GraphDocumentJson().dump()) != saved_fingerprint_;
+    // A graph that cannot be captured counts as unsaved; Save reports why.
+    const auto fingerprint = GraphFingerprint();
+    unsaved_ = !fingerprint.has_value() || *fingerprint != saved_fingerprint_;
 }
 
 void NodeEditor::DrawGraphMenu() {

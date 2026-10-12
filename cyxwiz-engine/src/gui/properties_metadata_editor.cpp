@@ -4,6 +4,7 @@
 #include "node_editor.h"
 #include "../core/file_dialogs.h"
 #include <imgui.h>
+#include <imgui_stdlib.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -290,25 +291,17 @@ void RenderParameter(
         }
     }
     else if (ShouldUseMultilineText(param)) {
-        char text_buf[2048];
-        strncpy(text_buf, value.c_str(), sizeof(text_buf) - 1);
-        text_buf[sizeof(text_buf) - 1] = '\0';
-
-        ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::InputTextMultiline("##value", text_buf, sizeof(text_buf), ImVec2(260.0f, 72.0f))) {
-            value = text_buf;
+        // Edits the parameter string in place (imgui_stdlib resizes it), so a long
+        // value such as an 84-line SQL query is never cut to a fixed buffer.
+        const float height = ImGui::GetTextLineHeightWithSpacing() * 10.0f;
+        if (ImGui::InputTextMultiline("##value", &value, ImVec2(-FLT_MIN, height))) {
             changed = true;
         }
     }
     else {
-        char str_buf[512];
-        strncpy(str_buf, value.c_str(), sizeof(str_buf) - 1);
-        str_buf[sizeof(str_buf) - 1] = '\0';
-
         ImGuiInputTextFlags flags = ShouldUsePasswordText(param) ? ImGuiInputTextFlags_Password : 0;
         ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::InputText("##value", str_buf, sizeof(str_buf), flags)) {
-            value = str_buf;
+        if (ImGui::InputText("##value", &value, flags)) {
             changed = true;
         }
     }

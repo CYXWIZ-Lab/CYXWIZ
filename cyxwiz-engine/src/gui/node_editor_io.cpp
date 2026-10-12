@@ -526,7 +526,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
         file << j.dump(4);  // Pretty print with 4-space indent
         current_file_path_ = filepath;
-        saved_fingerprint_ = std::hash<std::string>{}(j.dump());
+        saved_fingerprint_ = FingerprintOf(j);
         unsaved_ = false;
         cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
         spdlog::info("Graph saved to: {}", filepath);
