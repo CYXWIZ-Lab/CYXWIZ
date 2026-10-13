@@ -114,8 +114,7 @@ TreeModelRows ReadTreeModel(const std::string& json_text) {
     try {
         const json doc = json::parse(json_text);
         if (doc.is_object() && doc.value("format", "") == "cyxwiz_classic_model") {
-            out.error = "A " + doc.value("model_type", std::string("classic")) +
-                        " model has no trees to draw. Plot its Predictions output instead.";
+            out.error = "This model has no trees to draw. Plot its Predictions output instead.";
             return out;
         }
         if (!doc.is_object() || doc.value("format", "") != "cyxwiz_tree_model" || !doc.contains("model")) {
