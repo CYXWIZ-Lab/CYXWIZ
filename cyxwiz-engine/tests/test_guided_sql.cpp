@@ -160,7 +160,27 @@ void TestEveryOperationGenerates() {
 }
 }  // namespace
 
+void TestMoveOp() {
+    guided::GuidedStep step;
+    for (const char* type : {"keep_rows", "sort_rows", "number_rows", "add_checks"}) {
+        guided::Operation op;
+        op.type = type;
+        step.ops.push_back(op);
+    }
+    const auto order = [&] {
+        std::string out;
+        for (const auto& op : step.ops) out += op.type.substr(0, 2);
+        return out;
+    };
+    Check(guided::MoveOp(step, 0, 2) && order() == "sonuke" + std::string("ad"), "move down: first lands third");
+    Check(guided::MoveOp(step, 3, 0) && order() == "adsonuke", "move up: last lands first");
+    Check(guided::MoveOp(step, 1, 1) && order() == "adsonuke", "move to itself changes nothing");
+    Check(!guided::MoveOp(step, 4, 0) && !guided::MoveOp(step, 0, 4) && order() == "adsonuke",
+          "out of range is refused and changes nothing");
+}
+
 int main() {
+    TestMoveOp();
     TestLibrary();
     TestJson();
     TestColumnsAndSql();

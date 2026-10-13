@@ -453,6 +453,15 @@ std::vector<Columns> TrackColumns(const GuidedStep& step, const Context& context
     return out;
 }
 
+bool MoveOp(GuidedStep& step, size_t from, size_t to) {
+    if (from >= step.ops.size() || to >= step.ops.size()) return false;
+    if (from == to) return true;
+    Operation moved = std::move(step.ops[from]);
+    step.ops.erase(step.ops.begin() + static_cast<std::ptrdiff_t>(from));
+    step.ops.insert(step.ops.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+    return true;
+}
+
 std::string Summarise(const Operation& op) {
     const json& p = op.params;
     const std::string& t = op.type;
