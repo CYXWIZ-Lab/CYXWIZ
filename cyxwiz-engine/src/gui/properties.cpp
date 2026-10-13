@@ -811,8 +811,12 @@ void Properties::RenderLooseTruths(MLNode& node) {
             ImGui::TextColored(t.success, "%s", ICON_FA_CIRCLE_CHECK);
             cyxwiz::ui::Tooltip(("Loaded as " + d.store).c_str());
         } else {
-            cyxwiz::ui::Chip("not loaded", t.pending);
+            // An icon, not a chip: a chip widened the status column and left the
+            // file name a few characters wide in a narrow panel.
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(t.pending, "%s", ICON_FA_CLOCK);
             cyxwiz::ui::Tooltip(d.note.c_str());
+            properties_rows::Note("Not loaded");
         }
         if (!d.detail.empty()) properties_rows::Note(d.detail.c_str());
     }
