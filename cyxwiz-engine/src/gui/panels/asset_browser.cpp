@@ -1923,6 +1923,10 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
         RenderPreviewTable();
     } else if (!file_peek_.lines.empty()) {
         RenderPreviewLines();
+    } else if (!file_peek_.note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", file_peek_.note.c_str());
+        ImGui::PopTextWrapPos();
     } else if (kind == assets::FileKind::Image) {
         const float height = std::max(120.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f);
         ImGui::BeginChild("##image_preview", ImVec2(0.0f, height));
@@ -2024,7 +2028,8 @@ void AssetBrowserPanel::RenderPreviewLines() {
     for (const auto& line : file_peek_.lines) ImGui::TextUnformatted(line.c_str());
     if (code) ImGui::PopFont();
     ImGui::EndChild();
-    if (file_peek_.more_lines) ImGui::TextDisabled("First %d lines.", static_cast<int>(file_peek_.lines.size()));
+    if (file_peek_.more_lines)
+        ImGui::TextDisabled("First %d %ss.", static_cast<int>(file_peek_.lines.size()), file_peek_.line_noun.c_str());
 }
 
 void AssetBrowserPanel::RenderPreviewActions(const AssetItem& item) {

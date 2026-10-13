@@ -5338,8 +5338,11 @@ add_test(NAME test_predictions_table COMMAND test_test_predictions_table)
 add_executable(test_asset_preview
     tests/test_asset_preview.cpp
     src/core/asset_preview.cpp
+    src/utils/hdf5_browser_page.cpp
 )
-target_link_libraries(test_asset_preview PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
+target_include_directories(test_asset_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_asset_preview PRIVATE Arrow::arrow_shared Parquet::parquet_shared spdlog::spdlog fmt::fmt)
+cyxwiz_target_data_convert(test_asset_preview)
 if(WIN32)
     target_compile_definitions(test_asset_preview PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()

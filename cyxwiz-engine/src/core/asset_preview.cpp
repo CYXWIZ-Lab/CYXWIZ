@@ -1,7 +1,11 @@
 #include "asset_preview.h"
 
+#include "excel_table_adapter.h"
+#include "../utils/hdf5_browser.h"
+
 #include <arrow/api.h>
 #include <arrow/io/file.h>
+#include <arrow/ipc/reader.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/file_reader.h>
 #include <parquet/properties.h>
@@ -137,6 +141,25 @@ FilePeek PeekDelimited(const std::string& path, char delimiter, const PeekLimits
     return peek;
 }
 
+// Columns, kinds and the first rows of an Arrow table.
+void FillTablePeek(const arrow::Table& table, const PeekLimits& limits, FilePeek& peek) {
+    for (const auto& field : table.schema()->fields()) {
+        peek.columns.push_back(field->name());
+        peek.numeric.push_back(arrow::is_integer(field->type()->id()) || arrow::is_floating(field->type()->id()));
+    }
+    const int64_t n = std::min<int64_t>(table.num_rows(), limits.max_rows);
+    for (int64_t r = 0; r < n; ++r) {
+        std::vector<std::string> row;
+        for (int c = 0; c < table.num_columns(); ++c) {
+            auto cell = table.column(c)->GetScalar(r);
+            row.push_back(!cell.ok() || !(*cell)->is_valid ? std::string() : (*cell)->ToString());
+        }
+        peek.rows.push_back(std::move(row));
+    }
+    peek.table = true;
+    peek.ok = true;
+}
+
 FilePeek PeekParquet(const std::string& path, const PeekLimits& limits) {
     FilePeek peek;
     auto input = arrow::io::ReadableFile::Open(path);
@@ -161,13 +184,11 @@ FilePeek PeekParquet(const std::string& path, const PeekLimits& limits) {
         }
         peek.total_rows = reader->parquet_reader()->metadata()->num_rows();
         std::shared_ptr<arrow::Schema> schema;
-        if (reader->GetSchema(&schema).ok() && schema) {
-            for (const auto& field : schema->fields()) {
-                peek.columns.push_back(field->name());
-                peek.numeric.push_back(arrow::is_integer(field->type()->id()) ||
-                                       arrow::is_floating(field->type()->id()));
-            }
+        if (!reader->GetSchema(&schema).ok() || !schema) {
+            peek.error = "Not a readable Parquet file: no schema";
+            return peek;
         }
+        std::shared_ptr<arrow::Table> head = arrow::Table::MakeEmpty(schema).ValueOr(nullptr);
         // One small batch from the first row group.
         if (reader->num_row_groups() > 0 && peek.total_rows > 0) {
             const std::vector<int> first_group{0};
@@ -176,26 +197,109 @@ FilePeek PeekParquet(const std::string& path, const PeekLimits& limits) {
                 std::shared_ptr<arrow::RecordBatch> batch;
                 if ((*batches)->ReadNext(&batch).ok() && batch) {
                     auto table = arrow::Table::FromRecordBatches({batch});
-                    if (table.ok()) {
-                        const int64_t n = std::min<int64_t>((*table)->num_rows(), limits.max_rows);
-                        for (int64_t r = 0; r < n; ++r) {
-                            std::vector<std::string> row;
-                            for (int c = 0; c < (*table)->num_columns(); ++c) {
-                                auto cell = (*table)->column(c)->GetScalar(r);
-                                row.push_back(!cell.ok() || !(*cell)->is_valid ? std::string()
-                                                                               : (*cell)->ToString());
-                            }
-                            peek.rows.push_back(std::move(row));
-                        }
-                    }
+                    if (table.ok()) head = *table;
                 }
             }
         }
+        if (!head) {
+            peek.error = "Not a readable Parquet file";
+            return peek;
+        }
+        FillTablePeek(*head, limits, peek);
     } catch (const std::exception& e) {
         peek.error = std::string("Not a readable Parquet file: ") + e.what();
+        peek.ok = false;
+    }
+    return peek;
+}
+
+// Arrow IPC / Feather v2: the footer gives the row count, the first record
+// batch the rows; an IPC stream gives its first batch only.
+FilePeek PeekArrowIpc(const std::string& path, const PeekLimits& limits) {
+    FilePeek peek;
+    auto input = arrow::io::ReadableFile::Open(path);
+    if (!input.ok()) {
+        peek.error = "Could not open the file.";
         return peek;
     }
-    peek.table = true;
+    std::shared_ptr<arrow::RecordBatch> first;
+    std::shared_ptr<arrow::Schema> schema;
+    auto file_reader = arrow::ipc::RecordBatchFileReader::Open(*input);
+    if (file_reader.ok()) {
+        schema = (*file_reader)->schema();
+        auto rows = (*file_reader)->CountRows();
+        if (rows.ok()) peek.total_rows = *rows;
+        if ((*file_reader)->num_record_batches() > 0) {
+            auto batch = (*file_reader)->ReadRecordBatch(0);
+            if (batch.ok()) first = *batch;
+        }
+    } else {
+        auto reopened = arrow::io::ReadableFile::Open(path);
+        auto stream = reopened.ok() ? arrow::ipc::RecordBatchStreamReader::Open(*reopened)
+                                    : arrow::Result<std::shared_ptr<arrow::ipc::RecordBatchStreamReader>>(
+                                          reopened.status());
+        if (!stream.ok()) {
+            peek.error = "Not a readable Arrow / Feather file: " + file_reader.status().message();
+            return peek;
+        }
+        schema = (*stream)->schema();
+        (void)(*stream)->ReadNext(&first);
+    }
+    auto head = first ? arrow::Table::FromRecordBatches({first}) : arrow::Table::MakeEmpty(schema);
+    if (!head.ok()) {
+        peek.error = "Not a readable Arrow / Feather file: " + head.status().message();
+        return peek;
+    }
+    FillTablePeek(**head, limits, peek);
+    return peek;
+}
+
+// The first sheet of a small workbook (the adapter reads a sheet whole).
+FilePeek PeekWorkbook(const std::string& path, const PeekLimits& limits) {
+    FilePeek peek;
+    peek.ok = true;
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    if (!ec && size > limits.max_workbook_bytes) {
+        peek.note = "Large workbook: rows are read when a Data Input or Data Convert opens it.";
+        return peek;
+    }
+    ExcelTableReadOptions options;
+    std::string error;
+    auto table = ReadExcelTable(path, options, error);
+    if (!table) {
+        peek.note = "No preview: " + (error.empty() ? std::string("the workbook could not be read") : error) + ".";
+        return peek;
+    }
+    peek.total_rows = table->num_rows();
+    FillTablePeek(*table, limits, peek);
+    return peek;
+}
+
+// An HDF5 file's top-level groups and datasets (metadata only).
+FilePeek PeekHdf5(const std::string& path, const PeekLimits& limits) {
+    FilePeek peek;
+    Hdf5BrowseRequest request;
+    request.group_path = "/";
+    request.limit = static_cast<uint32_t>(std::max(1, limits.max_lines));
+    const Hdf5BrowsePage page = HDF5Browser::BrowsePage(path, request);
+    if (page.status != Hdf5TableStatus::Ok) {
+        peek.ok = true;
+        peek.note = "No preview: " + (page.error.empty() ? std::string("the file could not be listed") : page.error) + ".";
+        return peek;
+    }
+    for (const auto& entry : page.entries) {
+        std::string line = entry.kind == Hdf5ObjectKind::Group ? entry.name + "/" : entry.name;
+        if (entry.kind == Hdf5ObjectKind::Dataset) {
+            std::string shape;
+            for (const auto dim : entry.dataset.shape) shape += (shape.empty() ? "" : " x ") + std::to_string(dim);
+            line += "   [" + shape + "]";
+            if (!entry.dataset.source_type.empty()) line += " " + entry.dataset.source_type;
+        }
+        peek.lines.push_back(std::move(line));
+    }
+    peek.more_lines = page.total_entries > page.entries.size();
+    peek.line_noun = "object";
     peek.ok = true;
     return peek;
 }
@@ -261,7 +365,7 @@ std::string TypeLabel(const std::string& path, bool is_directory) {
 }
 
 bool PeeksAsTable(const std::string& path) {
-    return OneOf(Extension(path), {".csv", ".tsv", ".parquet"});
+    return OneOf(Extension(path), {".csv", ".tsv", ".parquet", ".arrow", ".feather", ".ipc", ".xlsx"});
 }
 
 bool PeeksAsText(FileKind kind) {
@@ -273,6 +377,15 @@ FilePeek PeekFile(const std::string& path, const PeekLimits& limits) {
     if (ext == ".csv") return PeekDelimited(path, ',', limits);
     if (ext == ".tsv") return PeekDelimited(path, '\t', limits);
     if (ext == ".parquet") return PeekParquet(path, limits);
+    if (OneOf(ext, {".arrow", ".feather", ".ipc"})) return PeekArrowIpc(path, limits);
+    if (ext == ".xlsx") return PeekWorkbook(path, limits);
+    if (OneOf(ext, {".h5", ".hdf5", ".hdf"})) return PeekHdf5(path, limits);
+    if (ext == ".xls") {
+        FilePeek old;
+        old.ok = true;
+        old.note = "Only .xlsx workbooks can be previewed.";
+        return old;
+    }
     if (PeeksAsText(KindOfPath(path, false))) return PeekText(path, limits);
     FilePeek none;
     none.ok = true;  // nothing to show beyond the file's details
@@ -288,7 +401,8 @@ std::string SummaryLine(const std::string& type_label, const std::string& size_t
                     (peek.total_rows == 1 ? " row" : " rows");
         line += " \xC2\xB7 " + std::to_string(peek.columns.size()) + (peek.columns.size() == 1 ? " column" : " columns");
     } else if (peek.ok && !peek.lines.empty() && !peek.more_lines) {
-        line += " \xC2\xB7 " + std::to_string(peek.lines.size()) + (peek.lines.size() == 1 ? " line" : " lines");
+        line += " \xC2\xB7 " + std::to_string(peek.lines.size()) + " " + peek.line_noun +
+                (peek.lines.size() == 1 ? "" : "s");
     }
     return line;
 }
