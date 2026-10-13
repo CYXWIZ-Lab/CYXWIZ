@@ -5510,6 +5510,41 @@ set_target_properties(test_computation_truth_clustering PROPERTIES
 )
 add_test(NAME clustering_parity COMMAND test_computation_truth_clustering)
 
+# ===== Test: classic ML against scikit-learn (TOFIX145 Group C, classic ML on the device) =====
+set(CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/classic_ml_sklearn.json"
+)
+add_executable(test_computation_truth_classic_ml
+    tests/computation_truth/test_computation_truth_classic_ml.cpp
+)
+target_include_directories(test_computation_truth_classic_ml PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_classic_ml PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_classic_ml PRIVATE
+    CYXWIZ_CLASSIC_ML_FIXTURE="${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_classic_ml_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_classic_ml>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_classic_ml>/computation_truth_fixtures/classic_ml_sklearn.json"
+    SOURCES "${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_classic_ml copy_test_computation_truth_classic_ml_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_classic_ml PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_classic_ml PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME classic_ml_sklearn_parity COMMAND test_computation_truth_classic_ml)
+
 # ===== Test: PCA / t-SNE / UMAP against PyTorch / scipy references (TOFIX140 dimensionality reduction on the device) =====
 set(CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/dimensionality_reduction_pytorch.json"

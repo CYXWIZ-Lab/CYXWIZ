@@ -1,0 +1,48 @@
+#pragma once
+
+// Classical supervised models on ArrayFire (TOFIX145 Group C): fit on host
+// rows, compute on the selected device (float64 where it has it), results back
+// as host values. scikit-learn is the oracle: same formulas, same class order
+// (classes are 0..k-1 in the caller's sorted label order), same tie breaking.
+
+#include "cyxwiz/api_export.h"
+
+#include <string>
+#include <vector>
+
+namespace cyxwiz {
+
+using ClassicMatrix = std::vector<std::vector<double>>;
+
+// Class predictions with per-class probabilities [n, k] (empty when the model
+// has none).
+struct CYXWIZ_API ClassicPrediction {
+    std::vector<int> labels;
+    ClassicMatrix probabilities;
+
+    bool success = false;
+    std::string error_message;
+};
+
+// sklearn.naive_bayes.GaussianNB: per-class mean and variance (ddof 0), every
+// variance + var_smoothing * the largest feature variance, priors from counts.
+struct CYXWIZ_API GaussianNBModel {
+    ClassicMatrix theta;               // [k, d] class means
+    ClassicMatrix var;                 // [k, d] class variances incl. epsilon
+    std::vector<double> class_prior;   // [k]
+    std::vector<double> class_count;   // [k]
+    double epsilon = 0.0;
+
+    bool success = false;
+    std::string error_message;
+};
+
+class CYXWIZ_API ClassicML {
+public:
+    // labels in 0..n_classes-1; every class must have at least one row.
+    static GaussianNBModel FitGaussianNB(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes,
+                                         double var_smoothing = 1e-9);
+    static ClassicPrediction PredictGaussianNB(const GaussianNBModel& model, const ClassicMatrix& x);
+};
+
+}  // namespace cyxwiz
