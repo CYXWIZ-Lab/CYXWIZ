@@ -102,6 +102,7 @@ std::string SupportAxisValueLabel(const std::string& value) {
     if (value == "pipeline_executor") return "Pipeline executor";
     if (value == "pipeline_operator_factory") return "Pipeline operator factory";
     if (value == "ui_only") return "UI-only";
+    if (value == "recipe_lowering") return "Recipe lowering";
     if (value == "classic_ml") return "Classic ML";
     if (value == "deep_learning") return "Deep learning";
     if (value == "model_layer") return "Model layer";

@@ -1331,6 +1331,13 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
             "nodes.", ""};
         subgraph.made_by = "Select two or more nodes, then right-click the canvas: Actions > Create Subgraph "
                            "(Ctrl+Shift+U).";
+        // Its owner is recipe lowering, not a UI panel: a Preparation Recipe
+        // runs as its steps (TOFIX147 item 7).
+        const std::string owner_reason =
+            "A Preparation Recipe runs: it is lowered into its steps before the pipeline runs. A visual group "
+            "only tidies the canvas and does not run.";
+        UpsertSupportAxis(subgraph, "Implementation Owner", "recipe_lowering", true, owner_reason);
+        ApplySupportState(subgraph, "real", true, owner_reason);
         RegisterNode(std::move(subgraph));
     }
 
