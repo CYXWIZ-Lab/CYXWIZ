@@ -124,6 +124,74 @@ void RunLogistic(const json& c, const std::string& name) {
     CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", 1e-6);
 }
 
+double SvmGamma(const json& c, const Matrix& x) {
+    const auto& params = c.at("params");
+    std::string gamma = "scale";
+    if (params.contains("gamma")) gamma = params.at("gamma").is_string() ? params.at("gamma").get<std::string>()
+                                                                          : std::to_string(params.at("gamma").get<double>());
+    const double value = ClassicML::ResolveSVMGamma(x, gamma);
+    CheckValue(value, c.at("gamma_value").get<double>(), "gamma " + gamma);
+    return value;
+}
+
+std::string SvmKernel(const json& c) { return c.at("params").value("kernel", std::string("rbf")); }
+int SvmDegree(const json& c) { return c.at("params").value("degree", 3); }
+double SvmCoef0(const json& c) { return c.at("params").value("coef0", 0.0); }
+
+void RunSVC(const json& c, const std::string& name) {
+    const auto x = c.at("x").get<Matrix>();
+    const auto model = ClassicML::FitSVC(x, c.at("y").get<std::vector<int>>(), c.at("n_classes").get<int>(),
+                                         c.at("params").value("C", 1.0), SvmKernel(c), SvmGamma(c, x), SvmDegree(c),
+                                         SvmCoef0(c), 1e-9);
+    Check(model.success && model.converged, name + " fit: " + model.error_message);
+    // Support vectors per class, as sklearn's n_support_.
+    const auto n_support = c.at("n_support").get<std::vector<int>>();
+    const auto labels = c.at("y").get<std::vector<int>>();
+    std::vector<int> per_class(n_support.size(), 0);
+    for (const auto& row : model.support_vectors) {
+        for (size_t r = 0; r < x.size(); ++r) {
+            if (x[r] == row) {
+                ++per_class[static_cast<size_t>(labels[r])];
+                break;
+            }
+        }
+    }
+    for (size_t k = 0; k < n_support.size(); ++k)
+        Check(per_class[k] == n_support[k], name + " support vectors of class " + std::to_string(k) + ": " +
+                                                std::to_string(per_class[k]) + ", sklearn " + std::to_string(n_support[k]));
+    const auto train = ClassicML::PredictSVC(model, x);
+    Check(train.success, name + " predict: " + train.error_message);
+    CheckLabels(train.labels, c.at("predict"), name + " predict");
+    const auto x_test = c.at("x_test").get<Matrix>();
+    const auto held_out = ClassicML::PredictSVC(model, x_test);
+    Check(held_out.success, name + " predict test: " + held_out.error_message);
+    CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
+    std::string error;
+    CheckMatrix(ClassicML::SVMDecision(model, x_test, &error), c.at("decision_test"), name + " decision " + error, 1e-6);
+}
+
+void RunSVR(const json& c, const std::string& name) {
+    const auto x = c.at("x").get<Matrix>();
+    const auto& params = c.at("params");
+    const auto model = ClassicML::FitSVR(x, c.at("t").get<std::vector<double>>(), params.value("C", 1.0),
+                                         params.value("epsilon", 0.1), SvmKernel(c), SvmGamma(c, x), SvmDegree(c),
+                                         SvmCoef0(c), 1e-9);
+    Check(model.success && model.converged, name + " fit: " + model.error_message);
+    Check(static_cast<int>(model.support_vectors.size()) == c.at("n_support").get<int>(),
+          name + " support vectors: " + std::to_string(model.support_vectors.size()));
+    CheckValue(-model.rho.front(), c.at("intercept").get<double>(), name + " intercept", 1e-6);
+    std::string error;
+    const auto train = ClassicML::PredictSVR(model, x, &error);
+    Check(!train.empty(), name + " predict: " + error);
+    const auto expected = c.at("predict").get<std::vector<double>>();
+    for (size_t i = 0; i < expected.size(); ++i) CheckValue(train[i], expected[i], name + " predict", 1e-6);
+    const auto held_out = ClassicML::PredictSVR(model, c.at("x_test").get<Matrix>(), &error);
+    const auto expected_test = c.at("predict_test").get<std::vector<double>>();
+    Check(held_out.size() == expected_test.size(), name + " predict test: " + error);
+    for (size_t i = 0; i < expected_test.size(); ++i)
+        CheckValue(held_out[i], expected_test[i], name + " predict test", 1e-6);
+}
+
 }  // namespace
 
 int main(int, char** argv) {
@@ -138,6 +206,8 @@ int main(int, char** argv) {
         if (op == "gaussian_nb") RunGaussianNB(c, name);
         else if (op == "knn") RunKNN(c, name);
         else if (op == "logistic") RunLogistic(c, name);
+        else if (op == "svc") RunSVC(c, name);
+        else if (op == "svr") RunSVR(c, name);
         else Check(false, "unknown case " + op);
         ++passed;
     }
@@ -154,6 +224,14 @@ int main(int, char** argv) {
     Check(!ClassicML::FitLogistic({{0.0}, {1.0}}, {0, 1}, 2, 0.0).success, "C = 0 is refused");
     const auto short_fit = ClassicML::FitLogistic({{0.0}, {0.4}, {0.6}, {1.0}}, {0, 1, 0, 1}, 2, 1.0, 1, 1e-12);
     Check(short_fit.success && !short_fit.converged && short_fit.n_iter == 1, "max_iter stops the fit unconverged");
+    Check(!ClassicML::FitSVC({{0.0}, {1.0}}, {0, 1}, 2, 1.0, "laplacian").success, "an unknown kernel is refused");
+    Check(!ClassicML::FitSVC({{0.0}, {1.0}}, {0, 1}, 2, 1.0, "rbf", 0.0).success, "gamma = 0 is refused");
+    Check(!ClassicML::FitSVR({{0.0}, {1.0}}, {0.0, 1.0}, 1.0, -0.1).success, "a negative epsilon is refused");
+    Check(ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "auto") == 0.5 &&
+              ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "0.25") == 0.25 &&
+              ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "fast") == 0.0 &&
+              ClassicML::ResolveSVMGamma({{3.0, 3.0}}, "scale") == 1.0,
+          "gamma auto, a number, an unreadable word, and scale on constant data");
 
     std::cout << "classic ML matches scikit-learn: " << passed << " cases" << std::endl;
     return 0;
