@@ -10,6 +10,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
+#include "arrayfire_sort.h"
 #include "classic_ml_detail.h"
 
 #include <algorithm>
@@ -88,7 +89,7 @@ ClassicPrediction ClassicML::PredictKNN(const KNNModel& model, const ClassicMatr
             const af::seq rows(static_cast<double>(start), static_cast<double>(end - 1));
             const af::array distances = PairwiseDistances(query(rows, af::span), train, model.metric);
             af::array sorted, order;
-            af::sort(sorted, order, distances, 1, true);
+            SortWithIndex(sorted, order, distances, 1, true);
             const af::array nearest = sorted(af::span, af::seq(static_cast<double>(k)));
             const af::array nearest_index = order(af::span, af::seq(static_cast<double>(k)));
             const dim_t b = end - start;

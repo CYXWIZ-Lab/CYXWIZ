@@ -2,6 +2,7 @@
 #include <vector>
 #include "layer_arrayfire_utils.h"
 #include "../arrayfire_backend_utils.h"
+#include "../arrayfire_sort.h"
 
 #include <cmath>
 #include <cstring>
@@ -236,7 +237,7 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
                 dw(key_array, af::span) = token_rows;
             } else {
                 af::array sorted_keys, order;
-                af::sort(sorted_keys, order, key_array, 0, true);
+                SortWithIndex(sorted_keys, order, key_array, 0, true);
                 af::array unique_keys, sums;
                 af::sumByKey(unique_keys, sums, sorted_keys, af::lookup(token_rows, order, 0), 0);
                 dw(unique_keys, af::span) = sums;

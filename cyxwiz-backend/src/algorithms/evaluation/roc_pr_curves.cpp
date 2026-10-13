@@ -8,6 +8,7 @@
 #include "cyxwiz/model_evaluation.h"
 #include "classification_metric_contract.h"
 #include "../arrayfire_host_values.h"
+#include "../arrayfire_sort.h"
 
 #include <arrayfire.h>
 
@@ -46,7 +47,7 @@ ThresholdCounts CountsAtThresholds(const std::vector<int>& y_true, const std::ve
     const af::array labels = af::array(n, y_true.data()).as(scores.type());
     af::array sorted;
     af::array order;
-    af::sort(sorted, order, scores, 0, false);
+    SortWithIndex(sorted, order, scores, 0, false);
     const af::array tps = af::accum(labels(order));
     const af::array fps = (af::range(af::dim4(n), 0, scores.type()) + 1.0) - tps;
     af::array ends = af::constant(static_cast<unsigned>(n - 1), 1, u32);

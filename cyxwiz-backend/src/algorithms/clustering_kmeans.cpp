@@ -7,6 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "analysis_device.h"
+#include "arrayfire_sort.h"
 
 #include <cmath>
 #include <limits>
@@ -78,7 +79,7 @@ KMeansRun RunLloyd(const af::array& data, af::array centers, int max_iter, doubl
 
 af::array RandomRows(const af::array& data, int k, af::randomEngine& engine) {
     af::array keys, order;
-    af::sort(keys, order, af::randu(data.dims(0), f32, engine));
+    SortWithIndex(keys, order, af::randu(data.dims(0), f32, engine));
     const af::array chosen = order(af::seq(0, k - 1));
     return data(chosen, af::span);
 }
