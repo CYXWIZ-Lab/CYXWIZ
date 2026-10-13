@@ -79,7 +79,9 @@ af::array PairwiseDistances(const af::array& rows, const af::array& all, const s
             const af::array safe = af::max(norms, af::constant(1e-300, norms.dims(), norms.type()));
             return x / af::tile(safe, 1, static_cast<unsigned>(x.dims(1)));
         };
-        return 1.0 - af::matmul(unit(rows), unit(all), AF_MAT_NONE, AF_MAT_TRANS);
+        // Clipped to [0, 2] as scikit-learn: rounding can leave a row's distance
+        // to itself at -2e-16, which would flip a 1/d weight.
+        return af::clamp(1.0 - af::matmul(unit(rows), unit(all), AF_MAT_NONE, AF_MAT_TRANS), 0.0, 2.0);
     }
     const bool manhattan = metric == "manhattan";
     af::array total = af::constant(0.0, b, n, rows.type());

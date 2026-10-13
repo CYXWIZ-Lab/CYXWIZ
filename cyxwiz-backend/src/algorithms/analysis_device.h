@@ -33,7 +33,7 @@ dim_t RowBlock(dim_t n);
 
 // Distances from each row of `rows` [b, d] to each row of `all` [n, d]: [b, n].
 // Euclidean and Manhattan are accumulated feature by feature (no |a|^2 + |b|^2
-// - 2ab cancellation); cosine is 1 - u.v / (|u| |v|).
+// - 2ab cancellation); cosine is 1 - u.v / (|u| |v|), clipped to [0, 2].
 af::array PairwiseDistances(const af::array& rows, const af::array& all, const std::string& metric);
 
 // Squared euclidean distances [b, k] from rows to centers, feature by feature.
