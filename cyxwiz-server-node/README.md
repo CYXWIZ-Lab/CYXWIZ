@@ -19,7 +19,7 @@ The external orchestration service is maintained in the separate [CyxCloud repos
 
 Safe templates live in `resources/config/` and the root `config/` directory. Keep secrets and machine-local overrides outside Git. Placeholder JWT values are not suitable for deployed systems.
 
-ArrayFire is optional for the Server Node build. When it is absent, GPU-related reporting and execution capability are reduced.
+ArrayFire is required for the Server Node build: it comes with `cyxwiz-backend`, which computes on ArrayFire only (its CPU backend is the CPU option).
 
 ## Build
 

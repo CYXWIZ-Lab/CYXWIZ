@@ -146,7 +146,6 @@ void HardwareDetector::FillMeasuredCapability(protocol::NodeInfo* info) {
             benchmark->set_tokens_per_second(measured.tokens_per_second);
             benchmark->set_step_ms_median(measured.step_ms_median);
             benchmark->set_step_ms_p90(measured.step_ms_p90);
-            benchmark->set_native_cpu_fallbacks(measured.native_cpu_fallbacks);
             benchmark->set_build(measured.build);
             benchmark->set_measured_at(measured.measured_at);
         }

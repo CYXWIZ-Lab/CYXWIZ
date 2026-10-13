@@ -1,106 +1,95 @@
 #include "cyxwiz/tensor.h"
-#include "tensor_backend_observation_utils.h"
+#include "tensor_math_utils.h"
 #include "tensor_utils.h"
 
 #include <algorithm>
 #include <array>
-#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
-#endif
+#include "../algorithms/arrayfire_host_values.h"
 
 namespace cyxwiz {
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-void RecordShapeArrayFireFallback(const char* operation_name,
-                                  const Tensor& input,
-                                  const std::vector<size_t>& output_shape,
-                                  const std::string& attributes,
-                                  const char* error_message) {
-    tensor_backend_observation::RecordArrayFireFallback(
-        operation_name,
-        tensor_backend_observation::DataTypeName(input.GetDataType()),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {input.Shape()},
-            output_shape,
-            input.GetDataType(),
-            attributes),
-        error_message);
+// One af::reorder of a rank <= 4 semantic array.
+af::array ReorderSemantic(const af::array& semantic, const std::vector<int>& order) {
+    std::array<unsigned int, 4> axes = {0, 1, 2, 3};
+    for (size_t axis = 0; axis < order.size(); ++axis) axes[axis] = static_cast<unsigned int>(order[axis]);
+    return af::reorder(semantic, axes[0], axes[1], axes[2], axes[3]);
 }
 
-af::array RowMajorLinear(const Tensor& input) {
-    if (input.Shape().size() == 2) {
-        return af::flat(af::transpose(input.GetArrayRowMajor2D()));
+// General permutation of row-major flat storage: each output position's
+// source index is computed on the device (div / mod per output axis) and
+// gathered.
+af::array PermuteGatherFlat(const af::array& flat, const std::vector<size_t>& shape,
+                            const std::vector<int>& dims, const std::vector<size_t>& new_shape) {
+    if (static_cast<unsigned long long>(flat.elements()) > (std::numeric_limits<unsigned>::max)()) {
+        throw std::runtime_error("Tensor::Permute: input exceeds the ArrayFire index range");
     }
-    if (input.Shape().size() == 3) {
-        return af::flat(af::reorder(input.GetArrayRowMajor3D(), 2, 1, 0));
+    std::vector<double> source_strides(shape.size(), 1.0);
+    for (size_t axis = shape.size() - 1; axis-- > 0;) {
+        source_strides[axis] = source_strides[axis + 1] * static_cast<double>(shape[axis + 1]);
     }
-    return af::flat(input.GetArray());
+    af::array remaining = af::range(af::dim4(flat.elements()), 0, s64);
+    af::array source = af::constant(0, af::dim4(flat.elements()), s64);
+    // Extents and strides stay far below 2^53, so double scalars are exact.
+    for (size_t axis = new_shape.size(); axis-- > 0;) {
+        const double extent = static_cast<double>(new_shape[axis]);
+        const af::array coordinate = af::mod(remaining, extent);
+        remaining = (remaining - coordinate) / extent;
+        source = source + coordinate * source_strides[static_cast<size_t>(dims[axis])];
+    }
+    return flat(source.as(u32));
 }
 
-af::array SemanticArrayFromRowMajorLinear(
-    const af::array& linear,
-    const std::vector<size_t>& shape) {
-    af::dim4 reversed_dims(1, 1, 1, 1);
-    for (size_t axis = 0; axis < shape.size(); ++axis) {
-        reversed_dims[static_cast<unsigned int>(axis)] =
-            static_cast<dim_t>(shape[shape.size() - axis - 1]);
-    }
-    af::array reversed = af::moddims(linear, reversed_dims);
-
-    switch (shape.size()) {
-        case 1: return reversed;
-        case 2: return af::reorder(reversed, 1, 0);
-        case 3: return af::reorder(reversed, 2, 1, 0);
-        case 4: return af::reorder(reversed, 3, 2, 1, 0);
-        default:
-            throw std::runtime_error(
-                "ArrayFire semantic permutation supports ranks 1 through 4");
-    }
-}
-
-Tensor TensorFromPermutedSemantic(
-    const af::array& semantic,
-    const std::vector<size_t>& shape) {
-    if (shape.size() <= 4) {
-        return Tensor::FromSemanticArray(semantic, shape);
-    }
-    throw std::runtime_error(
-        "ArrayFire semantic permutation supports ranks 1 through 4");
-}
-
+// Permute on the device. Up to rank 4: reorder the semantic view. Above:
+// consecutive output axes that read consecutive source axes merge into one
+// run; with at most four runs it is one reorder of the collapsed view,
+// otherwise a gather.
 Tensor PermuteArrayFire(const Tensor& input,
-                        const std::vector<int>& normalized_dims,
-                        const std::vector<size_t>& output_shape) {
-    af::array semantic = SemanticArrayFromRowMajorLinear(
-        RowMajorLinear(input), input.Shape());
-    std::array<unsigned int, 4> order = {0, 1, 2, 3};
-    for (size_t axis = 0; axis < normalized_dims.size(); ++axis) {
-        order[axis] = static_cast<unsigned int>(normalized_dims[axis]);
+                        const std::vector<int>& dims,
+                        const std::vector<size_t>& new_shape) {
+    const std::vector<size_t>& shape = input.Shape();
+    if (shape.size() <= 4) {
+        af::array permuted = ReorderSemantic(input.GetSemanticArray(), dims);
+        permuted.eval();
+        return Tensor::FromSemanticArray(permuted, new_shape);
     }
-    af::array permuted =
-        af::reorder(semantic, order[0], order[1], order[2], order[3]);
-    permuted.eval();
-    return TensorFromPermutedSemantic(permuted, output_shape);
-}
-
-std::string PermutationAttributes(const std::vector<int>& dims) {
-    std::string attributes = "op=permute;dims=";
-    for (size_t index = 0; index < dims.size(); ++index) {
-        if (index > 0) {
-            attributes += ',';
+    struct Run { int source_start; size_t extent; };
+    std::vector<Run> runs;  // in output order
+    for (size_t axis = 0; axis < dims.size(); ++axis) {
+        if (!runs.empty() && dims[axis] == dims[axis - 1] + 1) {
+            runs.back().extent *= new_shape[axis];
+        } else {
+            runs.push_back({dims[axis], new_shape[axis]});
         }
-        attributes += std::to_string(dims[index]);
     }
-    return attributes;
+    const af::array flat = input.GetRowMajorFlatArray();
+    af::array output;
+    if (runs.size() <= 4) {
+        std::vector<size_t> source_order(runs.size());
+        for (size_t i = 0; i < runs.size(); ++i) source_order[i] = i;
+        std::sort(source_order.begin(), source_order.end(),
+                  [&runs](size_t a, size_t b) { return runs[a].source_start < runs[b].source_start; });
+        std::vector<size_t> collapsed_source(runs.size());
+        std::vector<int> collapsed_order(runs.size());
+        for (size_t position = 0; position < source_order.size(); ++position) {
+            collapsed_source[position] = runs[source_order[position]].extent;
+            collapsed_order[source_order[position]] = static_cast<int>(position);
+        }
+        const af::array permuted = ReorderSemantic(
+            tensor_math_utils::RowMajorFlatToSemantic(flat, collapsed_source), collapsed_order);
+        output = tensor_math_utils::SemanticToRowMajorFlat(permuted, runs.size());
+    } else {
+        output = PermuteGatherFlat(flat, shape, dims, new_shape);
+    }
+    output.eval();
+    return Tensor::FromRowMajorFlatArray(output, new_shape);
 }
-#endif
 
 } // namespace
 
@@ -249,60 +238,11 @@ Tensor Tensor::Permute(const std::vector<int>& dims) const {
         return Reshape(shape_);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (shape_.size() <= 4) {
-        try {
-            return PermuteArrayFire(*this, normalized_dims, new_shape);
-        } catch (const af::exception& e) {
-            RecordShapeArrayFireFallback(
-                "Tensor::Permute",
-                *this,
-                new_shape,
-                PermutationAttributes(normalized_dims),
-                e.what());
-        }
-    } else {
-        RecordShapeArrayFireFallback(
-            "Tensor::Permute",
-            *this,
-            new_shape,
-            PermutationAttributes(normalized_dims),
-            "ArrayFire permutation supports ranks up to 4");
+    try {
+        return PermuteArrayFire(*this, normalized_dims, new_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::Permute", e));
     }
-#endif
-
-    Tensor result(new_shape, dtype_);
-    const size_t element_size = tensor_utils::ElementSize(dtype_);
-    const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor stride calculation overflow");
-    const auto dst_strides = tensor_utils::RowMajorStrides(new_shape, "Tensor stride calculation overflow");
-
-    const auto* src = static_cast<const unsigned char*>(ReadData());
-    auto* dst = static_cast<unsigned char*>(result.MutableData());
-
-    const size_t total = NumElements();
-    std::vector<size_t> src_index(shape_.size(), 0);
-    std::vector<size_t> dst_index(shape_.size(), 0);
-
-    for (size_t linear = 0; linear < total; linear++) {
-        size_t rem = linear;
-        for (size_t axis = 0; axis < shape_.size(); axis++) {
-            src_index[axis] = rem / src_strides[axis];
-            rem %= src_strides[axis];
-        }
-
-        for (size_t axis = 0; axis < normalized_dims.size(); axis++) {
-            dst_index[axis] = src_index[static_cast<size_t>(normalized_dims[axis])];
-        }
-
-        size_t dst_linear = 0;
-        for (size_t axis = 0; axis < dst_index.size(); axis++) {
-            dst_linear += dst_index[axis] * dst_strides[axis];
-        }
-
-        std::memcpy(dst + dst_linear * element_size, src + linear * element_size, element_size);
-    }
-
-    return result;
 }
 
 } // namespace cyxwiz

@@ -3,6 +3,7 @@
 #include "arrow_dataset.h"
 #include "graph_compiler.h"
 #include "graph_compiler_dataset_hooks.h"
+#include "graph_node_factory.h"
 #include "graph_training_prep.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
@@ -37,22 +38,16 @@ std::string Parameter(const gui::MLNode& node, const char* key) {
     return it == node.parameters.end() ? std::string() : it->second;
 }
 
-gui::NodeCategory CategoryOf(const gui::MLNode& node) {
-    if (node.category != gui::NodeCategory::Unknown) return node.category;
-    auto& registry = NodeMetadataRegistry::Instance();
-    if (!registry.IsInitialized()) registry.Initialize();
-    const NodeMetadata* metadata = registry.GetMetadata(node.type);
-    return metadata ? metadata->category : gui::NodeCategory::Unknown;
-}
-
 // Data-path steps a headless run cannot perform yet: the Engine applies them
 // through its preparation pipeline (every operator-backed node) before
 // training. Inspection nodes (SampleRows, DescribeStats...) do not change the
-// training data and pass.
+// training data and pass. Image transforms (Resize, crops, flips,
+// augmentation) compile into the trainer's image batcher, which applies them
+// here too.
 bool NeedsPreparation(const gui::MLNode& node) {
-    if (node.type == gui::NodeType::Augmentation) return true;
     if (ResolvePipelineRuntimeSupport(node.type).mode == PipelineRuntimeSupportMode::OperatorBacked) return true;
-    switch (CategoryOf(node)) {
+    if (GraphCompiler::GetPreprocessingNodeDomain(node.type) == PreprocessingDomain::Image) return false;
+    switch (gui::GetNodeCategoryForType(node.type)) {
     case gui::NodeCategory::DataTransform:
     case gui::NodeCategory::Preprocessing:
     case gui::NodeCategory::TextProcessing:
@@ -294,6 +289,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     const BatchCallback on_batch = [&](int epoch, int batch, int total, float loss, float accuracy) {
         ++batches;
         if (callbacks.on_batch) callbacks.on_batch(epoch, batch, total, loss, accuracy);
+        // A pause asked for now holds the next batch: the executor waits at
+        // the top of each batch. The watcher's 200 ms poll alone let batches
+        // run on after the request.
+        if (callbacks.should_pause && !executor->IsPaused() && callbacks.should_pause()) executor->Pause();
     };
     const auto seconds_since = [](std::chrono::steady_clock::time_point start) {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -302,9 +301,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     std::thread watcher;
     if (callbacks.should_cancel || callbacks.should_pause || callbacks.should_stop_with_checkpoint) {
         // Cancel and pause reach the executor from here; it honours both
-        // between batches (Stop, and Pause/Resume via WaitWhilePaused).
+        // between batches (Stop, and Pause/Resume via WaitWhilePaused). The
+        // batch callback can pause too, so the watcher follows the
+        // executor's state rather than its own.
         watcher = std::thread([&] {
-            bool paused = false;
             while (!finished.load()) {
                 if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
@@ -317,13 +317,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                     return;
                 }
                 const bool pause = callbacks.should_pause && callbacks.should_pause();
-                if (pause != paused) {
-                    paused = pause;
-                    if (paused) {
-                        executor->Pause();
-                    } else {
-                        executor->Resume();
-                    }
+                if (pause && !executor->IsPaused()) {
+                    executor->Pause();
+                } else if (!pause && executor->IsPaused()) {
+                    executor->Resume();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }

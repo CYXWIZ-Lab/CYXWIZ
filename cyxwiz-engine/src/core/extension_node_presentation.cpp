@@ -118,8 +118,6 @@ ExtensionCanvasStyle BuildExtensionCanvasStyle(const gui::MLNode& node,
     ExtensionCanvasStyle style;
     if (descriptor == nullptr || node.extension_missing) {
         style.missing = true;
-        style.box_color = kExtensionMissingBoxColor;
-        style.outline_color = kExtensionMissingOutlineColor;
         style.status_line = kExtensionNotInstalledLabel;
         return style;
     }

@@ -148,12 +148,11 @@ std::string_view HelpTasksText() {
     return "=== Help: common tasks ===\n"
            "Training failed or behaved oddly:\n"
            "  show errors last 20 - the newest errors, the first place to look\n"
-           "  show training last - how the last run ended, its backend and fallback\n"
+           "  show training last - how the last run ended, its backend and policy\n"
            "  show code <CW-X-NNNN> - meaning and next step for a code you saw\n"
            "  show run <run_id> codes CW-* - every diagnostic code of one run\n"
            "Training is slower than expected:\n"
            "  show device active - confirm training runs on the GPU you expect\n"
-           "  show training fallback - steps that ran on the CPU instead of the GPU\n"
            "  show training host-sync - device-to-host copies that stall the GPU\n"
            "  show training placement - where tensors lived during the run\n"
            "Choosing or checking a GPU:\n"
@@ -187,7 +186,7 @@ std::string_view HelpGrepText() {
            "  It searches the message only; use show logs where for other fields.\n"
            "  The session filter (filter set) still applies.\n"
            "Examples:\n"
-           "  show logs grep \"native CPU fallback\" - steps that left the GPU\n"
+           "  show logs grep \"host sync\" - device-to-host copies\n"
            "  show logs grep timed out - connection and task timeouts\n"
            "  show logs grep cuda - anything mentioning CUDA (any case)\n"
            "  show logs grep \"Python execution error\" - failed scripts and REPL code\n"
@@ -198,14 +197,14 @@ std::string_view HelpGrepText() {
            "  Only errors with the text: show logs where message contains cuda and\n"
            "    level>=error\n"
            "  Search one backend repeatedly: filter set backend=arrayfire_cuda,\n"
-           "    then show logs grep fallback\n"
+           "    then show logs grep \"host sync\"\n"
            "  More than 100 rows or every field: the Logs tab search box and Export.";
 }
 
 std::string_view HelpSyntaxText() {
     return "=== Help: syntax ===\n"
            "Arguments are separated by spaces. Quote text that contains spaces:\n"
-           "  show logs grep \"native CPU fallback\"\n"
+           "  show logs grep \"host sync\"\n"
            "Inside quotes write \\\" for a quote and \\\\ for a backslash.\n"
            "Counts: <n> is 1-1000 (show logs last 50, show errors last 20).\n"
            "Device routes: <backend>:<id> such as cpu:0, cuda:0, opencl:0, oneapi:0\n"
@@ -654,13 +653,11 @@ void AddTrainingSummary(RuntimeConsoleCommandResult& result,
                 " fingerprint=" +
                 RecordedOr(truth.physical_fingerprint));
     AddLine(result, RuntimeConsoleOutputLevel::Info,
-            "Policy: fallback=" + RecordedOr(truth.fallback_policy) +
+            "Policy: " + RecordedOr(truth.execution_policy) +
                 " residency=" + RecordedOr(truth.residency_verdict) +
                 " reason=" + RecordedOr(truth.residency_reason));
     AddLine(result, RuntimeConsoleOutputLevel::Info,
-            "Evidence: native_cpu_fallback=" +
-                std::to_string(truth.native_cpu_fallback_count) +
-                " host_sync=" + std::to_string(truth.host_sync_count) +
+            "Evidence: host_sync=" + std::to_string(truth.host_sync_count) +
                 " host_sync_bytes=" + std::to_string(truth.host_sync_bytes) +
                 " transfer=" + std::to_string(truth.transfer_event_count) +
                 " synchronization=" +
@@ -674,12 +671,6 @@ std::string FormatTrainingEvent(const RuntimeTrainingEventTruth& event) {
            << " status=" << RecordedOr(event.status)
            << " epoch=" << event.epoch << " batch=" << event.batch;
     if (event.total_batches > 0) output << '/' << event.total_batches;
-    if (event.native_cpu_fallback) {
-        output << " fallback_operation="
-               << RecordedOr(event.fallback_operation)
-               << " fallback_reason=" << RecordedOr(event.fallback_reason)
-               << " fallback_policy=" << RecordedOr(event.fallback_policy);
-    }
     if (event.host_sync_bytes > 0 || !event.host_sync_reason.empty()) {
         output << " host_sync_bytes=" << event.host_sync_bytes
                << " host_sync_category="
@@ -745,8 +736,6 @@ void AddRunSummary(RuntimeConsoleCommandResult& result,
             "Evidence: issues=" + std::to_string(run.issue_count) +
                 " traces=" + std::to_string(run.trace_count) +
                 " events=" + std::to_string(run.event_count) +
-                " fallback=" +
-                std::to_string(run.native_cpu_fallback_count) +
                 " transfer=" + std::to_string(run.transfer_event_count) +
                 " synchronization=" +
                 std::to_string(run.synchronization_event_count));
@@ -864,7 +853,7 @@ RuntimeConsoleCommandService::Registry() {
           "  show codes family <CW-X-*>  Every known code in a family\n"
           "  show codes last <n>  Newest n events that carry any code\n"
           "  show codes where <filter>  Coded events matching a filter\n"
-          "  show training current|last|trace|fallback|host-sync|placement|materialization\n"
+          "  show training current|last|trace|host-sync|placement|materialization\n"
           "  show device active|available|queued|backends|oneapi|qualification\n"
           "  show device route <backend>:<id>  Verification result of one device route\n"
           "  show device recommendations <backend>:<id>  Recommended use of one device\n"
@@ -872,14 +861,13 @@ RuntimeConsoleCommandService::Registry() {
           "  show backend compatibility  Which backends this machine can run\n"
           "  show backend support-bundle [1-100]  Diagnostics to share when reporting a problem\n"
           "  show run current  The run in progress\n"
-          "  show run <run_id> summary|events|codes|host-sync|fallback\n"
+          "  show run <run_id> summary|events|codes|host-sync\n"
           "  show run <run_id> code <CW-X-NNNN>  One code within a run\n"
           "  show run <run_id> codes <CW-X-*>  A code family within a run\n"
           "  show materialization last  Last data materialization (dataset to tensors)\n"
           "Subjects:\n"
           "  training: current = the running job, last = the previous run; trace = "
-          "recent training events; fallback = steps that ran on the CPU instead "
-          "of the GPU; host-sync = device-to-host copies that stall the GPU; "
+          "recent training events; host-sync = device-to-host copies that stall the GPU; "
           "placement = where tensors lived; materialization = how the dataset "
           "was turned into tensors.\n"
           "  device: active = device in use now, available = every detected "
@@ -893,7 +881,7 @@ RuntimeConsoleCommandService::Registry() {
           "Examples:\n"
           "  show logs last 50\n"
           "  show logs where category=training and level>=warn\n"
-          "  show logs grep \"native CPU fallback\"\n"
+          "  show logs grep \"host sync\"\n"
           "  show code CW-C-0101\n"
           "  show codes family CW-G-*\n"
           "  show training current\n"
@@ -902,7 +890,7 @@ RuntimeConsoleCommandService::Registry() {
           "  show device recommendations cuda:0\n"
           "  show backend compatibility\n"
           "  show backend support-bundle 32\n"
-          "  show run train-1786337176120 fallback\n"
+          "  show run train-1786337176120 host-sync\n"
           "  show materialization last"},
          &RuntimeConsoleCommandService::ExecuteShow, true},
         {{"filter", "filter set|clear|save|use ...",
@@ -1284,7 +1272,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
     const auto tokens = TokenizeCommand(arguments);
     if (tokens.error || tokens.values.size() != 1) {
         return Usage(
-            "show training current|last|trace|fallback|host-sync|placement|materialization");
+            "show training current|last|trace|host-sync|placement|materialization");
     }
     if (!truth_provider_) {
         return ErrorResult("Runtime training truth provider is unavailable");
@@ -1301,7 +1289,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
                     "the latest retained trace");
             return result;
         }
-    } else if (mode == "last" || mode == "trace" || mode == "fallback" ||
+    } else if (mode == "last" || mode == "trace" ||
                mode == "host-sync" || mode == "placement" ||
                mode == "materialization") {
         truth = truth_provider_->GetCurrentTraining();
@@ -1316,7 +1304,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
         }
     } else {
         return Usage(
-            "show training current|last|trace|fallback|host-sync|placement|materialization");
+            "show training current|last|trace|host-sync|placement|materialization");
     }
 
     RuntimeConsoleCommandResult result;
@@ -1337,25 +1325,6 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
         for (size_t index = first; index < truth.recent_events.size(); ++index) {
             AddLine(result, RuntimeConsoleOutputLevel::Info,
                     FormatTrainingEvent(truth.recent_events[index]));
-        }
-        return result;
-    }
-    if (mode == "fallback") {
-        AddLine(result, RuntimeConsoleOutputLevel::Info,
-                "Native CPU fallback: run=" + RecordedOr(truth.run_id) +
-                    " count=" +
-                    std::to_string(truth.native_cpu_fallback_count));
-        size_t shown = 0;
-        for (const auto& event : truth.recent_events) {
-            if (!event.native_cpu_fallback) continue;
-            AddLine(result, RuntimeConsoleOutputLevel::Warning,
-                    FormatTrainingEvent(event));
-            ++shown;
-        }
-        if (truth.native_cpu_fallback_count > shown) {
-            AddLine(result, RuntimeConsoleOutputLevel::Warning,
-                    "Some fallback events are outside the retained trace "
-                    "window");
         }
         return result;
     }
@@ -1984,7 +1953,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowRun(
     const auto tokens = TokenizeCommand(arguments);
     if (tokens.error || tokens.values.empty() || tokens.values.size() > 3) {
         return Usage(
-            "show run current | show run <run_id> summary|events|codes|host-sync|fallback | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
+            "show run current | show run <run_id> summary|events|codes|host-sync | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
     }
     if (!truth_provider_) {
         return ErrorResult("Runtime run truth provider is unavailable");
@@ -2004,20 +1973,20 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowRun(
         return result;
     }
     if (tokens.values.size() < 2) {
-        return Usage("show run current | show run <run_id> summary|events|codes|host-sync|fallback");
+        return Usage("show run current | show run <run_id> summary|events|codes|host-sync");
     }
 
     const std::string& requested_run_id = tokens.values[0].text;
     const auto mode = LowerAscii(tokens.values[1].text);
     const bool valid_two_token_mode =
         mode == "summary" || mode == "events" || mode == "codes" ||
-        mode == "host-sync" || mode == "fallback";
+        mode == "host-sync";
     const bool valid_three_token_mode =
         mode == "code" || mode == "codes";
     if ((tokens.values.size() == 2 && !valid_two_token_mode) ||
         (tokens.values.size() == 3 && !valid_three_token_mode)) {
         return Usage(
-            "show run <run_id> summary|events|codes|host-sync|fallback | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
+            "show run <run_id> summary|events|codes|host-sync | show run <run_id> code <CW-X-NNNN> | show run <run_id> codes <CW-X-*>");
     }
 
     const auto run = truth_provider_->GetRun(requested_run_id);
@@ -2041,26 +2010,6 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowRun(
         for (const auto& event : run.events) {
             AddLine(result, RuntimeConsoleOutputLevel::Info,
                     FormatRunEvent(event));
-        }
-        return result;
-    }
-
-    if (mode == "fallback") {
-        RuntimeConsoleCommandResult result;
-        AddLine(result, RuntimeConsoleOutputLevel::Info,
-                "Native CPU fallback: run=" + requested_run_id +
-                    " count=" +
-                    std::to_string(run.native_cpu_fallback_count) +
-                    " source=" + RecordedOr(run.source));
-        if (!run.training_evidence_available) {
-            AddLine(result, RuntimeConsoleOutputLevel::Warning,
-                    "Detailed fallback events were not retained for this run");
-            return result;
-        }
-        for (const auto& event : run.training.recent_events) {
-            if (!event.native_cpu_fallback) continue;
-            AddLine(result, RuntimeConsoleOutputLevel::Warning,
-                    FormatTrainingEvent(event));
         }
         return result;
     }

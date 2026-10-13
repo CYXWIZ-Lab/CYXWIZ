@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <deque>
 #include <map>
@@ -74,6 +75,12 @@ NodeResultPlan PlanNodeResult(int plot_node_id, const std::vector<gui::MLNode>& 
         return plan;
     }
     plan.feeder_name = feeder->name;
+    for (const auto& l : links)
+        if (l.to_node == plot_node_id && l.from_node == feeder->id) {
+            plan.feeder_pin = PinIndex(feeder->outputs, l.from_pin);
+            break;
+        }
+    plan.model = plan.feeder_pin >= 0 && feeder->outputs[static_cast<size_t>(plan.feeder_pin)].type == gui::PinType::Parameters;
 
     // Everything above the plot, nearest first (breadth-first upstream).
     std::vector<int> order;
@@ -107,6 +114,7 @@ NodeResultPlan PlanNodeResult(int plot_node_id, const std::vector<gui::MLNode>& 
                                 std::to_string(l.from_pin) + ":" + std::to_string(l.to_pin));
     std::sort(link_keys.begin(), link_keys.end());
     for (const auto& lk : link_keys) key += lk + "\n";
+    key += "out " + std::to_string(plan.feeder_pin) + "\n";  // the trainer's table or its model
     plan.fingerprint = Hex(std::hash<std::string>{}(key));
 
     // A loaded Data Input is read as it is (no run).
@@ -129,6 +137,47 @@ NodeResultPlan PlanNodeResult(int plot_node_id, const std::vector<gui::MLNode>& 
             plan.alternative_id = FirstInput(id, links);
             if (const gui::MLNode* alt = Find(nodes, plan.alternative_id)) plan.alternative_name = alt->name;
             else plan.alternative_id = -1;
+            return plan;
+        }
+    }
+
+    // A sparse vectorizer: its Data Input runs alone; the materializer does the rest.
+    if (feeder->type == gui::NodeType::CountVectorizer || feeder->type == gui::NodeType::TFIDFVectorizer) {
+        auto format = feeder->parameters.find("output_format");
+        std::string f = format == feeder->parameters.end() ? std::string() : format->second;
+        for (char& c : f) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (f == "sparse") {
+            plan.sparse = true;
+            plan.closure_ids = sorted;
+            for (int id : order) {
+                const gui::MLNode* n = Find(nodes, id);
+                if (n && n->type == gui::NodeType::DataInput) {
+                    plan.source_input_id = id;
+                    break;
+                }
+            }
+            if (plan.source_input_id < 0) {
+                plan.state = NodeResultPlan::State::Unavailable;
+                plan.reason = feeder->name + " needs a Data Input above it.";
+                return plan;
+            }
+            const gui::MLNode* input = Find(nodes, plan.source_input_id);
+            auto ds = input->parameters.find("dataset_name");
+            if (ds != input->parameters.end() && !ds->second.empty() && dataset_loaded && dataset_loaded(ds->second))
+                plan.dataset_name = ds->second;
+            nlohmann::json ij;
+            ij["nodes"] = nlohmann::json::array();
+            nlohmann::json nj;
+            nj["id"] = input->id;
+            nj["type"] = PipelineTypeName(input->type);
+            nj["name"] = input->name;
+            nj["parameters"] = nlohmann::json::object();
+            for (const auto& [k, v] : input->parameters) nj["parameters"][k] = v;
+            ij["nodes"].push_back(std::move(nj));
+            ij["links"] = nlohmann::json::array();
+            plan.input_pipeline_json = ij.dump();
+            plan.state = NodeResultPlan::State::Run;
+            plan.run_node_count = static_cast<int>(sorted.size());
             return plan;
         }
     }

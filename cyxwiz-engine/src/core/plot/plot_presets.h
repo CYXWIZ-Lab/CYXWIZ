@@ -5,7 +5,8 @@
 // after ROC Curve or PR Curve as a line with the AUC / average precision in
 // the title. Recognised by the table's columns, so the same tables from a
 // file or a script get the same first plot. The type can be changed like any
-// plot.
+// plot. A trained tree model's rows (P4.7) open as a Tree, on a forest's
+// first tree.
 
 #include "plot_model.h"
 

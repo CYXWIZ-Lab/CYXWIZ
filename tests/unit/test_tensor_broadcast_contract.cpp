@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -130,19 +131,10 @@ void CheckShapeCases(const json& fixture) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_broadcast_host_sync_count = 0;
-size_t g_broadcast_fallback_count = 0;
-std::vector<std::string> g_broadcast_fallback_operations;
 
 void CountBroadcastHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_broadcast_host_sync_count;
-}
-
-void CountBroadcastFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++g_broadcast_fallback_count;
-    g_broadcast_fallback_operations.push_back(event.operation_name);
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -170,24 +162,17 @@ void CheckMaterializationCasesOnActiveDevice(const json& fixture,
                 DeviceTensorFromFixture(test_case.at("input"), dtype);
             cyxwiz::Tensor actual;
             g_broadcast_host_sync_count = 0;
-            g_broadcast_fallback_count = 0;
             {
-                const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                    cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
                 const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                     &CountBroadcastHostSync);
-                const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                    &CountBroadcastFallback);
                 actual = ApplyMaterialization(input, target_shape, operation);
                 if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
             }
             REQUIRE(g_broadcast_host_sync_count == 0);
-            REQUIRE(g_broadcast_fallback_count == 0);
             CheckTensor(actual, dtype, test_case.at("expected"));
         }
     }
 }
-#endif
 
 } // namespace
 
@@ -195,31 +180,13 @@ TEST_CASE("Tensor broadcast helpers and materialization match PyTorch",
           "[tensor][tensor_broadcast][pytorch]") {
     const json fixture = LoadBroadcastFixture();
     CheckShapeCases(fixture);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckMaterializationCasesOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture.at("materialization_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const auto target_shape =
-            test_case.at("target_shape").get<std::vector<size_t>>();
-        for (const std::string operation : {"expand", "broadcast_to"}) {
-            const cyxwiz::Tensor input =
-                TensorFromFixture(test_case.at("input"), dtype);
-            CheckTensor(
-                ApplyMaterialization(input, target_shape, operation),
-                dtype,
-                test_case.at("expected"));
-        }
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor broadcast materialization matches PyTorch on every accelerator",
           "[tensor][tensor_broadcast][accelerator]") {
     const json fixture = LoadBroadcastFixture();
@@ -248,96 +215,69 @@ TEST_CASE("Tensor broadcast materialization matches PyTorch on every accelerator
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
 
-TEST_CASE("Tensor rank-five broadcast fallback is explicit and strict-safe",
-          "[tensor][tensor_broadcast][arrayfire][fallback]") {
+// TOFIX140 F4: rank-five broadcasts run on the device. [1,2,1,2,1] ->
+// [3,2,4,2,5] alternates broadcast and kept axes (five groups: the gather
+// path); [1,2,1,1,3] -> [4,2,5,6,3] collapses to four (the tile path).
+TEST_CASE("Tensor rank-five broadcast runs on the device",
+          "[tensor][tensor_broadcast][arrayfire]") {
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
-    const std::vector<size_t> input_shape{1, 2, 1, 2, 1};
-    const std::vector<size_t> target_shape{3, 2, 4, 2, 5};
-    auto make_input = [&]() {
-        const int32_t values[] = {0, 1, 2, 3};
-        return cyxwiz::Tensor(
-            input_shape, values, cyxwiz::DataType::Int32);
-    };
+    const int32_t alternating_values[] = {0, 1, 2, 3};
+    const cyxwiz::Tensor alternating({1, 2, 1, 2, 1}, alternating_values, cyxwiz::DataType::Int32);
+    const int32_t collapsing_values[] = {0, 1, 2, 3, 4, 5};
+    const cyxwiz::Tensor collapsing({1, 2, 1, 1, 3}, collapsing_values, cyxwiz::DataType::Int32);
+    alternating.GetRowMajorFlatArray().eval();  // resident before the strict scope
+    collapsing.GetRowMajorFlatArray().eval();
 
-    const cyxwiz::Tensor compatibility_input = make_input();
-    g_broadcast_fallback_count = 0;
-    g_broadcast_fallback_operations.clear();
-    cyxwiz::Tensor expanded;
-    cyxwiz::Tensor broadcast;
-    cyxwiz::Tensor identity_expand;
-    cyxwiz::Tensor identity_broadcast;
+    const std::vector<size_t> alternating_target{3, 2, 4, 2, 5};
+    const std::vector<size_t> collapsing_target{4, 2, 5, 6, 3};
+    g_broadcast_host_sync_count = 0;
+    cyxwiz::Tensor expanded, broadcast, identity, collapsed, sum;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountBroadcastFallback);
-        expanded = compatibility_input.Expand(target_shape);
-        broadcast = compatibility_input.BroadcastTo(target_shape);
-        identity_expand = compatibility_input.Expand(input_shape);
-        identity_broadcast = compatibility_input.BroadcastTo(input_shape);
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
+            &CountBroadcastHostSync);
+        expanded = alternating.Expand(alternating_target);
+        broadcast = alternating.BroadcastTo(alternating_target);
+        identity = alternating.Expand({1, 2, 1, 2, 1});
+        collapsed = collapsing.BroadcastTo(collapsing_target);
+        sum = alternating + collapsing.Reshape({1, 1, 1, 2, 3}).Expand({1, 2, 1, 2, 3});
     }
-    REQUIRE(g_broadcast_fallback_count == 4);
-    REQUIRE(g_broadcast_fallback_operations == std::vector<std::string>{
-        "Tensor::Expand", "Tensor::BroadcastTo",
-        "Tensor::Expand", "Tensor::BroadcastTo"});
-    REQUIRE(expanded.Shape() == target_shape);
-    REQUIRE(broadcast.Shape() == target_shape);
-    REQUIRE(identity_expand.Shape() == input_shape);
-    REQUIRE(identity_broadcast.Shape() == input_shape);
+    REQUIRE(g_broadcast_host_sync_count == 0);
+
+    REQUIRE(expanded.Shape() == alternating_target);
     const int32_t* expanded_values = expanded.ReadData<int32_t>();
     const int32_t* broadcast_values = broadcast.ReadData<int32_t>();
     size_t index = 0;
-    for (size_t axis0 = 0; axis0 < 3; ++axis0) {
-        for (size_t axis1 = 0; axis1 < 2; ++axis1) {
-            for (size_t axis2 = 0; axis2 < 4; ++axis2) {
-                for (size_t axis3 = 0; axis3 < 2; ++axis3) {
-                    for (size_t axis4 = 0; axis4 < 5; ++axis4) {
-                        const int32_t expected =
-                            static_cast<int32_t>(axis1 * 2 + axis3);
+    for (size_t a0 = 0; a0 < 3; ++a0)
+        for (size_t a1 = 0; a1 < 2; ++a1)
+            for (size_t a2 = 0; a2 < 4; ++a2)
+                for (size_t a3 = 0; a3 < 2; ++a3)
+                    for (size_t a4 = 0; a4 < 5; ++a4, ++index) {
+                        const int32_t expected = static_cast<int32_t>(a1 * 2 + a3);
                         REQUIRE(expanded_values[index] == expected);
                         REQUIRE(broadcast_values[index] == expected);
-                        ++index;
                     }
-                }
-            }
-        }
-    }
-    const int32_t* identity_expand_values =
-        identity_expand.ReadData<int32_t>();
-    const int32_t* identity_broadcast_values =
-        identity_broadcast.ReadData<int32_t>();
-    for (size_t value_index = 0; value_index < 4; ++value_index) {
-        REQUIRE(identity_expand_values[value_index] ==
-                static_cast<int32_t>(value_index));
-        REQUIRE(identity_broadcast_values[value_index] ==
-                static_cast<int32_t>(value_index));
-    }
+    const int32_t* identity_values = identity.ReadData<int32_t>();
+    for (size_t i = 0; i < 4; ++i) REQUIRE(identity_values[i] == static_cast<int32_t>(i));
 
-    const cyxwiz::Tensor strict_input = make_input();
-    g_broadcast_host_sync_count = 0;
-    g_broadcast_fallback_count = 0;
-    g_broadcast_fallback_operations.clear();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-            &CountBroadcastHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountBroadcastFallback);
-        REQUIRE_THROWS_AS(strict_input.Expand(target_shape), std::runtime_error);
-        REQUIRE_THROWS_AS(
-            strict_input.BroadcastTo(target_shape), std::runtime_error);
-        REQUIRE_THROWS_AS(strict_input.Expand(input_shape), std::runtime_error);
-        REQUIRE_THROWS_AS(
-            strict_input.BroadcastTo(input_shape), std::runtime_error);
-    }
-    REQUIRE(g_broadcast_host_sync_count == 0);
-    REQUIRE(g_broadcast_fallback_count == 4);
-    REQUIRE(g_broadcast_fallback_operations == std::vector<std::string>{
-        "Tensor::Expand", "Tensor::BroadcastTo",
-        "Tensor::Expand", "Tensor::BroadcastTo"});
+    REQUIRE(collapsed.Shape() == collapsing_target);
+    const int32_t* collapsed_values = collapsed.ReadData<int32_t>();
+    index = 0;
+    for (size_t a0 = 0; a0 < 4; ++a0)
+        for (size_t a1 = 0; a1 < 2; ++a1)
+            for (size_t a2 = 0; a2 < 5; ++a2)
+                for (size_t a3 = 0; a3 < 6; ++a3)
+                    for (size_t a4 = 0; a4 < 3; ++a4, ++index)
+                        REQUIRE(collapsed_values[index] == static_cast<int32_t>(a1 * 3 + a4));
+
+    // [1,2,1,2,1] + [1,2,1,2,3] -> [1,2,1,2,3]: elementwise add with a rank-five broadcast.
+    REQUIRE(sum.Shape() == std::vector<size_t>{1, 2, 1, 2, 3});
+    const int32_t* sum_values = sum.ReadData<int32_t>();
+    index = 0;
+    for (size_t a1 = 0; a1 < 2; ++a1)
+        for (size_t a3 = 0; a3 < 2; ++a3)
+            for (size_t a4 = 0; a4 < 3; ++a4, ++index)
+                REQUIRE(sum_values[index] == static_cast<int32_t>(a1 * 2 + a3 + a3 * 3 + a4));
 }
-#endif
 
 TEST_CASE("Tensor broadcast materialization rejects PyTorch-invalid shapes",
           "[tensor][tensor_broadcast][invalid]") {
@@ -360,23 +300,12 @@ TEST_CASE("Tensor broadcast shape overflow fails before compute",
     const cyxwiz::Tensor scalar({}, &value, cyxwiz::DataType::Float32);
     const std::vector<size_t> target{
         (std::numeric_limits<size_t>::max)(), 2};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_broadcast_host_sync_count = 0;
-    g_broadcast_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountBroadcastHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountBroadcastFallback);
         REQUIRE_THROWS_AS(scalar.Expand(target), std::overflow_error);
         REQUIRE_THROWS_AS(scalar.BroadcastTo(target), std::overflow_error);
     }
     REQUIRE(g_broadcast_host_sync_count == 0);
-    REQUIRE(g_broadcast_fallback_count == 0);
-#else
-    REQUIRE_THROWS_AS(scalar.Expand(target), std::overflow_error);
-    REQUIRE_THROWS_AS(scalar.BroadcastTo(target), std::overflow_error);
-#endif
 }

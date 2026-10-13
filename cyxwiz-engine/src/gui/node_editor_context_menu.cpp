@@ -32,6 +32,10 @@ void NodeEditor::ConfigureNode(int node_id) {
         OpenPlotNode(node_id);
         return;
     }
+    if (node->type == NodeType::Dashboard) {
+        OpenDashboardNode(node_id);
+        return;
+    }
 
     if (properties_panel_) {
         properties_panel_->ConfigureNode(node);

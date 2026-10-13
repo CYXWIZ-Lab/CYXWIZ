@@ -14,6 +14,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+
+#include "../../core/plot/plot_layout.h"
 #include <vector>
 
 namespace cyxwiz::plot {
@@ -30,6 +32,9 @@ struct ViewHooks {
 };
 void SetViewHooks(ViewHooks hooks);
 const ViewHooks& Hooks();
+
+// A model figure as text ("AUC 0.871", accuracy "77.5%", rows "2,575").
+std::string MetricText(const std::string& name, double value);
 
 class PlotView {
 public:
@@ -62,6 +67,29 @@ public:
         bool own_window_button = true;
     };
 
+    // A click on a bar, a pie slice or a histogram bin (not a drag): what
+    // was clicked, for a dashboard's cross-filter. TakeClick() hands it over once.
+    struct Click {
+        enum class What { Category, Range } what = What::Category;
+        std::string field;   // the column it is a value of
+        std::string value;   // Category
+        double lo = 0, hi = 0;  // Range
+    };
+    // A dashboard's context: the same plot over all rows drawn in grey
+    // behind this one (when filters apply), and the values or range this
+    // widget selected (drawn in full colour, the rest dimmed).
+    void SetBackground(std::shared_ptr<const Prepared> all_rows) { background_ = std::move(all_rows); }
+    void SetHighlight(std::vector<std::string> categories, double lo = NAN, double hi = NAN) {
+        highlight_ = std::move(categories);
+        highlight_lo_ = lo;
+        highlight_hi_ = hi;
+    }
+    std::optional<Click> TakeClick() {
+        auto c = click_;
+        click_.reset();
+        return c;
+    }
+
     void SetData(Prepared data);
     const Prepared& Data() const { return data_; }
     bool HasData() const { return has_data_; }
@@ -76,9 +104,25 @@ public:
     void DrawOwnWindow(const Options& options);
     bool own_window = false;
 
+    // 3D: turns the view (degrees; NaN elevation: the default view). The view
+    // the user turns to is reported once they let go (to save in the plot).
+    void SetView(double elevation, double azimuth);
+    // Network / Tree: back to the computed layout (moved nodes and folds undone).
+    void ResetGraphLayout();
+    // The colour series i is drawn with (a picked colour, else the theme's).
+    ImVec4 DrawnColour(size_t i) const { return ColourOf(i); }
+    std::function<void(double elevation, double azimuth)> on_view_changed;
+
 private:
     void DrawToolbar(const Options& options);
     void DrawPlot(ImVec2 size);
+    void Draw3D(ImVec2 size);         // Scatter 3D, Line 3D, Surface, Mesh (plot_view3d.cpp)
+    void DrawGraph(ImVec2 size);      // Network, Tree (plot_view_graph.cpp)
+    void DrawImages(ImVec2 size);     // Image: a grid of pictures (ImGui, not ImPlot)
+    void DrawPairPlot(ImVec2 size);   // Pair plot: an ImPlot subplot grid
+    void DrawSankey();                // Sankey, Treemap: drawn in pixels inside the plot
+    void DrawTreemap();
+    void DrawWorld(bool regions);     // Maps: the built-in country outlines
     void DrawHover();
     ImVec4 ColourOf(size_t i) const;
     void ExportMenu(const Options& options);
@@ -106,6 +150,35 @@ private:
     bool drawing_own_window_ = false;
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
+    int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
+    std::optional<Click> click_;
+    std::shared_ptr<const Prepared> background_;
+    std::vector<std::string> highlight_;
+    double highlight_lo_ = NAN, highlight_hi_ = NAN;
+    void DetectClick();
+    int hot_node_ = -1, hot_link_ = -1;          // sankey: under the mouse
+    std::vector<TreeRect> tree_rects_;           // treemap: last frame's layout (pixels)
+    int hot_rect_ = -1;
+    std::vector<std::string> tree_zoom_;         // treemap: the group zoomed into (empty: all)
+    int hot_country_ = -1;                       // map regions: under the mouse
+    // 3D: a view preset to apply, the view last reported, and this frame's
+    // drawn points (screen position and values) for hover.
+    double view_el_ = NAN, view_az_ = NAN;
+    bool view_apply_ = false;
+    double saved_el_ = NAN, saved_az_ = NAN;
+    struct Hover3D {
+        ImVec2 pos;
+        double x, y, z, c;
+    };
+    std::vector<Hover3D> hover3d_;
+    // Network / Tree: positions (x right, y up) after moves and folds.
+    std::vector<ImVec2> graph_pos_;
+    std::vector<char> graph_moved_, graph_fold_;
+    bool graph_layout_dirty_ = true;
+    int hot_graph_ = -1, graph_drag_ = -1;
+    ImVec2 graph_press_{};
+    ImVec2 hot_min_{}, hot_max_{};   // the node under the mouse last frame (pixels): where a press grabs it
+    bool graph_dragging_ = false;
 };
 
 }  // namespace cyxwiz::plot

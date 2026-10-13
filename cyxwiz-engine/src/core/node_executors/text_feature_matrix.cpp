@@ -263,6 +263,7 @@ BuildSparseTextFeatureDataset(TextFeatureMatrix matrix,
         ARROW_ASSIGN_OR_RAISE(auto labels, label_builder.Finish());
         contents.labels = std::make_shared<arrow::ChunkedArray>(labels);
         contents.label_name = std::move(matrix.label_name);
+        contents.class_names = std::move(matrix.class_names);
     }
     return SparseFeatureDataset::Create(std::move(contents));
 }

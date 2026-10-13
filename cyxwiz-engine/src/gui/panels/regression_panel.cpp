@@ -1,6 +1,7 @@
 #include "regression_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -63,8 +64,6 @@ void RegressionPanel::Render() {
 void RegressionPanel::RenderToolbar() {
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     if (!has_result_) ImGui::BeginDisabled();
 
     if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
@@ -77,36 +76,7 @@ void RegressionPanel::RenderToolbar() {
 }
 
 void RegressionPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                x_column_ = -1;
-                y_column_ = -1;
-                has_result_ = false;
-
-                // Find numeric columns
-                numeric_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            numeric_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("regression_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void RegressionPanel::RenderConfiguration() {
@@ -247,21 +217,22 @@ void RegressionPanel::RenderModelSummary() {
 
     // R-squared interpretation
     ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation = "Poor";
-    ImVec4 color = ImVec4(0.8f, 0.4f, 0.4f, 1.0f);
+    ImVec4 color = t.error;
 
     if (result_.r_squared >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        color = t.success;
     } else if (result_.r_squared >= 0.7) {
         interpretation = "Good";
-        color = ImVec4(0.4f, 0.7f, 0.4f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (result_.r_squared >= 0.5) {
         interpretation = "Moderate";
-        color = ImVec4(0.8f, 0.7f, 0.2f, 1.0f);
+        color = t.warning;
     } else if (result_.r_squared >= 0.3) {
         interpretation = "Weak";
-        color = ImVec4(0.8f, 0.5f, 0.2f, 1.0f);
+        color = t.caution;
     }
 
     ImGui::TextColored(color, "Model fit: %s (R^2 = %.1f%%)", interpretation, result_.r_squared * 100);
@@ -269,6 +240,8 @@ void RegressionPanel::RenderModelSummary() {
 
 void RegressionPanel::RenderCoefficientsTable() {
     std::lock_guard<std::mutex> lock(result_mutex_);
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Spacing();
     ImGui::Text("%s Coefficients", ICON_FA_TABLE);
@@ -307,13 +280,13 @@ void RegressionPanel::RenderCoefficientsTable() {
             if (i < result_.p_values.size()) {
                 double p = result_.p_values[i];
                 if (p < 0.001) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "< 0.001 ***");
+                    ImGui::TextColored(t.success, "< 0.001 ***");
                 } else if (p < 0.01) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.7f, 0.3f, 1.0f), "%.4f **", p);
+                    ImGui::TextColored(ui::Mix(t.success, t.text_dim, 0.35f), "%.4f **", p);
                 } else if (p < 0.05) {
-                    ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.3f, 1.0f), "%.4f *", p);
+                    ImGui::TextColored(ui::Mix(t.success, t.text_dim, 0.6f), "%.4f *", p);
                 } else if (p < 0.1) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.3f, 1.0f), "%.4f .", p);
+                    ImGui::TextColored(t.text_dim, "%.4f .", p);
                 } else {
                     ImGui::Text("%.4f", p);
                 }
@@ -354,6 +327,8 @@ void RegressionPanel::RenderScatterPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("Scatter Plot with Regression Line", ImVec2(-1, 400))) {
         std::string x_label = x_column_ >= 0 && x_column_ < static_cast<int>(numeric_columns_.size())
             ? numeric_columns_[x_column_] : "X";
@@ -392,7 +367,7 @@ void RegressionPanel::RenderScatterPlot() {
                 y_curve.push_back(y);
             }
 
-            ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+            ImPlot::SetNextLineStyle(t.series[2], 2);
             ImPlot::PlotLine("Fit", x_curve.data(), y_curve.data(), static_cast<int>(x_curve.size()));
         }
 
@@ -408,6 +383,8 @@ void RegressionPanel::RenderResidualsPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     // Residuals vs Fitted
     if (ImPlot::BeginPlot("Residuals vs Fitted", ImVec2(-1, 250))) {
         ImPlot::SetupAxes("Fitted Values", "Residuals");
@@ -420,7 +397,7 @@ void RegressionPanel::RenderResidualsPlot() {
         double x_max = *std::max_element(result_.predicted.begin(), result_.predicted.end());
         double zero_x[] = {x_min, x_max};
         double zero_y[] = {0, 0};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 1), 1);
+        ImPlot::SetNextLineStyle(t.series[2], 1);
         ImPlot::PlotLine("##Zero", zero_x, zero_y, 2);
 
         ImPlot::EndPlot();
@@ -490,15 +467,6 @@ void RegressionPanel::RenderExportOptions() {
     }
 }
 
-void RegressionPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
-    }
-}
-
 void RegressionPanel::AnalyzeTable(std::shared_ptr<DataTable> table) {
     if (!table) return;
     current_table_ = table;
@@ -547,13 +515,16 @@ void RegressionPanel::RunRegression() {
 
     compute_thread_ = std::make_unique<std::thread>([this, table, x_idx, y_idx, type, degree]() {
         try {
-            auto x_vals = DataAnalyzer::GetNumericValues(*table, x_idx);
-            auto y_vals = DataAnalyzer::GetNumericValues(*table, y_idx);
-
-            // Align data (ensure same length)
-            size_t n = std::min(x_vals.size(), y_vals.size());
-            x_vals.resize(n);
-            y_vals.resize(n);
+            // Pairs from the same row: a row is used only when both cells are
+            // numbers (filtering each column alone shifts the pairs).
+            std::vector<double> x_vals, y_vals;
+            for (size_t row = 0; row < table->GetRowCount(); ++row) {
+                const auto x = DataAnalyzer::ToDouble(table->GetCell(row, x_idx));
+                const auto y = DataAnalyzer::ToDouble(table->GetCell(row, y_idx));
+                if (!x || !y) continue;
+                x_vals.push_back(*x);
+                y_vals.push_back(*y);
+            }
 
             RegressionResult res;
 

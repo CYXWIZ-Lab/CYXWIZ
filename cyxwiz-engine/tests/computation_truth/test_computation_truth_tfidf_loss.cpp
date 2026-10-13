@@ -1,7 +1,6 @@
 #include "../../src/core/execution_device_context.h"
 #include "../../src/core/materialization_memory_guard.h"
 #include "../../src/core/metric_learning_metrics.h"
-#include "../../src/core/metric_learning_training_step.h"
 #include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
 #include <cyxwiz/activation.h>
 #include <cyxwiz/cyxwiz.h>
@@ -39,17 +38,8 @@ namespace {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-thread_local std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>*
-    g_fallback_events = nullptr;
 thread_local std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_host_sync_events =
     nullptr;
-
-void RecordFallbackEvent(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    if (g_fallback_events != nullptr) {
-        g_fallback_events->push_back(event);
-    }
-}
 
 void RecordHostSyncEvent(const cyxwiz::ArrayFireHostSyncEvent& event) {
     if (g_host_sync_events != nullptr) {
@@ -567,12 +557,10 @@ void TestRegressionLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name + " targets"),
             target_values.data(), cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -598,15 +586,10 @@ void TestRegressionLossParity(const json& cases) {
         Check(test_case.value("operation", "") == expected_operation,
               name + " operation mismatch");
 
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss->Forward(predictions, targets);
         const auto actual_gradient = loss->Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -649,12 +632,10 @@ void TestProbabilityLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -680,15 +661,10 @@ void TestProbabilityLossParity(const json& cases) {
         Check(test_case.value("operation", "") == expected_operation,
               name + " operation mismatch");
 
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss->Forward(predictions, targets);
         const auto actual_gradient = loss->Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -718,12 +694,10 @@ void TestOverlapLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         const auto reduction = ParseReduction(
             test_case.at("reduction").get<std::string>());
@@ -752,15 +726,10 @@ void TestOverlapLossParity(const json& cases) {
         Check(test_case.value("operation", "") == expected_operation,
               name + " operation mismatch");
 
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss->Forward(predictions, targets);
         const auto actual_gradient = loss->Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -782,8 +751,6 @@ void TestMetricLearningLossParity(const json& cases) {
         const auto reduction = ParseReduction(test_case.at("reduction").get<std::string>());
         const float margin = test_case.at("margin").get<float>();
         const std::string loss_type = test_case.at("loss_type").get<std::string>();
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
 
@@ -842,8 +809,6 @@ void TestMetricLearningLossParity(const json& cases) {
             actual_third_gradient = gradients.negative;
         }
 
-        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
         const auto tolerance = ReadTolerance(test_case);
@@ -890,8 +855,6 @@ void TestMetricLearningMetricParity(const json& cases) {
         Check(convention_name == "contrastive_zero_similar" ||
                   convention_name == "cosine_one_similar",
               name + " metric fixture convention mismatch");
-        const size_t fallback_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto result = cyxwiz::ComputePairDistanceMetrics(
@@ -900,9 +863,6 @@ void TestMetricLearningMetricParity(const json& cases) {
             FloatTensorFromFixture(test_case.at("labels"), name + " labels"),
             convention,
             test_case.at("threshold").get<double>());
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_before,
-              name + " metric attempted native CPU fallback");
         Check(g_host_sync_events != nullptr &&
                   g_host_sync_events->size() == host_sync_before + 2,
               name + " metric must perform two bounded readbacks");
@@ -949,8 +909,6 @@ void TestMetricLearningMetricParity(const json& cases) {
                   test_case.value("operation", "") ==
                       "torch.cdist + stable argsort retrieval ranks",
               name + " retrieval fixture metadata mismatch");
-        const size_t fallback_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto result = cyxwiz::ComputeRetrievalMetrics(
@@ -959,9 +917,6 @@ void TestMetricLearningMetricParity(const json& cases) {
             Int64TensorFromFixture(
                 test_case.at("class_ids"), name + " class IDs"),
             test_case.at("k").get<size_t>());
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_before,
-              name + " retrieval attempted native CPU fallback");
         Check(g_host_sync_events != nullptr &&
                   g_host_sync_events->size() == host_sync_before + 1 &&
                   IsDeclaredMetricReadback(
@@ -991,72 +946,6 @@ void TestMetricLearningMetricParity(const json& cases) {
             tolerance,
             name + " retrieval nearest-neighbor agreement");
     }
-}
-
-void TestMetricPairLinearMultiBatchUpdateParity(const json& cases) {
-    const auto& test_case = cases.at("metric_pair_linear_multibatch_sgd_f32");
-    Check(test_case.value("operation", "") ==
-                  "PyTorch explicit contrastive + shared nn.Linear + optim.SGD" &&
-              test_case.value("dtype", "") == "float32" &&
-              test_case.value("loss_type", "") == "contrastive" &&
-              test_case.value("reduction", "") == "mean",
-          "metric pair multi-batch fixture metadata mismatch");
-    const auto tolerance = ReadTolerance(test_case);
-    auto model = std::make_unique<cyxwiz::SequentialModel>();
-    model->Add<cyxwiz::LinearModule>(2, 2, true);
-    cyxwiz::SharedEncoderRuntime runtime(
-        std::make_unique<cyxwiz::SequentialExecutableModel>(std::move(model)));
-    runtime.SetParameters({
-        {"layer0.weight", FloatTensorFromFixture(test_case.at("initial").at("weight"),
-                                                 "metric pair initial weight")},
-        {"layer0.bias",
-         FloatTensorFromFixture(test_case.at("initial").at("bias"), "metric pair initial bias")},
-    });
-    cyxwiz::SGDOptimizer optimizer(test_case.at("learning_rate").get<double>());
-    cyxwiz::PairMetricTrainingStepConfig config;
-    config.loss_kind = cyxwiz::MetricLearningPairLossKind::Contrastive;
-    config.margin = test_case.at("margin").get<float>();
-    config.reduction = cyxwiz::Reduction::Mean;
-    config.update_parameters = true;
-
-    size_t step_index = 0;
-    for (const auto& step : test_case.at("steps")) {
-        const std::string label = "metric pair multi-batch step " + std::to_string(step_index + 1);
-        cyxwiz::PairBatch batch;
-        batch.input_a = FloatTensorFromFixture(step.at("input_a"), label + " input_a");
-        batch.input_b = FloatTensorFromFixture(step.at("input_b"), label + " input_b");
-        batch.pair_label = FloatTensorFromFixture(step.at("labels"), label + " labels");
-        batch.size = batch.input_a.Shape()[0];
-
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
-        const size_t host_sync_count_before =
-            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
-        const auto result = cyxwiz::RunPairMetricTrainingStep(runtime, batch, config, &optimizer);
-        const auto parameters = runtime.GetParameters();
-        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
-              label + " attempted native CPU fallback");
-        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
-              label + " materialized a tensor during compute");
-
-        CheckTensor(result.embeddings.embedding_a, step.at("expected").at("embedding_a"), tolerance,
-                    label + " embedding_a");
-        CheckTensor(result.embeddings.embedding_b, step.at("expected").at("embedding_b"), tolerance,
-                    label + " embedding_b");
-        CheckTensor(result.loss, step.at("expected").at("loss"), tolerance, label + " loss");
-        CheckTensor(result.input_gradients.input_a, step.at("expected").at("grad_input_a"),
-                    tolerance, label + " input_a gradient");
-        CheckTensor(result.input_gradients.input_b, step.at("expected").at("grad_input_b"),
-                    tolerance, label + " input_b gradient");
-        CheckTensor(parameters.at("layer0.weight"), step.at("expected").at("updated_weight"),
-                    tolerance, label + " updated weight");
-        CheckTensor(parameters.at("layer0.bias"), step.at("expected").at("updated_bias"), tolerance,
-                    label + " updated bias");
-        ++step_index;
-        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
-              label + " optimizer step count mismatch");
-    }
-    Check(step_index == 2, "metric pair multi-batch fixture must contain two update steps");
 }
 
 void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
@@ -1092,8 +981,6 @@ void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
             step.at("input"), label + " input");
         const auto targets = FloatTensorFromFixture(
             step.at("targets"), label + " targets");
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto output = linear.Forward(input);
@@ -1104,9 +991,6 @@ void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
         auto parameters = linear.GetParameters();
         optimizer.Step(parameters, gradients);
         linear.SetParameters(parameters);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              label + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               label + " materialized a tensor during compute");
@@ -1172,27 +1056,20 @@ void TestCrossEntropyMatrixParity(const json& cases) {
         // Re-wrap through the semantic ArrayFire view so the public inputs are
         // device-current and host-stale at the compute boundary. A supported
         // CrossEntropy shape must neither materialize them nor fall back.
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::CrossEntropyLoss loss(
             ParseReduction(test_case.at("reduction").get<std::string>()),
             test_case.at("ignore_index").get<int>(),
             test_case.at("class_weights").get<std::vector<float>>(),
             test_case.at("label_smoothing").get<float>());
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss.Forward(predictions, targets);
         const auto actual_gradient = loss.Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -1239,25 +1116,18 @@ void TestNLLLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Int64);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::NLLLoss loss(
             ParseReduction(test_case.at("reduction").get<std::string>()),
             test_case.at("ignore_index").get<int>());
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss.Forward(predictions, targets);
         const auto actual_gradient = loss.Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -1303,26 +1173,19 @@ void TestFocalLossParity(const json& cases) {
         cyxwiz::Tensor targets(
             ReadShape(test_case.at("targets"), name), target_values.data(),
             cyxwiz::DataType::Int64);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         predictions = cyxwiz::Tensor::FromSemanticArray(
             predictions.GetSemanticArray(), predictions.Shape());
         targets = cyxwiz::Tensor::FromSemanticArray(
             targets.GetSemanticArray(), targets.Shape());
-#endif
 
         cyxwiz::FocalLoss loss(
             test_case.at("alpha").get<float>(),
             test_case.at("gamma").get<float>(),
             ParseReduction(test_case.at("reduction").get<std::string>()));
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto actual_loss = loss.Forward(predictions, targets);
         const auto actual_gradient = loss.Backward(predictions, targets);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
@@ -1503,8 +1366,6 @@ void TestElementwiseActivationParity(const json& cases) {
         auto activation = CreateFixtureActivation(test_case);
         const auto input = FloatTensorFromFixture(
             test_case.at("input"), name + " activation input");
-        const size_t fallback_count_before =
-            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
         const size_t host_sync_count_before =
             g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
         const auto output = activation->Forward(input);
@@ -1512,9 +1373,6 @@ void TestElementwiseActivationParity(const json& cases) {
             FloatTensorFromFixture(test_case.at("grad_output"),
                                    name + " activation grad_output"),
             input);
-        Check(g_fallback_events == nullptr ||
-                  g_fallback_events->size() == fallback_count_before,
-              name + " activation attempted native CPU fallback");
         Check(g_host_sync_events == nullptr ||
                   g_host_sync_events->size() == host_sync_count_before,
               name + " activation materialized a tensor during compute");
@@ -2312,7 +2170,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
           "training-core truth test must execute on ArrayFire CPU");
 
     auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        cyxwiz::ExecutionPolicy::Strict);
     context.execution_validated = activation.execution_validated;
     Check(context.valid && context.platform == "arrayfire",
           "execution context must report a valid ArrayFire platform");
@@ -2324,15 +2182,9 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     Check(!context.selection_fallback_applied,
           "exact ArrayFire CPU activation must not report selection fallback");
 
-    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
     std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
-    g_fallback_events = &fallback_events;
     g_host_sync_events = &host_sync_events;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &RecordFallbackEvent);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
             &RecordHostSyncEvent);
         const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
@@ -2340,15 +2192,12 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
 
         Check(cyxwiz::CurrentExecutionDeviceContext() == &context,
               "one immutable execution context must be bound before compute");
-        Check(cyxwiz::IsArrayFireNativeCpuFallbackForbidden(),
-              "training-core truth test must forbid native CPU fallback");
 
         TestRegressionLossParity(cases);
         TestProbabilityLossParity(cases);
         TestOverlapLossParity(cases);
         TestMetricLearningLossParity(cases);
         TestMetricLearningMetricParity(cases);
-        TestMetricPairLinearMultiBatchUpdateParity(cases);
         TestOverlapLinearMultiBatchUpdateParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
@@ -2363,11 +2212,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestDenseMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
     }
-    g_fallback_events = nullptr;
     g_host_sync_events = nullptr;
 
-    Check(fallback_events.empty(),
-          "training-core ArrayFire CPU path attempted native CPU fallback");
     for (const auto& event : host_sync_events) {
         Check(event.selected_backend == "cpu",
               "host-sync evidence must retain ArrayFire CPU identity");
@@ -2414,7 +2260,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
 
         const std::string backend = cyxwiz::CurrentArrayFireBackendName();
         auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            cyxwiz::ExecutionPolicy::Strict);
         context.execution_validated = activation.execution_validated;
         Check(context.valid && context.platform == "arrayfire" &&
                   context.requested_backend == context.effective_backend &&
@@ -2424,15 +2270,9 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
               "accelerator training-core context lost exact route identity for " +
                   route);
 
-        std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
         std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
-        g_fallback_events = &fallback_events;
         g_host_sync_events = &host_sync_events;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver
-                fallback_observer(&RecordFallbackEvent);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
                 &RecordHostSyncEvent);
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
@@ -2442,7 +2282,6 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestOverlapLossParity(cases);
             TestMetricLearningLossParity(cases);
             TestMetricLearningMetricParity(cases);
-            TestMetricPairLinearMultiBatchUpdateParity(cases);
             TestOverlapLinearMultiBatchUpdateParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);
@@ -2457,12 +2296,8 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestDenseMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);
         }
-        g_fallback_events = nullptr;
         g_host_sync_events = nullptr;
 
-        Check(fallback_events.empty(),
-              "accelerator training-core path attempted native CPU fallback for " +
-                  route);
         for (const auto& event : host_sync_events) {
             Check(event.selected_backend == backend,
                   "accelerator training-core readback lost backend identity for " +

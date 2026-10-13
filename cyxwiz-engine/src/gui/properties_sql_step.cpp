@@ -311,7 +311,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
         if (view.editor.Render("##sql_query", ImVec2(-FLT_MIN, line_h * static_cast<float>(shown) + 8.0f))) {
             view.loaded_query = view.editor.GetText();
             node.parameters["query"] = view.loaded_query;
-            InvalidateShapes();
+            NotifyEdited();
         }
         if (mono) ImGui::PopFont();
 
@@ -347,7 +347,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
                     view.editor.Doc().Type(column);
                     view.loaded_query = view.editor.GetText();
                     node.parameters["query"] = view.loaded_query;
-                    InvalidateShapes();
+                    NotifyEdited();
                 }
             }
             ImGui::EndPopup();
@@ -382,7 +382,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
                 const auto again = cyxwiz::guided::GenerateSql(*guided_step, guided_step->saved_context);
                 node.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(*guided_step);
                 node.parameters["query"] = again.sql;
-                InvalidateShapes();
+                NotifyEdited();
             }
             if (ui::SecondaryButton("Edit in guided editor")) ConfigureNode(&node);
         } else if (BeginCard("##sql_guided_note")) {
@@ -626,10 +626,10 @@ void Properties::RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* 
         ImGui::EndTable();
     }
 
-    // The generic sections, unchanged: name, support truth, compile card,
-    // truth summary, every parameter, advanced, presets, executor.
+    // The generic sections, unchanged: header, settings, AS COMPILED,
+    // fusion, Advanced and executor.
     ImGui::Dummy(ImVec2(0.0f, t.space_sm));
-    RenderGenericSections(node, metadata, properties_contract::IsDialogOnlyPropertiesNode(metadata));
+    RenderGenericSections(node);
 }
 
 }  // namespace gui

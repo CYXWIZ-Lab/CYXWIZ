@@ -13,9 +13,8 @@
 
 namespace {
 using cyxwiz::Tensor;using json=nlohmann::json;
-uint64_t host_count=0,host_bytes=0,fallbacks=0;
+uint64_t host_count=0,host_bytes=0;
 void Host(const cyxwiz::ArrayFireHostSyncEvent& e){++host_count;host_bytes+=e.bytes;}
-void Fallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&){++fallbacks;}
 void Check(bool ok,const std::string& message){if(!ok)throw std::runtime_error(message);}
 Tensor Fixture(const std::vector<size_t>& shape,float offset=0){
     Tensor t(shape);auto*p=t.MutableData<float>();
@@ -35,24 +34,22 @@ template<class Model> void FixedParameters(Model& model){
 }
 json Measure(const std::string& name,const std::function<void()>& work,size_t tokens,int iterations){
     for(int i=0;i<5;++i){work();af::sync();}
-    std::vector<double> samples;host_count=host_bytes=fallbacks=0;
+    std::vector<double> samples;host_count=host_bytes=0;
     {
         cyxwiz::ScopedArrayFireHostSyncObserver h(Host);
-        cyxwiz::ScopedArrayFireNativeCpuFallbackObserver f(Fallback);
         for(int i=0;i<iterations;++i){
             af::sync();const auto start=std::chrono::steady_clock::now();
             work();af::sync();
             samples.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());
         }
     }
-    Check(fallbacks==0,"strict benchmark encountered native fallback");
     auto sorted=samples;std::sort(sorted.begin(),sorted.end());
     const double median=sorted[sorted.size()/2];
     const double p95=sorted[static_cast<size_t>(std::ceil(.95*sorted.size()))-1];
     std::cout<<name<<": median="<<median<<" ms; host bytes/call="<<double(host_bytes)/iterations<<std::endl;
     return {{"name",name},{"samples_ms",samples},{"median_ms",median},{"p95_ms",p95},
         {"tokens_per_second",tokens*1000./median},{"tokens_per_call",tokens},{"iterations",iterations},
-        {"host_syncs",host_count},{"host_sync_bytes",host_bytes},{"native_fallbacks",fallbacks},
+        {"host_syncs",host_count},{"host_sync_bytes",host_bytes},
         {"explicit_measurement_fences",iterations*2},{"warmup_calls",5}};
 }
 void Blocks(json& results,size_t sequence,int width,int iterations){
@@ -104,11 +101,10 @@ int main(int argc,char**argv){try{
     Check(backend=="cpu"||backend=="cuda"||backend=="opencl","backend");
     auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
     Check(activation.success&&activation.execution_validated,activation.message);
-    auto policy=cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    auto policy=cyxwiz::ExecutionPolicy::Strict;
     const auto context=cyxwiz::CaptureCurrentExecutionDeviceContext(policy);
     cyxwiz::ScopedActiveExecutionDeviceContext active;
     cyxwiz::ScopedExecutionDeviceContext binding(context);
-    cyxwiz::ScopedArrayFireFallbackPolicy strict(policy);
     af::setSeed(52);int major,minor,patch;Check(af_get_version(&major,&minor,&patch)==AF_SUCCESS,"ArrayFire version");
     json report={{"device",context.Describe()},{"backend",backend},
        {"exact_activation",{{"success",activation.success},{"execution_validated",activation.execution_validated},{"message",activation.message}}},

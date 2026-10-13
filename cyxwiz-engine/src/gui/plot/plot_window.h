@@ -10,6 +10,7 @@
 #include "../../core/plot/plot_prepare.h"
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <future>
 #include <memory>
@@ -56,6 +57,14 @@ public:
 
     void Render();
     bool visible = false;
+    // Where the window first opens (screen pixels; unset: ImGui's default),
+    // so several windows opened together do not cover each other.
+    ImVec2 first_position = ImVec2(-1.0f, -1.0f);
+    // Shown and brought to the front on the next frame.
+    void Focus() {
+        visible = true;
+        focus_next_ = true;
+    }
 
     // Optional: "Open in Visualizer" with the X column's index.
     std::function<void(int column)> on_open_visualizer;
@@ -65,6 +74,7 @@ private:
     void Poll();
     void DrawKinds();
     void DrawSettings();
+    bool DrawColours(float width);
     // ROWS section (TOFIX134 P2 board 6); true when the selection changed.
     bool DrawRows(float width);
     // Column names and types of the table, then their summaries (range,
@@ -76,12 +86,16 @@ private:
     int ColumnIndex(const std::string& name) const;
 
     std::string id_;
+    bool focus_next_ = false;
     std::string source_name_;
     std::shared_ptr<DataTable> table_;
     std::shared_ptr<arrow::Table> arrow_table_;
     std::string empty_message_ = "No table. Open a table in the Table Viewer and choose Plot on a column.";
     std::vector<std::string> headers_;
     std::vector<bool> numeric_;
+    // A trained tree model's table (TOFIX134 P4.7): each tree's name, for
+    // the "Tree N of M" picker (empty for other tables).
+    std::vector<std::string> model_tree_names_;
     std::vector<ColumnSummary> columns_;
     std::future<std::vector<ColumnSummary>> columns_job_;
     ColumnPicker picker_;
@@ -91,9 +105,14 @@ private:
     PlotSpec spec_;
     PlotView view_;
     std::future<Prepared> job_;
+    // Set when the window goes: a long image job (mean per class) stops reading.
+    std::shared_ptr<std::atomic<bool>> stop_ = std::make_shared<std::atomic<bool>>(false);
     bool busy_ = false;
     bool dirty_ = false;
     char title_buf_[256] = {};
+    // Positive class field (ROC, PR, calibration), kept in step with spec_.
+    char positive_buf_[128] = {};
+    std::string positive_for_ = "\x01";
 };
 
 }  // namespace cyxwiz::plot

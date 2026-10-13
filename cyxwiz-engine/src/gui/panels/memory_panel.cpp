@@ -1,5 +1,6 @@
 #include "memory_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/training_manager.h"
 #include "../../core/execution_device_context.h"
 #include "../../core/training_trace_collector.h"
@@ -15,6 +16,14 @@
 #include <numeric>
 
 namespace cyxwiz {
+
+namespace {
+// Memory kinds keep stable theme series colours (read every frame).
+ImVec4 CpuHeapColour() { return ui::SeriesColour(ui::CurrentTokens(), 0); }
+ImVec4 CpuTensorColour() { return ui::SeriesColour(ui::CurrentTokens(), 1); }
+ImVec4 GpuAllocatedColour() { return ui::SeriesColour(ui::CurrentTokens(), 2); }
+ImVec4 GpuCachedColour() { return ui::SeriesColour(ui::CurrentTokens(), 3); }
+}  // namespace
 
 MemoryPanel::MemoryPanel() : Panel("Memory Monitor", false) {
     last_refresh_ = std::chrono::steady_clock::now();
@@ -72,9 +81,9 @@ void MemoryPanel::Render() {
 void MemoryPanel::RenderToolbar() {
     // Status indicator
     if (is_monitoring_) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_CIRCLE " Monitoring");
+        ImGui::TextColored(ui::CurrentTokens().running, ICON_FA_CIRCLE " Monitoring");
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE " Idle");
+        ImGui::TextColored(ui::CurrentTokens().pending, ICON_FA_CIRCLE " Idle");
     }
 
     ImGui::SameLine();
@@ -135,7 +144,7 @@ void MemoryPanel::RenderOverviewChart() {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     if (history_.size() < 2) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Collecting memory data...");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Collecting memory data...");
         ImGui::TextDisabled("Start training to see memory usage over time.");
         return;
     }
@@ -184,24 +193,24 @@ void MemoryPanel::RenderOverviewChart() {
         ImPlot::SetupAxisLimits(ImAxis_X1, start_time, latest_time, ImGuiCond_Always);
 
         if (show_cpu_heap_ && !cpu_heap.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(cpu_heap_color_.x, cpu_heap_color_.y, cpu_heap_color_.z, 1.0f));
-            ImPlot::SetNextFillStyle(ImVec4(cpu_heap_color_.x, cpu_heap_color_.y, cpu_heap_color_.z, 0.3f));
+            ImPlot::SetNextLineStyle(CpuHeapColour());
+            ImPlot::SetNextFillStyle(ui::WithAlpha(CpuHeapColour(), 0.3f));
             ImPlot::PlotShaded("CPU Heap", timestamps.data(), cpu_heap.data(), static_cast<int>(timestamps.size()), 0.0);
         }
 
         if (show_cpu_tensors_ && !cpu_tensors.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(cpu_tensor_color_.x, cpu_tensor_color_.y, cpu_tensor_color_.z, 1.0f));
+            ImPlot::SetNextLineStyle(CpuTensorColour());
             ImPlot::PlotLine("CPU Tensors", timestamps.data(), cpu_tensors.data(), static_cast<int>(timestamps.size()));
         }
 
         if (show_gpu_allocated_ && !gpu_allocated.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(gpu_allocated_color_.x, gpu_allocated_color_.y, gpu_allocated_color_.z, 1.0f));
-            ImPlot::SetNextFillStyle(ImVec4(gpu_allocated_color_.x, gpu_allocated_color_.y, gpu_allocated_color_.z, 0.3f));
+            ImPlot::SetNextLineStyle(GpuAllocatedColour());
+            ImPlot::SetNextFillStyle(ui::WithAlpha(GpuAllocatedColour(), 0.3f));
             ImPlot::PlotShaded("GPU Allocated", timestamps.data(), gpu_allocated.data(), static_cast<int>(timestamps.size()), 0.0);
         }
 
         if (show_gpu_cached_ && !gpu_cached.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(gpu_cached_color_.x, gpu_cached_color_.y, gpu_cached_color_.z, 1.0f));
+            ImPlot::SetNextLineStyle(GpuCachedColour());
             ImPlot::PlotLine("GPU Cached", timestamps.data(), gpu_cached.data(), static_cast<int>(timestamps.size()));
         }
 
@@ -213,22 +222,22 @@ void MemoryPanel::RenderOverviewChart() {
     const auto& latest = history_.back();
 
     ImGui::Columns(4, nullptr, false);
-    ImGui::ColorButton("##cpu_heap", cpu_heap_color_, ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
+    ImGui::ColorButton("##cpu_heap", CpuHeapColour(), ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
     ImGui::SameLine();
     ImGui::Text("CPU Heap: %s", FormatBytes(latest.cpu_heap_bytes).c_str());
     ImGui::NextColumn();
 
-    ImGui::ColorButton("##cpu_tensor", cpu_tensor_color_, ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
+    ImGui::ColorButton("##cpu_tensor", CpuTensorColour(), ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
     ImGui::SameLine();
     ImGui::Text("CPU Tensors: %s", FormatBytes(latest.cpu_tensors_bytes).c_str());
     ImGui::NextColumn();
 
-    ImGui::ColorButton("##gpu_alloc", gpu_allocated_color_, ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
+    ImGui::ColorButton("##gpu_alloc", GpuAllocatedColour(), ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
     ImGui::SameLine();
     ImGui::Text("GPU Allocated: %s", FormatBytes(latest.gpu_allocated_bytes).c_str());
     ImGui::NextColumn();
 
-    ImGui::ColorButton("##gpu_cache", gpu_cached_color_, ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
+    ImGui::ColorButton("##gpu_cache", GpuCachedColour(), ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
     ImGui::SameLine();
     ImGui::Text("GPU Cached: %s", FormatBytes(latest.gpu_cached_bytes).c_str());
 
@@ -239,7 +248,7 @@ void MemoryPanel::RenderLayerBreakdown() {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     if (history_.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No layer memory data available.");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "No layer memory data available.");
         return;
     }
 
@@ -288,12 +297,12 @@ void MemoryPanel::RenderLayerBreakdown() {
         if (ImPlot::BeginPlot("Layer Memory (MB)", ImVec2(-1, 300))) {
             ImPlot::SetupAxes(nullptr, "Memory (MB)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 
-            ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.6f, 0.9f, 0.8f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.8f));
             ImPlot::PlotBars("Memory", values.data(), static_cast<int>(values.size()), 0.5);
 
             // Add labels
             for (size_t i = 0; i < labels.size(); i++) {
-                ImPlot::Annotation(static_cast<double>(i), values[i], ImVec4(1, 1, 1, 1), ImVec2(0, -5), true, "%s", labels[i]);
+                ImPlot::Annotation(static_cast<double>(i), values[i], ui::CurrentTokens().bg_raised, ImVec2(0, -5), true, "%s", labels[i]);
             }
 
             ImPlot::EndPlot();
@@ -348,7 +357,7 @@ void MemoryPanel::RenderGPUDetails() {
     ImGui::Separator();
 
     if (gpu_info_.device_id < 0) {
-        ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.2f, 1.0f), "No GPU detected or GPU backend not available.");
+        ImGui::TextColored(ui::CurrentTokens().warning, "No GPU detected or GPU backend not available.");
         ImGui::TextDisabled("Ensure ArrayFire is initialized with CUDA or OpenCL backend.");
 
         if (ImGui::Button("Refresh GPU Status")) {
@@ -432,8 +441,8 @@ void MemoryPanel::RenderGPUDetails() {
             ImPlot::SetupAxes("Time (s)", "Memory (MB)");
             ImPlot::SetupAxisLimits(ImAxis_X1, start_time, latest_time, ImGuiCond_Always);
 
-            ImPlot::SetNextLineStyle(ImVec4(gpu_allocated_color_.x, gpu_allocated_color_.y, gpu_allocated_color_.z, 1.0f));
-            ImPlot::SetNextFillStyle(ImVec4(gpu_allocated_color_.x, gpu_allocated_color_.y, gpu_allocated_color_.z, 0.3f));
+            ImPlot::SetNextLineStyle(GpuAllocatedColour());
+            ImPlot::SetNextFillStyle(ui::WithAlpha(GpuAllocatedColour(), 0.3f));
             ImPlot::PlotShaded("GPU Memory", timestamps.data(), gpu_used.data(), static_cast<int>(timestamps.size()), 0.0);
 
             ImPlot::EndPlot();
@@ -445,7 +454,7 @@ void MemoryPanel::RenderMemoryStats() {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     if (history_.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No memory data collected yet.");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "No memory data collected yet.");
         return;
     }
 
@@ -738,17 +747,18 @@ std::string MemoryPanel::FormatBytes(size_t bytes) const {
 }
 
 ImVec4 MemoryPanel::GetMemoryColor(double usage_percentage) const {
-    // Green -> Yellow -> Red based on usage
+    // Success -> warning -> caution -> error based on usage
+    const ui::Tokens& tokens = ui::CurrentTokens();
     if (usage_percentage < 50) {
-        return ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+        return tokens.success;
     } else if (usage_percentage < 75) {
-        float t = (static_cast<float>(usage_percentage) - 50.0f) / 25.0f;
-        return ImVec4(0.2f + 0.8f * t, 0.8f, 0.2f, 1.0f);  // Green to Yellow
+        float f = (static_cast<float>(usage_percentage) - 50.0f) / 25.0f;
+        return ui::Mix(tokens.success, tokens.warning, f);
     } else if (usage_percentage < 90) {
-        float t = (static_cast<float>(usage_percentage) - 75.0f) / 15.0f;
-        return ImVec4(1.0f, 0.8f - 0.6f * t, 0.2f, 1.0f);  // Yellow to Orange
+        float f = (static_cast<float>(usage_percentage) - 75.0f) / 15.0f;
+        return ui::Mix(tokens.warning, tokens.caution, f);
     } else {
-        return ImVec4(1.0f, 0.2f, 0.2f, 1.0f);  // Red
+        return tokens.error;
     }
 }
 

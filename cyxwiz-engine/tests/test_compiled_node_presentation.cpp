@@ -162,7 +162,12 @@ void CheckNer() {
     Check(!failed.issues.empty() && failed.issues.front().error &&
               failed.issues.front().message.find("Concatenate dim is 1") != std::string::npos,
           "the node's own compiler error is listed");
-    Check(failed.status_note == "1 error on this node. Shapes appear once the graph compiles.",
+    // Since 7f862079 (TOFIX140 A2) the branched-graph shape pass also reports
+    // the merge mismatch on the node: [96, 100] and [96, 16] differ outside dim 1.
+    Check(failed.issues.size() == 2 && failed.issues[1].error &&
+              failed.issues[1].message.find("Concatenate inputs differ outside dim 1") != std::string::npos,
+          "the node's shape-mismatch error is listed too");
+    Check(failed.status_note == "2 errors on this node. Shapes appear once the graph compiles.",
           "status names the node's error count: " + failed.status_note);
     Check(failed.role == "Word + POS fusion, rejected by the compiler (see below)",
           "a rejected fusion Concatenate says what it would have been: " + failed.role);
@@ -180,6 +185,16 @@ void CheckNer() {
     const auto not_compiled = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
                                                              IdNamed(ner.graph, "Dropout"), none);
     Check(not_compiled.status == "Not compiled yet" && !not_compiled.has_shapes, "before the first compile");
+
+    // Data Pipeline mode: no training compile, even with an older result around.
+    cyxwiz::CompiledNodeInputs pipeline = counting;
+    pipeline.state = cyxwiz::LiveCompileState::Failed;
+    pipeline.data_pipeline = true;
+    const auto pipeline_card = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
+                                                             IdNamed(ner.graph, "Dropout"), pipeline);
+    Check(pipeline_card.status == "Not compiled for training" && !pipeline_card.has_shapes &&
+              pipeline_card.kind == cyxwiz::CompiledStatusKind::None,
+          "a Data Pipeline graph shows no training compile status");
 }
 
 void CheckBerean() {

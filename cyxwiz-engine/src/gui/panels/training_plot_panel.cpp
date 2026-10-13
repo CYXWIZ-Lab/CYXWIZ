@@ -1,9 +1,13 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
-#ifndef CYXWIZ_PLOTTING_MODULE
+#include "../separate_windows.h"
+// Test builds that draw the dashboard without the training system define
+// CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 #include "../../core/async_task_manager.h"
 #include "../../core/crash_run_recorder.h"
+#include "../../core/execution_policy.h"
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #endif
@@ -103,7 +107,7 @@ DashColors CurrentDashColors() {
     DashColors c;
     c.window = t.bg_window;
     c.light = t.light;
-    const ImVec4 lift = c.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
+    const ImVec4 lift = t.text_bright;
     c.text = t.text;
     c.muted = t.text_dim;
     c.faint = t.text_faint;
@@ -440,25 +444,13 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();
          it != trace.recent_events.rend();
          ++it) {
         if (it->pin_memory_requested || !it->transfer_mode.empty()) {
-            return &(*it);
-        }
-    }
-    return nullptr;
-}
-
-const TrainingTraceEvent* FindLatestNativeCpuFallbackEvent(
-    const TrainingTraceSummary& trace) {
-    for (auto it = trace.recent_events.rbegin();
-         it != trace.recent_events.rend();
-         ++it) {
-        if (it->native_cpu_fallback) {
             return &(*it);
         }
     }
@@ -479,11 +471,8 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
     if (verdict == "strict_arrayfire_declared_boundaries") {
         return "Strict ArrayFire residency";
     }
-    if (verdict == "native_cpu_fallback_observed") {
-        return "Native CPU fallback observed";
-    }
-    if (verdict == "compatibility_no_observed_fallback") {
-        return "ArrayFire-first; no fallback observed";
+    if (verdict == "compatibility_completed") {
+        return "Compatibility; completed";
     }
     if (verdict == "terminal_without_residency_pass") {
         return "Residency not proven";
@@ -497,14 +486,14 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
 }
 
 ImVec4 ResidencyVerdictColor(const std::string& verdict) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (verdict == "strict_arrayfire_declared_boundaries") {
-        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        return t.success;
     }
-    if (verdict == "native_cpu_fallback_observed" ||
-        verdict == "terminal_without_residency_pass") {
-        return ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
+    if (verdict == "terminal_without_residency_pass") {
+        return t.error;
     }
-    return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+    return t.warning;
 }
 
 void RenderExecutionTruthRow(const char* label, const std::string& value) {
@@ -537,21 +526,40 @@ std::string FormatRouteQualification(
 
 } // namespace
 
+namespace {
+// The curves keep their roles in theme colours (series index): training
+// loss coral, validation loss blue, training accuracy green, validation
+// accuracy amber.
+constexpr int kTrainLossColour = 4;
+constexpr int kValLossColour = 1;
+constexpr int kTrainAccuracyColour = 3;
+constexpr int kValAccuracyColour = 2;
+
+// The series dots (metric cards, stats table) use the same theme colours as
+// the curves. Set every frame: the theme can change at any time.
+template <typename Series>
+void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accuracy,
+                        Series& val_accuracy, std::vector<Series>& custom) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    train_loss.color = cyxwiz::ui::SeriesColour(t, kTrainLossColour);
+    val_loss.color = cyxwiz::ui::SeriesColour(t, kValLossColour);
+    train_accuracy.color = cyxwiz::ui::SeriesColour(t, kTrainAccuracyColour);
+    val_accuracy.color = cyxwiz::ui::SeriesColour(t, kValAccuracyColour);
+    for (size_t i = 0; i < custom.size(); ++i) {
+        custom[i].color = cyxwiz::ui::SeriesColour(t, i % 6);
+    }
+}
+}  // namespace
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 
     // Initialize metric series
+    // Colours come from the theme each frame (ApplySeriesColours).
     train_loss_.name = "Training Loss";
-    train_loss_.color = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);  // Coral
-
     val_loss_.name = "Validation Loss";
-    val_loss_.color = ImVec4(0.42f, 0.66f, 1.0f, 1.0f);  // Blue
-
     train_accuracy_.name = "Training Accuracy";
-    train_accuracy_.color = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);  // Green
-
     val_accuracy_.name = "Validation Accuracy";
-    val_accuracy_.color = ImVec4(0.95f, 0.76f, 0.30f, 1.0f);  // Amber
 
     visible_ = true;
     RecordPanelEvent("TrainingPlotPanel.Created");
@@ -568,6 +576,7 @@ void TrainingPlotPanel::Render() {
             last_render_visible_ = false;
         }
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
@@ -579,15 +588,20 @@ void TrainingPlotPanel::Render() {
     // Larger default size for better visibility
     ImGui::SetNextWindowSize(ImVec2(1000, 800), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin(name_.c_str(), &visible_)) {
+    ::gui::NextWindowMayLeave(name_.c_str());
+    const bool expanded = ImGui::Begin(name_.c_str(), &visible_);
+    ::gui::TabMenu(name_.c_str(), &visible_);
+    if (!expanded) {
         ImGui::End();
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
 
     // Lock data for reading
     std::lock_guard<std::mutex> lock(data_mutex_);
+    ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
 
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
@@ -985,14 +999,7 @@ void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoc
         // Create new metric series
         MetricSeries new_series;
         new_series.name = metric_name;
-        // Generate a unique color based on index
-        float hue = (custom_metrics_.size() * 0.618034f);  // Golden ratio
-        hue = hue - std::floor(hue);  // Wrap to [0, 1]
-        ImGui::ColorConvertHSVtoRGB(hue, 0.7f, 1.0f,
-                                    new_series.color.x,
-                                    new_series.color.y,
-                                    new_series.color.z);
-        new_series.color.w = 1.0f;
+        // Its colour comes from the theme each frame (ApplySeriesColours).
         custom_metrics_.push_back(new_series);
         it = custom_metrics_.end() - 1;
     }
@@ -1587,16 +1594,6 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
 void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
     DrawChart(2, size, fit, in_window);
 }
-
-namespace {
-// The curves keep their roles in theme colours (series index): training
-// loss coral, validation loss blue, training accuracy green, validation
-// accuracy amber.
-constexpr int kTrainLossColour = 4;
-constexpr int kValLossColour = 1;
-constexpr int kTrainAccuracyColour = 3;
-constexpr int kValAccuracyColour = 2;
-}  // namespace
 
 plot::Series TrainingPlotPanel::ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn,
                                              const std::vector<double>& smooth_x, const std::vector<double>& smooth_y,
@@ -2233,7 +2230,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
     if (tasks.empty()) {
         return;
@@ -2682,7 +2679,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 }
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     // LatestTrace copies the whole trace (events, timings) and may read the
     // saved one from disk; it ran every frame with data_mutex_ held
     // (TOFIX134 P0 item 8). UI thread only.
@@ -2699,20 +2696,18 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     }
 
     const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    const TrainingTraceEvent* fallback =
-        FindLatestNativeCpuFallbackEvent(trace);
     const bool has_execution_truth =
         !trace.requested_backend.empty() ||
         !trace.effective_backend.empty() ||
         !trace.placement_fingerprint.empty();
-    if (!transfer && !fallback && trace.warnings.empty() &&
+    if (!transfer && trace.warnings.empty() &&
         !HasResidencyVerdict(trace) && !has_execution_truth) {
         return;
     }
 
     ImGui::Spacing();
     bool truth_open = false;
-    if (has_execution_truth || !trace.residency_verdict.empty() || transfer || fallback) {
+    if (has_execution_truth || !trace.residency_verdict.empty() || transfer) {
         std::string header = "Execution Truth";
         std::string summary = trace.effective_backend;
         if (!trace.residency_verdict.empty()) {
@@ -2796,8 +2791,9 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                     "Selection fallback",
                     "Applied to ArrayFire CPU");
             }
-            RenderExecutionTruthRow("Fallback policy",
-                                    trace.fallback_policy);
+            RenderExecutionTruthRow(
+                "Execution policy",
+                RecordedExecutionPolicyDisplayName(trace.execution_policy));
 
             std::string placement = trace.placement_fingerprint;
             if (!placement.empty()) {
@@ -2828,21 +2824,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 trace.synchronization_summary.empty()
                     ? "None recorded"
                     : trace.synchronization_summary);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("Native CPU fallback");
-            ImGui::TableNextColumn();
-            const ImVec4 fallback_count_color =
-                trace.native_cpu_fallback_count == 0
-                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                    : ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
-            ImGui::TextColored(
-                fallback_count_color,
-                "%llu event%s",
-                static_cast<unsigned long long>(
-                    trace.native_cpu_fallback_count),
-                trace.native_cpu_fallback_count == 1 ? "" : "s");
             ImGui::EndTable();
         }
 
@@ -2860,8 +2841,8 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     if (truth_open && transfer) {
         ImGui::SeparatorText("Transfer Detail");
         const ImVec4 color = transfer->status == "warning"
-            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-            : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            ? cyxwiz::ui::CurrentTokens().warning
+            : cyxwiz::ui::CurrentTokens().success;
         ImGui::TextColored(color, "Pin-memory transfer");
         if (ImGui::BeginTable(
                 "##pin_memory_transfer_detail",
@@ -2882,34 +2863,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
         }
     }
 
-    if (truth_open && fallback) {
-        ImGui::SeparatorText("Fallback Detail");
-        const ImVec4 color = fallback->status == "error"
-            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        ImGui::TextColored(color, "Native CPU fallback");
-        if (ImGui::BeginTable(
-                "##native_cpu_fallback_detail",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-            RenderExecutionTruthRow(
-                "Count",
-                std::to_string(trace.native_cpu_fallback_count));
-            RenderExecutionTruthRow("Selected backend",
-                                    fallback->compute_backend);
-            RenderExecutionTruthRow("Operation",
-                                    fallback->fallback_operation);
-            RenderExecutionTruthRow("Reason", fallback->fallback_reason);
-            RenderExecutionTruthRow("Policy", fallback->fallback_policy);
-            ImGui::EndTable();
-        }
-    }
-
     bool rendered_warning_header = false;
     if (!trace.warnings.empty()) {
         const int start =
@@ -2923,7 +2876,7 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 ImGui::SeparatorText("Warnings");
                 rendered_warning_header = true;
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                                "%s", ClassifyTrainingWarning(warning));
             ImGui::SameLine(155.0f);
             ImGui::TextWrapped("%s", warning.c_str());
@@ -3186,7 +3139,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     const DashColors c = CurrentDashColors();
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
     const bool training_paused = tm.IsPaused();
@@ -3275,7 +3228,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     const float right_edge = ImGui::GetWindowContentRegionMax().x;
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
                                row_top));
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     if (training_active) {
         if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
             if (training_paused) {
@@ -3524,7 +3477,7 @@ void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
 
 void TrainingPlotPanel::RecordPanelEvent(const std::string& action,
                                          const std::string& detail) const {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     CrashRunRecorder::Instance().MarkPanelEvent(action, detail);
 #else
     (void)action;

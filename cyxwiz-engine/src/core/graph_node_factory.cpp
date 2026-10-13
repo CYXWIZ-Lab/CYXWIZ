@@ -32,318 +32,14 @@ void PopulateStaticNodeContractFromMetadata(MLNode& node, int& next_pin_id) {
 
 } // namespace
 
-// Unified Canvas Phase 1: Map NodeType to NodeCategory for UI organization
+// The Node Browser's category (the metadata registry) - the one category
+// source for the editor, colours and headless hosts (TOFIX140; the factory's
+// own table missed 107 types and disagreed with the registry on 43 more).
 NodeCategory GetNodeCategoryForType(NodeType type) {
-    switch (type) {
-        // Smart I/O Nodes (Universal)
-        case NodeType::DataInput:
-        case NodeType::DataOutput:
-        case NodeType::DataConvert:
-        // Legacy Data Sources
-        case NodeType::CSVFile:
-        case NodeType::HDF5Dataset:
-        case NodeType::ParquetFile:
-        case NodeType::JSONFile:
-        case NodeType::ExcelFile:
-        case NodeType::RESTAPISource:
-        // Phase 4: Dataset Source Nodes (UI Consolidation)
-        case NodeType::ImageFolderDataset:
-        case NodeType::MNISTDataset:
-        case NodeType::CIFAR10Dataset:
-        case NodeType::HuggingFaceDataset:
-        case NodeType::KaggleDataset:
-            return NodeCategory::DataSources;
-
-        // Data Transforms
-        case NodeType::SQLQuery:
-        case NodeType::RowCountCheck:
-        case NodeType::FilterRows:
-        case NodeType::SelectColumns:
-        case NodeType::JoinTables:
-        case NodeType::GroupByAggregate:
-        case NodeType::SortRows:
-        case NodeType::FillMissingValues:
-        case NodeType::RemoveDuplicateRows:
-        case NodeType::PivotTable:
-        case NodeType::UnionTables:
-        case NodeType::RenameColumns:
-            return NodeCategory::DataTransform;
-
-        // Analytics
-        case NodeType::DescribeStats:
-        case NodeType::SampleRows:
-        case NodeType::CorrelationMatrix:
-        case NodeType::ValueCounts:
-        case NodeType::CrossTabulation:
-            return NodeCategory::Analytics;
-
-        // Data Export
-        case NodeType::ExportCSV:
-        case NodeType::ExportParquet:
-        case NodeType::ExportSQL:
-        case NodeType::ExportJSON:
-            return NodeCategory::DataSources;
-
-        // Preprocessing
-        case NodeType::Normalize:
-        case NodeType::OneHotEncode:
-        case NodeType::OutlierDetector:
-        case NodeType::ImagePreprocessor:
-        case NodeType::QualityAnalyzer:
-        case NodeType::DataValidator:
-            return NodeCategory::Preprocessing;
-
-        // Dense/Linear layers
-        case NodeType::Dense:
-            return NodeCategory::Layers;
-
-        // Convolutional layers
-        case NodeType::Conv1D:
-        case NodeType::Conv2D:
-        case NodeType::Conv3D:
-        case NodeType::DepthwiseConv2D:
-            return NodeCategory::Layers;
-
-        // Pooling layers
-        case NodeType::MaxPool2D:
-        case NodeType::AvgPool2D:
-        case NodeType::GlobalMaxPool:
-        case NodeType::GlobalAvgPool:
-        case NodeType::AdaptiveAvgPool:
-            return NodeCategory::Pooling;
-
-        // Normalization layers
-        case NodeType::BatchNorm:
-        case NodeType::LayerNorm:
-        case NodeType::GroupNorm:
-        case NodeType::InstanceNorm:
-            return NodeCategory::Normalization;
-
-        // Regularization
-        case NodeType::Dropout:
-        case NodeType::L1Regularization:
-        case NodeType::L2Regularization:
-        case NodeType::ElasticNet:
-            return NodeCategory::Regularization;
-
-        // Activation functions
-        case NodeType::ReLU:
-        case NodeType::LeakyReLU:
-        case NodeType::PReLU:
-        case NodeType::ELU:
-        case NodeType::SELU:
-        case NodeType::GELU:
-        case NodeType::Swish:
-        case NodeType::Mish:
-        case NodeType::Sigmoid:
-        case NodeType::Tanh:
-        case NodeType::Softmax:
-            return NodeCategory::Activation;
-
-        // Recurrent layers
-        case NodeType::RNN:
-        case NodeType::LSTM:
-        case NodeType::GRU:
-        case NodeType::Bidirectional:
-        case NodeType::TimeDistributed:
-        case NodeType::Embedding:
-            return NodeCategory::Recurrent;
-
-        // Attention & Transformer
-        case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
-        case NodeType::CrossAttention:
-        case NodeType::LinearAttention:
-        case NodeType::TransformerEncoder:
-        case NodeType::TransformerDecoder:
-        case NodeType::PositionalEncoding:
-            return NodeCategory::Attention;
-
-        // Shape operations
-        case NodeType::Reshape:
-        case NodeType::Permute:
-        case NodeType::Squeeze:
-        case NodeType::Unsqueeze:
-        case NodeType::View:
-        case NodeType::Split:
-        case NodeType::Flatten:
-            return NodeCategory::ShapeOps;
-
-        // Merge operations
-        case NodeType::Concatenate:
-        case NodeType::Add:
-        case NodeType::Multiply:
-        case NodeType::Average:
-            return NodeCategory::MergeOps;
-
-        // Tensor reductions
-        case NodeType::TensorSum:
-        case NodeType::TensorMean:
-        case NodeType::TensorMax:
-        case NodeType::TensorMin:
-        case NodeType::TensorProd:
-        case NodeType::TensorVar:
-        case NodeType::TensorStd:
-            return NodeCategory::Analytics;
-
-        case NodeType::TensorBroadcastTo:
-        case NodeType::TensorExpand:
-        case NodeType::TensorIndexSelect:
-            return NodeCategory::ShapeOps;
-
-        case NodeType::TensorPow:
-        case NodeType::TensorSqrt:
-        case NodeType::TensorExp:
-        case NodeType::TensorLog:
-        case NodeType::TensorAbs:
-        case NodeType::TensorSign:
-        case NodeType::TensorClip:
-        case NodeType::TensorDot:
-        case NodeType::TensorBatchMatMul:
-        case NodeType::TensorCompare:
-        case NodeType::TensorLogicalMask:
-            return NodeCategory::Analytics;
-
-        // Training
-        case NodeType::SGD:
-        case NodeType::Adam:
-        case NodeType::AdamW:
-        case NodeType::RMSprop:
-        case NodeType::Adagrad:
-        case NodeType::NAdam:
-        case NodeType::StepLR:
-        case NodeType::CosineAnnealing:
-        case NodeType::ReduceOnPlateau:
-        case NodeType::ExponentialLR:
-        case NodeType::WarmupScheduler:
-        case NodeType::MSELoss:
-        case NodeType::CrossEntropyLoss:
-        case NodeType::BCELoss:
-        case NodeType::BCEWithLogits:
-        case NodeType::L1Loss:
-        case NodeType::SmoothL1Loss:
-        case NodeType::HuberLoss:
-        case NodeType::NLLLoss:
-        case NodeType::FocalLoss:
-        case NodeType::SoftDiceLoss:
-        case NodeType::TverskyLoss:
-        case NodeType::JaccardLoss:
-        case NodeType::Output:
-            return NodeCategory::Training;
-
-        // Utility
-        case NodeType::Lambda:
-        case NodeType::Identity:
-        case NodeType::Constant:
-        case NodeType::Parameter:
-            return NodeCategory::Utility;
-
-        // Signal/Control
-        case NodeType::SignalSlider:
-        case NodeType::SineWave:
-        case NodeType::StepSignal:
-        case NodeType::RampSignal:
-        case NodeType::SignalScope:
-            return NodeCategory::Signal;
-
-        // Data Pipeline
-        case NodeType::DatasetInput:
-        case NodeType::DataLoader:
-        case NodeType::Augmentation:
-        case NodeType::DataSplit:
-        case NodeType::TensorReshape:
-        // Image Transform Nodes (Phase 1)
-        case NodeType::Resize:
-        case NodeType::CenterCrop:
-        case NodeType::RandomCrop:
-        case NodeType::HorizontalFlip:
-        case NodeType::VerticalFlip:
-        case NodeType::ImageRotate:
-        case NodeType::ColorJitter:
-        case NodeType::ImageGaussianBlur:
-        case NodeType::Grayscale:
-        // Phase 6: Advanced Augmentation Nodes (UI Consolidation)
-        case NodeType::AugmentationPreset:
-        case NodeType::GeometricTransform:
-        case NodeType::ColorTransform:
-        case NodeType::MorphologyTransform:
-        case NodeType::AdvancedAugment:
-            return NodeCategory::DataPipeline;
-
-        // DNN Inference
-        case NodeType::DNNModelLoad:
-        case NodeType::DNNDetect:
-        case NodeType::DNNClassify:
-        case NodeType::DNNPoseEstimate:
-        case NodeType::DNNFaceDetect:
-        case NodeType::DNNPreprocess:
-        case NodeType::PretrainedYOLO:
-        case NodeType::PretrainedMobileNet:
-        case NodeType::PretrainedOpenPose:
-        case NodeType::PretrainedFaceNet:
-        case NodeType::NonMaxSuppression:
-        case NodeType::ArgMax:
-        case NodeType::TopK:
-        case NodeType::ThresholdFilter:
-            return NodeCategory::DNN;
-
-        // Text Processing
-        case NodeType::TextTokenizer:
-        case NodeType::TextVocabulary:
-        case NodeType::TextPadding:
-        case NodeType::NERSequenceBuilder:
-        case NodeType::TokenVocabulary:
-        case NodeType::POSVocabulary:
-        case NodeType::NERTagVocabulary:
-        case NodeType::SequenceTagOutput:
-            return NodeCategory::TextProcessing;
-
-        // Upsampling
-        case NodeType::ConvTranspose2D:
-        case NodeType::Upsample:
-        case NodeType::PixelShuffle:
-            return NodeCategory::Upsampling;
-
-        // Time Series
-        case NodeType::TimeSeriesSegment:
-        case NodeType::TimeSeriesWindow:
-        case NodeType::TimeSeriesFeatures:
-        case NodeType::TimeSeriesSplit:
-        case NodeType::SeasonalNaive:
-        case NodeType::LogTransform:
-        case NodeType::Differencing:
-        case NodeType::TimeSeriesDecomposition:
-        case NodeType::ACFNode:
-        case NodeType::PACFNode:
-        case NodeType::StationarityTest:
-        case NodeType::SeasonalityDetector:
-        case NodeType::ARIMAForecaster:
-        case NodeType::ExponentialSmoothing:
-            return NodeCategory::TimeSeries;
-
-        // Audio
-        case NodeType::AudioInput:
-        case NodeType::Spectrogram:
-        case NodeType::MelSpectrogram:
-        case NodeType::MFCC:
-        case NodeType::AudioAugmentation:
-            return NodeCategory::Audio;
-
-        // RL
-        case NodeType::GymEnvironment:
-        case NodeType::ReplayBufferNode:
-        case NodeType::PolicyNetwork:
-        case NodeType::ValueNetwork:
-        case NodeType::RLTraining:
-            return NodeCategory::RL;
-
-        // Plugin
-        case NodeType::PluginCustom:
-            return NodeCategory::Plugin;
-
-        default:
-            return NodeCategory::Unknown;
-    }
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
+    return metadata ? metadata->category : NodeCategory::Unknown;
 }
 
 MLNode CreateGraphNode(NodeType type,
@@ -358,7 +54,7 @@ MLNode CreateGraphNode(NodeType type,
     MLNode node;
     node.id = next_node_id_++;
     node.type = type;
-    node.category = GetNodeCategoryForType(type);  // Unified Canvas Phase 1
+    node.category = GetNodeCategoryForType(type);
     node.name = name;
 
     // Create pins based on node type
@@ -382,35 +78,12 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::Softmax:
         case NodeType::LeakyReLU:
         case NodeType::ELU:
+        case NodeType::SELU:
+        case NodeType::PReLU:
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
-        case NodeType::PReLU:
-        case NodeType::SELU: {
-            // Catalog-preview activations remain constructible only for
-            // compatibility with saved graphs.
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::PReLU) {
-                node.parameters["num_parameters"] = "1";
-                node.parameters["init"] = "0.25";
-            }
             break;
         }
 
@@ -494,193 +167,26 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::Augmentation: {
-            // Augmentation node - transform pipeline
-            // Input: Data tensor
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Image (or tabular) tensor stream to apply augmentations "
-                "to. Augmentation runs train-only — eval/test passes are "
-                "pass-through, so the model sees the unperturbed data "
-                "for fair metrics.";
-            node.inputs.push_back(input_pin);
-
-            // Output: Augmented data
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Same shape as Input. The transforms parameter is a "
-                "csv pipeline (RandomFlip,Normalize,...) applied left "
-                "to right.";
-            node.outputs.push_back(output_pin);
-
-            // Parameters (transform pipeline)
-            node.parameters["transforms"] = "RandomFlip,Normalize";
-            node.parameters["flip_prob"] = "0.5";
-            node.parameters["normalize_mean"] = "0.0";
-            node.parameters["normalize_std"] = "1.0";
-            break;
-        }
-
-        // ===== Image Transform Nodes (Phase 1) =====
-        // All share the same pin layout: one Tensor in, one Tensor out.
-        // Parameters vary per transform type. Random* / *Flip / Rotate /
-        // Jitter / Blur are train-only (eval/test pass-through); Resize /
-        // CenterCrop / Grayscale always run.
-        case NodeType::Resize: {
+        // ===== Image transforms (TOFIX140): pins and settings from the registry =====
+        case NodeType::Resize:
+        case NodeType::CenterCrop:
+        case NodeType::RandomCrop:
+        case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip:
+        case NodeType::ImageRotate:
+        case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur:
+        case NodeType::Grayscale:
+        case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment:
+        case NodeType::AugmentationPreset:
+        case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-        case NodeType::CenterCrop: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Must be at "
-                             "least width × height in spatial size.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Center crop of shape [batch, channels, height, width].";
-            node.outputs.push_back(out);
-            node.parameters["width"] = "224";
-            node.parameters["height"] = "224";
-            break;
-        }
-        case NodeType::RandomCrop: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only — "
-                             "eval/test pass through unchanged.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Random crop of shape [batch, channels, height, width]. "
-                              "Position is resampled per batch.";
-            node.outputs.push_back(out);
-            node.parameters["width"] = "224";
-            node.parameters["height"] = "224";
-            break;
-        }
-        case NodeType::HorizontalFlip: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample independently flipped left↔right with "
-                              "the configured probability.";
-            node.outputs.push_back(out);
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::VerticalFlip: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample independently flipped top↔bottom with "
-                              "the configured probability. Avoid for natural "
-                              "imagery where 'up' is meaningful.";
-            node.outputs.push_back(out);
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::ImageRotate: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Each sample rotated by an angle uniformly sampled "
-                              "in [-max_angle, +max_angle] degrees.";
-            node.outputs.push_back(out);
-            node.parameters["max_angle"] = "15.0";
-            node.parameters["probability"] = "0.5";
-            break;
-        }
-        case NodeType::ColorJitter: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Color image tensor [batch, 3, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Per-sample random adjustments to brightness, "
-                              "contrast, saturation, and hue within the "
-                              "configured ranges.";
-            node.outputs.push_back(out);
-            node.parameters["brightness"] = "0.2";
-            node.parameters["contrast"] = "0.2";
-            node.parameters["saturation"] = "0.2";
-            node.parameters["hue"] = "0.1";
-            break;
-        }
-        case NodeType::ImageGaussianBlur: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W]. Train-only.";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Gaussian-blurred image with the configured "
-                              "kernel_size and sigma. Same shape as Input.";
-            node.outputs.push_back(out);
-            node.parameters["kernel_size"] = "5";
-            node.parameters["sigma"] = "1.0";
-            break;
-        }
-        case NodeType::Grayscale: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Color image tensor [batch, 3, H, W].";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Single-channel grayscale [batch, 1, H, W] using "
-                              "the standard luminosity weighting.";
-            node.outputs.push_back(out);
             break;
         }
 
         case NodeType::DataSplit: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
-        case NodeType::TensorReshape: {
-            // TensorReshape node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Any tensor — total element count must match the target "
-                "shape (one -1 entry is auto-computed).";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Reshaped to the comma-separated `shape` parameter — "
-                "e.g. '-1,28,28,1' to recover MNIST-shaped images from "
-                "a flattened tensor.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "-1,28,28,1";
             break;
         }
 
@@ -732,8 +238,7 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::RNN:
-        case NodeType::Bidirectional: {
+        case NodeType::RNN: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -755,7 +260,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
@@ -784,30 +288,7 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         case NodeType::Split: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Multiple outputs for split
-            NodePin output1;
-            output1.id = next_pin_id_++;
-            output1.type = PinType::Tensor;
-            output1.name = "Output 1";
-            output1.is_input = false;
-            node.outputs.push_back(output1);
-
-            NodePin output2;
-            output2.id = next_pin_id_++;
-            output2.type = PinType::Tensor;
-            output2.name = "Output 2";
-            output2.is_input = false;
-            node.outputs.push_back(output2);
-
-            node.parameters["split_size"] = "2";
-            node.parameters["dim"] = "0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1143,8 +624,6 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::PairDatasetBuilder:
         case NodeType::TripletDatasetBuilder:
-        case NodeType::SharedEncoder:
-        case NodeType::SiameseBranch:
         case NodeType::ContrastiveLoss:
         case NodeType::CosineEmbeddingLoss:
         case NodeType::TripletLoss:
@@ -2190,70 +1669,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::ImagePreprocessor: {
-            NodePin images_in;
-            images_in.id = next_pin_id_++;
-            images_in.type = PinType::Tensor;
-            images_in.name = "Images";
-            images_in.is_input = true;
-            node.inputs.push_back(images_in);
-
-            NodePin processed_out;
-            processed_out.id = next_pin_id_++;
-            processed_out.type = PinType::Tensor;
-            processed_out.name = "Processed";
-            processed_out.is_input = false;
-            node.outputs.push_back(processed_out);
-
-            node.parameters["resize_mode"] = "aspect_fit";  // exact, aspect_fit, aspect_fill, center
-            node.parameters["target_width"] = "224";
-            node.parameters["target_height"] = "224";
-            node.parameters["normalize"] = "true";
-            node.parameters["mean"] = "0.485,0.456,0.406";  // ImageNet mean
-            node.parameters["std"] = "0.229,0.224,0.225";   // ImageNet std
-            node.parameters["interpolation"] = "bilinear";  // nearest, bilinear, bicubic
-            node.parameters["padding_mode"] = "reflect";    // constant, reflect, replicate
-            break;
-        }
-
-        case NodeType::QualityAnalyzer: {
-            NodePin images_in;
-            images_in.id = next_pin_id_++;
-            images_in.type = PinType::Dataset;
-            images_in.name = "Images";
-            images_in.is_input = true;
-            node.inputs.push_back(images_in);
-
-            NodePin passed_out;
-            passed_out.id = next_pin_id_++;
-            passed_out.type = PinType::Dataset;
-            passed_out.name = "Passed";
-            passed_out.is_input = false;
-            node.outputs.push_back(passed_out);
-
-            NodePin rejected_out;
-            rejected_out.id = next_pin_id_++;
-            rejected_out.type = PinType::Dataset;
-            rejected_out.name = "Rejected";
-            rejected_out.is_input = false;
-            node.outputs.push_back(rejected_out);
-
-            NodePin report_out;
-            report_out.id = next_pin_id_++;
-            report_out.type = PinType::Dataset;
-            report_out.name = "Report";
-            report_out.is_input = false;
-            node.outputs.push_back(report_out);
-
-            node.parameters["blur_threshold"] = "100.0";      // Laplacian variance threshold
-            node.parameters["brightness_min"] = "30";         // Min acceptable brightness
-            node.parameters["brightness_max"] = "220";        // Max acceptable brightness
-            node.parameters["contrast_threshold"] = "0.2";    // Min contrast (std dev)
-            node.parameters["noise_threshold"] = "50.0";      // Max noise level
-            node.parameters["duplicate_check"] = "true";      // Check for duplicates
-            node.parameters["aspect_ratio_tolerance"] = "0.1"; // Aspect ratio consistency
-            break;
-        }
 
         case NodeType::DataValidator: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
@@ -2368,123 +1783,6 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
-        case NodeType::AugmentationPreset: {
-            // AugmentationPreset - Predefined augmentation pipelines
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["preset"] = "ImageNet";            // ImageNet, CIFAR, Medical, SelfSupervised, Custom
-            node.parameters["normalize"] = "true";             // Apply normalization
-            node.parameters["resize"] = "224,224";             // Target size (preset-specific default)
-            break;
-        }
-
-        case NodeType::GeometricTransform: {
-            // GeometricTransform - Geometric transforms (rotate, flip, crop, perspective)
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["transform"] = "rotate";           // rotate, flip_h, flip_v, crop, perspective, affine
-            node.parameters["angle_range"] = "-30,30";         // Rotation angle range (degrees)
-            node.parameters["flip_prob"] = "0.5";              // Probability for flip transforms
-            node.parameters["crop_scale"] = "0.8,1.0";         // Random crop scale range
-            node.parameters["perspective_distortion"] = "0.2"; // Perspective distortion scale
-            break;
-        }
-
-        case NodeType::ColorTransform: {
-            // ColorTransform - Color space transforms
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["brightness_range"] = "0.8,1.2";   // Brightness multiplier range
-            node.parameters["contrast_range"] = "0.8,1.2";     // Contrast multiplier range
-            node.parameters["saturation_range"] = "0.8,1.2";   // Saturation multiplier range
-            node.parameters["hue_range"] = "-0.1,0.1";         // Hue shift range
-            node.parameters["gamma_range"] = "0.8,1.2";        // Gamma correction range
-            break;
-        }
-
-        case NodeType::MorphologyTransform: {
-            // MorphologyTransform - Morphological operations
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["operation"] = "blur";             // blur, sharpen, dilate, erode, edge
-            node.parameters["kernel_size"] = "3";              // Kernel size for morphological ops
-            node.parameters["sigma"] = "1.0";                  // Sigma for Gaussian blur
-            node.parameters["strength"] = "1.0";               // Effect strength
-            break;
-        }
-
-        case NodeType::AdvancedAugment: {
-            // AdvancedAugment - Advanced augmentation techniques
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["method"] = "Cutout";              // Cutout, MixUp, CutMix, RandAugment, AutoAugment
-            node.parameters["cutout_size"] = "16";             // Size of cutout region (Cutout)
-            node.parameters["mixup_alpha"] = "0.2";            // MixUp/CutMix alpha parameter
-            node.parameters["num_ops"] = "2";                  // Number of operations (RandAugment)
-            node.parameters["magnitude"] = "9";                // Magnitude level (RandAugment/AutoAugment)
-            break;
-        }
-
         // ===== Phase 4: Signal Processing Nodes =====
         case NodeType::FFTNode:
         case NodeType::FilterDesigner:
@@ -2595,7 +1893,8 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::Plot: {
+        case NodeType::Plot:
+        case NodeType::Dashboard: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

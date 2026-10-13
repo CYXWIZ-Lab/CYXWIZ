@@ -122,6 +122,7 @@ const char* ContextName(Context context) {
         case Context::ScriptNotebook: return "Script Editor, notebook";
         case Context::Variables: return "Variable Explorer";
         case Context::TableViewer: return "Table Viewer";
+        case Context::DataStudio: return "Data Studio";
     }
     return "Everywhere";
 }
@@ -148,6 +149,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         const Context notebook = Context::ScriptNotebook;
         const Context variables = Context::Variables;
         const Context viewer = Context::TableViewer;
+        const Context studio = Context::DataStudio;
 
         // Everywhere: handled by the main window.
         add(any, "file.new_project", "New Project...", "Ctrl+Shift+N", "File");
@@ -281,6 +283,9 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(viewer, "table.add_selection", "Add a cell to the selection", "Ctrl+Click", "", true);
         add(viewer, "table.extend_selection", "Extend the selection", "Shift+Click", "", true);
         add(viewer, "table.slice_step", "Step the first index of an array slice", "Up, Down", "", true);
+
+        // Data Studio: the Query tab handles these while its editor has focus.
+        add(studio, "datastudio.run_query", "Run the query", "Ctrl+Enter", "", true);
         // While a code cell is being edited, the language keys work as in a script.
         add(notebook, "script.completion", "Completion in the cell (with the list open: details)", "Ctrl+Space", "", true);
         add(notebook, "editor.signature_help", "Show the signature of the call in the cell", "Ctrl+Shift+Space", "", true);
@@ -446,6 +451,22 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Action(f, "view.save_layout", "Save Layout", "Saves the current panel arrangement."),
                          Action(f, "view.reset_layout", "Reset to Default",
                                 "Puts every panel back in its default place.")}));
+        {
+            // The focused window out of the main window and back (TOFIX129 A8).
+            Opts out;
+            out.argument = in.focused_window;
+            if (in.focused_window.empty()) out.why = "No window has the focus.";
+            else if (!in.focused_window_may_leave) out.why = "This window stays in the main window.";
+            else if (in.focused_window_outside) out.why = "Already in a window of its own.";
+            Opts back;
+            back.argument = in.focused_window;
+            if (!in.focused_window_outside) back.why = "The window is in the main window.";
+            i.push_back(Sub("view.window", "Window", "The focused window out of the main window, or back.",
+                            {Action(f, "view.window_out", "Move to its own window",
+                                    "The focused window becomes a window of its own on the desktop, on any monitor.", out),
+                             Action(f, "view.window_back", "Dock back into the main window",
+                                    "The window returns to its place in the main window.", back)}));
+        }
         i.push_back(Sep());
         {
             std::vector<MenuItem> themes;
@@ -547,9 +568,9 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
     {
         Menu m{"data", "Data", {}};
         auto& i = m.items;
-        i.push_back(Action(f, "data.import", "Import Dataset...", "Opens the dataset import."));
-        i.push_back(Action(f, "data.create_custom", "Create Custom Dataset...", "Starts a dataset from your own files."));
-        i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Shows row counts, columns and value summaries."));
+        i.push_back(Action(f, "data.import", "Import Dataset...", "Adds a Data Input node and opens it: data enters the Engine there."));
+        i.push_back(Action(f, "data.create_custom", "Create Custom Dataset...", "Adds a Data Input node for your own files (tables, image, audio or text folders)."));
+        i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Opens Data Studio's Profile: row counts, columns and value summaries."));
         i.push_back(Sep());
         i.push_back(Sub("data.explore", "Explore", "Look at a table before using it.",
                         {Tool(f, "data.profiler", "Data Profiler"),

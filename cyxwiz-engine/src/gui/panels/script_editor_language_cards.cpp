@@ -12,6 +12,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 
@@ -64,6 +65,7 @@ bool SamePath(const std::string& a, const std::string& b) {
 // A raised card: soft shadow on the editor's window, then a borderless window.
 bool BeginCard(const char* id, ImVec2 pos, float width) {
     const ui::Tokens& t = ui::CurrentTokens();
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(width, FLT_MAX));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |

@@ -38,6 +38,11 @@ namespace cyxwiz {
 class LiveGraphCompile;
 }  // namespace cyxwiz
 
+namespace cyxwiz::dashboard {
+class DashboardWindow;
+struct DashboardTarget;
+struct WidgetSpec;
+}
 namespace cyxwiz::plot {
 class PlotNodeLane;
 class PlotWindow;
@@ -45,7 +50,6 @@ class PlotWindow;
 
 namespace gui {
 class Properties;
-class ShapeInferenceEngine;
 
 // Icon pack selection for node icons
 enum class IconPack {
@@ -157,6 +161,18 @@ struct NodeGroup {
     float padding = 20.0f;  // Padding around contained nodes
 };
 
+// Default colour of a new canvas annotation, from the active theme tokens
+// (the colour itself is user data saved with the graph).
+ImU32 DefaultAnnotationColour();
+
+// The colour of a node category on the canvas, in the Node Browser and in
+// the node documentation: one series colour of the theme tokens per category.
+ImVec4 NodeCategoryColour(NodeCategory category);
+
+// The colour of a pin data type (Node Info panel, pin legends): one series
+// colour of the theme tokens per type.
+ImVec4 PinTypeColour(PinType type);
+
 // Canvas annotation (KNIME-style sticky note)
 struct CanvasAnnotation {
     int id;
@@ -171,7 +187,7 @@ struct CanvasAnnotation {
         : id(-1)
         , position(0, 0)
         , size(200, 100)
-        , color(IM_COL32(255, 255, 200, 255))  // Default yellow
+        , color(0)  // set by the creator: DefaultAnnotationColour() or the saved colour
         , is_minimized(false) {}
 };
 
@@ -191,15 +207,6 @@ struct CanvasFrame {
         , position(0, 0)
         , size(300, 200)
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
-};
-
-// Annotation color presets
-enum class AnnotationColor {
-    Yellow,   // Default - IM_COL32(255, 255, 200, 255)
-    Blue,     // Info - IM_COL32(200, 220, 255, 255)
-    Green,    // Done - IM_COL32(200, 255, 200, 255)
-    Orange,   // TODO - IM_COL32(255, 230, 200, 255)
-    Pink      // Important - IM_COL32(255, 200, 220, 255)
 };
 
 // Validation warning severity levels
@@ -273,6 +280,16 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     // Configure a node as a double-click does (Properties "Open Dialog...").
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
+    void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
+    // whether each shows `dataset`; the Data Input a new one would read; the add
+    // itself is applied in the editor's next frame (node 0: a new Dashboard node).
+    std::vector<cyxwiz::dashboard::DashboardTarget> DashboardTargets(const std::string& dataset);
+    std::string DashboardSourceFor(const std::string& dataset) const;
+    void QueueDashboardWidget(int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget);
+    // A dashboard's "Open in Data Studio" / "Open in Query tab": dataset and SQL.
+    void SetOpenDataStudioQueryCallback(std::function<void(const std::string&, const std::string&)> cb) { open_data_studio_query_ = std::move(cb); }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
@@ -478,7 +495,6 @@ public:
                                     int& next_pin_id);
 
     // Unified Canvas Phase 1: Get category for a node type
-    static NodeCategory GetCategoryForNodeType(NodeType type);
 
     // ===== Menu Operations (Public API for Toolbar) =====
 
@@ -486,6 +502,9 @@ public:
     // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
     void AddDataInputFromAsset(const std::string& path);
+    // Data > Import Dataset: a new Data Input node with its dialog open (data
+    // enters the Engine only through Data Input nodes).
+    void AddDataInputAndConfigure();
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -630,9 +649,6 @@ private:
     ImU32 GetLinkColor(LinkType type) const;
     ImU32 GetLinkHoverColor(LinkType type) const;
 
-    // Get visual color for pins and links based on data type
-    ImU32 GetPinTypeColor(PinType type) const;
-    ImU32 GetPinTypeHoverColor(PinType type) const;
 
     // Connection tracking for variadic pins
     int GetConnectionCount(int pin_id) const;
@@ -735,10 +751,8 @@ private:
     void RenderAnnotations();
     void RenderAnnotationEditPopup();
     void HandleAnnotationInteraction();
-    CanvasAnnotation* FindAnnotationById(int annotation_id);
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
-    ImU32 GetAnnotationColorValue(AnnotationColor color) const;
 
     // Subgraph encapsulation
     void CreateSubgraphFromSelection(const std::string& name);
@@ -762,7 +776,9 @@ private:
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
     // PyTorch export of the optimizer node's training recipe (tofix112).
     const MLNode* FindExportOptimizerNode() const;
+    const MLNode* FindExportSchedulerNode() const;
     std::string PyTorchOptimizerSetup() const;
+    std::string PyTorchPenaltyLines() const;
     std::string PyTorchStepLines() const;
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
@@ -848,6 +864,7 @@ private:
         std::string name;
         ImVec2 position;  // Grid space position where node should be created
         std::unordered_map<std::string, std::string> initial_parameters;
+        bool open_configuration = false;  // open the node's dialog once it exists
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)
@@ -940,7 +957,6 @@ private:
     int pending_flatten_to_pin_ = -1;
 
     // Shape inference engine and validation warnings
-    std::unique_ptr<ShapeInferenceEngine> shape_inference_;
     std::vector<ValidationWarning> validation_warnings_;
 
     // Deferred clear flag (to call ImNodes clear inside BeginNodeEditor scope)
@@ -1066,6 +1082,22 @@ private:
     void DrawPlotNodeStatus(const MLNode& node);
     void DrawPlotNodeHeader(int node_id);
     void PlotNodeInput(int plot_id, int source_id);
+    // Dashboard nodes (TOFIX134 P3): the same lane, one Dashboard window each.
+    std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
+    std::map<int, uint64_t> dashboard_data_versions_;
+    std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
+    void OpenDashboardNode(int node_id);
+    // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.
+    int DataInputOf(const std::string& dataset) const;
+    struct PendingDashboardWidget {
+        int node_id = 0;
+        std::string dataset;
+        std::shared_ptr<cyxwiz::dashboard::WidgetSpec> widget;
+    };
+    std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
+    void ApplyPendingDashboardWidgets();
+    void RenderDashboardWindows();
     std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====

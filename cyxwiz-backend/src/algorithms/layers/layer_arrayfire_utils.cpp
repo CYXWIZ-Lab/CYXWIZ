@@ -1,7 +1,5 @@
 #include "layer_arrayfire_utils.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 #include <limits>
 #include <cmath>
 #include <stdexcept>
@@ -68,4 +66,3 @@ af::array KaimingUniform(int fan_in, af::dim4 dims) {
 
 } // namespace cyxwiz
 
-#endif

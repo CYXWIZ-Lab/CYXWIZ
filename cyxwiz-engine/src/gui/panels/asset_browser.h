@@ -5,6 +5,8 @@
 #include <future>
 #include "../panel.h"
 #include "../../core/data_registry.h"
+#include "../../core/asset_preview.h"
+#include <imgui.h>
 #include "../../core/data_preview_service.h"
 #include "../../core/async_task_manager.h"
 #include "../preview/preview_renderer.h"
@@ -84,8 +86,12 @@ public:
     using GraphCallback = std::function<void(const std::string& path)>;
     void SetOnOpenInNodeEditor(GraphCallback callback) { on_open_in_node_editor_ = std::move(callback); }
 
-    // Enable/disable dataset preview pane
+    // Enable/disable the file preview pane
     void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
+
+    // A loaded dataset's "Open in Data Studio" (its registry name).
+    using DatasetNameCallback = std::function<void(const std::string& dataset_name)>;
+    void SetOnOpenInDataStudio(DatasetNameCallback callback) { on_open_in_data_studio_ = std::move(callback); }
 
 private:
     enum class AssetActionStatus { None, Success, Error };
@@ -95,7 +101,15 @@ private:
     void RenderDirectoryView();
     void RenderAssetNode(AssetItem& item, int depth = 0);
     void RenderStatusBar();
-    void RenderDatasetPreview();
+    // The selected file's light preview (TOFIX140): beside the tree in a wide
+    // panel, below it in a narrow one. A bounded peek only; data enters the
+    // Engine through a Data Input.
+    void RenderFilePreview(const AssetItem& item, const ImVec2& size);
+    void RefreshFilePreview(const AssetItem& item);
+    void RenderPreviewTable();
+    void RenderPreviewLines();
+    void RenderPreviewActions(const AssetItem& item);
+    void PreviewSplitter(bool beside);
 
     // Dataset helpers
     bool IsDatasetFile(const AssetItem& item) const;
@@ -110,7 +124,6 @@ private:
     // Asset operations
     void BuildDirectoryTree();
     AssetType DetermineAssetType(const std::string& path);
-    const char* GetAssetIcon(AssetType type) const;
 
     // Helper to count total items
     int CountItems() const;
@@ -180,11 +193,19 @@ private:
 
     GraphCallback on_open_in_node_editor_;
 
-    // Dataset preview state
+    DatasetNameCallback on_open_in_data_studio_;
+
+    // File preview state: the peek (a loaded dataset's page is shown through
+    // it too), its column type labels, and the pane's size per placement.
     bool show_dataset_preview_ = true;
-    DataPreviewPage current_preview_;
     std::string preview_path_;
+    std::string preview_modified_;
     std::string preview_dataset_name_;
+    std::string preview_registry_name_;  // the registry's name for the file when last read
+    assets::FilePeek file_peek_;
+    std::vector<std::string> preview_column_types_;
+    float preview_side_width_ = 400.0f;
+    float preview_below_height_ = 320.0f;
     AssetActionStatus asset_action_status_ = AssetActionStatus::None;
     std::string asset_action_message_;
 

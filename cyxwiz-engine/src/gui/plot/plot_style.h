@@ -15,5 +15,9 @@ void ApplyPlotStyle();
 ImPlotColormap SeriesColormap();
 ImPlotColormap SequentialColormap();
 ImPlotColormap DivergingColormap();
+// The scale a plot uses: the theme's (sequential, or diverging when the
+// values lie on both sides of 0) unless the spec picked one (P4.4).
+struct PlotSpec;
+ImPlotColormap ScaleColormap(const PlotSpec& spec, bool two_sided);
 
 }  // namespace cyxwiz::plot

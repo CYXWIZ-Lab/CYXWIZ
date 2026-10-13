@@ -1,5 +1,6 @@
 #include "optimizer_settings_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
@@ -110,7 +111,7 @@ void OptimizerSettingsPanel::RenderOptimizerSelection() {
     }
 
     // Description
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     switch (optimizer_type_) {
         case OptimizerTypeUI::SGD:
             ImGui::TextWrapped("Stochastic Gradient Descent with optional momentum. Good for vision tasks.");
@@ -221,7 +222,7 @@ void OptimizerSettingsPanel::RenderAdamWSettings() {
     ImGui::InputFloat("Weight Decay", &weight_decay_, 0.001f, 0.01f, "%.4f");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Decoupled weight decay (0.01 typical for transformers)");
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().info);
     ImGui::TextWrapped(ICON_FA_CIRCLE_INFO " AdamW uses decoupled weight decay which is more effective than L2 regularization");
     ImGui::PopStyleColor();
 }
@@ -262,7 +263,7 @@ void OptimizerSettingsPanel::RenderNAdamSettings() {
     ImGui::SetNextItemWidth(150);
     ImGui::InputFloat("Weight Decay", &weight_decay_, 0.0001f, 0.001f, "%.6f");
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().info);
     ImGui::TextWrapped(ICON_FA_CIRCLE_INFO " NAdam incorporates Nesterov momentum into Adam for potentially faster convergence");
     ImGui::PopStyleColor();
 }

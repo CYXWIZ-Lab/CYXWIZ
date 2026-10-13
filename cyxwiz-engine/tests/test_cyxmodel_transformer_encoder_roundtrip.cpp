@@ -209,7 +209,7 @@ std::string BuildBertSequenceClassifierGraphJson() {
         {"id", 7},
         {"type", static_cast<int>(gui::NodeType::Output)},
         {"name", "Class Output"},
-        {"parameters", {{"classes", "2"}}}
+        {"parameters", {{"num_classes", "2"}}}
     });
     graph["nodes"].push_back({
         {"id", 8},

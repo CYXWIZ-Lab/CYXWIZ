@@ -111,9 +111,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
             try {
                 // Build where training would: the worker otherwise starts on
                 // ArrayFire's default backend, not the selected route.
-                if (const auto selected = Device::GetProcessDevice()) {
-                    Device(selected->type, selected->device_id).ActivateExact(false);
-                }
+                Device::ActivateProcessDeviceOnThisThread();
                 auto built = BuildExecutableFromConfig(result->config);
                 if (built.ok()) {
                     std::vector<std::pair<std::string, long long>> named;

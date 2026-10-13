@@ -64,7 +64,6 @@ private:
     std::vector<std::vector<double>> matrix_b_;
     int rows_b_ = 3;
     int cols_b_ = 3;
-    bool show_matrix_b_ = false;
 
     // Scalar for scalar multiply
     double scalar_value_ = 1.0;
@@ -83,6 +82,7 @@ private:
         FrobeniusNorm,
         ConditionNumber
     };
+    static bool NeedsMatrixB(Operation op);
     Operation selected_op_ = Operation::Add;
 
     // Results

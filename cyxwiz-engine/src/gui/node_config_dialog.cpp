@@ -1,6 +1,8 @@
 #include "node_config_dialog.h"
+#include "quality_analyzer_dialog.h"
 #include "node_editor.h"
 #include "sql_workbench.h"
+#include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
@@ -138,43 +140,13 @@ bool NodeConfigDialog::Render() {
     } else if (visible) {
         // Content area
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        float button_height = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
 
         // Main content (excluding button area)
-        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - button_height), false);
+        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - FooterHeight()), false);
         RenderContent();
         ImGui::EndChild();
 
-        ImGui::Separator();
-
-        // Bottom buttons (OK, Cancel, Apply)
-        float button_width = 80.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float total_width = button_width * 3 + spacing * 2;
-        ImGui::SetCursorPosX(avail.x - total_width);
-
-        // Grey out OK/Apply while a subclass reports it's busy (e.g. async
-        // data load in DataInputDialog). Cancel stays enabled so the user
-        // can always bail out.
-        bool busy = IsBusy() || !CanApply();
-
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-            Apply();
-            should_close = true;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
-            Reset();
-            should_close = true;
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
-            Apply();
-        }
-        ImGui::EndDisabled();
+        RenderFooter(should_close);
     }
     ImGui::End();
 
@@ -183,6 +155,44 @@ bool NodeConfigDialog::Render() {
     }
 
     return is_open_;
+}
+
+float NodeConfigDialog::FooterHeight() const {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
+}
+
+void NodeConfigDialog::RenderFooter(bool& should_close) {
+    ImGui::Separator();
+
+    // Bottom buttons (OK, Cancel, Apply)
+    const float avail = ImGui::GetContentRegionAvail().x;
+    float button_width = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float total_width = button_width * 3 + spacing * 2;
+    ImGui::SetCursorPosX(avail - total_width);
+
+    // Grey out OK/Apply while a subclass reports it's busy (e.g. async
+    // data load in DataInputDialog). Cancel stays enabled so the user
+    // can always bail out.
+    bool busy = IsBusy() || !CanApply();
+
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+        Apply();
+        should_close = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+        Reset();
+        should_close = true;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
+        Apply();
+    }
+    ImGui::EndDisabled();
 }
 
 bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const char* filter) {
@@ -212,7 +222,8 @@ bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const 
 }
 
 void NodeConfigDialog::ValidationMessage(const std::string& message, bool is_error) {
-    ImVec4 color = is_error ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    ImVec4 color = is_error ? t.error : t.success;
     ImGui::TextColored(color, "%s", message.c_str());
 }
 
@@ -368,7 +379,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
             auto size = test_file.tellg();
             test_file.close();
 
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "File found");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "File found");
             ImGui::Text("Size: %.2f KB", static_cast<float>(size) / 1024.0f);
         } else {
             ValidationMessage("File not found or cannot be opened");
@@ -378,7 +389,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
 
 void CSVReaderDialog::RenderTransformationTab() {
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Column transformation options will be available here.");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "Column transformation options will be available here.");
     ImGui::Spacing();
 
     ImGui::Text("Available transformations:");
@@ -454,7 +465,7 @@ void CSVReaderDialog::RenderLimitRowsTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim,
         "Note: Row limits are useful for:\n"
         "- Testing pipelines with large files\n"
         "- Memory management\n"
@@ -1484,9 +1495,9 @@ void TokenizerDialog::RenderPreviewTab() {
 
             // Draw token chip
             ImGui::PushID(static_cast<int>(i));
-            ImVec4 bg_color = ImVec4(0.2f, 0.4f, 0.6f, 1.0f);
+            ImVec4 bg_color = cyxwiz::ui::CurrentTokens().bg_raised;
             ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
             ImGui::SmallButton(token.c_str());
             ImGui::PopStyleColor(2);
             ImGui::PopID();
@@ -1868,6 +1879,10 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     // SQL step: the SQL Workbench (TOFIX146), a dockable window.
     RegisterDialog(NT::SQLQuery, [](MLNode* node) {
         return std::make_unique<SqlWorkbenchDialog>(node);
+    });
+
+    RegisterDialog(NT::QualityAnalyzer, [](MLNode* node) {
+        return std::make_unique<QualityAnalyzerDialog>(node);
     });
 
     // Visualization framework — chart nodes live in their own TU

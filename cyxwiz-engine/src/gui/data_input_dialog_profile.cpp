@@ -1,6 +1,7 @@
 // DataInputDialog profiling tab and Arrow column statistics.
 
 #include "node_config_dialog.h"
+#include "ui_tokens.h"
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
 
@@ -52,13 +53,14 @@ void DataInputDialog::RenderDataProfilingTab() {
     ImGui::TextColored(accent, "Data Quality Score");
     ImGui::Spacing();
 
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImVec4 score_color;
     if (data_quality_score_ >= 0.8f)
-        score_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        score_color = t.success;
     else if (data_quality_score_ >= 0.5f)
-        score_color = ImVec4(0.9f, 0.7f, 0.0f, 1.0f);
+        score_color = t.warning;
     else
-        score_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+        score_color = t.error;
 
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, score_color);
     ImGui::ProgressBar(data_quality_score_, ImVec2(-1, 20));
@@ -110,7 +112,7 @@ void DataInputDialog::RenderDataProfilingTab() {
 
             ImGui::TableSetColumnIndex(4);
             if (stat.null_percentage > 5.0f) {
-                ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "%.1f%%", stat.null_percentage);
+                ImGui::TextColored(t.warning, "%.1f%%", stat.null_percentage);
             } else {
                 ImGui::Text("%.1f%%", stat.null_percentage);
             }

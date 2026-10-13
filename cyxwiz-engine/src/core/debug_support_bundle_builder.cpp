@@ -101,8 +101,6 @@ nlohmann::json DebugSupportBundleBuilder::Build(
         {"debug_run", DebugRunToJson(input.debug_run)},
         {"crash_run", CrashRunToJson(input.crash_run)},
         {"training_trace", TrainingTraceToJson(input.training_trace)},
-        {"placement_observations",
-         PlacementObservationsToJson(input.placement_observations)},
         {"environment", environment},
         {"recent_logs", logs},
         {"runtime_log_slice", std::move(runtime_log_slice)}
@@ -171,7 +169,6 @@ nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(
                 {"execution_context_id", record.summary.execution.execution_context_id},
                 {"placement_fingerprint", record.summary.execution.placement_fingerprint},
                 {"residency_verdict", record.summary.execution.residency_verdict},
-                {"native_cpu_fallback_count", record.summary.execution.native_cpu_fallback_count},
                 {"transfer_event_count", record.summary.execution.transfer_event_count},
                 {"transfer_known_bytes", record.summary.execution.transfer_known_bytes},
                 {"synchronization_event_count", record.summary.execution.synchronization_event_count},
@@ -269,11 +266,7 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
             {"effective_device_name", event.effective_device_name},
             {"execution_platform", event.execution_platform},
             {"execution_context_id", event.execution_context_id},
-            {"fallback_target", event.fallback_target},
-            {"fallback_operation", event.fallback_operation},
-            {"fallback_reason", event.fallback_reason},
-            {"fallback_policy", event.fallback_policy},
-            {"native_cpu_fallback", event.native_cpu_fallback},
+            {"execution_policy", event.execution_policy},
             {"arrayfire_host_sync_bytes", event.arrayfire_host_sync_bytes},
             {"arrayfire_host_sync_reason", event.arrayfire_host_sync_reason},
             {"placement_fingerprint", event.placement_fingerprint},
@@ -293,7 +286,6 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
         {"latest_total_batches", summary.latest_total_batches},
         {"latest_loss", summary.latest_loss},
         {"latest_accuracy", summary.latest_accuracy},
-        {"native_cpu_fallback_count", summary.native_cpu_fallback_count},
         {"transfer_event_count", summary.transfer_event_count},
         {"transfer_known_bytes", summary.transfer_known_bytes},
         {"transfer_summary", summary.transfer_summary},
@@ -312,39 +304,13 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
         {"effective_device_id", summary.effective_device_id},
         {"effective_device_name", summary.effective_device_name},
         {"execution_context_id", summary.execution_context_id},
-        {"fallback_policy", summary.fallback_policy},
+        {"execution_policy", summary.execution_policy},
         {"declared_output_boundary_count",
          summary.declared_output_boundary_count},
         {"residency_verdict", summary.residency_verdict},
         {"residency_reason", summary.residency_reason},
         {"recent_events", events},
         {"warnings", summary.warnings}
-    };
-}
-
-nlohmann::json DebugSupportBundleBuilder::PlacementObservationsToJson(
-    const std::vector<BackendPlacementObservation>& observations) {
-    nlohmann::json out = nlohmann::json::array();
-    for (const auto& observation : observations) {
-        out.push_back(PlacementObservationToJson(observation));
-    }
-    return out;
-}
-
-nlohmann::json DebugSupportBundleBuilder::PlacementObservationToJson(
-    const BackendPlacementObservation& observation) {
-    return {
-        {"op_type", observation.op_type},
-        {"backend", observation.backend},
-        {"device", observation.device},
-        {"dtype", observation.dtype},
-        {"shape_signature", observation.shape_signature},
-        {"reason_code", observation.reason_code},
-        {"source", observation.source},
-        {"detail", RedactString(observation.detail)},
-        {"timestamp", observation.timestamp},
-        {"probe_outcome", observation.probe_outcome},
-        {"probe_scope", observation.probe_scope}
     };
 }
 

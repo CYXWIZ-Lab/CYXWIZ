@@ -130,21 +130,10 @@ private:
     bool cached_attention_dropout_ = false;
 
     void InitializeWeights();
-    // Name of the first enabled option the native CPU path cannot run, or null.
-    const char* ArrayFireOnlyOption() const {
-        if (rope_) return "Rotary position embedding";
-        if (qk_norm_) return "QK normalization";
-        if (alibi_) return "ALiBi";
-        if (logit_softcap_ > 0.0f) return "Attention logit soft-capping";
-        if (num_kv_heads_ != num_heads_) return "Grouped-query attention";
-        return nullptr;
-    }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     Tensor ForwardArrayFire(const Tensor& query, const Tensor& key,
                             const Tensor& value, const Tensor* attn_mask);
     Tensor BackwardArrayFire(const Tensor& grad_output);
     Tensor ForwardIncrementalArrayFire(const Tensor& input);
-#endif
     // Returns true and fills context_heads ([Sq, head_dim, B, heads]) when the
     // fused provider ran; q/k/v heads are post QK-norm/RoPE, k/v not expanded.
     bool TryFusedAttention(const void* qh, const void* kh, const void* vh, size_t batch, size_t sq,

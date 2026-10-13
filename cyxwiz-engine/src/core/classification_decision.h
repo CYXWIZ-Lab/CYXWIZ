@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_model.h"
+#include "metric_learning_batch.h"
 
 #include <cyxwiz/tensor.h>
 
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -16,7 +18,28 @@ enum class ClassificationDecisionMode {
     MulticlassScores,
     BinaryProbability,
     BinaryLogit,
+    // Triplet Loss over stacked [anchors; positives; negatives] embeddings:
+    // a triplet is correct when d(anchor, positive) < d(anchor, negative).
+    TripletOrder,
+    // Pair losses over stacked [firsts; seconds] embeddings and 1/0 similar
+    // labels: a pair is called similar when its distance is below
+    // (Contrastive) or its cosine above (Cosine Embedding) the pair threshold.
+    PairDistance,
+    PairCosine,
+    // The same decisions over the triplets / pairs the loss mines from an
+    // unstacked [N, D] batch with its class ids (metric_learning_mining.h).
+    TripletOrderHard,
+    TripletOrderSemiHard,
+    PairDistanceHard,
+    PairCosineHard,
 };
+
+inline bool IsMinedMetricDecision(ClassificationDecisionMode mode) {
+    return mode == ClassificationDecisionMode::TripletOrderHard ||
+           mode == ClassificationDecisionMode::TripletOrderSemiHard ||
+           mode == ClassificationDecisionMode::PairDistanceHard ||
+           mode == ClassificationDecisionMode::PairCosineHard;
+}
 
 inline bool UsesScalarBinaryTargets(gui::NodeType loss_type) {
     return loss_type == gui::NodeType::BCELoss ||
@@ -27,8 +50,22 @@ inline bool UsesClassIndexTargets(gui::NodeType loss_type) {
     return loss_type == gui::NodeType::CrossEntropyLoss;
 }
 
+// mining: the Pair / Triplet Dataset Builder's (config.metric_mining).
 inline ClassificationDecisionMode ClassificationDecisionModeForLoss(
-    gui::NodeType loss_type) {
+    gui::NodeType loss_type,
+    MetricMining mining = MetricMining::Random) {
+    const bool random = mining == MetricMining::Random;
+    if (loss_type == gui::NodeType::TripletLoss) {
+        if (random) return ClassificationDecisionMode::TripletOrder;
+        return mining == MetricMining::Hard ? ClassificationDecisionMode::TripletOrderHard
+                                            : ClassificationDecisionMode::TripletOrderSemiHard;
+    }
+    if (loss_type == gui::NodeType::ContrastiveLoss) {
+        return random ? ClassificationDecisionMode::PairDistance : ClassificationDecisionMode::PairDistanceHard;
+    }
+    if (loss_type == gui::NodeType::CosineEmbeddingLoss) {
+        return random ? ClassificationDecisionMode::PairCosine : ClassificationDecisionMode::PairCosineHard;
+    }
     if (loss_type == gui::NodeType::BCEWithLogits) {
         return ClassificationDecisionMode::BinaryLogit;
     }
@@ -102,7 +139,8 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index = std::nullopt);
+    std::optional<int> ignore_index = std::nullopt,
+    float pair_threshold = 0.0f);
 
 ClassificationDecisionScalar BuildClassificationDecisionScalar(
     const Tensor& predictions,
@@ -110,7 +148,8 @@ ClassificationDecisionScalar BuildClassificationDecisionScalar(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode,
-    std::optional<int> ignore_index = std::nullopt);
+    std::optional<int> ignore_index = std::nullopt,
+    float pair_threshold = 0.0f);
 
 ClassificationDecisionCount ReadClassificationDecisionScalar(
     const ClassificationDecisionScalar& scalar,
@@ -159,6 +198,41 @@ inline float ClassificationConfidence(
     return exp_sum > 0.0f
         ? std::exp(scores[predicted_class] - max_score) / exp_sum
         : 0.0f;
+}
+
+// Probability of every class for one sample, appended to `out`; returns the
+// class count. Binary modes give {1 - p, p}. Multi-class scores that already
+// form a distribution (a Softmax output layer) are used as they are -
+// re-applying softmax would reorder samples within a class - and other scores
+// are treated as logits (softmax), as ClassificationConfidence does.
+inline size_t ClassificationClassProbabilities(
+    const float* scores,
+    size_t width,
+    ClassificationDecisionMode mode,
+    std::vector<float>& out) {
+    if (!scores || width == 0) return 0;
+    if (mode == ClassificationDecisionMode::BinaryLogit ||
+        mode == ClassificationDecisionMode::BinaryProbability) {
+        const float positive = ClassificationConfidence(scores, width, 1, mode);
+        out.push_back(1.0f - positive);
+        out.push_back(positive);
+        return 2;
+    }
+    float sum = 0.0f;
+    bool distribution = true;
+    for (size_t i = 0; i < width; ++i) {
+        distribution = distribution && scores[i] >= 0.0f && scores[i] <= 1.0f;
+        sum += scores[i];
+    }
+    if (distribution && std::abs(sum - 1.0f) <= 1e-3f) {
+        out.insert(out.end(), scores, scores + width);
+        return width;
+    }
+    const float max_score = *std::max_element(scores, scores + width);
+    float exp_sum = 0.0f;
+    for (size_t i = 0; i < width; ++i) exp_sum += std::exp(scores[i] - max_score);
+    for (size_t i = 0; i < width; ++i) out.push_back(std::exp(scores[i] - max_score) / exp_sum);
+    return width;
 }
 
 } // namespace cyxwiz

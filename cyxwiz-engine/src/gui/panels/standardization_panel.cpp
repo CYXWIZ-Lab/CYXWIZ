@@ -1,5 +1,8 @@
 #include "standardization_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -17,17 +20,10 @@ void StandardizationPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_SIMPLE) + " Standardization (Z-Score)###StandardizationPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("standardization", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (transform_result_.success) {
             if (ImGui::BeginTabBar("StdTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Preview")) {
@@ -41,56 +37,45 @@ void StandardizationPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select data and configure settings, then click 'Apply'.");
-            ImGui::Spacing();
-            ImGui::TextWrapped("Z-Score standardization transforms data to have mean=0 and std=1.");
-            ImGui::TextWrapped("Formula: z = (x - mean) / std");
+            ui::EmptyState(ICON_FA_CHART_SIMPLE, "No standardization yet",
+                           "Pick a dataset and the columns, then Apply Standardization.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void StandardizationPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("standardization_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Select Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 150), true);
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::AlignTextToFramePadding();  // level with the links beside it
+        ImGui::TextColored(t.text_dim, "Columns");
+        ImGui::SameLine();
+        if (ui::LinkButton("Select all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
+        }
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear all")) {
+            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
+        }
+        ui::BeginInsetList("##columns", 150.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
-
-        if (ImGui::Button("Select All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All", ImVec2(80, 0))) {
-            for (size_t i = 0; i < selected_columns_.size(); ++i) selected_columns_[i] = false;
-        }
+        ui::EndInsetList();
     }
 }
 
 void StandardizationPanel::RenderSettings() {
-    ImGui::Text(ICON_FA_COG " Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("Method");
+    ImGui::TextWrapped("Z-Score standardization transforms data to have mean=0 and std=1.");
+    ImGui::TextWrapped("Formula: z = (x - mean) / std");
 
     ImGui::Checkbox("Use Robust Scaling", &use_robust_scaling_);
     if (ImGui::IsItemHovered()) {
@@ -98,43 +83,33 @@ void StandardizationPanel::RenderSettings() {
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     int selected_count = 0;
     for (bool sel : selected_columns_) if (sel) selected_count++;
     bool can_apply = current_table_ != nullptr && selected_count > 0;
+    const char* disabled_reason = current_table_ == nullptr ? "Pick a dataset first" : "Select at least one column";
 
-    if (!can_apply) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Apply Standardization", ImVec2(-1, 30))) {
+    if (ui::PrimaryButton("Apply Standardization", can_apply, disabled_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         ApplyStandardization();
     }
 
-    if (!can_apply) ImGui::EndDisabled();
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void StandardizationPanel::RenderPreview() {
     if (!transform_result_.success || original_stats_.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Before/After Distribution Comparison:");
     ImGui::Spacing();
 
-    // Find first selected column for visualization
-    int vis_idx = 0;
-    for (size_t i = 0; i < selected_columns_.size(); ++i) {
-        if (selected_columns_[i]) {
-            vis_idx = static_cast<int>(i);
-            break;
-        }
-    }
-
-    if (vis_idx < static_cast<int>(original_stats_.size())) {
+    // The first transformed column (transformed_data follows transformed_columns_).
+    if (!transformed_columns_.empty() && !transform_result_.transformed_data.empty()) {
+        const int vis_idx = transformed_columns_[0];
         ImGui::Text("Column: %s", column_names_[vis_idx].c_str());
 
         std::vector<double> original_data;
@@ -150,9 +125,7 @@ void StandardizationPanel::RenderPreview() {
             }
         }
 
-        if (vis_idx < static_cast<int>(transform_result_.transformed_data.size())) {
-            transformed_data = transform_result_.transformed_data[vis_idx];
-        }
+        transformed_data = transform_result_.transformed_data[0];
 
         if (!original_data.empty() && !transformed_data.empty()) {
             if (ImPlot::BeginPlot("##OriginalHist", ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 200))) {
@@ -165,7 +138,7 @@ void StandardizationPanel::RenderPreview() {
 
             if (ImPlot::BeginPlot("##StandardizedHist", ImVec2(ImGui::GetContentRegionAvail().x, 200))) {
                 ImPlot::SetupAxes("Z-Score", "Count");
-                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.7f));
+                ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[3], 0.7f));
                 ImPlot::PlotHistogram("Standardized", transformed_data.data(), static_cast<int>(transformed_data.size()), 30);
                 ImPlot::EndPlot();
             }
@@ -185,14 +158,10 @@ void StandardizationPanel::RenderPreview() {
         ImGui::TableSetupColumn("New Std");
         ImGui::TableHeadersRow();
 
-        int trans_idx = 0;
-        for (size_t i = 0; i < selected_columns_.size(); ++i) {
-            if (!selected_columns_[i]) continue;
-            if (trans_idx >= static_cast<int>(transformed_stats_.size())) break;
-
+        for (size_t trans_idx = 0; trans_idx < transformed_columns_.size() && trans_idx < transformed_stats_.size(); ++trans_idx) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", column_names_[i].c_str());
+            ImGui::Text("%s", column_names_[transformed_columns_[trans_idx]].c_str());
             ImGui::TableNextColumn();
             ImGui::Text("%.4f", original_stats_[trans_idx].mean);
             ImGui::TableNextColumn();
@@ -201,8 +170,6 @@ void StandardizationPanel::RenderPreview() {
             ImGui::Text("%.4f", transformed_stats_[trans_idx].mean);
             ImGui::TableNextColumn();
             ImGui::Text("%.4f", transformed_stats_[trans_idx].std_dev);
-
-            trans_idx++;
         }
 
         ImGui::EndTable();
@@ -211,27 +178,24 @@ void StandardizationPanel::RenderPreview() {
     // Outlier detection
     ImGui::Spacing();
     ImGui::Text("Outliers (|z| > 3):");
-    int trans_idx = 0;
-    for (size_t i = 0; i < selected_columns_.size(); ++i) {
-        if (!selected_columns_[i]) continue;
-        if (trans_idx >= static_cast<int>(transform_result_.transformed_data.size())) break;
-
+    for (size_t trans_idx = 0;
+         trans_idx < transformed_columns_.size() && trans_idx < transform_result_.transformed_data.size(); ++trans_idx) {
         int outlier_count = 0;
         for (double z : transform_result_.transformed_data[trans_idx]) {
             if (std::abs(z) > 3.0) outlier_count++;
         }
 
         ImGui::BulletText("%s: %d outliers (%.2f%%)",
-                         column_names_[i].c_str(),
+                         column_names_[transformed_columns_[trans_idx]].c_str(),
                          outlier_count,
                          100.0 * outlier_count / transform_result_.transformed_data[trans_idx].size());
-        trans_idx++;
     }
 }
 
 void StandardizationPanel::RenderResults() {
     if (!transform_result_.success) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text(ICON_FA_TABLE " Transformed Data Preview");
     ImGui::Spacing();
 
@@ -242,10 +206,8 @@ void StandardizationPanel::RenderResults() {
     if (n_cols > 0 && ImGui::BeginTable("TransData", n_cols + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX)) {
         ImGui::TableSetupColumn("Row");
 
-        for (size_t i = 0; i < selected_columns_.size(); ++i) {
-            if (selected_columns_[i]) {
-                ImGui::TableSetupColumn(column_names_[i].c_str());
-            }
+        for (int col = 0; col < n_cols && col < static_cast<int>(transformed_columns_.size()); ++col) {
+            ImGui::TableSetupColumn(column_names_[transformed_columns_[col]].c_str());
         }
         ImGui::TableHeadersRow();
 
@@ -256,9 +218,11 @@ void StandardizationPanel::RenderResults() {
 
             for (int col = 0; col < n_cols; ++col) {
                 ImGui::TableNextColumn();
-                double z = transform_result_.transformed_data[col][row];
+                const auto& values = transform_result_.transformed_data[col];  // columns can differ in length
+                if (row >= static_cast<int>(values.size())) continue;
+                double z = values[row];
                 if (std::abs(z) > 3.0) {
-                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%.4f", z);
+                    ImGui::TextColored(t.error, "%.4f", z);
                 } else {
                     ImGui::Text("%.4f", z);
                 }
@@ -294,18 +258,15 @@ void StandardizationPanel::RenderResults() {
     }
 }
 
-void StandardizationPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void StandardizationPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
 
     transform_result_ = TransformResult();
     original_stats_.clear();
     transformed_stats_.clear();
+    transformed_columns_.clear();
     status_message_ = "Data loaded. Select columns to standardize.";
 }
 
@@ -314,6 +275,7 @@ void StandardizationPanel::ApplyStandardization() {
 
     std::vector<std::vector<double>> data;
     original_stats_.clear();
+    transformed_columns_.clear();
 
     for (size_t col = 0; col < selected_columns_.size(); ++col) {
         if (!selected_columns_[col]) continue;
@@ -330,6 +292,7 @@ void StandardizationPanel::ApplyStandardization() {
         if (!col_data.empty()) {
             original_stats_.push_back(DataTransform::ComputeColumnStats(col_data));
             data.push_back(col_data);
+            transformed_columns_.push_back(static_cast<int>(col));
         }
     }
 

@@ -8,6 +8,7 @@
 #include "debug_numerics.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
+#include "metric_learning_sampling.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
 #include "sparse_feature_dataset_batcher.h"
@@ -32,10 +33,25 @@ float ExtractLossScalar(const Tensor& t) {
 
 float Accuracy(const Tensor& predictions,
                const Tensor& targets,
-               ClassificationDecisionMode mode) {
+               ClassificationDecisionMode mode,
+               float pair_threshold) {
     const auto& shape = predictions.Shape();
     if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
         return 0.0f;
+    }
+
+    const bool pairs = mode == ClassificationDecisionMode::PairDistance ||
+                       mode == ClassificationDecisionMode::PairCosine;
+    const bool mined = IsMinedMetricDecision(mode);
+    if (mode == ClassificationDecisionMode::TripletOrder || pairs || mined) {
+        // Stacked [anchors; positives; negatives] or [firsts; seconds], or
+        // the unstacked batch the loss mines from.
+        const size_t units = mined ? shape[0] : shape[0] / (pairs ? 2 : 3);
+        const auto count = CountClassificationDecisionScalars(
+            predictions, targets, units, shape[1], mode, std::nullopt, pair_threshold);
+        return count.total > 0
+            ? static_cast<float>(count.correct) / static_cast<float>(count.total)
+            : 0.0f;
     }
 
     const size_t batch_size = shape[0];
@@ -162,6 +178,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     auto& registry = DataRegistry::Instance();
     const int batch_size = std::max(1, std::min(config.batch_size, 32));
+    // metric_source outlives the MetricBatchSampler that wraps it (declared first, destroyed last).
+    std::unique_ptr<IBatcher> metric_source;
     std::unique_ptr<IBatcher> batcher;
     std::string batcher_source = "legacy text";
 
@@ -249,6 +267,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
             const std::string label_column =
                 arrow_dataset->GetSchema()->field(label_idx)->name();
+            if (auto text = TextLabelColumn(arrow_dataset->GetArrowTable(), label_column)) {
+                arrow_dataset = WithEncodedLabels(arrow_dataset, label_column, BuildLabelVocabulary({text}));
+            }
             batcher = std::make_unique<ArrowDatasetBatcher>(
                 arrow_dataset,
                 label_column,
@@ -312,7 +333,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         return result;
     }
 
-    if (UsesScalarBinaryTargets(config.loss_type)) {
+    if (config.metric_sampling != MetricSampling::None) {
+        batcher->SetClassIndexLabelMode(true);
+    } else if (UsesScalarBinaryTargets(config.loss_type)) {
         batcher->SetScalarLabelMode(true);
     } else if (config.preprocessing.has_onehot &&
                config.preprocessing.num_classes > 0) {
@@ -323,6 +346,14 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
         text_batcher->TryApplyBalancedClassWeights(config);
+    }
+    if (config.metric_sampling != MetricSampling::None) {
+        // Same stacked pair / triplet batches as Train (TOFIX140 A5).
+        auto source = std::move(batcher);
+        batcher = std::make_unique<MetricBatchSampler>(
+            *source, config.metric_sampling, config.metric_mining,
+            static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
+        metric_source = std::move(source);
     }
     batcher->SetBatchInspectionEnabled(true);
 
@@ -418,7 +449,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         result.last_accuracy = Accuracy(
             predictions, batch.labels,
-            ClassificationDecisionModeForLoss(config.loss_type));
+            ClassificationDecisionModeForLoss(config.loss_type, config.metric_mining),
+            config.pair_decision_threshold);
 
         const auto shape_compatibility = CheckDebugPredictionTargetShapes(
             predictions.Shape(), batch.labels.Shape(), config.loss_type);

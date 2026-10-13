@@ -60,6 +60,23 @@ std::optional<PlotSpec> EvaluationPreset(const std::vector<std::string>& columns
         s.y_label = "Precision";
         return s;
     }
+    // A trained tree model (TOFIX134 P4.7, plot_tree_model): the Tree, sized
+    // by training rows and coloured by class; a forest shows its first tree.
+    if (Has(columns, {"tree", "tree_name", "node", "parent", "rule", "trees"})) {
+        s.kind = Kind::Tree;
+        s.x_column = "node";
+        s.y_columns = {"parent"};
+        const bool boosting = !std::isfinite(first_value("samples"));
+        s.value_column = boosting ? "value" : "samples";
+        if (!boosting) s.color_column = "class";
+        const double trees = first_value("trees");
+        if (std::isfinite(trees) && trees > 1) {
+            s.rows = RowMode::Filter;
+            s.conditions = {{"tree", "=", "1"}};
+        }
+        s.title = boosting ? "Boosted trees" : std::isfinite(trees) && trees > 1 ? "Random forest" : "Decision tree";
+        return s;
+    }
     return std::nullopt;
 }
 

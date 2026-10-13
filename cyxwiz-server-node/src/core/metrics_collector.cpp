@@ -76,10 +76,8 @@ typedef struct {
 #include <sstream>
 #endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #include "cyxwiz/device.h"
-#endif
 
 namespace cyxwiz::servernode::core {
 
@@ -1295,7 +1293,6 @@ void MetricsCollector::CollectAllGPUMetrics(SystemMetrics& metrics) {
     // macOS/Linux: Use backend Device API to enumerate GPUs
     metrics.gpus.clear();
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         spdlog::info("Enumerating GPUs via backend Device API...");
         auto devices = cyxwiz::Device::GetAvailableDevices();
@@ -1361,10 +1358,6 @@ void MetricsCollector::CollectAllGPUMetrics(SystemMetrics& metrics) {
         spdlog::warn("Failed to enumerate GPUs via backend: {}", e.what());
         metrics.gpu_count = 0;
     }
-#else
-    // No ArrayFire available - can't detect GPUs
-    metrics.gpu_count = 0;
-#endif
 
 #endif
 }

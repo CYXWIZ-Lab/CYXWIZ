@@ -8,7 +8,9 @@
 #include "transformer_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
 #include "spatial_head_module.h"
+#include "stacked_metric_loss.h"
 #include "spatial_sequential_head.h"
+#include "sequence_conv_section.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -396,6 +398,7 @@ bool BuildSequential(
     size_t current_input_size = config.input_size;
     size_t current_sequence_length = config.input_size > 0 ? config.input_size : 1;
     const auto spatial_head = ResolveSpatialSequentialHead(config);
+    const auto sequence_section = ResolveSequenceConvSection(config);
 
     for (size_t i = 0; i < config.layers.size(); ++i) {
         const auto& layer_cfg = config.layers[i];
@@ -442,6 +445,13 @@ bool BuildSequential(
             throw std::runtime_error(
                 "invalid layer configuration at index " +
                 std::to_string(i) + ": " + *reason);
+        }
+
+        // A branched graph (TOFIX140 A2): a layer reads the width of the pin
+        // that feeds it, not the output of the layer before it in sort order.
+        if ((!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) &&
+            !layer_cfg.input_shape.empty() && layer_cfg.input_shape.size() <= 2) {
+            current_input_size = layer_cfg.input_shape.back();
         }
 
         switch (layer_cfg.type) {
@@ -600,6 +610,8 @@ bool BuildSequential(
                         nt == gui::NodeType::LayerNorm ||
                         nt == gui::NodeType::PositionalEncoding ||
                         nt == gui::NodeType::MultiHeadAttention ||
+                        nt == gui::NodeType::CrossAttention ||
+                        nt == gui::NodeType::LinearAttention ||
                         nt == gui::NodeType::TransformerEncoder ||
                         nt == gui::NodeType::TransformerDecoder ||
                         nt == gui::NodeType::TimeDistributed) {
@@ -800,6 +812,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -814,6 +827,77 @@ bool BuildSequential(
                 current_input_size = next_is_transformer
                     ? d_model
                     : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::CrossAttention: {
+                // Query over Key / Value (TOFIX140 Group C); the graph runtime
+                // feeds its three inputs (CrossAttentionModule::ForwardInputs).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const float dropout = std::stof(param("dropout", "0.0"));
+                const std::string bias = param("use_bias", "true");
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("CrossAttention embed_dim does not match the Query width");
+                }
+                if (heads == 0 || embed_dim % heads != 0) {
+                    throw std::runtime_error("CrossAttention embed_dim must be divisible by num_heads");
+                }
+                model.Add<CrossAttentionModule>(embed_dim, heads, dropout, bias != "false" && bias != "0");
+                CYXWIZ_BUILDER_INFO("  [{}] CrossAttention(embed_dim={}, heads={}, dropout={})", i, embed_dim,
+                                    heads, dropout);
+                current_input_size = embed_dim;
+                break;
+            }
+
+            case gui::NodeType::LinearAttention: {
+                // Kernel self-attention over [batch, length, embed_dim] (TOFIX140 Group C).
+                const auto param = [&](const char* key, const char* fallback) {
+                    const auto it = layer_cfg.parameters.find(key);
+                    return it == layer_cfg.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+                };
+                const size_t embed_dim = static_cast<size_t>(std::stoul(param("embed_dim", "512")));
+                const size_t heads = static_cast<size_t>(std::stoul(param("num_heads", "8")));
+                const std::string feature_map = param("feature_map", "elu");
+                const float eps = std::stof(param("eps", "1e-6"));
+                const std::string causal = param("causal", "false");
+                const std::string bias = param("use_bias", "true");
+                // The compiler's [length, width] sample, so a sequence fed
+                // straight from the data (not after an Embedding) is read right.
+                const auto& sample = layer_cfg.input_shape;
+                if (sample.size() == 2) {
+                    current_sequence_length = sample[0];
+                    current_input_size = sample[1];
+                }
+                if (current_input_size > 0 && current_input_size != embed_dim) {
+                    throw std::runtime_error("LinearAttention embed_dim does not match the incoming feature width");
+                }
+                if (feature_map != "elu" && feature_map != "relu") {
+                    throw std::runtime_error("LinearAttention feature_map must be elu or relu");
+                }
+                model.Add<LinearAttentionModule>(
+                    embed_dim, heads,
+                    feature_map == "relu" ? LinearAttentionModule::FeatureMap::Relu
+                                          : LinearAttentionModule::FeatureMap::EluPlusOne,
+                    eps, causal == "true" || causal == "1", bias != "false" && bias != "0");
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] LinearAttention(embed_dim={}, heads={}, feature_map={}, causal={}) - "
+                                    "output [batch, {}, {}]",
+                                    i, embed_dim, heads, feature_map, causal, current_sequence_length, embed_dim);
+                current_input_size = next_is_sequence_layer ? embed_dim : current_sequence_length * embed_dim;
                 break;
             }
 
@@ -845,6 +929,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -918,6 +1003,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -1016,6 +1102,30 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::SELU: {
+                model.Add<SELUModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] SELU", i);
+                break;
+            }
+
+            case gui::NodeType::PReLU: {
+                const int slopes = static_cast<int>(ParseSizeParam(layer_cfg, "num_parameters", 1));
+                const float init = ParseFloatParam(layer_cfg, "init", 0.25f);
+                if (slopes < 1) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU needs at least one slope");
+                }
+                if (slopes > 1 && current_input_size != 0 && static_cast<size_t>(slopes) != current_input_size &&
+                    !(spatial_head && i < spatial_head->input_shapes.size())) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                             ": PReLU has " + std::to_string(slopes) + " slopes but its input has " +
+                                             std::to_string(current_input_size) + " features");
+                }
+                model.Add<PReLUModule>(slopes, init);
+                CYXWIZ_BUILDER_INFO("  [{}] PReLU(slopes={}, init={})", i, slopes, init);
+                break;
+            }
+
             case gui::NodeType::GELU: {
                 model.Add<GELUModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] GELU", i);
@@ -1049,6 +1159,80 @@ bool BuildSequential(
                 break;
             }
 
+            // The CNN stack (TOFIX140 A1): [H,W,C,N] modules, channels from
+            // the spatial head's shape walk (the compiler's rule).
+            case gui::NodeType::Conv2D:
+            case gui::NodeType::DepthwiseConv2D:
+            case gui::NodeType::MaxPool2D:
+            case gui::NodeType::AvgPool2D:
+            case gui::NodeType::ConvTranspose2D:
+            case gui::NodeType::GroupNorm:
+            case gui::NodeType::InstanceNorm: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " is outside the spatial head (Flatten before Dense)");
+                }
+                const auto& in_shape = spatial_head->input_shapes[i];
+                if (in_shape.size() != 3) {
+                    throw std::runtime_error(
+                        "spatial layer at index " + std::to_string(i) +
+                        " needs the model's input_shape [H,W,C] to know its channels");
+                }
+                const int channels = static_cast<int>(in_shape[2]);
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[2]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " +
+                                             std::to_string(i) + ": " + error.what());
+                }
+                switch (layer_cfg.type) {
+                    case gui::NodeType::Conv2D:
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::DepthwiseConv2D:
+                        model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
+                                                         g.padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
+                                            g.depth_multiplier, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::MaxPool2D:
+                        model.Add<MaxPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] MaxPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::AvgPool2D:
+                        model.Add<AvgPool2DModule>(g.kernel, g.stride, g.padding);
+                        CYXWIZ_BUILDER_INFO("  [{}] AvgPool2D(pool={}, s={}, p={})", i, g.kernel, g.stride, g.padding);
+                        break;
+                    case gui::NodeType::ConvTranspose2D:
+                        model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
+                                                         g.output_padding, true);
+                        CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
+                                            g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
+                        break;
+                    case gui::NodeType::GroupNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", true);
+                        model.Add<GroupNormModule>(g.groups, channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] GroupNorm(groups={}, channels={})", i, g.groups, channels);
+                        break;
+                    }
+                    case gui::NodeType::InstanceNorm: {
+                        const float eps = ParseFloatParam(layer_cfg, "eps", 1e-5f);
+                        const bool affine = ParseBoolParam(layer_cfg, "affine", false);
+                        model.Add<InstanceNorm2DModule>(channels, eps, affine);
+                        CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                break;
+            }
+
             case gui::NodeType::Upsample:
             case gui::NodeType::PixelShuffle: {
                 UpsamplingConfiguration resolved;
@@ -1071,8 +1255,82 @@ bool BuildSequential(
                 break;
             }
 
+            // The sequence section (TOFIX140): Conv1D on [L,C,N], opened on
+            // the input rows or after an Embedding (sequence_conv_section.h).
+            // Adaptive Avg Pool: [H,W,C,N] -> [s,s,C,N] (torch AdaptiveAvgPool2d).
+            case gui::NodeType::AdaptiveAvgPool: {
+                if (!spatial_head || i >= spatial_head->input_shapes.size()) {
+                    throw std::runtime_error("Adaptive Avg Pool at index " + std::to_string(i) +
+                                             " is outside the spatial section (Flatten before Dense)");
+                }
+                const int size = spatial::AdaptiveOutputSize(layer_cfg.parameters);
+                model.Add<AdaptiveAvgPool2DModule>(size, size);
+                CYXWIZ_BUILDER_INFO("  [{}] AdaptiveAvgPool2D -> [{}, {}, C]", i, size, size);
+                break;
+            }
+
+            // Conv3D on [D,H,W,C] volume rows (TOFIX140 Group C): the
+            // compiler's shape walk gives the sample; rows stay rows, so the
+            // Flatten that ends the section is a plain one.
+            case gui::NodeType::Conv3D: {
+                const auto& in_shape = layer_cfg.input_shape;
+                if (in_shape.size() != 4) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             " needs its [D, H, W, C] input sample");
+                }
+                spatial::Geometry g;
+                try {
+                    g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[3]);
+                } catch (const std::invalid_argument& error) {
+                    throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) + ": " +
+                                             error.what());
+                }
+                auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
+                                                           static_cast<size_t>(g.channels_out), g.kernel,
+                                                           g.stride, g.padding, true);
+                const auto out_shape = conv->OutputSample();
+                if (out_shape != layer_cfg.output_shape) {
+                    throw std::runtime_error("Conv3D at index " + std::to_string(i) +
+                                             ": the backend's output sample differs from the compiled shape");
+                }
+                model.AddModule(std::move(conv));
+                current_input_size = out_shape[0] * out_shape[1] * out_shape[2] * out_shape[3];
+                CYXWIZ_BUILDER_INFO("  [{}] Conv3D({} -> {}, k={}, s={}, p={}) [{}x{}x{}] -> [{}x{}x{}]", i,
+                                    in_shape[3], g.channels_out, g.kernel, g.stride, g.padding, in_shape[0],
+                                    in_shape[1], in_shape[2], out_shape[0], out_shape[1], out_shape[2]);
+                break;
+            }
+
+            case gui::NodeType::Conv1D: {
+                if (!sequence_section || i >= sequence_section->input_shapes.size() ||
+                    sequence_section->input_shapes[i].size() != 2) {
+                    throw std::runtime_error(
+                        "Conv1D at index " + std::to_string(i) +
+                        " needs its [L, C] input sample (the input rows' length is not known yet)");
+                }
+                const auto& in_shape = sequence_section->input_shapes[i];
+                if (i == sequence_section->open_index) {
+                    if (sequence_section->from_rows) {
+                        model.Add<SequenceRowsModule>(in_shape[0], in_shape[1]);
+                    } else {
+                        model.Add<SequenceChannelsLastModule>();
+                    }
+                }
+                const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
+                model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
+                                        g.stride, g.padding, 1, true);
+                CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
+                                    in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
+                                    in_shape[0], in_shape[1]);
+                break;
+            }
+
             case gui::NodeType::Flatten: {
-                if (spatial_head && spatial_head->flatten_index == i) {
+                if (sequence_section && sequence_section->close_index == i) {
+                    model.Add<SequenceFlattenModule>();
+                    current_input_size = sequence_section->features;
+                    CYXWIZ_BUILDER_INFO("  [{}] SequenceFlatten [L,C,N] -> [N,{}]", i, current_input_size);
+                } else if (spatial_head && spatial_head->flatten_index == i) {
                     model.Add<SpatialFlattenModule>(spatial_head->sample_shape);
                     current_input_size = spatial_head->features;
                     CYXWIZ_BUILDER_INFO("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
@@ -1293,6 +1551,7 @@ bool BuildSequential(
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LinearAttention ||
                         config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
@@ -1314,9 +1573,7 @@ bool BuildSequential(
             // Skip non-layer nodes (preprocessing, loss functions, optimizers)
             case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
-            case gui::NodeType::Augmentation:
             case gui::NodeType::DataSplit:
-            case gui::NodeType::TensorReshape:
             case gui::NodeType::Normalize:
             case gui::NodeType::OneHotEncode:
             // Loss functions
@@ -1339,15 +1596,34 @@ bool BuildSequential(
                 // These are not layers in the sequential model
                 break;
 
-            // CNN layers (not yet supported in SequentialModel, need CNN module wrappers)
-            case gui::NodeType::Conv2D:
-            case gui::NodeType::MaxPool2D:
-            case gui::NodeType::AvgPool2D:
-            case gui::NodeType::GlobalMaxPool:
+            // A global pool ends the spatial or sequence section like Flatten:
+            // one value per channel, [N,C] rows (torch adaptive_avg/max_pool + flatten).
             case gui::NodeType::GlobalAvgPool:
-                spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
-                             i, static_cast<int>(layer_cfg.type));
+            case gui::NodeType::GlobalMaxPool: {
+                const bool average = layer_cfg.type == gui::NodeType::GlobalAvgPool;
+                if (sequence_section && sequence_section->close_index == i) {
+                    if (average) {
+                        model.Add<SequenceGlobalAvgPoolModule>();
+                    } else {
+                        model.Add<SequenceGlobalMaxPoolModule>();
+                    }
+                    current_input_size = sequence_section->features;
+                } else if (spatial_head && spatial_head->flatten_index == i) {
+                    if (average) {
+                        model.Add<GlobalAvgPool2DModule>();
+                    } else {
+                        model.Add<GlobalMaxPool2DModule>();
+                    }
+                    current_input_size = spatial_head->features;
+                } else {
+                    throw std::runtime_error(
+                        std::string(average ? "Global Avg Pool" : "Global Max Pool") + " at index " +
+                        std::to_string(i) + " needs an [H,W,C] or [L,C] sample before it");
+                }
+                CYXWIZ_BUILDER_INFO("  [{}] {} -> [N,{}]", i,
+                                    model.GetModule(model.Size() - 1)->GetName(), current_input_size);
                 break;
+            }
 
             default:
                 spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));
@@ -1544,6 +1820,20 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             out.smooth = ResolveLossFloatParam(
                 config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
             break;
+        // The backend losses check the exact ranges (Triplet > 0, Cosine
+        // Embedding <= 1) on construction.
+        case gui::NodeType::TripletLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Triplet margin");
+            break;
+        case gui::NodeType::ContrastiveLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 1.0f, 0.0f, "Contrastive margin");
+            break;
+        case gui::NodeType::CosineEmbeddingLoss:
+            out.margin = ResolveLossFloatParam(
+                config, "margin", 0.0f, -1.0f, "Cosine Embedding margin");
+            break;
         default:
             break;
     }
@@ -1640,10 +1930,32 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                          ReductionName(reduction), smooth);
             return std::make_unique<JaccardLoss>(reduction, smooth);
         }
+        case gui::NodeType::TripletLoss: {
+            // Over the Triplet Dataset Builder's stacked [anchors; positives;
+            // negatives] embeddings; mean over triplets as torch.
+            const float margin = resolved.margin.value();
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Triplet loss "
+                         "(stacked batch, margin={})", margin);
+            return std::make_unique<StackedTripletLoss>(margin, config.metric_mining);
+        }
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss: {
+            // Over the Pair Dataset Builder's stacked [firsts; seconds]
+            // embeddings; mean over pairs.
+            const float margin = resolved.margin.value();
+            const bool contrastive = config.loss_type == gui::NodeType::ContrastiveLoss;
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} loss (stacked pairs, margin={})",
+                         contrastive ? "Contrastive" : "Cosine Embedding", margin);
+            return std::make_unique<StackedPairLoss>(
+                contrastive ? StackedPairLoss::Kind::Contrastive : StackedPairLoss::Kind::CosineEmbedding,
+                margin, config.metric_mining);
+        }
         default:
-            CYXWIZ_BUILDER_INFO("TrainingExecutor: Defaulting to CrossEntropy loss "
-                         "(reduction={})", ReductionName(reduction));
-            return CreateLoss(LossType::CrossEntropy, reduction);
+            // Training another objective than the graph's would be silent
+            // and wrong; the compiler should have refused this node.
+            throw std::runtime_error(
+                "ModelBuilder has no loss implementation for node type " +
+                std::to_string(static_cast<int>(config.loss_type)));
     }
 }
 
@@ -1776,7 +2088,7 @@ QuietModelBuildScope::~QuietModelBuildScope() {
 }
 
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
-    if (!config.graph_op_node_ids.empty()) {
+    if (!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) {
         return BuildGraphExecutableFromConfig(config);
     }
 
@@ -1805,7 +2117,9 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
 
     const bool has_graph_ops = !config.graph_op_node_ids.empty();
 
-    if (!has_graph_ops) {
+    // Multi-input layers (Cross Attention) run in the graph runtime even when
+    // the graph has no merge / split ops.
+    if (!has_graph_ops && config.multi_input_layer_node_ids.empty()) {
         std::string reason;
         if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
                                                    layer_node_ids,

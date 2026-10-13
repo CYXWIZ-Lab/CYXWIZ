@@ -25,6 +25,7 @@ struct MetricPairScoreInferenceInput {
     bool has_sample_ids = false;
     bool has_class_ids = false;
     PairScoreMode score_mode = PairScoreMode::EuclideanDistance;
+    bool has_score_mode = false;  // the request named one
 };
 
 MetricEmbeddingInferenceInput ParseMetricEmbeddingInferenceInput(

@@ -32,7 +32,7 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 203,
+    Check(import_names.size() == 202,
           "accepted graph-import name count drifted");
 
     std::set<std::string> names;
@@ -282,8 +282,7 @@ void CheckPropertyAndSupportContract(const cyxwiz::NodeMetadata& metadata) {
     Check(state != nullptr,
           "implemented node has no declared support state: " +
               TypeId(metadata.type));
-    Check(owner->value != "none" && owner->value != "unknown" &&
-              owner->value != "unowned_training_workflow",
+    Check(owner->value != "none" && owner->value != "unknown",
           "implemented node declares no executable/UI owner: " +
               TypeId(metadata.type) + "=" + owner->value);
     Check(state->value != "blocked" && cyxwiz::CanAddNodeToGraph(metadata),
@@ -322,10 +321,6 @@ void CheckTrainingCapabilityContract(
     };
     check_unsupported(
         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities());
-    check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities());
-    check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities());
 
     std::map<int, cyxwiz::PipelineTrainingSupportRole> roles_by_type;
     for (const auto& capability :
@@ -458,10 +453,15 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Resize is a training preprocessing contract since TOFIX140 A1: the
+    // compiler takes the image input shape [H,W,C] from it.
+    {
+        const auto* resize = registry.GetMetadata(gui::NodeType::Resize);
+        Check(resize != nullptr && resize->IsImplemented() &&
+                  cyxwiz::CanAddNodeToGraph(*resize) && !resize->parameters.empty(),
+              "Resize must be an implemented, addable preprocessing node");
+    }
     for (const auto [type, expected_evidence] : {
-             std::pair{gui::NodeType::Resize,
-                       cyxwiz::PipelineBackendPrimitiveEvidence::
-                           ProvenNodePrimitive},
              std::pair{gui::NodeType::AudioAugmentation,
                        cyxwiz::PipelineBackendPrimitiveEvidence::
                            RelatedHelperOnly}}) {

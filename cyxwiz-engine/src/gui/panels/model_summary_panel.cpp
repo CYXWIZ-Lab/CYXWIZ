@@ -1,6 +1,7 @@
 #include "model_summary_panel.h"
 #include "../node_editor.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -26,7 +27,7 @@ void ModelSummaryPanel::Render() {
             if (analysis_.error_message.empty()) {
                 ImGui::TextDisabled("No model to analyze. Create a node graph first.");
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", analysis_.error_message.c_str());
+                ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", analysis_.error_message.c_str());
             }
 
             if (ImGui::Button(ICON_FA_ROTATE " Refresh Analysis")) {
@@ -192,7 +193,8 @@ void ModelSummaryPanel::RenderSummaryStats() {
     // Summary cards
     float card_width = 200.0f;
     float card_height = 80.0f;
-    ImVec4 card_bg = ImVec4(0.15f, 0.15f, 0.2f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImVec4 card_bg = t.bg_panel;
 
     static int card_id = 0;
     card_id = 0;  // Reset each frame
@@ -218,17 +220,17 @@ void ModelSummaryPanel::RenderSummaryStats() {
     DrawCard("Total Parameters",
              FormatParameterCount(analysis_.total_parameters).c_str(),
              ICON_FA_WEIGHT_SCALE,
-             ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+             ui::SeriesColour(t, 0));
     ImGui::SameLine();
     DrawCard("Trainable",
              FormatParameterCount(analysis_.trainable_parameters).c_str(),
              ICON_FA_GRADUATION_CAP,
-             ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+             ui::SeriesColour(t, 1));
     ImGui::SameLine();
     DrawCard("Non-trainable",
              FormatParameterCount(analysis_.non_trainable_parameters).c_str(),
              ICON_FA_LOCK,
-             ImVec4(0.9f, 0.6f, 0.3f, 1.0f));
+             ui::SeriesColour(t, 2));
 
     ImGui::Spacing();
 
@@ -236,17 +238,17 @@ void ModelSummaryPanel::RenderSummaryStats() {
     DrawCard("Total FLOPs",
              FormatFLOPs(analysis_.total_flops).c_str(),
              ICON_FA_MICROCHIP,
-             ImVec4(0.9f, 0.4f, 0.9f, 1.0f));
+             ui::SeriesColour(t, 3));
     ImGui::SameLine();
     DrawCard("Memory (Activations)",
              FormatMemory(analysis_.total_memory_bytes).c_str(),
              ICON_FA_MEMORY,
-             ImVec4(1.0f, 0.7f, 0.3f, 1.0f));
+             ui::SeriesColour(t, 4));
     ImGui::SameLine();
     DrawCard("Layers",
              std::to_string(analysis_.layers.size()).c_str(),
              ICON_FA_LAYER_GROUP,
-             ImVec4(0.5f, 0.8f, 0.9f, 1.0f));
+             ui::SeriesColour(t, 5));
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -274,6 +276,7 @@ void ModelSummaryPanel::RenderShapeFlow() {
     ImGui::Separator();
 
     // Draw shape flow as a horizontal diagram
+    const ui::Tokens& t = ui::CurrentTokens();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
     float box_width = 100.0f;
@@ -282,17 +285,18 @@ void ModelSummaryPanel::RenderShapeFlow() {
 
     // Draw input shape
     ImVec2 pos = canvas_pos;
-    ImU32 input_color = IM_COL32(80, 180, 80, 255);
+    const ImVec4 input_fill = ui::SeriesColour(t, 1);
+    ImU32 input_color = ui::ToU32(input_fill);
     draw_list->AddRectFilled(pos, ImVec2(pos.x + box_width, pos.y + box_height), input_color, 4.0f);
-    draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), IM_COL32(255, 255, 255, 200), 4.0f);
+    draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), ui::ToU32(t.border), 4.0f);
 
     // Input text
     std::string input_text = "Input";
     std::string input_shape_text = FormatShape(analysis_.input_shape);
     ImVec2 text_size = ImGui::CalcTextSize(input_text.c_str());
-    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), IM_COL32(255, 255, 255, 255), input_text.c_str());
+    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), ui::ToU32(ui::ReadableOn(t, input_fill)), input_text.c_str());
     text_size = ImGui::CalcTextSize(input_shape_text.c_str());
-    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), IM_COL32(200, 200, 200, 255), input_shape_text.c_str());
+    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), ui::ToU32(ui::WithAlpha(ui::ReadableOn(t, input_fill), 0.78f)), input_shape_text.c_str());
 
     pos.x += box_width + spacing;
 
@@ -306,12 +310,13 @@ void ModelSummaryPanel::RenderShapeFlow() {
         // Arrow
         draw_list->AddLine(ImVec2(pos.x - spacing + 5, canvas_pos.y + box_height / 2),
                           ImVec2(pos.x - 5, canvas_pos.y + box_height / 2),
-                          IM_COL32(150, 150, 150, 255), 2.0f);
+                          ui::ToU32(t.text_dim), 2.0f);
 
         // Layer box
-        ImU32 layer_color = IM_COL32(80, 120, 180, 255);
+        const ImVec4 layer_fill = ui::SeriesColour(t, 0);
+        ImU32 layer_color = ui::ToU32(layer_fill);
         draw_list->AddRectFilled(pos, ImVec2(pos.x + box_width, pos.y + box_height), layer_color, 4.0f);
-        draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), IM_COL32(255, 255, 255, 200), 4.0f);
+        draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), ui::ToU32(t.border), 4.0f);
 
         // Layer text
         std::string layer_name = GetNodeTypeName(layer.type);
@@ -320,9 +325,9 @@ void ModelSummaryPanel::RenderShapeFlow() {
         if (shape_text.length() > 14) shape_text = shape_text.substr(0, 12) + "..";
 
         text_size = ImGui::CalcTextSize(layer_name.c_str());
-        draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), IM_COL32(255, 255, 255, 255), layer_name.c_str());
+        draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), ui::ToU32(ui::ReadableOn(t, layer_fill)), layer_name.c_str());
         text_size = ImGui::CalcTextSize(shape_text.c_str());
-        draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), IM_COL32(200, 200, 200, 255), shape_text.c_str());
+        draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), ui::ToU32(ui::WithAlpha(ui::ReadableOn(t, layer_fill), 0.78f)), shape_text.c_str());
 
         pos.x += box_width + spacing;
     }
@@ -330,21 +335,22 @@ void ModelSummaryPanel::RenderShapeFlow() {
     // Show ellipsis if more layers
     if (analysis_.layers.size() > static_cast<size_t>(max_visible)) {
         draw_list->AddText(ImVec2(pos.x - spacing / 2 - 10, canvas_pos.y + box_height / 2 - 5),
-                          IM_COL32(200, 200, 200, 255), "...");
+                          ui::ToU32(t.text_dim), "...");
         pos.x += 30;
     }
 
     // Output box
-    ImU32 output_color = IM_COL32(180, 80, 80, 255);
+    const ImVec4 output_fill = ui::SeriesColour(t, 2);
+    ImU32 output_color = ui::ToU32(output_fill);
     draw_list->AddRectFilled(pos, ImVec2(pos.x + box_width, pos.y + box_height), output_color, 4.0f);
-    draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), IM_COL32(255, 255, 255, 200), 4.0f);
+    draw_list->AddRect(pos, ImVec2(pos.x + box_width, pos.y + box_height), ui::ToU32(t.border), 4.0f);
 
     std::string output_text = "Output";
     std::string output_shape_text = FormatShape(analysis_.output_shape);
     text_size = ImGui::CalcTextSize(output_text.c_str());
-    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), IM_COL32(255, 255, 255, 255), output_text.c_str());
+    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 5), ui::ToU32(ui::ReadableOn(t, output_fill)), output_text.c_str());
     text_size = ImGui::CalcTextSize(output_shape_text.c_str());
-    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), IM_COL32(200, 200, 200, 255), output_shape_text.c_str());
+    draw_list->AddText(ImVec2(pos.x + (box_width - text_size.x) / 2, pos.y + 25), ui::ToU32(ui::WithAlpha(ui::ReadableOn(t, output_fill), 0.78f)), output_shape_text.c_str());
 
     // Reserve space
     ImGui::Dummy(ImVec2(pos.x - canvas_pos.x + box_width + 20, box_height + 20));

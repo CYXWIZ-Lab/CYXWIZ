@@ -8,11 +8,9 @@
 #include <memory>
 #include <initializer_list>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace af {
     class array;
 }
-#endif
 
 namespace cyxwiz {
     class Device;
@@ -36,10 +34,8 @@ public:
     Tensor();
     Tensor(const std::vector<size_t>& shape, DataType dtype = DataType::Float32);
     Tensor(const std::vector<size_t>& shape, const void* data, DataType dtype = DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Construct from ArrayFire array (takes ownership)
     explicit Tensor(const af::array& arr);
-#endif
     ~Tensor();
 
     // Copy/Move
@@ -75,7 +71,6 @@ public:
     // Device metadata
     Device* GetDevice() const { return device_; }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire array access (creates if needed, syncs from CPU data)
     af::array GetArray() const;
     // 2D row-major Tensor view as semantic ArrayFire [rows, cols].
@@ -105,7 +100,12 @@ public:
     static Tensor FromSemanticArray(
         const af::array& arr,
         std::vector<size_t> semantic_shape);
-#endif
+    // Row-major storage order as a 1-D ArrayFire array, for any rank. Ranks
+    // above 4 live on the device through this view; ops collapse neighbouring
+    // dimensions to fit ArrayFire's four.
+    af::array GetRowMajorFlatArray() const;
+    void SetFromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
+    static Tensor FromRowMajorFlatArray(const af::array& flat, std::vector<size_t> shape);
 
     // Operations
     Tensor Clone() const;
@@ -318,13 +318,13 @@ private:
     DataType dtype_;
     Device* device_;
     mutable std::unique_ptr<TensorHostBuffer> host_buffer_;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     enum class TensorDeviceLayout {
         None,
         ArrayFireNative,
         RowMajor2D,
         RowMajor3D,
-        RowMajor4D
+        RowMajor4D,
+        RowMajorFlat  // 1-D, row-major storage order, any rank
     };
 
     mutable std::unique_ptr<af::array> af_array_;
@@ -335,7 +335,6 @@ private:
     void EnsureHostCurrent() const;
     void MarkHostModified() const;
     void ClearDeviceCache() const;
-#endif
 };
 
 } // namespace cyxwiz

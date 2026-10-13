@@ -27,7 +27,7 @@ TEST_CASE("GPU execution mode and family names pin the declared spellings",
               GpuOperationFamily::GraphTensorOp)) == "graph_tensor_op");
 }
 
-TEST_CASE("Declared execution modes record the 2026-09-22 audit truth",
+TEST_CASE("Declared execution modes record the audited truth",
           "[gpu_execution][taxonomy]") {
     using namespace cyxwiz;
 
@@ -35,9 +35,7 @@ TEST_CASE("Declared execution modes record the 2026-09-22 audit truth",
     // ticket's parity + benchmark evidence, not a drive-by edit.
     CHECK(DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent) ==
           GpuExecutionMode::StagedArrayFire);
-    CHECK(DeclaredGpuExecutionMode(
-              GpuOperationFamily::AttentionNormalization) ==
-          GpuExecutionMode::Cpu);
+
     CHECK(DeclaredGpuExecutionMode(GpuOperationFamily::Evaluation) ==
           GpuExecutionMode::Cpu);
 
@@ -47,6 +45,7 @@ TEST_CASE("Declared execution modes record the 2026-09-22 audit truth",
     // that keeps the stamp consistent with the family table.
     for (const auto family : {GpuOperationFamily::DenseMatmul,
                               GpuOperationFamily::EmbeddingIndexing,
+                              GpuOperationFamily::AttentionNormalization,
                               GpuOperationFamily::ConvolutionPooling,
                               GpuOperationFamily::Activation,
                               GpuOperationFamily::Loss,

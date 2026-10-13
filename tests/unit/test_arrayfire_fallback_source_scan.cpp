@@ -42,22 +42,10 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/distributed/distributed_trainer.cpp", 10, "compatibility_compute", "legacy distributed trainer"},
         {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
         {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
-        {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
-        {"cyxwiz-backend/src/algorithms/layers/gru.cpp", 20, "compatibility_compute", "GRU layer (reviewed 2026-09-23: provider handoff now returns final states as Tensors, no host copy loop)"},
-        {"cyxwiz-backend/src/algorithms/layers/gru_backward.cpp", 7, "compatibility_compute", "GRU backward"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm.cpp", 35, "compatibility_compute", "LSTM layer (reviewed 2026-09-23: provider handoff now returns final states as Tensors, no host copy loop)"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp", 11, "compatibility_compute", "LSTM backward"},
-        {"cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.cpp", 26, "compatibility_compute", "LSTM direction kernels"},
-        {"cyxwiz-backend/src/algorithms/layers/normalization.cpp", 26, "compatibility_compute", "normalization layers"},
-        {"cyxwiz-backend/src/algorithms/layers/rnn.cpp", 8, "compatibility_compute", "vanilla RNN CPU reference layer (tofix68 phase 3 parity oracle)"},
         {"cyxwiz-backend/src/algorithms/providers/nvidia_cublas_provider.cpp", 8, "transport_boundary", "NVIDIA neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0: rnn/lstm/gru forward outputs + optional stacked final states, lstm/gru backward dx and per-layer weight/bias gradients; explicit v1 boundary copies)"},
         {"cyxwiz-backend/src/algorithms/providers/opencl_cell_provider.cpp", 8, "transport_boundary", "OpenCL neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0 mirror of the NVIDIA provider: forward outputs + optional stacked final states, backward dx and per-layer gradients)"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
-        {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 9, "compatibility_compute", "feed-forward modules"},
-        {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},
-        {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 11, "compatibility_compute", "recurrent modules"},
-        {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
-        {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 3, "compatibility_compute", "sequence metrics"},
+        {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 2, "transport_boundary", "BIO span matching reads tag ids"},
         {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},
         {"cyxwiz-engine/src/core/test_executor.cpp", 3, "compatibility_compute", "test evaluation"},
     };
@@ -96,10 +84,6 @@ bool IsAllowedRawFallbackHit(const RawFallbackHit& hit) {
     }
     if (hit.path == "cyxwiz-backend/src/algorithms/layers/linear.cpp" &&
         hit.line.find("LinearLayer: GPU check failed") != std::string::npos) {
-        return true;
-    }
-    if (hit.path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
-        hit.line.find("native CPU recurrent path") != std::string::npos) {
         return true;
     }
     return false;
@@ -149,22 +133,7 @@ bool WindowContains(
     return false;
 }
 
-bool UsesSharedFallbackPolicy(
-    const std::vector<std::string>& lines,
-    size_t catch_index) {
-    return WindowContains(lines, catch_index, "FallbackOnce") ||
-           WindowContains(lines, catch_index, "BackendFailureOnce") ||
-           WindowContains(lines, catch_index, "BackendWarningOnce") ||
-           WindowContains(lines, catch_index, "ArrayFireFallback") ||
-           WindowContains(lines, catch_index,
-                          "ClassifyArrayFireBackendFallbackReason") ||
-           WindowContains(lines, catch_index,
-                          "BuildArrayFireBackendFallbackMessage") ||
-           WindowContains(lines, catch_index,
-                          "BuildRecurrentFormalParameterOverflowFallbackMessage");
-}
-
-bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
+bool IsAllowedArrayFireCatch(
     const std::string& relative_path,
     const std::vector<std::string>& lines,
     size_t catch_index) {
@@ -178,17 +147,19 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     if (WindowContains(lines, catch_index, "GPU check failed", 8)) {
         return true;
     }
+    // Device-only layers (one ArrayFire path, no host loop): the handler
+    // reports the error ("... failed on the ArrayFire device: ...", directly
+    // or through a Throw...DeviceError helper) instead of falling back.
+    // A provider classifies the error to decline a contract.
+    if (WindowContains(lines, catch_index, "ClassifyArrayFireBackendFallbackReason", 4)) {
+        return true;
+    }
+    if (WindowContains(lines, catch_index, "DeviceError(", 3) ||
+        WindowContains(lines, catch_index, "failed on the ArrayFire device", 4)) {
+        return true;
+    }
     if (relative_path == "cyxwiz-backend/src/algorithms/optimizers/optimizer_utils.cpp" &&
         WindowContains(lines, catch_index, "s_use_gpu = false", 8)) {
-        return true;
-    }
-    if (relative_path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
-        WindowContains(lines, catch_index, "return true", 8)) {
-        return true;
-    }
-    if (relative_path == "cyxwiz-backend/src/algorithms/layers/gru.cpp" &&
-        WindowContains(lines, catch_index,
-                       "Disabled legacy AF reference path", 12)) {
         return true;
     }
     return false;
@@ -294,38 +265,6 @@ size_t CountLegacyTensorDataLines(const fs::path& path) {
     return count;
 }
 
-bool FunctionBodyContains(
-    const std::vector<std::string>& lines,
-    const std::string& function_name,
-    const std::string& needle) {
-    bool found_signature = false;
-    bool found_body = false;
-    int brace_depth = 0;
-    for (const auto& line : lines) {
-        if (!found_signature) {
-            if (line.find(function_name + "(") == std::string::npos) {
-                continue;
-            }
-            found_signature = true;
-        }
-        if (line.find(needle) != std::string::npos) {
-            return true;
-        }
-        for (const char ch : line) {
-            if (ch == '{') {
-                found_body = true;
-                ++brace_depth;
-            } else if (ch == '}') {
-                --brace_depth;
-            }
-        }
-        if (found_body && brace_depth == 0) {
-            return false;
-        }
-    }
-    return false;
-}
-
 } // namespace
 
 TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy",
@@ -378,7 +317,7 @@ TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy"
     REQUIRE(unexpected_hits.empty());
 }
 
-TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared policy",
+TEST_CASE("ArrayFire exception handlers report the device error",
           "[arrayfire][fallback][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
     const auto scan_files = ArrayFireFallbackHandlerScanFiles(repo_root);
@@ -394,9 +333,7 @@ TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared
                 std::string::npos) {
                 continue;
             }
-            if (UsesSharedFallbackPolicy(lines, i) ||
-                IsAllowedArrayFireCatchWithoutFallbackPolicy(
-                    relative_path, lines, i)) {
+            if (IsAllowedArrayFireCatch(relative_path, lines, i)) {
                 continue;
             }
             unexpected_handlers.push_back(
@@ -469,11 +406,19 @@ TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor ac
         "cyxwiz-backend/src/algorithms/activations/sigmoid.cpp",
         "cyxwiz-backend/src/algorithms/activations/tanh.cpp",
         "cyxwiz-backend/src/algorithms/layers/dense.cpp",
+        "cyxwiz-backend/src/algorithms/layers/gru.cpp",
+        "cyxwiz-backend/src/algorithms/layers/gru_backward.cpp",
+        "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp",
+        "cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp",
         "cyxwiz-backend/src/algorithms/layers/pixel_shuffle.cpp",
+        "cyxwiz-backend/src/algorithms/layers/rnn.cpp",
         "cyxwiz-backend/src/algorithms/layers/upsampling.cpp",
         "cyxwiz-backend/src/algorithms/layers/multi_head_attention_arrayfire.cpp",
         "cyxwiz-backend/src/algorithms/layers/layer_norm_arrayfire.cpp",
         "cyxwiz-backend/src/algorithms/layers/transformer_layers.cpp",
+        "cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp",
         "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp",
         "cyxwiz-backend/src/algorithms/optimizers/adam_family.cpp",
         "cyxwiz-engine/src/core/classification_decision.cpp",
@@ -547,30 +492,75 @@ TEST_CASE("Legacy Tensor Data compatibility access has exact reviewed ownership"
     REQUIRE(actual == expected);
 }
 
-TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native compute",
+// TOFIX140 F4: core Tensor ops run on ArrayFire at every rank; there is no
+// native fallback to guard, so none may come back.
+TEST_CASE("Core Tensor ops have no native fallback",
           "[arrayfire][fallback][policy][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
-    const std::vector<std::pair<std::string, std::string>> guarded_helpers = {
-        {"cyxwiz-backend/src/algorithms/activation.cpp",
-         "LogActivationFallbackOnce"},
-        {"cyxwiz-backend/src/algorithms/layers/pooling.cpp",
-         "LogPoolingFallbackOnce"},
-        {"cyxwiz-backend/src/algorithms/layers/layer_utils.cpp",
-         "RecordLayerArrayFireFallback"},
-        {"cyxwiz-backend/src/algorithms/layers/multi_head_attention.cpp",
-         "LogAttentionInitializationFallbackOnce"},
-        {"cyxwiz-backend/src/algorithms/linear_algebra_tensor.cpp",
-         "LogLinearAlgebraTensorFallbackOnce"},
+    const std::vector<std::string> relative_paths = {
+        "cyxwiz-backend/src/core/tensor_arithmetic.cpp",
+        "cyxwiz-backend/src/core/tensor_broadcast.cpp",
+        "cyxwiz-backend/src/core/tensor_comparison.cpp",
+        "cyxwiz-backend/src/core/tensor_concat.cpp",
+        "cyxwiz-backend/src/core/tensor_elementwise.cpp",
+        "cyxwiz-backend/src/core/tensor_factory.cpp",
+        "cyxwiz-backend/src/core/tensor_indexing.cpp",
+        "cyxwiz-backend/src/core/tensor_linalg.cpp",
+        "cyxwiz-backend/src/core/tensor_logical.cpp",
+        "cyxwiz-backend/src/core/tensor_math_utils.h",
+        "cyxwiz-backend/src/core/tensor_reductions.cpp",
+        "cyxwiz-backend/src/core/tensor_shape.cpp",
     };
-
-    for (const auto& [relative_path, helper_name] : guarded_helpers) {
+    const std::vector<std::string> forbidden_needles = {
+        "RecordArrayFireFallback",
+        "AllowNativeCpuFallback",
+        "memcpy",
+        "Native",
+        "ranks up to 4",
+    };
+    std::vector<RawFallbackHit> hits;
+    for (const auto& relative_path : relative_paths) {
         const auto lines = ReadLines(repo_root / relative_path);
-        INFO(relative_path << "::" << helper_name);
-        REQUIRE(FunctionBodyContains(
-            lines,
-            helper_name,
-            "ThrowIfArrayFireNativeCpuFallbackForbidden"));
+        REQUIRE_FALSE(lines.empty());
+        for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+            for (const auto& needle : forbidden_needles) {
+                if (lines[line_index].find(needle) != std::string::npos) {
+                    hits.push_back(RawFallbackHit{relative_path, line_index + 1, needle, lines[line_index]});
+                }
+            }
+        }
     }
+    INFO("Core Tensor ops must stay device-only:" + FormatHits(hits));
+    REQUIRE(hits.empty());
+}
+
+TEST_CASE("ROC / PR curves run on the device without a fallback",
+          "[arrayfire][roc_pr][device_only][source_scan]") {
+    // TOFIX140: the sorted cumulative counts behind ROC / PR run on the
+    // selected ArrayFire device for every input size; there is no native
+    // path or size switch to fall back to.
+    const fs::path repo_root = FindRepoRoot();
+    const auto lines = ReadLines(repo_root / "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp");
+    REQUIRE_FALSE(lines.empty());
+    const std::vector<std::string> forbidden_needles = {
+        "CYXWIZ_HAS_ARRAYFIRE",
+        "ArrayFireHostSyncCategory",
+        "LogEvaluationFallbackOnce",
+        "ArgSort",
+    };
+    std::vector<RawFallbackHit> hits;
+    bool sorts_on_device = false;
+    for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+        if (lines[line_index].find("af::sort(") != std::string::npos) sorts_on_device = true;
+        for (const auto& needle : forbidden_needles) {
+            if (lines[line_index].find(needle) != std::string::npos) {
+                hits.push_back(RawFallbackHit{"roc_pr_curves.cpp", line_index + 1, needle, lines[line_index]});
+            }
+        }
+    }
+    INFO("ROC / PR must stay device-only:" + FormatHits(hits));
+    REQUIRE(hits.empty());
+    REQUIRE(sorts_on_device);
 }
 
 TEST_CASE("Host-vector model evaluation has one native execution owner",
@@ -579,7 +569,6 @@ TEST_CASE("Host-vector model evaluation has one native execution owner",
     const std::vector<std::string> relative_paths = {
         "cyxwiz-backend/src/algorithms/evaluation/classification_metrics.cpp",
         "cyxwiz-backend/src/algorithms/evaluation/cross_validation.cpp",
-        "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp",
         "cyxwiz-backend/src/algorithms/model_evaluation.cpp",
     };
     const std::vector<std::string> forbidden_needles = {

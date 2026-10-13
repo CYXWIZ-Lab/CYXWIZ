@@ -1,6 +1,7 @@
 #include "descriptive_stats_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -65,7 +66,6 @@ void DescriptiveStatsPanel::Render() {
 
 void DescriptiveStatsPanel::RenderToolbar() {
     RenderDataSelector();
-    ImGui::SameLine();
     RenderColumnSelector();
 
     ImGui::SameLine();
@@ -93,35 +93,7 @@ void DescriptiveStatsPanel::RenderToolbar() {
 }
 
 void DescriptiveStatsPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                selected_column_ = -1;
-                has_stats_ = false;
-
-                // Find numeric columns
-                numeric_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            numeric_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("stats_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void DescriptiveStatsPanel::RenderColumnSelector() {
@@ -218,6 +190,8 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
         return;
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("Box Plot", ImVec2(-1, 300))) {
         ImPlot::SetupAxes(nullptr, "Value");
 
@@ -243,7 +217,7 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
         // Median line
         double med_x[] = {0.7, 1.3};
         double med_y[] = {stats_.median, stats_.median};
-        ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+        ImPlot::SetNextLineStyle(t.series[2], 2);
         ImPlot::PlotLine("Median", med_x, med_y, 2);
 
         // Whiskers
@@ -263,7 +237,7 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
         // Mean point
         double mean_x[] = {1.0};
         double mean_y[] = {stats_.mean};
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, ImVec4(0, 0.8f, 0, 1));
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[3], IMPLOT_AUTO, t.series[3]);
         ImPlot::PlotScatter("Mean", mean_x, mean_y, 1);
 
         // Outliers
@@ -275,7 +249,8 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
             }
         }
         if (!outlier_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, ImVec4(1, 0, 0, 0.7f));
+            const ImVec4 outlier = ui::WithAlpha(t.series[4], 0.7f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, outlier, IMPLOT_AUTO, outlier);
             ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_y.data(), static_cast<int>(outlier_x.size()));
         }
 
@@ -283,11 +258,11 @@ void DescriptiveStatsPanel::RenderBoxPlot() {
     }
 
     // Legend
-    ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Orange line: Median");
+    ImGui::TextColored(t.series[2], "Line: median");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0, 0.8f, 0, 1), "Green diamond: Mean");
+    ImGui::TextColored(t.series[3], "Diamond: mean");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(1, 0, 0, 1), "Red dots: Outliers");
+    ImGui::TextColored(t.series[4], "Dots: outliers");
 }
 
 void DescriptiveStatsPanel::RenderHistogram() {
@@ -297,6 +272,8 @@ void DescriptiveStatsPanel::RenderHistogram() {
         ImGui::TextDisabled("No data available for histogram");
         return;
     }
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     static int num_bins = 20;
     ImGui::SliderInt("Bins", &num_bins, 5, 50);
@@ -321,14 +298,14 @@ void DescriptiveStatsPanel::RenderHistogram() {
                 y_curve.push_back(y);
             }
 
-            ImPlot::SetNextLineStyle(ImVec4(1, 0.5f, 0, 1), 2);
+            ImPlot::SetNextLineStyle(t.series[2], 2);
             ImPlot::PlotLine("Normal Fit", x_curve.data(), y_curve.data(), static_cast<int>(x_curve.size()));
         }
 
         ImPlot::EndPlot();
     }
 
-    ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Orange curve: Normal distribution fit");
+    ImGui::TextColored(t.series[2], "Curve: normal distribution fit");
 }
 
 void DescriptiveStatsPanel::RenderExportOptions() {
@@ -371,15 +348,6 @@ void DescriptiveStatsPanel::RenderExportOptions() {
         }
 
         ImGui::EndPopup();
-    }
-}
-
-void DescriptiveStatsPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

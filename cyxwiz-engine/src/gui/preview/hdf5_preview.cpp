@@ -1,5 +1,6 @@
 #include "hdf5_preview.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -44,13 +45,14 @@ void HDF5PreviewRenderer::Clear() {
 }
 
 void HDF5PreviewRenderer::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!file_loaded_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No HDF5 file loaded.");
+        ImGui::TextColored(t.text_dim, "No HDF5 file loaded.");
         return;
     }
 
     // File info header
-    ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_DATABASE " %s",
+    ImGui::TextColored(t.accent_text, ICON_FA_DATABASE " %s",
                        fs::path(current_path_).filename().string().c_str());
 
     ImGui::Separator();
@@ -60,7 +62,7 @@ void HDF5PreviewRenderer::Render() {
 
     // Left panel: Tree view
     ImGui::BeginChild("##HDF5Tree", ImVec2(tree_width, 0), true);
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Structure");
+    ImGui::TextColored(t.text_dim, "Structure");
     ImGui::Separator();
 
     if (root_node_.children.empty() && !root_node_.is_group) {
@@ -84,13 +86,13 @@ void HDF5PreviewRenderer::Render() {
         ImGui::Separator();
         RenderSamplePreview();
     } else if (selected_node_ && selected_node_->is_group) {
-        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_FOLDER " Group: %s",
+        ImGui::TextColored(t.accent_text, ICON_FA_FOLDER " Group: %s",
                            selected_node_->name.c_str());
         ImGui::Spacing();
         ImGui::Text("Path: %s", selected_node_->path.c_str());
         ImGui::Text("Children: %zu", selected_node_->children.size());
     } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(t.text_dim,
                            "Select a dataset to view details");
     }
 
@@ -126,8 +128,9 @@ void HDF5PreviewRenderer::RenderTreeNode(cyxwiz::HDF5NodeInfo& node) {
     }
 
     // Color based on type
-    ImVec4 color = node.is_group ? ImVec4(0.9f, 0.8f, 0.3f, 1.0f)  // Yellow for groups
-                                  : ImVec4(0.4f, 0.8f, 0.4f, 1.0f); // Green for datasets
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    ImVec4 color = node.is_group ? t.series[0]  // groups
+                                  : t.series[1]; // datasets
 
     ImGui::PushStyleColor(ImGuiCol_Text, color);
     bool opened = ImGui::TreeNodeEx(node.name.c_str(), flags, "%s %s", icon, node.name.c_str());
@@ -158,8 +161,9 @@ void HDF5PreviewRenderer::RenderTreeNode(cyxwiz::HDF5NodeInfo& node) {
 
 void HDF5PreviewRenderer::RenderDatasetDetails() {
     if (!selected_node_) return;
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
-    ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_TABLE_CELLS " Dataset: %s",
+    ImGui::TextColored(t.accent_text, ICON_FA_TABLE_CELLS " Dataset: %s",
                        selected_node_->name.c_str());
     ImGui::Spacing();
 
@@ -171,56 +175,56 @@ void HDF5PreviewRenderer::RenderDatasetDetails() {
         // Path
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Path");
+        ImGui::TextColored(t.text_dim, "Path");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->path.c_str());
 
         // Shape
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Shape");
+        ImGui::TextColored(t.text_dim, "Shape");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->GetShapeString().c_str());
 
         // Data type
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Type");
+        ImGui::TextColored(t.text_dim, "Type");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->dtype.c_str());
 
         // Size
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Size");
+        ImGui::TextColored(t.text_dim, "Size");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->GetSizeString().c_str());
 
         // Compression
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Compression");
+        ImGui::TextColored(t.text_dim, "Compression");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->compression.empty() ? "none" : selected_node_->compression.c_str());
 
         // Chunked
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Chunked");
+        ImGui::TextColored(t.text_dim, "Chunked");
         ImGui::TableNextColumn();
         ImGui::Text("%s", selected_node_->is_chunked ? "Yes" : "No");
 
         // Inferred type
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Looks Like");
+        ImGui::TextColored(t.text_dim, "Looks Like");
         ImGui::TableNextColumn();
         if (selected_node_->LooksLikeImageData()) {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_IMAGE " Image Data");
+            ImGui::TextColored(t.series[2], ICON_FA_IMAGE " Image Data");
         } else if (selected_node_->LooksLikeLabelData()) {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), ICON_FA_TAGS " Labels");
+            ImGui::TextColored(t.series[3], ICON_FA_TAGS " Labels");
         } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Generic Data");
+            ImGui::TextColored(t.text_dim, "Generic Data");
         }
 
         ImGui::EndTable();
@@ -229,8 +233,9 @@ void HDF5PreviewRenderer::RenderDatasetDetails() {
 
 void HDF5PreviewRenderer::RenderSamplePreview() {
     if (!selected_node_ || selected_node_->is_group) return;
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
-    ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), ICON_FA_EYE " Sample Preview");
+    ImGui::TextColored(t.accent_text, ICON_FA_EYE " Sample Preview");
     ImGui::Spacing();
 
     // Load preview data if needed
@@ -247,7 +252,7 @@ void HDF5PreviewRenderer::RenderSamplePreview() {
     }
 
     if (!preview_loaded_ || preview_data_.empty()) {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Could not load preview data");
+        ImGui::TextColored(t.error, "Could not load preview data");
         return;
     }
 
@@ -259,7 +264,7 @@ void HDF5PreviewRenderer::RenderSamplePreview() {
 
     size_t num_samples = preview_data_.size() / sample_size;
     if (num_samples == 0) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No samples available");
+        ImGui::TextColored(t.text_dim, "No samples available");
         return;
     }
 
@@ -320,7 +325,7 @@ void HDF5PreviewRenderer::RenderSamplePreview() {
             if (sample_size > display_count) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "... (%zu more)", sample_size - display_count);
+                ImGui::TextColored(t.text_dim, "... (%zu more)", sample_size - display_count);
             }
 
             ImGui::EndTable();

@@ -51,7 +51,7 @@
       {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
       {"id": "embed", "type": "Embedding", "name": "Embedding", "pos": [200, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
       {"id": "dropout1", "type": "Dropout", "name": "Dropout 1", "pos": [400, 200], "params": {"rate": "$dropout_rate"}},
-      {"id": "bilstm", "type": "Bidirectional", "name": "BiLSTM", "pos": [600, 200], "params": {"units": "$hidden_size", "layer_type": "LSTM"}},
+      {"id": "bilstm", "type": "LSTM", "name": "BiLSTM", "pos": [600, 200], "params": {"hidden_size": "$hidden_size", "bidirectional": "true"}},
       {"id": "dropout2", "type": "Dropout", "name": "Dropout 2", "pos": [800, 200], "params": {"rate": "$dropout_rate"}},
       {"id": "dense1", "type": "Dense", "name": "Dense", "pos": [1000, 200], "params": {"units": "64"}},
       {"id": "act1", "type": "ReLU", "name": "ReLU", "pos": [1200, 200]},

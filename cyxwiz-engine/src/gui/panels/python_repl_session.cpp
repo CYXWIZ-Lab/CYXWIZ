@@ -5,9 +5,11 @@
 #include "../../scripting/scripting_engine.h"
 #include "../editor_fonts.h"
 #include "../variables_view.h"
+#include "../separate_windows.h"
 #include <nlohmann/json.hpp>
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -66,7 +68,7 @@ void RefreshPalette() {
   kString = p.string;
   kNumber = p.number;
   kDecorator = p.decorator;
-  kError = (p.light ? ImVec4(0.72f, 0.36f, 0.05f, 1.0f) : ImVec4(0.96f, 0.63f, 0.29f, 1.0f));
+  kError = ui::CurrentTokens().caution;  // tracebacks: orange "failed" status
   kWarning = p.warning;
   kReady = p.success;
   kInputBg = p.input;
@@ -886,7 +888,7 @@ void PythonReplSession::RenderInput() {
   ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
   ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, ImVec4(0.357f, 0.239f, 0.961f, 0.35f));
+  ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, ui::WithAlpha(ui::CurrentTokens().accent, 0.35f));
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, pad_y));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
   if (focus_input_) {
@@ -1093,6 +1095,7 @@ void PythonReplSession::RenderCompletionPopup() {
   if (!completion_open_ || completion_items_.empty())
     return;
   ImFont *mono = ReplMonoFont();
+  ::gui::NextWindowFollowsCurrent();
   ImGui::SetNextWindowPos(ImVec2(completion_anchor_x_ - 6.0f, completion_anchor_y_ - 2.0f),
                           ImGuiCond_Always, ImVec2(0.0f, 1.0f));
   const int visible = std::min<int>(8, static_cast<int>(completion_items_.size()));

@@ -71,7 +71,7 @@ TrainingConfiguration Configuration(gui::NodeType type, int mode, int prefetch,
   config.save_best_checkpoint = false;
   config.early_stopping_patience = 0;
   config.checkpoint_dir = dir.string();
-  config.forbid_native_cpu_fallback = true;
+  config.strict_execution = true;
   for (auto node_type : {type, gui::NodeType::ReLU, gui::NodeType::Flatten,
                          gui::NodeType::Dense}) {
     CompiledLayer layer;
@@ -125,8 +125,6 @@ std::vector<float> Run(const TrainingConfiguration &config,
       Require(final.has_validation_metrics && final.has_test_metrics,
               "validation and held-out test executed");
       const auto trace = TrainingTraceCollector::Instance().Snapshot();
-      Require(trace.native_cpu_fallback_count == 0,
-              "strict spatial training native fallback");
       Require(trace.effective_backend == backend_name &&
                   trace.effective_device_id == device_id,
               "exact effective backend/device: " + trace.effective_backend);
@@ -173,6 +171,22 @@ std::vector<float> Run(const TrainingConfiguration &config,
                   tested.status_message);
       Require(std::isfinite(tested.test_loss),
               "finite held-out evaluation loss");
+      // ROC / PR inputs (TOFIX140): a probability row per test sample, each
+      // summing to 1; the curves either computed or say why not.
+      Require(tested.probability_classes >= 2 &&
+                  tested.class_probabilities.size() ==
+                      static_cast<size_t>(tested.total_samples) *
+                          static_cast<size_t>(tested.probability_classes),
+              "class probabilities kept for every test sample");
+      for (int row = 0; row < tested.total_samples; ++row) {
+        double sum = 0.0;
+        for (int c = 0; c < tested.probability_classes; ++c)
+          sum += tested.class_probabilities[static_cast<size_t>(row * tested.probability_classes + c)];
+        Require(std::abs(sum - 1.0) < 1e-4, "probabilities of a sample sum to 1");
+      }
+      Require((tested.roc && tested.roc->success && tested.pr && tested.pr->success) ||
+                  !tested.curves_note.empty(),
+              "ROC / PR computed, or the reason they were not");
       std::cout << "Spatial ingress passed: " << backend_name << " "
                 << (arrow ? "Arrow" : "Parquet")
                 << " prefetch=" << config.prefetch_factor

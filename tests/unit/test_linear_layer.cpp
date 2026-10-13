@@ -5,9 +5,7 @@
 #include <cyxwiz/tensor.h>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 TEST_CASE("LinearLayer matches PyTorch forward and backward fixtures",
           "[linear][pytorch][route]") {
@@ -111,7 +109,6 @@ TEST_CASE("LinearLayer matches PyTorch forward and backward fixtures",
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {
         af::Backend backend = af::getActiveBackend();
@@ -173,4 +170,3 @@ TEST_CASE("LinearLayer GPU backward keeps gradients device resident until host r
 
     (void)output;
 }
-#endif

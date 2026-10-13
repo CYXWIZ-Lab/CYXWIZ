@@ -41,10 +41,8 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingPlotPanel;
-class PlotTestControlPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
-class DataExplorerPanel;
 class AnnotationEditorPanel;
 class VisualizationPanel;
 class ConnectionDialog;
@@ -169,7 +167,6 @@ public:
     void Render();
     void ResetDockLayout();
     Console* GetConsole() { return console_.get(); }
-    cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
     NodeEditor* GetNodeEditor() { return node_editor_.get(); }
     bool OpenGraphInNodeEditor(const std::string& path);
@@ -257,6 +254,7 @@ private:
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
+    void LoadCheckpointForTesting();
     void RenderOperationErrorPopup();
     void RenderMaterializationMemoryConfirmationPopup();
     bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
@@ -356,10 +354,8 @@ private:
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
-    std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
-    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
     std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
     std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;

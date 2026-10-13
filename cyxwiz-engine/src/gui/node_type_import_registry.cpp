@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 202> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -25,11 +25,9 @@ constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"RNN", NodeType::RNN},
         {"LSTM", NodeType::LSTM},
         {"GRU", NodeType::GRU},
-        {"Bidirectional", NodeType::Bidirectional},
         {"TimeDistributed", NodeType::TimeDistributed},
         {"Embedding", NodeType::Embedding},
         {"MultiHeadAttention", NodeType::MultiHeadAttention},
-        {"SelfAttention", NodeType::SelfAttention},
         {"CrossAttention", NodeType::CrossAttention},
         {"LinearAttention", NodeType::LinearAttention},
         {"TransformerEncoder", NodeType::TransformerEncoder},
@@ -112,9 +110,7 @@ constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"DataOutput", NodeType::DataOutput},
         {"DatasetInput", NodeType::DatasetInput, true},
         {"DataLoader", NodeType::DataLoader},
-        {"Augmentation", NodeType::Augmentation},
         {"DataSplit", NodeType::DataSplit},
-        {"TensorReshape", NodeType::TensorReshape},
         {"Normalize", NodeType::Normalize},
         {"OneHotEncode", NodeType::OneHotEncode},
         {"TextTokenizer", NodeType::TextTokenizer},
@@ -127,8 +123,6 @@ constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"SequenceTagOutput", NodeType::SequenceTagOutput},
         {"PairDatasetBuilder", NodeType::PairDatasetBuilder},
         {"TripletDatasetBuilder", NodeType::TripletDatasetBuilder},
-        {"SharedEncoder", NodeType::SharedEncoder},
-        {"SiameseBranch", NodeType::SiameseBranch},
         {"ContrastiveLoss", NodeType::ContrastiveLoss},
         {"CosineEmbeddingLoss", NodeType::CosineEmbeddingLoss},
         {"TripletLoss", NodeType::TripletLoss},
@@ -202,6 +196,10 @@ constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"ColorJitter", NodeType::ColorJitter},
         {"ImageGaussianBlur", NodeType::ImageGaussianBlur},
         {"Grayscale", NodeType::Grayscale},
+        {"MorphologyTransform", NodeType::MorphologyTransform},
+        {"AdvancedAugment", NodeType::AdvancedAugment},
+        {"AugmentationPreset", NodeType::AugmentationPreset},
+        {"QualityAnalyzer", NodeType::QualityAnalyzer},
         {"FFTNode", NodeType::FFTNode},
         {"FilterDesigner", NodeType::FilterDesigner},
         {"Convolution1D", NodeType::Convolution1D},
@@ -210,6 +208,7 @@ constexpr std::array<NodeTypeImportName, 203> kNodeTypeImportNames = {{
         {"ROCCurveNode", NodeType::ROCCurveNode},
         {"PRCurveNode", NodeType::PRCurveNode},
         {"Plot", NodeType::Plot},
+        {"Dashboard", NodeType::Dashboard},
 }};
 
 } // namespace

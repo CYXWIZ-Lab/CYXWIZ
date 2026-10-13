@@ -2,6 +2,7 @@
 
 #include "node_config_dialog.h"
 #include "data_convert_format_controls.h"
+#include "ui_tokens.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_convert_formats.h"
 #include "../core/file_dialogs.h"
@@ -366,7 +367,7 @@ void DataConvertDialog::RenderContent() {
 
     if (!status_message_.empty()) {
         const ImVec4 color = status_is_error_
-            ? ImVec4(0.95f, 0.35f, 0.30f, 1.0f)
+            ? cyxwiz::ui::CurrentTokens().error
             : ImGui::GetStyleColorVec4(ImGuiCol_Text);
         ImGui::TextColored(color, "%s", status_message_.c_str());
         ImGui::Separator();
@@ -448,7 +449,7 @@ void DataConvertDialog::RenderSourceTab() {
     if (effective_format == dc::Format::Text) {
         ImGui::Spacing();
         ImGui::TextColored(
-            ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+            cyxwiz::ui::CurrentTokens().warning,
             "Plain Text produces one column named 'text'.");
         ImGui::TextWrapped(
             "For a semicolon-delimited .txt table, select CSV here and set the delimiter to semicolon. The file extension does not need to change.");
@@ -466,7 +467,7 @@ void DataConvertDialog::RenderOptionsTab() {
 
     if (!delimited_input) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+            cyxwiz::ui::CurrentTokens().warning,
             "Delimiter settings apply only to CSV/TSV. Headers also apply to XLSX.");
         ImGui::TextWrapped(
             "Select CSV for comma-, semicolon-, or pipe-delimited data, including delimited files whose extension is .txt.");
@@ -597,7 +598,7 @@ void DataConvertDialog::RenderOutputTab() {
         !DataFormatExtensionMatches(std::filesystem::path(output_path_),
                                          output_format_)) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                            "Output extension does not match the selected format. Expected %s.",
                            DataFormatExtension(output_format_));
     }
@@ -642,7 +643,7 @@ void DataConvertDialog::RenderPreviewTab() {
     }
     if (!preview_.ok) {
         if (!preview_.error.empty()) {
-            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error,
                                "%s", preview_.error.c_str());
         }
         return;
@@ -1230,7 +1231,7 @@ void DataLoaderDialog::RenderContent() {
     ImGui::SameLine();
     ImGui::TextDisabled("(-1 unset; fresh-run weights/dropout)");
     if (model_seed_ < -1)
-        ImGui::TextColored(ImVec4(1, .4f, .3f, 1), "Model RNG seed must be -1 or nonnegative.");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Model RNG seed must be -1 or nonnegative.");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Class Imbalance");
@@ -1368,7 +1369,7 @@ void DataLoaderDialog::RenderContent() {
         has_changes_ = true;
     }
     if (num_workers_ > 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                            "  Used as synchronous per-batch workers where supported; Prefetch controls async queuing.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
@@ -1394,7 +1395,7 @@ void DataLoaderDialog::RenderContent() {
     ImGui::SameLine(130);
     ImGui::TextDisabled(pin_memory_requested_ ? "unsupported (saved true)" : "unsupported");
     if (pin_memory_requested_) {
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                            "  This loaded graph requests pin_memory=true, but current batchers ignore it.");
     } else {
         ImGui::TextDisabled("  Serialized for compatibility only; no pinned host-memory transfer backend exists yet.");
@@ -1514,7 +1515,7 @@ void DataSplitDialog::RenderContent() {
         node_->parameters.count("data_boundary_pin_contract") > 0 &&
         node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
     if (legacy_contract) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().warning);
         ImGui::TextWrapped(
             "Legacy Data Boundary v1 is preserved. Its two tensor inputs and six Train/Val/Test outputs remain connected exactly as saved.");
         ImGui::PopStyleColor();
@@ -1559,10 +1560,10 @@ void DataSplitDialog::RenderContent() {
     float sum = train_ratio_ + val_ratio_ + test_ratio_;
     ImGui::Spacing();
     if (std::abs(sum - 1.0f) > 0.01f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                            "Sum = %.2f (will be normalized to 1.00 on Apply)", sum);
     } else {
-        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Sum = %.2f", sum);
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "Sum = %.2f", sum);
     }
 
     ImGui::Spacing();

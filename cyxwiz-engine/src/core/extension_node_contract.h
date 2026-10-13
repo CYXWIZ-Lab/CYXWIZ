@@ -62,7 +62,7 @@ struct ExtensionNodeDescriptor {
     // name, category, ports, typed parameters, help. type is PluginCustom.
     NodeMetadata metadata;
     std::string menu_category;         // provider's own category text ("Image Processing")
-    uint32_t color = 0xFF4488AAUL;     // node header colour (ABGR)
+    uint32_t color = 0;                // node header colour (ABGR); 0: the theme's plugin colour
 
     // Pins that follow a parameter (a MuJoCo model file, for example).
     bool supports_dynamic_pins = false;

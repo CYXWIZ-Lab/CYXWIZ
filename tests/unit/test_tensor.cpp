@@ -20,9 +20,7 @@ void CaptureTensorHostSync(
 
 } // namespace
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 TEST_CASE("Tensor creation", "[tensor]") {
     cyxwiz::Tensor t({2, 3}, cyxwiz::DataType::Float32);
@@ -92,7 +90,6 @@ TEST_CASE("Tensor transpose swaps 2D row-major axes", "[tensor]") {
     REQUIRE(out[5] == 6);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor native to row-major layout conversion remains device-only",
           "[tensor][arrayfire][host_sync]") {
     float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
@@ -282,7 +279,6 @@ TEST_CASE("Tensor dim transpose keeps Float64 ArrayFire output device-resident",
     REQUIRE(out[4] == 3.0);
     REQUIRE(out[5] == 6.0);
 }
-#endif
 
 TEST_CASE("Tensor view aliases reshape semantics", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({2, 3}, cyxwiz::DataType::Float32);
@@ -378,7 +374,6 @@ TEST_CASE("Tensor permute validates dimensions and preserves dtype", "[tensor]")
     REQUIRE_THROWS_AS(t.Permute({0, 1, 3}), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor 2D permute keeps Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {
         1.0f, 2.0f, 3.0f,
@@ -406,9 +401,7 @@ TEST_CASE("Tensor 2D permute keeps Float32 ArrayFire output device-resident", "[
     REQUIRE(out[4] == 3.0f);
     REQUIRE(out[5] == 6.0f);
 }
-#endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor reshape preserves native ArrayFire device residency", "[tensor]") {
     float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
     cyxwiz::Tensor input(af::array(6, data));
@@ -481,7 +474,6 @@ TEST_CASE("Tensor reshape preserves row-major 3D ArrayFire device residency", "[
         REQUIRE(out[i] == data[i]);
     }
 }
-#endif
 
 TEST_CASE("Tensor scalar reductions work for float tensors", "[tensor]") {
     float data[] = {1.0f, -2.0f, 3.0f, 4.0f};
@@ -532,7 +524,6 @@ TEST_CASE("Tensor scalar statistical reductions return NaN for empty tensors", "
     REQUIRE(std::isnan(t.Std().Data<float>()[0]));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor scalar reductions keep Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {1.0f, -2.0f, 3.0f, 4.0f};
     cyxwiz::Tensor input(af::array(4, data));
@@ -689,7 +680,6 @@ TEST_CASE("Tensor 2D variance reductions keep Float64 ArrayFire output device-re
     REQUIRE(col_std.Data<double>()[1] == Catch::Approx(1.5));
     REQUIRE(col_std.Data<double>()[2] == Catch::Approx(1.5));
 }
-#endif
 
 TEST_CASE("Tensor dimension reductions preserve integer dtype and shape", "[tensor]") {
     int32_t data[] = {
@@ -824,7 +814,6 @@ TEST_CASE("Tensor dot computes row-wise 2D inner products", "[tensor]") {
     REQUIRE(result.Data<float>()[1] == Catch::Approx(30.0f));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor dot keeps Float32 ArrayFire vector output device-resident", "[tensor][arrayfire]") {
     const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
 
@@ -867,7 +856,6 @@ TEST_CASE("Tensor dot keeps Float64 row-wise ArrayFire output device-resident", 
     REQUIRE(out[0] == Catch::Approx(6.0));
     REQUIRE(out[1] == Catch::Approx(30.0));
 }
-#endif
 
 TEST_CASE("Tensor dot validates rank size and dtype", "[tensor]") {
     float left_data[] = {1.0f, 2.0f};
@@ -1015,7 +1003,6 @@ TEST_CASE("Tensor elementwise abs sign clip and negate work", "[tensor]") {
     REQUIRE(t.Clip(2.0f, 1.0f).Data<float>()[0] == 1.0f);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor unary real math keeps Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {1.0f, 4.0f, 9.0f};
     cyxwiz::Tensor input(af::array(3, data));
@@ -1095,7 +1082,6 @@ TEST_CASE("Tensor tensor pow keeps matching Float64 ArrayFire output device-resi
     REQUIRE(result.Data<double>()[1] == Catch::Approx(9.0));
     REQUIRE(result.Data<double>()[2] == Catch::Approx(2.0));
 }
-#endif
 
 TEST_CASE("Tensor comparison operators return UInt8 masks", "[tensor]") {
     int32_t left_data[] = {1, 2, 3, 4};
@@ -1141,7 +1127,6 @@ TEST_CASE("Tensor scalar comparisons preserve shape", "[tensor]") {
     REQUIRE(eq.Data<uint8_t>()[1] == 1);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor comparison keeps Float32 ArrayFire output device-resident", "[tensor]") {
     float left_data[] = {1.0f, 4.0f, 3.0f, 8.0f};
     float right_data[] = {2.0f, 3.0f, 3.0f, 1.0f};
@@ -1178,7 +1163,6 @@ TEST_CASE("Tensor scalar comparison keeps Float64 ArrayFire output device-reside
     REQUIRE(out[1] == 0);
     REQUIRE(out[2] == 0);
 }
-#endif
 
 TEST_CASE("Tensor comparisons broadcast and support mixed dtypes", "[tensor]") {
     int32_t left_data[] = {
@@ -1228,7 +1212,6 @@ TEST_CASE("Tensor logical operators return UInt8 masks", "[tensor]") {
     REQUIRE(inverted.Data<uint8_t>()[1] == 1);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor logical operators keep matching Float32 ArrayFire output device-resident", "[tensor]") {
     float left_data[] = {1.0f, 0.0f, -2.0f, 0.0f};
     float right_data[] = {1.0f, 3.0f, 0.0f, 0.0f};
@@ -1255,7 +1238,6 @@ TEST_CASE("Tensor logical operators keep matching Float32 ArrayFire output devic
     REQUIRE(inverted.Data<uint8_t>()[0] == 0);
     REQUIRE(inverted.Data<uint8_t>()[1] == 1);
 }
-#endif
 
 TEST_CASE("Tensor logical operators broadcast and support mixed dtypes", "[tensor]") {
     int32_t left_data[] = {
@@ -1333,7 +1315,6 @@ TEST_CASE("Tensor expand materializes broadcasted float data", "[tensor]") {
     REQUIRE(out[5] == 30.0f);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor 2D expand keeps Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {
         10.0f, 20.0f, 30.0f
@@ -1388,7 +1369,6 @@ TEST_CASE("Tensor 2D broadcast to keeps Float64 ArrayFire output device-resident
     REQUIRE(out[4] == 2.0);
     REQUIRE(out[5] == 2.0);
 }
-#endif
 
 TEST_CASE("Tensor broadcast to repeats singleton dimensions for integer tensors", "[tensor]") {
     int32_t data[] = {1, 2};
@@ -1492,7 +1472,6 @@ TEST_CASE("Tensor slice extracts stepped ranges across dimensions", "[tensor]") 
     REQUIRE_THROWS_AS(t.Slice(1, 0, -1, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor 2D slice keeps Float32 row output device-resident", "[tensor]") {
     float data[] = {
         0.0f, 1.0f, 2.0f, 3.0f,
@@ -1548,7 +1527,6 @@ TEST_CASE("Tensor 2D slice keeps Float64 stepped column output device-resident",
     REQUIRE(out[4] == 8.0);
     REQUIRE(out[5] == 10.0);
 }
-#endif
 
 TEST_CASE("Tensor index select gathers requested indices", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({3, 4}, cyxwiz::DataType::Int32);
@@ -1574,7 +1552,6 @@ TEST_CASE("Tensor index select gathers requested indices", "[tensor]") {
     REQUIRE_THROWS_AS(t.IndexSelect(3, {0}), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor 2D index select keeps Float32 row output device-resident", "[tensor]") {
     float data[] = {
         0.0f, 1.0f, 2.0f, 3.0f,
@@ -1630,7 +1607,6 @@ TEST_CASE("Tensor 2D index select keeps Float64 column output device-resident", 
     REQUIRE(out[7] == 9.0);
     REQUIRE(out[8] == 8.0);
 }
-#endif
 
 TEST_CASE("Tensor cat concatenates along selected dimensions", "[tensor]") {
     int32_t a_data[] = {
@@ -1662,7 +1638,6 @@ TEST_CASE("Tensor cat concatenates along selected dimensions", "[tensor]") {
     REQUIRE(cols.Data<int32_t>()[7] == 8);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor cat keeps Float32 row concat output device-resident", "[tensor]") {
     float a_data[] = {
         1.0f, 2.0f,
@@ -1726,7 +1701,6 @@ TEST_CASE("Tensor cat keeps Float64 column concat output device-resident", "[ten
     REQUIRE(out[4] == 3.0);
     REQUIRE(out[7] == 8.0);
 }
-#endif
 
 TEST_CASE("Tensor cat rejects incompatible tensors", "[tensor]") {
     cyxwiz::Tensor a = cyxwiz::Tensor::Ones({2, 2}, cyxwiz::DataType::Float32);
@@ -1761,7 +1735,6 @@ TEST_CASE("Tensor stack inserts a new dimension", "[tensor]") {
     REQUIRE(back.Data<float>()[3] == 4.0f);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor stack keeps 1D ArrayFire output device-resident", "[tensor]") {
     float a_data[] = {1.0f, 2.0f};
     float b_data[] = {3.0f, 4.0f};
@@ -1892,7 +1865,6 @@ TEST_CASE("Tensor stack keeps 2D ArrayFire output device-resident", "[tensor]") 
     REQUIRE(back_out[10] == 6.0);
     REQUIRE(back_out[11] == 12.0);
 }
-#endif
 
 TEST_CASE("Tensor split and chunk produce row-major slices", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({3, 4}, cyxwiz::DataType::Int32);
@@ -1926,7 +1898,6 @@ TEST_CASE("Tensor split and chunk produce row-major slices", "[tensor]") {
     REQUIRE_THROWS_AS(t.Chunk(0, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor split and chunk reuse ArrayFire slice residency", "[tensor]") {
     float data[] = {
         0.0f, 1.0f, 2.0f, 3.0f,
@@ -1965,7 +1936,6 @@ TEST_CASE("Tensor split and chunk reuse ArrayFire slice residency", "[tensor]") 
     REQUIRE(chunks[1].Data<float>()[0] == 8.0f);
     REQUIRE(chunks[1].Data<float>()[3] == 11.0f);
 }
-#endif
 
 TEST_CASE("Tensor split and chunk handle empty dimensions", "[tensor]") {
     cyxwiz::Tensor t({0, 3}, cyxwiz::DataType::Float32);
@@ -2007,7 +1977,6 @@ TEST_CASE("Tensor arithmetic syncs lazily to host data", "[tensor]") {
     REQUIRE(c_data[3] == 44.0f);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor device arithmetic keeps host data unmaterialized", "[tensor][arrayfire]") {
     const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
 
@@ -2073,7 +2042,6 @@ TEST_CASE("Tensor row-major unary elementwise keeps host data unmaterialized", "
     REQUIRE(clip.At(0, 0) == 2.5f);
     REQUIRE(clip.At(1, 2) == 5.0f);
 }
-#endif
 
 TEST_CASE("Tensor host allocations are tracked", "[tensor]") {
     const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
@@ -2136,7 +2104,6 @@ TEST_CASE("Tensor copy and move ownership keeps memory accounting balanced", "[t
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor row-major 2D ArrayFire conversion preserves layout", "[tensor][arrayfire]") {
     float data[] = {
         1.0f, 2.0f, 3.0f,
@@ -2349,4 +2316,3 @@ TEST_CASE("Tensor host mutation invalidates cached ArrayFire data", "[tensor][ar
     REQUIRE(host[1] == 7.0f);
     REQUIRE(host[2] == 3.0f);
 }
-#endif

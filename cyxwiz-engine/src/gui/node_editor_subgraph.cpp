@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "subgraph_presentation.h"
 #include "subgraph_document.h"
+#include "../core/graph_node_factory.h"
 #include "../core/preparation_recipe.h"
 #include "properties.h"
 #include <imnodes.h>
@@ -80,7 +81,7 @@ void NodeEditor::CreateSubgraphFromSelection(const std::string& name) {
 
     // Create the subgraph node
     MLNode subgraph_node{};
-    subgraph_node.category = GetCategoryForNodeType(NodeType::Subgraph);
+    subgraph_node.category = GetNodeCategoryForType(NodeType::Subgraph);
     subgraph_node.id = next_node_id_++;
     subgraph_node.type = NodeType::Subgraph;
     subgraph_node.name = name.empty() ? "Subgraph" : name;

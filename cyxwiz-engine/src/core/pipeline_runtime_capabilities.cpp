@@ -392,8 +392,32 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"CrossValidationNode", "cross-validation graph execution is not implemented in PipelineExecutor",
          gui::NodeType::CrossValidationNode, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"Resize", "image-training resize configuration reaches ImageDatasetBatcher, but node-level output-shape, persisted-graph, and live workflow evidence is incomplete",
-         gui::NodeType::Resize, std::nullopt, true,
+        {"Resize", "Resize is a training preprocessing contract node: the image batcher decodes to its width and height and the compiler takes the model's [H,W,C] input shape from it (TOFIX140 A1); PipelineExecutor image resizing is not implemented",
+         gui::NodeType::Resize, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"CenterCrop", "Center Crop is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::CenterCrop, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomCrop", "Random Crop is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomCrop, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"HorizontalFlip", "Horizontal Flip is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::HorizontalFlip, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"VerticalFlip", "Vertical Flip is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::VerticalFlip, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageRotate", "Image Rotate is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageRotate, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ColorJitter", "Color Jitter is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ColorJitter, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"ImageGaussianBlur", "Image Gaussian Blur is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::ImageGaussianBlur, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"Grayscale", "Grayscale is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::Grayscale, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"AudioAugmentation", "audio DSP helpers exist, but noise_level units conflict with AddNoise SNR-dB semantics and stretch/pitch ranges lack a deterministic node contract",
          gui::NodeType::AudioAugmentation, std::nullopt, true,
@@ -424,6 +448,10 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::LeakyReLU, std::nullopt, false},
         {"ELU", "ELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
          gui::NodeType::ELU, std::nullopt, false},
+        {"SELU", "SELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::SELU, std::nullopt, false},
+        {"PReLU", "PReLU is a training model layer (learned slopes); PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::PReLU, std::nullopt, false},
         {"Swish", "Swish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
          gui::NodeType::Swish, std::nullopt, false},
         {"Mish", "Mish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
@@ -539,11 +567,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"SignalScope", "SignalScope belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute interactive simulation sinks",
          gui::NodeType::SignalScope, std::nullopt, false},
         {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
-        {"ImagePreprocessor", "legacy ImagePreprocessor graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::ImagePreprocessor, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"QualityAnalyzer", "legacy QualityAnalyzer graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::QualityAnalyzer, std::nullopt, true,
+        {"QualityAnalyzer", "Quality Analyzer is a training dataset filter: the compiler judges its cached analysis and the image batcher leaves the rejected files out (TOFIX140); PipelineExecutor image filtering is not implemented",
+         gui::NodeType::QualityAnalyzer, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"ImageFolderDataset", "legacy ImageFolderDataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::ImageFolderDataset, std::nullopt, true,
@@ -560,20 +585,14 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"KaggleDataset", "legacy KaggleDataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::KaggleDataset, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"AugmentationPreset", "legacy AugmentationPreset graph execution is not implemented",
-         gui::NodeType::AugmentationPreset, std::nullopt, true,
+        {"AugmentationPreset", "Augmentation Preset is a training image transform: it compiles into image transform ops the image batcher runs on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::AugmentationPreset, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"GeometricTransform", "legacy GeometricTransform graph execution is not implemented",
-         gui::NodeType::GeometricTransform, std::nullopt, true,
+        {"MorphologyTransform", "Morphology Transform is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::MorphologyTransform, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"ColorTransform", "legacy ColorTransform graph execution is not implemented",
-         gui::NodeType::ColorTransform, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"MorphologyTransform", "legacy MorphologyTransform graph execution is not implemented",
-         gui::NodeType::MorphologyTransform, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"AdvancedAugment", "legacy AdvancedAugment graph execution is not implemented",
-         gui::NodeType::AdvancedAugment, std::nullopt, true,
+        {"AdvancedAugment", "Advanced Augment is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::AdvancedAugment, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"IFFTNode", "legacy IFFT graph execution is not implemented",
          gui::NodeType::IFFTNode, std::nullopt, true,
@@ -1068,136 +1087,12 @@ GetPipelineFloatParameterRuntimeCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::Conv1D,
-         "has an ArrayFire-first backend primitive with tested multi-channel/multi-batch layout, padding/stride, residency, declared dilation fallback behavior, and a direct SequentialModel adapter, but is not supported by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::Conv2D,
-         "has an ArrayFire-first backend primitive with tested multi-channel/multi-batch layout, padding/stride, residency, and declared fallback behavior plus a direct SequentialModel adapter, but is not supported by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::Conv3D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::DepthwiseConv2D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::MaxPool2D,
-         "has an ArrayFire-first backend primitive with tested padding, overlap, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::AvgPool2D,
-         "has an ArrayFire-first backend primitive with tested padding, overlap, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::GlobalMaxPool,
-         "has a compiler sketch but no backend layer or ModelBuilder/SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::GlobalAvgPool,
-         "has an ArrayFire-first backend primitive with tested layout, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::AdaptiveAvgPool,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::ConvTranspose2D,
-         "has an ArrayFire-first backend primitive with tested output padding, gradients, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::Upsample,
-         "has ArrayFire-first nearest/bilinear forward and gradients with observed native fallback and exact ModelBuilder construction through the SequentialModel adapter, but has no integrated spatial batch-layout contract or multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::PixelShuffle,
-         "has an ArrayFire-first depth-to-space backend primitive with tested inverse, gradients, residency, and fallback behavior plus exact ModelBuilder construction through the SequentialModel adapter, but has no integrated spatial batch-layout contract or multi-batch Studio training workflow",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::ValueNetwork,
          "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
          PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::GroupNorm,
-         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::InstanceNorm,
-         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract",
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::SelfAttention,
-         "retains a legacy explicit Query/Key/Value graph contract but has no distinct GraphCompiler/ModelBuilder execution owner; use Multi-Head Attention for supported unary self-attention",
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::CrossAttention,
-         "the backend attention primitive can compute Query/Key/Value attention, but Studio has no graph-level multi-input CrossAttention owner or gradient/output contract",
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::LinearAttention,
-         "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::Bidirectional,
-         "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node",
-         PipelineBackendPrimitiveEvidence::Missing},
-    };
-    return capabilities;
-}
-
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingControlCapabilities() {
-    constexpr const char* scheduler_ownership_gap =
-        "the backend scheduler is numerically available, but GraphCompiler/"
-        "TrainingExecutor do not construct it or own its update cadence, run "
-        "state, or checkpoint restoration";
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::StepLR, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::CosineAnnealing, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ReduceOnPlateau, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ExponentialLR, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::WarmupScheduler, scheduler_ownership_gap,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::L1Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::L2Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss; AdamW weight decay is separate",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::ElasticNet,
-         "has no Engine owner that reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss",
-         PipelineBackendPrimitiveEvidence::Missing},
-    };
-    return capabilities;
-}
-
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingWorkflowCapabilities() {
-    static constexpr const char* kDatasetReason =
-        "has a typed metric-learning batch helper, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
-    static constexpr const char* kSharedEncoderReason =
-        "has a shared-encoder helper, but visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented";
-    static constexpr const char* kLossReason =
-        "has backend metric-learning loss primitives, but GraphCompiler/TrainingExecutor do not route pair/triplet embeddings and labels through a shared-weight training step";
-    static constexpr const char* kMetricsReason =
-        "has a focused metric helper, but no visual graph or TrainingExecutor owner computes and reports it from metric-learning batches";
-    static constexpr const char* kOutputReason =
-        "has inference response packaging helpers, but visual graph/runtime routing from a shared encoder to this output is not implemented";
-
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::PairDatasetBuilder, kDatasetReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::TripletDatasetBuilder, kDatasetReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::SharedEncoder, kSharedEncoderReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::SiameseBranch, kSharedEncoderReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::ContrastiveLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::CosineEmbeddingLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::TripletLoss, kLossReason,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::PairMetrics, kMetricsReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::RetrievalMetrics, kMetricsReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::EmbeddingOutput, kOutputReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
-        {gui::NodeType::PairScoreOutput, kOutputReason,
-         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
     };
     return capabilities;
 }
@@ -1230,16 +1125,50 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable model layer"},
         {gui::NodeType::BatchNorm, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable model layer"},
+        // The CNN stack (TOFIX140 A1): [H,W,C,N] layers between the image
+        // Data Input and the Flatten; PyTorch fixtures in computation_truth.
+        {gui::NodeType::Conv2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire convolution layer"},
+        {gui::NodeType::DepthwiseConv2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire depthwise convolution (one kernel set per channel)"},
+        {gui::NodeType::MaxPool2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire pooling layer"},
+        {gui::NodeType::Conv1D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 1-D convolution on [L,C,N] sequences (input rows or after an Embedding)"},
+        {gui::NodeType::Conv3D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire 3-D convolution on [D,H,W,C] volume rows (TOFIX140 Group C)"},
+        {gui::NodeType::AdaptiveAvgPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire adaptive average pool inside the spatial section"},
+        {gui::NodeType::GlobalMaxPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as the ArrayFire global max pool that ends a spatial or sequence section with [N,C] rows"},
+        {gui::NodeType::GlobalAvgPool, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as the ArrayFire global average pool that ends the spatial section with [N,C] rows"},
+        {gui::NodeType::AvgPool2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire pooling layer"},
+        {gui::NodeType::ConvTranspose2D, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable ArrayFire transposed-convolution layer"},
+        {gui::NodeType::Upsample, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire upsampling layer"},
+        {gui::NodeType::PixelShuffle, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as an ArrayFire depth-to-space layer"},
+        {gui::NodeType::GroupNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable group-normalisation layer"},
+        {gui::NodeType::InstanceNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable instance-normalisation layer"},
         {gui::NodeType::LayerNorm, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable CPU-backed transformer normalization layer"},
+        {gui::NodeType::CrossAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable two-input attention layer (Query over Key / Value) in the graph runtime"},
         {gui::NodeType::MultiHeadAttention, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable CPU-backed self-attention layer"},
+        {gui::NodeType::LinearAttention, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable linear (kernel) self-attention layer built on tensor ops"},
         {gui::NodeType::LSTM, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable recurrent model layer"},
         {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable recurrent model layer"},
         {gui::NodeType::RNN, PipelineTrainingSupportRole::ModelLayer,
-         "compiled as a trainable simple recurrent model layer on the native CPU reference"},
+         "compiled as a trainable simple recurrent model layer"},
         {gui::NodeType::Embedding, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable token embedding layer"},
         {gui::NodeType::TransformerEncoder, PipelineTrainingSupportRole::ModelLayer,
@@ -1296,6 +1225,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled and built as an elementwise tensor layer"},
         {gui::NodeType::Concatenate, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Split, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-out tensor op"},
         {gui::NodeType::Add, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
         {gui::NodeType::Multiply, PipelineTrainingSupportRole::ModelLayer,
@@ -1304,6 +1235,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled and executed as a graph fan-in tensor layer"},
         {gui::NodeType::TensorDot, PipelineTrainingSupportRole::ModelLayer,
          "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorBatchMatMul, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in batched matrix product"},
         {gui::NodeType::TensorCompare, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a scalar tensor mask or graph fan-in comparison layer"},
         {gui::NodeType::TensorLogicalMask, PipelineTrainingSupportRole::ModelLayer,
@@ -1323,6 +1256,10 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled and built as a training activation"},
         {gui::NodeType::ELU, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
+        {gui::NodeType::SELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::PReLU, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a trainable activation layer (learned slopes)"},
         {gui::NodeType::GELU, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
         {gui::NodeType::Swish, PipelineTrainingSupportRole::Activation,
@@ -1354,6 +1291,14 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into training loss configuration"},
         {gui::NodeType::NLLLoss, PipelineTrainingSupportRole::Loss,
          "compiled into training loss configuration"},
+        // Metric learning (TOFIX140 A5): the loss splits the stacked
+        // [anchors; positives; negatives] embeddings of one model pass.
+        {gui::NodeType::TripletLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked triplet embeddings"},
+        {gui::NodeType::ContrastiveLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
+        {gui::NodeType::CosineEmbeddingLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration over the stacked pair embeddings"},
 
         {gui::NodeType::SGD, PipelineTrainingSupportRole::Optimizer,
          "compiled into training optimizer configuration"},
@@ -1372,6 +1317,36 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the training preprocessing configuration"},
         {gui::NodeType::OneHotEncode, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the training label preprocessing configuration"},
+        {gui::NodeType::PairDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch pairs by class id"},
+        {gui::NodeType::TripletDatasetBuilder, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training batcher: each batch becomes stacked in-batch triplets by class id"},
+        {gui::NodeType::Resize, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's decode size and the model's [H,W,C] input shape"},
+        {gui::NodeType::CenterCrop, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomCrop, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::HorizontalFlip, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::VerticalFlip, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ImageRotate, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ColorJitter, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::ImageGaussianBlur, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::Grayscale, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::MorphologyTransform, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::AdvancedAugment, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::AugmentationPreset, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::QualityAnalyzer, PipelineTrainingSupportRole::Preprocessing,
+         "its cached analysis is judged at compile time; the image batcher leaves the rejected files out"},
         {gui::NodeType::AudioInput, PipelineTrainingSupportRole::DataSource,
          "compiled as the source contract for the training audio batcher"},
         {gui::NodeType::Spectrogram, PipelineTrainingSupportRole::Preprocessing,
@@ -1389,6 +1364,31 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into train, validation, and held-out test partition policy"},
         {gui::NodeType::Output, PipelineTrainingSupportRole::TrainingControl,
          "compiled as a terminal training-graph marker without adding a module"},
+        {gui::NodeType::StepLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::CosineAnnealing, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::ReduceOnPlateau, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped on the validation loss after each validated epoch"},
+        {gui::NodeType::ExponentialLR, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::WarmupScheduler, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training scheduler, stepped after each completed epoch"},
+        {gui::NodeType::L1Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::L2Regularization, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        {gui::NodeType::ElasticNet, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the training loss penalty; its gradient joins every optimizer step"},
+        // Metric learning (TOFIX140 A5): side nodes on the encoder output.
+        {gui::NodeType::PairMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::RetrievalMetrics, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the validation, held-out test and Test-step evaluation of the metric model"},
+        {gui::NodeType::EmbeddingOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the embeddings file written after training"},
+        {gui::NodeType::PairScoreOutput, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into the pair-score defaults saved with the trained model"},
     };
     return capabilities;
 }
@@ -1614,10 +1614,6 @@ const char* PipelineTrainingBackendSupportModeName(
         return "allowed";
     case PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer:
         return "unsupported_sequential_model_layer";
-    case PipelineTrainingBackendSupportMode::UnsupportedTrainingControl:
-        return "unsupported_training_control";
-    case PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow:
-        return "unsupported_training_workflow";
     }
     return "unknown";
 }
@@ -1891,32 +1887,8 @@ const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType n
         : nullptr;
 }
 
-const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type) {
-    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-    return support.mode ==
-               PipelineTrainingBackendSupportMode::UnsupportedTrainingControl
-        ? support.reason
-        : nullptr;
-}
-
-const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type) {
-    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-    return support.mode ==
-               PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow
-        ? support.reason
-        : nullptr;
-}
-
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
-}
-
-bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
-    return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
-}
-
-bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type) {
-    return ResolvePipelineUnsupportedTrainingWorkflowReason(node_type) != nullptr;
 }
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
@@ -1957,38 +1929,6 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
                 false,
                 layer_it->reason,
                 layer_it->primitive_evidence};
-    }
-
-    const auto& control_capabilities =
-        GetPipelineUnsupportedTrainingControlCapabilities();
-    auto control_it = std::find_if(
-        control_capabilities.begin(),
-        control_capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (control_it != control_capabilities.end()) {
-        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingControl,
-                false,
-                false,
-                control_it->reason,
-                control_it->primitive_evidence};
-    }
-
-    const auto& workflow_capabilities =
-        GetPipelineUnsupportedTrainingWorkflowCapabilities();
-    auto workflow_it = std::find_if(
-        workflow_capabilities.begin(),
-        workflow_capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (workflow_it != workflow_capabilities.end()) {
-        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow,
-                false,
-                false,
-                workflow_it->reason,
-                workflow_it->primitive_evidence};
     }
 
     const auto& supported_capabilities =

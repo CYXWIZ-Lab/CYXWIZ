@@ -1,5 +1,9 @@
 #include "cholesky_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -35,17 +39,11 @@ void CholeskyPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.4f, 0), true);
+            ui::BeginSettingsColumn("cholesky", ImGui::GetContentRegionAvail().x * 0.4f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -74,9 +72,8 @@ void CholeskyPanel::RenderToolbar() {
 }
 
 void CholeskyPanel::RenderMatrixInput() {
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix A");
-    ImGui::Separator();
-
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::SettingsSection("Input matrix A");
     ImGui::TextDisabled("Must be symmetric positive definite");
     ImGui::Spacing();
 
@@ -91,20 +88,31 @@ void CholeskyPanel::RenderMatrixInput() {
 
     ImGui::Spacing();
 
-    // Check symmetry and positive definiteness
-    bool is_symmetric = LinearAlgebra::IsSymmetric(matrix_);
-    bool is_pos_def = LinearAlgebra::IsPositiveDefinite(matrix_);
+    // Check symmetry and positive definiteness (on the device, so only
+    // when the matrix changed, not every frame).
+    if (checked_matrix_ != matrix_) {
+        checked_matrix_ = matrix_;
+        try {
+            input_symmetric_ = LinearAlgebra::IsSymmetric(matrix_);
+            input_positive_definite_ = LinearAlgebra::IsPositiveDefinite(matrix_);
+        } catch (const std::exception& e) {
+            input_symmetric_ = input_positive_definite_ = false;
+            spdlog::warn("Cholesky input check: {}", e.what());
+        }
+    }
+    const bool is_symmetric = input_symmetric_;
+    const bool is_pos_def = input_positive_definite_;
 
     if (is_symmetric) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Symmetric");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Symmetric");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Not symmetric");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Not symmetric");
     }
     ImGui::SameLine();
     if (is_pos_def) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Pos. Def.");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Pos. Def.");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Not pos. def.");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Not pos. def.");
     }
 
     ImGui::Spacing();
@@ -138,7 +146,7 @@ void CholeskyPanel::RenderMatrixInput() {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_ROTATE " Symmetrize")) {
+    if (ui::SecondaryButton("Symmetrize", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         // Make symmetric: A = (A + A^T) / 2
         for (int i = 0; i < size_; i++) {
             for (int j = i + 1; j < size_; j++) {
@@ -157,26 +165,25 @@ void CholeskyPanel::RenderLoadingIndicator() {
 }
 
 void CholeskyPanel::RenderResults() {
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to perform Cholesky: A = L * L^T");
+        ui::EmptyState(ICON_FA_SQUARE_ROOT_VARIABLE, "No decomposition yet",
+                       "Enter a symmetric positive definite matrix, then Compute (A = L * L^T).");
         return;
     }
 
     // Status
     if (result_.is_positive_definite) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Matrix is positive definite");
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Matrix is positive definite");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), ICON_FA_XMARK " Matrix is NOT positive definite");
+        ImGui::TextColored(t.error, ICON_FA_XMARK " Matrix is NOT positive definite");
     }
 
     ImGui::Spacing();
@@ -240,6 +247,7 @@ void CholeskyPanel::RenderMatrixL() {
 }
 
 void CholeskyPanel::RenderVerification() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Verification: A = L * L^T");
     ImGui::Spacing();
 
@@ -248,17 +256,9 @@ void CholeskyPanel::RenderVerification() {
         return;
     }
 
-    // Compute L^T
-    auto Lt = LinearAlgebra::Transpose(result_.L);
-    if (!Lt.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not compute L^T");
-        return;
-    }
-
-    // Compute L * L^T
-    auto LLt = LinearAlgebra::Multiply(result_.L, Lt.matrix);
+    const MatrixResult& LLt = reconstruction_;
     if (!LLt.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not compute L * L^T");
+        ImGui::TextColored(t.error, "Could not compute L * L^T");
         return;
     }
 
@@ -301,9 +301,9 @@ void CholeskyPanel::RenderVerification() {
 
     ImGui::Spacing();
     if (max_error < 1e-6) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Verified: max error = %.2e", max_error);
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Verified: max error = %.2e", max_error);
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
     }
 }
 
@@ -344,10 +344,14 @@ void CholeskyPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        Device::ActivateProcessDeviceOnThisThread();
 
         try {
             result_ = LinearAlgebra::Cholesky(matrix_);
+            reconstruction_ = {};
             if (result_.success) {
+                const auto Lt = LinearAlgebra::Transpose(result_.L);
+                if (Lt.success) reconstruction_ = LinearAlgebra::Multiply(result_.L, Lt.matrix);
                 has_result_ = true;
             } else {
                 error_message_ = result_.error_message;

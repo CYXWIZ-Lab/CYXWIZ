@@ -1,4 +1,5 @@
 #include "agent_llm_session.h"
+#include "../ui_tokens.h"
 
 #include <imgui.h>
 
@@ -66,7 +67,7 @@ void AgentLlmSession::RenderContent(std::string_view project_root) {
 
   ImGui::SameLine();
   if (request_running_.load(std::memory_order_acquire)) {
-    ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 1.0f),
+    ImGui::TextColored(ui::CurrentTokens().running,
                        "Assistant working...");
   } else {
     ImGui::TextDisabled("Provider: on demand");
@@ -107,26 +108,27 @@ void AgentLlmSession::RenderTranscript() {
     const auto &entry = transcript_[entry_index];
     ImGui::PushID(static_cast<int>(entry_index));
     ImGui::Spacing();
+    const ui::Tokens &t = ui::CurrentTokens();
     switch (entry.kind) {
     case EntryKind::User:
-      ImGui::TextColored(ImVec4(0.45f, 0.72f, 1.0f, 1.0f), "You");
+      ImGui::TextColored(t.accent_text, "You");
       break;
     case EntryKind::Agent:
-      ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.55f, 1.0f), "Agent LLM");
+      ImGui::TextColored(t.success, "Agent LLM");
       break;
     case EntryKind::Error:
-      ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Agent LLM error");
+      ImGui::TextColored(t.error, "Agent LLM error");
       break;
     }
 
     if (!entry.backend_state.empty()) {
-      ImGui::TextColored(ImVec4(0.90f, 0.62f, 0.25f, 1.0f), "Backend: %s",
+      ImGui::TextColored(t.warning, "Backend: %s",
                          entry.backend_state.c_str());
     }
 
     if (entry.retrieval_requested) {
-      ImGui::TextColored(entry.retrieval_ok ? ImVec4(0.45f, 0.82f, 0.55f, 1.0f)
-                                            : ImVec4(0.95f, 0.45f, 0.40f, 1.0f),
+      ImGui::TextColored(entry.retrieval_ok ? t.success
+                                            : t.error,
                          "Evidence: %s",
                          entry.retrieval_ok ? "retrieved" : "not found");
       ImGui::SameLine();
@@ -135,8 +137,8 @@ void AgentLlmSession::RenderTranscript() {
       if (!entry.runtime_requested) {
         ImGui::TextDisabled("Local model: not requested");
       } else {
-        ImGui::TextColored(entry.runtime_ok ? ImVec4(0.45f, 0.82f, 0.55f, 1.0f)
-                                            : ImVec4(0.95f, 0.45f, 0.40f, 1.0f),
+        ImGui::TextColored(entry.runtime_ok ? t.success
+                                            : t.error,
                            "Local model: %s",
                            entry.runtime_ok ? "completed" : "unavailable");
       }
@@ -148,7 +150,7 @@ void AgentLlmSession::RenderTranscript() {
 
     for (const auto &section : entry.sections) {
       ImGui::Spacing();
-      ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.88f, 1.0f), "%s",
+      ImGui::TextColored(t.text_dim, "%s",
                          section.title.c_str());
       if (section.content.empty()) {
         ImGui::TextDisabled("None reported.");

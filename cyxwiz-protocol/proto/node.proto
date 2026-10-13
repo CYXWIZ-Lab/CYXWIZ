@@ -79,7 +79,8 @@ message TrainingBenchmark {
   double tokens_per_second = 5;
   double step_ms_median = 6;
   double step_ms_p90 = 7;
-  int64 native_cpu_fallbacks = 8;
+  reserved 8;                       // native_cpu_fallbacks: compute is ArrayFire only (TOFIX140)
+  reserved "native_cpu_fallbacks";
   string build = 9;
   string measured_at = 10;          // UTC ISO 8601
 }

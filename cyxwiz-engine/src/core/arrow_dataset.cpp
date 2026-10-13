@@ -39,8 +39,13 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFile(const std::string& path,
 
     switch (format) {
         case arrow_utils::FileFormat::CSV:
-        case arrow_utils::FileFormat::TSV:
-            return FromCSV(path, name);
+        case arrow_utils::FileFormat::TSV: {
+            // Quoted values may span lines (free text, reviews); a TSV is tab-separated.
+            auto parse_options = arrow::csv::ParseOptions::Defaults();
+            parse_options.newlines_in_values = true;
+            if (format == arrow_utils::FileFormat::TSV) parse_options.delimiter = '\t';
+            return FromCSV(path, name, arrow::csv::ReadOptions::Defaults(), parse_options);
+        }
         case arrow_utils::FileFormat::Parquet:
             return FromParquet(path, name);
         case arrow_utils::FileFormat::Feather:

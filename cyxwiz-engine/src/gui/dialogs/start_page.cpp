@@ -7,6 +7,7 @@
 #include "../icons.h"
 #include "../ui_fonts.h"
 #include "../ui_platform.h"
+#include "../separate_windows.h"
 
 #include <cyxwiz/cyxwiz.h>
 #include <imgui.h>
@@ -143,6 +144,7 @@ bool StartPage::Render() {
     if (result_ != Result::InProgress) return false;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |

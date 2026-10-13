@@ -44,7 +44,6 @@ struct TrainingBenchmarkResult {
     double step_ms_p90 = 0.0;
     double tokens_per_second = 0.0;    // at the median step
     double wall_seconds = 0.0;         // including setup
-    long long native_cpu_fallbacks = 0;
     float first_loss = 0.0f;
     float last_loss = 0.0f;
 };

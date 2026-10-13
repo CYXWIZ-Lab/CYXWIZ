@@ -1,12 +1,86 @@
 #include "architecture_diagram.h"
 #include "../node_editor.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 
 namespace cyxwiz {
+
+namespace {
+
+// Layer kinds are categories: each takes one theme series colour in this
+// fixed order, shared by the blocks and the legend.
+enum LayerSlot {
+    kDenseSlot = 0,
+    kConvSlot,
+    kPoolSlot,
+    kNormSlot,
+    kActivationSlot,
+    kRecurrentSlot,
+    kAttentionSlot,
+    kShapeSlot,
+    kNeutralSlot  // Dropout and anything else: the raised surface
+};
+
+LayerSlot LayerSlotFor(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::Dense:
+            return kDenseSlot;
+        case gui::NodeType::Conv1D:
+        case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:
+        case gui::NodeType::DepthwiseConv2D:
+            return kConvSlot;
+        case gui::NodeType::MaxPool2D:
+        case gui::NodeType::AvgPool2D:
+        case gui::NodeType::GlobalMaxPool:
+        case gui::NodeType::GlobalAvgPool:
+        case gui::NodeType::AdaptiveAvgPool:
+            return kPoolSlot;
+        case gui::NodeType::BatchNorm:
+        case gui::NodeType::LayerNorm:
+        case gui::NodeType::GroupNorm:
+        case gui::NodeType::InstanceNorm:
+            return kNormSlot;
+        case gui::NodeType::ReLU:
+        case gui::NodeType::LeakyReLU:
+        case gui::NodeType::PReLU:
+        case gui::NodeType::ELU:
+        case gui::NodeType::SELU:
+        case gui::NodeType::GELU:
+        case gui::NodeType::Swish:
+        case gui::NodeType::Mish:
+        case gui::NodeType::Sigmoid:
+        case gui::NodeType::Tanh:
+        case gui::NodeType::Softmax:
+            return kActivationSlot;
+        case gui::NodeType::LSTM:
+        case gui::NodeType::GRU:
+        case gui::NodeType::RNN:
+            return kRecurrentSlot;
+        case gui::NodeType::MultiHeadAttention:
+        case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention:
+        case gui::NodeType::TransformerEncoder:
+        case gui::NodeType::TransformerDecoder:
+            return kAttentionSlot;
+        case gui::NodeType::Flatten:
+        case gui::NodeType::Reshape:
+        case gui::NodeType::Permute:
+            return kShapeSlot;
+        default:
+            return kNeutralSlot;
+    }
+}
+
+ImVec4 LayerSlotColour(const ui::Tokens& t, LayerSlot slot) {
+    return slot == kNeutralSlot ? t.bg_raised : ui::SeriesColour(t, static_cast<size_t>(slot));
+}
+
+}  // namespace
 
 ArchitectureDiagram::ArchitectureDiagram() {
 }
@@ -22,7 +96,7 @@ void ArchitectureDiagram::Render() {
             if (analysis_.error_message.empty()) {
                 ImGui::TextDisabled("No model to visualize. Create a node graph first.");
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", analysis_.error_message.c_str());
+                ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", analysis_.error_message.c_str());
             }
 
             if (ImGui::Button(ICON_FA_ROTATE " Refresh")) {
@@ -141,12 +215,13 @@ void ArchitectureDiagram::RenderDiagram() {
     }
 
     // Draw background
+    const ui::Tokens& t = ui::CurrentTokens();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     draw_list->AddRectFilled(canvas_pos, ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y),
-                             IM_COL32(25, 25, 30, 255));
+                             ui::ToU32(t.plot_bg));
 
     // Draw grid
-    ImU32 grid_color = IM_COL32(50, 50, 60, 255);
+    ImU32 grid_color = ui::ToU32(t.plot_grid);
     float grid_step = 50.0f * zoom_;
     for (float x = fmod(pan_offset_.x, grid_step); x < canvas_size.x; x += grid_step) {
         draw_list->AddLine(ImVec2(canvas_pos.x + x, canvas_pos.y),
@@ -190,7 +265,7 @@ void ArchitectureDiagram::RenderDiagram() {
                 to_center = ImVec2(to_screen.x, to_screen.y + to_size.y * zoom_ / 2);
             }
 
-            DrawConnection(draw_list, from_center, to_center, IM_COL32(150, 150, 180, 200));
+            DrawConnection(draw_list, from_center, to_center, ui::ToU32(ui::WithAlpha(t.text_dim, 200.0f / 255.0f)));
         }
     }
 
@@ -247,18 +322,15 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
     bool is_hovered = (index == hovered_layer_);
     bool is_selected = (index == selected_layer_);
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImU32 bg_color = GetLayerColor(layer.type);
     ImU32 border_color = GetLayerBorderColor(layer.type);
 
     if (is_hovered) {
         // Brighten on hover
-        bg_color = IM_COL32(
-            std::min(255, (int)((bg_color & 0xFF) * 1.3f)),
-            std::min(255, (int)(((bg_color >> 8) & 0xFF) * 1.3f)),
-            std::min(255, (int)(((bg_color >> 16) & 0xFF) * 1.3f)),
-            255
-        );
+        bg_color = ui::ToU32(ui::Mix(ImGui::ColorConvertU32ToFloat4(bg_color), t.text_bright, 0.2f));
     }
+    const ImVec4 ink = ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color));
 
     // Draw rounded rectangle
     float rounding = 8.0f * zoom_;
@@ -267,7 +339,7 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
 
     if (is_selected) {
         draw_list->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                          IM_COL32(255, 200, 100, 255), rounding, 0, 3.0f);
+                          ui::ToU32(t.accent_text), rounding, 0, 3.0f);
     }
 
     // Draw text
@@ -285,7 +357,7 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
     float text_y = pos.y + 5 * zoom_;
 
     // Scale font (not ideal but works)
-    draw_list->AddText(ImVec2(text_x, text_y), IM_COL32(255, 255, 255, 255), display_name.c_str());
+    draw_list->AddText(ImVec2(text_x, text_y), ui::ToU32(ink), display_name.c_str());
 
     // Draw shape info
     if (show_shapes_ && !layer.output_shape.empty()) {
@@ -296,7 +368,7 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
         ImVec2 shape_size = ImGui::CalcTextSize(shape_text.c_str());
         float shape_x = pos.x + (size.x - shape_size.x * zoom_) / 2;
         float shape_y = pos.y + size.y / 2;
-        draw_list->AddText(ImVec2(shape_x, shape_y), IM_COL32(200, 200, 200, 255), shape_text.c_str());
+        draw_list->AddText(ImVec2(shape_x, shape_y), ui::ToU32(ui::WithAlpha(ink, 0.8f)), shape_text.c_str());
     }
 
     // Draw param count
@@ -305,7 +377,7 @@ void ArchitectureDiagram::DrawLayerBlock(ImDrawList* draw_list, const LayerAnaly
         ImVec2 param_size = ImGui::CalcTextSize(param_text.c_str());
         float param_x = pos.x + (size.x - param_size.x * zoom_) / 2;
         float param_y = pos.y + size.y - 20 * zoom_;
-        draw_list->AddText(ImVec2(param_x, param_y), IM_COL32(180, 180, 180, 200), param_text.c_str());
+        draw_list->AddText(ImVec2(param_x, param_y), ui::ToU32(ui::WithAlpha(ink, 0.6f)), param_text.c_str());
     }
 }
 
@@ -355,26 +427,27 @@ void ArchitectureDiagram::RenderLegend() {
 
     struct LegendItem {
         const char* name;
-        ImU32 color;
+        LayerSlot slot;
     };
 
     std::vector<LegendItem> items = {
-        {"Dense", IM_COL32(60, 150, 80, 255)},
-        {"Conv", IM_COL32(80, 120, 180, 255)},
-        {"Pool", IM_COL32(180, 120, 80, 255)},
-        {"Norm", IM_COL32(150, 80, 150, 255)},
-        {"Activation", IM_COL32(200, 150, 50, 255)},
-        {"Recurrent", IM_COL32(80, 150, 180, 255)},
-        {"Attention", IM_COL32(180, 80, 120, 255)},
+        {"Dense", kDenseSlot},
+        {"Conv", kConvSlot},
+        {"Pool", kPoolSlot},
+        {"Norm", kNormSlot},
+        {"Activation", kActivationSlot},
+        {"Recurrent", kRecurrentSlot},
+        {"Attention", kAttentionSlot},
     };
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     float x = ImGui::GetCursorScreenPos().x + 60;
     float y = ImGui::GetCursorScreenPos().y;
 
     for (const auto& item : items) {
-        draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x + 15, y + 15), item.color, 3.0f);
-        draw_list->AddText(ImVec2(x + 20, y), IM_COL32(200, 200, 200, 255), item.name);
+        draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x + 15, y + 15), ui::ToU32(LayerSlotColour(t, item.slot)), 3.0f);
+        draw_list->AddText(ImVec2(x + 20, y), ui::ToU32(t.text), item.name);
         x += ImGui::CalcTextSize(item.name).x + 40;
     }
 
@@ -435,78 +508,13 @@ ImVec2 ArchitectureDiagram::GetBlockSize(const LayerAnalysis& layer) const {
 }
 
 ImU32 ArchitectureDiagram::GetLayerColor(gui::NodeType type) const {
-    switch (type) {
-        case gui::NodeType::Dense:
-            return IM_COL32(60, 150, 80, 255);
-
-        case gui::NodeType::Conv1D:
-        case gui::NodeType::Conv2D:
-        case gui::NodeType::Conv3D:
-        case gui::NodeType::DepthwiseConv2D:
-            return IM_COL32(80, 120, 180, 255);
-
-        case gui::NodeType::MaxPool2D:
-        case gui::NodeType::AvgPool2D:
-        case gui::NodeType::GlobalMaxPool:
-        case gui::NodeType::GlobalAvgPool:
-        case gui::NodeType::AdaptiveAvgPool:
-            return IM_COL32(180, 120, 80, 255);
-
-        case gui::NodeType::BatchNorm:
-        case gui::NodeType::LayerNorm:
-        case gui::NodeType::GroupNorm:
-        case gui::NodeType::InstanceNorm:
-            return IM_COL32(150, 80, 150, 255);
-
-        case gui::NodeType::ReLU:
-        case gui::NodeType::LeakyReLU:
-        case gui::NodeType::PReLU:
-        case gui::NodeType::ELU:
-        case gui::NodeType::SELU:
-        case gui::NodeType::GELU:
-        case gui::NodeType::Swish:
-        case gui::NodeType::Mish:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh:
-        case gui::NodeType::Softmax:
-            return IM_COL32(200, 150, 50, 255);
-
-        case gui::NodeType::LSTM:
-        case gui::NodeType::GRU:
-        case gui::NodeType::RNN:
-        case gui::NodeType::Bidirectional:
-            return IM_COL32(80, 150, 180, 255);
-
-        case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
-        case gui::NodeType::CrossAttention:
-        case gui::NodeType::LinearAttention:
-        case gui::NodeType::TransformerEncoder:
-        case gui::NodeType::TransformerDecoder:
-            return IM_COL32(180, 80, 120, 255);
-
-        case gui::NodeType::Dropout:
-            return IM_COL32(100, 100, 100, 255);
-
-        case gui::NodeType::Flatten:
-        case gui::NodeType::Reshape:
-        case gui::NodeType::Permute:
-            return IM_COL32(120, 120, 150, 255);
-
-        default:
-            return IM_COL32(100, 100, 100, 255);
-    }
+    return ui::ToU32(LayerSlotColour(ui::CurrentTokens(), LayerSlotFor(type)));
 }
 
 ImU32 ArchitectureDiagram::GetLayerBorderColor(gui::NodeType type) const {
-    ImU32 base = GetLayerColor(type);
     // Brighter border
-    return IM_COL32(
-        std::min(255, (int)((base & 0xFF) * 1.5f)),
-        std::min(255, (int)(((base >> 8) & 0xFF) * 1.5f)),
-        std::min(255, (int)(((base >> 16) & 0xFF) * 1.5f)),
-        255
-    );
+    const ui::Tokens& t = ui::CurrentTokens();
+    return ui::ToU32(ui::Mix(LayerSlotColour(t, LayerSlotFor(type)), t.text_bright, 0.35f));
 }
 
 std::string ArchitectureDiagram::GetLayerCategory(gui::NodeType type) const {
@@ -535,7 +543,6 @@ std::string ArchitectureDiagram::GetLayerCategory(gui::NodeType type) const {
         case gui::NodeType::RNN:
             return "Recurrent";
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
             return "Attention";
         default:
             return "Other";

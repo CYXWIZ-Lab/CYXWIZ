@@ -4,11 +4,14 @@
 #include "compiled_graph_plan.h"
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
+#include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
+#include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "graph_model.h"
 #include "../preprocessing/preprocessing_config.h"
+#include <cyxwiz/image_augmentation.h>
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>
 #include <cyxwiz/optimizer.h>
@@ -83,16 +86,13 @@ enum class PreprocessingDomain {
 
 /**
  * Tabular preprocessing configuration (the original v0.1 struct, kept for
- * backward compatibility). Extracted from Normalize / TensorReshape /
+ * backward compatibility). Extracted from Normalize /
  * OneHotEncode nodes.
  */
 struct GraphPreprocessingConfig {
     bool has_normalization = false;
     float norm_mean = 0.0f;
     float norm_std = 1.0f;
-
-    bool has_reshape = false;
-    std::vector<int> reshape_dims;
 
     bool has_onehot = false;
     size_t num_classes = 0;
@@ -307,10 +307,8 @@ inline constexpr const char* Unknown = "unknown";
 namespace BackendPlacementReason {
 inline constexpr const char* ArrayFireTensorOpCapable =
     "arrayfire_tensor_op_capable";
-inline constexpr const char* GraphRuntimeArrayFireMixed =
-    "graph_runtime_arrayfire_mixed";
-inline constexpr const char* GraphRuntimeCpuBacked =
-    "graph_runtime_cpu_backed";
+inline constexpr const char* GraphRuntimeArrayFire =
+    "graph_runtime_arrayfire";
 inline constexpr const char* BackendCapabilityUnclassified =
     "backend_capability_unclassified";
 inline constexpr const char* TimeDistributedSequenceWrapper =
@@ -332,12 +330,9 @@ struct BackendPlacementEntry {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
-    std::string observation_source;
+    // Run-time metadata of execution-plan entries (execution_placement_plan.h).
     std::string observation_device;
     std::string observation_dtype;
-    std::string observation_shape_signature;
-    std::string observation_detail;
-    std::string observation_timestamp;
     std::string observation_probe_outcome;
     std::string observation_probe_scope;
     // GpuExecutionModeName of the owning operation family's declared mode
@@ -354,12 +349,8 @@ struct BackendPlacementEntry {
     }
 
     bool HasObservationMetadata() const {
-        return !observation_source.empty() ||
-               !observation_device.empty() ||
+        return !observation_device.empty() ||
                !observation_dtype.empty() ||
-               !observation_shape_signature.empty() ||
-               !observation_detail.empty() ||
-               !observation_timestamp.empty() ||
                !observation_probe_outcome.empty() ||
                !observation_probe_scope.empty();
     }
@@ -437,9 +428,12 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Layers with several inputs (Cross Attention): the graph runtime runs
+    // them, so the model is built as a graph even without graph ops.
+    std::vector<int> multi_input_layer_node_ids;
 
     // Passive metric-learning graph contract. Populated when the selected
-    // training path contains Siamese / metric-learning nodes, but remains
+    // training path contains metric-learning nodes, but remains
     // executable=false until the graph executor and local inference routes are
     // implemented.
     MetricLearningGraphContract metric_learning_graph;
@@ -450,6 +444,10 @@ struct TrainingConfiguration {
 
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST
+    // [L, C] when the input rows are channel-major sequences, torch's [N,C,L]
+    // (time-series windows: [input_width, features]; audio: [frames, bins]).
+    // A first-layer Conv1D reads it (sequence_conv_section.h).
+    std::vector<size_t> sequence_input_shape;
     size_t input_size = 0;              // Flattened size
     size_t output_size = 0;             // Number of classes
 
@@ -506,6 +504,16 @@ struct TrainingConfiguration {
     // preprocessing_domain == Image.
     ImagePreprocessingConfig image_preprocessing;
 
+    // The image transform nodes between Resize and Normalize, in graph
+    // order: run by the image batcher on the device (Normalize after them).
+    cyxwiz::image::ImageAugmentation image_augmentation;
+    // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
+    int image_mix_node_id = -1;
+    // The Quality Analyzer node and the files its analysis leaves out of
+    // training (the image batcher skips them; they stay on disk).
+    int image_quality_node_id = -1;
+    std::vector<std::string> image_excluded_files;
+
     // Preprocessing — audio-specific (Phase 2.1). Populated by audio-
     // domain extractors in the preprocessing table when
     // preprocessing_domain == Audio. When has_feature_node is false,
@@ -553,6 +561,46 @@ struct TrainingConfiguration {
     float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
     float grad_clip_norm = 0.0f;        // 0 = off
     std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
+    // attaches it unless a scheduler is configured on the executor directly.
+    std::optional<TrainingSchedulerSpec> scheduler;
+    int scheduler_node_id = -1;
+    // Regularization node between the loss and the optimizer (TOFIX140 A4):
+    // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
+    float regularization_l1 = 0.0f;
+    float regularization_l2 = 0.0f;
+    int regularization_node_id = -1;
+    // Pair / Triplet Dataset Builder + its loss (TOFIX140 A5): TrainingExecutor
+    // wraps every batcher in a MetricBatchSampler, so the model runs once over
+    // [firsts; seconds] or [anchors; positives; negatives] picked in-batch by
+    // class id. Pair accuracy calls a pair similar at pair_decision_threshold
+    // (Contrastive: distance below margin / 2; Cosine Embedding: cosine above
+    // (1 + margin) / 2).
+    MetricSampling metric_sampling = MetricSampling::None;
+    // The builder's `mining`: random stacks seeded picks; hard / semi-hard
+    // let the loss mine from the batch's embeddings.
+    MetricMining metric_mining = MetricMining::Random;
+    int metric_builder_node_id = -1;
+    float pair_decision_threshold = 0.0f;
+    // Pair / Retrieval Metrics nodes on the encoder output (TOFIX140 A5):
+    // evaluated at validated epochs, on the held-out test rows and in the
+    // Test step (metric_learning_evaluation.h).
+    bool pair_metrics = false;
+    double pair_metric_threshold = 0.5;
+    bool retrieval_metrics = false;
+    size_t retrieval_k = 10;
+    // Embedding Output: after training, the partition's embeddings are
+    // written to embedding_output_path (made absolute in the project by the
+    // host that starts training).
+    bool embedding_output = false;
+    std::string embedding_output_path;
+    std::string embedding_output_partition = "all";
+    bool embedding_output_metadata = true;
+    // Pair Score Output: saved with the trained model as the inference
+    // server's /v1/pair-score defaults.
+    bool pair_score_output = false;
+    std::string pair_score_mode = "distance";
+    double pair_score_threshold = 0.5;
 
     // Validation
     bool is_valid = false;
@@ -572,10 +620,10 @@ struct TrainingConfiguration {
     // immutable execution-device context.
     std::string compiler_placement_fingerprint;
 
-    // ArrayFire-first production runs keep native CPU fallback available for
-    // known gaps and diagnostics. Strict residency tests can opt in to forbid
-    // native CPU fallback and fail terminally on any routed fallback attempt.
-    bool forbid_native_cpu_fallback = false;
+    // The strict execution policy (execution_policy.h): the run stays on the
+    // selected device - no ArrayFire CPU recovery, the placement plan must be
+    // fully on the device, no debug sample dumps.
+    bool strict_execution = false;
 
     // Convenience: count issues by level. Used by UI gating logic.
     size_t CountIssues(IssueLevel level) const {
@@ -633,6 +681,9 @@ struct TrainingConfiguration {
             case gui::NodeType::SoftDiceLoss: return "SoftDice";
             case gui::NodeType::TverskyLoss: return "Tversky";
             case gui::NodeType::JaccardLoss: return "Jaccard";
+            case gui::NodeType::TripletLoss: return "Triplet";
+            case gui::NodeType::ContrastiveLoss: return "Contrastive";
+            case gui::NodeType::CosineEmbeddingLoss: return "CosineEmbedding";
             default: return "CrossEntropy";
         }
     }
@@ -666,6 +717,10 @@ inline bool UsesContinuousTargetMetrics(
  * Takes the node graph from NodeEditor and produces a TrainingConfiguration
  * that can be used by TrainingExecutor to run actual training.
  */
+// The [H, W, 3] image the image batcher decodes: the Resize target, or
+// 224 x 224 without one. The image transforms start from this shape.
+cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config);
+
 class GraphCompiler {
 public:
     GraphCompiler() = default;
@@ -681,7 +736,6 @@ public:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         bool allow_unloaded_data = false,
-        const std::string& placement_observation_cache_path = {},
         Purpose purpose = Purpose::Training
     );
 
@@ -697,6 +751,10 @@ public:
         const std::vector<gui::NodeLink>& links,
         std::string& error
     );
+
+    // The data domain of a preprocessing node the trainer applies itself
+    // (Normalize, image transforms, audio features...), or nullopt.
+    static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
 private:
     // Topological sort for execution order
@@ -736,7 +794,6 @@ private:
 
     // Check if node is preprocessing
     bool IsPreprocessing(gui::NodeType type) const;
-    std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type) const;
 
     // Extract layer parameters from node
     CompiledLayer ExtractLayerConfig(const gui::MLNode& node) const;

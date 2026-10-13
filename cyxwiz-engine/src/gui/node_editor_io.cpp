@@ -613,7 +613,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                 annotation.size.x = annotation_json.value("width", 200.0f);
                 annotation.size.y = annotation_json.value("height", 100.0f);
                 annotation.color = annotation_json.value(
-                    "color", static_cast<ImU32>(IM_COL32(255, 255, 200, 255)));
+                    "color", DefaultAnnotationColour());
                 annotation.is_minimized = annotation_json.value("minimized", false);
                 loaded_annotations.push_back(std::move(annotation));
                 loaded_next_annotation_id = std::max(

@@ -163,7 +163,7 @@
         "name": "Forecast",
         "pos": [2460, 320],
         "params": {
-          "classes": "1"
+          "num_classes": "1"
         }
       }
     ],

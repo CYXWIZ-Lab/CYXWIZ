@@ -79,6 +79,10 @@ public:
     void OpenFind(bool replace);
     // Edit > Go to Line (the Engine's dialog), offered in the code's right-click menu.
     void SetGoToLineRequest(std::function<void()> request) { go_to_line_request_ = std::move(request); }
+    // A notebook image's "Open in window": shown in Plot Output (TOFIX134 P5).
+    void SetOpenImageCallback(std::function<void(const std::vector<unsigned char>&, const std::string&)> callback) {
+        open_image_callback_ = std::move(callback);
+    }
     // A notebook table result opens in the Table Viewer (TOFIX133 P4 board 5).
     // Variable Explorer (TOFIX133 P5): the open notebooks it can show, and
     // a name inserted at the cursor of the script or cell being edited.
@@ -284,7 +288,6 @@ private:
     void RenderPlotOutput(Cell& cell, CellOutput& out, float width);
     void OpenResultInTableViewer(Cell& cell, const CellOutput& out);
     void OpenTraceFrame(const nbview::FrameLink& link);
-    void RenderPlotWindows();
     std::function<void(std::shared_ptr<DataTable>)> open_table_callback_;
     std::function<void(const VariablesView::OpenRequest&, const scripting::VariablesService::Result&)> open_variable_callback_;
     std::string table_open_error_;
@@ -293,19 +296,8 @@ private:
     std::string deferred_open_path_;  // a traceback frame's file, opened next frame
     int deferred_open_line_ = 0;
     int pending_goto_line_ = 0;
-    // Plots opened in their own window: a copy of the image, so clearing the
-    // cell does not take the window's picture with it.
-    struct PlotWindow {
-        int id = 0;
-        std::string title;
-        std::vector<unsigned char> png;
-        unsigned int texture = 0;
-        int width = 0;
-        int height = 0;
-        bool open = true;
-    };
-    std::vector<PlotWindow> plot_windows_;
-    int next_plot_window_ = 1;
+    // Plot Output takes a copy of the image, so clearing the cell keeps it there.
+    std::function<void(const std::vector<unsigned char>&, const std::string&)> open_image_callback_;
     void RenderNotebookVariables(EditorTab& tab, float height);  // script_editor_notebook_side.cpp
     void RenderNotebookOutline(EditorTab& tab, float width, float height);
     void RestartNotebook(EditorTab& tab);  // Restart + the Variables view forgets

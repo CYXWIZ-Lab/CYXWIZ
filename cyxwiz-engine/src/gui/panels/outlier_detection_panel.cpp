@@ -1,6 +1,7 @@
 #include "outlier_detection_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -46,7 +47,6 @@ void OutlierDetectionPanel::RenderToolbar() {
     // Row 1: Data and column selection
     RenderDataSelector();
 
-    ImGui::SameLine();
     RenderColumnSelector();
 
     // Row 2: Method selection and parameters
@@ -67,37 +67,7 @@ void OutlierDetectionPanel::RenderToolbar() {
 }
 
 void OutlierDetectionPanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                if (name != selected_table_) {
-                    selected_table_ = name;
-                    auto table = registry.GetTable(name);
-                    if (table) {
-                        current_table_ = table;
-                        // Find numeric columns
-                        numeric_columns_.clear();
-                        const auto& headers = table->GetHeaders();
-                        for (size_t i = 0; i < headers.size(); i++) {
-                            auto dtype = DataAnalyzer::DetectColumnType(*table, i);
-                            if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                                numeric_columns_.push_back(headers[i]);
-                            }
-                        }
-                        selected_column_idx_ = numeric_columns_.empty() ? -1 : 0;
-                        has_result_ = false;
-                    }
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("outlier_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void OutlierDetectionPanel::RenderColumnSelector() {
@@ -184,10 +154,11 @@ void OutlierDetectionPanel::RenderResults() {
     // Summary
     ImGui::Spacing();
 
+    const ui::Tokens& t = ui::CurrentTokens();
     ImVec4 color = result_.outlier_percentage > 10 ?
-        ImVec4(1.0f, 0.4f, 0.4f, 1.0f) :
-        (result_.outlier_percentage > 5 ? ImVec4(1.0f, 0.8f, 0.4f, 1.0f) :
-                                           ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        t.error :
+        (result_.outlier_percentage > 5 ? t.warning :
+                                           t.success);
 
     ImGui::Text("Column: %s", result_.column_name.c_str());
     ImGui::Text("Method: %s", OutlierMethodToString(result_.method));
@@ -295,19 +266,22 @@ void OutlierDetectionPanel::RenderScatterPlot() {
         }
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##OutlierPlot", ImVec2(-1, 300))) {
         ImPlot::SetupAxes("Index", result_.column_name.c_str());
 
         // Plot normal points
         if (!normal_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, ImVec4(0.4f, 0.6f, 1.0f, 0.8f));
+            const ImVec4 normal = ui::WithAlpha(t.series[1], 0.8f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3, normal, IMPLOT_AUTO, normal);
             ImPlot::PlotScatter("Normal", normal_x.data(), normal_y.data(),
                                 static_cast<int>(normal_x.size()));
         }
 
         // Plot outliers
         if (!outlier_x.empty()) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 6, t.series[4], IMPLOT_AUTO, t.series[4]);
             ImPlot::PlotScatter("Outliers", outlier_x.data(), outlier_y.data(),
                                 static_cast<int>(outlier_x.size()));
         }
@@ -319,10 +293,10 @@ void OutlierDetectionPanel::RenderScatterPlot() {
         double upper_y[] = {result_.upper_bound, result_.upper_bound};
         double lower_y[] = {result_.lower_bound, result_.lower_bound};
 
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.0f, 0.8f), 2);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[2], 0.8f), 2);
         ImPlot::PlotLine("Upper", bounds_x, upper_y, 2);
 
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.0f, 0.8f), 2);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[2], 0.8f), 2);
         ImPlot::PlotLine("Lower", bounds_x, lower_y, 2);
 
         ImPlot::EndPlot();
@@ -330,8 +304,10 @@ void OutlierDetectionPanel::RenderScatterPlot() {
 }
 
 void OutlierDetectionPanel::RenderOutlierTable() {
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (result_.outliers.empty()) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+        ImGui::TextColored(t.success,
                           "%s No outliers detected!", ICON_FA_CIRCLE_CHECK);
         return;
     }
@@ -413,22 +389,13 @@ void OutlierDetectionPanel::RenderOutlierTable() {
 
             ImGui::TableNextColumn();
             if (outlier.is_low) {
-                ImGui::TextColored(ImVec4(0.4f, 0.6f, 1.0f, 1.0f), "Low");
+                ImGui::TextColored(t.info, "Low");
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "High");
+                ImGui::TextColored(t.error, "High");
             }
         }
 
         ImGui::EndTable();
-    }
-}
-
-void OutlierDetectionPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

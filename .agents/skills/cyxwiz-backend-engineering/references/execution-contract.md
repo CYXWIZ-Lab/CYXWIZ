@@ -14,10 +14,10 @@
 
 ## 1. Runtime Architecture
 
-The GUI Engine requires ArrayFire to configure, link, and start. ArrayFire is
-the current compute platform for supported Tensor math. A backend-only build
-may omit ArrayFire only when the Engine is disabled; describe that output as a
-reduced native development/test build.
+Every build requires ArrayFire to configure, link, and start: the backend, the
+Engine and the Server Node. ArrayFire is the only compute platform; the CPU
+option is ArrayFire's CPU backend, and there are no hand-written CPU kernels.
+Only the standalone installer is built without ArrayFire.
 
 Supported ArrayFire execution selections are:
 
@@ -38,7 +38,8 @@ immutable `ExecutionDeviceContext` for the run with:
 - requested backend/device;
 - effective backend/device and stable identity;
 - capability generation;
-- native CPU fallback policy.
+- execution policy (compatibility: may recover on ArrayFire CPU; strict: stays on the
+  selected device). There is no native CPU fallback: compute is ArrayFire only.
 
 Do not mutate the active process-wide ArrayFire device during a run. Disable
 or queue GUI selection changes until the next run. Query current backend truth

@@ -7,9 +7,7 @@
 #include <cyxwiz/tensor.h>
 #include <string>
 #include <vector>
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::test::convolution {
 inline void CheckValues(const cyxwiz::Tensor &actual,
@@ -24,31 +22,17 @@ inline void CheckValues(const cyxwiz::Tensor &actual,
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 inline size_t conv_host_sync_count = 0;
 inline uint64_t conv_host_sync_bytes = 0;
-inline size_t conv_fallback_count = 0;
-inline bool saw_conv_cpu_path = false;
-inline cyxwiz::ArrayFireNativeCpuFallbackEvent last_conv_fallback;
 
 inline void CountConvHostSync(const cyxwiz::ArrayFireHostSyncEvent &event) {
   ++conv_host_sync_count;
   conv_host_sync_bytes += event.bytes;
-  saw_conv_cpu_path |= event.attribution_category == "layer_cpu_path";
-}
-
-inline void
-CountConvFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent &event) {
-  ++conv_fallback_count;
-  last_conv_fallback = event;
 }
 
 inline void ResetConvObservations() {
   conv_host_sync_count = 0;
   conv_host_sync_bytes = 0;
-  conv_fallback_count = 0;
-  saw_conv_cpu_path = false;
-  last_conv_fallback = {};
 }
 
 inline af::dim4 SemanticDims(const std::vector<size_t> &shape) {
@@ -134,9 +118,6 @@ private:
   std::string previous_;
 };
 
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 // Select the requested lane for every numerical test as well as residency.
 class BackendLane {
 public:
@@ -177,8 +158,5 @@ private:
   af_backend original_;
   int device_;
 };
-#else
-struct BackendLane {};
-#endif
 
 } // namespace cyxwiz::test::convolution

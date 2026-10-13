@@ -9,10 +9,20 @@ DataStudioPanel::DataStudioPanel()
 {
     // Initialize all components (Unified Canvas Phase 5: Removed pipeline_canvas_)
     query_editor_ = std::make_unique<QueryEditor>();
-    analyzer_ = std::make_unique<Analyzer>();
+    profile_ = std::make_unique<ProfileView>();
     visualizer_ = std::make_unique<Visualizer>();
 
     spdlog::info("[Data Studio] Panel initialized (simplified - pipeline moved to Node Editor)");
+}
+
+void DataStudioPanel::ShowQuery(const std::string& dataset_name, const std::string& sql) {
+    SetActiveDataset(dataset_name);
+    visible_ = true;
+    show_query_ = true;
+    if (query_editor_) {
+        query_editor_->SetQuery(sql);
+        query_editor_->ExecuteQuery();
+    }
 }
 
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
@@ -23,8 +33,8 @@ void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     if (query_editor_) {
         query_editor_->SetActiveDataset(dataset_name);
     }
-    if (analyzer_) {
-        analyzer_->SetActiveDataset(dataset_name);
+    if (profile_) {
+        profile_->SetActiveDataset(dataset_name);
     }
     if (visualizer_) {
         visualizer_->SetActiveDataset(dataset_name);

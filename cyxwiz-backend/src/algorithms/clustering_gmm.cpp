@@ -1,86 +1,152 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Gaussian mixture by EM on ArrayFire (TOFIX140), following scikit-learn's
+// GaussianMixture: log-space E-step through Cholesky factors, reg_covar on every
+// covariance, "full" / "tied" / "diag" / "spherical", convergence on the mean
+// per-sample log-likelihood, BIC / AIC from its parameter count.
+
 #ifdef _WIN32
-#ifndef NOMINMAX
 #define NOMINMAX
-#endif
 #endif
 
 #include "cyxwiz/clustering.h"
-#include "arrayfire_backend_utils.h"
-#include "arrayfire_host_materialization.h"
-#include <spdlog/spdlog.h>
+#include "analysis_device.h"
 
-#define _USE_MATH_DEFINES
 #include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
-// Ensure Windows min/max macros are undefined
-#ifdef _WIN32
 #ifdef min
 #undef min
 #endif
 #ifdef max
 #undef max
 #endif
-#endif
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+using namespace analysis_detail;
 
-static std::string BuildClusteringContext(
-    const std::vector<std::vector<double>>& data,
-    const std::string& extra = {})
-{
-    std::string context = "samples=" + std::to_string(data.size()) +
-        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
-    if (!extra.empty()) {
-        context += "; ";
-        context += extra;
-    }
-    return context;
+namespace {
+
+constexpr double kRegCovar = 1e-6;
+
+int CovarianceParameters(const std::string& type, int k, int d) {
+    if (type == "full") return k * d * (d + 1) / 2;
+    if (type == "tied") return d * (d + 1) / 2;
+    if (type == "diag") return k * d;
+    return k;  // spherical
 }
 
-static void LogClusteringBackendFailureOnce(
-    const char* operation_name,
-    const char* error_message,
-    const std::string& data_context)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
-    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        return;
-    }
+struct Mixture {
+    af::array means;                 // [k, d]
+    std::vector<af::array> covs;     // k matrices (one for tied), d x d
+    af::array log_weights;           // [1, k]
+};
 
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "clustering operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); clustering operation cannot complete on the current ArrayFire backend.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
-        error_message != nullptr &&
-        error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    spdlog::error("{}", message);
+const af::array& CovarianceOf(const Mixture& m, int component) {
+    return m.covs.size() == 1 ? m.covs[0] : m.covs[static_cast<size_t>(component)];
 }
 
-// ==================== GMM Implementation ====================
+// log N(x | mean, cov) for every row of x: [n, 1].
+af::array LogGaussian(const af::array& x, const af::array& mean, const af::array& cov) {
+    const dim_t n = x.dims(0), d = x.dims(1);
+    af::array lower;
+    if (af::cholesky(lower, cov, /*is_upper=*/false) != 0 ||
+        !af::allTrue<bool>(af::isNaN(lower) == 0 && af::isInf(lower) == 0)) {
+        throw Refusal("A covariance is not positive definite (too few points for a component; "
+                      "try fewer components or a diag / spherical covariance)");
+    }
+    const af::array diff = x - af::tile(mean, static_cast<unsigned>(n), 1);
+    const af::array whitened = af::solve(lower, diff.T(), AF_MAT_LOWER);  // [d, n]
+    const af::array mahalanobis = af::sum(whitened * whitened, 0).T();
+    const double log_det = 2.0 * af::sum<double>(af::log(af::diag(lower)));
+    return -0.5 * (static_cast<double>(d) * std::log(2.0 * 3.14159265358979323846) + log_det + mahalanobis);
+}
+
+// Responsibilities [n, k] and the mean per-sample log-likelihood.
+std::pair<af::array, double> EStep(const af::array& x, const Mixture& m) {
+    const dim_t n = x.dims(0), k = m.means.dims(0);
+    af::array log_prob = af::constant(0.0, n, k, x.type());
+    for (int c = 0; c < static_cast<int>(k); ++c) {
+        log_prob(af::span, c) = LogGaussian(x, m.means(c, af::span), CovarianceOf(m, c));
+    }
+    log_prob += af::tile(m.log_weights, static_cast<unsigned>(n), 1);
+    const af::array peak = af::max(log_prob, 1);
+    const af::array log_norm = peak + af::log(af::sum(af::exp(log_prob - af::tile(peak, 1, static_cast<unsigned>(k))), 1));
+    const af::array resp = af::exp(log_prob - af::tile(log_norm, 1, static_cast<unsigned>(k)));
+    return {resp, af::mean<double>(log_norm)};
+}
+
+Mixture MStep(const af::array& x, const af::array& resp, const std::string& type) {
+    const dim_t n = x.dims(0), d = x.dims(1), k = resp.dims(1);
+    const af::array eye = af::identity(d, d, x.type());
+    const af::array nk = af::sum(resp, 0) + 10.0 * std::numeric_limits<double>::epsilon();  // [1, k]
+    const af::array nk_col = af::tile(nk.T(), 1, static_cast<unsigned>(d));                  // [k, d]
+    Mixture m;
+    m.log_weights = af::log(nk / static_cast<double>(n));
+    m.means = af::matmul(resp, x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
+    m.means.eval();
+    if (type == "tied") {
+        const af::array avg_x2 = af::matmul(x, x, AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array avg_means2 = af::matmul(nk_col * m.means, m.means, AF_MAT_TRANS, AF_MAT_NONE);
+        m.covs.push_back((avg_x2 - avg_means2) / af::sum<double>(nk) + kRegCovar * eye);
+    } else if (type == "full") {
+        for (int c = 0; c < static_cast<int>(k); ++c) {
+            const af::array diff = x - af::tile(m.means(c, af::span), static_cast<unsigned>(n), 1);
+            const af::array weighted = diff * af::tile(resp(af::span, c), 1, static_cast<unsigned>(d));
+            const double count = af::sum<double>(nk(c));
+            m.covs.push_back(af::matmul(weighted, diff, AF_MAT_TRANS, AF_MAT_NONE) / count + kRegCovar * eye);
+        }
+    } else {  // diag, spherical: per-feature variances [k, d]
+        const af::array avg_x2 = af::matmul(resp, x * x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
+        af::array variances = avg_x2 - m.means * m.means + kRegCovar;
+        if (type == "spherical") variances = af::tile(af::mean(variances, 1), 1, static_cast<unsigned>(d));
+        for (int c = 0; c < static_cast<int>(k); ++c) {
+            m.covs.push_back(af::diag(variances(c, af::span).T(), 0, false));
+        }
+    }
+    for (auto& cov : m.covs) cov.eval();
+    return m;
+}
+
+struct EmRun {
+    Mixture mixture;
+    af::array resp;
+    double mean_ll = -std::numeric_limits<double>::infinity();
+    int iterations = 0;
+    bool converged = false;
+};
+
+EmRun RunEm(const af::array& x, int k, const std::string& type, int max_iter, double tol, af::randomEngine& engine,
+            const std::function<void(int, double)>& progress) {
+    const dim_t n = x.dims(0);
+    // Start: hard assignment to k-means++ seeds, then an M-step.
+    af::array nearest, labels;
+    af::min(nearest, labels, SquaredDistances(x, KMeansPlusPlus(x, k, engine)), 1);
+    const af::array ids = af::tile(af::range(af::dim4(1, k), 1, u32), static_cast<unsigned>(n), 1);
+    EmRun run;
+    run.mixture = MStep(x, (af::tile(labels, 1, static_cast<unsigned>(k)) == ids).as(x.type()), type);
+    double bound = -std::numeric_limits<double>::infinity();
+    for (int iter = 0; iter < max_iter; ++iter) {
+        const double previous = bound;
+        const auto [resp, mean_ll] = EStep(x, run.mixture);
+        run.mixture = MStep(x, resp, type);
+        bound = mean_ll;
+        run.iterations = iter + 1;
+        if (progress) progress(iter + 1, mean_ll * static_cast<double>(n));
+        if (std::abs(bound - previous) < tol) {
+            run.converged = true;
+            break;
+        }
+    }
+    // Final E-step: responsibilities and likelihood of the returned parameters.
+    const auto [resp, mean_ll] = EStep(x, run.mixture);
+    run.resp = resp;
+    run.mean_ll = mean_ll;
+    return run;
+}
+
+}  // namespace
 
 GMMResult Clustering::GMM(
     const std::vector<std::vector<double>>& data,
@@ -93,357 +159,59 @@ GMMResult Clustering::GMM(
     std::function<void(int, double)> progress_callback
 ) {
     GMMResult result;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
+    if (const std::string refusal = MatrixRefusal(data); !refusal.empty()) {
+        result.error_message = refusal;
         return result;
     }
-
-    int n_samples = static_cast<int>(data.size());
-    int n_features = static_cast<int>(data[0].size());
-
-    if (n_components <= 0 || n_components > n_samples) {
-        result.error_message = "Invalid number of components";
+    const int n = static_cast<int>(data.size()), d = static_cast<int>(data[0].size());
+    if (n_components < 1 || n_components > n) {
+        result.error_message = "Number of components must be between 1 and the number of samples";
         return result;
     }
-
+    if (covariance_type != "full" && covariance_type != "tied" && covariance_type != "diag" &&
+        covariance_type != "spherical") {
+        result.error_message = "Unknown covariance type '" + covariance_type + "' (full, tied, diag or spherical)";
+        return result;
+    }
+    if (max_iter < 1 || n_init < 1 || !(tol >= 0.0)) {
+        result.error_message = "max_iter and n_init must be at least 1, and tol non-negative";
+        return result;
+    }
     try {
-        af::array af_data = ToAfArray(data);
-
-        double best_ll = -std::numeric_limits<double>::max();
-        af::array best_means;
-        std::vector<af::array> best_covs;
-        af::array best_weights;
-        af::array best_resp;
-        int best_iters = 0;
-        bool best_converged = false;
-
-        for (int init_run = 0; init_run < n_init; ++init_run) {
-            unsigned int run_seed = (seed == 0) ? 0 : seed + init_run;
-
-            // Initialize parameters
-            af::array means;
-            std::vector<af::array> covariances;
-            af::array weights;
-            InitializeGMM(af_data, n_components, means, covariances, weights, covariance_type, run_seed);
-
-            double prev_ll = -std::numeric_limits<double>::max();
-            af::array responsibilities;
-            int iterations = 0;
-            bool converged = false;
-
-            for (int iter = 0; iter < max_iter; ++iter) {
-                // E-Step
-                responsibilities = EStep(af_data, means, covariances, weights);
-
-                // M-Step
-                MStep(af_data, responsibilities, means, covariances, weights, covariance_type);
-
-                // Compute log-likelihood
-                double ll = ComputeLogLikelihood(af_data, means, covariances, weights);
-
-                if (init_run == 0 && progress_callback) {
-                    progress_callback(iter + 1, ll);
-                }
-
-                if (std::abs(ll - prev_ll) < tol) {
-                    converged = true;
-                    iterations = iter + 1;
-                    break;
-                }
-
-                prev_ll = ll;
-                iterations = iter + 1;
-            }
-
-            double final_ll = ComputeLogLikelihood(af_data, means, covariances, weights);
-
-            if (final_ll > best_ll) {
-                best_ll = final_ll;
-                best_means = means;
-                best_covs = covariances;
-                best_weights = weights;
-                best_resp = responsibilities;
-                best_iters = iterations;
-                best_converged = converged;
-            }
+        const af::array x = MatrixToDevice(data);
+        af::randomEngine engine = SeededEngine(seed);
+        EmRun best;
+        for (int run = 0; run < n_init; ++run) {
+            EmRun current = RunEm(x, n_components, covariance_type, max_iter, tol, engine,
+                                  run == 0 ? progress_callback : std::function<void(int, double)>{});
+            if (current.mean_ll > best.mean_ll) best = std::move(current);
         }
-
-        // Convert results
-        result.means = FromAfArray(best_means);
-
-        // Convert responsibilities
-        result.responsibilities.resize(n_samples);
-        std::vector<double> resp_flat(n_samples * n_components);
-        best_resp.eval();
-        MaterializeArrayFireToHost(
-            best_resp,
-            resp_flat.data(),
-            ArrayFireHostSyncCategory::OutputMaterialization,
-            "Clustering::GaussianMixture::Responsibilities",
-            "arrayfire_column_major");
-        for (int i = 0; i < n_samples; ++i) {
-            result.responsibilities[i].resize(n_components);
-            for (int j = 0; j < n_components; ++j) {
-                result.responsibilities[i][j] = resp_flat[j * n_samples + i];
-            }
+        constexpr const char* kOperation = "Clustering::GMM";
+        af::array peak, labels;
+        af::max(peak, labels, best.resp, 1);
+        result.labels = LabelsFromDevice(labels, kOperation);
+        result.responsibilities = MatrixFromDevice(best.resp, kOperation);
+        result.means = MatrixFromDevice(best.mixture.means, kOperation);
+        result.weights = DeviceToHostValues(af::exp(best.mixture.log_weights), kOperation);
+        for (int c = 0; c < n_components; ++c) {
+            result.covariances.push_back(MatrixFromDevice(CovarianceOf(best.mixture, c), kOperation));
         }
-
-        // Hard labels
-        af::array max_vals, label_indices;
-        af::max(max_vals, label_indices, best_resp, 1);
-        label_indices.eval();
-        result.labels = AfArrayToIntVector(label_indices);
-
-        // Weights
-        result.weights = AfArrayToDoubleVector(best_weights);
-
-        // Covariances
-        result.covariances.resize(n_components);
-        for (int k = 0; k < n_components; ++k) {
-            result.covariances[k] = FromAfArray(best_covs[k]);
-        }
-
-        result.log_likelihood = best_ll;
+        result.log_likelihood = best.mean_ll * n;
+        const int parameters = n_components * d + CovarianceParameters(covariance_type, n_components, d) + n_components - 1;
+        result.bic = -2.0 * result.log_likelihood + parameters * std::log(static_cast<double>(n));
+        result.aic = -2.0 * result.log_likelihood + 2.0 * parameters;
         result.n_components = n_components;
-        result.n_iterations = best_iters;
-        result.converged = best_converged;
-
-        // BIC and AIC
-        int n_params = n_components * n_features + n_components * n_features * (n_features + 1) / 2 + n_components - 1;
-        result.bic = -2 * best_ll + n_params * std::log(static_cast<double>(n_samples));
-        result.aic = -2 * best_ll + 2 * n_params;
-
+        result.n_iterations = best.iterations;
+        result.converged = best.converged;
         result.success = true;
-
-        spdlog::info("GMM completed: {} components, log-likelihood={:.4f}", n_components, best_ll);
-
+    } catch (const Refusal& refusal) {
+        result = GMMResult{};
+        result.error_message = refusal.what();
     } catch (const af::exception& e) {
-        result.error_message = std::string("ArrayFire error: ") + e.what();
-        LogClusteringBackendFailureOnce(
-            "Clustering::GMM",
-            e.what(),
-            BuildClusteringContext(
-                data,
-                "components=" + std::to_string(n_components) +
-                "; covariance_type=" + covariance_type));
+        result = GMMResult{};
+        result.error_message = DeviceError("Clustering::GMM", e);
     }
-
     return result;
 }
-
-void Clustering::InitializeGMM(
-    const af::array& data,
-    int n_components,
-    af::array& means,
-    std::vector<af::array>& covariances,
-    af::array& weights,
-    const std::string& covariance_type,
-    unsigned int seed
-) {
-    int n_samples = static_cast<int>(data.dims(0));
-    int n_features = static_cast<int>(data.dims(1));
-
-    // Initialize means using k-means++
-    means = InitializeCentroidsKMeansPP(data, n_components, seed);
-
-    // Initialize weights uniformly
-    weights = af::constant(1.0 / n_components, n_components, f64);
-
-    // Initialize covariances
-    covariances.clear();
-    af::array data_centered = data - af::tile(af::mean(data, 0), n_samples, 1);
-    data_centered.eval();
-    af::array global_cov = af::matmul(data_centered.T(), data_centered) / static_cast<double>(n_samples - 1);
-    global_cov.eval();
-
-    for (int k = 0; k < n_components; ++k) {
-        if (covariance_type == "spherical") {
-            af::array diag_cov = af::diag(global_cov);
-            diag_cov.eval();
-            double var = af::mean<double>(diag_cov);
-            af::array covariance = af::identity(n_features, n_features, f64) * var;
-            covariance.eval();
-            covariances.push_back(covariance);
-        } else if (covariance_type == "diag") {
-            af::array diag_cov = af::diag(global_cov);
-            diag_cov.eval();
-            af::array covariance = af::diag(diag_cov, 0, false);
-            covariance.eval();
-            covariances.push_back(covariance);
-        } else {
-            covariances.push_back(global_cov.copy());
-        }
-    }
-}
-
-af::array Clustering::EStep(
-    const af::array& data,
-    const af::array& means,
-    const std::vector<af::array>& covariances,
-    const af::array& weights
-) {
-    int n_samples = static_cast<int>(data.dims(0));
-    int n_components = static_cast<int>(means.dims(0));
-
-    af::array log_probs = af::constant(0.0, n_samples, n_components, f64);
-
-    for (int k = 0; k < n_components; ++k) {
-        af::array pdf = GaussianPDF(data, means(k, af::span), covariances[k]);
-        pdf.eval();
-        log_probs(af::span, k) = af::log(pdf + 1e-300) + std::log(weights(k).scalar<double>());
-    }
-    log_probs.eval();
-
-    // Log-sum-exp for numerical stability
-    af::array max_log = af::max(log_probs, 1);
-    max_log.eval();
-    af::array log_probs_shifted = log_probs - af::tile(max_log, 1, n_components);
-    log_probs_shifted.eval();
-    af::array sum_exp = af::sum(af::exp(log_probs_shifted), 1);
-    sum_exp.eval();
-    af::array log_sum = max_log + af::log(sum_exp);
-    log_sum.eval();
-
-    // Responsibilities
-    af::array responsibilities = af::exp(log_probs - af::tile(log_sum, 1, n_components));
-    responsibilities.eval();
-
-    return responsibilities;
-}
-
-void Clustering::MStep(
-    const af::array& data,
-    const af::array& responsibilities,
-    af::array& means,
-    std::vector<af::array>& covariances,
-    af::array& weights,
-    const std::string& covariance_type
-) {
-    int n_samples = static_cast<int>(data.dims(0));
-    int n_features = static_cast<int>(data.dims(1));
-    int n_components = static_cast<int>(means.dims(0));
-
-    // Update weights
-    af::array nk = af::sum(responsibilities, 0).T();  // [n_components x 1]
-    nk.eval();
-    weights = nk / static_cast<double>(n_samples);
-    weights.eval();
-
-    // Update means
-    for (int k = 0; k < n_components; ++k) {
-        af::array resp_k = responsibilities(af::span, k);  // [n_samples x 1]
-        resp_k.eval();
-        af::array weighted_sum = af::sum(data * af::tile(resp_k, 1, n_features), 0);
-        weighted_sum.eval();
-        means(k, af::span) = weighted_sum / nk(k).scalar<double>();
-    }
-    means.eval();
-
-    // Update covariances
-    for (int k = 0; k < n_components; ++k) {
-        af::array resp_k = responsibilities(af::span, k);
-        resp_k.eval();
-        af::array mean_k = means(k, af::span);
-        af::array diff = data - af::tile(mean_k, n_samples, 1);
-        diff.eval();
-
-        if (covariance_type == "spherical") {
-            af::array weighted_sq = af::sum(diff * diff * af::tile(resp_k, 1, n_features), 0);
-            weighted_sq.eval();
-            double var = af::sum<double>(weighted_sq) / (nk(k).scalar<double>() * n_features);
-            covariances[k] = af::identity(n_features, n_features, f64) * var;
-            covariances[k].eval();
-        } else if (covariance_type == "diag") {
-            af::array weighted_sq = af::sum(diff * diff * af::tile(resp_k, 1, n_features), 0);
-            weighted_sq.eval();
-            af::array variances = weighted_sq / nk(k).scalar<double>();
-            variances.eval();
-            covariances[k] = af::diag(variances.T(), 0, false);
-            covariances[k].eval();
-        } else {
-            af::array weighted_diff = diff * af::tile(af::sqrt(resp_k), 1, n_features);
-            weighted_diff.eval();
-            covariances[k] = af::matmul(weighted_diff.T(), weighted_diff) / nk(k).scalar<double>();
-            covariances[k].eval();
-            // Add regularization
-            covariances[k] += af::identity(n_features, n_features, f64) * 1e-6;
-            covariances[k].eval();
-        }
-    }
-}
-
-af::array Clustering::GaussianPDF(
-    const af::array& data,
-    const af::array& mean,
-    const af::array& covariance
-) {
-    int n_samples = static_cast<int>(data.dims(0));
-    int n_features = static_cast<int>(data.dims(1));
-
-    af::array diff = data - af::tile(mean, n_samples, 1);
-    diff.eval();
-
-    // Compute (x - mu)^T @ Sigma^-1 @ (x - mu) for each sample
-    af::array cov_inv = af::inverse(covariance);
-    cov_inv.eval();
-    af::array mahalanobis = af::sum(af::matmul(diff, cov_inv) * diff, 1);
-    mahalanobis.eval();
-
-    af::array covariance_diag = af::diag(covariance);
-    covariance_diag.eval();
-    af::array log_abs_diag = af::log(af::abs(covariance_diag));
-    log_abs_diag.eval();
-    double log_det = af::sum<double>(log_abs_diag);
-    double log_norm = -0.5 * (n_features * std::log(2 * M_PI) + log_det);
-
-    af::array pdf = af::exp(log_norm - 0.5 * mahalanobis);
-    pdf.eval();
-    return pdf;
-}
-
-double Clustering::ComputeLogLikelihood(
-    const af::array& data,
-    const af::array& means,
-    const std::vector<af::array>& covariances,
-    const af::array& weights
-) {
-    int n_samples = static_cast<int>(data.dims(0));
-    int n_components = static_cast<int>(means.dims(0));
-
-    af::array weighted_probs = af::constant(0.0, n_samples, f64);
-
-    for (int k = 0; k < n_components; ++k) {
-        af::array pdf = GaussianPDF(data, means(k, af::span), covariances[k]);
-        pdf.eval();
-        weighted_probs += weights(k).scalar<double>() * pdf;
-    }
-    weighted_probs.eval();
-
-    af::array log_probs = af::log(weighted_probs + 1e-300);
-    log_probs.eval();
-    return af::sum<double>(log_probs);
-}
-
-
-#else  // No ArrayFire - CPU fallback stubs
-
-GMMResult Clustering::GMM(
-    const std::vector<std::vector<double>>& data,
-    int n_components,
-    const std::string& covariance_type,
-    int max_iter,
-    double tol,
-    int n_init,
-    unsigned int seed,
-    std::function<void(int, double)> progress_callback
-) {
-    GMMResult result;
-    result.error_message = "ArrayFire not available";
-    return result;
-}
-
-
-#endif  // CYXWIZ_HAS_ARRAYFIRE
 
 } // namespace cyxwiz

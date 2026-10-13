@@ -1,5 +1,6 @@
 #include "viewport.h"
 #include "panels/training_plot_panel.h"
+#include "ui_tokens.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/training_trace_collector.h"
 
@@ -46,12 +47,13 @@ std::optional<int> DeviceTypeFromExecutionBackend(
 }
 
 ImVec4 DeviceTypeColor(int type) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     switch (type) {
-        case 0: return ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
-        case 1: return ImVec4(0.35f, 0.95f, 0.45f, 1.0f);
-        case 2: return ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
-        case 5: return ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
-        default: return ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
+        case 0: return cyxwiz::ui::SeriesColour(t, 0);
+        case 1: return cyxwiz::ui::SeriesColour(t, 1);
+        case 2: return cyxwiz::ui::SeriesColour(t, 2);
+        case 5: return cyxwiz::ui::SeriesColour(t, 3);
+        default: return t.pending;
     }
 }
 
@@ -94,7 +96,8 @@ void Viewport::Render() {
     if (!show_window_) return;
 
     if (ImGui::Begin("Viewport", &show_window_)) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+        ImGui::TextColored(t.accent_text,
                            "System Information");
         ImGui::Separator();
 
@@ -111,7 +114,7 @@ void Viewport::Render() {
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
+        ImGui::TextColored(t.accent_text,
                            "Active Compute Runtime");
         ImGui::Separator();
 
@@ -403,22 +406,17 @@ void Viewport::Render() {
                             "%llu",
                             static_cast<unsigned long long>(
                                 trace.placement_entry_count));
-                        if (!trace.fallback_policy.empty()) {
-                            const bool run_is_strict =
-                                trace.fallback_policy ==
-                                "forbid_native_cpu_fallback";
+                        if (!trace.execution_policy.empty()) {
                             SummaryRow(
                                 "Run policy",
-                                run_is_strict
-                                    ? "Strict ArrayFire residency"
-                                    : "Compatibility with recorded fallback");
+                                cyxwiz::RecordedExecutionPolicyDisplayName(
+                                    trace.execution_policy));
                         }
                     }
 
                     const auto selected_policy =
                         next_run_policy.value_or(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     const std::string next_policy_label =
                         std::string(cyxwiz::ExecutionPolicyDisplayName(
                             selected_policy)) +
@@ -444,7 +442,7 @@ void Viewport::Render() {
                     ImGui::EndTable();
                 }
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                ImGui::TextColored(t.warning,
                                    "ArrayFire runtime device is unavailable");
             }
 
@@ -514,8 +512,8 @@ void Viewport::Render() {
                     } else {
                         ImGui::TextColored(
                             device.matrix_qualified
-                                ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                                : ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                                ? t.success
+                                : t.caution,
                             "%s",
                             device.matrix_qualified ? "Verification passed"
                                                     : "Verification failed");
@@ -532,8 +530,8 @@ void Viewport::Render() {
                         ImGui::SameLine();
                         ImGui::TextColored(
                             device.training_authorized
-                                ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                                : ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
+                                ? t.success
+                                : t.info,
                             "%s",
                             device.training_authorized
                                 ? "Training ready"
@@ -563,10 +561,9 @@ void Viewport::Render() {
                 "backend/device when a run exists. Process runtime is shown "
                 "only when no run-bound trace is available. Preferences "
                 "selection is shown separately as Next run and is applied at "
-                "training start. Native CPU fallback is reported separately "
-                "by run diagnostics.");
+                "training start.");
         } catch (const std::exception& error) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+            ImGui::TextColored(t.error,
                                "Device query failed: %s",
                                error.what());
         }
@@ -584,7 +581,7 @@ void Viewport::Render() {
             (training.has_data || training.is_training || training.is_preparing ||
              training.preparation_failed || !training.terminal_status.empty());
 
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+        ImGui::TextColored(t.accent_text,
                            "Training Summary");
         ImGui::Separator();
 
@@ -592,21 +589,21 @@ void Viewport::Render() {
             ImGui::TextDisabled("No active or completed training run");
         } else {
             const char* status = "Last run";
-            ImVec4 status_color(0.7f, 0.7f, 0.7f, 1.0f);
+            ImVec4 status_color = t.pending;
             if (training.preparation_failed) {
                 status = "Preparation failed";
-                status_color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+                status_color = t.error;
             } else if (training.is_preparing) {
                 status = "Preparing";
-                status_color = ImVec4(1.0f, 0.75f, 0.3f, 1.0f);
+                status_color = t.running;
             } else if (training.is_training) {
                 status = "Training";
-                status_color = ImVec4(0.35f, 1.0f, 0.4f, 1.0f);
+                status_color = t.running;
             } else if (!training.terminal_status.empty()) {
                 status = training.terminal_status.c_str();
                 status_color = training.terminal_status == "completed"
-                    ? ImVec4(0.35f, 1.0f, 0.4f, 1.0f)
-                    : ImVec4(1.0f, 0.75f, 0.3f, 1.0f);
+                    ? t.success
+                    : t.caution;
             }
 
             ImGui::Text("Status:");
@@ -727,8 +724,8 @@ void Viewport::Render() {
         ImGui::Text("Engine status:");
         ImGui::SameLine();
         ImGui::TextColored(
-            busy ? ImVec4(0.35f, 1.0f, 0.4f, 1.0f)
-                 : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            busy ? t.running
+                 : t.text_dim,
             "%s",
             training.is_preparing ? "Preparing"
                                   : (training.is_training ? "Training" : "Ready"));

@@ -12,6 +12,7 @@
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <cstring>
@@ -48,18 +49,20 @@ const char* ArrayFireBackendIcon(DeviceType type) {
 }
 
 ImVec4 ArrayFireBackendColor(DeviceType type) {
+    const ui::Tokens& t = ui::CurrentTokens();
     switch (type) {
-        case DeviceType::CPU: return ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
-        case DeviceType::CUDA: return ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
-        case DeviceType::OPENCL: return ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
-        case DeviceType::ONEAPI: return ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
-        default: return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+        case DeviceType::CPU: return t.series[0];
+        case DeviceType::CUDA: return t.series[1];
+        case DeviceType::OPENCL: return t.series[2];
+        case DeviceType::ONEAPI: return t.series[3];
+        default: return t.text_dim;
     }
 }
 
 } // namespace
 
 void ToolbarPanel::RenderPreferencesDialog() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
 
@@ -374,15 +377,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             : "Currently Active Backend:");
                     ImGui::SameLine();
                     if (has_run_bound_device) {
-                        ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                        ImVec4 backend_color = t.text_dim;
                         if (active_run_trace.effective_backend == "arrayfire_cpu") {
-                            backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                            backend_color = t.series[0];
                         } else if (active_run_trace.effective_backend == "arrayfire_cuda") {
-                            backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                            backend_color = t.series[1];
                         } else if (active_run_trace.effective_backend == "arrayfire_opencl") {
-                            backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                            backend_color = t.series[2];
                         } else if (active_run_trace.effective_backend == "arrayfire_oneapi") {
-                            backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                            backend_color = t.series[3];
                         }
                         ImGui::TextColored(
                             backend_color,
@@ -447,38 +450,38 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         auto* current_device = cyxwiz::Device::GetCurrentDevice();
                         if (current_device) {
                             const char* backend_name = "Unknown";
-                            ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                            ImVec4 backend_color = t.text_dim;
                             switch (current_device->GetType()) {
                                 case cyxwiz::DeviceType::CPU:
                                     backend_name = "CPU";
-                                    backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                                    backend_color = t.series[0];
                                     break;
                                 case cyxwiz::DeviceType::CUDA:
                                     backend_name = "CUDA (NVIDIA)";
-                                    backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                                    backend_color = t.series[1];
                                     break;
                                 case cyxwiz::DeviceType::OPENCL:
                                     backend_name = "OpenCL";
-                                    backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                                    backend_color = t.series[2];
                                     break;
                                 case cyxwiz::DeviceType::ONEAPI:
                                     backend_name = "oneAPI";
-                                    backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                                    backend_color = t.series[3];
                                     break;
                                 case cyxwiz::DeviceType::METAL:
                                     backend_name = "Metal (unsupported)";
-                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    backend_color = t.text_dim;
                                     break;
                                 case cyxwiz::DeviceType::VULKAN:
                                     backend_name = "Vulkan (unsupported)";
-                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    backend_color = t.text_dim;
                                     break;
                                 default:
                                     break;
                             }
                             ImGui::TextColored(backend_color, "%s %s", ICON_FA_CIRCLE_CHECK, backend_name);
                         } else {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
+                            ImGui::TextColored(t.warning, "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
                         }
                         } catch (...) {
                             ImGui::TextDisabled("Unable to query");
@@ -494,29 +497,27 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
 
                     if (has_run_bound_device &&
-                        !active_run_trace.fallback_policy.empty()) {
+                        !active_run_trace.execution_policy.empty()) {
                         const bool run_is_strict =
-                            active_run_trace.fallback_policy ==
-                            "forbid_native_cpu_fallback";
+                            active_run_trace.execution_policy ==
+                            "strict";
                         ImGui::TextDisabled(
                             training_active ? "Current run" : "Last run");
                         ImGui::SameLine(130.0f);
                         ImGui::TextColored(
                             run_is_strict
-                                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                                : ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                                ? t.success
+                                : t.warning,
                             "%s",
-                            run_is_strict
-                                ? "Strict ArrayFire residency"
-                                : "Compatibility with recorded fallback");
+                            cyxwiz::RecordedExecutionPolicyDisplayName(
+                                active_run_trace.execution_policy));
                     }
 
                     const auto next_run_policy =
                         cyxwiz::GetNextRunExecutionPolicy();
                     const auto selected_policy =
                         next_run_policy.value_or(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     ImGui::TextDisabled("Next runs");
                     ImGui::SameLine(130.0f);
                     if (training_active) {
@@ -525,21 +526,22 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const bool compatibility_clicked = ImGui::RadioButton(
                         "Compatibility##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Allow declared native CPU compatibility paths and record observed fallback");
+                            "May finish on ArrayFire's CPU backend when the selected GPU is not verified,\n"
+                            "runs stages the placement plan does not put on the device, and dumps the\n"
+                            "first batch's debug samples.");
                     }
                     ImGui::SameLine();
                     const bool strict_clicked = ImGui::RadioButton(
                         "Strict residency##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Strict);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Reject non-ArrayFire placement before training and terminate on unexpected fallback");
+                            "Stays on the selected device: no ArrayFire CPU recovery, and the run is\n"
+                            "refused before training if any stage is not placed on the device.");
                     }
                     if (training_active) {
                         ImGui::EndDisabled();
@@ -547,7 +549,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const auto persist_policy = [&](auto policy,
                                                     const char* description) {
                         std::string persistence_error;
-                        if (!cyxwiz::UpdateDefaultFallbackPolicyAtomic(
+                        if (!cyxwiz::UpdateDefaultExecutionPolicyAtomic(
                                 cyxwiz::GetComputeRuntimeConfigPath(),
                                 policy,
                                 persistence_error)) {
@@ -565,14 +567,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     };
                     if (!training_active && compatibility_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback,
+                            cyxwiz::ExecutionPolicy::Compatibility,
                             "compatibility execution policy");
                     } else if (!training_active && strict_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback,
-                            "strict ArrayFire residency policy");
+                            cyxwiz::ExecutionPolicy::Strict,
+                            "strict execution policy");
                     }
 
                     ImGui::Spacing();
@@ -589,14 +589,13 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         "Choose a candidate ArrayFire route. OK validates and commits it.");
                     if (training_active) {
                         ImGui::TextColored(
-                            ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                            t.warning,
                             "%s Training is active; device changes are disabled until the run finishes.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
                     } else {
                         ImGui::TextDisabled(
                             "The candidate remains local until you click OK.");
                     }
-                    ImGui::TextDisabled("Operator fallbacks are reported as native CPU fallback events.");
                     ImGui::Spacing();
 
                     // Initialize device list if needed
@@ -706,7 +705,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     // Device selection list
                     if (cached_devices_.empty()) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No compute devices found!");
+                        ImGui::TextColored(t.error, "No compute devices found!");
                     } else {
                         auto* active_device = cyxwiz::Device::GetCurrentDevice();
                         const auto pending_selection =
@@ -882,7 +881,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
                             ImGui::TextColored(
-                                ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                                t.warning,
                                 "%s This compute route is not authorized for normal training.",
                                 ICON_FA_TRIANGLE_EXCLAMATION);
                             ImGui::Separator();
@@ -1183,7 +1182,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         if (task_failed || !device_selection_error_.empty()) {
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextColored(
-                                ImVec4(1.0f, 0.48f, 0.45f, 1.0f),
+                                t.caution,
                                 "%s Verification did not complete: %s",
                                 ICON_FA_TRIANGLE_EXCLAMATION,
                                 task_failed
@@ -1229,7 +1228,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 std::replace(fastest_label.begin(),
                                              fastest_label.end(), '_', ' ');
                                 ImGui::TextColored(
-                                    ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
+                                    t.success,
                                     "%s Fastest verified route for the dense benchmark",
                                     ICON_FA_GAUGE_HIGH);
                                 ImGui::BulletText(
@@ -1423,7 +1422,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     nullptr,
                     ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::TextColored(
-                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                    t.error,
                     "%s Selection was not changed",
                     ICON_FA_TRIANGLE_EXCLAMATION);
                 ImGui::Separator();

@@ -721,6 +721,39 @@ NodeEditor::FindUnsupportedSequentialLayerError(
                     node->type)) {
             return EffectiveNodeName(*node) + ": " + reason;
         }
+        if (node->type == NodeType::CrossAttention) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not support Cross Attention (a two-input layer) yet; train it in Studio";
+        }
+        if (node->type == NodeType::LinearAttention) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not support Linear Attention yet (frameworks have no built-in layer for it); "
+                   "train it in Studio";
+        }
+        if (node->type == NodeType::Conv3D) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not support Conv3D (volume rows) yet; train it in Studio";
+        }
+        switch (node->type) {
+            case NodeType::CenterCrop:
+            case NodeType::RandomCrop:
+            case NodeType::HorizontalFlip:
+            case NodeType::VerticalFlip:
+            case NodeType::ImageRotate:
+            case NodeType::ColorJitter:
+            case NodeType::ImageGaussianBlur:
+            case NodeType::Grayscale:
+            case NodeType::MorphologyTransform:
+            case NodeType::AdvancedAugment:
+            case NodeType::AugmentationPreset:
+                return EffectiveNodeName(*node) +
+                       ": code export does not include image transforms yet; train it in Studio";
+            case NodeType::QualityAnalyzer:
+                return EffectiveNodeName(*node) +
+                       ": code export does not include the Quality Analyzer's filter yet; train it in Studio";
+            default:
+                break;
+        }
     }
     return std::nullopt;
 }
@@ -993,6 +1026,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -1145,6 +1179,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "    #         optimizer.zero_grad()\n";
     code += "    #         output = model(data)\n";
     code += "    #         loss = criterion(output, target)\n";
+    code += PyTorchPenaltyLines();
     code += "    #         loss.backward()\n";
     code += PyTorchStepLines();
 
@@ -1162,6 +1197,27 @@ const MLNode* NodeEditor::FindExportOptimizerNode() const {
                 return &node;
             default:
                 break;
+        }
+    }
+    return nullptr;
+}
+
+// The scheduler node fed by the export optimizer's State output (TOFIX140
+// A3), or nullptr. The compiler trains the same one.
+const MLNode* NodeEditor::FindExportSchedulerNode() const {
+    const MLNode* optimizer = FindExportOptimizerNode();
+    if (!optimizer) return nullptr;
+    for (const auto& link : links_) {
+        if (link.from_node != optimizer->id) continue;
+        for (const auto& node : nodes_) {
+            if (node.id != link.to_node) continue;
+            switch (node.type) {
+                case NodeType::StepLR: case NodeType::CosineAnnealing: case NodeType::ReduceOnPlateau:
+                case NodeType::ExponentialLR: case NodeType::WarmupScheduler:
+                    return &node;
+                default:
+                    break;
+            }
         }
     }
     return nullptr;
@@ -1236,8 +1292,68 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
                 : "        return min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * p))\n";
         }
         code += "    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_factor)\n";
+    } else if (const MLNode* scheduler = FindExportSchedulerNode()) {
+        const auto param = [scheduler](const char* key, const char* fallback) {
+            return GetParamOrDefault(*scheduler, key, fallback);
+        };
+        code += "    # Scheduler node: stepped once per epoch\n";
+        switch (scheduler->type) {
+            case NodeType::StepLR:
+                code += "    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=" + param("step_size", "10") +
+                        ", gamma=" + param("gamma", "0.1") + ")\n";
+                break;
+            case NodeType::CosineAnnealing:
+                code += "    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=" + param("T_max", "100") +
+                        ", eta_min=" + param("eta_min", "0.0") + ")\n";
+                break;
+            case NodeType::ReduceOnPlateau:
+                code += "    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=" +
+                        param("factor", "0.1") + ", patience=" + param("patience", "10") + ", threshold=" +
+                        param("threshold", "0.0001") + ", threshold_mode='abs', min_lr=" + param("min_lr", "0.0") +
+                        ")\n";
+                break;
+            case NodeType::ExponentialLR:
+                code += "    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=" + param("gamma", "0.95") +
+                        ")\n";
+                break;
+            default:
+                code += "    scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=" +
+                        param("start_factor", "0.1") + ", end_factor=1.0, total_iters=" +
+                        param("warmup_epochs", "5") + ")\n";
+                break;
+        }
     }
     return code + "\n";
+}
+
+// The regularization node feeding the export optimizer's Loss input
+// (TOFIX140 A4) as a loss term; the compiler trains the same one.
+std::string NodeEditor::PyTorchPenaltyLines() const {
+    const MLNode* optimizer = FindExportOptimizerNode();
+    if (!optimizer) return {};
+    for (const auto& link : links_) {
+        if (link.to_node != optimizer->id) continue;
+        for (const auto& node : nodes_) {
+            if (node.id != link.from_node) continue;
+            const std::string lambda = GetParamOrDefault(node, "lambda", "0.01");
+            const std::string l1 = "sum(p.abs().sum() for p in model.parameters())";
+            const std::string l2 = "sum(p.pow(2).sum() for p in model.parameters())";
+            switch (node.type) {
+                case NodeType::L1Regularization:
+                    return "    #         loss = loss + " + lambda + " * " + l1 + "  # L1 Regularization node\n";
+                case NodeType::L2Regularization:
+                    return "    #         loss = loss + " + lambda + " * " + l2 + "  # L2 Regularization node\n";
+                case NodeType::ElasticNet: {
+                    const std::string ratio = GetParamOrDefault(node, "l1_ratio", "0.5");
+                    return "    #         loss = loss + " + lambda + " * (" + ratio + " * " + l1 + " + (1 - " +
+                           ratio + ") * " + l2 + ")  # Elastic Net node\n";
+                }
+                default:
+                    break;
+            }
+        }
+    }
+    return {};
 }
 
 std::string NodeEditor::PyTorchStepLines() const {
@@ -1252,6 +1368,10 @@ std::string NodeEditor::PyTorchStepLines() const {
     code += "    #         optimizer.step()\n";
     if (node && GetParamOrDefault(*node, "lr_schedule", "none") != "none") {
         code += "    #         scheduler.step()\n";
+    } else if (const MLNode* scheduler = FindExportSchedulerNode()) {
+        code += scheduler->type == NodeType::ReduceOnPlateau
+            ? "    #     scheduler.step(val_loss)  # after validating the epoch\n"
+            : "    #     scheduler.step()  # after each epoch\n";
     }
     return code;
 }
@@ -1353,6 +1473,7 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -1662,6 +1783,7 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
                 break;
 
             case NodeType::Dense:
+            case NodeType::PReLU:
                 code += "        " + out + " = self.layer" + std::to_string(layer_idx++) + ".forward(" + input_expr(*node, 0) + ")\n";
                 record_output(out);
                 break;
@@ -1712,9 +1834,12 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             }
 
             case NodeType::Split: {
+                // Output 1 = the first split_size entries, Output 2 = the rest.
                 std::string split_size = GetParamOrDefault(*node, "split_size", "2");
-                std::string dim = GetParamOrDefault(*node, "dim", "0");
-                code += "        " + out + " = " + input_expr(*node, 0) + ".split(" + split_size + ", " + dim + ")\n";
+                std::string dim = GetParamOrDefault(*node, "dim", "1");
+                const std::string source = input_expr(*node, 0);
+                code += "        " + out + " = " + source + ".split([" + split_size + ", " + source +
+                        ".shape()[" + dim + "] - " + split_size + "], " + dim + ")\n";
                 node_outputs[node->id] = out + "[0]";
                 for (size_t i = 0; i < node->outputs.size(); ++i) {
                     pin_outputs[node->outputs[i].id] = out + "[" + std::to_string(i) + "]";
@@ -2282,6 +2407,11 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        case NodeType::PReLU:
+            code = "nn.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
+                   ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
+            break;
+
         case NodeType::PluginCustom: {
             if (!node.extension_type_id.empty())
                 code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(
@@ -2372,6 +2502,15 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
             it = node.parameters.find("embedding_dim");
             if (it != node.parameters.end()) embedding_dim = it->second;
             code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
+            break;
+        }
+
+        case NodeType::PReLU: {
+            // One shared slope shares the alpha over every non-batch axis.
+            const std::string init = GetParamOrDefault(node, "init", "0.25");
+            code = GetParamOrDefault(node, "num_parameters", "1") == "1"
+                ? "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "), shared_axes=[1])"
+                : "layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(" + init + "))";
             break;
         }
 
@@ -2483,6 +2622,15 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             it = node.parameters.find("embedding_dim");
             if (it != node.parameters.end()) embedding_dim = it->second;
             code = "layers.Embedding(input_dim=" + num_embeddings + ", output_dim=" + embedding_dim + ")";
+            break;
+        }
+
+        case NodeType::PReLU: {
+            // One shared slope shares the alpha over every non-batch axis.
+            const std::string init = GetParamOrDefault(node, "init", "0.25");
+            code = GetParamOrDefault(node, "num_parameters", "1") == "1"
+                ? "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "), shared_axes=[1])"
+                : "layers.PReLU(alpha_initializer=keras.initializers.Constant(" + init + "))";
             break;
         }
 
@@ -2809,6 +2957,11 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
         case NodeType::TensorLogicalMask:
         case NodeType::TensorIndexSelect:
             code = "";
+            break;
+
+        case NodeType::PReLU:
+            code = "cx.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
+                   ", init=" + GetParamOrDefault(node, "init", "0.25") + ")";
             break;
 
         case NodeType::PluginCustom: {

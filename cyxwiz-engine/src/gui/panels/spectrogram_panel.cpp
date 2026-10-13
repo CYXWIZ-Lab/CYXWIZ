@@ -1,5 +1,8 @@
 #include "spectrogram_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -31,19 +34,12 @@ void SpectrogramPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.28f, 0), true);
+            ui::BeginSettingsColumn("spectrogram", ImGui::GetContentRegionAvail().x * 0.28f);
             RenderSignalInput();
-            ImGui::Separator();
             RenderParameters();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -76,13 +72,11 @@ void SpectrogramPanel::RenderToolbar() {
 }
 
 void SpectrogramPanel::RenderSignalInput() {
-    ImGui::Text(ICON_FA_SIGNAL " Signal Generator");
-    ImGui::Spacing();
+    ui::SettingsSection("Signal");
 
-    ImGui::Text("Signal Type:");
     const char* signal_types[] = { "Linear Chirp", "Exponential Chirp", "Multi-Tone", "AM Signal", "FM Signal" };
     int current_type = static_cast<int>(signal_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Signal type");
     if (ImGui::Combo("##SignalType", &current_type, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(current_type);
     }
@@ -93,50 +87,40 @@ void SpectrogramPanel::RenderSignalInput() {
     switch (signal_type_) {
         case SignalType::ChirpLinear:
         case SignalType::ChirpExponential:
-            ImGui::Text("Start Freq (Hz):");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Start frequency (Hz)");
             ImGui::InputDouble("##startfreq", &start_freq_, 10.0, 50.0, "%.1f");
             start_freq_ = std::clamp(start_freq_, 10.0, sample_rate_ / 2.0);
 
-            ImGui::Text("End Freq (Hz):");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("End frequency (Hz)");
             ImGui::InputDouble("##endfreq", &end_freq_, 10.0, 50.0, "%.1f");
             end_freq_ = std::clamp(end_freq_, 10.0, sample_rate_ / 2.0);
             break;
 
         case SignalType::MultiTone:
-            ImGui::Text("Base Freq (Hz):");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Base frequency (Hz)");
             ImGui::InputDouble("##basefreq", &start_freq_, 10.0, 50.0, "%.1f");
-            ImGui::TextDisabled("(Harmonics at 2x, 3x, 4x)");
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "(Harmonics at 2x, 3x, 4x)");
             break;
 
         case SignalType::AM:
         case SignalType::FM:
-            ImGui::Text("Carrier Freq (Hz):");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Carrier frequency (Hz)");
             ImGui::InputDouble("##carrierfreq", &carrier_freq_, 10.0, 50.0, "%.1f");
             carrier_freq_ = std::clamp(carrier_freq_, 10.0, sample_rate_ / 2.0);
 
-            ImGui::Text("Modulation Freq (Hz):");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Modulation frequency (Hz)");
             ImGui::InputDouble("##modfreq", &modulation_freq_, 1.0, 10.0, "%.1f");
             modulation_freq_ = std::clamp(modulation_freq_, 0.1, 100.0);
             break;
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ui::SettingsSection("Sampling");
 
-    ImGui::Text("Sample Rate (Hz):");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Sample rate (Hz)");
     if (ImGui::InputDouble("##samplerate", &sample_rate_, 500.0, 2000.0, "%.0f")) {
         sample_rate_ = std::clamp(sample_rate_, 1000.0, 48000.0);
     }
 
-    ImGui::Text("Duration (samples):");
-    ImGui::SetNextItemWidth(-1);
     const char* durations[] = { "1024", "2048", "4096", "8192", "16384" };
     int dur_idx = 2;
     if (num_samples_ == 1024) dur_idx = 0;
@@ -145,16 +129,15 @@ void SpectrogramPanel::RenderSignalInput() {
     else if (num_samples_ == 8192) dur_idx = 3;
     else if (num_samples_ == 16384) dur_idx = 4;
 
+    ui::FieldLabel("Duration (samples)");
     if (ImGui::Combo("##numsamples", &dur_idx, durations, IM_ARRAYSIZE(durations))) {
         int sizes[] = { 1024, 2048, 4096, 8192, 16384 };
         num_samples_ = sizes[dur_idx];
     }
 
-    ImGui::Spacing();
-
     // Presets
-    ImGui::Text("Presets:");
-    if (ImGui::Button("Sweep 100-1000Hz", ImVec2(-1, 0))) {
+    ui::SettingsSection("Presets");
+    if (ui::SecondaryButton("Sweep 100-1000Hz", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::ChirpLinear;
         start_freq_ = 100.0;
         end_freq_ = 1000.0;
@@ -162,7 +145,7 @@ void SpectrogramPanel::RenderSignalInput() {
         num_samples_ = 8192;
         GenerateSignal();
     }
-    if (ImGui::Button("FM Modulation", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("FM Modulation", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::FM;
         carrier_freq_ = 500.0;
         modulation_freq_ = 5.0;
@@ -173,19 +156,15 @@ void SpectrogramPanel::RenderSignalInput() {
 }
 
 void SpectrogramPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " STFT Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("STFT");
 
-    ImGui::Text("Window Function:");
     const char* window_types[] = { "Hamming", "Hann", "Blackman", "Rectangular" };
     int current_window = static_cast<int>(window_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Window function");
     if (ImGui::Combo("##WindowType", &current_window, window_types, IM_ARRAYSIZE(window_types))) {
         window_type_ = static_cast<WindowType>(current_window);
     }
 
-    ImGui::Text("Window Size:");
-    ImGui::SetNextItemWidth(-1);
     const char* win_sizes[] = { "64", "128", "256", "512", "1024" };
     int win_idx = 2;
     if (window_size_ == 64) win_idx = 0;
@@ -194,14 +173,14 @@ void SpectrogramPanel::RenderParameters() {
     else if (window_size_ == 512) win_idx = 3;
     else if (window_size_ == 1024) win_idx = 4;
 
+    ui::FieldLabel("Window size");
     if (ImGui::Combo("##winsize", &win_idx, win_sizes, IM_ARRAYSIZE(win_sizes))) {
         int sizes[] = { 64, 128, 256, 512, 1024 };
         window_size_ = sizes[win_idx];
         hop_size_ = std::min(hop_size_, window_size_);
     }
 
-    ImGui::Text("Hop Size:");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Hop size");
     ImGui::SliderInt("##hopsize", &hop_size_, 16, window_size_, "%d");
     hop_size_ = std::clamp(hop_size_, 16, window_size_);
 
@@ -209,27 +188,21 @@ void SpectrogramPanel::RenderParameters() {
 
     // Overlap percentage
     float overlap = 100.0f * (1.0f - static_cast<float>(hop_size_) / window_size_);
-    ImGui::Text("Overlap: %.1f%%", overlap);
+    ImGui::TextColored(ui::CurrentTokens().text_dim, "Overlap: %.1f%%", overlap);
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text(ICON_FA_PALETTE " Display");
+    ui::SettingsSection("Display");
 
     ImGui::Checkbox("Log Scale (dB)", &log_scale_);
 
     if (log_scale_) {
-        ImGui::Text("Dynamic Range:");
-        ImGui::SetNextItemWidth(-1);
+        ui::FieldLabel("Dynamic range");
         static const double kDynMin = 20.0, kDynMax = 120.0;
         ImGui::SliderScalar("##dynrange", ImGuiDataType_Double, &dynamic_range_, &kDynMin, &kDynMax, "%.0f dB");
     }
 
-    ImGui::Text("Color Scale:");
     const char* color_scales[] = { "Viridis", "Plasma", "Inferno", "Grayscale" };
     int current_color = static_cast<int>(color_scale_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Color scale");
     if (ImGui::Combo("##ColorScale", &current_color, color_scales, IM_ARRAYSIZE(color_scales))) {
         color_scale_ = static_cast<ColorScale>(current_color);
     }
@@ -241,15 +214,17 @@ void SpectrogramPanel::RenderLoadingIndicator() {
 }
 
 void SpectrogramPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (signal_.empty()) {
-        ImGui::TextDisabled("No signal data. Generate a signal first.");
+        ui::EmptyState(ICON_FA_CHART_AREA, "No signal yet",
+                       "Generate a signal, then Compute.");
         return;
     }
 

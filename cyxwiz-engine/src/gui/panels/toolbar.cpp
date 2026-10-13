@@ -1,5 +1,4 @@
 #include "toolbar.h"
-#include "plot_window.h"
 #include "../theme.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"

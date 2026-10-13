@@ -1,6 +1,7 @@
 // DataInputDialog dataset summary rendering.
 
 #include "node_config_dialog.h"
+#include "ui_tokens.h"
 
 #include <string>
 
@@ -121,7 +122,7 @@ void DataInputDialog::RenderDatasetSummaryPanel() {
     if (IsApplySupported()) {
         ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
     } else {
-        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error,
                            "Apply path: %s", CurrentApplySummary().c_str());
     }
 }

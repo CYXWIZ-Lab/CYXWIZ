@@ -1,3 +1,9 @@
+#include "../core/legacy_dataset_batchers.h"
+#include "../core/session_query_service.h"
+#include "../core/pipeline_type_names.h"
+#include "../core/image_quality_analysis.h"
+#include "../core/training_export_metadata.h"
+#include "separate_windows.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -15,6 +21,7 @@
 #include "panel_memory.h"
 #include "../core/live_graph_compile.h"
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
@@ -35,7 +42,6 @@
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/compute_runtime_config.h"
 #include "../core/compute_runtime_paths.h"
-#include "../core/placement_observation_cache_session.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "frame_metrics.h"
@@ -44,10 +50,8 @@
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
 #include "panels/training_plot_panel.h"
-#include "panels/plot_test_control.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
-#include "panels/data_explorer_panel.h"
 #include "panels/annotation_editor_panel.h"
 #include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
@@ -63,7 +67,6 @@
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
-#include "panels/python_plot_window_registry.h"
 #include "panels/test_results_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
@@ -145,11 +148,13 @@
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
 #include "data_studio/data_studio_panel.h"
+#include "dashboard/dashboard_links.h"
 #include "../plugin/plugin_manager.h"
 #include "../plugin/plugin_context.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../core/async_task_manager.h"
+#include "../core/dataset_catalog.h"
 #include "../scripting/scripting_engine.h"
 #include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
@@ -182,6 +187,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
 #include "../core/model_converter.h"
@@ -548,7 +554,6 @@ MainWindow::MainWindow()
     // Merge persisted GPU placement evidence (runtime fallbacks, preflight
     // probes) into the process-global store so the first compile of this
     // session already routes around known-unsafe device/shape keys.
-    cyxwiz::LoadPlacementObservationCacheAtStartup();
 
     // Original panels
     node_editor_ = std::make_unique<NodeEditor>();
@@ -617,10 +622,8 @@ MainWindow::MainWindow()
             }
         });
 
-    plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
-    data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
     annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
     visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
@@ -672,19 +675,6 @@ MainWindow::MainWindow()
     distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
 
-    // Wire Data Explorer Hub to analysis panels
-    if (data_explorer_panel_) {
-        data_explorer_panel_->SetPanelReferences(
-            descriptive_stats_panel_.get(),
-            correlation_matrix_panel_.get(),
-            regression_panel_.get(),
-            outlier_detection_panel_.get(),
-            missing_value_panel_.get(),
-            data_profiler_panel_.get()
-        );
-        data_explorer_panel_->SetVisualizationPanel(visualization_panel_.get());
-    }
-
     // Connect TableViewer to VisualizationPanel
     if (table_viewer_ && visualization_panel_) {
         table_viewer_->SetVisualizationPanel(visualization_panel_.get());
@@ -694,6 +684,7 @@ MainWindow::MainWindow()
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
+    feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
@@ -812,6 +803,29 @@ MainWindow::MainWindow()
             spdlog::info("Opened Node Editor panel from Data Studio");
         }
     });
+    // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
+    if (node_editor_) {
+        node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
+            if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
+        });
+        node_editor_->SetOpenDataStudioQueryCallback([this](const std::string& dataset, const std::string& sql) {
+            if (data_studio_panel_) data_studio_panel_->ShowQuery(dataset, sql);
+        });
+        // Add to Dashboard from Data Studio's Visualize and Query tabs (TOFIX134 P3.11).
+        auto& links = cyxwiz::dashboard::DashboardLinks();
+        links.list = [this](const std::string& dataset) { return node_editor_->DashboardTargets(dataset); };
+        links.new_source = [this](const std::string& dataset) { return node_editor_->DashboardSourceFor(dataset); };
+        links.add = [this](int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget) {
+            node_editor_->QueueDashboardWidget(node_id, dataset, widget);
+        };
+    }
+    // Query results open in the Table Viewer (TOFIX134 P3.3).
+    data_studio_panel_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
+        if (table_viewer_ && table) {
+            table_viewer_->SetTable(table);
+            table_viewer_->Show();
+        }
+    });
 
     // Set NAS panel callbacks for node editor integration
     nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
@@ -841,7 +855,6 @@ MainWindow::MainWindow()
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
     // Registration is deferred - actual Python import happens on first script execution
     if (scripting_engine_) {
-        scripting_engine_->RegisterTrainingDashboard(training_plot_panel_.get());
     }
 
     // Connect Viewport to TrainingPlotPanel for real-time metrics display
@@ -1007,202 +1020,16 @@ MainWindow::MainWindow()
         spdlog::info("App theme changed: {}", theme_index);
     });
 
-    toolbar_->SetLoadCheckpointCallback([this]() {
-        auto& training = cyxwiz::TrainingManager::Instance();
-        auto& testing = cyxwiz::TestManager::Instance();
-        if (training.IsTrainingActive() || testing.IsTestingActive()) {
-            ShowOperationError("Cannot load checkpoint",
-                "Stop the active training or testing task first.");
-            return;
-        }
-        if (!node_editor_) {
-            ShowOperationError("Cannot load checkpoint", "The node editor is unavailable.");
-            return;
-        }
-        if (node_editor_->GetNodes().empty()) {
-            // The checkpoint's weights are loaded into the model built from the
-            // graph on the canvas; without that graph there is nothing to load into.
-            ShowOperationError("Cannot load checkpoint",
-                "The canvas is empty. Open the graph this checkpoint was trained with, "
-                "Apply its Data Inputs, then load the checkpoint.");
-            return;
-        }
+    toolbar_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
 
-        auto& project = cyxwiz::ProjectManager::Instance();
-        const std::string default_path = project.HasActiveProject()
-            ? project.GetCheckpointsPath()
-            : std::string();
-        auto selected = cyxwiz::FileDialogs::SelectFolder(
-            "Select Checkpoint or Training Run",
-            default_path.empty() ? nullptr : default_path.c_str());
-        if (!selected) {
-            return;
-        }
 
-        const auto nodes = node_editor_->GetNodes();
-        const auto links = node_editor_->GetLinks();
-        BuildCompileResult(nodes, links);
-        if (!compile_result_success_) {
-            compile_result_mode_ = CompileResultMode::Compile;
-            compile_result_message_ =
-                "Cannot load checkpoint: the open graph must compile first. It should be the "
-                "graph the checkpoint was trained with, with its Data Inputs applied.";
-            show_compile_result_popup_ = true;
-            spdlog::error(
-                "LoadCheckpoint: active graph did not pass the compile gate.");
-            return;
-        }
-
-        cyxwiz::TrainingConfiguration config;
-        try {
-            cyxwiz::GraphCompiler compiler;
-            config = compiler.Compile(nodes, links);
-        } catch (const std::exception& exception) {
-            ShowOperationError("Cannot load checkpoint",
-                std::string("Graph compilation failed: ") + exception.what());
-            return;
-        }
-
-        std::ostringstream fingerprint;
-        fingerprint << std::hex << HashGraphStructure(nodes, links);
-        const std::string graph_fingerprint = fingerprint.str();
-        const std::string selected_path = *selected;
-        const std::string materialization_project_root =
-            project.GetProjectRoot();
-        auto load_result =
-            std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
-        std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
-            training_plot_panel_;
-
-        cyxwiz::AsyncTaskManager::Instance().RunAsync(
-            "Load checkpoint for testing",
-            [config = std::move(config), nodes, links, selected_path,
-             graph_fingerprint, load_result,
-             materialization_project_root](cyxwiz::LambdaTask& task) {
-                auto evaluation_config = config;
-                task.ReportProgress(0.05f,
-                                    "Preparing evaluation dataset...");
-                std::string effective_dataset_name =
-                    evaluation_config.dataset_name;
-                if (effective_dataset_name.empty()) {
-                    effective_dataset_name =
-                        evaluation_config.dataset_roles.train.dataset_name;
-                }
-                if (effective_dataset_name.empty()) {
-                    throw std::runtime_error(
-                        "Checkpoint testing cannot resolve the graph's "
-                        "source dataset. Apply the Data Input node first.");
-                }
-
-                auto& registry = cyxwiz::DataRegistry::Instance();
-                cyxwiz::PipelineOperatorExecutionContext materialization_context;
-                materialization_context.cancellation_requested =
-                    [&task]() { return task.ShouldStop(); };
-                const auto materialized =
-                    cyxwiz::PipelineMaterializer::Materialize(
-                        nodes, links, registry, effective_dataset_name,
-                        GraphMaterializationCacheConfig(
-                            materialization_project_root),
-                        [&task](
-                            const cyxwiz::PipelineOperatorProgress& event) {
-                            const float progress =
-                                0.05f + 0.55f *
-                                    std::clamp(event.progress, 0.0f, 1.0f);
-                            task.ReportProgress(
-                                progress,
-                                event.message.empty()
-                                    ? event.stage
-                                    : event.message);
-                        },
-                        std::move(materialization_context));
-                if (materialized.failure_kind ==
-                    cyxwiz::MaterializationFailureKind::Cancelled) {
-                    return;
-                }
-                if (!materialized.success) {
-                    throw std::runtime_error(
-                        "Checkpoint evaluation preprocessing failed: " +
-                        materialized.error_message);
-                }
-                if (!materialized.effective_dataset_name.empty()) {
-                    effective_dataset_name =
-                        materialized.effective_dataset_name;
-                }
-                std::string effective_label =
-                    evaluation_config.dataset_roles.train.label_column.empty()
-                        ? evaluation_config.target.primary_column
-                        : evaluation_config.dataset_roles.train.label_column;
-                evaluation_config.dataset_name = effective_dataset_name;
-                evaluation_config.dataset_roles.train.dataset_name =
-                    effective_dataset_name;
-                evaluation_config.dataset_roles.train.label_column =
-                    effective_label;
-                task.ReportProgress(0.65f, "Inspecting checkpoint...");
-                *load_result = cyxwiz::TrainingManager::Instance()
-                    .LoadCheckpointForEvaluation(
-                        evaluation_config,
-                        cyxwiz::DataRegistry::Instance().GetArrowDataset(
-                            evaluation_config.dataset_name),
-                        selected_path, graph_fingerprint,
-                        [&task]() { return task.IsCancelRequested(); });
-                if (task.IsCancelRequested()) {
-                    return;
-                }
-                if (!load_result->success) {
-                    throw std::runtime_error(load_result->error_message);
-                }
-                task.ReportProgress(1.0f, "Checkpoint loaded for testing");
-            },
-            nullptr,
-            [this, lifetime = std::weak_ptr<int>(test_callback_lifetime_), dashboard, load_result](
-                bool success, const std::string& error) {
-                if (!success || !load_result->success) {
-                    const std::string reason = error.empty() ? load_result->error_message : error;
-                    if (!lifetime.expired()) {
-                        ShowOperationError("Cannot load checkpoint", reason);
-                    } else {
-                        spdlog::error("LoadCheckpoint: {}", reason);
-                    }
-                    return;
-                }
-
-                const bool has_validation =
-                    !load_result->metadata.val_loss_history.empty() ||
-                    !load_result->metadata.val_accuracy_history.empty() ||
-                    load_result->metadata.val_loss != 0.0f ||
-                    load_result->metadata.val_accuracy != 0.0f;
-                if (auto panel = dashboard.lock()) {
-                    panel->SetActiveCheckpointLoaded(
-                        load_result->resolved_checkpoint_path,
-                        load_result->metadata.epoch,
-                        load_result->metadata.val_loss,
-                        load_result->metadata.val_accuracy,
-                        has_validation);
-                    panel->SetVisible(true);
-                }
-                spdlog::info(
-                    "LoadCheckpoint: active model is ready for Train > Test");
-            });
-    });
-
-    toolbar_->SetTogglePlotTestControlCallback([this]() {
-        if (plot_test_control_) {
-            plot_test_control_->Toggle();
-        }
-    });
-
+    // Data enters only through Data Input nodes: both open a new one's dialog.
     toolbar_->SetImportDatasetCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel");
-        }
+        if (node_editor_) node_editor_->AddDataInputAndConfigure();
     });
 
     toolbar_->SetCreateCustomDatasetCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel");
-        }
+        if (node_editor_) node_editor_->AddDataInputAndConfigure();
     });
 
     // Preprocess - opens Feature Scaling panel
@@ -1228,11 +1055,9 @@ MainWindow::MainWindow()
         }
     });
 
+    // Row counts, columns and value summaries: Data Studio's Profile tab.
     toolbar_->SetDatasetStatisticsCallback([this]() {
-        if (data_explorer_panel_) {
-            data_explorer_panel_->SetVisible(true);
-            spdlog::info("Opened Data Explorer panel for statistics");
-        }
+        if (data_studio_panel_) data_studio_panel_->ShowProfile(data_studio_panel_->GetActiveDataset());
     });
 
     // Compile Graph - dry-run the graph compilation and show results in a popup
@@ -1366,6 +1191,19 @@ MainWindow::MainWindow()
     const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
     cyxwiz::TestManager::Instance().SetOnTestingEnd([this, test_window_lifetime](bool success, const cyxwiz::TestingMetrics& metrics) {
         if (test_window_lifetime.expired()) return;
+        if (success && !metrics.regression_mode && !metrics.causal_lm_mode && !metrics.ground_truth.empty()) {
+            // The run's per-sample results as the "test_predictions" table, so
+            // the ROC / PR nodes and panels can read them like any dataset.
+            std::vector<std::string> class_names;
+            for (const auto& c : metrics.per_class_metrics) class_names.push_back(c.class_name);
+            if (auto table = cyxwiz::BuildTestPredictionsTable(metrics.ground_truth, metrics.predictions,
+                                                               metrics.confidences, metrics.class_probabilities,
+                                                               metrics.probability_classes, class_names)) {
+                cyxwiz::DataRegistry::Instance().RegisterArrowTable(table, cyxwiz::kTestPredictionsDataset);
+                spdlog::info("Published {} test predictions as '{}'", table->num_rows(),
+                             cyxwiz::kTestPredictionsDataset);
+            }
+        }
         if (test_results_panel_) {
             test_results_panel_->SetResults(metrics);
             test_results_panel_->Show();
@@ -2478,6 +2316,10 @@ MainWindow::MainWindow()
 
     // Set up Go to Line callback
     if (script_editor_) script_editor_->SetGoToLineRequest([this]() { if (toolbar_) toolbar_->OpenGoToLineDialog(); });
+    if (script_editor_)
+        script_editor_->SetOpenImageCallback([this](const std::vector<unsigned char>& png, const std::string& title) {
+            if (plot_output_panel_) plot_output_panel_->ShowImage(png, title);
+        });
     if (variable_explorer_) {
         // Variable Explorer (TOFIX133 P5): the session or an open notebook;
         // View data opens the value in the Table Viewer.
@@ -2654,9 +2496,10 @@ MainWindow::MainWindow()
 
             // Open text-based files in script editor
             if (ext == ".py" || ext == ".cyx" || ext == ".txt" ||
-                ext == ".json" || ext == ".md" || ext == ".csv" ||
+                ext == ".json" || ext == ".md" || ext == ".csv" || ext == ".tsv" ||
                 ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
                 ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+                script_editor_->SetVisible(true);  // a closed Script Editor opens
                 script_editor_->OpenFile(item.absolute_path);
                 spdlog::info("Opened file in script editor: {}", item.name);
             }
@@ -2665,6 +2508,13 @@ MainWindow::MainWindow()
 
     asset_browser_->SetOnCreateDataInput([this](const std::string& path) {
         if (node_editor_) node_editor_->AddDataInputFromAsset(path);
+    });
+
+    // A loaded dataset opens in Data Studio's Query tab (TOFIX140).
+    asset_browser_->SetOnOpenInDataStudio([this](const std::string& dataset) {
+        if (!data_studio_panel_) return;
+        data_studio_panel_->ShowQuery(dataset, "SELECT * FROM \"" + dataset + "\" LIMIT 100");
+        ImGui::SetWindowFocus("Data Studio");
     });
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)
@@ -2749,12 +2599,7 @@ MainWindow::~MainWindow() {
 
     // Persist placement evidence gathered this session (covers compile-time
     // probe results even when no training ran).
-    cyxwiz::SavePlacementObservationCache();
 
-    // IMPORTANT: Destroy panels that use PlotManager/Python BEFORE scripting_engine_
-    // PlotWindow destructor calls PlotManager::DeletePlot() which may use Python
-    spdlog::info("~MainWindow: plot_test_control_ (before scripting_engine)");
-    plot_test_control_.reset();
     spdlog::info("~MainWindow: training_plot_panel_ (before scripting_engine)");
     training_plot_panel_.reset();
 
@@ -2936,10 +2781,8 @@ MainWindow::~MainWindow() {
     connection_dialog_.reset();
     spdlog::info("~MainWindow: table_viewer_");
     table_viewer_.reset();
-    spdlog::info("~MainWindow: data_explorer_panel_");
-    data_explorer_panel_.reset();
     // script_editor_ and console_ already reset with the scripting-engine panels.
-    // plot_test_control_, training_plot_panel_ already reset at the beginning
+    // training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
     spdlog::info("~MainWindow: toolbar_");
@@ -3165,6 +3008,7 @@ void MainWindow::ResetDockLayout() {
     }
     SetDefaultPanelVisibility(true);
     ForgetRememberedPanels();
+    ::gui::MoveAllWindowsBack();
     spdlog::info("Dock layout reset requested");
 }
 
@@ -3175,6 +3019,40 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    // Dataset labels for the catalog: each Data Input node's name for its
+    // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1,
+    // and each node's name for the table a pipeline run made from it.
+    static double labels_at = -1.0;
+    if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
+        labels_at = ImGui::GetTime();
+        std::map<std::string, std::string> labels, targets, sources;
+        for (const auto& n : node_editor_->GetNodes()) {
+            if (n.type != gui::NodeType::DataInput) {
+                // PipelineExecutor names a node's output ds_operator_<Type>_<id>.
+                const std::string type = cyxwiz::PipelineTypeName(n.type);
+                if (type != "Unknown" && !n.name.empty()) labels.emplace("ds_operator_" + type + "_" + std::to_string(n.id), n.name);
+                continue;
+            }
+            std::vector<std::string> names{"ds_datainput_" + std::to_string(n.id)};  // read for a plot or a run (PipelineExecutor)
+            auto it = n.parameters.find("dataset_name");
+            if (it != n.parameters.end() && !it->second.empty()) names.push_back(it->second);
+            auto label = n.parameters.find("label_column");
+            auto file = n.parameters.find("file_path");
+            for (const auto& dataset : names) {
+                if (!n.name.empty()) labels.emplace(dataset, n.name);
+                if (label != n.parameters.end() && !label->second.empty()) targets.emplace(dataset, label->second);
+                if (file != n.parameters.end() && !file->second.empty()) sources.emplace(dataset, file->second);
+            }
+        }
+        cyxwiz::DatasetCatalog::Instance().SetTargets(std::move(targets));
+        cyxwiz::DatasetCatalog::Instance().SetSources(std::move(sources));
+        static size_t labels_seen = 0;
+        if (labels.size() != labels_seen) {
+            labels_seen = labels.size();
+            spdlog::info("Dataset catalog: {} dataset label(s) from the graph", labels_seen);
+        }
+        cyxwiz::DatasetCatalog::Instance().SetLabels(std::move(labels));
+    }
     UpdateLiveCompile();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
@@ -3205,10 +3083,8 @@ void MainWindow::Render() {
     // Render new panels
     TimedRender("asset browser", asset_browser_);
     TimedRender("training plot", training_plot_panel_);  // Now "Training Dashboard"
-    TimedRender("plot test control", plot_test_control_);
     TimedRender("script editor", script_editor_);
     TimedRender("table viewer", table_viewer_);
-    TimedRender("data explorer", data_explorer_panel_);
     TimedRender("annotation editor", annotation_editor_panel_);
     TimedRender("visualization", visualization_panel_);
     TimedRender("connection dialog", connection_dialog_);
@@ -3230,13 +3106,6 @@ void MainWindow::Render() {
     TimedRender("import dialog", import_dialog_);
     TimedRender("deployment dialog", deployment_dialog_);
     TimedRender("studio debugger", studio_debugger_panel_);
-
-    // Render Python-created plot windows (cyxwiz_plotting)
-    for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
-        if (plot_window) {
-            plot_window->Render();
-        }
-    }
 
     // Render Model Analysis panels (Phase 2)
     TimedRender("model summary", model_summary_panel_);
@@ -3407,6 +3276,9 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
 
 void MainWindow::UpdateLiveCompile() {
     if (!live_compile_ || !node_editor_) return;
+    // A Data Pipeline graph has no model: no training compile (it runs with
+    // Execute Pipeline or a Plot node).
+    if (node_editor_->GetExecutionMode() == gui::ExecutionMode::DuckDBPipeline) return;
     // Counting parameters builds the model once; not while training uses
     // the device.
     const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
@@ -3502,6 +3374,7 @@ void MainWindow::RenderDockSpace() {
             first_time_layout_ = false;
         }
 
+        ::gui::SetMainDockSpace(dockspace_id);
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
         // Draw Unreal-style active tab indicators on all dock nodes
@@ -3579,7 +3452,7 @@ void MainWindow::BuildInitialDockLayout() {
         ImGui::DockBuilderSplitNode(dock_id_right, ImGuiDir_Down, 0.45f, nullptr, &dock_id_right);
     for (const char* name : {"Nodes", "Pattern Browser"}) ImGui::DockBuilderDockWindow(name, dock_id_left);
     for (const char* name : {"Info", "Wallet"}) ImGui::DockBuilderDockWindow(name, dock_id_right_bottom);
-    for (const char* name : {"Table Viewer", "Data Explorer", "Annotation Editor", "###Visualizer", "Query Console",
+    for (const char* name : {"Table Viewer", "Annotation Editor", "###Visualizer", "Query Console",
                              "Plot Output", "###CloudBrowser", "###DatasetManager", "Plugin Manager"})
         ImGui::DockBuilderDockWindow(name, dock_id_center_right);
     for (const char* name : {"###VariableExplorer", "Background Tasks", "Job Status & Orchestration",
@@ -3629,7 +3502,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Data
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
     add("Table Viewer", ICON_FA_TABLE, table_viewer_, "Data");
-    add("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_, "Data");
     add("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_, "Data");
     add("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_, "Data");
     add("Query Console", ICON_FA_MAGNIFYING_GLASS_CHART, query_console_, "Data");
@@ -3682,7 +3554,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
 
     // Main panels - hide by default
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
-    if (plot_test_control_) plot_test_control_->SetVisible(false);
     if (script_editor_) script_editor_->SetVisible(false);
     if (table_viewer_) table_viewer_->SetVisible(false);
     if (job_status_panel_) job_status_panel_->SetVisible(false);
@@ -3891,6 +3762,14 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "StartTrainingFromGraph: using project checkpoint directory '{}'",
                 config.checkpoint_dir);
         }
+        // Embedding Output: a relative file path is in the project folder.
+        if (config.embedding_output && project.HasActiveProject() &&
+            std::filesystem::path(config.embedding_output_path).is_relative()) {
+            config.embedding_output_path =
+                (std::filesystem::path(project.GetProjectRoot()) / config.embedding_output_path)
+                    .lexically_normal()
+                    .string();
+        }
         // Like DataInput paths, a relative warm-start checkpoint is project-relative.
         if (!config.initialize_from_checkpoint.empty() && project.HasActiveProject() &&
             std::filesystem::path(config.initialize_from_checkpoint).is_relative()) {
@@ -4052,8 +3931,8 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
             kPopupTitle, nullptr, ImGuiWindowFlags_NoResize)) {
         const bool risky = materialization_memory_confirmation_risk_ == "risky";
         const ImVec4 risk_color = risky
-            ? ImVec4(1.0f, 0.48f, 0.30f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+            ? cyxwiz::ui::CurrentTokens().caution
+            : cyxwiz::ui::CurrentTokens().warning;
         ImGui::TextColored(
             risk_color, "%s memory estimate",
             risky ? "Risky" : "Warning");
@@ -5661,7 +5540,7 @@ void MainWindow::RenderOperationErrorPopup() {
     }
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", operation_error_title_.c_str());
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", operation_error_title_.c_str());
         ImGui::Separator();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 540.0f);
         ImGui::TextUnformatted(operation_error_message_.c_str());
@@ -5695,6 +5574,7 @@ void MainWindow::RenderCompileResultPopup() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(760, 540), ImVec2(FLT_MAX, FLT_MAX));
 
     if (ImGui::BeginPopupModal(popup_title, nullptr)) {
+        const cyxwiz::ui::Tokens& tok = cyxwiz::ui::CurrentTokens();
         // === Header line: overall status ===
         size_t error_count = 0, warn_count = 0, info_count = 0;
         for (const auto& issue : compile_result_issues_) {
@@ -5706,36 +5586,36 @@ void MainWindow::RenderCompileResultPopup() {
         }
 
         if (compile_result_mode_ == CompileResultMode::BlockedTrain) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[BLOCKED]  Training cannot start - fix the errors below");
         } else if (compile_result_mode_ == CompileResultMode::BlockedDebug) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[BLOCKED]  Local Debug cannot run - fix the errors below");
         } else if (compile_result_mode_ == CompileResultMode::Debug) {
             // The Local Debug subtitle mirrors the compile-mode header
             // shape but makes it clear the tensors that produced these
             // findings were synthetic, not the user's dataset.
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.75f, 1.0f),
+            ImGui::TextColored(tok.text_dim,
                                "1 forward + 1 backward pass, synthetic data");
             ImGui::Spacing();
             if (compile_result_success_ && warn_count == 0) {
-                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                ImGui::TextColored(tok.success,
                                    "[OK]  Debug pass succeeded");
             } else if (compile_result_success_) {
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                ImGui::TextColored(tok.warning,
                                    "[OK with warnings]  Debug pass succeeded - %zu warning(s)", warn_count);
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                ImGui::TextColored(tok.error,
                                    "[FAIL]  Debug pass hit %zu error(s)", error_count);
             }
         } else if (compile_result_success_ && warn_count == 0) {
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.success,
                                "[OK]  Graph is valid and ready to train");
         } else if (compile_result_success_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+            ImGui::TextColored(tok.warning,
                                "[OK with warnings]  Graph is valid - %zu warning(s)", warn_count);
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(tok.error,
                                "[FAIL]  Graph has %zu error(s)", error_count);
         }
         ImGui::Separator();
@@ -5769,20 +5649,20 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::PopStyleColor();
         };
 
-        render_metric("Errors", error_count, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        render_metric("Errors", error_count, tok.error);
         ImGui::SameLine();
-        render_metric("Warnings", warn_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+        render_metric("Warnings", warn_count, tok.warning);
         ImGui::SameLine();
-        render_metric("Info", info_count, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+        render_metric("Info", info_count, tok.info);
         if (!compile_result_backend_placements_.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            render_metric("GPU", gpu_count, ImVec4(0.45f, 0.9f, 0.5f, 1.0f));
+            render_metric("GPU", gpu_count, tok.success);
             ImGui::SameLine();
-            render_metric("CPU", cpu_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+            render_metric("CPU", cpu_count, tok.warning);
             ImGui::SameLine();
-            render_metric("Unknown", unknown_count, ImVec4(0.75f, 0.75f, 0.78f, 1.0f));
+            render_metric("Unknown", unknown_count, tok.pending);
         }
         ImGui::Spacing();
 
@@ -5795,19 +5675,19 @@ void MainWindow::RenderCompileResultPopup() {
                 } else {
                     ImGui::PushTextWrapPos(0.0f);
                     for (const auto& issue : compile_result_issues_) {
-                        ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                        ImVec4 color = tok.text;
                         const char* tag = "INFO";
                         switch (issue.level) {
                             case cyxwiz::IssueLevel::Error:
-                                color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                                color = tok.error;
                                 tag = "ERROR";
                                 break;
                             case cyxwiz::IssueLevel::Warning:
-                                color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                                color = tok.warning;
                                 tag = "WARNING";
                                 break;
                             case cyxwiz::IssueLevel::Info:
-                                color = ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+                                color = tok.info;
                                 tag = "INFO";
                                 break;
                         }
@@ -5865,15 +5745,15 @@ void MainWindow::RenderCompileResultPopup() {
                         ImGui::TableHeadersRow();
 
                         for (const auto& placement : compile_result_backend_placements_) {
-                            ImVec4 status_color(0.75f, 0.75f, 0.75f, 1.0f);
+                            ImVec4 status_color = tok.pending;
                             if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
-                                status_color = ImVec4(0.45f, 0.9f, 0.5f, 1.0f);
+                                status_color = tok.success;
                             } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu ||
                                        placement.status == cyxwiz::BackendPlacementStatus::Mixed ||
                                        placement.status == cyxwiz::BackendPlacementStatus::Risk) {
-                                status_color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                                status_color = tok.warning;
                             } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
-                                status_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                                status_color = tok.error;
                             }
 
                             std::string node_label = placement.node_type;
@@ -5894,10 +5774,6 @@ void MainWindow::RenderCompileResultPopup() {
                             }
                             if (placement.HasObservationMetadata()) {
                                 reason_label += "\nObservation";
-                                if (!placement.observation_source.empty()) {
-                                    reason_label += " source=" +
-                                        placement.observation_source;
-                                }
                                 if (!placement.observation_dtype.empty()) {
                                     reason_label += " dtype=" +
                                         placement.observation_dtype;
@@ -5913,14 +5789,6 @@ void MainWindow::RenderCompileResultPopup() {
                                 if (!placement.observation_device.empty()) {
                                     reason_label += "\nDevice: " +
                                         placement.observation_device;
-                                }
-                                if (!placement.observation_shape_signature.empty()) {
-                                    reason_label += "\nShape: " +
-                                        placement.observation_shape_signature;
-                                }
-                                if (!placement.observation_detail.empty()) {
-                                    reason_label += "\nDetail: " +
-                                        placement.observation_detail;
                                 }
                             }
 
@@ -6145,7 +6013,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
 
 void MainWindow::RenderSidebar() {
     // Render the Unreal-style sidebar (auto-hides, appears on hover)
-    GetDockStyle().RenderSidebarToggles();
+    GetDockStyle().RenderSidebarToggles(StatusBarHeight());
 }
 
 
@@ -6327,6 +6195,9 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
     spdlog::info("Project opened: {}", project_root);
 
     if (console_) console_->SetProjectRoot(project_root);
+    // Saved query results (dashboards) live in the project.
+    cyxwiz::SessionQueryService::Instance().SetProjectRoot(project_root);
+    cyxwiz::SetImageQualityProjectRoot(project_root);
 
     // Load project settings and layout
     LoadProjectSettings();
@@ -6347,6 +6218,8 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
+    cyxwiz::SessionQueryService::Instance().SetProjectRoot("");
+    cyxwiz::SetImageQualityProjectRoot("");
 
     // A pipeline run writes into the closed project's artifact/export paths;
     // it stops with the project (TOFIX101 section 7).
@@ -6411,18 +6284,18 @@ void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
     ImGui::SameLine(0.0f, 16.0f);
     switch (status.state) {
         case SetupState::Pending:
-            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s %s", ICON_FA_SPINNER,
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().running, "%s %s", ICON_FA_SPINNER,
                                status.message.c_str());
             break;
         case SetupState::Ready:
             // Confirm briefly, then get out of the way.
             if (age < std::chrono::seconds(8)) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s %s",
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "%s %s",
                                    ICON_FA_CIRCLE_CHECK, status.message.c_str());
             }
             break;
         case SetupState::Failed:
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "%s Python environment setup failed",
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s Python environment setup failed",
                                ICON_FA_TRIANGLE_EXCLAMATION);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", status.message.c_str());
@@ -6449,6 +6322,7 @@ void MainWindow::RenderStatusBar() {
     const float status_bar_height = StatusBarHeight();
 
     // Position status bar at the bottom of the screen
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height));
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, status_bar_height));
 
@@ -6504,6 +6378,186 @@ void MainWindow::RenderStatusBar() {
 
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+}
+
+// Train > Load Checkpoint for Testing, also offered by Feature Importance:
+// compiles the graph, prepares its data and makes the checkpoint the active model.
+void MainWindow::LoadCheckpointForTesting() {
+    auto& training = cyxwiz::TrainingManager::Instance();
+    auto& testing = cyxwiz::TestManager::Instance();
+    if (training.IsTrainingActive() || testing.IsTestingActive()) {
+        ShowOperationError("Cannot load checkpoint",
+            "Stop the active training or testing task first.");
+        return;
+    }
+    if (!node_editor_) {
+        ShowOperationError("Cannot load checkpoint", "The node editor is unavailable.");
+        return;
+    }
+    if (node_editor_->GetNodes().empty()) {
+        // The checkpoint's weights are loaded into the model built from the
+        // graph on the canvas; without that graph there is nothing to load into.
+        ShowOperationError("Cannot load checkpoint",
+            "The canvas is empty. Open the graph this checkpoint was trained with, "
+            "Apply its Data Inputs, then load the checkpoint.");
+        return;
+    }
+
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path = project.HasActiveProject()
+        ? project.GetCheckpointsPath()
+        : std::string();
+    auto selected = cyxwiz::FileDialogs::SelectFolder(
+        "Select Checkpoint or Training Run",
+        default_path.empty() ? nullptr : default_path.c_str());
+    if (!selected) {
+        return;
+    }
+
+    const auto nodes = node_editor_->GetNodes();
+    const auto links = node_editor_->GetLinks();
+    BuildCompileResult(nodes, links);
+    if (!compile_result_success_) {
+        compile_result_mode_ = CompileResultMode::Compile;
+        compile_result_message_ =
+            "Cannot load checkpoint: the open graph must compile first. It should be the "
+            "graph the checkpoint was trained with, with its Data Inputs applied.";
+        show_compile_result_popup_ = true;
+        spdlog::error(
+            "LoadCheckpoint: active graph did not pass the compile gate.");
+        return;
+    }
+
+    cyxwiz::TrainingConfiguration config;
+    try {
+        cyxwiz::GraphCompiler compiler;
+        config = compiler.Compile(nodes, links);
+    } catch (const std::exception& exception) {
+        ShowOperationError("Cannot load checkpoint",
+            std::string("Graph compilation failed: ") + exception.what());
+        return;
+    }
+
+    std::ostringstream fingerprint;
+    fingerprint << std::hex << HashGraphStructure(nodes, links);
+    const std::string graph_fingerprint = fingerprint.str();
+    const std::string selected_path = *selected;
+    const std::string materialization_project_root =
+        project.GetProjectRoot();
+    auto load_result =
+        std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
+        training_plot_panel_;
+
+    cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Load checkpoint for testing",
+        [config = std::move(config), nodes, links, selected_path,
+         graph_fingerprint, load_result,
+         materialization_project_root](cyxwiz::LambdaTask& task) {
+            auto evaluation_config = config;
+            task.ReportProgress(0.05f,
+                                "Preparing evaluation dataset...");
+            std::string effective_dataset_name =
+                evaluation_config.dataset_name;
+            if (effective_dataset_name.empty()) {
+                effective_dataset_name =
+                    evaluation_config.dataset_roles.train.dataset_name;
+            }
+            if (effective_dataset_name.empty()) {
+                throw std::runtime_error(
+                    "Checkpoint testing cannot resolve the graph's "
+                    "source dataset. Apply the Data Input node first.");
+            }
+
+            auto& registry = cyxwiz::DataRegistry::Instance();
+            cyxwiz::PipelineOperatorExecutionContext materialization_context;
+            materialization_context.cancellation_requested =
+                [&task]() { return task.ShouldStop(); };
+            const auto materialized =
+                cyxwiz::PipelineMaterializer::Materialize(
+                    nodes, links, registry, effective_dataset_name,
+                    GraphMaterializationCacheConfig(
+                        materialization_project_root),
+                    [&task](
+                        const cyxwiz::PipelineOperatorProgress& event) {
+                        const float progress =
+                            0.05f + 0.55f *
+                                std::clamp(event.progress, 0.0f, 1.0f);
+                        task.ReportProgress(
+                            progress,
+                            event.message.empty()
+                                ? event.stage
+                                : event.message);
+                    },
+                    std::move(materialization_context));
+            if (materialized.failure_kind ==
+                cyxwiz::MaterializationFailureKind::Cancelled) {
+                return;
+            }
+            if (!materialized.success) {
+                throw std::runtime_error(
+                    "Checkpoint evaluation preprocessing failed: " +
+                    materialized.error_message);
+            }
+            if (!materialized.effective_dataset_name.empty()) {
+                effective_dataset_name =
+                    materialized.effective_dataset_name;
+            }
+            std::string effective_label =
+                evaluation_config.dataset_roles.train.label_column.empty()
+                    ? evaluation_config.target.primary_column
+                    : evaluation_config.dataset_roles.train.label_column;
+            evaluation_config.dataset_name = effective_dataset_name;
+            evaluation_config.dataset_roles.train.dataset_name =
+                effective_dataset_name;
+            evaluation_config.dataset_roles.train.label_column =
+                effective_label;
+            task.ReportProgress(0.65f, "Inspecting checkpoint...");
+            *load_result = cyxwiz::TrainingManager::Instance()
+                .LoadCheckpointForEvaluation(
+                    evaluation_config,
+                    cyxwiz::DataRegistry::Instance().GetArrowDataset(
+                        evaluation_config.dataset_name),
+                    selected_path, graph_fingerprint,
+                    [&task]() { return task.IsCancelRequested(); });
+            if (task.IsCancelRequested()) {
+                return;
+            }
+            if (!load_result->success) {
+                throw std::runtime_error(load_result->error_message);
+            }
+            task.ReportProgress(1.0f, "Checkpoint loaded for testing");
+        },
+        nullptr,
+        [this, lifetime = std::weak_ptr<int>(test_callback_lifetime_), dashboard, load_result](
+            bool success, const std::string& error) {
+            if (!success || !load_result->success) {
+                const std::string reason = error.empty() ? load_result->error_message : error;
+                if (!lifetime.expired()) {
+                    ShowOperationError("Cannot load checkpoint", reason);
+                } else {
+                    spdlog::error("LoadCheckpoint: {}", reason);
+                }
+                return;
+            }
+
+            const bool has_validation =
+                !load_result->metadata.val_loss_history.empty() ||
+                !load_result->metadata.val_accuracy_history.empty() ||
+                load_result->metadata.val_loss != 0.0f ||
+                load_result->metadata.val_accuracy != 0.0f;
+            if (auto panel = dashboard.lock()) {
+                panel->SetActiveCheckpointLoaded(
+                    load_result->resolved_checkpoint_path,
+                    load_result->metadata.epoch,
+                    load_result->metadata.val_loss,
+                    load_result->metadata.val_accuracy,
+                    has_validation);
+                panel->SetVisible(true);
+            }
+            spdlog::info(
+                "LoadCheckpoint: active model is ready for Tools > Test");
+        });
 }
 
 } // namespace gui

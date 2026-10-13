@@ -15,7 +15,7 @@ namespace cyxwiz::menu {
 // Which dock window has keyboard focus. Shortcuts are window-wise: the same
 // chord can do the matching action in another window (F5 runs a script in
 // the Script Editor and starts training elsewhere).
-enum class Context { Any, StudioCanvas, ScriptEditor, ScriptDebugging, ScriptNotebook, Variables, TableViewer };
+enum class Context { Any, StudioCanvas, ScriptEditor, ScriptDebugging, ScriptNotebook, Variables, TableViewer, DataStudio };
 
 const char* ContextName(Context context);
 
@@ -57,6 +57,12 @@ struct MenuInputs {
     bool idle_log = false;
     bool verbose_python = false;
     bool frame_overlay = false;
+    // The window that had the focus, for View > Window (TOFIX129 A8): its
+    // name as given to ImGui::Begin, whether it may leave the main window
+    // and whether it is in a window of its own now.
+    std::string focused_window;
+    bool focused_window_may_leave = false;
+    bool focused_window_outside = false;
     std::vector<PanelEntry> panels;
     std::vector<NamedEntry> recent_projects;  // id = path, label = project name
     std::vector<NamedEntry> themes;

@@ -6,6 +6,7 @@
 #include <arrow/io/api.h>
 #include <arrow/ipc/api.h>
 #include <arrow/util/key_value_metadata.h>
+#include <nlohmann/json.hpp>
 
 #include <charconv>
 #include <chrono>
@@ -36,6 +37,7 @@ constexpr std::string_view kNameKey = "name";
 constexpr std::string_view kRowsKey = "num_rows";
 constexpr std::string_view kFeaturesKey = "num_features";
 constexpr std::string_view kLabelNameKey = "label_name";
+constexpr std::string_view kClassNamesKey = "class_names";  // JSON array, when known
 
 arrow::Status Invalid(const std::string& detail) {
     return arrow::Status::Invalid("SparseFeatureDatasetCache: " + detail);
@@ -181,14 +183,18 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> MakeCacheBatch(
         columns.push_back(std::move(label_list));
     }
 
-    auto metadata = arrow::KeyValueMetadata::Make(
-        {std::string(kFormatKey), std::string(kVersionKey),
-         std::string(kNameKey), std::string(kRowsKey),
-         std::string(kFeaturesKey), std::string(kLabelNameKey)},
-        {std::string(kFormatValue),
-         std::to_string(SparseFeatureDatasetCache::kFormatVersion),
-         dataset.GetName(), std::to_string(dataset.GetNumRows()),
-         std::to_string(dataset.GetNumFeatures()), dataset.GetLabelName()});
+    std::vector<std::string> meta_keys = {std::string(kFormatKey), std::string(kVersionKey),
+                                     std::string(kNameKey), std::string(kRowsKey),
+                                     std::string(kFeaturesKey), std::string(kLabelNameKey)};
+    std::vector<std::string> meta_values = {std::string(kFormatValue),
+                                       std::to_string(SparseFeatureDatasetCache::kFormatVersion),
+                                       dataset.GetName(), std::to_string(dataset.GetNumRows()),
+                                       std::to_string(dataset.GetNumFeatures()), dataset.GetLabelName()};
+    if (!dataset.GetClassNames().empty()) {
+        meta_keys.push_back(std::string(kClassNamesKey));
+        meta_values.push_back(nlohmann::json(dataset.GetClassNames()).dump());
+    }
+    auto metadata = arrow::KeyValueMetadata::Make(std::move(meta_keys), std::move(meta_values));
     const auto schema = arrow::schema(std::move(fields), std::move(metadata));
     return arrow::RecordBatch::Make(schema, 1, std::move(columns));
 }
@@ -365,6 +371,14 @@ SparseFeatureDatasetCache::Load(const std::string& path) {
         ParseNonNegativeInt64(features_text, kFeaturesKey));
     ARROW_ASSIGN_OR_RAISE(contents.label_name,
                           RequiredMetadata(metadata, kLabelNameKey));
+    if (auto names = metadata->Get(std::string(kClassNamesKey)); names.ok()) {
+        const auto parsed = nlohmann::json::parse(*names, nullptr, false);
+        if (!parsed.is_array()) return Invalid("class_names metadata is not a JSON array");
+        for (const auto& n : parsed) {
+            if (!n.is_string()) return Invalid("class_names must be strings");
+            contents.class_names.push_back(n.get<std::string>());
+        }
+    }
 
     ARROW_ASSIGN_OR_RAISE(auto row_offsets,
                           ReadListValues(*batch, "row_offsets", true));

@@ -24,6 +24,7 @@ inline bool IsExecutableActivationNode(gui::NodeType node_type) {
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:
         case gui::NodeType::ELU:
+        case gui::NodeType::SELU:
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:

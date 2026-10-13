@@ -5,6 +5,7 @@
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
 #include "../../core/project_manager.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,7 @@
 
 namespace cyxwiz {
 void ToolbarPanel::RenderProjectDialogs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // File > New Project: the same dialog as the start page (TOFIX129 A2-1).
     create_project_dialog_.Render();
 
@@ -35,7 +37,7 @@ void ToolbarPanel::RenderProjectDialogs() {
         ImGuiWindowFlags popup_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
         if (ImGui::BeginPopupModal("Login Required", &show_login_required_popup_, popup_flags)) {
             // Warning icon and message
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
             ImGui::Text(ICON_FA_TRIANGLE_EXCLAMATION);
             ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -59,8 +61,8 @@ void ToolbarPanel::RenderProjectDialogs() {
             float start_x = (ImGui::GetWindowWidth() - total_width) * 0.5f;
             ImGui::SetCursorPosX(start_x);
 
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
             if (ImGui::Button(ICON_FA_RIGHT_TO_BRACKET " Login", ImVec2(button_width, 0))) {
                 show_login_required_popup_ = false;
                 show_account_settings_dialog_ = true;  // Open login dialog

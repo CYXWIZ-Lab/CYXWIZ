@@ -6,9 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -32,7 +30,6 @@ ConvolutionResult SignalProcessing::Convolve1D(
     int k = static_cast<int>(kernel.size());
 
     try {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         af::array sig(n, signal.data());
         af::array kern(k, kernel.data());
 
@@ -65,38 +62,6 @@ ConvolutionResult SignalProcessing::Convolve1D(
 
         result.output_size = static_cast<int>(result.output.size());
         result.success = true;
-#else
-        // CPU fallback
-        int full_size = n + k - 1;
-        std::vector<double> full_output(full_size, 0.0);
-
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < k; j++) {
-                full_output[i + j] += signal[i] * kernel[j];
-            }
-        }
-
-        if (mode == "full") {
-            result.output = full_output;
-        } else if (mode == "same") {
-            int offset = k / 2;
-            result.output.resize(n);
-            for (int i = 0; i < n; i++) {
-                result.output[i] = full_output[i + offset];
-            }
-        } else if (mode == "valid") {
-            int valid_size = n - k + 1;
-            if (valid_size > 0) {
-                result.output.resize(valid_size);
-                for (int i = 0; i < valid_size; i++) {
-                    result.output[i] = full_output[i + k - 1];
-                }
-            }
-        }
-
-        result.output_size = static_cast<int>(result.output.size());
-        result.success = true;
-#endif
     } catch (const std::exception& e) {
         result.error_message = std::string("Convolution failed: ") + e.what();
     }
@@ -122,7 +87,6 @@ Convolution2DResult SignalProcessing::Convolve2D(
     int kern_cols = static_cast<int>(kernel[0].size());
 
     try {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         // Flatten image and kernel
         std::vector<double> img_flat(img_rows * img_cols);
         for (int i = 0; i < img_rows; i++) {
@@ -171,53 +135,6 @@ Convolution2DResult SignalProcessing::Convolve2D(
         result.rows = out_rows;
         result.cols = out_cols;
         result.success = true;
-#else
-        // CPU fallback
-        int out_rows, out_cols;
-        int pad_top = 0, pad_left = 0;
-
-        if (mode == "full") {
-            out_rows = img_rows + kern_rows - 1;
-            out_cols = img_cols + kern_cols - 1;
-            pad_top = kern_rows - 1;
-            pad_left = kern_cols - 1;
-        } else if (mode == "same") {
-            out_rows = img_rows;
-            out_cols = img_cols;
-            pad_top = kern_rows / 2;
-            pad_left = kern_cols / 2;
-        } else {  // valid
-            out_rows = img_rows - kern_rows + 1;
-            out_cols = img_cols - kern_cols + 1;
-        }
-
-        if (out_rows <= 0 || out_cols <= 0) {
-            result.error_message = "Kernel larger than image for valid mode";
-            return result;
-        }
-
-        result.output.resize(out_rows, std::vector<double>(out_cols, 0.0));
-
-        for (int i = 0; i < out_rows; i++) {
-            for (int j = 0; j < out_cols; j++) {
-                double sum = 0.0;
-                for (int ki = 0; ki < kern_rows; ki++) {
-                    for (int kj = 0; kj < kern_cols; kj++) {
-                        int ii = i + ki - pad_top;
-                        int jj = j + kj - pad_left;
-                        if (ii >= 0 && ii < img_rows && jj >= 0 && jj < img_cols) {
-                            sum += image[ii][jj] * kernel[kern_rows - 1 - ki][kern_cols - 1 - kj];
-                        }
-                    }
-                }
-                result.output[i][j] = sum;
-            }
-        }
-
-        result.rows = out_rows;
-        result.cols = out_cols;
-        result.success = true;
-#endif
     } catch (const std::exception& e) {
         result.error_message = std::string("2D Convolution failed: ") + e.what();
     }

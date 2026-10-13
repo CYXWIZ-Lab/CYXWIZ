@@ -10,9 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -57,57 +55,11 @@ void CheckTensorExact(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-void SetEnvVar(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value);
-#else
-    setenv(name, value, 1);
-#endif
-}
-
-void ClearEnvVar(const char* name) {
-#ifdef _WIN32
-    _putenv_s(name, "");
-#else
-    unsetenv(name);
-#endif
-}
-
-class ScopedEnvVar {
-public:
-    ScopedEnvVar(const char* name, const char* value) : name_(name) {
-        const char* previous = std::getenv(name);
-        if (previous != nullptr) {
-            had_previous_ = true;
-            previous_ = previous;
-        }
-        SetEnvVar(name_, value);
-    }
-
-    ~ScopedEnvVar() {
-        if (had_previous_) {
-            SetEnvVar(name_, previous_.c_str());
-        } else {
-            ClearEnvVar(name_);
-        }
-    }
-
-private:
-    const char* name_;
-    bool had_previous_ = false;
-    std::string previous_;
-};
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t dropout_host_sync_count = 0;
 size_t dropout_fallback_count = 0;
 
 void CountHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++dropout_host_sync_count;
-}
-
-void CountFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++dropout_fallback_count;
 }
 
 class ScopedArrayFireDeviceRestore {
@@ -141,12 +93,8 @@ void CheckActiveDeviceResidency(Dropout& dropout) {
     cyxwiz::Tensor output;
     cyxwiz::Tensor grad_input;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFallback);
         af::setSeed(3917);
         output = dropout.Forward(input);
         grad_input = dropout.Backward(grad_output);
@@ -173,7 +121,6 @@ void CheckActiveDeviceResidency(Dropout& dropout) {
     CHECK(unexpected_values == 0);
     CHECK(backward_mismatches == 0);
 }
-#endif
 
 } // namespace
 
@@ -237,9 +184,7 @@ TEST_CASE("Dropout backward follows the exact forward mask contract",
 
     const auto check = [&](auto& dropout) {
         CHECK_THROWS_AS(dropout.Backward(grad_output), std::logic_error);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         af::setSeed(3923);
-#endif
         const cyxwiz::Tensor output = dropout.Forward(input);
         dropout.SetTraining(false);
         const cyxwiz::Tensor grad_input = dropout.Backward(grad_output);
@@ -277,7 +222,6 @@ TEST_CASE("Dropout backward follows the exact forward mask contract",
         unsupported_module.Forward(unsupported), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Dropout distribution matches PyTorch and backend seed replays",
           "[dropout][pytorch][random][replay]") {
     const ScopedArrayFireDeviceRestore restore;
@@ -387,64 +331,3 @@ TEST_CASE("Dropout remains resident on every installed supported route",
     }
 }
 
-#ifndef NDEBUG
-TEST_CASE("Dropout fallback is observable and strict policy rejects it",
-          "[dropout][arrayfire][fallback]") {
-    constexpr const char* force_fallback =
-        "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
-    const std::vector<float> values(64, 1.0f);
-    const cyxwiz::Tensor input(
-        {8, 8}, values.data(), cyxwiz::DataType::Float32);
-
-    cyxwiz::DropoutLayer compatible(0.5f);
-    dropout_fallback_count = 0;
-    {
-        const ScopedEnvVar force(force_fallback, "DropoutLayer::Forward");
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountFallback);
-        const cyxwiz::ScopedArrayFireFallbackPolicy policy(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::Tensor output = compatible.Forward(input);
-        CHECK(output.Shape() == input.Shape());
-    }
-    CHECK(dropout_fallback_count == 1);
-    cyxwiz::Tensor compatible_output;
-    {
-        af::setSeed(3941);
-        cyxwiz::DropoutLayer compatible_backward(0.5f);
-        compatible_output = compatible_backward.Forward(input);
-        const ScopedEnvVar force(force_fallback, "DropoutLayer::Backward");
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountFallback);
-        const cyxwiz::ScopedArrayFireFallbackPolicy policy(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::Tensor grad_input = compatible_backward.Backward(input);
-        const float* output_data = compatible_output.ReadData<float>();
-        const float* grad_data = grad_input.ReadData<float>();
-        size_t mismatches = 0;
-        for (size_t index = 0; index < input.NumElements(); ++index) {
-            mismatches += output_data[index] == grad_data[index] ? 0 : 1;
-        }
-        CHECK(mismatches == 0);
-    }
-    CHECK(dropout_fallback_count == 2);
-
-    cyxwiz::DropoutLayer strict(0.5f);
-    {
-        const ScopedEnvVar force(force_fallback, "DropoutLayer::Forward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy policy(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        CHECK_THROWS_AS(strict.Forward(input), std::runtime_error);
-    }
-
-    cyxwiz::DropoutLayer strict_backward(0.5f);
-    (void)strict_backward.Forward(input);
-    {
-        const ScopedEnvVar force(force_fallback, "DropoutLayer::Backward");
-        const cyxwiz::ScopedArrayFireFallbackPolicy policy(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        CHECK_THROWS_AS(strict_backward.Backward(input), std::runtime_error);
-    }
-}
-#endif
-#endif

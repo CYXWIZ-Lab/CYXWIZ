@@ -37,6 +37,10 @@ enum class NeuralOp {
     // 2 * inputs[0], elementwise. Exercises caller-owned device memory on the
     // caller's queue without any attention math.
     DeviceProbe,
+    // Device-resident 2D convolution (TOFIX140 A1b); contract with the
+    // NeuralOpRequest conv fields.
+    Conv2dForward,
+    Conv2dBackward,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -156,6 +160,20 @@ struct NeuralOpRequest {
     // the same seed use the same mask. Softmax statistics (LSE) are pre-dropout.
     float attention_dropout = 0.0f;
     uint64_t dropout_seed = 0;
+    // 2D convolution (device-resident), TOFIX140 A1b. batch = N, input = Cin,
+    // hidden = Cout; square kernel, symmetric padding (PyTorch Conv2d).
+    // Layouts are the semantic arrays (first dimension fastest):
+    //   Conv2dForward   inputs  X [H, W, Cin, N], Wt [k, k, Cin, Cout][, B [Cout]]
+    //                   outputs Y [OH, OW, Cout, N]
+    //   Conv2dBackward  inputs  X, Wt, dY [OH, OW, Cout, N]
+    //                   outputs dX [H, W, Cin, N], dWt [k, k, Cin, Cout][, dB [Cout]]
+    // OH = (H + 2*padding - k) / stride + 1 (likewise OW).
+    size_t conv_height = 0;
+    size_t conv_width = 0;
+    size_t conv_kernel = 0;
+    size_t conv_stride = 1;
+    size_t conv_padding = 0;
+    bool conv_bias = false;
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).

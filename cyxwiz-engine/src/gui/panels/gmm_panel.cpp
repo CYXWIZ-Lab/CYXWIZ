@@ -1,5 +1,10 @@
 #include "gmm_panel.h"
+#include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -8,19 +13,6 @@
 #include <algorithm>
 
 namespace cyxwiz {
-
-const ImU32 GMMPanel::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),  IM_COL32(255, 127, 14, 255),
-    IM_COL32(44, 160, 44, 255),   IM_COL32(214, 39, 40, 255),
-    IM_COL32(148, 103, 189, 255), IM_COL32(140, 86, 75, 255),
-    IM_COL32(227, 119, 194, 255), IM_COL32(127, 127, 127, 255),
-    IM_COL32(188, 189, 34, 255),  IM_COL32(23, 190, 207, 255),
-    IM_COL32(174, 199, 232, 255), IM_COL32(255, 187, 120, 255),
-    IM_COL32(152, 223, 138, 255), IM_COL32(255, 152, 150, 255),
-    IM_COL32(197, 176, 213, 255), IM_COL32(196, 156, 148, 255),
-    IM_COL32(247, 182, 210, 255), IM_COL32(199, 199, 199, 255),
-    IM_COL32(219, 219, 141, 255), IM_COL32(158, 218, 229, 255),
-};
 
 GMMPanel::GMMPanel() : Panel("GMM Clustering", true) {}
 
@@ -34,68 +26,60 @@ void GMMPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(950, 750), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_PIE) + " Gaussian Mixture Models###GMMPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(320, 0), true);
+        ui::BeginSettingsColumn("gmm", 320.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::Separator();
         RenderModelSelection();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         RenderResults();
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void GMMPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("gmm_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 100), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 100);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(column_names_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
     }
 }
 
 void GMMPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
-    ImGui::SliderInt("Components", &n_components_, 2, 20);
-    ImGui::SliderInt("Max Iterations", &max_iter_, 10, 500);
-    ImGui::SliderInt("Initializations", &n_init_, 1, 10);
+    ui::FieldLabel("Components");
+    ImGui::SliderInt("##n_components", &n_components_, 2, 20);
+    ui::FieldLabel("Max iterations");
+    ImGui::SliderInt("##max_iter", &max_iter_, 10, 500);
+    ui::FieldLabel("Initializations");
+    ImGui::SliderInt("##n_init", &n_init_, 1, 10);
 
     const char* cov_types[] = {"Full", "Tied", "Diagonal", "Spherical"};
-    ImGui::Combo("Covariance Type", &covariance_type_, cov_types, 4);
+    ui::FieldLabel("Covariance type");
+    ImGui::Combo("##covariance_type", &covariance_type_, cov_types, 4);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Full: Each component has its own covariance matrix\n"
                          "Tied: All components share the same covariance\n"
@@ -105,44 +89,49 @@ void GMMPanel::RenderParameters() {
 
     ImGui::Spacing();
 
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run GMM", ImVec2(-1, 30))) {
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "GMM is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run GMM", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (is_computing_) {
-        ImGui::Text("Computing... Iteration %d", progress_iteration_.load());
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Computing... Iteration %d", progress_iteration_.load());
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void GMMPanel::RenderModelSelection() {
-    ImGui::Text(ICON_FA_CHART_LINE " Model Selection");
-    ImGui::Spacing();
+    ui::SettingsSection("Model selection");
 
-    ImGui::SliderInt("Min Components", &model_select_min_, 1, 10);
-    ImGui::SliderInt("Max Components", &model_select_max_, model_select_min_ + 1, 20);
-
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Find Optimal Components", ImVec2(-1, 25))) {
-        RunModelSelection();
+    if (ImGui::BeginTable("##component_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Min components");
+        ImGui::SliderInt("##model_select_min", &model_select_min_, 1, 10);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("Max components");
+        ImGui::SliderInt("##model_select_max", &model_select_max_, model_select_min_ + 1, 20);
+        ImGui::EndTable();
     }
 
-    if (!can_run) ImGui::EndDisabled();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "GMM is running" : "Pick a dataset first";
+    if (ui::SecondaryButton("Find Optimal Components", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
+        RunModelSelection();
+    }
 
     if (!model_k_values_.empty()) {
         ImGui::Text("Suggested: %d components", suggested_components_);
 
-        if (ImGui::Button("Use Suggested")) {
+        if (ui::SecondaryButton("Use Suggested")) {
             n_components_ = suggested_components_;
         }
 
@@ -161,7 +150,8 @@ void GMMPanel::RenderModelSelection() {
 
 void GMMPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run GMM clustering to see results.");
+        ui::EmptyState(ICON_FA_CHART_PIE, "No mixture model yet",
+                       "Pick a dataset and feature columns, then Run GMM.");
         return;
     }
 
@@ -245,6 +235,8 @@ void GMMPanel::RenderScatterPlot() {
         if (selected_col_indices[i] == y_axis_column_) y_idx = static_cast<int>(i);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##ScatterPlot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes(column_names_[x_axis_column_].c_str(), column_names_[y_axis_column_].c_str());
 
@@ -258,8 +250,8 @@ void GMMPanel::RenderScatterPlot() {
                 }
             }
             if (!x_data.empty()) {
-                ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
+                ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color, IMPLOT_AUTO, color);
                 ImPlot::PlotScatter(("Component " + std::to_string(k)).c_str(), x_data.data(), y_data.data(), static_cast<int>(x_data.size()));
             }
         }
@@ -273,7 +265,7 @@ void GMMPanel::RenderScatterPlot() {
                     my.push_back(mean[y_idx]);
                 }
             }
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ImVec4(0, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, t.text_bright, 2, t.text_bright);
             ImPlot::PlotScatter("Means", mx.data(), my.data(), static_cast<int>(mx.size()));
         }
 
@@ -289,6 +281,8 @@ void GMMPanel::RenderComponentInfo() {
         if (selected_columns_[i]) feature_names.push_back(column_names_[i]);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Component Means:");
     ImGui::Spacing();
 
@@ -303,7 +297,7 @@ void GMMPanel::RenderComponentInfo() {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+            ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
             ImGui::TextColored(color, "%d", k);
 
             ImGui::TableNextColumn();
@@ -319,12 +313,8 @@ void GMMPanel::RenderComponentInfo() {
     }
 }
 
-void GMMPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void GMMPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
 
@@ -351,9 +341,9 @@ void GMMPanel::LoadSelectedData() {
     status_message_ = "Data loaded.";
 }
 
-void GMMPanel::RunClustering() {
-    if (!current_table_ || is_computing_) return;
-
+// Rows of the selected columns that parse as numbers; false (with a
+// status message) when there is nothing to cluster.
+bool GMMPanel::CollectInputData() {
     std::vector<int> col_indices;
     for (size_t i = 0; i < selected_columns_.size(); ++i) {
         if (selected_columns_[i]) col_indices.push_back(static_cast<int>(i));
@@ -361,7 +351,7 @@ void GMMPanel::RunClustering() {
 
     if (col_indices.size() < 2) {
         status_message_ = "Select at least 2 columns.";
-        return;
+        return false;
     }
 
     input_data_.clear();
@@ -379,73 +369,86 @@ void GMMPanel::RunClustering() {
 
     if (input_data_.empty()) {
         status_message_ = "No valid data.";
-        return;
+        return false;
     }
+    return true;
+}
+
+void GMMPanel::RunClustering() {
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     status_message_ = "Computing...";
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
-        const char* cov_types[] = {"full", "tied", "diag", "spherical"};
-
-        result_ = Clustering::GMM(
-            input_data_,
-            n_components_,
-            cov_types[covariance_type_],
-            max_iter_,
+    const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+    compute_thread_ = std::thread([this, data = input_data_, k = n_components_, cov = std::string(cov_types[covariance_type_]),
+                                   max_iter = max_iter_, n_init = n_init_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        GMMResult result = Clustering::GMM(
+            data,
+            k,
+            cov,
+            max_iter,
             1e-3,
-            n_init_,
+            n_init,
             0,
             [this](int iter, double) { progress_iteration_ = iter; }
         );
-
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = std::to_string(result_.n_components) + " components, BIC=" +
-                             std::to_string(static_cast<int>(result_.bic));
-        } else {
-            status_message_ = "Failed: " + result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = std::to_string(result_.n_components) + " components, BIC=" +
+                                 std::to_string(static_cast<int>(result_.bic));
+            } else {
+                status_message_ = "Failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
 void GMMPanel::RunModelSelection() {
-    if (input_data_.empty() || is_computing_) return;
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     status_message_ = "Running model selection...";
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this]() {
-        model_k_values_.clear();
-        model_bic_values_.clear();
-        model_aic_values_.clear();
-
-        const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+    const char* cov_types[] = {"full", "tied", "diag", "spherical"};
+    compute_thread_ = std::thread([this, data = input_data_, cov = std::string(cov_types[covariance_type_]),
+                                   k_min = model_select_min_, k_max = model_select_max_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        std::vector<int> k_values;
+        std::vector<double> bic_values, aic_values;
         double best_bic = std::numeric_limits<double>::max();
-        suggested_components_ = model_select_min_;
+        int suggested = k_min;
 
-        for (int k = model_select_min_; k <= model_select_max_; ++k) {
-            auto gmm_result = Clustering::GMM(input_data_, k, cov_types[covariance_type_], 50, 1e-3, 1, 0);
+        for (int k = k_min; k <= k_max; ++k) {
+            auto gmm_result = Clustering::GMM(data, k, cov, 50, 1e-3, 1, 0);
 
             if (gmm_result.success) {
-                model_k_values_.push_back(k);
-                model_bic_values_.push_back(gmm_result.bic);
-                model_aic_values_.push_back(gmm_result.aic);
+                k_values.push_back(k);
+                bic_values.push_back(gmm_result.bic);
+                aic_values.push_back(gmm_result.aic);
 
                 if (gmm_result.bic < best_bic) {
                     best_bic = gmm_result.bic;
-                    suggested_components_ = k;
+                    suggested = k;
                 }
             }
         }
-
-        is_computing_ = false;
-        status_message_ = "Model selection complete. Suggested: " + std::to_string(suggested_components_);
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, k_values = std::move(k_values), bic_values = std::move(bic_values),
+                                                               aic_values = std::move(aic_values), suggested]() mutable {
+            model_k_values_ = std::move(k_values);
+            model_bic_values_ = std::move(bic_values);
+            model_aic_values_ = std::move(aic_values);
+            suggested_components_ = suggested;
+            status_message_ = "Model selection complete. Suggested: " + std::to_string(suggested_components_);
+            is_computing_ = false;
+        });
     });
 }
 

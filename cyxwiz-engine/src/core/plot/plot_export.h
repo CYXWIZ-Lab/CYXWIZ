@@ -4,6 +4,7 @@
 // as CSV and the plot as SVG. Reduced or sampled series export all values.
 
 #include "plot_model.h"
+#include "plot_scales.h"
 
 #include <string>
 
@@ -26,6 +27,9 @@ struct SvgStyle {
     std::string diverging_low = "#4a8fd9";
     std::string diverging_mid = "#262626";
     std::string diverging_high = "#e0704f";
+    // A scale picked in the plot (ToSvg sets these from the spec).
+    const ScaleInfo* scale = nullptr;
+    bool scale_reverse = false;
 };
 
 // The visible axis ranges (from the view; log_y draws the y axis in log10).
@@ -35,6 +39,10 @@ struct AxisRange {
 };
 
 std::string ToSvg(const Prepared& data, const AxisRange& range, const SvgStyle& style);
+
+// How an image plot lays its pictures out: columns of the grid (one row: 1;
+// means: one line up to 12; a gallery: about square).
+int PictureColumns(const Prepared& data);
 
 // "#rrggbb" for an ImVec4-like colour (0..1 floats).
 std::string HexColour(float r, float g, float b);

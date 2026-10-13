@@ -23,7 +23,6 @@ inline bool IsTrainingTaskAttentionStatus(std::string_view status) {
 }
 
 struct PinMemoryTransferStatus;
-struct ArrayFireNativeCpuFallbackEvent;
 struct ArrayFireHostSyncEvent;
 struct ExecutionDeviceContext;
 
@@ -102,11 +101,7 @@ struct TrainingTraceEvent {
     bool selection_fallback_applied = false;
     std::string preflight_stage;
     int preflight_error_code = 0;
-    std::string fallback_target;
-    std::string fallback_operation;
-    std::string fallback_reason;
-    std::string fallback_policy;
-    bool native_cpu_fallback = false;
+    std::string execution_policy;
     uint64_t arrayfire_host_sync_bytes = 0;
     std::string arrayfire_host_sync_reason;
     std::string arrayfire_host_sync_category;
@@ -155,7 +150,6 @@ struct TrainingTraceSummary {
     std::vector<TrainingTraceEvent> recent_events;
     std::vector<TrainingTraceEvent> materialization_events;
     std::vector<std::string> warnings;
-    uint64_t native_cpu_fallback_count = 0;
     uint64_t transfer_event_count = 0;
     uint64_t transfer_known_bytes = 0;
     std::string transfer_summary;
@@ -192,7 +186,7 @@ struct TrainingTraceSummary {
     bool selection_fallback_applied = false;
     std::string preflight_stage;
     int preflight_error_code = 0;
-    std::string fallback_policy;
+    std::string execution_policy;
     uint64_t declared_output_boundary_count = 0;
     std::string residency_verdict;
     std::string residency_reason;
@@ -262,8 +256,6 @@ public:
         const PinMemoryTransferStatus& status,
         const std::string& message,
         const std::string& severity);
-    void RecordNativeCpuFallback(
-        const ArrayFireNativeCpuFallbackEvent& fallback);
     void RecordArrayFireHostSync(const ArrayFireHostSyncEvent& sync);
     void RecordTrainingRandomness(const TrainingRandomness& randomness);
     void RecordExecutionDeviceContext(
@@ -345,7 +337,6 @@ private:
     bool has_execution_context_event_ = false;
     TrainingTraceEvent placement_plan_event_;
     bool has_placement_plan_event_ = false;
-    uint64_t native_cpu_fallback_count_ = 0;
     uint64_t transfer_event_count_ = 0;
     uint64_t transfer_known_bytes_ = 0;
     std::map<std::string, uint64_t> transfer_reason_counts_;

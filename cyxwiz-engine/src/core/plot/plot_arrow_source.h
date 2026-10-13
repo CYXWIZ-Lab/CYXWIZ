@@ -28,4 +28,8 @@ std::vector<ArrowColumnInfo> ArrowColumns(const arrow::Table& table);
 // many rows and labels the source with the row limit.
 Source SourceFromArrow(const arrow::Table& table, const std::vector<std::string>& columns, size_t max_rows = 0);
 
+// Only the given rows (0-based, in this order) of the named columns: a wide
+// table (MNIST's 784 pixel columns) is never read whole for a few pictures.
+Source SourceFromArrowRows(const arrow::Table& table, const std::vector<std::string>& columns, const std::vector<size_t>& rows);
+
 }  // namespace cyxwiz::plot

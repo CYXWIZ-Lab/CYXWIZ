@@ -107,13 +107,12 @@ The broad tracking ticket is:
 - Verifies CosineEmbedding, Contrastive, and Euclidean/smoothed-cosine Triplet
   forward values and every embedding-branch gradient against generated
   PyTorch 2.10 fixtures across `none`/`mean`/`sum`, including zero vectors,
-  coincident embeddings, inactive margins, and exact label conventions. A
-  two-batch shared-Linear Contrastive-to-SGD sequence proves device-resident
-  gradient accumulation and parameter updates. Strict ArrayFire CPU and every
-  locally qualified CUDA/OpenCL route run with exact identity and zero native
-  fallback; forced failures separately prove strict rejection and compatible,
-  attributed native CPU execution. Incompatible oneAPI remains an explicit
-  device-selection skip rather than a global blocker.
+  coincident embeddings, inactive margins, and exact label conventions.
+  Strict ArrayFire CPU and every locally qualified CUDA/OpenCL route run with
+  exact identity and zero native fallback; forced failures separately prove
+  strict rejection and compatible, attributed native CPU execution.
+  Incompatible oneAPI remains an explicit device-selection skip rather than a
+  global blocker.
 - Verifies metric-learning pair-distance accuracy/means and retrieval
   Recall@k, mean reciprocal rank, and nearest-neighbor class agreement against
   generated PyTorch 2.10 vector-norm/cdist fixtures. Rank-2 and rank-3 cases
@@ -121,8 +120,8 @@ The broad tracking ticket is:
   Distance, decision, aggregation, and ranking remain ArrayFire-resident on
   strict CPU and every locally qualified CUDA/OpenCL route; only one pair-label
   validation scalar and the bounded result scalars cross to host with exact
-  attribution. Forced failures prove strict rejection before host access and
-  compatible `metric_cpu_path` execution. Inference JSON materialization is a
+  attribution. There is no CPU path: a device failure is reported as an error.
+  Inference JSON materialization is a
   separate, explicitly attributed output boundary.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
@@ -142,7 +141,7 @@ The broad tracking ticket is:
   zero-norm edges, `zero_grad` preservation, and exact resume across three steps
   against an independent PyTorch tensor-equation fixture.
 - Activates ArrayFire CPU exactly, binds an immutable execution context, and
-  runs the fixture-backed core checks with native CPU fallback forbidden.
+  runs the fixture-backed core checks under the strict execution policy.
 - Repeats the complete Adam/AdamW/NAdam, SGD, RMSprop/AdaGrad/Adadelta, and
   LAMB multi-step/state/resume fixture matrix on every selectable installed
   CUDA/OpenCL route. Each route is activated exactly, forbids native fallback,
@@ -403,8 +402,25 @@ fully completed epoch; ReduceLROnPlateau advances only after a completed epoch
 that produced a finite validation loss from at least one validation sample;
 OneCycleLR advances only after an actual optimizer update, including a forced
 final partial accumulation flush.
-Graph scheduler nodes remain blocked until GraphCompiler and the node-owning
-work bind saved generic property values into this boundary.
+The graph scheduler nodes (Step, Cosine, Exponential, Warmup, Reduce LR) bind
+into this boundary (TOFIX140 A3): GraphCompiler turns the node fed by the
+training optimizer into `TrainingConfiguration::scheduler`, and
+`scheduler_node_pytorch_parity` (test_scheduler_node_training.cpp, fixture from
+generate_scheduler_node_fixtures.py) trains a compiled graph per node and
+matches torch's learning rate after every epoch, replays Reduce LR's
+validation losses through the backend scheduler, and resumes a run from its
+checkpoint on torch's sequence.
+
+The regularization nodes (L1, L2, Elastic Net; TOFIX140 A4) sit between the
+loss and the optimizer. GraphCompiler turns the one on that wire into
+`TrainingConfiguration::regularization_l1/l2`, and TrainingExecutor adds
+`l1 x sign(w) + 2 x l2 x w` to each trainable parameter's gradient once per
+optimizer step, before clipping. `regularization_node_pytorch_parity`
+(test_regularization_node_training.cpp, fixture from
+generate_regularization_node_fixtures.py) first checks that the Engine's
+model_seed 52 initialisation is the fixture's start, then trains a compiled
+graph per node and matches torch's parameters after
+`(mse + penalty).backward()` and SGD steps.
 
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
@@ -437,7 +453,7 @@ Float64, Int32, Int64, and UInt8. Shape, dtype, and exact payload bytes must
 round-trip, and the file must contain exactly the declared payload size.
 Unsupported dtype headers and truncated payloads must fail closed
 without mutating the active model. Checkpoint reads and writes remain explicit
-bounded host I/O; this is serialization evidence, not native CPU fallback.
+bounded host I/O; this is serialization evidence, not compute.
 
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
@@ -455,7 +471,7 @@ weighted, ignored, label-smoothed sum-reduction case proves that microbatch
 gradients add without mean normalization and that the reported epoch loss is
 the exact effective-batch sum. Bias parameters are compared at every SGD
 boundary, final parameters and optimizer-step counts must match, terminal
-lifecycle truth is exact, and native CPU fallback is forbidden.
+lifecycle truth is exact, and the run uses the strict execution policy.
 
 `test_training_executor_arrow_parquet --paused-control-matrix-only` exercises
 resume and cancellation while paused across Arrow, Parquet, external

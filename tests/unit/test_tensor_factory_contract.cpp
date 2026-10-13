@@ -6,6 +6,7 @@
 #include <cyxwiz/memory_manager.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -216,19 +217,10 @@ void CheckSeedReplay(const json& fixture) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_factory_host_sync_count = 0;
-size_t g_factory_fallback_count = 0;
-std::vector<std::string> g_factory_fallback_operations;
 
 void CountFactoryHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_factory_host_sync_count;
-}
-
-void CountFactoryFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++g_factory_fallback_count;
-    g_factory_fallback_operations.push_back(event.operation_name);
 }
 
 void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
@@ -241,20 +233,14 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             test_case.at("operation").get<std::string>();
         CAPTURE(test_case.at("name").get<std::string>());
         g_factory_host_sync_count = 0;
-        g_factory_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountFactoryHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountFactoryFallback);
             actual = ApplyFactory(operation, shape, dtype);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_factory_host_sync_count == 0);
-        REQUIRE(g_factory_fallback_count == 0);
         CheckExact(actual, dtype, test_case.at("expected"));
     }
 
@@ -268,17 +254,12 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
         for (const std::string operation : {"random", "random_seeded"}) {
             CAPTURE(operation, static_cast<int>(dtype));
             g_factory_host_sync_count = 0;
-            g_factory_fallback_count = 0;
             cyxwiz::Tensor actual;
             cyxwiz::Tensor replay;
             cyxwiz::Tensor different;
             {
-                const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                    cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
                 const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                     &CountFactoryHostSync);
-                const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                    &CountFactoryFallback);
                 actual = ApplyFactory(operation, {2, 1, 257}, dtype);
                 actual.GetSemanticArray().eval();
                 if (operation == "random_seeded") {
@@ -292,7 +273,6 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             }
             REQUIRE(actual.Shape() == std::vector<size_t>{2, 1, 257});
             REQUIRE(g_factory_host_sync_count == 0);
-            REQUIRE(g_factory_fallback_count == 0);
             if (operation == "random_seeded") {
                 REQUIRE(TensorValuesEqual(actual, replay));
                 REQUIRE_FALSE(TensorValuesEqual(actual, different));
@@ -300,36 +280,21 @@ void CheckFactoryCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
         }
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor exact factories match PyTorch shape dtype and values",
           "[tensor][tensor_factory][pytorch]") {
     const json fixture = LoadFactoryFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckFactoryCasesOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture.at("exact_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const auto shape = test_case.at("shape").get<std::vector<size_t>>();
-        CheckExact(
-            ApplyFactory(
-                test_case.at("operation").get<std::string>(), shape, dtype),
-            dtype,
-            test_case.at("expected"));
-    }
-#endif
     CheckRandomContract(fixture);
     CheckSeedReplay(fixture);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor seeded and range factories are device-resident",
           "[tensor][tensor_factory][arrayfire][residency]") {
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
@@ -374,65 +339,54 @@ TEST_CASE("Tensor factories stay resident on every accelerator",
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
 
-TEST_CASE("Tensor rank-five factory fallback is explicit and strict-safe",
-          "[tensor][tensor_factory][arrayfire][fallback]") {
+// TOFIX140 F4: ranks above 4 live on the device as row-major flat arrays, so
+// rank-five factories run on ArrayFire with no native fallback, even strict.
+TEST_CASE("Tensor rank-five factories run on the device",
+          "[tensor][tensor_factory][arrayfire]") {
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
-    const std::vector<size_t> shape{1, 1, 1, 1, 4};
-    const std::vector<std::string> operations{
-        "zeros", "ones", "random", "random_seeded", "range_n"};
-    g_factory_fallback_count = 0;
-    g_factory_fallback_operations.clear();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountFactoryFallback);
-        for (const std::string& operation : operations) {
-            const cyxwiz::Tensor output = ApplyFactory(
-                operation, shape, cyxwiz::DataType::Int32);
-            REQUIRE(output.Shape() == shape);
-        }
-    }
-    REQUIRE(g_factory_fallback_count == operations.size());
-    REQUIRE(g_factory_fallback_operations == std::vector<std::string>{
-        "Tensor::Zeros", "Tensor::Ones", "Tensor::Random",
-        "Tensor::RandomSeeded", "Tensor::RangeN"});
-
+    const std::vector<size_t> shape{2, 1, 3, 1, 4};
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
-    g_factory_fallback_operations.clear();
+    std::vector<cyxwiz::Tensor> outputs;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountFactoryHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFactoryFallback);
-        for (const std::string& operation : operations) {
-            REQUIRE_THROWS_AS(
-                ApplyFactory(operation, shape, cyxwiz::DataType::Int32),
-                std::runtime_error);
+        for (const std::string operation : {"zeros", "ones", "range_n", "random", "random_seeded"}) {
+            outputs.push_back(ApplyFactory(operation, shape, cyxwiz::DataType::Int32));
+            REQUIRE(outputs.back().Shape() == shape);
         }
     }
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == operations.size());
-    REQUIRE(g_factory_fallback_operations == std::vector<std::string>{
-        "Tensor::Zeros", "Tensor::Ones", "Tensor::Random",
-        "Tensor::RandomSeeded", "Tensor::RangeN"});
+
+    const auto* zeros = outputs[0].ReadData<int32_t>();
+    const auto* ones = outputs[1].ReadData<int32_t>();
+    const auto* range = outputs[2].ReadData<int32_t>();
+    const auto* random = outputs[3].ReadData<int32_t>();
+    for (size_t i = 0; i < 24; ++i) {
+        REQUIRE(zeros[i] == 0);
+        REQUIRE(ones[i] == 1);
+        REQUIRE(range[i] == static_cast<int32_t>(i));  // row-major storage order
+        REQUIRE(random[i] >= 0);
+        REQUIRE(random[i] < 100);
+    }
+    // Draws land in storage order, so a seeded rank-five tensor holds the same
+    // values as a flat one of the same seed and count.
+    const cyxwiz::Tensor flat = cyxwiz::Tensor::RandomSeeded({24}, 7, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor folded = cyxwiz::Tensor::RandomSeeded(shape, 7, cyxwiz::DataType::Float32);
+    const auto* flat_values = flat.ReadData<float>();
+    const auto* folded_values = folded.ReadData<float>();
+    for (size_t i = 0; i < 24; ++i) REQUIRE(folded_values[i] == flat_values[i]);
+    const cyxwiz::Tensor matrix = cyxwiz::Tensor::RandomSeeded({4, 6}, 7, cyxwiz::DataType::Float32);
+    const auto* matrix_values = matrix.ReadData<float>();
+    for (size_t i = 0; i < 24; ++i) REQUIRE(matrix_values[i] == flat_values[i]);
 }
 
 TEST_CASE("Tensor empty factories require no compute or fallback",
           "[tensor][tensor_factory][arrayfire]") {
     const std::vector<size_t> empty_rank_five{1, 0, 1, 1, 1};
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountFactoryHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFactoryFallback);
         for (const std::string operation : {
                  "zeros", "ones", "random", "random_seeded", "range_n"}) {
             const cyxwiz::Tensor output = ApplyFactory(
@@ -442,32 +396,20 @@ TEST_CASE("Tensor empty factories require no compute or fallback",
         }
     }
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == 0);
 }
-#endif
 
 TEST_CASE("Tensor factory shape overflow fails before compute",
           "[tensor][tensor_factory][invalid]") {
     const std::vector<size_t> shape{
         (std::numeric_limits<size_t>::max)(), 2};
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_factory_host_sync_count = 0;
-    g_factory_fallback_count = 0;
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
         &CountFactoryHostSync);
-    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &CountFactoryFallback);
-#endif
     for (const std::string operation : {
              "zeros", "ones", "random", "random_seeded", "range_n"}) {
         REQUIRE_THROWS_AS(
             ApplyFactory(operation, shape, cyxwiz::DataType::Float32),
             std::overflow_error);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     REQUIRE(g_factory_host_sync_count == 0);
-    REQUIRE(g_factory_fallback_count == 0);
-#endif
 }

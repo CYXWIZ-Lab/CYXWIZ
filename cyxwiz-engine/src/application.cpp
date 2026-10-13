@@ -9,6 +9,7 @@
 #include "gui/ui_buttons.h"
 #include "gui/ui_tokens.h"
 #include "gui/panel_memory.h"
+#include "gui/separate_windows.h"
 #include "gui/ui_widgets.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_dialog.h"
@@ -18,6 +19,7 @@
 #include "network/job_manager.h"
 #include "core/async_task_manager.h"
 #include "core/data_registry.h"
+#include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
 #include "core/engine_config.h"
@@ -48,6 +50,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include <implot3d.h>
 #include "gui/plot/plot_style.h"
 #include "gui/plot/plot_capture_gl.h"
 #include <imnodes.h>
@@ -363,6 +366,7 @@ bool CyxWizApp::Initialize() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     implot_context_ = ImPlot::CreateContext();  // the one ImPlot context (TOFIX134 P0 item 1)
+    ImPlot3D::CreateContext();                  // 3D plots (TOFIX134 P4)
     cyxwiz::plot::InstallPlotViewHooks();  // PNG export, save dialog, image copy (TOFIX134 P1)
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
@@ -381,23 +385,32 @@ bool CyxWizApp::Initialize() {
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // TODO: ViewportsEnable causes crash on Windows - needs investigation
-    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // The big windows may become windows of their own (TOFIX129 A8).
+    gui::InstallSeparateWindows();
 
     // Engine-wide appearance (theme, code text size, sidebar) from the
     // Engine settings; the interface text size is used by LoadFonts.
     gui::ApplyStartupAppearance();
 
-    // When viewports are enabled we tweak WindowRounding/WindowBg
-    ImGuiStyle& style = ImGui::GetStyle();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
-
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+    gui::NameSeparateWindows();
+    cyxwiz::plot::CapturePlotsInSeparateWindows();
+    // A window of its own gets the main window's title bar and icon.
+    {
+        ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        static void (*backend_create_window)(ImGuiViewport*) = pio.Platform_CreateWindow;
+        pio.Platform_CreateWindow = [](ImGuiViewport* viewport) {
+            backend_create_window(viewport);
+            if (auto* window = static_cast<GLFWwindow*>(viewport->PlatformHandle)) {
+#ifdef _WIN32
+                enable_dark_title_bar(window);
+#endif
+                load_window_icon(window);
+            }
+        };
+    }
 
     // Match font rasterization to the physical framebuffer while preserving
     // logical font metrics and UI layout.
@@ -660,6 +673,14 @@ void CyxWizApp::Update(float delta_time) {
 
     // Process async task completion callbacks
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    // Dataset changes (loaded, replaced, removed) to their subscribers, on this thread.
+    // Each change is logged once (one subscriber for the app's lifetime).
+    static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
+        const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
+        spdlog::info("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
+    });
+    (void)catalog_log;
+    cyxwiz::DatasetCatalog::Instance().Pump();
 }
 
 void CyxWizApp::RenderPythonWait() {
@@ -814,7 +835,7 @@ void CyxWizApp::Render() {
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data != nullptr) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
-        cyxwiz::plot::CompletePlotCaptures();  // plot images asked for this frame
+        cyxwiz::plot::CompletePlotCaptures(ImGui::GetMainViewport());  // plot images asked for this frame
     } else {
         spdlog::error("ImGui::GetDrawData() returned nullptr - skipping render");
     }
@@ -864,6 +885,7 @@ void CyxWizApp::Shutdown() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImNodes::DestroyContext();  // Cleanup ImNodes context
+    ImPlot3D::DestroyContext();
     ImPlot::DestroyContext(implot_context_);  // the Engine's context, whatever is current
     implot_context_ = nullptr;
     ImGui::DestroyContext();

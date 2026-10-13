@@ -13,6 +13,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -73,6 +74,10 @@ scripting::LanguageService::Request ScriptEditorPanel::LanguageRequest(scripting
 
 bool ScriptEditorPanel::LanguageReady() {
     if (!scripting_engine_) return false;
+    // Python tools only for Python files: a CSV showed Python "problems".
+    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) &&
+        !tabs_[active_tab_index_]->cell_mode && !tabs_[active_tab_index_]->editor.LanguageIsPython())
+        return false;
     if (!scripting_engine_->IsInitialized()) {
         // Python starts only with a project; without one, asking every frame
         // (the problems check polls) only logged a warning each time.
@@ -133,6 +138,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
                               IM_COL32(0, 0, 0, 14), 8.0f + s);
     }
 
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |

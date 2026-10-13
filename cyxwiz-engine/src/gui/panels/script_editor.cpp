@@ -4,11 +4,13 @@
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_widgets.h"
+#include "../ui_tokens.h"
 #include "../editor_fonts.h"
 #include "../../scripting/scripting_engine.h"
 #include "../../scripting/script_output_sink.h"
 #include "../../core/keyboard_shortcuts.h"
 #include "../../core/script_keys.h"
+#include "../separate_windows.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -60,7 +62,6 @@ void ScriptEditorPanel::Render() {
         if (tab) tab->cell_manager.Pump();
     }
     CheckFilesOnDisk();
-    RenderPlotWindows();
     PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
     UpdateDebugState();     // the debugger's snapshot and paused line (P6)
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) && tabs_[active_tab_index_])
@@ -125,7 +126,9 @@ void ScriptEditorPanel::Render() {
     }
 
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    ::gui::NextWindowMayLeave(GetName());
     const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    ::gui::TabMenu(GetName(), &visible_);
     if (expanded) {
         // Track focus state (including child windows like the code view)
         is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
@@ -190,7 +193,7 @@ void ScriptEditorPanel::Render() {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     if (ImGui::BeginPopupModal("Empty Script Warning", &show_empty_script_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION);
         ImGui::SameLine();
         ImGui::Text("Cannot Save Empty Script");
         ImGui::Separator();
@@ -264,7 +267,7 @@ void ScriptEditorPanel::RenderMenuBar() {
                 // Animated indicator
                 const char* indicators[] = {"Running.", "Running..", "Running..."};
                 int idx = static_cast<int>(running_indicator_time_ * 2) % 3;
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%s", indicators[idx]);
+                ImGui::TextColored(ui::CurrentTokens().running, "%s", indicators[idx]);
                 ImGui::Separator();
             }
 
@@ -306,9 +309,9 @@ void ScriptEditorPanel::RenderMenuBar() {
             ImGui::Separator();
             ImGui::Text("Sandbox Status:");
             if (sandbox_enabled) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  Active - Scripts are sandboxed");
+                ImGui::TextColored(ui::CurrentTokens().success, "  Active - Scripts are sandboxed");
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "  Inactive - Full Python access");
+                ImGui::TextColored(ui::CurrentTokens().warning, "  Inactive - Full Python access");
             }
 
             ImGui::Separator();

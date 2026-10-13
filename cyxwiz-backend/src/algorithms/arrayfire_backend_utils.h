@@ -5,22 +5,15 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <random>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
 
-// Reset the current thread/device default ArrayFire RNG and this thread's
-// native RNG (CPU layer paths); return the ArrayFire generator identity. Does
-// not restore stream continuation.
+// Reset the current thread/device default ArrayFire RNG and the attention
+// dropout stream counter; return the ArrayFire generator identity. Does not
+// restore stream continuation.
 CYXWIZ_API std::string SeedCurrentArrayFireRandomEngine(uint64_t seed);
-
-// This thread's native random engine for CPU layer paths (dropout masks,
-// random tensors). Seeded by SeedCurrentArrayFireRandomEngine on the training
-// worker, so a seeded run repeats on CPU-placed layers too; otherwise seeded
-// from std::random_device.
-CYXWIZ_API std::mt19937& NativeRandomEngine();
 
 // Next attention-dropout mask stream: fused attention derives each call's mask
 // seed from ArrayFire's seed and this counter. Reset to zero by
@@ -46,25 +39,15 @@ private:
     int64_t start_ns_;
 };
 
-enum class ArrayFireFallbackPolicy {
-    AllowNativeCpuFallback,
-    ForbidNativeCpuFallback,
-};
-
 enum class ArrayFireHostSyncCategory {
     Unknown,
     LossScalarReadback,
     MetricScalarReadback,
     LayoutConversion,
     DebugSampleDump,
-    LayerCpuPath,
-    OptimizerCpuPath,
     CheckpointOutput,
-    AlgorithmCpuPath,
     OutputMaterialization,
-    LossCpuPath,
     LossInputValidation,
-    MetricCpuPath,
     MetricInputValidation,
     // Provider tenants that cannot share ArrayFire's device memory (oneAPI)
     // stage inputs through host memory.
@@ -74,15 +57,6 @@ enum class ArrayFireHostSyncCategory {
 struct ArrayFireHostSyncAttribution {
     ArrayFireHostSyncCategory category = ArrayFireHostSyncCategory::Unknown;
     std::string operation_name;
-};
-
-struct ArrayFireNativeCpuFallbackEvent {
-    std::string operation_name;
-    std::string reason_code;
-    std::string selected_backend;
-    std::string context;
-    std::string error_message;
-    bool fallback_forbidden = false;
 };
 
 struct ArrayFireHostSyncEvent {
@@ -98,38 +72,8 @@ struct ArrayFireHostSyncEvent {
     uint64_t bytes = 0;
 };
 
-using ArrayFireNativeCpuFallbackObserver =
-    void (*)(const ArrayFireNativeCpuFallbackEvent& event);
 using ArrayFireHostSyncObserver =
     void (*)(const ArrayFireHostSyncEvent& event);
-
-class CYXWIZ_API ScopedArrayFireFallbackPolicy {
-public:
-    explicit ScopedArrayFireFallbackPolicy(ArrayFireFallbackPolicy policy);
-    ~ScopedArrayFireFallbackPolicy();
-
-    ScopedArrayFireFallbackPolicy(const ScopedArrayFireFallbackPolicy&) = delete;
-    ScopedArrayFireFallbackPolicy& operator=(
-        const ScopedArrayFireFallbackPolicy&) = delete;
-
-private:
-    ArrayFireFallbackPolicy previous_;
-};
-
-class CYXWIZ_API ScopedArrayFireNativeCpuFallbackObserver {
-public:
-    explicit ScopedArrayFireNativeCpuFallbackObserver(
-        ArrayFireNativeCpuFallbackObserver observer);
-    ~ScopedArrayFireNativeCpuFallbackObserver();
-
-    ScopedArrayFireNativeCpuFallbackObserver(
-        const ScopedArrayFireNativeCpuFallbackObserver&) = delete;
-    ScopedArrayFireNativeCpuFallbackObserver& operator=(
-        const ScopedArrayFireNativeCpuFallbackObserver&) = delete;
-
-private:
-    ArrayFireNativeCpuFallbackObserver previous_;
-};
 
 class CYXWIZ_API ScopedArrayFireHostSyncObserver {
 public:
@@ -162,13 +106,6 @@ private:
     ArrayFireHostSyncAttribution previous_;
 };
 
-CYXWIZ_API ArrayFireFallbackPolicy GetArrayFireFallbackPolicy();
-CYXWIZ_API void SetArrayFireFallbackPolicy(ArrayFireFallbackPolicy policy);
-CYXWIZ_API bool IsArrayFireNativeCpuFallbackForbidden();
-CYXWIZ_API ArrayFireNativeCpuFallbackObserver
-GetArrayFireNativeCpuFallbackObserver();
-CYXWIZ_API void SetArrayFireNativeCpuFallbackObserver(
-    ArrayFireNativeCpuFallbackObserver observer);
 CYXWIZ_API ArrayFireHostSyncObserver GetArrayFireHostSyncObserver();
 CYXWIZ_API void SetArrayFireHostSyncObserver(
     ArrayFireHostSyncObserver observer);
@@ -187,26 +124,5 @@ CYXWIZ_API std::string BuildTensorShapeContext(
     const std::vector<size_t>& shape);
 CYXWIZ_API std::string CurrentArrayFireBackendName();
 CYXWIZ_API bool IsCurrentArrayFireBackendAvailable();
-CYXWIZ_API bool IsCurrentArrayFireBackendGpu();
-CYXWIZ_API std::string BuildArrayFireBackendFallbackContext(
-    const std::string& shape_or_node_context,
-    const std::string& backend_name = CurrentArrayFireBackendName());
-CYXWIZ_API std::string BuildArrayFireBackendFallbackMessage(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    bool include_error_text,
-    const char* error_message,
-    const std::string& context = {});
-CYXWIZ_API void ThrowIfArrayFireNativeCpuFallbackForbidden(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    const char* error_message,
-    const std::string& context = {});
-CYXWIZ_API bool ShouldLogArrayFireBackendFallbackOnce(
-    const char* operation_name,
-    BackendFallbackReason reason,
-    const std::string& context = {});
-CYXWIZ_API bool ShouldForceArrayFireBackendFallbackForTesting(
-    const char* operation_name);
 
 } // namespace cyxwiz

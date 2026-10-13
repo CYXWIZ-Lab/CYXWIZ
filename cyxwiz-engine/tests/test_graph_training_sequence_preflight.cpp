@@ -333,12 +333,12 @@ void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
     cyxwiz::RequestedRouteTrainingReadiness unqualified;
     unqualified.route_available=true;unqualified.authorized=false;unqualified.route_name="GTX 1050 Ti";
     unqualified.message="No isolated route qualification snapshot is installed";
-    config.forbid_native_cpu_fallback=true;
+    config.strict_execution=true;
     issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
     Check(count(issues,cyxwiz::IssueLevel::Error,"Verify Selected")==1 &&
           count(issues,cyxwiz::IssueLevel::Error,"No isolated route qualification")==1,
           "an unqualified device with fallback forbidden is a Compile error with the action");
-    config.forbid_native_cpu_fallback=false;unqualified.cpu_recovery_qualified=true;
+    config.strict_execution=false;unqualified.cpu_recovery_qualified=true;
     issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
     Check(count(issues,cyxwiz::IssueLevel::Warning,"fall back to ArrayFire CPU")==1 &&
           count(issues,cyxwiz::IssueLevel::Error,"")==0,"a qualified CPU fallback is a warning");
@@ -353,10 +353,10 @@ void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
     no_recovery.cpu_recovery_qualified=true;
     Check(gui::CheckGraphLaunchReadiness(nodes,config,registry,&no_recovery).empty(),
           "a verified CPU recovery route reports nothing");
-    no_recovery.cpu_recovery_qualified=false;config.forbid_native_cpu_fallback=true;
+    no_recovery.cpu_recovery_qualified=false;config.strict_execution=true;
     Check(gui::CheckGraphLaunchReadiness(nodes,config,registry,&no_recovery).empty(),
           "strict runs never fall back, so recovery is not mentioned");
-    config.forbid_native_cpu_fallback=false;
+    config.strict_execution=false;
     auto data_only=config;data_only.layers.clear();
     Check(gui::CheckGraphLaunchReadiness(nodes,data_only,registry,&unqualified).empty(),
           "graphs without a model are not judged on the training device");

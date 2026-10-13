@@ -622,12 +622,6 @@ void RenderSlowPathInspection(const DebugTraceRecord& trace) {
         }
     }
 
-    if (JsonNumber(payload, "native_cpu_fallback_count") > 0.0) {
-        ImGui::TextColored(
-            DebuggerWarning(),
-            "Native CPU fallback occurrences: %.0f (duration unavailable)",
-            JsonNumber(payload, "native_cpu_fallback_count"));
-    }
     ImGui::TextDisabled(
         "Timing semantics: host wall clock; no ArrayFire synchronization was forced.");
     ImGui::TextDisabled(
@@ -2027,8 +2021,7 @@ void StudioDebuggerPanel::RenderRunHistory() {
                     ? "unknown"
                     : run.execution.residency_verdict.c_str());
             ImGui::TextDisabled(
-                "fallbacks=%zu transfers=%zu/%s syncs=%zu/%s",
-                run.execution.native_cpu_fallback_count,
+                "transfers=%zu/%s syncs=%zu/%s",
                 run.execution.transfer_event_count,
                 FormatBytesCompact(run.execution.transfer_known_bytes).c_str(),
                 run.execution.synchronization_event_count,
@@ -2220,10 +2213,6 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
                 trace.residency_verdict.empty()
                     ? "unknown"
                     : trace.residency_verdict.c_str());
-    ImGui::SameLine(280);
-    ImGui::TextDisabled(
-        "fallbacks=%llu",
-        static_cast<unsigned long long>(trace.native_cpu_fallback_count));
     ImGui::TextDisabled("transfers=%llu/%s  syncs=%llu/%s",
                         static_cast<unsigned long long>(
                             trace.transfer_event_count),
@@ -3713,17 +3702,15 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
                 JsonNumber(payload, "placement_count"),
                 JsonNumber(payload, "actual_backend_observed_count"));
     ImGui::SameLine(500.0f);
-    ImGui::TextDisabled("attention %.0f  current fallback %.0f",
-                        JsonNumber(payload, "attention_count"),
-                        JsonNumber(payload, "same_run_fallback_count"));
+    ImGui::TextDisabled("attention %.0f",
+                        JsonNumber(payload, "attention_count"));
 
     if (JsonBool(payload, "linked_execution_context_available", false)) {
         ImGui::TextDisabled(
-            "Linked context: %s | %s | residency %s | fallbacks %.0f",
+            "Linked context: %s | %s | residency %s",
             JsonString(payload, "linked_execution_scope", "unobserved").c_str(),
             JsonString(payload, "linked_effective_backend", "unobserved").c_str(),
-            JsonString(payload, "linked_residency_verdict", "unobserved").c_str(),
-            JsonNumber(payload, "linked_native_cpu_fallback_count"));
+            JsonString(payload, "linked_residency_verdict", "unobserved").c_str());
         ImGui::TextDisabled(
             "Linked context is run-level evidence and is not treated as a per-node actual backend.");
     } else {
@@ -3808,14 +3795,7 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
             }
 
             ImGui::TableSetColumnIndex(3);
-            if (JsonBool(row, "fallback_observed_this_run", false)) {
-                ImGui::TextColored(DebuggerDanger(),
-                    "observed this run");
-            } else if (JsonBool(
-                           row, "prior_runtime_fallback_observed", false)) {
-                ImGui::TextColored(DebuggerWarning(),
-                    "prior observation");
-            } else if (JsonBool(row, "fallback_possible", false)) {
+            if (JsonBool(row, "fallback_possible", false)) {
                 ImGui::TextDisabled("possible");
             } else {
                 ImGui::TextDisabled("not declared");
@@ -4692,16 +4672,6 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                 !JsonString(trace.payload, "backend_fallback").empty()) {
                 ImGui::Text("Fallback path: %s",
                     JsonString(trace.payload, "backend_fallback").c_str());
-            }
-            ImGui::Text("Same-run fallback observed: %s",
-                JsonBool(trace.payload,
-                         "backend_fallback_observed_this_run", false)
-                    ? "yes"
-                    : "no");
-            if (JsonBool(trace.payload,
-                         "backend_prior_runtime_fallback_observed", false)) {
-                ImGui::TextDisabled(
-                    "A matching fallback was observed before this debug run.");
             }
             if (!JsonBool(trace.payload,
                           "backend_cost_estimate_available", false)) {

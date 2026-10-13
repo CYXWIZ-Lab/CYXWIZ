@@ -115,6 +115,8 @@ int main() {
     cat.columns.push_back(Text("truth", {"cat", "dog", "dog", "cat", "bird"}));
     cat.columns.push_back(Numbers("v", {1, 2, 3, 4, 5}));
     cat.columns.push_back(Numbers("w", {2, 1, 4, 3, 5}));
+    cat.columns.push_back(Numbers("prob", {0.1, 0.9, 0.4, 0.2, 0.7}));
+    cat.columns.push_back(Text("country", {"France", "Spain", "Peru", "Chile", "Japan"}));
     for (const auto& k : Kinds()) {
         PlotSpec s;
         s.kind = k.kind;
@@ -122,7 +124,46 @@ int main() {
         if (k.required & kEncX) s.x_column = categories ? "pred" : "v";
         if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
         if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
-        const Prepared kp = Prepare(s, cat);
+        // Model results: actual labels against predictions, scores and probabilities.
+        if (k.kind == Kind::Confusion || k.kind == Kind::Roc || k.kind == Kind::PrCurve || k.kind == Kind::Calibration) s.x_column = "truth";
+        if (k.kind == Kind::Confusion) s.y_columns = {"pred"};
+        if (k.kind == Kind::Calibration) s.y_columns = {"prob"};
+        if (k.kind == Kind::Importance) s.x_column = "pred";
+        if (k.kind == Kind::Sankey) s.y_columns = {"truth", "pred"};
+        if (k.kind == Kind::Treemap) s.y_columns = {"truth", "pred"};
+        if (k.kind == Kind::MapRegions) {
+            s.x_column = "country";
+            s.y_columns = {"v"};
+        }
+        if (k.kind == Kind::Matrix || k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) s.y_columns = {"v", "w"};
+        // 3D: x, y and z (a surface from X, Y, Z; its cells need one row each here).
+        if (Info(k.kind).group == Group::ThreeD) {
+            s.x_column = "v";
+            s.y_columns = {"w"};
+            s.z_column = "prob";
+            s.min_cell_rows = 1;
+        }
+        // Vector fields read a grid of arrows: a 6 x 6 rotation.
+        Source field;
+        if (k.required & kEncVector) {
+            std::vector<double> fx, fy, fu, fv;
+            for (int j = 0; j < 6; ++j)
+                for (int i = 0; i < 6; ++i) {
+                    fx.push_back(i);
+                    fy.push_back(j);
+                    fu.push_back(2.5 - j);
+                    fv.push_back(i - 2.5);
+                }
+            field.columns.push_back(Numbers("x", fx));
+            field.columns.push_back(Numbers("y", fy));
+            field.columns.push_back(Numbers("u", fu));
+            field.columns.push_back(Numbers("v", fv));
+            s.x_column = "x";
+            s.y_columns = {"y"};
+            s.u_column = "u";
+            s.v_column = "v";
+        }
+        const Prepared kp = Prepare(s, (k.required & kEncVector) ? field : cat);
         Check(kp.problem.empty(), std::string(k.id) + ": prepared (" + kp.problem + ")");
         const std::string doc = ToSvg(kp, AxisRange{0, 5, 0, 6, false}, SvgStyle{});
         Check(doc.find("</svg>") != std::string::npos, std::string(k.id) + ": SVG written");
@@ -130,6 +171,42 @@ int main() {
         ParsesAsXml(doc, k.id);
     }
     Check(HexColour(1.0f, 0.5f, 0.0f) == "#ff8000", "hex colour");
+
+    // 3D: the surface CSV lists the filled cells at their centres, bottom row first.
+    {
+        Source grid;
+        grid.columns.push_back(Numbers("V1", {1, 2}));
+        grid.columns.push_back(Numbers("V2", {3, NAN}));
+        PlotSpec gs;
+        gs.kind = Kind::Surface;
+        gs.surface_from = PlotSpec::SurfaceFrom::Grid;
+        gs.y_columns = {"V1", "V2"};
+        const std::string surface_csv = ToCsv(Prepare(gs, grid));
+        Check(surface_csv == "column,row,value\n1,1,1\n2,1,3\n1,2,2\n", "surface CSV: " + surface_csv);
+        Check(ToSvg(Prepare(gs, grid), AxisRange{}, SvgStyle{}).find("saved as PNG or CSV") != std::string::npos, "3D SVG says PNG or CSV");
+    }
+    // Colour picker in SVG: a picked scale and a picked series colour.
+    {
+        Source picked_src;
+        picked_src.columns.push_back(Numbers("x", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+        picked_src.columns.push_back(Numbers("y", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+        picked_src.columns.push_back(Numbers("epoch", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+        PlotSpec picked_scale;
+        picked_scale.kind = Kind::Scatter;
+        picked_scale.x_column = "x";
+        picked_scale.y_columns = {"y"};
+        picked_scale.color_column = "epoch";
+        picked_scale.colour_scale = "viridis";
+        const std::string picked_svg = ToSvg(Prepare(picked_scale, picked_src), AxisRange{0, 13, 0, 13, false}, SvgStyle{});
+        Check(picked_svg.find("#440154") != std::string::npos, "the lowest epoch takes Viridis' low end");
+        PlotSpec picked_line;
+        picked_line.kind = Kind::Line;
+        picked_line.x_column = "x";
+        picked_line.y_columns = {"y"};
+        picked_line.series_colours = {"#5ec8b8"};
+        Check(ToSvg(Prepare(picked_line, picked_src), AxisRange{0, 13, 0, 13, false}, SvgStyle{}).find("#5ec8b8") != std::string::npos,
+              "a picked series colour");
+    }
 
     // Colour scale (P2 board 6): the CSV keeps the colour value, the SVG
     // points take the scale's ends, a missing value the dim text colour.
@@ -155,6 +232,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 13 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 41 kinds, colour scale, 3D CSV, picked scale and series colour. OK\n";
     return 0;
 }

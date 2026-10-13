@@ -1,7 +1,7 @@
 #pragma once
 
 #include "query_editor.h"
-#include "analyzer.h"
+#include "profile_view.h"
 #include "visualizer.h"
 #include <imgui.h>
 #include <functional>
@@ -22,7 +22,7 @@ namespace cyxwiz {
  * Architecture:
  *   DataStudioPanel (Container)
  *     ├─ QueryEditor (SQL query interface)
- *     ├─ Analyzer (Statistical analysis)
+ *     ├─ ProfileView (profile and column roles)
  *     └─ Visualizer (Interactive plots)
  *
  * Tab Structure:
@@ -83,14 +83,32 @@ public:
         open_node_editor_callback_ = std::move(cb);
     }
 
+    // Opens Data Studio on a dataset's Profile tab (a dashboard's "Edit roles").
+    void ShowProfile(const std::string& dataset_name) {
+        SetActiveDataset(dataset_name);
+        visible_ = true;
+        show_profile_ = true;
+    }
+
+    // Opens Data Studio's Query tab on a dataset with this SQL in the editor
+    // (a dashboard's "Open in Data Studio" / "Open in Query tab"); it runs.
+    void ShowQuery(const std::string& dataset_name, const std::string& sql);
+
+    // Query results open in the Table Viewer through this (MainWindow).
+    void SetOpenTableCallback(std::function<void(std::shared_ptr<class DataTable>)> cb) {
+        if (query_editor_) query_editor_->on_open_table = std::move(cb);
+    }
+
 private:
     // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
     std::unique_ptr<QueryEditor> query_editor_;
-    std::unique_ptr<Analyzer> analyzer_;
+    std::unique_ptr<ProfileView> profile_;
     std::unique_ptr<Visualizer> visualizer_;
 
     // State
     std::string active_dataset_;
+    bool show_profile_ = false;  // select the Profile tab (and focus) next frame
+    bool show_query_ = false;    // select the Query tab (and focus) next frame
     int selected_tab_;
     bool visible_;
 

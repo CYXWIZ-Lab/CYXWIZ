@@ -8,9 +8,7 @@
 #include <string>
 #include <thread>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -25,7 +23,6 @@ std::mutex& LifecycleMutex() {
 
 } // namespace
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 const char* BackendToString(af::Backend backend) {
@@ -163,7 +160,6 @@ bool TryActivateCpuBackend() {
 }
 
 }  // namespace
-#endif
 
 bool Initialize() {
     std::lock_guard<std::mutex> lock(LifecycleMutex());
@@ -178,7 +174,6 @@ bool Initialize() {
                  CYXWIZ_VERSION_MINOR,
                  CYXWIZ_VERSION_PATCH);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     bool backend_activated = false;
 
     // Each activation step is timed, and a watchdog names a step that runs
@@ -265,9 +260,6 @@ bool Initialize() {
     } catch (const af::exception& e) {
         spdlog::warn("ArrayFire initialized but active backend query failed: {}", e.what());
     }
-#else
-    spdlog::warn("ArrayFire not available - backend compiled in native CPU-only mode");
-#endif
 
 #ifdef CYXWIZ_DEBUG
     spdlog::set_level(spdlog::level::debug);
@@ -283,11 +275,9 @@ bool IsInitialized() {
 }
 
 void ReleaseUnusedDeviceMemory() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (g_initialized) {
         af::deviceGC();
     }
-#endif
 }
 
 void Shutdown() {
@@ -299,9 +289,7 @@ void Shutdown() {
 
     spdlog::info("Shutting down CyxWiz Backend");
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::deviceGC();
-#endif
 
     g_initialized = false;
 }

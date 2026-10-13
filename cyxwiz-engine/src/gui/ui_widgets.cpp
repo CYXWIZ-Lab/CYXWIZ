@@ -8,6 +8,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace cyxwiz::ui {
@@ -136,21 +137,29 @@ void StatusText(Status status, const char* text) {
     ImGui::TextColored(s.colour, "%s %s", s.icon, text && text[0] ? text : s.label);
 }
 
-void StatusChip(Status status, const char* text) {
+void Chip(const char* text, const ImVec4& colour) {
     const Tokens& t = CurrentTokens();
-    const StatusStyle s = StatusStyleFor(status);
-    const char* label = text && text[0] ? text : s.label;
     const float height = ImGui::GetFrameHeight() - 4.0f;
     const float dot = 6.0f;
-    const ImVec2 text_size = ImGui::CalcTextSize(label);
+    const ImVec2 text_size = ImGui::CalcTextSize(text);
     const ImVec2 size(t.space_md * 2.0f + dot + t.space_sm + text_size.x, height);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(s.colour, 0.16f)), height * 0.5f);
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ToU32(WithAlpha(colour, 0.16f)), height * 0.5f);
     const float cy = pos.y + height * 0.5f;
-    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, cy), dot * 0.5f, ToU32(s.colour));
-    dl->AddText(ImVec2(pos.x + t.space_md + dot + t.space_sm, cy - text_size.y * 0.5f), ToU32(s.colour), label);
+    dl->AddCircleFilled(ImVec2(pos.x + t.space_md + dot * 0.5f, cy), dot * 0.5f, ToU32(colour));
+    dl->AddText(ImVec2(pos.x + t.space_md + dot + t.space_sm, cy - text_size.y * 0.5f), ToU32(colour), text);
+}
+
+float ChipWidth(const char* text) {
+    const Tokens& t = CurrentTokens();
+    return t.space_md * 2.0f + 6.0f + t.space_sm + ImGui::CalcTextSize(text).x;
+}
+
+void StatusChip(Status status, const char* text) {
+    const StatusStyle s = StatusStyleFor(status);
+    Chip(text && text[0] ? text : s.label, s.colour);
 }
 
 void StatusLegend(std::initializer_list<Status> statuses) {
@@ -229,6 +238,100 @@ bool FlowRow::Next(float item_width) {
 }
 
 // ---------------------------------------------------------------------------
+// Settings column + results area
+
+namespace {
+constexpr float kHandleWidth = 7.0f;
+constexpr float kMinColumnWidth = 200.0f;
+}  // namespace
+
+void BeginSettingsColumn(const char* id, float default_width) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushID(id);
+    float* width = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##column_width"), default_width);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    *width = std::clamp(*width, kMinColumnWidth, std::max(kMinColumnWidth, avail * 0.6f));
+
+    // Areas are told apart by tone, not outlines (owner rule 2026-10-01): the
+    // column sits one step above the window, so the input-toned fields read on it.
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, Mix(t.bg_window, t.bg_raised, 0.4f));
+    ImGui::BeginChild("##settings", ImVec2(*width, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
+}
+
+void BeginResultsArea() {
+    const Tokens& t = CurrentTokens();
+    ImGui::EndChild();
+
+    // Drag handle between the panes: a short grip in the surface tone.
+    float* width = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##column_width"));
+    ImGui::SameLine(0.0f, 0.0f);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float height = std::max(ImGui::GetContentRegionAvail().y, 1.0f);
+    ImGui::InvisibleButton("##handle", ImVec2(kHandleWidth, height));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (active) *width += ImGui::GetIO().MouseDelta.x;
+    const float grip = 28.0f;
+    const ImVec2 grip_min(pos.x + kHandleWidth * 0.5f - 1.0f, pos.y + (height - grip) * 0.5f);
+    ImGui::GetWindowDrawList()->AddRectFilled(grip_min, ImVec2(grip_min.x + 2.0f, grip_min.y + grip),
+                                              ToU32(hovered || active ? t.border : t.border_soft), 1.0f);
+
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::BeginChild("##results", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+}
+
+void EndResultsArea() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+}
+
+void SettingsSection(const char* title) {
+    const Tokens& t = CurrentTokens();
+    std::string upper(title);
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1.0f) ImGui::Spacing();
+    FontScope font(Font::Medium);
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::TextUnformatted(upper.c_str());
+    ImGui::PopStyleColor();
+}
+
+void FieldLabel(const char* label) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    // In a table the next cell inherits the frame baseline of the widget in the
+    // cell before it, which drew this label a frame padding lower; start at the top.
+    ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(label);
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+void BeginInsetList(const char* id, float height) {
+    const Tokens& t = CurrentTokens();
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_field);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_input);
+    // Checkbox frames on the raised tone, so an unchecked box shows on the list.
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_raised);
+    const ImGuiChildFlags flags =
+        ImGuiChildFlags_AlwaysUseWindowPadding | (height > 0.0f ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+    ImGui::BeginChild(id, ImVec2(0.0f, height), flags);
+}
+
+void EndInsetList() {
+    ImGui::EndChild();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// ---------------------------------------------------------------------------
 // Empty state
 
 void EmptyState(const char* icon, const char* title, const char* hint) {
@@ -247,7 +350,32 @@ void EmptyState(const char* icon, const char* title, const char* hint) {
     };
     if (icon && icon[0]) centred(icon, t.text_faint, 2.0f);
     centred(title, t.text_dim, 1.0f);
-    if (hint && hint[0]) centred(hint, t.text_faint, 1.0f);
+    if (!hint || !hint[0]) return;
+    // The hint wraps into centred lines that fit the area (a single line ran
+    // past the edge of a narrow results area).
+    const float max_width = std::min(std::max(avail.x - ImGui::GetStyle().ItemSpacing.x * 2.0f, 80.0f), 420.0f);
+    std::string line;
+    std::string word;
+    const auto flush = [&]() {
+        if (!line.empty()) centred(line.c_str(), t.text_faint, 1.0f);
+        line.clear();
+    };
+    for (const char* c = hint;; ++c) {
+        if (*c == ' ' || *c == '\0') {
+            const std::string candidate = line.empty() ? word : line + " " + word;
+            if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > max_width) {
+                flush();
+                line = word;
+            } else {
+                line = candidate;
+            }
+            word.clear();
+            if (*c == '\0') break;
+        } else {
+            word += *c;
+        }
+    }
+    flush();
 }
 
 // ---------------------------------------------------------------------------

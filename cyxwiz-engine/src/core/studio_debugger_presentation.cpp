@@ -433,8 +433,7 @@ StudioDebuggerStatusLine BuildStudioDebuggerStatusLine(
             std::string residency = execution.residency_verdict.empty()
                 ? std::string("residency unobserved") : execution.residency_verdict;
             std::replace(residency.begin(), residency.end(), '_', ' ');
-            line.provenance = residency + " · " +
-                std::to_string(execution.native_cpu_fallback_count) + " CPU fallbacks";
+            line.provenance = residency;
         } else if (snapshot.training_trace_historical && snapshot.training_trace.available) {
             line.provenance = "Runtime shows historical training evidence (run " +
                               snapshot.training_trace.run_id + ")";

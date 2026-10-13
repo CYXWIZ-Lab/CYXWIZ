@@ -1,5 +1,8 @@
 #include "wavelet_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -39,19 +42,12 @@ void WaveletPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("SettingsPanel", ImVec2(panel_width * 0.28f, 0), true);
+            ui::BeginSettingsColumn("wavelet", ImGui::GetContentRegionAvail().x * 0.28f);
             RenderSignalInput();
-            ImGui::Separator();
             RenderWaveletSettings();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -85,13 +81,11 @@ void WaveletPanel::RenderToolbar() {
 }
 
 void WaveletPanel::RenderSignalInput() {
-    ImGui::Text(ICON_FA_SIGNAL " Signal");
-    ImGui::Spacing();
+    ui::SettingsSection("Signal");
 
-    ImGui::Text("Type:");
     const char* signal_types[] = { "Sine", "Step", "Noisy Sine", "Chirp", "Custom" };
     int current_type = static_cast<int>(signal_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Type");
     if (ImGui::Combo("##SignalType", &current_type, signal_types, IM_ARRAYSIZE(signal_types))) {
         signal_type_ = static_cast<SignalType>(current_type);
         if (signal_type_ != SignalType::Custom) {
@@ -101,8 +95,6 @@ void WaveletPanel::RenderSignalInput() {
     }
 
     if (signal_type_ != SignalType::Custom) {
-        ImGui::Text("Length:");
-        ImGui::SetNextItemWidth(-1);
         const char* lengths[] = { "64", "128", "256", "512", "1024" };
         int len_idx = 2;
         if (signal_length_ == 64) len_idx = 0;
@@ -111,6 +103,7 @@ void WaveletPanel::RenderSignalInput() {
         else if (signal_length_ == 512) len_idx = 3;
         else if (signal_length_ == 1024) len_idx = 4;
 
+        ui::FieldLabel("Length");
         if (ImGui::Combo("##Length", &len_idx, lengths, IM_ARRAYSIZE(lengths))) {
             int lens[] = { 64, 128, 256, 512, 1024 };
             signal_length_ = lens[len_idx];
@@ -119,8 +112,7 @@ void WaveletPanel::RenderSignalInput() {
         }
 
         if (signal_type_ != SignalType::Step) {
-            ImGui::Text("Frequency:");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Frequency");
             if (ImGui::InputDouble("##Freq", &signal_freq_, 1.0, 5.0, "%.1f")) {
                 signal_freq_ = std::clamp(signal_freq_, 1.0, 50.0);
                 GenerateSignal();
@@ -129,8 +121,7 @@ void WaveletPanel::RenderSignalInput() {
         }
 
         if (signal_type_ == SignalType::Noisy) {
-            ImGui::Text("Noise Level:");
-            ImGui::SetNextItemWidth(-1);
+            ui::FieldLabel("Noise level");
             if (ImGui::SliderScalar("##Noise", ImGuiDataType_Double, &noise_level_, &kNoiseMin, &kNoiseMax, "%.2f")) {
                 GenerateSignal();
                 has_result_ = false;
@@ -140,7 +131,7 @@ void WaveletPanel::RenderSignalInput() {
 
     ImGui::Spacing();
 
-    if (ImGui::Button(ICON_FA_ROTATE " Regenerate", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Regenerate", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         GenerateSignal();
         has_result_ = false;
         has_reconstruction_ = false;
@@ -148,9 +139,8 @@ void WaveletPanel::RenderSignalInput() {
     }
 
     // Presets
-    ImGui::Spacing();
-    ImGui::Text("Presets:");
-    if (ImGui::Button("Noisy Signal", ImVec2(-1, 0))) {
+    ui::SettingsSection("Presets");
+    if (ui::SecondaryButton("Noisy Signal", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::Noisy;
         signal_freq_ = 10.0;
         noise_level_ = 0.3;
@@ -158,7 +148,7 @@ void WaveletPanel::RenderSignalInput() {
         GenerateSignal();
         has_result_ = false;
     }
-    if (ImGui::Button("Clean Sine", ImVec2(-1, 0))) {
+    if (ui::SecondaryButton("Clean Sine", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         signal_type_ = SignalType::Sine;
         signal_freq_ = 5.0;
         signal_length_ = 256;
@@ -168,22 +158,17 @@ void WaveletPanel::RenderSignalInput() {
 }
 
 void WaveletPanel::RenderWaveletSettings() {
-    ImGui::Text(ICON_FA_SLIDERS " Wavelet Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("Wavelet");
 
-    ImGui::Text("Wavelet Family:");
     const char* wavelets[] = { "Haar", "db1", "db2", "db3", "db4" };
     int current_wavelet = static_cast<int>(wavelet_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Wavelet family");
     if (ImGui::Combo("##Wavelet", &current_wavelet, wavelets, IM_ARRAYSIZE(wavelets))) {
         wavelet_type_ = static_cast<WaveletType>(current_wavelet);
         has_result_ = false;
     }
 
-    ImGui::Spacing();
-
-    ImGui::Text("Decomposition Levels:");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Decomposition levels");
     if (ImGui::SliderInt("##Levels", &decomp_levels_, 1, 6)) {
         has_result_ = false;
     }
@@ -193,24 +178,17 @@ void WaveletPanel::RenderWaveletSettings() {
     if (decomp_levels_ > max_levels) {
         decomp_levels_ = max_levels;
     }
-    ImGui::TextDisabled("(max %d for length %d)", max_levels, signal_length_);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ImGui::TextColored(ui::CurrentTokens().text_dim, "(max %d for length %d)", max_levels, signal_length_);
 
     // Denoising settings
-    ImGui::Text(ICON_FA_BRUSH " Denoising");
-    ImGui::Spacing();
+    ui::SettingsSection("Denoising");
 
-    ImGui::Text("Threshold:");
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Threshold");
     ImGui::SliderScalar("##Threshold", ImGuiDataType_Double, &threshold_, &kThresholdMin, &kThresholdMax, "%.3f");
 
-    ImGui::Text("Type:");
     const char* thresh_types[] = { "Hard", "Soft" };
     int current_thresh = static_cast<int>(threshold_type_);
-    ImGui::SetNextItemWidth(-1);
+    ui::FieldLabel("Threshold type");
     if (ImGui::Combo("##ThreshType", &current_thresh, thresh_types, IM_ARRAYSIZE(thresh_types))) {
         threshold_type_ = static_cast<ThresholdType>(current_thresh);
     }
@@ -222,15 +200,17 @@ void WaveletPanel::RenderLoadingIndicator() {
 }
 
 void WaveletPanel::RenderResults() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (signal_.empty()) {
-        ImGui::TextDisabled("No signal data. Generate a signal first.");
+        ui::EmptyState(ICON_FA_WATER, "No signal yet",
+                       "Generate a signal, then Decompose.");
         return;
     }
 

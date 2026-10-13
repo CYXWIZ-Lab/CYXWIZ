@@ -30,6 +30,8 @@ struct CompiledNodeInputs {
     bool parameters_counting = false;
     // Display name of the node's type ("LSTM", "Concatenate", ...).
     std::string type_label;
+    // The canvas is in Data Pipeline mode: no training compile runs.
+    bool data_pipeline = false;
 };
 
 enum class CompiledStatusKind { Ok, Failed, Pending, None };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "algorithms/arrayfire_backend_utils.h"
+#include "execution_policy.h"
 #include "route_qualification_snapshot.h"
 #include "../../../redist/bootstrapper/runtime_mutation_gate.h"
 
@@ -11,9 +12,7 @@
 #include <sstream>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -38,8 +37,8 @@ struct ExecutionDeviceContext {
     ExecutionRouteQualification requested_qualification;
     ExecutionRouteQualification effective_qualification;
     uint64_t capability_generation = 0;
-    ArrayFireFallbackPolicy fallback_policy =
-        ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+    ExecutionPolicy execution_policy =
+        ExecutionPolicy::Compatibility;
     bool valid = false;
     bool activation_succeeded = false;
     bool execution_validated = false;
@@ -48,11 +47,8 @@ struct ExecutionDeviceContext {
     int preflight_error_code = 0;
     std::string error;
 
-    std::string FallbackPolicyName() const {
-        return fallback_policy ==
-                ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-            ? "forbid_native_cpu_fallback"
-            : "allow_native_cpu_fallback";
+    std::string ExecutionPolicyName() const {
+        return cyxwiz::ExecutionPolicyName(execution_policy);
     }
 
     std::string Describe() const {
@@ -80,7 +76,7 @@ struct ExecutionDeviceContext {
             << RouteQualificationEvidenceLabel(
                    effective_qualification.matrix_id)
             << " generation=" << capability_generation
-            << " fallback_policy=" << FallbackPolicyName()
+            << " execution_policy=" << ExecutionPolicyName()
             << " activation=" << (activation_succeeded ? "ok" : "failed")
             << " execution="
             << (execution_validated ? "validated" : "not_validated")
@@ -103,7 +99,6 @@ inline uint64_t NextExecutionDeviceCapabilityGeneration() {
 }
 
 inline std::string ArrayFireBackendNameForContext(int backend) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     switch (backend) {
         case AF_BACKEND_CPU: return "arrayfire_cpu";
         case AF_BACKEND_CUDA: return "arrayfire_cuda";
@@ -111,14 +106,9 @@ inline std::string ArrayFireBackendNameForContext(int backend) {
         case AF_BACKEND_ONEAPI: return "arrayfire_oneapi";
         default: return "arrayfire_unknown";
     }
-#else
-    (void)backend;
-    return "native_cpu";
-#endif
 }
 
 inline DeviceType DeviceTypeForContextBackend(int backend) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     switch (backend) {
         case AF_BACKEND_CUDA: return DeviceType::CUDA;
         case AF_BACKEND_OPENCL: return DeviceType::OPENCL;
@@ -127,19 +117,14 @@ inline DeviceType DeviceTypeForContextBackend(int backend) {
         default:
             return DeviceType::CPU;
     }
-#else
-    (void)backend;
-    return DeviceType::CPU;
-#endif
 }
 
 inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
-    ArrayFireFallbackPolicy fallback_policy) {
+    ExecutionPolicy execution_policy) {
     ExecutionDeviceContext context;
-    context.fallback_policy = fallback_policy;
+    context.execution_policy = execution_policy;
     context.capability_generation = NextExecutionDeviceCapabilityGeneration();
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::Backend backend = af::getActiveBackend();
         const int device_id = af::getDevice();
@@ -175,18 +160,6 @@ inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
         context.error = error_name != nullptr ? error_name
                                               : "unknown ArrayFire error";
     }
-#else
-    context.platform = "native";
-    context.requested_backend = "native_cpu";
-    context.effective_backend = "native_cpu";
-    context.device_name = "native CPU";
-    context.route_identity = "native:native_cpu:0";
-    context.identity_confidence = DeviceIdentityConfidence::BackendLocal;
-    context.activation_succeeded = true;
-    context.execution_validated = true;
-    context.preflight_stage = "complete";
-    context.valid = true;
-#endif
 
     return context;
 }

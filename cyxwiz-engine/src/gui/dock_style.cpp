@@ -1,5 +1,6 @@
 #include "appearance_settings.h"
 #include "dock_style.h"
+#include "separate_windows.h"
 #include <algorithm>
 #include <cctype>
 #include <spdlog/spdlog.h>
@@ -281,7 +282,7 @@ void DockStyle::ClearPanels() {
     panels_.clear();
 }
 
-bool DockStyle::RenderSidebarToggles() {
+bool DockStyle::RenderSidebarToggles(float bottom_inset) {
     bool any_changed = false;
 
     if (panels_.empty() || sidebar_position_ == SidebarPosition::Hidden) {
@@ -299,7 +300,6 @@ bool DockStyle::RenderSidebarToggles() {
     const float icon_gap = 3.0f;
     const float group_gap = 9.0f;
     const float edge_pad = 5.0f;
-    const float top_offset = 32.0f;  // Space for the menu bar
     const float hover_zone = 50.0f;  // Edge zone that reveals the sidebar
 
     const bool left_side = (sidebar_position_ == SidebarPosition::Left);
@@ -307,12 +307,12 @@ bool DockStyle::RenderSidebarToggles() {
     // Hover detection with hysteresis (auto-hide)
     ImVec2 hover_zone_min, hover_zone_max;
     if (left_side) {
-        hover_zone_min = ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + top_offset);
+        hover_zone_min = ImVec2(viewport->WorkPos.x, viewport->WorkPos.y);
         hover_zone_max = ImVec2(viewport->WorkPos.x + hover_zone + sidebar_width,
                                 viewport->WorkPos.y + viewport->WorkSize.y);
     } else {
         hover_zone_min = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - sidebar_width - hover_zone,
-                                viewport->WorkPos.y + top_offset);
+                                viewport->WorkPos.y);
         hover_zone_max = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x,
                                 viewport->WorkPos.y + viewport->WorkSize.y);
     }
@@ -339,10 +339,13 @@ bool DockStyle::RenderSidebarToggles() {
 
     const float slide_offset = (1.0f - sidebar_visibility_) * sidebar_width;
     const ImVec2 sidebar_pos = left_side
-        ? ImVec2(viewport->WorkPos.x - slide_offset, viewport->WorkPos.y + top_offset)
+        ? ImVec2(viewport->WorkPos.x - slide_offset, viewport->WorkPos.y)
         : ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - sidebar_width + slide_offset,
-                 viewport->WorkPos.y + top_offset);
-    const float sidebar_height = viewport->WorkSize.y - top_offset;
+                 viewport->WorkPos.y);
+    // The work area already starts below the menu bar; the sidebar stops above
+    // the status bar like the dockspace (a 32 px top offset left a strip of
+    // dock background, and the last icons ran over the status bar).
+    const float sidebar_height = viewport->WorkSize.y - bottom_inset;
     const float alpha = sidebar_visibility_;
 
     // Content height: panels with their group lines, then the pinned actions.
@@ -372,6 +375,7 @@ bool DockStyle::RenderSidebarToggles() {
     ImVec4 window_bg = style.Colors[ImGuiCol_MenuBarBg];
     window_bg.w = 0.97f * alpha;
 
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(sidebar_pos);
     ImGui::SetNextWindowSize(ImVec2(sidebar_width, sidebar_height));
     ImGui::SetNextWindowContentSize(ImVec2(0.0f, content_height));

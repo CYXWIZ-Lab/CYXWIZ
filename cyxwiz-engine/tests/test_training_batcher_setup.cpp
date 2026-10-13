@@ -1,5 +1,6 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/classification_decision.h"
+#include "../src/core/label_vocabulary.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sparse_feature_dataset.h"
@@ -570,6 +571,69 @@ void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
 }
 
 } // namespace
+
+// Text class labels (TOFIX145): one sorted vocabulary, encoded before the
+// batchers; Arrow and Parquet paths agree; unencoded text is refused.
+void TestTextLabels(const std::filesystem::path& work_dir) {
+    arrow::StringBuilder labels;
+    for (const char* v : {"north", "east", "north", "delta", "east", "delta", "north", "east"})
+        Check(labels.Append(v).ok(), "label append");
+    std::shared_ptr<arrow::Array> label_array;
+    Check(labels.Finish(&label_array).ok(), "label finish");
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("segment", arrow::utf8())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray({1, 2, 3, 4, 5, 6, 7, 8}), label_array}, 8);
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "text_labels");
+    const cyxwiz::LabelVocabulary full = cyxwiz::BuildLabelVocabulary({table->GetColumnByName("segment")});
+    Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
+              full.names,
+          "plain values give the same sorted vocabulary (empty = missing)");
+
+    auto config = MakeConfig();
+    config.output_size = 3;
+    config.train_ratio = 1.0f;
+    const std::vector<size_t> expected = {2, 3, 3};  // delta, east, north
+
+    auto arrow_set = cyxwiz::BuildArrowTrainingBatchers(config, dataset, "segment", /*batch_size=*/3);
+    Check(arrow_set.label_classes == std::vector<std::string>({"delta", "east", "north"}),
+          "Arrow text labels: sorted class names");
+    Check(CountOneHotLabels(*arrow_set.train, 3, "Arrow text labels") == expected,
+          "Arrow text labels: each row keeps its class");
+
+    const std::filesystem::path parquet_path = work_dir / "cyxwiz_text_labels.parquet";
+    Check(dataset->ExportParquet(parquet_path.string()), "text labels export to Parquet");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "text_labels_parquet");
+    Check(parquet_dataset != nullptr, "text label Parquet opens");
+    {
+        auto parquet_set = cyxwiz::BuildParquetTrainingBatchers(config, parquet_dataset, "segment", /*batch_size=*/3);
+        Check(parquet_set.label_classes == arrow_set.label_classes, "Parquet text labels: same class names");
+        Check(CountOneHotLabels(*parquet_set.train, 3, "Parquet text labels") == expected,
+              "Parquet text labels: each row keeps its class");
+    }
+
+    bool refused = false;
+    try {
+        cyxwiz::ArrowDatasetBatcher unencoded(dataset, "segment", 3);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Check(refused, "an unencoded text label column is refused, not read as class 0");
+
+    cyxwiz::LabelVocabulary partial = full;
+    partial.names.pop_back();
+    partial.index.erase("north");
+    Check(!cyxwiz::EncodeLabelColumn(table, "segment", partial).ok(), "a value outside the vocabulary is an error");
+
+    arrow::StringBuilder with_null;
+    Check(with_null.Append("east").ok() && with_null.AppendNull().ok(), "null append");
+    std::shared_ptr<arrow::Array> null_array;
+    Check(with_null.Finish(&null_array).ok(), "null finish");
+    auto encoded = cyxwiz::EncodeLabels(arrow::ChunkedArray(null_array), full);
+    Check(encoded.ok() && (*encoded)->null_count() == 1 &&
+              std::static_pointer_cast<arrow::Int32Array>((*encoded)->chunk(0))->Value(0) == 1,
+          "east encodes to 1 and nulls stay null");
+    parquet_dataset.reset();
+    std::filesystem::remove(parquet_path);
+}
 
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
@@ -1290,6 +1354,28 @@ int main(int argc, char** argv) {
           "class-index accuracy must exclude ignored targets from both "
           "the numerator and denominator");
 
+    // TOFIX140 F6: the device count takes any layout with batch x width
+    // values ([batch, 1, width] here), breaks argmax ties at the first class
+    // like std::max_element, and refuses a mismatched element count.
+    const float tied_scores[] = {0.5f, 0.5f, 0.1f, 0.2f, 0.9f, 0.9f};
+    const int32_t tied_targets[] = {0, 1};
+    const auto tied_accuracy = cyxwiz::CountClassificationDecisionScalars(
+        cyxwiz::Tensor({2, 1, 3}, tied_scores, cyxwiz::DataType::Float32),
+        cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+        2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(tied_accuracy.correct == 2 && tied_accuracy.total == 2,
+          "argmax ties must resolve to the first class on the device");
+    bool mismatch_refused = false;
+    try {
+        (void)cyxwiz::CountClassificationDecisionScalars(
+            cyxwiz::Tensor({2, 2}, tied_scores, cyxwiz::DataType::Float32),
+            cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+            2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    } catch (const std::invalid_argument&) {
+        mismatch_refused = true;
+    }
+    Check(mismatch_refused, "a prediction element count that is not batch x width must be refused");
+
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeTimeSeriesConfig(),
@@ -1507,6 +1593,7 @@ int main(int argc, char** argv) {
     fs::remove(multi_parquet_path);
     fs::remove(multi_ts_parquet_path);
     fs::remove(multi_step_ts_parquet_path);
+    TestTextLabels(fs::temp_directory_path());
     fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";

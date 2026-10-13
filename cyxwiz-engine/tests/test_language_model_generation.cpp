@@ -370,7 +370,7 @@ private:
     size_t vocab_;
 };
 
-uint64_t readback_bytes = 0, readback_count = 0, fallback_count = 0;
+uint64_t readback_bytes = 0, readback_count = 0;
 void ObserveReadback(const cyxwiz::ArrayFireHostSyncEvent& event) {
     ++readback_count;
     readback_bytes += event.bytes;
@@ -380,7 +380,6 @@ void ObserveReadback(const cyxwiz::ArrayFireHostSyncEvent& event) {
     Check(event.tensor_shape.size() == 3 && event.tensor_shape[0] == 1 &&
           event.tensor_shape[1] == 1, "only final-position logits may reach host");
 }
-void ObserveFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) { ++fallback_count; }
 
 void TestDeviceGenerationReadback() {
     size_t cases = 0;
@@ -400,10 +399,9 @@ void TestDeviceGenerationReadback() {
                     if (mode == 2) config.top_p = .72f;
                     const std::vector<int64_t> prompt(prefix, 1);
                     cyxwiz::LanguageModelGenerationResult report;
-                    readback_bytes = readback_count = fallback_count = 0;
+                    readback_bytes = readback_count = 0;
                     {
                         cyxwiz::ScopedArrayFireHostSyncObserver reads(ObserveReadback);
-                        cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallbacks(ObserveFallback);
                         report = cyxwiz::GenerateTokenIdsWithReport(model, prompt, config, seed);
                     }
                     Check(report.steps.size() == 3 && report.remaining_budget == 0,
@@ -412,8 +410,8 @@ void TestDeviceGenerationReadback() {
                           report.include_prompt == config.include_prompt &&
                           report.stop_reason == cyxwiz::LanguageModelGenerationStopReason::MaxTokens,
                           "generation report contract");
-                    Check(readback_count == 3 && readback_bytes == 3 * vocab * sizeof(float) &&
-                          fallback_count == 0, "one vocabulary row per token, zero native fallback");
+                    Check(readback_count == 3 && readback_bytes == 3 * vocab * sizeof(float),
+                          "one vocabulary row per token");
                     std::mt19937 rng(seed);
                     std::vector<int64_t> expected;
                     for (size_t step = 0; step < report.steps.size(); ++step) {
@@ -440,7 +438,7 @@ void TestDeviceGenerationReadback() {
             }
         }
     }
-    std::cout << cases << " device readback/candidate/seed/context cases passed; zero native fallback\n";
+    std::cout << cases << " device readback/candidate/seed/context cases passed\n";
 }
 
 class InvalidOutputModule : public cyxwiz::Module {
@@ -578,11 +576,10 @@ int main(int argc, char** argv) {
         backend == "cpu" ? cyxwiz::DeviceType::CPU :
         backend == "cuda" ? cyxwiz::DeviceType::CUDA : cyxwiz::DeviceType::OPENCL, 0).ActivateExact(true);
     Check(activation.success && activation.execution_validated, activation.message);
-    const auto policy = cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    const auto policy = cyxwiz::ExecutionPolicy::Strict;
     const auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(policy);
     cyxwiz::ScopedActiveExecutionDeviceContext active;
     cyxwiz::ScopedExecutionDeviceContext binding(context);
-    cyxwiz::ScopedArrayFireFallbackPolicy strict(policy);
     std::cout << "Exact activation validated: " << backend << "\n" << context.Describe() << "\n";
     TestDeviceGenerationReadback();
     TestInvalidModelOutput();

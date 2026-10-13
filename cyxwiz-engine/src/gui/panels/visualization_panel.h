@@ -14,7 +14,7 @@ enum class VizChartType { Histogram, Scatter, Bar, Box };
 /**
  * VisualizationPanel - Dockable panel for data visualization
  *
- * Receives data from DataExplorerPanel and displays interactive charts.
+ * Receives data from the Table Viewer and displays interactive charts.
  * Can be docked anywhere in the workspace.
  */
 class VisualizationPanel : public Panel {
@@ -25,7 +25,7 @@ public:
     void Render() override;
     const char* GetIcon() const override { return ICON_FA_CHART_SIMPLE; }
 
-    // Data intake from DataExplorer
+    // Data intake from the Table Viewer
     void SetData(const std::vector<std::string>& column_names,
                  const std::vector<std::vector<std::string>>& rows);
     void ClearData();

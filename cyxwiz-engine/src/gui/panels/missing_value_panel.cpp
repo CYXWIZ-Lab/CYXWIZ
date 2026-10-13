@@ -1,6 +1,7 @@
 #include "missing_value_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -58,8 +59,6 @@ void MissingValuePanel::Render() {
 void MissingValuePanel::RenderToolbar() {
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Analyze")) {
         if (current_table_) {
             AnalyzeAsync(current_table_);
@@ -68,24 +67,7 @@ void MissingValuePanel::RenderToolbar() {
 }
 
 void MissingValuePanel::RenderDataSelector() {
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                auto table = registry.GetTable(name);
-                if (table) {
-                    AnalyzeTable(table);
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("missing_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void MissingValuePanel::RenderLoadingIndicator() {
@@ -95,6 +77,7 @@ void MissingValuePanel::RenderLoadingIndicator() {
 
 void MissingValuePanel::RenderSummary() {
     std::lock_guard<std::mutex> lock(analysis_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Summary cards
     float card_width = (ImGui::GetContentRegionAvail().x - 30) / 4;
@@ -104,7 +87,7 @@ void MissingValuePanel::RenderSummary() {
     // Total cells
     ImGui::BeginChild("TotalCells", ImVec2(card_width, 60), true);
     ImGui::Text("Total Cells");
-    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%zu", analysis_.total_cells);
+    ImGui::TextColored(t.info, "%zu", analysis_.total_cells);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -113,9 +96,9 @@ void MissingValuePanel::RenderSummary() {
     ImGui::BeginChild("TotalMissing", ImVec2(card_width, 60), true);
     ImGui::Text("Missing Cells");
     ImVec4 color = analysis_.missing_percentage > 20 ?
-        ImVec4(1.0f, 0.4f, 0.4f, 1.0f) :
-        (analysis_.missing_percentage > 5 ? ImVec4(1.0f, 0.8f, 0.4f, 1.0f) :
-                                             ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        t.error :
+        (analysis_.missing_percentage > 5 ? t.warning :
+                                             t.success);
     ImGui::TextColored(color, "%zu (%.1f%%)", analysis_.total_missing, analysis_.missing_percentage);
     ImGui::EndChild();
 
@@ -124,7 +107,7 @@ void MissingValuePanel::RenderSummary() {
     // Complete rows
     ImGui::BeginChild("CompleteRows", ImVec2(card_width, 60), true);
     ImGui::Text("Complete Rows");
-    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%zu", analysis_.complete_rows);
+    ImGui::TextColored(t.success, "%zu", analysis_.complete_rows);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -132,7 +115,7 @@ void MissingValuePanel::RenderSummary() {
     // Rows with missing
     ImGui::BeginChild("IncompleteRows", ImVec2(card_width, 60), true);
     ImGui::Text("Incomplete Rows");
-    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.4f, 1.0f), "%zu (%.1f%%)",
+    ImGui::TextColored(t.warning, "%zu (%.1f%%)",
                        analysis_.rows_with_missing, analysis_.rows_with_missing_percentage);
     ImGui::EndChild();
 
@@ -141,6 +124,7 @@ void MissingValuePanel::RenderSummary() {
 
 void MissingValuePanel::RenderColumnTable() {
     std::lock_guard<std::mutex> lock(analysis_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     if (ImGui::BeginTable("MissingByColumn", 4,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -203,9 +187,9 @@ void MissingValuePanel::RenderColumnTable() {
             ImGui::TableNextColumn();
             if (col.missing_count > 0) {
                 ImVec4 color = col.missing_percentage > 20 ?
-                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f) :
-                    (col.missing_percentage > 5 ? ImVec4(1.0f, 0.8f, 0.4f, 1.0f) :
-                                                   ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+                    t.error :
+                    (col.missing_percentage > 5 ? t.warning :
+                                                   t.success);
                 ImGui::TextColored(color, "%.1f%%", col.missing_percentage);
             } else {
                 ImGui::TextDisabled("0%%");
@@ -221,14 +205,14 @@ void MissingValuePanel::RenderColumnTable() {
 
             // Background
             draw_list->AddRectFilled(pos, ImVec2(pos.x + bar_width, pos.y + 14),
-                                     IM_COL32(60, 60, 60, 255));
+                                     ui::ToU32(t.bg_raised));
 
             // Fill
             if (fill_width > 0) {
-                ImU32 fill_color = col.missing_percentage > 20 ?
-                    IM_COL32(200, 80, 80, 255) :
-                    (col.missing_percentage > 5 ? IM_COL32(200, 180, 80, 255) :
-                                                   IM_COL32(80, 200, 80, 255));
+                ImU32 fill_color = ui::ToU32(col.missing_percentage > 20 ?
+                    t.error :
+                    (col.missing_percentage > 5 ? t.warning :
+                                                   t.success));
                 draw_list->AddRectFilled(pos, ImVec2(pos.x + fill_width, pos.y + 14), fill_color);
             }
 
@@ -263,6 +247,7 @@ void MissingValuePanel::RenderColumnTable() {
 
 void MissingValuePanel::RenderMissingPattern() {
     std::lock_guard<std::mutex> lock(analysis_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Bar chart of missing values per column
     std::vector<const char*> labels;
@@ -306,22 +291,23 @@ void MissingValuePanel::RenderMissingPattern() {
     float complete_width = bar_width * (complete_pct / 100.0f);
 
     draw_list->AddRectFilled(pos, ImVec2(pos.x + complete_width, pos.y + 20),
-                             IM_COL32(80, 180, 80, 255));
+                             ui::ToU32(t.success));
     draw_list->AddRectFilled(ImVec2(pos.x + complete_width, pos.y),
                              ImVec2(pos.x + bar_width, pos.y + 20),
-                             IM_COL32(180, 80, 80, 255));
+                             ui::ToU32(t.error));
 
     ImGui::Dummy(ImVec2(bar_width, 20));
 }
 
 void MissingValuePanel::RenderImputationSuggestions() {
     std::lock_guard<std::mutex> lock(analysis_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::TextWrapped("Based on the missing value patterns, here are some suggestions:");
     ImGui::Spacing();
 
     if (analysis_.total_missing == 0) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+        ImGui::TextColored(t.success,
                           "%s No missing values detected! Your data is complete.",
                           ICON_FA_CIRCLE_CHECK);
         return;
@@ -359,7 +345,7 @@ void MissingValuePanel::RenderImputationSuggestions() {
                 ImGui::BulletText("Investigating why data is missing (MCAR, MAR, MNAR)");
                 ImGui::Unindent();
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                ImGui::TextColored(t.error,
                                   "Very high missing rate (>50%%)");
                 ImGui::BulletText("Consider dropping this column entirely");
                 ImGui::BulletText("Or investigate data collection issues");
@@ -381,15 +367,6 @@ void MissingValuePanel::RenderImputationSuggestions() {
     ImGui::BulletText("For categorical data: mode or 'Unknown' category");
     ImGui::BulletText("For time series: forward/backward fill or interpolation");
     ImGui::BulletText("Always document your imputation strategy!");
-}
-
-void MissingValuePanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
-    }
 }
 
 void MissingValuePanel::AnalyzeTable(std::shared_ptr<DataTable> table) {

@@ -203,6 +203,8 @@ public:
     // Figures of finished script runs (not notebook cells, which show their
     // own), for the Plot Output window; each figure is returned once.
     std::vector<CapturedPlot> TakePublishedPlots() { return published_plots_.Take(); }
+    // Plots asked for with the cyxwiz module, and windows it closed (TOFIX134 P5).
+    std::vector<PythonPlot> TakePythonPlots() { return python_plots_.Take(); }
     // Values scripts reported with pycyxwiz.rl_update_metric, for the RL
     // Training Dashboard; each value is returned once.
     std::vector<RLMetricSample> TakeRLMetrics() { return rl_metrics_.Take(); }
@@ -257,17 +259,11 @@ public:
     // Last message from a failed Python start, empty when none.
     std::string GetLastInitError() const;
 
-    // Register Training Dashboard with Python module (deferred - stores panel pointer)
-    void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
-    // Actually register with Python (called lazily when scripts run)
-    void EnsureTrainingDashboardRegistered();
 
 private:
     mutable std::mutex init_error_mutex_;
     std::string last_init_error_;
     std::string cached_python_version_;
-    cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
-    bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends
     std::unique_ptr<VariablesService> variables_;  // the same
@@ -297,6 +293,7 @@ private:
     std::mutex plot_mutex_;
     std::vector<CapturedPlot> plot_queue_;
     PlotInbox published_plots_;
+    PythonPlotInbox python_plots_;
     cyxwiz::ThreadInbox<RLMetricSample> rl_metrics_;
 
     // Result storage
@@ -317,6 +314,8 @@ private:
 
     // Queue plot for async retrieval
     void QueuePlot(const CapturedPlot& plot);
+    // Once per interpreter: plt.show() figures reach the Engine (cyxwiz_capture).
+    void InstallFigureCapture();
 
     // Shared cancellation flag - accessible from Python without GIL
     static std::atomic<int> shared_cancel_flag_;

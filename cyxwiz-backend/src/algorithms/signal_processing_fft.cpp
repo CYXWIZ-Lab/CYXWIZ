@@ -8,16 +8,10 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 namespace {
-#ifndef CYXWIZ_HAS_ARRAYFIRE
-constexpr double PI = 3.14159265358979323846;
-constexpr double TWO_PI = 2.0 * PI;
-#endif
 } // namespace
 
 // ============================================================================
@@ -37,7 +31,6 @@ FFTResult SignalProcessing::FFT(const std::vector<double>& signal, double sample
     result.n = n;
 
     try {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         // GPU-accelerated FFT using ArrayFire
         af::array sig(n, signal.data());
         af::array fft_result = af::fft(sig);
@@ -74,69 +67,6 @@ FFTResult SignalProcessing::FFT(const std::vector<double>& signal, double sample
         }
 
         result.success = true;
-#else
-        // CPU fallback using Cooley-Tukey FFT
-        // Pad to next power of 2
-        int padded_size = NextPowerOf2(n);
-        std::vector<std::complex<double>> data(padded_size, {0.0, 0.0});
-
-        for (int i = 0; i < n; i++) {
-            data[i] = std::complex<double>(signal[i], 0.0);
-        }
-
-        // Bit-reversal permutation
-        int bits = static_cast<int>(std::log2(padded_size));
-        for (int i = 0; i < padded_size; i++) {
-            int j = 0;
-            for (int k = 0; k < bits; k++) {
-                if (i & (1 << k)) {
-                    j |= (1 << (bits - 1 - k));
-                }
-            }
-            if (i < j) {
-                std::swap(data[i], data[j]);
-            }
-        }
-
-        // Cooley-Tukey iterative FFT
-        for (int len = 2; len <= padded_size; len *= 2) {
-            double angle = -TWO_PI / len;
-            std::complex<double> wlen(std::cos(angle), std::sin(angle));
-
-            for (int i = 0; i < padded_size; i += len) {
-                std::complex<double> w(1.0, 0.0);
-                for (int j = 0; j < len / 2; j++) {
-                    std::complex<double> u = data[i + j];
-                    std::complex<double> v = data[i + j + len / 2] * w;
-                    data[i + j] = u + v;
-                    data[i + j + len / 2] = u - v;
-                    w *= wlen;
-                }
-            }
-        }
-
-        // Store results (only original n samples)
-        result.complex_output.resize(n);
-        result.magnitude.resize(n);
-        result.phase.resize(n);
-        result.frequencies.resize(n);
-
-        double freq_resolution = sample_rate / n;
-
-        for (int i = 0; i < n; i++) {
-            result.complex_output[i] = data[i];
-            result.magnitude[i] = std::abs(data[i]);
-            result.phase[i] = std::arg(data[i]);
-
-            if (i <= n / 2) {
-                result.frequencies[i] = i * freq_resolution;
-            } else {
-                result.frequencies[i] = (i - n) * freq_resolution;
-            }
-        }
-
-        result.success = true;
-#endif
     } catch (const std::exception& e) {
         result.error_message = std::string("FFT failed: ") + e.what();
     }
@@ -158,7 +88,6 @@ FFT2DResult SignalProcessing::FFT2D(const std::vector<std::vector<double>>& imag
     result.cols = cols;
 
     try {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         // Flatten to 1D and create ArrayFire array
         std::vector<double> flat(rows * cols);
         for (int i = 0; i < rows; i++) {
@@ -196,44 +125,6 @@ FFT2DResult SignalProcessing::FFT2D(const std::vector<std::vector<double>>& imag
         }
 
         result.success = true;
-#else
-        // CPU fallback: Apply 1D FFT to each row, then each column
-        result.complex_output.resize(rows, std::vector<std::complex<double>>(cols));
-        result.magnitude.resize(rows, std::vector<double>(cols));
-        result.phase.resize(rows, std::vector<double>(cols));
-
-        // FFT on rows
-        for (int i = 0; i < rows; i++) {
-            auto row_fft = FFT(image[i], 1.0);
-            if (!row_fft.success) {
-                result.error_message = "2D FFT failed on row " + std::to_string(i);
-                return result;
-            }
-            for (int j = 0; j < cols; j++) {
-                result.complex_output[i][j] = row_fft.complex_output[j];
-            }
-        }
-
-        // FFT on columns
-        for (int j = 0; j < cols; j++) {
-            std::vector<double> col(rows);
-            for (int i = 0; i < rows; i++) {
-                col[i] = result.complex_output[i][j].real();
-            }
-            auto col_fft = FFT(col, 1.0);
-            if (!col_fft.success) {
-                result.error_message = "2D FFT failed on column " + std::to_string(j);
-                return result;
-            }
-            for (int i = 0; i < rows; i++) {
-                result.complex_output[i][j] = col_fft.complex_output[i];
-                result.magnitude[i][j] = std::abs(result.complex_output[i][j]);
-                result.phase[i][j] = std::arg(result.complex_output[i][j]);
-            }
-        }
-
-        result.success = true;
-#endif
     } catch (const std::exception& e) {
         result.error_message = std::string("2D FFT failed: ") + e.what();
     }
@@ -249,7 +140,6 @@ std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double
     int n = static_cast<int>(spectrum.size());
 
     try {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
         // Convert to ArrayFire complex array
         std::vector<af::cfloat> complex_input(n);
         for (int i = 0; i < n; i++) {
@@ -274,60 +164,6 @@ std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double
         }
 
         return result;
-#else
-        // CPU fallback: Conjugate, FFT, conjugate, scale
-        std::vector<std::complex<double>> conj_spectrum(n);
-        for (int i = 0; i < n; i++) {
-            conj_spectrum[i] = std::conj(spectrum[i]);
-        }
-
-        // Reuse FFT code structure
-        int padded_size = NextPowerOf2(n);
-        std::vector<std::complex<double>> data(padded_size, {0.0, 0.0});
-
-        for (int i = 0; i < n; i++) {
-            data[i] = conj_spectrum[i];
-        }
-
-        // Bit-reversal permutation
-        int bits = static_cast<int>(std::log2(padded_size));
-        for (int i = 0; i < padded_size; i++) {
-            int j = 0;
-            for (int k = 0; k < bits; k++) {
-                if (i & (1 << k)) {
-                    j |= (1 << (bits - 1 - k));
-                }
-            }
-            if (i < j) {
-                std::swap(data[i], data[j]);
-            }
-        }
-
-        // Cooley-Tukey iterative FFT
-        for (int len = 2; len <= padded_size; len *= 2) {
-            double angle = -TWO_PI / len;
-            std::complex<double> wlen(std::cos(angle), std::sin(angle));
-
-            for (int i = 0; i < padded_size; i += len) {
-                std::complex<double> w(1.0, 0.0);
-                for (int j = 0; j < len / 2; j++) {
-                    std::complex<double> u = data[i + j];
-                    std::complex<double> v = data[i + j + len / 2] * w;
-                    data[i + j] = u + v;
-                    data[i + j + len / 2] = u - v;
-                    w *= wlen;
-                }
-            }
-        }
-
-        // Conjugate and scale
-        std::vector<double> result(n);
-        for (int i = 0; i < n; i++) {
-            result[i] = std::conj(data[i]).real() / n;
-        }
-
-        return result;
-#endif
     } catch (...) {
         return {};
     }

@@ -1,6 +1,7 @@
 #include "gradcam_panel.h"
 #include <cyxwiz/sequential.h>
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -63,7 +64,7 @@ void GradCAMPanel::RenderModelInfo() {
     ImGui::Spacing();
 
     if (!model_) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "No model loaded");
+        ImGui::TextColored(ui::CurrentTokens().error, "No model loaded");
         ImGui::TextDisabled("Use the Training panel to train a model first");
         return;
     }
@@ -96,10 +97,10 @@ void GradCAMPanel::RenderModelInfo() {
     // Input status
     ImGui::Spacing();
     if (has_input_) {
-        ImGui::TextColored(ImVec4(0.5f, 1, 0.5f, 1), "Input image loaded: %dx%dx%d",
+        ImGui::TextColored(ui::CurrentTokens().success, "Input image loaded: %dx%dx%d",
                           input_channels_, input_height_, input_width_);
     } else {
-        ImGui::TextColored(ImVec4(1, 0.7f, 0.5f, 1), "No input image set");
+        ImGui::TextColored(ui::CurrentTokens().warning, "No input image set");
         ImGui::TextDisabled("Call SetInputImage() with image data");
     }
 }
@@ -210,7 +211,7 @@ void GradCAMPanel::RenderHeatmapVisualization() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
     if (!gradcam_result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s",
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s",
                           gradcam_result_.error_message.c_str());
         return;
     }
@@ -278,7 +279,7 @@ void GradCAMPanel::RenderSaliencyVisualization() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
     if (!saliency_result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s",
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s",
                           saliency_result_.error_message.c_str());
         return;
     }

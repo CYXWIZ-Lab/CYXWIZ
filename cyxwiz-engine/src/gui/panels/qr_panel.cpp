@@ -1,5 +1,8 @@
 #include "qr_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -35,17 +38,11 @@ void QRPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("qr", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -65,9 +62,7 @@ void QRPanel::RenderToolbar() {
 }
 
 void QRPanel::RenderMatrixInput() {
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix A");
-    ImGui::Separator();
-
+    ui::SettingsSection("Input matrix A");
     ImGui::Text("Size:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(50);
@@ -124,18 +119,17 @@ void QRPanel::RenderLoadingIndicator() {
 }
 
 void QRPanel::RenderResults() {
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to perform QR decomposition");
+        ui::EmptyState(ICON_FA_TABLE_COLUMNS, "No decomposition yet",
+                       "Enter matrix A, then Compute QR.");
         return;
     }
 
@@ -157,6 +151,7 @@ void QRPanel::RenderResults() {
 }
 
 void QRPanel::RenderMatrixQ() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Q Matrix (%zu x %zu) - Orthogonal:", result_.Q.size(),
                 result_.Q.empty() ? 0 : result_.Q[0].size());
     ImGui::Spacing();
@@ -196,11 +191,10 @@ void QRPanel::RenderMatrixQ() {
     }
 
     // Check orthogonality
-    bool is_orthogonal = LinearAlgebra::IsOrthogonal(result_.Q);
-    if (is_orthogonal) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Q is orthogonal (Q^T * Q = I)");
+    if (q_orthogonal_) {
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Q is orthogonal (Q^T * Q = I)");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Q orthogonality check failed");
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Q orthogonality check failed");
     }
 }
 
@@ -251,14 +245,14 @@ void QRPanel::RenderMatrixR() {
 }
 
 void QRPanel::RenderVerification() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Verification: A = Q * R");
     ImGui::Spacing();
 
-    // Compute Q * R
-    auto qr_product = LinearAlgebra::Multiply(result_.Q, result_.R);
+    const MatrixResult& qr_product = qr_product_;
 
     if (!qr_product.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Could not verify: %s", qr_product.error_message.c_str());
+        ImGui::TextColored(t.error, "Could not verify: %s", qr_product.error_message.c_str());
         return;
     }
 
@@ -301,9 +295,9 @@ void QRPanel::RenderVerification() {
 
     ImGui::Spacing();
     if (max_error < 1e-6) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_CHECK " Verified: max error = %.2e", max_error);
+        ImGui::TextColored(t.success, ICON_FA_CHECK " Verified: max error = %.2e", max_error);
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " Max error = %.6f", max_error);
     }
 }
 
@@ -327,10 +321,15 @@ void QRPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        Device::ActivateProcessDeviceOnThisThread();
 
         try {
             result_ = LinearAlgebra::QR(matrix_);
+            qr_product_ = {};
+            q_orthogonal_ = false;
             if (result_.success) {
+                qr_product_ = LinearAlgebra::Multiply(result_.Q, result_.R);
+                q_orthogonal_ = LinearAlgebra::IsOrthogonal(result_.Q);
                 has_result_ = true;
             } else {
                 error_message_ = result_.error_message;

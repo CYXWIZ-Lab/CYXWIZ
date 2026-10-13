@@ -28,7 +28,6 @@ struct DebugRunExecutionSummary {
     std::string execution_context_id;
     std::string placement_fingerprint;
     std::string residency_verdict;
-    size_t native_cpu_fallback_count = 0;
     size_t transfer_event_count = 0;
     uint64_t transfer_known_bytes = 0;
     size_t synchronization_event_count = 0;
@@ -84,7 +83,7 @@ struct DebugReplayCompiledConfigSummary {
     float weight_decay = 0.0f;
     std::string compiler_placement_fingerprint;
     size_t backend_placement_count = 0;
-    bool forbid_native_cpu_fallback = false;
+    bool strict_execution = false;
 };
 
 struct DebugRunReplayCapsule {

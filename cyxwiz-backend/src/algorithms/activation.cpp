@@ -4,11 +4,8 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
-#include <spdlog/spdlog.h>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 // Undefine Windows macros that conflict with ArrayFire functions
 // Must be AFTER all includes (Windows headers define these)
@@ -41,89 +38,6 @@ void ValidateFloat32ActivationBackward(const Tensor& grad_output,
     }
 }
 
-Tensor CpuReLUForward(const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "ReLU::Forward");
-    ValidateFloat32UnaryActivation(input, "ReLU");
-    Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.ReadData<float>();
-    float* out = output.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = std::max(0.0f, in[i]);
-    }
-    return output;
-}
-
-Tensor CpuReLUBackward(const Tensor& grad_output, const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "ReLU::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, "ReLU");
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = in[i] > 0.0f ? grad[i] : 0.0f;
-    }
-    return grad_input;
-}
-
-Tensor CpuSigmoidForward(const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Sigmoid::Forward");
-    ValidateFloat32UnaryActivation(input, "Sigmoid");
-    Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.ReadData<float>();
-    float* out = output.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = 1.0f / (1.0f + std::exp(-in[i]));
-    }
-    return output;
-}
-
-Tensor CpuSigmoidBackward(const Tensor& grad_output, const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Sigmoid::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, "Sigmoid");
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        const float value = 1.0f / (1.0f + std::exp(-in[i]));
-        out[i] = grad[i] * value * (1.0f - value);
-    }
-    return grad_input;
-}
-
-Tensor CpuTanhForward(const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Tanh::Forward");
-    ValidateFloat32UnaryActivation(input, "Tanh");
-    Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.ReadData<float>();
-    float* out = output.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = std::tanh(in[i]);
-    }
-    return output;
-}
-
-Tensor CpuTanhBackward(const Tensor& grad_output, const Tensor& input) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Tanh::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, "Tanh");
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        const float value = std::tanh(in[i]);
-        out[i] = grad[i] * (1.0f - value * value);
-    }
-    return grad_input;
-}
-
 int NormalizeActivationAxis(int axis, int rank, const char* name) {
     if (rank <= 0) {
         throw std::runtime_error(std::string(name) + " requires at least one tensor dimension");
@@ -135,186 +49,12 @@ int NormalizeActivationAxis(int axis, int rank, const char* name) {
     return normalized;
 }
 
-std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape) {
-    std::vector<size_t> strides(shape.size(), 1);
-    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
-        strides[static_cast<size_t>(i)] = strides[static_cast<size_t>(i + 1)] * shape[static_cast<size_t>(i + 1)];
-    }
-    return strides;
-}
-
-Tensor CpuSoftmaxForward(const Tensor& input, int axis, Tensor* cached_output) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Softmax::Forward");
-    ValidateFloat32UnaryActivation(input, "Softmax");
-    const std::vector<size_t>& shape = input.Shape();
-    const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
-    const std::vector<size_t> strides = RowMajorStrides(shape);
-    const size_t axis_size = shape[static_cast<size_t>(actual_axis)];
-    const size_t axis_stride = strides[static_cast<size_t>(actual_axis)];
-    const size_t outer_count = input.NumElements() / axis_size;
-
-    Tensor output(shape, input.GetDataType());
-    const float* in = input.ReadData<float>();
-    float* out = output.MutableData<float>();
-
-    for (size_t outer = 0; outer < outer_count; ++outer) {
-        const size_t before_axis = outer / axis_stride;
-        const size_t after_axis = outer % axis_stride;
-        const size_t base = before_axis * axis_size * axis_stride + after_axis;
-
-        float max_value = in[base];
-        for (size_t i = 1; i < axis_size; ++i) {
-            max_value = std::max(max_value, in[base + i * axis_stride]);
-        }
-
-        float sum_exp = 0.0f;
-        for (size_t i = 0; i < axis_size; ++i) {
-            const float value = std::exp(in[base + i * axis_stride] - max_value);
-            out[base + i * axis_stride] = value;
-            sum_exp += value;
-        }
-
-        for (size_t i = 0; i < axis_size; ++i) {
-            out[base + i * axis_stride] /= sum_exp;
-        }
-    }
-
-    if (cached_output) {
-        *cached_output = output;
-    }
-    return output;
-}
-
-Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int axis, const Tensor& cached_output) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "Softmax::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
-    // Backward receives the source input, so derive the Jacobian from that
-    // input rather than trusting a same-shaped cache from an earlier call.
-    (void)cached_output;
-    Tensor softmax_out = CpuSoftmaxForward(input, axis, nullptr);
-
-    const std::vector<size_t>& shape = input.Shape();
-    const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
-    const std::vector<size_t> strides = RowMajorStrides(shape);
-    const size_t axis_size = shape[static_cast<size_t>(actual_axis)];
-    const size_t axis_stride = strides[static_cast<size_t>(actual_axis)];
-    const size_t outer_count = input.NumElements() / axis_size;
-
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.ReadData<float>();
-    const float* softmax = softmax_out.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-
-    for (size_t outer = 0; outer < outer_count; ++outer) {
-        const size_t before_axis = outer / axis_stride;
-        const size_t after_axis = outer % axis_stride;
-        const size_t base = before_axis * axis_size * axis_stride + after_axis;
-
-        float dot = 0.0f;
-        for (size_t i = 0; i < axis_size; ++i) {
-            const size_t index = base + i * axis_stride;
-            dot += grad[index] * softmax[index];
-        }
-
-        for (size_t i = 0; i < axis_size; ++i) {
-            const size_t index = base + i * axis_stride;
-            out[index] = softmax[index] * (grad[index] - dot);
-        }
-    }
-
-    return grad_input;
-}
-
-template <typename Fn>
-Tensor CpuElementwiseActivationForward(const Tensor& input, const char* name, Fn&& fn) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        std::string(name) + "::Forward");
-    ValidateFloat32UnaryActivation(input, name);
-    Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.ReadData<float>();
-    float* out = output.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = fn(in[i]);
-    }
-    return output;
-}
-
-template <typename Fn>
-Tensor CpuElementwiseActivationBackward(const Tensor& grad_output,
-                                        const Tensor& input,
-                                        const char* name,
-                                        Fn&& derivative) {
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath,
-        std::string(name) + "::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, name);
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = grad[i] * derivative(in[i]);
-    }
-    return grad_input;
-}
-
-float CpuSigmoidValue(float x) {
-    if (x >= 0.0f) {
-        return 1.0f / (1.0f + std::exp(-x));
-    }
-    const float exp_x = std::exp(x);
-    return exp_x / (1.0f + exp_x);
-}
-
-float CpuSoftplus(float x) {
-    if (x > 20.0f) {
-        return x;
-    }
-    if (x < -20.0f) {
-        return std::exp(x);
-    }
-    return std::log1p(std::exp(x));
-}
-
-float CpuGELU(float x) {
-    constexpr float sqrt_2_over_pi = 0.7978845608028654f;
-    constexpr float gelu_const = 0.044715f;
-    const float inner = sqrt_2_over_pi * (x + gelu_const * x * x * x);
-    return 0.5f * x * (1.0f + std::tanh(inner));
-}
-
-float CpuGELUDerivative(float x) {
-    constexpr float sqrt_2_over_pi = 0.7978845608028654f;
-    constexpr float gelu_const = 0.044715f;
-    const float x2 = x * x;
-    const float inner = sqrt_2_over_pi * (x + gelu_const * x * x2);
-    const float tanh_inner = std::tanh(inner);
-    const float sech2_inner = 1.0f - tanh_inner * tanh_inner;
-    const float d_inner = sqrt_2_over_pi * (1.0f + 3.0f * gelu_const * x2);
-    return 0.5f * (1.0f + tanh_inner) + 0.5f * x * sech2_inner * d_inner;
-}
-
-float CpuMish(float x) {
-    return x * std::tanh(CpuSoftplus(x));
-}
-
-float CpuMishDerivative(float x) {
-    const float softplus = CpuSoftplus(x);
-    const float tanh_sp = std::tanh(softplus);
-    const float sech2_sp = 1.0f - tanh_sp * tanh_sp;
-    return tanh_sp + x * sech2_sp * CpuSigmoidValue(x);
-}
-
 } // namespace
 
 // ============================================================================
 // Helper Functions for ArrayFire Integration
 // ============================================================================
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 // Helper: Create ArrayFire array from Tensor
 static af::array TensorToAf(const Tensor& t) {
@@ -328,37 +68,16 @@ static Tensor AfToTensor(const af::array& arr) {
     return Tensor(materialized);
 }
 
-static void LogActivationFallbackOnce(
-    const char* operation_name,
-    const char* error_message,
-    const Tensor& tensor,
-    const char* tensor_name) {
-    const BackendFallbackReason reason =
-        ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext(tensor_name, tensor.Shape()));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        operation_name,
-        reason,
-        error_message,
-        context);
-    const bool log_fallback =
-        ShouldLogArrayFireBackendFallbackOnce(
-            operation_name, reason, context);
-    if (log_fallback) {
-        spdlog::warn("{}",
-                     BuildArrayFireBackendFallbackMessage(
-                         operation_name, reason,
-                         reason != BackendFallbackReason::CudaJitParamOverflow,
-                         error_message, context));
-    }
+// One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
+// reported, not hidden behind host loops.
+[[noreturn]] static void ThrowActivationDeviceError(const char* operation, const af::exception& error) {
+    throw std::runtime_error(std::string(operation) + " failed on the ArrayFire device: " + error.what());
 }
 
 // Constants for GELU approximation
 static const float SQRT_2_OVER_PI = 0.7978845608028654f;  // sqrt(2/pi)
 static const float GELU_CONST = 0.044715f;
 
-#endif // CYXWIZ_HAS_ARRAYFIRE
 
 // ============================================================================
 // Factory Function
@@ -405,21 +124,17 @@ std::unique_ptr<Activation> CreateActivation(ActivationType type, float alpha) {
 // ============================================================================
 
 Tensor ReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // ReLU: max(0, x)
         af::array output = af::max(x, 0.0f);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("ReLU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("ReLU::Forward", e);
     }
-#endif
-    return CpuReLUForward(input);
 }
 
 Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -427,10 +142,8 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array dx = grad_out * (x > 0).as(af::dtype::f32);
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("ReLU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("ReLU::Backward", e);
     }
-#endif
-    return CpuReLUBackward(grad_output, input);
 }
 
 // ============================================================================
@@ -438,7 +151,6 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor LeakyReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // LeakyReLU: max(alpha*x, x) = x if x > 0 else alpha*x
@@ -447,16 +159,11 @@ Tensor LeakyReLUActivation::Forward(const Tensor& input) {
         af::array output = positive + negative;
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("LeakyReLU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("LeakyReLU::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "LeakyReLU", [this](float x) {
-        return x > 0.0f ? x : alpha_ * x;
-    });
 }
 
 Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -465,12 +172,8 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array dx = grad_out * (mask + (1.0f - mask) * alpha_);
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("LeakyReLU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("LeakyReLU::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "LeakyReLU", [this](float x) {
-        return x > 0.0f ? 1.0f : alpha_;
-    });
 }
 
 // ============================================================================
@@ -478,7 +181,6 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor ELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // ELU: x if x > 0 else alpha * (exp(x) - 1)
@@ -488,16 +190,11 @@ Tensor ELUActivation::Forward(const Tensor& input) {
         af::array output = af::select(x > 0, x, negative);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("ELU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("ELU::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "ELU", [this](float x) {
-        return x > 0.0f ? x : alpha_ * (std::exp(x) - 1.0f);
-    });
 }
 
 Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -505,12 +202,8 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
         af::array dx = grad_out * af::select(x > 0, 1.0f, alpha_ * af::exp(x));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("ELU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("ELU::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "ELU", [this](float x) {
-        return x > 0.0f ? 1.0f : alpha_ * std::exp(x);
-    });
 }
 
 // ============================================================================
@@ -518,7 +211,6 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
 // ============================================================================
 
 Tensor GELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // GELU approximation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
@@ -526,14 +218,11 @@ Tensor GELUActivation::Forward(const Tensor& input) {
         af::array output = 0.5f * x * (1.0f + af::tanh(inner));
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("GELU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("GELU::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "GELU", CpuGELU);
 }
 
 Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -554,10 +243,8 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("GELU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("GELU::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "GELU", CpuGELUDerivative);
 }
 
 // ============================================================================
@@ -565,7 +252,6 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor SwishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Swish: x * sigmoid(x)
@@ -573,16 +259,11 @@ Tensor SwishActivation::Forward(const Tensor& input) {
         af::array output = x * sigmoid_x;
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Swish::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Swish::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "Swish", [](float x) {
-        return x * CpuSigmoidValue(x);
-    });
 }
 
 Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -594,13 +275,8 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Swish::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Swish::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "Swish", [](float x) {
-        const float sigmoid = CpuSigmoidValue(x);
-        return sigmoid * (1.0f + x * (1.0f - sigmoid));
-    });
 }
 
 // ============================================================================
@@ -608,21 +284,17 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
 // ============================================================================
 
 Tensor SigmoidActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Sigmoid: 1 / (1 + exp(-x))
         af::array output = af::sigmoid(x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Sigmoid::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Sigmoid::Forward", e);
     }
-#endif
-    return CpuSigmoidForward(input);
 }
 
 Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -633,10 +305,8 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Sigmoid::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Sigmoid::Backward", e);
     }
-#endif
-    return CpuSigmoidBackward(grad_output, input);
 }
 
 // ============================================================================
@@ -644,20 +314,16 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 // ============================================================================
 
 Tensor TanhActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         af::array output = af::tanh(x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Tanh::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Tanh::Forward", e);
     }
-#endif
-    return CpuTanhForward(input);
 }
 
 Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -668,10 +334,8 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Tanh::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Tanh::Backward", e);
     }
-#endif
-    return CpuTanhBackward(grad_output, input);
 }
 
 // ============================================================================
@@ -686,7 +350,6 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
         cached_output_ = input.Clone();
         return cached_output_;
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
 
@@ -712,11 +375,8 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
             Tensor::FromSemanticArray(output, input.Shape());
         return cached_output_;
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce(
-            "Softmax::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Softmax::Forward", e);
     }
-#endif
-    return CpuSoftmaxForward(input, axis_, &cached_output_);
 }
 
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -726,7 +386,6 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
     if (input.NumElements() == 0) {
         return grad_output.Clone();
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = grad_output.GetSemanticArray();
         af::array x = input.GetSemanticArray();
@@ -749,11 +408,8 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 
         return Tensor::FromSemanticArray(dx, input.Shape());
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce(
-            "Softmax::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Softmax::Backward", e);
     }
-#endif
-    return CpuSoftmaxBackward(grad_output, input, axis_, cached_output_);
 }
 
 // ============================================================================
@@ -761,7 +417,6 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 // ============================================================================
 
 Tensor MishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Stable softplus avoids exp overflow for large finite inputs.
@@ -770,14 +425,11 @@ Tensor MishActivation::Forward(const Tensor& input) {
         af::array output = x * af::tanh(softplus_x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Mish::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Mish::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "Mish", CpuMish);
 }
 
 Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -795,10 +447,8 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Mish::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Mish::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "Mish", CpuMishDerivative);
 }
 
 // ============================================================================
@@ -806,7 +456,6 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor HardswishActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // Hardswish: x * ReLU6(x + 3) / 6
@@ -821,22 +470,11 @@ Tensor HardswishActivation::Forward(const Tensor& input) {
         af::array output = mask_high * x + mask_mid * (x * (x + 3.0f) / 6.0f);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Hardswish::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("Hardswish::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "Hardswish", [](float x) {
-        if (x <= -3.0f) {
-            return 0.0f;
-        }
-        if (x >= 3.0f) {
-            return x;
-        }
-        return x * (x + 3.0f) / 6.0f;
-    });
 }
 
 Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -853,18 +491,8 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array dx = grad_out * (mask_high + mask_mid * ((2.0f * x + 3.0f) / 6.0f));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("Hardswish::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("Hardswish::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "Hardswish", [](float x) {
-        if (x <= -3.0f) {
-            return 0.0f;
-        }
-        if (x >= 3.0f) {
-            return 1.0f;
-        }
-        return (2.0f * x + 3.0f) / 6.0f;
-    });
 }
 
 
@@ -873,31 +501,21 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor SquaredReLUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array r = af::max(TensorToAf(input), 0.0f);
         return AfToTensor(r * r);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("SquaredReLU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("SquaredReLU::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "SquaredReLU", [](float x) {
-        return x > 0.0f ? x * x : 0.0f;
-    });
 }
 
 Tensor SquaredReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array dx = TensorToAf(grad_output) * (2.0f * af::max(TensorToAf(input), 0.0f));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("SquaredReLU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("SquaredReLU::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "SquaredReLU", [](float x) {
-        return x > 0.0f ? 2.0f * x : 0.0f;
-    });
 }
 
 // ============================================================================
@@ -910,34 +528,24 @@ constexpr float kInvSqrt2Pi = 0.39894228040143268f;  // 1 / sqrt(2*pi)
 }
 
 Tensor GELUExactActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         return AfToTensor(0.5f * x * (1.0f + af::erf(x * kInvSqrt2)));
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("GELUExact::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("GELUExact::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "GELUExact", [](float x) {
-        return 0.5f * x * (1.0f + std::erf(x * kInvSqrt2));
-    });
 }
 
 Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& input) {
     // d/dx x*Phi(x) = Phi(x) + x*phi(x)
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         af::array cdf = 0.5f * (1.0f + af::erf(x * kInvSqrt2));
         af::array pdf = kInvSqrt2Pi * af::exp(-0.5f * x * x);
         return AfToTensor(TensorToAf(grad_output) * (cdf + x * pdf));
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("GELUExact::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("GELUExact::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "GELUExact", [](float x) {
-        return 0.5f * (1.0f + std::erf(x * kInvSqrt2)) + x * kInvSqrt2Pi * std::exp(-0.5f * x * x);
-    });
 }
 
 // ============================================================================
@@ -945,7 +553,6 @@ Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& in
 // ============================================================================
 
 Tensor SELUActivation::Forward(const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
         // SELU: scale * (max(0, x) + alpha * min(0, exp(x) - 1))
@@ -954,16 +561,11 @@ Tensor SELUActivation::Forward(const Tensor& input) {
         af::array output = SCALE * (positive + ALPHA * (af::exp(negative) - 1.0f));
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("SELU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("SELU::Forward", e);
     }
-#endif
-    return CpuElementwiseActivationForward(input, "SELU", [](float x) {
-        return SCALE * (x > 0.0f ? x : ALPHA * (std::exp(x) - 1.0f));
-    });
 }
 
 Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad = TensorToAf(grad_output);
         af::array x = TensorToAf(input);
@@ -974,12 +576,8 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
             (positive_mask + ALPHA * af::exp(af::min(x, 0.0f)) * negative_mask);
         return AfToTensor(grad_input);
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("SELU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("SELU::Backward", e);
     }
-#endif
-    return CpuElementwiseActivationBackward(grad_output, input, "SELU", [](float x) {
-        return SCALE * (x > 0.0f ? 1.0f : ALPHA * std::exp(x));
-    });
 }
 
 // ============================================================================
@@ -1019,7 +617,6 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
         throw std::invalid_argument(
             "PReLU channel parameters must match input dimension 1");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
         af::array alpha = alpha_.GetSemanticArray();
@@ -1051,28 +648,8 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
 
         return Tensor::FromSemanticArray(output, input.Shape());
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("PReLU::Forward", e.what(), input, "input");
+        ThrowActivationDeviceError("PReLU::Forward", e);
     }
-#endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Forward");
-    const auto& shape = input.Shape();
-    size_t channel_span = 1;
-    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
-        channel_span *= shape[dimension];
-    }
-
-    const float* alpha = alpha_.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    Tensor output(shape, input.GetDataType());
-    float* out = output.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        const size_t channel = num_parameters_ == 1
-            ? 0
-            : (i / channel_span) % shape[1];
-        out[i] = in[i] > 0.0f ? in[i] : alpha[channel] * in[i];
-    }
-    return output;
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -1083,7 +660,6 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
         throw std::invalid_argument(
             "PReLU channel parameters must match input dimension 1");
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad = grad_output.GetSemanticArray();
         af::array x = input.GetSemanticArray();
@@ -1130,34 +706,8 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
 
         return Tensor::FromSemanticArray(grad_input, input.Shape());
     } catch (const af::exception& e) {
-        LogActivationFallbackOnce("PReLU::Backward", e.what(), grad_output, "grad_output");
+        ThrowActivationDeviceError("PReLU::Backward", e);
     }
-#endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Backward");
-    const auto& shape = input.Shape();
-    size_t channel_span = 1;
-    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
-        channel_span *= shape[dimension];
-    }
-
-    const float* alpha = alpha_.ReadData<float>();
-    Tensor grad_input(input.Shape(), input.GetDataType());
-    grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters_)});
-    float* grad_alpha = grad_alpha_.MutableData<float>();
-    const float* grad = grad_output.ReadData<float>();
-    const float* in = input.ReadData<float>();
-    float* out = grad_input.MutableData<float>();
-    for (size_t i = 0; i < input.NumElements(); ++i) {
-        const size_t channel = num_parameters_ == 1
-            ? 0
-            : (i / channel_span) % shape[1];
-        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha[channel]);
-        if (in[i] < 0.0f) {
-            grad_alpha[channel] += grad[i] * in[i];
-        }
-    }
-    return grad_input;
 }
 
 } // namespace cyxwiz

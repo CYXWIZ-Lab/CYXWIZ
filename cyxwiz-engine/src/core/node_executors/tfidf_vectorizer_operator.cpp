@@ -639,6 +639,7 @@ TFIDFVectorizerOperator::ApplyConfigured(
         for (int label : labels) {
             feature_matrix.labels.push_back(static_cast<int32_t>(label));
         }
+        feature_matrix.class_names = class_names;  // the codes' names (the Dashboard shows them)
         feature_matrix.label_name = "y";
     }
 

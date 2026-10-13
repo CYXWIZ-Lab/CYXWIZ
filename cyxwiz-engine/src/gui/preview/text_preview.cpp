@@ -1,5 +1,6 @@
 #include "text_preview.h"
 #include "../python_language.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -55,6 +56,7 @@ void TextPreviewRenderer::Render() {
 }
 
 void TextPreviewRenderer::RenderPlainText() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Split into lines
     std::vector<std::string> lines;
     std::istringstream stream(current_content_);
@@ -64,12 +66,12 @@ void TextPreviewRenderer::RenderPlainText() {
     }
 
     if (lines.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(empty)");
+        ImGui::TextColored(t.text_dim, "(empty)");
         return;
     }
 
     // Status line
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%zu lines", lines.size());
+    ImGui::TextColored(t.text_dim, "%zu lines", lines.size());
     ImGui::Separator();
 
     ImGui::BeginChild("##PlainTextContent", ImVec2(0, 0), false);
@@ -87,14 +89,14 @@ void TextPreviewRenderer::RenderPlainText() {
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
             // Line number (dimmed)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::Text("%*d", digits, i + 1);
             ImGui::PopStyleColor();
 
             ImGui::SameLine(line_num_width);
 
             // Separator line
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_faint);
             ImGui::Text("|");
             ImGui::PopStyleColor();
 

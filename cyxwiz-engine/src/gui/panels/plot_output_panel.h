@@ -10,12 +10,18 @@
 #include <glad/glad.h>
 #include <imgui.h>  // For ImVec2
 
+namespace cyxwiz::plot {
+class PlotWindow;
+}
+
 namespace cyxwiz {
 
 /**
- * Plot Output Panel - displays matplotlib figures from script execution
- * Similar to MATLAB's figure window, shows plots captured during script runs.
- * UI thread only: figures arrive through ScriptingEngine::TakePublishedPlots.
+ * Plot Output - one place for what Python shows (TOFIX134 P5, board 18):
+ * matplotlib figures (images: zoom, pan, copy, save) and plots made with the
+ * cyxwiz module (live: each owns an Engine Plot window; the same title
+ * updates it). UI thread only: both arrive through the ScriptingEngine's
+ * inboxes, taken every frame.
  */
 class PlotOutputPanel : public Panel {
 public:
@@ -29,6 +35,9 @@ public:
 
     // Manually add a plot (for external use)
     void AddPlot(const scripting::CapturedPlot& plot);
+
+    // A notebook output's "Open in window": the image, selected and shown here.
+    void ShowImage(const std::vector<unsigned char>& png_data, const std::string& title);
 
     // Clear all plots
     void ClearPlots();
@@ -46,7 +55,11 @@ private:
         int height = 0;
         std::string label;
         std::vector<unsigned char> png_data;  // For copy/save operations
-        bool selected = false;
+        // A cyxwiz plot: its Plot window, what it is and where it came from.
+        bool python = false;
+        std::string kind_label;
+        std::shared_ptr<std::string> source_text;
+        std::unique_ptr<plot::PlotWindow> window;
     };
 
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
@@ -54,7 +67,9 @@ private:
     int selected_plot_index_ = -1;
     bool auto_scroll_ = true;
     bool show_thumbnails_ = true;
-    float thumbnail_size_ = 80.0f;
+    int filter_ = 0;  // 0 all, 1 figures, 2 Python plots
+    int next_window_id_ = 1;
+    bool focus_next_ = false;
 
     // Zoom and pan state
     float zoom_level_ = 1.0f;           // 1.0 = 100%, 2.0 = 200%
@@ -69,10 +84,21 @@ private:
     // Delete texture
     void DeleteTexture(GLuint texture_id);
 
+    // The entries the filter shows, in order.
+    std::vector<int> Shown() const;
+    void Select(int index);
+    void RemoveEntry(int index);
+
+    // A cyxwiz plot arrived: a new window, or the window of the same title updated.
+    void AddPythonPlot(scripting::PythonPlot plot);
+    void ClosePythonPlot(const std::string& title);
+
     // Render a single plot at full size
     void RenderSelectedPlot();
+    // A cyxwiz plot selected: what it is, Show window, Close plot.
+    void RenderPythonCard(PlotEntry& entry);
 
-    // Render thumbnail gallery
+    // The list of figures and plots
     void RenderThumbnails();
 
     // Render toolbar
@@ -95,8 +121,8 @@ private:
     // Save plot to file
     bool SaveToFile(int plot_index);
 
-    // Take the figures finished scripts published (every frame, also while
-    // the window is hidden; TOFIX134 P0 item 6)
+    // Take the figures and plots scripts published (every frame, also while
+    // the window is hidden; TOFIX134 P0 item 6, P5)
     void PollForNewPlots();
 };
 

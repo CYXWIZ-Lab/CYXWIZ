@@ -8,10 +8,9 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -153,19 +152,10 @@ void CheckReduction(const cyxwiz::Tensor& actual, const json& test_case) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_reduction_host_sync_count = 0;
-size_t g_reduction_fallback_count = 0;
-std::vector<std::string> g_reduction_fallback_operations;
 
 void CountReductionHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_reduction_host_sync_count;
-}
-
-void CountReductionFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++g_reduction_fallback_count;
-    g_reduction_fallback_operations.push_back(event.operation_name);
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -188,55 +178,31 @@ void CheckReductionFixtureOnActiveDevice(const json& fixture,
         const cyxwiz::Tensor input =
             DeviceTensorFromFixture(test_case.at("input"), input_dtype);
         g_reduction_host_sync_count = 0;
-        g_reduction_fallback_count = 0;
-        g_reduction_fallback_operations.clear();
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountReductionHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountReductionFallback);
             actual = ApplyReduction(input, test_case);
             actual.GetSemanticArray().eval();
         }
         REQUIRE(g_reduction_host_sync_count == 0);
-        REQUIRE(g_reduction_fallback_count == 0);
         CheckReduction(actual, test_case);
     }
 }
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor reductions match generated PyTorch dtype rank and correction matrix",
           "[tensor][tensor_reduction][pytorch]") {
     const json fixture = LoadReductionFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
-#endif
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckReductionFixtureOnActiveDevice(fixture, true);
-#else
-    for (const json& test_case : fixture) {
-        const std::string name = test_case.at("name").get<std::string>();
-        CAPTURE(name);
-        const cyxwiz::DataType input_dtype =
-            ParseDataType(test_case.at("input_dtype").get<std::string>());
-        const cyxwiz::Tensor input =
-            TensorFromFixture(test_case.at("input"), input_dtype);
-        const cyxwiz::Tensor actual = ApplyReduction(input, test_case);
-        CheckReduction(actual, test_case);
-    }
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor reductions match PyTorch on every installed accelerator",
           "[tensor][tensor_reduction][accelerator]") {
     const json fixture = LoadReductionFixture();
@@ -269,7 +235,6 @@ TEST_CASE("Tensor reductions match PyTorch on every installed accelerator",
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(restore.success);
 }
-#endif
 
 TEST_CASE("Tensor reduction empty and scalar domains match PyTorch semantics",
           "[tensor][tensor_reduction][empty]") {
@@ -319,7 +284,6 @@ TEST_CASE("Tensor variance correction matches PyTorch singular domains",
     REQUIRE(std::isinf(input.VarWithCorrection(3).ReadData<float>()[0]));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor global empty reductions remain device resident",
           "[tensor][tensor_reduction][arrayfire][empty][residency]") {
     const auto activation =
@@ -328,15 +292,10 @@ TEST_CASE("Tensor global empty reductions remain device resident",
     const cyxwiz::Tensor empty({0}, cyxwiz::DataType::Float32);
 
     g_reduction_host_sync_count = 0;
-    g_reduction_fallback_count = 0;
     std::vector<cyxwiz::Tensor> outputs;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountReductionHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountReductionFallback);
         outputs = {
             empty.Sum(), empty.Prod(), empty.Mean(), empty.Var(), empty.Std()};
         for (const auto& output : outputs) {
@@ -345,7 +304,6 @@ TEST_CASE("Tensor global empty reductions remain device resident",
     }
 
     REQUIRE(g_reduction_host_sync_count == 0);
-    REQUIRE(g_reduction_fallback_count == 0);
     REQUIRE(outputs[0].ReadData<float>()[0] == 0.0f);
     REQUIRE(outputs[1].ReadData<float>()[0] == 1.0f);
     REQUIRE(std::isnan(outputs[2].ReadData<float>()[0]));
@@ -353,69 +311,82 @@ TEST_CASE("Tensor global empty reductions remain device resident",
     REQUIRE(std::isnan(outputs[4].ReadData<float>()[0]));
 }
 
-TEST_CASE("Tensor rank-five reduction fallback is explicit and strict-safe",
-          "[tensor][tensor_reduction][arrayfire][fallback]") {
-    const cyxwiz::Tensor input = cyxwiz::Tensor::RangeN(
-        {1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-
-    g_reduction_fallback_count = 0;
-    g_reduction_fallback_operations.clear();
+// TOFIX140 F4: rank-five reductions run on the device (row-major flat view,
+// reduced as [after, axis, before]). Every axis, with and without keepdim,
+// against a host reference over the same values.
+TEST_CASE("Tensor rank-five reductions run on the device",
+          "[tensor][tensor_reduction][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
+    const std::vector<size_t> shape{2, 3, 1, 2, 4};
+    const cyxwiz::Tensor input =
+        cyxwiz::Tensor::RandomSeeded(shape, 140, cyxwiz::DataType::Float32) * 2.0f + 0.5f;
+    std::vector<double> values(input.NumElements());
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountReductionFallback);
+        const float* host = input.ReadData<float>();
+        for (size_t i = 0; i < values.size(); ++i) values[i] = host[i];
+    }
+    input.GetRowMajorFlatArray().eval();
+
+    struct Reference { double sum = 0, prod = 1, max = -1e300, min = 1e300, mean = 0, var = 0; };
+    const auto reduce = [](const std::vector<double>& group) {
+        Reference r;
+        for (double v : group) { r.sum += v; r.prod *= v; r.max = (std::max)(r.max, v); r.min = (std::min)(r.min, v); }
+        r.mean = r.sum / static_cast<double>(group.size());
+        for (double v : group) r.var += (v - r.mean) * (v - r.mean);
+        r.var /= static_cast<double>(group.size());
+        return r;
+    };
+    const auto check = [](const cyxwiz::Tensor& actual, const std::vector<double>& expected, double tolerance) {
+        REQUIRE(actual.NumElements() == expected.size());
+        const float* host = actual.ReadData<float>();
+        for (size_t i = 0; i < expected.size(); ++i) {
+            CAPTURE(i);
+            REQUIRE(host[i] == Catch::Approx(expected[i]).margin(tolerance).epsilon(1e-5));
+        }
+    };
+
+    {
+        const Reference all = reduce(values);
         REQUIRE(input.Sum().Shape().empty());
-        REQUIRE(input.Mean().Shape().empty());
-        REQUIRE(input.Max().Shape().empty());
-        REQUIRE(input.Min().Shape().empty());
-        REQUIRE(input.Prod().Shape().empty());
-        REQUIRE(input.Var().Shape().empty());
-        REQUIRE(input.Std().Shape().empty());
-        REQUIRE(input.Sum(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Mean(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Max(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Min(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Prod(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Var(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-        REQUIRE(input.Std(1).Shape() == std::vector<size_t>{1, 1, 2, 2});
-    }
-    REQUIRE(g_reduction_fallback_count == 14);
-    REQUIRE((g_reduction_fallback_operations == std::vector<std::string>{
-        "Tensor::Sum", "Tensor::Mean", "Tensor::Max", "Tensor::Min",
-        "Tensor::Prod", "Tensor::Var", "Tensor::Std",
-        "Tensor::Sum(dim)", "Tensor::Mean(dim)", "Tensor::Max(dim)",
-        "Tensor::Min(dim)", "Tensor::Prod(dim)", "Tensor::Var(dim)",
-        "Tensor::Std(dim)"}));
+        check(input.Sum(), {all.sum}, 1e-4);
+        check(input.Mean(), {all.mean}, 1e-5);
+        check(input.Max(), {all.max}, 0.0);
+        check(input.Min(), {all.min}, 0.0);
+        check(input.Prod(), {all.prod}, 1e-3);
+        check(input.Var(), {all.var}, 1e-5);
+        check(input.Std(), {std::sqrt(all.var)}, 1e-5);
 
-    g_reduction_fallback_count = 0;
-    g_reduction_fallback_operations.clear();
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountReductionFallback);
-        REQUIRE_THROWS_AS(input.Sum(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Mean(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Max(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Min(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Prod(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Var(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Std(), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Sum(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Mean(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Max(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Min(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Prod(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Var(1), std::runtime_error);
-        REQUIRE_THROWS_AS(input.Std(1), std::runtime_error);
+        for (int axis = 0; axis < 5; ++axis) {
+            CAPTURE(axis);
+            // Row-major: index = (before * extent + k) * after + a.
+            size_t before = 1, after = 1;
+            for (int i = 0; i < axis; ++i) before *= shape[static_cast<size_t>(i)];
+            for (size_t i = static_cast<size_t>(axis) + 1; i < shape.size(); ++i) after *= shape[i];
+            const size_t extent = shape[static_cast<size_t>(axis)];
+            std::vector<double> sum, mean, max, min, prod, var, std_dev;
+            for (size_t b = 0; b < before; ++b) {
+                for (size_t a = 0; a < after; ++a) {
+                    std::vector<double> group;
+                    for (size_t k = 0; k < extent; ++k) group.push_back(values[(b * extent + k) * after + a]);
+                    const Reference r = reduce(group);
+                    sum.push_back(r.sum); mean.push_back(r.mean); max.push_back(r.max); min.push_back(r.min);
+                    prod.push_back(r.prod); var.push_back(r.var); std_dev.push_back(std::sqrt(r.var));
+                }
+            }
+            for (bool keepdim : {false, true}) {
+                CAPTURE(keepdim);
+                std::vector<size_t> expected_shape = shape;
+                if (keepdim) expected_shape[static_cast<size_t>(axis)] = 1;
+                else expected_shape.erase(expected_shape.begin() + axis);
+                REQUIRE(input.Sum(axis, keepdim).Shape() == expected_shape);
+                check(input.Sum(axis, keepdim), sum, 1e-5);
+                check(input.Mean(axis, keepdim), mean, 1e-5);
+                check(input.Max(axis, keepdim), max, 0.0);
+                check(input.Min(axis, keepdim), min, 0.0);
+                check(input.Prod(axis, keepdim), prod, 1e-5);
+                check(input.Var(axis, keepdim), var, 1e-5);
+                check(input.Std(axis, keepdim), std_dev, 1e-5);
+            }
+        }
     }
-    REQUIRE(g_reduction_fallback_count == 14);
-    REQUIRE((g_reduction_fallback_operations == std::vector<std::string>{
-        "Tensor::Sum", "Tensor::Mean", "Tensor::Max", "Tensor::Min",
-        "Tensor::Prod", "Tensor::Var", "Tensor::Std",
-        "Tensor::Sum(dim)", "Tensor::Mean(dim)", "Tensor::Max(dim)",
-        "Tensor::Min(dim)", "Tensor::Prod(dim)", "Tensor::Var(dim)",
-        "Tensor::Std(dim)"}));
 }
-#endif

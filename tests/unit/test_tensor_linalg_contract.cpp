@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -99,44 +100,10 @@ void CheckTensor(const cyxwiz::Tensor& actual,
     throw std::runtime_error("unsupported linalg expected dtype");
 }
 
-void CheckNativeParity(const json& fixture) {
-    for (const json& test_case : fixture.at("dot_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const cyxwiz::Tensor left =
-            TensorFromFixture(test_case.at("left"), dtype);
-        const cyxwiz::Tensor right =
-            TensorFromFixture(test_case.at("right"), dtype);
-        CAPTURE(test_case.at("name").get<std::string>());
-        CheckTensor(left.Dot(right), dtype, test_case.at("expected"));
-    }
-    for (const json& test_case : fixture.at("batch_matmul_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        const cyxwiz::Tensor left =
-            TensorFromFixture(test_case.at("left"), dtype);
-        const cyxwiz::Tensor right =
-            TensorFromFixture(test_case.at("right"), dtype);
-        CAPTURE(test_case.at("name").get<std::string>());
-        CheckTensor(left.BatchMatMul(right), dtype, test_case.at("expected"));
-    }
-}
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_linalg_host_sync_count = 0;
-size_t g_linalg_fallback_count = 0;
-std::vector<std::string> g_linalg_fallback_operations;
-std::vector<std::string> g_linalg_fallback_reasons;
 
 void CountLinalgHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_linalg_host_sync_count;
-}
-
-void CountLinalgFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++g_linalg_fallback_count;
-    g_linalg_fallback_operations.push_back(event.operation_name);
-    g_linalg_fallback_reasons.push_back(event.reason_code);
 }
 
 cyxwiz::Tensor DeviceTensorFromFixture(const json& value,
@@ -158,132 +125,58 @@ void CheckResidentCasesOnActiveDevice(const json& fixture, bool supports_fp64) {
             DeviceTensorFromFixture(test_case.at("right"), dtype);
         CAPTURE(test_case.at("name").get<std::string>());
         g_linalg_host_sync_count = 0;
-        g_linalg_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountLinalgHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountLinalgFallback);
             actual = left.Dot(right);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
         REQUIRE(g_linalg_host_sync_count == 0);
-        REQUIRE(g_linalg_fallback_count == 0);
         CheckTensor(actual, dtype, test_case.at("expected"));
     }
 
     for (const json& test_case : fixture.at("batch_matmul_cases")) {
         const auto dtype =
             ParseDataType(test_case.at("dtype").get<std::string>());
-        if (dtype != cyxwiz::DataType::Float32 &&
-            dtype != cyxwiz::DataType::Float64) {
-            continue;
-        }
+        const bool integer = dtype != cyxwiz::DataType::Float32 && dtype != cyxwiz::DataType::Float64;
         if (!supports_fp64 && dtype == cyxwiz::DataType::Float64) continue;
         const cyxwiz::Tensor left =
             DeviceTensorFromFixture(test_case.at("left"), dtype);
         const cyxwiz::Tensor right =
             DeviceTensorFromFixture(test_case.at("right"), dtype);
         CAPTURE(test_case.at("name").get<std::string>());
+        const bool computes = left.NumElements() != 0 && right.NumElements() != 0;
+        if (integer && computes && !supports_fp64) {
+            REQUIRE_THROWS_AS(left.BatchMatMul(right), std::runtime_error);
+            continue;
+        }
         g_linalg_host_sync_count = 0;
-        g_linalg_fallback_count = 0;
         cyxwiz::Tensor actual;
         {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
                 &CountLinalgHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountLinalgFallback);
             actual = left.BatchMatMul(right);
             if (actual.NumElements() != 0) actual.GetSemanticArray().eval();
         }
-        REQUIRE(g_linalg_host_sync_count == 0);
-        REQUIRE(g_linalg_fallback_count == 0);
+        // Integers read back one scalar: the 2^53 exactness bound.
+        REQUIRE(g_linalg_host_sync_count <= (integer ? 1u : 0u));
         CheckTensor(actual, dtype, test_case.at("expected"));
     }
 }
-
-void CheckIntegerBatchFallback(const json& fixture) {
-    for (const json& test_case : fixture.at("batch_matmul_cases")) {
-        const auto dtype =
-            ParseDataType(test_case.at("dtype").get<std::string>());
-        if (dtype == cyxwiz::DataType::Float32 ||
-            dtype == cyxwiz::DataType::Float64) {
-            continue;
-        }
-        const cyxwiz::Tensor left =
-            DeviceTensorFromFixture(test_case.at("left"), dtype);
-        const cyxwiz::Tensor right =
-            DeviceTensorFromFixture(test_case.at("right"), dtype);
-        const bool requires_compute =
-            left.NumElements() != 0 && right.NumElements() != 0;
-        CAPTURE(test_case.at("name").get<std::string>());
-
-        g_linalg_fallback_count = 0;
-        g_linalg_fallback_operations.clear();
-        g_linalg_fallback_reasons.clear();
-        cyxwiz::Tensor actual;
-        {
-            const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-                cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-                &CountLinalgFallback);
-            actual = left.BatchMatMul(right);
-        }
-        REQUIRE(g_linalg_fallback_count == (requires_compute ? 1 : 0));
-        if (requires_compute) {
-            REQUIRE(g_linalg_fallback_operations ==
-                    std::vector<std::string>{"Tensor::BatchMatMul"});
-            REQUIRE(g_linalg_fallback_reasons ==
-                    std::vector<std::string>{"unsupported_dtype"});
-        }
-        CheckTensor(actual, dtype, test_case.at("expected"));
-
-        if (!requires_compute) continue;
-        const cyxwiz::Tensor strict_left =
-            DeviceTensorFromFixture(test_case.at("left"), dtype);
-        const cyxwiz::Tensor strict_right =
-            DeviceTensorFromFixture(test_case.at("right"), dtype);
-        g_linalg_host_sync_count = 0;
-        g_linalg_fallback_count = 0;
-        {
-            const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-            const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
-                &CountLinalgHostSync);
-            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-                &CountLinalgFallback);
-            REQUIRE_THROWS_AS(
-                strict_left.BatchMatMul(strict_right), std::runtime_error);
-        }
-        REQUIRE(g_linalg_host_sync_count == 0);
-        REQUIRE(g_linalg_fallback_count == 1);
-    }
-}
-#endif
 
 } // namespace
 
 TEST_CASE("Tensor Dot and BatchMatMul match the PyTorch contract",
           "[tensor][tensor_linalg][pytorch]") {
     const json fixture = LoadLinalgFixture();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const auto activation =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     REQUIRE(activation.success);
     REQUIRE(activation.execution_validated);
     CheckResidentCasesOnActiveDevice(fixture, true);
-    CheckIntegerBatchFallback(fixture);
-#else
-    CheckNativeParity(fixture);
-#endif
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor floating BatchMatMul has a resident execution boundary",
           "[tensor][tensor_linalg][arrayfire][batch_residency]") {
     const json fixture = LoadLinalgFixture();
@@ -295,50 +188,47 @@ TEST_CASE("Tensor floating BatchMatMul has a resident execution boundary",
     const cyxwiz::Tensor right =
         DeviceTensorFromFixture(test_case.at("right"), dtype);
     g_linalg_host_sync_count = 0;
-    g_linalg_fallback_count = 0;
     cyxwiz::Tensor actual;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountLinalgHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountLinalgFallback);
         actual = left.BatchMatMul(right);
         actual.GetSemanticArray().eval();
     }
     REQUIRE(g_linalg_host_sync_count == 0);
-    REQUIRE(g_linalg_fallback_count == 0);
     CheckTensor(actual, dtype, test_case.at("expected"));
 }
 
-TEST_CASE("Tensor integer BatchMatMul declares native compatibility",
-          "[tensor][tensor_linalg][arrayfire][batch_fallback]") {
-    const json fixture = LoadLinalgFixture();
+// Integer BatchMatMul runs in float64 on the device and wraps like PyTorch's
+// integer bmm; products reaching 2^53 are refused instead of rounded.
+TEST_CASE("Tensor integer BatchMatMul wraps like PyTorch and refuses inexact products",
+          "[tensor][tensor_linalg][arrayfire]") {
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
-    const json& test_case = fixture.at("batch_matmul_cases").at(12);
-    const auto dtype = ParseDataType(test_case.at("dtype").get<std::string>());
-    const cyxwiz::Tensor left =
-        DeviceTensorFromFixture(test_case.at("left"), dtype);
-    const cyxwiz::Tensor right =
-        DeviceTensorFromFixture(test_case.at("right"), dtype);
-    g_linalg_fallback_count = 0;
-    g_linalg_fallback_operations.clear();
-    g_linalg_fallback_reasons.clear();
-    cyxwiz::Tensor actual;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountLinalgFallback);
-        actual = left.BatchMatMul(right);
-    }
-    REQUIRE(g_linalg_fallback_count == 1);
-    REQUIRE(g_linalg_fallback_operations ==
-            std::vector<std::string>{"Tensor::BatchMatMul"});
-    REQUIRE(g_linalg_fallback_reasons ==
-            std::vector<std::string>{"unsupported_dtype"});
-    CheckTensor(actual, dtype, test_case.at("expected"));
+    const uint8_t a8[] = {200, 200};
+    const uint8_t b8[] = {2, 2};
+    const cyxwiz::Tensor wrapped8 = cyxwiz::Tensor({1, 1, 2}, a8, cyxwiz::DataType::UInt8)
+                                        .BatchMatMul(cyxwiz::Tensor({1, 2, 1}, b8, cyxwiz::DataType::UInt8));
+    REQUIRE(wrapped8.ReadData<uint8_t>()[0] == 32);  // 800 mod 256
+
+    const int32_t a32[] = {65536, 1, -65536, 3};
+    const int32_t b32[] = {65536, 3};
+    const cyxwiz::Tensor wrapped32 = cyxwiz::Tensor({1, 2, 2}, a32, cyxwiz::DataType::Int32)
+                                         .BatchMatMul(cyxwiz::Tensor({1, 2, 1}, b32, cyxwiz::DataType::Int32));
+    REQUIRE(wrapped32.ReadData<int32_t>()[0] == 3);   // 2^32 + 3 wraps to 3
+    REQUIRE(wrapped32.ReadData<int32_t>()[1] == 9);   // -2^32 + 9 wraps to 9
+
+    // 2^25 * 2^26 twice = 2^52: exact.
+    const int64_t a64[] = {int64_t{1} << 25, int64_t{1} << 25};
+    const int64_t b64[] = {int64_t{1} << 26, int64_t{1} << 26};
+    const cyxwiz::Tensor exact64 = cyxwiz::Tensor({1, 1, 2}, a64, cyxwiz::DataType::Int64)
+                                       .BatchMatMul(cyxwiz::Tensor({1, 2, 1}, b64, cyxwiz::DataType::Int64));
+    REQUIRE(exact64.ReadData<int64_t>()[0] == (int64_t{1} << 52));
+
+    // 2^27 * 2^26 twice = 2^54: beyond float64's exact integers, refused.
+    const int64_t big[] = {int64_t{1} << 27, int64_t{1} << 27};
+    REQUIRE_THROWS_AS(cyxwiz::Tensor({1, 1, 2}, big, cyxwiz::DataType::Int64)
+                          .BatchMatMul(cyxwiz::Tensor({1, 2, 1}, b64, cyxwiz::DataType::Int64)),
+                      std::runtime_error);
 }
 
 TEST_CASE("Tensor linalg stays resident on every supported accelerator route",
@@ -368,7 +258,6 @@ TEST_CASE("Tensor linalg stays resident on every supported accelerator route",
     }
     REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
 }
-#endif
 
 TEST_CASE("Tensor linalg rejects invalid PyTorch shapes and mixed dtypes",
           "[tensor][tensor_linalg][invalid]") {
@@ -411,21 +300,11 @@ TEST_CASE("Tensor linalg output overflow fails before compute",
         {maximum, 1, 0}, cyxwiz::DataType::Float32);
     const cyxwiz::Tensor batch_right(
         {maximum, 0, 2}, cyxwiz::DataType::Float32);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     g_linalg_host_sync_count = 0;
-    g_linalg_fallback_count = 0;
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
         &CountLinalgHostSync);
-    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &CountLinalgFallback);
-#endif
     REQUIRE_THROWS_AS(dot_left.Dot(dot_right), std::overflow_error);
     REQUIRE_THROWS_AS(
         batch_left.BatchMatMul(batch_right), std::overflow_error);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     REQUIRE(g_linalg_host_sync_count == 0);
-    REQUIRE(g_linalg_fallback_count == 0);
-#endif
 }

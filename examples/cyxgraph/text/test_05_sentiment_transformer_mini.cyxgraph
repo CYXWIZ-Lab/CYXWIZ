@@ -225,7 +225,7 @@
         "name": "Output",
         "pos": [3000, 300],
         "params": {
-          "classes": "$num_classes"
+          "num_classes": "$num_classes"
         }
       }
     ],

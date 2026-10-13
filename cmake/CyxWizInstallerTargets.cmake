@@ -318,6 +318,52 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_dashboard_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/stop_words.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+    )
+    target_link_libraries(test_dashboard_model PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dashboard_model PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dashboard_model_contract
+        COMMAND test_dashboard_model
+    )
+
+    add_executable(test_dataset_contract
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/column_role_store.cpp"
+    )
+    target_link_libraries(test_dataset_contract PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dataset_contract PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_contract_contract
+        COMMAND test_dataset_contract
+    )
+
+    add_executable(test_dataset_catalog
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_catalog.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_catalog.cpp"
+    )
+    set_target_properties(test_dataset_catalog PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_catalog_contract
+        COMMAND test_dataset_catalog
+    )
+
     add_executable(test_python_scan_cache
         "${_cyxwiz_installer_engine_dir}/tests/test_python_scan_cache.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/python_scan_cache.cpp"
@@ -381,23 +427,58 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_plot_model
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
     )
     target_link_libraries(test_plot_model PRIVATE nlohmann_json::nlohmann_json)
     # Plot data preparation for every P1 kind (TOFIX134 P1).
     add_executable(test_plot_prepare
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_prepare.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_presets.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_prepare PRIVATE nlohmann_json::nlohmann_json)
+    # Graph and mesh algorithms (TOFIX134 P4 group 2).
+    add_executable(test_plot_graph
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+    )
+    # Sparse features in the Dashboard (TOFIX134 P3).
+    add_executable(test_sparse_summary
+        "${_cyxwiz_installer_engine_dir}/tests/test_sparse_summary.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/sparse_summary.cpp"
+    )
+    # A plot asked for from Python (TOFIX134 P5).
+    add_executable(test_python_plot_request
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_plot_request.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/python_plot_request.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+    )
+    target_link_libraries(test_python_plot_request PRIVATE nlohmann_json::nlohmann_json)
+    # A trained tree model as Tree rows (TOFIX134 P4.7).
+    add_executable(test_plot_tree_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_tree_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_tree_model.cpp"
+    )
+    target_link_libraries(test_plot_tree_model PRIVATE nlohmann_json::nlohmann_json)
     # Plot exports: CSV and SVG (TOFIX134 P1).
     add_executable(test_plot_export
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_export.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_export.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
@@ -406,7 +487,12 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
@@ -499,7 +585,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
-            test_plot_model test_plot_prepare test_plot_export
+            test_plot_model test_plot_prepare test_plot_export test_plot_graph test_plot_tree_model test_python_plot_request test_sparse_summary
             test_plot_table_source test_node_result_plan)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20

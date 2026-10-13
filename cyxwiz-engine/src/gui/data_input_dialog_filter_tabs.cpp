@@ -1,6 +1,7 @@
 // DataInputDialog transformation, row filter, and encoding tabs.
 
 #include "node_config_dialog.h"
+#include "ui_tokens.h"
 
 #include <algorithm>
 #include <cstring>
@@ -112,7 +113,7 @@ void DataInputDialog::RenderLimitRowsTab() {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("Dataset loading limit, not a preview display limit.");
     if (file_category_ == FileCategory::Text) {
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
             "The current Text loader does not apply this limit. "
             "It does not reduce the text data available for training.");
     } else {

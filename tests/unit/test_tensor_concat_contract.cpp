@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "tensor_index_helpers.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/device.h>
@@ -7,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -83,7 +82,6 @@ std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape) {
     return strides;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -113,14 +111,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_concat_host_sync_count = 0;
-size_t g_concat_fallback_count = 0;
 
 void CountConcatHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_concat_host_sync_count;
-}
-
-void CountConcatFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_concat_fallback_count;
 }
 
 size_t ElementCount(const std::vector<size_t>& shape) {
@@ -158,20 +151,14 @@ void CheckResidentCat(const std::vector<std::vector<size_t>>& shapes,
     }
 
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         output = cyxwiz::Tensor::Cat(inputs, static_cast<int>(axis));
         output.GetSemanticArray().eval();
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
 
     std::vector<size_t> output_shape = shapes.front();
     output_shape[axis] = 0;
@@ -216,20 +203,14 @@ void CheckResidentStack(const std::vector<size_t>& shape, size_t axis) {
         DeviceTensor<T>(shape, count)};
 
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         output = cyxwiz::Tensor::Stack(inputs, static_cast<int>(axis));
         output.GetSemanticArray().eval();
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
 
     std::vector<size_t> output_shape = shape;
     output_shape.insert(output_shape.begin() + static_cast<ptrdiff_t>(axis), 2);
@@ -262,16 +243,11 @@ template<typename T>
 void CheckResidentSplitChunk() {
     cyxwiz::Tensor input = DeviceTensor<T>({2, 3, 4}, 0);
     g_concat_host_sync_count = 0;
-    g_concat_fallback_count = 0;
     std::vector<cyxwiz::Tensor> split;
     std::vector<cyxwiz::Tensor> chunks;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountConcatHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountConcatFallback);
         split = input.Split(2, 2);
         chunks = input.Chunk(2, 1);
         for (const cyxwiz::Tensor& output : split) {
@@ -282,7 +258,6 @@ void CheckResidentSplitChunk() {
         }
     }
     REQUIRE(g_concat_host_sync_count == 0);
-    REQUIRE(g_concat_fallback_count == 0);
     REQUIRE(split.size() == 2);
     REQUIRE(chunks.size() == 2);
     REQUIRE(split[0].Shape() == std::vector<size_t>{2, 3, 2});
@@ -312,7 +287,6 @@ void CheckResidentConcatMatrix() {
     CheckResidentStack<T>({2, 2, 2}, 3);
     CheckResidentSplitChunk<T>();
 }
-#endif
 
 } // namespace
 
@@ -384,7 +358,6 @@ TEST_CASE("Tensor concat family rejects invalid contracts before compute",
     REQUIRE_THROWS_AS(matrix.Chunk(0, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor cat and stack remain device resident for every dtype",
           "[tensor][tensor_concat][arrayfire][host_sync]") {
     const auto activation =
@@ -399,38 +372,44 @@ TEST_CASE("Tensor cat and stack remain device resident for every dtype",
     CheckResidentConcatMatrix<uint8_t>();
 }
 
-TEST_CASE("Tensor rank-five concat fallback is explicit",
-          "[tensor][tensor_concat][arrayfire][fallback]") {
-    const cyxwiz::Tensor rank5 =
-        cyxwiz::Tensor::RangeN(
-            {1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-    const cyxwiz::Tensor rank4 =
-        DeviceTensor<float>({1, 2, 1, 2}, 0);
-
-    g_concat_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountConcatFallback);
-        REQUIRE(cyxwiz::Tensor::Cat({rank5, rank5}, 0).Shape() ==
-                std::vector<size_t>{2, 2, 1, 2, 2});
-        REQUIRE(cyxwiz::Tensor::Stack({rank4, rank4}, 0).Shape() ==
-                std::vector<size_t>{2, 1, 2, 1, 2});
+// TOFIX140 F4: rank-five Cat / Stack run on the device ([after, extent,
+// before] flat views joined on ArrayFire dim 1).
+TEST_CASE("Tensor rank-five concat runs on the device",
+          "[tensor][tensor_concat][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
+    const std::vector<size_t> shape{2, 3, 2, 2, 3};
+    const cyxwiz::Tensor first = cyxwiz::Tensor::RangeN(shape, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second = first + 1000.0f;
+    const std::vector<size_t> shape4{2, 3, 2, 3};
+    const cyxwiz::Tensor first4 = cyxwiz::Tensor::RangeN(shape4, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second4 = first4 + 1000.0f;
+    for (int axis = 0; axis < 5; ++axis) {
+        CAPTURE(axis);
+        cyxwiz::Tensor cat, stack;
+        {
+            cat = cyxwiz::Tensor::Cat({first, second}, axis);
+            stack = cyxwiz::Tensor::Stack({first4, second4}, axis);
+        }
+        std::vector<size_t> cat_shape = shape;
+        cat_shape[static_cast<size_t>(axis)] *= 2;
+        REQUIRE(cat.Shape() == cat_shape);
+        const float* cat_values = cat.ReadData<float>();
+        for (size_t i = 0; i < cat.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, cat_shape);
+            const size_t extent = shape[static_cast<size_t>(axis)];
+            const bool from_second = c[static_cast<size_t>(axis)] >= extent;
+            if (from_second) c[static_cast<size_t>(axis)] -= extent;
+            REQUIRE(cat_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)) + (from_second ? 1000.0f : 0.0f));
+        }
+        std::vector<size_t> stack_shape = shape4;
+        stack_shape.insert(stack_shape.begin() + axis, 2);
+        REQUIRE(stack.Shape() == stack_shape);
+        const float* stack_values = stack.ReadData<float>();
+        for (size_t i = 0; i < stack.NumElements(); ++i) {
+            std::vector<size_t> c = tensor_test::Unravel(i, stack_shape);
+            const size_t which = c[static_cast<size_t>(axis)];
+            c.erase(c.begin() + axis);
+            REQUIRE(stack_values[i] == static_cast<float>(tensor_test::Ravel(c, shape4)) + (which == 1 ? 1000.0f : 0.0f));
+        }
     }
-    REQUIRE(g_concat_fallback_count == 2);
-
-    g_concat_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountConcatFallback);
-        REQUIRE_THROWS_AS(cyxwiz::Tensor::Cat({rank5, rank5}, 0),
-                          std::runtime_error);
-        REQUIRE_THROWS_AS(cyxwiz::Tensor::Stack({rank4, rank4}, 0),
-                          std::runtime_error);
-    }
-    REQUIRE(g_concat_fallback_count == 2);
 }
-#endif

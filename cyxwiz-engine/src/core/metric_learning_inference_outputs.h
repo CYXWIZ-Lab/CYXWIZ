@@ -13,6 +13,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <optional>
+#include <map>
 
 namespace cyxwiz {
 
@@ -81,7 +83,51 @@ struct PairScoreRecord {
 struct PairScoreOutputResponse {
     PairScoreMode mode = PairScoreMode::EuclideanDistance;
     std::vector<PairScoreRecord> records;
+    // Pair Score Output (TOFIX140 A5): with the model's threshold, every
+    // record also says whether the pair is the same (same[i]).
+    std::optional<double> threshold;
+    std::vector<bool> same;
 };
+
+// The Pair Score Output node's settings saved with a trained model
+// (ExportOptions::custom_metadata "pair_score_mode" / "pair_score_threshold").
+struct PairScoreDefaults {
+    PairScoreMode mode = PairScoreMode::EuclideanDistance;
+    double threshold = 0.5;
+};
+
+inline std::optional<PairScoreDefaults> PairScoreDefaultsFromMetadata(
+    const std::map<std::string, std::string>& metadata) {
+    const auto mode = metadata.find("pair_score_mode");
+    const auto threshold = metadata.find("pair_score_threshold");
+    if (mode == metadata.end() || threshold == metadata.end()) return std::nullopt;
+    PairScoreDefaults defaults;
+    defaults.mode = ParsePairScoreMode(mode->second);
+    defaults.threshold = std::stod(threshold->second);
+    return defaults;
+}
+
+// Same when the distance is at most the threshold, the negative distance at
+// least -threshold, or the cosine similarity at least the threshold.
+inline bool PairScoreMeansSame(PairScoreMode mode, double score, double threshold) {
+    switch (mode) {
+        case PairScoreMode::EuclideanDistance:
+            return score <= threshold;
+        case PairScoreMode::NegativeEuclideanDistance:
+            return score >= -threshold;
+        case PairScoreMode::CosineSimilarity:
+            return score >= threshold;
+    }
+    return false;
+}
+
+inline void ApplyPairScoreThreshold(PairScoreOutputResponse& response, double threshold) {
+    response.threshold = threshold;
+    response.same.clear();
+    for (const auto& record : response.records) {
+        response.same.push_back(PairScoreMeansSame(response.mode, record.score, threshold));
+    }
+}
 
 inline bool HasBatchVector(const Tensor& tensor, size_t batch_size) {
     return !TensorIsEmpty(tensor) && TensorIsBatchVector(tensor, batch_size);
@@ -145,47 +191,6 @@ inline EmbeddingOutputResponse BuildEmbeddingOutputResponse(
     return response;
 }
 
-inline double CosineSimilarityRow(const Tensor& left,
-                                  const Tensor& right,
-                                  size_t row,
-                                  size_t dim) {
-    const float* left_data = left.ReadData<float>();
-    const float* right_data = right.ReadData<float>();
-    const size_t offset = row * dim;
-    double dot = 0.0;
-    double left_norm = 0.0;
-    double right_norm = 0.0;
-    for (size_t i = 0; i < dim; ++i) {
-        const double left_value = static_cast<double>(left_data[offset + i]);
-        const double right_value = static_cast<double>(right_data[offset + i]);
-        dot += left_value * right_value;
-        left_norm += left_value * left_value;
-        right_norm += right_value * right_value;
-    }
-    if (left_norm == 0.0 || right_norm == 0.0) {
-        throw std::invalid_argument(
-            "PairScoreOutput cosine similarity requires non-zero embeddings");
-    }
-    return dot / (std::sqrt(left_norm) * std::sqrt(right_norm));
-}
-
-inline double ScoreFromDistance(PairScoreMode mode,
-                                double distance,
-                                const Tensor& embedding_a,
-                                const Tensor& embedding_b,
-                                size_t row,
-                                size_t dim) {
-    switch (mode) {
-        case PairScoreMode::EuclideanDistance:
-            return distance;
-        case PairScoreMode::NegativeEuclideanDistance:
-            return -distance;
-        case PairScoreMode::CosineSimilarity:
-            return CosineSimilarityRow(embedding_a, embedding_b, row, dim);
-    }
-    return distance;
-}
-
 inline PairScoreOutputResponse BuildPairScoreOutputResponse(
     const Tensor& embedding_a,
     const Tensor& embedding_b,
@@ -224,17 +229,27 @@ inline PairScoreOutputResponse BuildPairScoreOutputResponse(
             "PairScoreOutput class IDs must both be [batch] or [batch, 1]");
     }
 
-    const size_t dim = FlattenedEmbeddingDim(embedding_a);
+    // Distances (and cosines) on the device, downloaded once.
+    const PairRowScores scores = ComputePairRowScores(
+        embedding_a, embedding_b, mode == PairScoreMode::CosineSimilarity);
     PairScoreOutputResponse response;
     response.mode = mode;
     response.records.reserve(pair_count);
 
     for (size_t row = 0; row < pair_count; ++row) {
         PairScoreRecord record;
-        record.distance =
-            EuclideanDistanceRow(embedding_a, embedding_b, row, dim);
-        record.score = ScoreFromDistance(
-            mode, record.distance, embedding_a, embedding_b, row, dim);
+        record.distance = scores.distances[row];
+        switch (mode) {
+            case PairScoreMode::EuclideanDistance:
+                record.score = record.distance;
+                break;
+            case PairScoreMode::NegativeEuclideanDistance:
+                record.score = -record.distance;
+                break;
+            case PairScoreMode::CosineSimilarity:
+                record.score = scores.cosines[row];
+                break;
+        }
         if (has_sample_ids) {
             record.has_sample_ids = true;
             record.sample_id_a = MetadataIdAt(sample_id_a, row);
@@ -277,11 +292,15 @@ inline nlohmann::json EmbeddingOutputResponseToJson(
 inline nlohmann::json PairScoreOutputResponseToJson(
     const PairScoreOutputResponse& response) {
     nlohmann::json records = nlohmann::json::array();
-    for (const auto& record : response.records) {
+    for (size_t i = 0; i < response.records.size(); ++i) {
+        const auto& record = response.records[i];
         nlohmann::json item = {
             {"score", record.score},
             {"distance", record.distance},
         };
+        if (i < response.same.size()) {
+            item["same"] = static_cast<bool>(response.same[i]);
+        }
         if (record.has_sample_ids) {
             item["sample_id_a"] = record.sample_id_a;
             item["sample_id_b"] = record.sample_id_b;
@@ -293,11 +312,15 @@ inline nlohmann::json PairScoreOutputResponseToJson(
         records.push_back(std::move(item));
     }
 
-    return {
+    nlohmann::json out = {
         {"output_type", "pair_score"},
         {"score_mode", PairScoreModeName(response.mode)},
         {"records", std::move(records)},
     };
+    if (response.threshold) {
+        out["threshold"] = *response.threshold;
+    }
+    return out;
 }
 
 }  // namespace cyxwiz

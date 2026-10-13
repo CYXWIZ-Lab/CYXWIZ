@@ -188,8 +188,8 @@ nlohmann::json CompiledConfigJson(
         {"compiler_placement_fingerprint",
          config.compiler_placement_fingerprint},
         {"backend_placement_count", config.backend_placement_count},
-        {"forbid_native_cpu_fallback",
-         config.forbid_native_cpu_fallback},
+        {"strict_execution",
+         config.strict_execution},
     };
 }
 
@@ -202,8 +202,6 @@ nlohmann::json BackendJson(const DebugRunExecutionSummary& execution) {
         {"effective_device_name", execution.effective_device_name},
         {"placement_fingerprint", execution.placement_fingerprint},
         {"residency_verdict", execution.residency_verdict},
-        {"native_cpu_fallback_count",
-         execution.native_cpu_fallback_count},
     };
 }
 

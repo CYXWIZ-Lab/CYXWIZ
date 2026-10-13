@@ -1,6 +1,7 @@
 #include "data_profiler_panel.h"
 #include "../../data/data_table.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -67,8 +68,6 @@ void DataProfilerPanel::RenderToolbar() {
     // Data selector
     RenderDataSelector();
 
-    ImGui::SameLine();
-
     // Refresh button
     if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh")) {
         if (current_table_) {
@@ -109,28 +108,7 @@ void DataProfilerPanel::RenderToolbar() {
 }
 
 void DataProfilerPanel::RenderDataSelector() {
-    // Get available tables
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::SetNextItemWidth(250);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select a table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                auto table = registry.GetTable(name);
-                if (table) {
-                    AnalyzeTable(table);
-                }
-            }
-            if (is_selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    source_.Render("profiler_dataset", [this](std::shared_ptr<DataTable> table) { AnalyzeTable(std::move(table)); });
 }
 
 void DataProfilerPanel::RenderLoadingIndicator() {
@@ -185,7 +163,7 @@ void DataProfilerPanel::RenderSummaryTab() {
         }
 
         if (cols_with_nulls.empty()) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "No missing values!");
+            ImGui::TextColored(ui::CurrentTokens().success, "No missing values!");
         } else {
             ImGui::Text("Columns with missing:");
             for (const auto* col : cols_with_nulls) {
@@ -447,7 +425,9 @@ void DataProfilerPanel::RenderHistogram(const ColumnProfile& profile) {
             (profile.histogram[1].low - profile.histogram[0].low) * 0.9 : 1.0;
 
         if (ImPlot::BeginPlot("##Histogram", ImVec2(-1, 200))) {
-            ImPlot::SetupAxes("Value", "Count");
+            // Fit to the selected column; the plot id is shared, so without
+            // this the previous column's limits stay.
+            ImPlot::SetupAxes("Value", "Count", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
             ImPlot::PlotBars("##bars", bin_centers.data(), counts.data(),
                              static_cast<int>(bin_centers.size()), bar_width);
             ImPlot::EndPlot();
@@ -524,15 +504,6 @@ void DataProfilerPanel::RenderExportOptions() {
         }
 
         ImGui::EndPopup();
-    }
-}
-
-void DataProfilerPanel::AnalyzeTable(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        AnalyzeTable(table);
     }
 }
 

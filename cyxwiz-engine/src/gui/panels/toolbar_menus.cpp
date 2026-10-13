@@ -18,6 +18,7 @@
 #include "../../core/window_manager.h"
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
+#include "../separate_windows.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -55,7 +56,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"edit.lines", ICON_FA_BARS}, {"edit.transform", ICON_FA_FONT},
         {"edit.toggle_line_comment", ICON_FA_COMMENT}, {"edit.toggle_block_comment", ICON_FA_COMMENT},
         {"view.command_palette", ICON_FA_MAGNIFYING_GLASS}, {"view.panels", ICON_FA_TABLE_COLUMNS},
-        {"view.layout", ICON_FA_GRIP_VERTICAL}, {"view.themes", ICON_FA_PALETTE},
+        {"view.layout", ICON_FA_GRIP_VERTICAL}, {"view.window", ICON_FA_WINDOW_RESTORE}, {"view.themes", ICON_FA_PALETTE},
         {"view.theme_editor", ICON_FA_BRUSH}, {"view.icon_packs", ICON_FA_GRIP}, {"view.minimaps", ICON_FA_EYE},
         {"view.fullscreen", ICON_FA_EXPAND},
         {"nodes.add_layer", ICON_FA_PLUS}, {"nodes.group", ICON_FA_OBJECT_GROUP},
@@ -131,6 +132,9 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     in.mujoco_viewport_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_viewport");
     in.mujoco_env_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_env_browser");
     in.auto_save = auto_save_enabled_;
+    in.focused_window = ::gui::FocusedWindowName();
+    in.focused_window_may_leave = ::gui::WindowMayLeave(in.focused_window.c_str());
+    in.focused_window_outside = ::gui::WindowIsOutside(in.focused_window.c_str());
     in.studio_minimap = node_editor_minimap_ptr_ && *node_editor_minimap_ptr_;
     in.script_minimap = script_editor_minimap_ptr_ && *script_editor_minimap_ptr_;
     in.idle_log = idle_log_ptr_ && *idle_log_ptr_;
@@ -402,6 +406,8 @@ void ToolbarPanel::BuildActionHandlers() {
     h["view.panel"] = [](const std::string& name) { ShowSidebarPanel(name, true); };
     call("view.save_layout", save_layout_callback_);
     call("view.reset_layout", reset_layout_callback_);
+    h["view.window_out"] = [](const std::string& name) { ::gui::MoveWindowOut(name.c_str()); };
+    h["view.window_back"] = [](const std::string& name) { ::gui::MoveWindowBack(name.c_str()); };
     h["view.theme"] = [this](const std::string& preset_id) {
         const auto preset = static_cast<gui::ThemePreset>(std::stoi(preset_id));
         gui::SetThemePreset(preset);

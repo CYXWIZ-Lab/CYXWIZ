@@ -1,6 +1,7 @@
 #include "frame_metrics.h"
 
 #include "ui_tokens.h"
+#include "separate_windows.h"
 
 #include <imgui.h>
 
@@ -67,6 +68,7 @@ void FrameMetrics::Render() {
     if (top.size() > 10) top.resize(10);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ::gui::NextWindowStaysInMain();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 12.0f, viewport->WorkPos.y + 44.0f),
                             ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.92f);

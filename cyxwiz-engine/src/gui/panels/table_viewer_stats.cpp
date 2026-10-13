@@ -289,7 +289,7 @@ void TableViewerPanel::RenderMiniHistogram(TableTab* tab, int column) {
             ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_AutoFit);
 
         std::vector<double> bins_d(stats.histogram_bins.begin(), stats.histogram_bins.end());
-        ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.5f, 0.9f, 0.7f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(ui::CurrentTokens().series[0], 0.7f));
         ImPlot::PlotBars("##bins", bins_d.data(), static_cast<int>(bins_d.size()), 0.8);
 
         ImPlot::EndPlot();

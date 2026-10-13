@@ -72,6 +72,19 @@ std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& n
     return catalog.text_info(name);
 }
 
+std::optional<DatasetStorageKind> GraphDatasetStorageKind(const std::string& name) {
+    const auto& catalog = Catalog();
+    if (name.empty() || !catalog.storage_kind) return std::nullopt;
+    return catalog.storage_kind(name);
+}
+
+std::optional<GraphImageQualityResult> GraphImageQuality(const std::string& name, int width, int height,
+                                                         const std::map<std::string, std::string>& parameters) {
+    const auto& catalog = Catalog();
+    if (!catalog.image_quality) return std::nullopt;
+    return catalog.image_quality(name, width, height, parameters);
+}
+
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name) {
     const auto& catalog = Catalog();
     if (name.empty() || !catalog.source_path) return std::nullopt;

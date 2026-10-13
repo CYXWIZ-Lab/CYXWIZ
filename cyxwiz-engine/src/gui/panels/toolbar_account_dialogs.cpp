@@ -4,6 +4,7 @@
 #include "../icons.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
+#include "../ui_tokens.h"
 
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,7 @@
 
 namespace cyxwiz {
 void ToolbarPanel::RenderAccountDialogs() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Account Settings dialog
     if (show_account_settings_dialog_) {
         ImGui::OpenPopup("##AccountSettings");
@@ -45,7 +47,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 const char* title = "CyxWiz";
                 float title_width = ImGui::CalcTextSize(title).x;
                 ImGui::SetCursorPosX((window_width - title_width) * 0.5f);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
                 ImGui::Text("%s", title);
                 ImGui::PopStyleColor();
                 ImGui::PopFont();
@@ -75,15 +77,15 @@ void ToolbarPanel::RenderAccountDialogs() {
                 float field_width = input_width - button_size - 4.0f;
 
                 ImGui::SetNextItemWidth(field_width);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ui::Mix(t.bg_input, t.text, 0.06f));
                 ImGui::InputText("##identifier", login_identifier_, sizeof(login_identifier_));
                 ImGui::PopStyleColor(2);
 
                 // Paste button for email
                 ImGui::SameLine(0, 4.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.bg_raised);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.bg_raised, t.text, 0.10f));
                 if (ImGui::Button(ICON_FA_PASTE "##paste_email", ImVec2(button_size, 0))) {
                     if (ImGui::GetClipboardText()) {
                         strncpy(login_identifier_, ImGui::GetClipboardText(), sizeof(login_identifier_) - 1);
@@ -104,8 +106,8 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 float password_field_width = input_width - (button_size * 2) - 8.0f;
                 ImGui::SetNextItemWidth(password_field_width);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ui::Mix(t.bg_input, t.text, 0.06f));
                 ImGuiInputTextFlags password_flags = ImGuiInputTextFlags_EnterReturnsTrue;
                 if (!show_password_) {
                     password_flags |= ImGuiInputTextFlags_Password;
@@ -115,8 +117,8 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 // Show/Hide password toggle button
                 ImGui::SameLine(0, 4.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.bg_raised);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.bg_raised, t.text, 0.10f));
                 if (ImGui::Button(show_password_ ? ICON_FA_EYE_SLASH "##toggle_pw" : ICON_FA_EYE "##toggle_pw", ImVec2(button_size, 0))) {
                     show_password_ = !show_password_;
                 }
@@ -127,8 +129,8 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 // Paste button for password
                 ImGui::SameLine(0, 4.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.bg_raised);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.bg_raised, t.text, 0.10f));
                 if (ImGui::Button(ICON_FA_PASTE "##paste_password", ImVec2(button_size, 0))) {
                     if (ImGui::GetClipboardText()) {
                         strncpy(login_password_, ImGui::GetClipboardText(), sizeof(login_password_) - 1);
@@ -144,7 +146,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 if (!login_error_message_.empty()) {
                     ImGui::Spacing();
                     ImGui::SetCursorPosX(start_x);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, t.error);
                     ImGui::Text("%s", login_error_message_.c_str());
                     ImGui::PopStyleColor();
                 }
@@ -154,9 +156,9 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 // Sign In button
                 ImGui::SetCursorPosX(start_x);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.52f, 0.96f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.60f, 1.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.accent_active);
 
                 bool can_login = strlen(login_identifier_) > 0 && strlen(login_password_) > 0 && !is_logging_in_;
 
@@ -198,12 +200,12 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 // Links row
                 ImGui::SetCursorPosX(start_x);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.55f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
 
                 ImGui::Text("Forgot password?");
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
                     ImGui::SetTooltip("Reset your password");
                     ImGui::PopStyleColor();
                 }
@@ -217,7 +219,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImGui::Text("Create account");
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
                     ImGui::SetTooltip("Sign up for CyxWiz");
                     ImGui::PopStyleColor();
                 }
@@ -249,14 +251,14 @@ void ToolbarPanel::RenderAccountDialogs() {
                 if (initials.empty()) initials = "U";
 
                 // Header with user avatar placeholder
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
                 ImGui::Text(ICON_FA_USER "  Account Settings");
                 ImGui::PopStyleColor();
 
                 ImGui::Spacing();
 
                 // User card with better info
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
                 ImGui::BeginChild("##UserCard", ImVec2(340, 90), true, ImGuiWindowFlags_NoScrollbar);
 
                 ImGui::SetCursorPos(ImVec2(12, 12));
@@ -266,7 +268,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImVec2 pos = ImGui::GetCursorScreenPos();
                 float avatar_radius = 28.0f;
                 ImVec2 avatar_center(pos.x + avatar_radius, pos.y + avatar_radius);
-                draw_list->AddCircleFilled(avatar_center, avatar_radius, IM_COL32(40, 80, 160, 255));
+                draw_list->AddCircleFilled(avatar_center, avatar_radius, ui::ToU32(t.accent));
 
                 // Draw initials centered
                 float font_scale = 1.4f;
@@ -274,7 +276,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImVec2 text_pos(avatar_center.x - text_size.x * font_scale * 0.5f,
                               avatar_center.y - text_size.y * font_scale * 0.5f);
                 draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize() * font_scale,
-                                  text_pos, IM_COL32(255, 255, 255, 255), initials.c_str());
+                                  text_pos, ui::ToU32(ui::ReadableOn(t, t.accent)), initials.c_str());
 
                 // User info next to avatar
                 ImGui::SetCursorPos(ImVec2(72, 12));
@@ -282,23 +284,23 @@ void ToolbarPanel::RenderAccountDialogs() {
                 // Name (or username if no name)
                 std::string display_name = user.name.empty() ? user.username : user.name;
                 if (display_name.empty()) display_name = "User";
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
                 ImGui::Text("%s", display_name.c_str());
                 ImGui::PopStyleColor();
 
                 // Email
                 ImGui::SetCursorPos(ImVec2(72, 32));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.65f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
                 ImGui::Text("%s", user.email.c_str());
                 ImGui::PopStyleColor();
 
                 // Role badge
                 ImGui::SetCursorPos(ImVec2(72, 54));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.success);
                 ImGui::Text(ICON_FA_CIRCLE_CHECK);
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.55f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
                 std::string role_display = user.role.empty() ? "User" : user.role;
                 role_display[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(role_display[0])));
                 ImGui::Text("%s", role_display.c_str());
@@ -311,13 +313,13 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImGui::Spacing();
 
                 // Server Section
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.75f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
                 ImGui::Text(ICON_FA_SERVER "  SERVER");
                 ImGui::PopStyleColor();
 
                 ImGui::Spacing();
 
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
                 ImGui::BeginChild("##ServerCard", ImVec2(340, 65), true, ImGuiWindowFlags_NoScrollbar);
 
                 ImGui::SetCursorPos(ImVec2(12, 10));
@@ -332,7 +334,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                     server_address_initialized = true;
                 }
                 ImGui::SetNextItemWidth(316);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
                 ImGui::InputText("##server", server_address, sizeof(server_address));
                 ImGui::PopStyleColor();
 
@@ -344,9 +346,9 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImGui::Spacing();
 
                 // Sign Out button
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.18f, 0.18f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.25f, 0.25f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::Mix(t.error, t.bg_window, 0.25f));
                 if (ImGui::Button("Sign Out", ImVec2(340, 36))) {
                     auth.Logout();
                     is_logged_in_ = false;
@@ -370,8 +372,8 @@ void ToolbarPanel::RenderAccountDialogs() {
             float close_width = 70;
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - close_width - 24);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.hover);
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             if (ImGui::Button("Close", ImVec2(close_width, 28))) {
                 show_account_settings_dialog_ = false;
                 if (on_login_success_callback_) {

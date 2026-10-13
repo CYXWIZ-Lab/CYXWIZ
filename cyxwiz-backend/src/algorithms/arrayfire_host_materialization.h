@@ -4,7 +4,6 @@
 
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace af {
 class array;
 }
@@ -23,4 +22,3 @@ CYXWIZ_API void MaterializeArrayFireToHost(
     std::string context = {});
 
 } // namespace cyxwiz
-#endif

@@ -214,9 +214,11 @@ int main() {
                       {Pin(202, gui::PinType::Tensor, "Output", false)});
     dense.parameters["units"] = "2";
 
+    // A node that is still a template (Lambda); Tensor Batch MatMul was the
+    // example until it was implemented (TOFIX140 Group C).
     auto batch_matmul = Node(3,
-                             gui::NodeType::TensorBatchMatMul,
-                             "Deferred BatchMatMul",
+                             gui::NodeType::Lambda,
+                             "Deferred Lambda",
                              {Pin(301, gui::PinType::Tensor, "A", true),
                               Pin(302, gui::PinType::Tensor, "B", true)},
                              {Pin(303, gui::PinType::Tensor, "Output", false)});
@@ -234,8 +236,8 @@ int main() {
                           {Pin(501, gui::PinType::Loss, "Loss", true)},
                           {});
 
-    // Reuse the graph fixture to qualify diagnostic spatial inference without
-    // promoting these nodes to an executable Studio training workflow.
+    // Reuse the graph fixture to qualify spatial shape inference and the
+    // compile-time diagnostics of the implemented spatial layers.
     {
         cyxwiz::GraphCompiler spatial_compiler;
         auto spatial_data = data;
@@ -252,9 +254,11 @@ int main() {
             spatial.parameters = {{key, "2"}, {"mode", "1"}};
             auto compiled = spatial_compiler.Compile(
                 {spatial_data, spatial, loss, optimizer}, spatial_links, true);
-            Check(!compiled.is_valid && HasIssueCode(compiled,
+            // Upsample and PixelShuffle train in Studio since TOFIX140 A1
+            // (c5433f95), so the spatial graph compiles.
+            Check(compiled.is_valid && !HasIssueCode(compiled,
                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
-                  "spatial geometry must not promote Studio training support");
+                  "implemented spatial layers must compile for Studio training");
             Check(compiled.layers.size() == 1 &&
                       compiled.layers[0].input_shape == std::vector<size_t>{2, 3, 8} &&
                       compiled.layers[0].output_shape == std::vector<size_t>{4, 6,
@@ -310,10 +314,10 @@ int main() {
               !config.dataset_roles.test.IsSupplied(),
           "disconnected legacy role hints must not affect resolved partitions");
 
-    Check(!config.is_valid, "training path with template TensorBatchMatMul must be invalid");
+    Check(!config.is_valid, "training path with template Lambda must be invalid");
     Check(HasIssueText(config, "template/deferred"),
           "compile should report template/deferred status");
-    Check(HasIssueText(config, "Deferred BatchMatMul"),
+    Check(HasIssueText(config, "Deferred Lambda"),
           "compile issue should name the deferred node");
     Check(HasIssueCode(config,
                        cyxwiz::errors::Compiler::UnsupportedTrainingNode),
@@ -323,7 +327,7 @@ int main() {
 
     auto side_dot = batch_matmul;
     side_dot.id = 6;
-    side_dot.name = "Disconnected Deferred BatchMatMul";
+    side_dot.name = "Disconnected Deferred Lambda";
     side_dot.inputs = {Pin(601, gui::PinType::Tensor, "A", true),
                        Pin(602, gui::PinType::Tensor, "B", true)};
     side_dot.outputs = {Pin(603, gui::PinType::Tensor, "Output", false)};
@@ -350,7 +354,7 @@ int main() {
           "deferred node outside selected training path should not block compile");
     Check(AllIssuesHaveCodes(config),
           "valid compile warnings should still carry codes");
-    Check(!HasIssueText(config, "Disconnected Deferred BatchMatMul"),
+    Check(!HasIssueText(config, "Disconnected Deferred Lambda"),
           "compile should not report side deferred node");
     Check(config.layers.size() == 1,
           "linear selected path should still compile one sequential layer");
@@ -836,12 +840,11 @@ int main() {
         Check(mha_placement->node_type == "MultiHeadAttention",
               "standalone MultiHeadAttention placement should name the node type");
         Check(mha_placement->status ==
-                  cyxwiz::BackendPlacementStatus::Cpu,
-              "self-attention-capable MultiHeadAttention placement should be CPU-backed");
+                  cyxwiz::BackendPlacementStatus::Gpu,
+              "MultiHeadAttention runs on ArrayFire only (TOFIX140)");
         Check(mha_placement->reason_code ==
-                  cyxwiz::BackendPlacementReason::
-                      GraphRuntimeCpuBacked,
-              "standalone MultiHeadAttention placement should use CPU-backed reason");
+                  cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+              "standalone MultiHeadAttention placement should use the ArrayFire tensor reason");
     }
 
     auto masked_mha = Node(371,
@@ -901,7 +904,7 @@ int main() {
 
     auto cpu_loader = Node(39,
                            gui::NodeType::DataLoader,
-                           "CPU DataLoader",
+                           "Pinned DataLoader",
                            {Pin(3901, gui::PinType::Dataset, "Dataset", true)},
                            {Pin(3902, gui::PinType::Tensor, "Batch", false)});
     cpu_loader.parameters["batch_size"] = "8";
@@ -916,23 +919,25 @@ int main() {
         Link(5, 4, 403, 5, 501),
     };
 
+    // Attention runs on ArrayFire only (TOFIX140), so this is a GPU graph:
+    // pin_memory is requested but the batchers have no pinned transfer yet.
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
-          "CPU-only pin_memory graph should compile with a warning");
-    Check(HasIssueText(config, "pin_memory=true is not applicable"),
-          "CPU-only pin_memory request should surface a not-applicable warning");
+          "pin_memory attention graph should compile with a warning");
+    Check(HasIssueText(config, "pin_memory=true is unsupported by current batchers"),
+          "pin_memory on an ArrayFire graph should say the batchers ignore it");
     Check(config.pin_memory_transfer.requested,
-          "CPU-only pin_memory request should be preserved");
-    Check(config.pin_memory_transfer.backend == "CPU",
-          "CPU-only pin_memory status should identify CPU backend");
+          "pin_memory request should be preserved");
+    Check(config.pin_memory_transfer.backend == "gpu",
+          "pin_memory status should identify the GPU placement");
     Check(config.pin_memory_transfer.effective_mode ==
-              cyxwiz::PinMemoryTransferMode::PinnedRequestedButNotApplicable,
-          "CPU-only pin_memory status should expose not-applicable mode");
+              cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported,
+          "pin_memory status should expose the unsupported mode");
     Check(config.pin_memory_transfer.reason_code ==
-              cyxwiz::PinMemoryTransferReason::CpuBackendNotApplicable,
-          "CPU-only pin_memory status should expose not-applicable reason");
+              cyxwiz::PinMemoryTransferReason::BackendUnavailable,
+          "pin_memory status should expose the backend-unavailable reason");
     Check(config.pin_memory_transfer.NeedsUserWarning(),
-          "CPU-only pin_memory status should require user warning");
+          "pin_memory status should require a user warning");
 
     auto sequence_data = data;
     sequence_data.name = "NER Sentence CSV";
@@ -1186,8 +1191,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "decoder-only TransformerDecoder path should compile under current engine support");
-    Check(config.SummarizeBackendPlacements().cpu == 1,
-          "decoder-only TransformerDecoder path should carry one CPU-backed placement");
+    Check(config.SummarizeBackendPlacements().cpu == 0,
+          "decoder-only TransformerDecoder path runs on ArrayFire only (TOFIX140): no CPU placement");
     Check(config.SummarizeBackendPlacements().unknown == 0,
           "decoder-only TransformerDecoder path should not carry unknown backend placement");
 
@@ -1233,6 +1238,17 @@ int main() {
           "causal sketch should report the matched generative parameter");
     Check(HasIssueText(config, "causal language-model contract"),
           "causal sketch should report missing causal language-model contract");
+
+    // Multi-Head Attention implements causal itself: its own setting is not
+    // a generative sketch (it was refused before the fix).
+    auto causal_attention = causal_dense;
+    causal_attention.type = gui::NodeType::MultiHeadAttention;
+    causal_attention.name = "Causal Attention";
+    causal_attention.parameters = {{"embed_dim", "4"}, {"num_heads", "2"}, {"causal", "true"}};
+    nodes = {data, causal_attention, loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!HasIssueText(config, "causal language-model contract"),
+          "Multi-Head Attention's own causal setting is not refused as a generative sketch");
 
     auto pretrained = Node(28,
                            gui::NodeType::PretrainedMobileNet,
@@ -1562,13 +1578,13 @@ int main() {
     Check(HasIssueText(config, "alternating optimizer"),
           "GAN/diffusion sketch should report missing training-step contract");
 
-    auto siamese_sketch = dense;
-    siamese_sketch.id = 38;
-    siamese_sketch.name = "SharedEncoder";
-    siamese_sketch.inputs = {Pin(3801, gui::PinType::Tensor, "Input", true)};
-    siamese_sketch.outputs = {Pin(3802, gui::PinType::Tensor, "Output", false)};
+    auto metric_sketch = dense;
+    metric_sketch.id = 38;
+    metric_sketch.name = "PairDatasetBuilder";
+    metric_sketch.inputs = {Pin(3801, gui::PinType::Tensor, "Input", true)};
+    metric_sketch.outputs = {Pin(3802, gui::PinType::Tensor, "Output", false)};
 
-    nodes = {data, siamese_sketch, loss, optimizer};
+    nodes = {data, metric_sketch, loss, optimizer};
     links = {
         Link(1, 1, 101, 38, 3801),
         Link(2, 38, 3802, 4, 401),
@@ -1579,25 +1595,25 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "selected metric-learning sketch should be invalid");
-    Check(HasIssueText(config, "sketches metric-learning/Siamese training") &&
-              HasIssueText(config, "SharedEncoder"),
+    Check(HasIssueText(config, "sketches metric-learning training") &&
+              HasIssueText(config, "PairDatasetBuilder"),
           "legacy Dense-name metric-learning sketch should report the matched "
           "compatibility marker and missing workflow owner");
     Check(HasIssueCode(config,
                        cyxwiz::errors::Compiler::UnsupportedTrainingNode),
           "metric-learning sketch should expose the unsupported-node code");
     Check(config.metric_learning_graph.detected,
-          "metric-learning contract should detect selected SharedEncoder sketch");
+          "metric-learning contract should detect selected PairDatasetBuilder sketch");
     Check(!config.metric_learning_graph.executable,
           "metric-learning graph contract should remain non-executable");
     Check(config.metric_learning_graph.kind ==
-              cyxwiz::MetricLearningGraphKind::None,
-          "lone SharedEncoder sketch should not infer a training kind");
-    Check(config.metric_learning_graph.shared_encoder_node_ids.size() == 1 &&
-              config.metric_learning_graph.shared_encoder_node_ids[0] == 38,
-          "metric-learning contract should record the shared encoder node");
-    Check(HasMetricLearningBlocker(config, "visual shared-encoder graph execution"),
-          "metric-learning contract should record shared-encoder execution blocker");
+              cyxwiz::MetricLearningGraphKind::PairTraining,
+          "PairDatasetBuilder sketch should infer the pair-training kind");
+    Check(config.metric_learning_graph.pair_dataset_builder_node_ids.size() == 1 &&
+              config.metric_learning_graph.pair_dataset_builder_node_ids[0] == 38,
+          "metric-learning contract should record the pair batch source sketch");
+    Check(HasMetricLearningBlocker(config, "visual metric-learning graph execution"),
+          "metric-learning contract should record the graph execution blocker");
 
     auto typed_pair_score_output = Node(
         42,
@@ -1620,11 +1636,6 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "typed metric-learning output node should be invalid");
-    Check(HasIssueText(
-              config,
-              cyxwiz::ResolvePipelineUnsupportedTrainingWorkflowReason(
-                  gui::NodeType::PairScoreOutput)),
-          "typed metric-learning node should report its canonical workflow gap");
     Check(config.metric_learning_graph.detected,
           "metric-learning contract should detect typed PairScoreOutput");
     Check(config.metric_learning_graph.kind ==
@@ -1633,17 +1644,24 @@ int main() {
     Check(config.metric_learning_graph.pair_score_output_node_ids.size() == 1 &&
               config.metric_learning_graph.pair_score_output_node_ids[0] == 42,
           "metric-learning contract should record pair-score output node");
-    Check(HasMetricLearningBlocker(config, "visual graph/runtime routing"),
-          "pair-score contract should report missing visual graph output routing");
+    // Pair Score Output is an implemented side node on the encoder output of
+    // a Pair / Triplet Dataset Builder graph since 1f89033e (TOFIX140 A5);
+    // without that training graph it is refused with that requirement.
+    Check(HasMetricLearningBlocker(
+              config, "metric-learning outputs need a model trained by a Pair or Triplet Dataset Builder"),
+          "pair-score contract should report the missing metric-learning training graph");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Error,
+                       "train it with a Pair or Triplet Dataset Builder and its loss"),
+          "Pair Score Output without a metric-learning model should name the training requirement");
 
-    auto siamese_side_output = Node(39,
-                                    gui::NodeType::Output,
-                                    "Siamese Side Output",
-                                    {Pin(3901, gui::PinType::Tensor, "Input", true)},
-                                    {});
+    auto metric_side_output = Node(39,
+                                   gui::NodeType::Output,
+                                   "Metric Side Output",
+                                   {Pin(3901, gui::PinType::Tensor, "Input", true)},
+                                   {});
 
-    nodes = {data, dense, loss, optimizer, siamese_sketch,
-             siamese_side_output};
+    nodes = {data, dense, loss, optimizer, metric_sketch,
+             metric_side_output};
     links = {
         Link(1, 1, 101, 2, 201),
         Link(2, 2, 202, 4, 401),
@@ -1656,7 +1674,7 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "side metric-learning sketch outside selected path should not block compile");
-    Check(!HasIssueText(config, "shared-weight graph contract"),
+    Check(!HasIssueText(config, "sketches metric-learning training"),
           "side metric-learning sketch should not be reported");
 
     auto triplet_dense = dense;
@@ -1754,56 +1772,6 @@ int main() {
     Check(HasIssueText(config, "message-passing kernels"),
           "GNN marker sketch should report missing message-passing contract");
 
-    for (const auto& scheduler_case :
-         cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
-        auto scheduler = Node(18,
-                              scheduler_case.node_type,
-                              "UnsupportedTrainingControl",
-                              {},
-                              {});
-
-        nodes = {data, dense, loss, optimizer, scheduler};
-        links = {
-            Link(1, 1, 101, 2, 201),
-            Link(2, 2, 202, 4, 401),
-            Link(3, 1, 102, 4, 402),
-            Link(4, 4, 403, 5, 501),
-        };
-
-        config = compiler.Compile(nodes, links, true);
-        Check(!config.is_valid,
-              "unsupported training control should block compile");
-        Check(HasIssueText(config, scheduler_case.reason),
-              "unsupported training control should report execution gap");
-    }
-
-    for (const auto& workflow_case :
-         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
-        auto workflow = Node(
-            18,
-            workflow_case.node_type,
-            "UnsupportedTrainingWorkflow",
-            {Pin(1801, gui::PinType::Tensor, "Input", true)},
-            {Pin(1802, gui::PinType::Tensor, "Output", false)});
-
-        nodes = {data, workflow, dense, loss, optimizer};
-        links = {
-            Link(1, 1, 101, 18, 1801),
-            Link(2, 18, 1802, 2, 201),
-            Link(3, 2, 202, 4, 401),
-            Link(4, 1, 102, 4, 402),
-            Link(5, 4, 403, 5, 501),
-        };
-
-        config = compiler.Compile(nodes, links, true);
-        Check(!config.is_valid,
-              "unsupported metric-learning workflow should block the selected path");
-        Check(HasIssueText(config, workflow_case.reason),
-              "unsupported metric-learning workflow should report its canonical gap");
-        Check(HasIssueCode(config,
-                           cyxwiz::errors::Compiler::UnsupportedTrainingNode),
-              "unsupported metric-learning workflow should expose the unsupported-node code");
-    }
 
     auto blocked_lambda = Node(
         18,
@@ -1874,8 +1842,10 @@ int main() {
           "selected Add graph should report unary layer backend placement");
     Check(abs_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "selected unary tensor layer should remain ArrayFire-capable");
-    Check(abs_placement->explanation.find("supported dtype/shape paths") != std::string::npos,
-          "unary tensor layer placement should avoid blanket GPU wording");
+    // Tensor primitives run on ArrayFire for every dtype and rank (TOFIX140 F4).
+    Check(abs_placement->fallback_backend == "none" &&
+              abs_placement->explanation.find("no native CPU fallback") != std::string::npos,
+          "unary tensor layer placement has no CPU fallback");
     Check(abs_placement->explanation.find("CPU fallback") != std::string::npos,
           "unary tensor layer placement should explain CPU fallback");
     Check(config.graph_op_node_ids.size() == 1,
@@ -1895,17 +1865,16 @@ int main() {
     const auto* add_placement = FindPlacement(config, 9);
     Check(add_placement != nullptr,
           "selected Add graph should report graph-op backend placement");
-    Check(add_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected Add graph op should be reported as mixed backend");
+    // Graph ops run on core Tensor operations, ArrayFire only (TOFIX140 F4).
+    Check(add_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected Add graph op should be reported on the ArrayFire backend");
     Check(add_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected Add graph op should use mixed graph-runtime reason");
-    Check(add_placement->fallback_backend == "CPU",
-          "selected Add graph op should report CPU fallback");
-    Check(add_placement->explanation.find("row-major 2D elementwise addition") != std::string::npos,
-          "selected Add graph op should explain concrete ArrayFire coverage");
-    Check(add_placement->explanation.find("CPU fallback") != std::string::npos,
-          "selected Add graph op should describe fallback as normal behavior");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected Add graph op should use the graph-runtime ArrayFire reason");
+    Check(add_placement->fallback_backend == "none",
+          "selected Add graph op has no CPU fallback");
+    Check(add_placement->explanation.find("no native CPU fallback") != std::string::npos,
+          "selected Add graph op should say a device failure stops the run");
     Check(add_placement->suggested_action.find("No correctness action needed") != std::string::npos,
           "selected Add graph op should avoid noisy fallback warnings");
 
@@ -1916,7 +1885,12 @@ int main() {
                         Pin(1002, gui::PinType::Tensor, "Input 2", true)},
                        {Pin(1003, gui::PinType::Tensor, "Output", false)});
 
-    nodes = {data, abs, concat, loss, optimizer};
+    // Since 7f862079 (TOFIX140 A2) a branched graph gives Concatenate its real
+    // merged shape (inputs added along dim), so the source needs a known
+    // per-sample shape.
+    auto concat_data = data;
+    concat_data.parameters["shape"] = "[4]";
+    nodes = {concat_data, abs, concat, loss, optimizer};
     links = {
         Link(1, 1, 101, 8, 801),
         Link(2, 8, 802, 10, 1001),
@@ -1929,6 +1903,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "selected training path with backend-supported Concatenate should compile");
+    Check(!HasIssueCode(config, cyxwiz::errors::Compiler::TensorShapeMismatch),
+          "Concatenate of two [4] inputs along dim 1 should not report a shape mismatch");
     Check(!HasIssueText(config, "Runtime Concat"),
           "supported graph-runtime Concatenate should not be reported as deferred");
     Check(config.graph_op_node_ids.size() == 1,
@@ -1946,11 +1922,11 @@ int main() {
     const auto* concat_placement = FindPlacement(config, 10);
     Check(concat_placement != nullptr,
           "selected Concatenate graph should report graph-op backend placement");
-    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected Concatenate graph op should be reported as mixed");
+    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected Concatenate graph op should be reported on the ArrayFire backend");
     Check(concat_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected Concatenate graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected Concatenate graph op should use the graph-runtime ArrayFire reason");
 
     auto runtime_dot = Node(13,
                             gui::NodeType::TensorDot,
@@ -1985,11 +1961,11 @@ int main() {
     const auto* dot_placement = FindPlacement(config, 13);
     Check(dot_placement != nullptr,
           "selected TensorDot graph should report graph-op backend placement");
-    Check(dot_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorDot graph op should be reported as mixed backend");
+    Check(dot_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorDot graph op should be reported on the ArrayFire backend");
     Check(dot_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorDot graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorDot graph op should use the graph-runtime ArrayFire reason");
     Check(dot_placement->explanation.find("graph backward") != std::string::npos,
           "selected TensorDot graph op should keep backward policy visible");
     Check(dot_placement->suggested_action.find("focused benchmarks") != std::string::npos,
@@ -2029,11 +2005,11 @@ int main() {
     const auto* compare_placement = FindPlacement(config, 11);
     Check(compare_placement != nullptr,
           "selected TensorCompare graph should report graph-op backend placement");
-    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorCompare graph op should be reported as mixed");
+    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorCompare graph op should be reported on the ArrayFire backend");
     Check(compare_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorCompare graph op should use mixed graph reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorCompare graph op should use the graph-runtime ArrayFire reason");
 
     auto logical = Node(12,
                         gui::NodeType::TensorLogicalMask,
@@ -2067,11 +2043,11 @@ int main() {
     const auto* logical_placement = FindPlacement(config, 12);
     Check(logical_placement != nullptr,
           "selected TensorLogicalMask graph should report graph-op backend placement");
-    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
-          "selected TensorLogicalMask graph op should be reported as mixed");
+    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected TensorLogicalMask graph op should be reported on the ArrayFire backend");
     Check(logical_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
-          "selected TensorLogicalMask graph op should use mixed graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire,
+          "selected TensorLogicalMask graph op should use the graph-runtime ArrayFire reason");
 
     auto binary_loss = Node(14,
                             gui::NodeType::BCELoss,
@@ -2871,7 +2847,7 @@ int main() {
                        "Output",
                        {Pin(1601, gui::PinType::Tensor, "Input", true)},
                        {Pin(1602, gui::PinType::Tensor, "Predictions", false)});
-    output.parameters["classes"] = "3";
+    output.parameters["num_classes"] = "3";
 
     auto class_dense = dense;
     class_dense.parameters["units"] = "2";
@@ -2904,12 +2880,6 @@ int main() {
           "Output canonical num_classes should drive CrossEntropy class count");
     Check(!HasIssueText(config, "class count"),
           "Output canonical num_classes should satisfy class-count validation");
-
-    output.parameters["classes"] = "3";
-    nodes = {data, class_dense, output, class_loss, optimizer};
-    config = compiler.Compile(nodes, links, true);
-    Check(config.is_valid && config.preprocessing.num_classes == 2,
-          "Output canonical num_classes should win over a conflicting legacy classes alias");
 
     auto sequence_tag_output = Node(
         18,

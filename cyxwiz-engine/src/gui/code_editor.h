@@ -50,6 +50,7 @@ public:
     void SetTabSize(int size) { doc_.Settings().tab_size = size; }
     void SetKeyboardEnabled(bool enabled) { keyboard_enabled_ = enabled; }
     void SetLanguage(editor::Language language) { highlighter_.SetLanguage(language); }
+    bool LanguageIsPython() const { return highlighter_.GetLanguage() == editor::Language::Python; }
     // Soft wrap at the view's width (Up/Down still move by document lines).
     void SetWordWrap(bool wrap) { wrap_ = wrap; }
 

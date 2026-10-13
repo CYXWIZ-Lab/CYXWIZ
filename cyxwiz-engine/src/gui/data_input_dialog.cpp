@@ -14,6 +14,7 @@
 
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "loaders/audio_loader.h"
 #include "loaders/data_loader.h"
 #include "loaders/image_loader.h"
@@ -25,6 +26,8 @@
 #include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <cctype>
@@ -58,8 +61,14 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["source_type"],
                 source_type_);
         }
+        // Apply stores sources inside the project project-relative; the
+        // dialog works on the resolved path, as the loaders do, so Preview
+        // and the registry lookup open the same file after a reopen.
+        const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
         if (node_->parameters.count("file_path")) {
-            strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
+            const std::string resolved =
+                cyxwiz::ResolveProjectDataPath(node_->parameters["file_path"], project_root);
+            strncpy(file_path_, resolved.c_str(), sizeof(file_path_) - 1);
             DetectFileType();
             DetectFileCategory();
         }
@@ -126,7 +135,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
             }
         }
         if (node_->parameters.count("folder_path")) {
-            strncpy(folder_path_, node_->parameters["folder_path"].c_str(), sizeof(folder_path_) - 1);
+            const std::string resolved =
+                cyxwiz::ResolveProjectDataPath(node_->parameters["folder_path"], project_root);
+            strncpy(folder_path_, resolved.c_str(), sizeof(folder_path_) - 1);
         }
         if (node_->parameters.count("dataset_name")) {
             strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
@@ -496,9 +507,10 @@ void DataInputDialog::RenderContent() {
 
         // Fade out effect
         float alpha = std::min(1.0f, apply_status_timer_);
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
         ImVec4 color = apply_success_
-            ? ImVec4(0.2f, 0.8f, 0.2f, alpha)  // Green for success
-            : ImVec4(0.9f, 0.3f, 0.3f, alpha); // Red for error
+            ? cyxwiz::ui::WithAlpha(t.success, alpha)
+            : cyxwiz::ui::WithAlpha(t.error, alpha);
 
         ImGui::PushStyleColor(ImGuiCol_Text, color);
 

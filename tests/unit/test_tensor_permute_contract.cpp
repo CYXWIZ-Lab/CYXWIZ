@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "tensor_index_helpers.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/device.h>
@@ -7,9 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <fstream>
@@ -100,7 +99,6 @@ std::vector<size_t> PermutedSourceIndices(
     return source_indices;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 template<typename T>
 struct TensorType;
 
@@ -130,15 +128,9 @@ struct TensorType<uint8_t> {
 };
 
 size_t g_permute_host_sync_count = 0;
-size_t g_permute_fallback_count = 0;
 
 void CountPermuteHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_permute_host_sync_count;
-}
-
-void CountPermuteFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_permute_fallback_count;
 }
 
 template<typename T, typename Operation>
@@ -160,21 +152,15 @@ void CheckDeviceReorder(const std::vector<size_t>& shape,
     device_only.SetFromArray(host.GetArray());
 
     g_permute_host_sync_count = 0;
-    g_permute_fallback_count = 0;
     cyxwiz::Tensor output;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_observer(
             &CountPermuteHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountPermuteFallback);
         output = operation(device_only);
         output.GetSemanticArray().eval();
     }
 
     REQUIRE(g_permute_host_sync_count == 0);
-    REQUIRE(g_permute_fallback_count == 0);
     const auto source_indices = PermutedSourceIndices(shape, expected_dims);
     const T* output_values = output.ReadData<T>();
     for (size_t index = 0; index < source_indices.size(); ++index) {
@@ -225,7 +211,6 @@ void CheckDevicePermutationMatrix() {
     CheckDeviceTranspose<T>({2, 2, 3, 2}, 1, 3);
     CheckDeviceDefaultTranspose<T>();
 }
-#endif
 
 } // namespace
 
@@ -258,7 +243,6 @@ TEST_CASE("Tensor permute and transpose reject invalid dimensions",
     REQUIRE_THROWS_AS(scalar.Transpose(0, 0), std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor permute and transpose remain device resident for every dtype",
           "[tensor][tensor_permute][arrayfire][host_sync]") {
     const auto activation =
@@ -273,32 +257,29 @@ TEST_CASE("Tensor permute and transpose remain device resident for every dtype",
     CheckDevicePermutationMatrix<uint8_t>();
 }
 
-TEST_CASE("Tensor permute rank-five compatibility fallback is explicit",
-          "[tensor][tensor_permute][arrayfire][fallback]") {
-    const cyxwiz::Tensor input =
-        cyxwiz::Tensor::RangeN({1, 2, 1, 2, 2}, cyxwiz::DataType::Float32);
-
-    g_permute_fallback_count = 0;
-    cyxwiz::Tensor output;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy compatibility(
-            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountPermuteFallback);
-        output = input.Permute({4, 1, 3, 0, 2});
+// TOFIX140 F4: rank-five permutes run on the device. {0,3,4,1,2} collapses
+// to three runs (one reorder); {4,1,3,0,2} does not (the gather path).
+TEST_CASE("Tensor rank-five permute runs on the device",
+          "[tensor][tensor_permute][arrayfire]") {
+    REQUIRE(cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true).success);
+    const std::vector<size_t> shape{2, 3, 2, 2, 3};
+    const cyxwiz::Tensor input = cyxwiz::Tensor::RangeN(shape, cyxwiz::DataType::Float32);
+    const std::vector<std::vector<int>> permutations{{0, 3, 4, 1, 2}, {4, 1, 3, 0, 2}};
+    for (const std::vector<int>& dims : permutations) {
+        CAPTURE(dims);
+        cyxwiz::Tensor output;
+        {
+            output = input.Permute(dims);
+        }
+        std::vector<size_t> out_shape;
+        for (int dim : dims) out_shape.push_back(shape[static_cast<size_t>(dim)]);
+        REQUIRE(output.Shape() == out_shape);
+        const float* values = output.ReadData<float>();
+        for (size_t i = 0; i < output.NumElements(); ++i) {
+            const std::vector<size_t> out = tensor_test::Unravel(i, out_shape);
+            std::vector<size_t> source(shape.size());
+            for (size_t k = 0; k < dims.size(); ++k) source[static_cast<size_t>(dims[k])] = out[k];
+            REQUIRE(values[i] == static_cast<float>(tensor_test::Ravel(source, shape)));
+        }
     }
-    REQUIRE(g_permute_fallback_count == 1);
-    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 2, 1, 1});
-
-    g_permute_fallback_count = 0;
-    {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
-            &CountPermuteFallback);
-        REQUIRE_THROWS_AS(
-            input.Permute({4, 1, 3, 0, 2}), std::runtime_error);
-    }
-    REQUIRE(g_permute_fallback_count == 1);
 }
-#endif

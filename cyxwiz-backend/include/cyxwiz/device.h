@@ -8,10 +8,6 @@
 #include <memory>
 #include <optional>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
 namespace cyxwiz {
 
 enum class DeviceMetadataStatus {
@@ -160,6 +156,9 @@ public:
     // the controlling thread; empty until the process selected one.
     static std::optional<ProcessDeviceSelection> GetProcessDevice();
     static void RecordProcessDevice(DeviceType type, int device_id);
+    // ArrayFire's backend and device are per thread: a worker thread calls this
+    // first so its compute runs on the process device, not ArrayFire's default.
+    static void ActivateProcessDeviceOnThisThread();
 
 private:
     DeviceType type_;

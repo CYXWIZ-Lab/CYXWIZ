@@ -89,7 +89,7 @@ void Populate(cyxwiz::RuntimeLogStore& store) {
           "fixture append should succeed");
 
     auto device_error = MakeEvent(
-        "device", cyxwiz::RuntimeLogLevel::Error, "native CPU fallback");
+        "device", cyxwiz::RuntimeLogLevel::Error, "kernel launch failed");
     device_error.run_id = "run-1";
     device_error.primary_error_code = "CW-G-0501";
     device_error.backend = "arrayfire_cuda";
@@ -217,7 +217,7 @@ void TestLogQueries(cyxwiz::RuntimeConsoleCommandService& service,
           "where should share run-plus-code filter semantics");
 
     const auto grep = service.Execute(
-        "show logs grep \"native CPU fallback\"");
+        "show logs grep \"kernel launch failed\"");
     Check(grep.success && ContainsLine(grep, "#3 ") &&
               !ContainsLine(grep, "#2 "),
           "grep should support quoted text without a second search engine");
@@ -346,27 +346,23 @@ void TestRuntimeTruthCommands() {
     provider.current_training.activation_succeeded = true;
     provider.current_training.execution_validated = true;
     provider.current_training.preflight_stage = "complete";
-    provider.current_training.fallback_policy =
-        "allow_native_cpu_fallback";
-    provider.current_training.native_cpu_fallback_count = 1;
+    provider.current_training.execution_policy =
+        "compatibility";
     provider.current_training.host_sync_count = 2;
     provider.current_training.host_sync_bytes = 16;
     provider.current_training.host_sync_summary = "bounded_scalar=2";
     provider.current_training.placement_fingerprint = "placement-42";
     provider.current_training.placement_entry_count = 8;
     provider.current_training.placement_summary = "8 ArrayFire stages";
-    provider.current_training.residency_verdict = "mixed_with_fallback";
-    provider.current_training.residency_reason = "declared_lstm_fallback";
+    provider.current_training.residency_verdict = "compatibility_completed";
+    provider.current_training.residency_reason = "completed under compatibility";
 
-    cyxwiz::RuntimeTrainingEventTruth fallback;
-    fallback.timestamp = "2026-08-11 10:00:00";
-    fallback.stage = "forward";
-    fallback.status = "warning";
-    fallback.native_cpu_fallback = true;
-    fallback.fallback_operation = "lstm_forward";
-    fallback.fallback_reason = "kernel_overflow";
-    fallback.fallback_policy = "allow_native_cpu_fallback";
-    provider.current_training.recent_events.push_back(fallback);
+    cyxwiz::RuntimeTrainingEventTruth forward;
+    forward.timestamp = "2026-08-11 10:00:00";
+    forward.stage = "forward";
+    forward.status = "ok";
+    forward.execution_policy = "compatibility";
+    provider.current_training.recent_events.push_back(forward);
 
     cyxwiz::RuntimeTrainingEventTruth host_sync;
     host_sync.timestamp = "2026-08-11 10:00:01";
@@ -400,7 +396,7 @@ void TestRuntimeTruthCommands() {
     provider.device.queued_available = true;
     provider.device.queued_backend = "arrayfire_cpu";
     provider.device.queued_device_id = 0;
-    provider.device.next_run_policy = "forbid_native_cpu_fallback";
+    provider.device.next_run_policy = "strict";
     provider.device.next_run_policy_source = "queued";
     provider.device.inventory_source = "cached_discovery";
     provider.device.inventory_status = "available";
@@ -470,11 +466,10 @@ void TestRuntimeTruthCommands() {
                            "Qualification: requested=failed evidence='Legacy route qualification evidence' effective=passed evidence='Legacy route qualification evidence'") &&
               ContainsLine(current,
                            "Identity: confidence=stable_hardware fingerprint=uuid:opencl-42") &&
-              ContainsLine(current, "native_cpu_fallback=1"),
+              ContainsLine(current, "Policy: compatibility"),
           "current training should preserve progress and requested/effective truth");
 
-    Check(ContainsLine(service.Execute("show training fallback"),
-                       "fallback_operation=lstm_forward") &&
+    Check(!service.Execute("show training fallback").success &&
               ContainsLine(service.Execute("show training host-sync"),
                            "host_sync_category=bounded_scalar") &&
               ContainsLine(service.Execute("show training placement"),
@@ -510,7 +505,7 @@ void TestRuntimeTruthCommands() {
     const auto queued = service.Execute("show device queued");
     Check(queued.success && ContainsLine(queued, "backend=arrayfire_cpu") &&
               ContainsLine(queued, "source=queued") &&
-              ContainsLine(queued, "forbid_native_cpu_fallback"),
+              ContainsLine(queued, "strict"),
           "queued device and next-run policy should remain separately labeled");
     const auto backends = service.Execute("show device backends");
     const auto available = service.Execute("show device available");
@@ -591,13 +586,12 @@ void TestRuntimeTruthCommands() {
     provider.run.source = "debug_run_store_training_link";
     provider.run.debug_run_id = "local-debug-42";
     provider.run.issue_count = 2;
-    provider.run.native_cpu_fallback_count = 1;
     provider.run.training_evidence_available = true;
     provider.run.training = provider.last_training;
     provider.run.training.run_id = "train-42";
     provider.run.training.host_sync_count = 2;
     provider.run.training.host_sync_bytes = 16;
-    provider.run.training.recent_events = {fallback, host_sync};
+    provider.run.training.recent_events = {forward, host_sync};
     provider.run.issues = {
         {"debug_run_issue", "error", "CW-T-0501", 17, "Dense",
          "Training failed"},
@@ -620,8 +614,7 @@ void TestRuntimeTruthCommands() {
                        "debug_run=local-debug-42") &&
               ContainsLine(service.Execute("show run train-42 events"),
                            "source=studio_event") &&
-              ContainsLine(service.Execute("show run train-42 fallback"),
-                           "fallback_operation=lstm_forward") &&
+              !service.Execute("show run train-42 fallback").success &&
               ContainsLine(service.Execute("show run train-42 host-sync"),
                            "host_sync_category=bounded_scalar"),
           "run summary and evidence commands should use adapter truth");

@@ -210,8 +210,8 @@ DebugReplayCompiledConfigSummary CompiledConfigSummaryFromJson(
         j.value("compiler_placement_fingerprint", "");
     config.backend_placement_count =
         j.value("backend_placement_count", static_cast<size_t>(0));
-    config.forbid_native_cpu_fallback =
-        j.value("forbid_native_cpu_fallback", false);
+    config.strict_execution =
+        j.value("strict_execution", false);
     return config;
 }
 
@@ -262,7 +262,6 @@ nlohmann::json ExecutionSummaryToJson(
         {"execution_context_id", execution.execution_context_id},
         {"placement_fingerprint", execution.placement_fingerprint},
         {"residency_verdict", execution.residency_verdict},
-        {"native_cpu_fallback_count", execution.native_cpu_fallback_count},
         {"transfer_event_count", execution.transfer_event_count},
         {"transfer_known_bytes", execution.transfer_known_bytes},
         {"synchronization_event_count", execution.synchronization_event_count},
@@ -287,8 +286,6 @@ DebugRunExecutionSummary ExecutionSummaryFromJson(const nlohmann::json& j) {
     execution.execution_context_id = j.value("execution_context_id", "");
     execution.placement_fingerprint = j.value("placement_fingerprint", "");
     execution.residency_verdict = j.value("residency_verdict", "");
-    execution.native_cpu_fallback_count =
-        j.value("native_cpu_fallback_count", static_cast<size_t>(0));
     execution.transfer_event_count =
         j.value("transfer_event_count", static_cast<size_t>(0));
     execution.transfer_known_bytes =
@@ -417,8 +414,8 @@ DebugRunReplayCapsule MakeDebugRunReplayCapsule(
         compiled.compiler_placement_fingerprint =
             config->compiler_placement_fingerprint;
         compiled.backend_placement_count = config->backend_placements.size();
-        compiled.forbid_native_cpu_fallback =
-            config->forbid_native_cpu_fallback;
+        compiled.strict_execution =
+            config->strict_execution;
     }
 
     if (execution.available) {
@@ -483,8 +480,8 @@ nlohmann::json DebugRunReplayCapsuleToJson(
             {"compiler_placement_fingerprint",
              config.compiler_placement_fingerprint},
             {"backend_placement_count", config.backend_placement_count},
-            {"forbid_native_cpu_fallback",
-             config.forbid_native_cpu_fallback}
+            {"strict_execution",
+             config.strict_execution}
         }},
         {"seeds", {
             {"split", capsule.split_seed},
@@ -585,7 +582,6 @@ DebugRunExecutionSummary MakeDebugRunExecutionSummary(
     execution.execution_context_id = trace.execution_context_id;
     execution.placement_fingerprint = trace.placement_fingerprint;
     execution.residency_verdict = trace.residency_verdict;
-    execution.native_cpu_fallback_count = trace.native_cpu_fallback_count;
     execution.transfer_event_count = trace.transfer_event_count;
     execution.transfer_known_bytes = trace.transfer_known_bytes;
     execution.synchronization_event_count = trace.synchronization_event_count;

@@ -60,6 +60,7 @@ private:
     void RenderOverviewTab();
     void RenderConfusionMatrixTab();
     void RenderPerClassTab();
+    void RenderCurvesTab();  // ROC / precision-recall (TOFIX140)
     void RenderPredictionsTab();
     void RenderComparisonTab();
 

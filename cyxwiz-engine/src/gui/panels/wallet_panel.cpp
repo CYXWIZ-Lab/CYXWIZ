@@ -1,5 +1,7 @@
 #include "wallet_panel.h"
 #include "../icons.h"
+#include "../../auth/auth_client.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <ctime>
 #include <iomanip>
@@ -33,6 +35,7 @@ WalletPanel::WalletPanel()
 WalletPanel::~WalletPanel() = default;
 
 void WalletPanel::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (!visible_) return;
 
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
@@ -54,7 +57,7 @@ void WalletPanel::Render() {
         ImGui::Separator();
         RenderTransactionHistory();
     } else {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Connect your wallet to get started");
+        ImGui::TextColored(t.text_dim, "Connect your wallet to get started");
         ImGui::Spacing();
         if (ImGui::Button(ICON_FA_WALLET " Connect CyxWallet", ImVec2(-1, 40))) {
             show_connection_dialog_ = true;
@@ -73,34 +76,36 @@ void WalletPanel::Render() {
 }
 
 void WalletPanel::RenderConnectionStatus() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text("Status:");
     ImGui::SameLine();
 
     switch (status_) {
         case WalletConnectionStatus::Disconnected:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CIRCLE " Disconnected");
+            ImGui::TextColored(t.pending, ICON_FA_CIRCLE " Disconnected");
             break;
         case WalletConnectionStatus::Connecting:
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), ICON_FA_SPINNER " Connecting...");
+            ImGui::TextColored(t.running, ICON_FA_SPINNER " Connecting...");
             break;
         case WalletConnectionStatus::Connected:
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CIRCLE_CHECK " Connected");
+            ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK " Connected");
             break;
         case WalletConnectionStatus::Error:
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_CIRCLE_XMARK " Error");
+            ImGui::TextColored(t.error, ICON_FA_CIRCLE_XMARK " Error");
             break;
     }
 
     if (!error_message_.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "- %s", error_message_.c_str());
+        ImGui::TextColored(t.error, "- %s", error_message_.c_str());
     }
 }
 
 void WalletPanel::RenderWalletInfo() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text(ICON_FA_WALLET " Address:");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", FormatAddress(wallet_address_).c_str());
+    ImGui::TextColored(t.accent_text, "%s", FormatAddress(wallet_address_).c_str());
 
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", wallet_address_.c_str());
@@ -118,12 +123,13 @@ void WalletPanel::RenderWalletInfo() {
 }
 
 void WalletPanel::RenderBalance() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     double total_usd = (sol_balance_ * sol_usd_price_) + (cyxwiz_balance_ * cyxwiz_usd_price_);
 
     ImGui::BeginChild("Balance", ImVec2(0, 160), true, ImGuiWindowFlags_NoScrollbar);
 
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Total Balance");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::TextColored(t.text_dim, "Total Balance");
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
     ImGui::Text("$%.2f USD", total_usd);
     ImGui::PopStyleColor();
 
@@ -133,15 +139,15 @@ void WalletPanel::RenderBalance() {
 
     ImGui::Columns(2, "balances", false);
 
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), ICON_FA_COINS " CYXWIZ");
+    ImGui::TextColored(t.series[0], ICON_FA_COINS " CYXWIZ");
     ImGui::Text("%.2f", cyxwiz_balance_);
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", cyxwiz_balance_ * cyxwiz_usd_price_);
+    ImGui::TextColored(t.text_dim, "$%.2f", cyxwiz_balance_ * cyxwiz_usd_price_);
 
     ImGui::NextColumn();
 
-    ImGui::TextColored(ImVec4(0.6f, 0.4f, 1.0f, 1.0f), ICON_FA_CIRCLE " SOL");
+    ImGui::TextColored(t.series[1], ICON_FA_CIRCLE " SOL");
     ImGui::Text("%.4f", sol_balance_);
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "$%.2f", sol_balance_ * sol_usd_price_);
+    ImGui::TextColored(t.text_dim, "$%.2f", sol_balance_ * sol_usd_price_);
 
     ImGui::Columns(1);
 
@@ -175,6 +181,7 @@ void WalletPanel::RenderActions() {
 }
 
 void WalletPanel::RenderTransactionHistory() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::Text(ICON_FA_CLOCK_ROTATE_LEFT " Recent Transactions:");
     ImGui::SameLine();
     if (ImGui::SmallButton(ICON_FA_ROTATE " Refresh")) {
@@ -182,7 +189,7 @@ void WalletPanel::RenderTransactionHistory() {
     }
 
     if (transactions_.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No transactions yet");
+        ImGui::TextColored(t.text_dim, "No transactions yet");
         return;
     }
 
@@ -193,27 +200,27 @@ void WalletPanel::RenderTransactionHistory() {
 
         ImGui::Text("%s", GetTransactionIcon(tx.type).c_str());
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", tx.description.c_str());
+        ImGui::TextColored(t.text, "%s", tx.description.c_str());
 
         ImGui::SameLine(ImGui::GetWindowWidth() - 150);
         if (tx.amount > 0) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "+%.2f", tx.amount);
+            ImGui::TextColored(t.success, "+%.2f", tx.amount);
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%.2f", tx.amount);
+            ImGui::TextColored(t.error, "%.2f", tx.amount);
         }
         ImGui::SameLine();
         ImGui::Text("CYXWIZ");
 
         ImGui::Indent(20.0f);
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", FormatTimestamp(tx.timestamp).c_str());
+        ImGui::TextColored(t.text_dim, "%s", FormatTimestamp(tx.timestamp).c_str());
         ImGui::SameLine();
 
         if (tx.status == "CONFIRMED") {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CIRCLE_CHECK " Confirmed");
+            ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK " Confirmed");
         } else if (tx.status == "PENDING") {
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), ICON_FA_SPINNER " Pending");
+            ImGui::TextColored(t.pending, ICON_FA_SPINNER " Pending");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_CIRCLE_XMARK " Failed");
+            ImGui::TextColored(t.error, ICON_FA_CIRCLE_XMARK " Failed");
         }
 
         if (ImGui::IsItemHovered()) {
@@ -230,6 +237,7 @@ void WalletPanel::RenderTransactionHistory() {
 }
 
 void WalletPanel::RenderConnectionDialog() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::OpenPopup("Connect Wallet");
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -245,7 +253,7 @@ void WalletPanel::RenderConnectionDialog() {
         ImGui::PopItemWidth();
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.0f, 1.0f), "Note: Your private key is never stored. Only the public address is used.");
+        ImGui::TextColored(t.warning, "Note: Your private key is never stored. Only the public address is used.");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -269,6 +277,7 @@ void WalletPanel::RenderConnectionDialog() {
 }
 
 void WalletPanel::RenderExternalWalletDialog() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     ImGui::OpenPopup("Connect External Wallet");
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -276,7 +285,7 @@ void WalletPanel::RenderExternalWalletDialog() {
     ImGui::SetNextWindowSize(ImVec2(550, 300), ImGuiCond_Appearing);
 
     if (ImGui::BeginPopupModal("Connect External Wallet", &show_external_wallet_dialog_, ImGuiWindowFlags_NoResize)) {
-        ImGui::TextColored(ImVec4(0.6f, 0.4f, 1.0f, 1.0f), ICON_FA_WALLET " Link External Solana Wallet");
+        ImGui::TextColored(t.accent_text, ICON_FA_WALLET " Link External Solana Wallet");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -291,7 +300,7 @@ void WalletPanel::RenderExternalWalletDialog() {
             ImGui::PopItemWidth();
 
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Supported: Phantom, Solflare, or any Solana wallet");
+            ImGui::TextColored(t.text_dim, "Supported: Phantom, Solflare, or any Solana wallet");
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -314,7 +323,7 @@ void WalletPanel::RenderExternalWalletDialog() {
             ImGui::Text("Step 2: Sign verification message");
             ImGui::Spacing();
 
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Sign this message in your wallet:");
+            ImGui::TextColored(t.warning, "Sign this message in your wallet:");
             ImGui::Spacing();
 
             ImGui::BeginChild("NonceBox", ImVec2(-1, 60), true, ImGuiWindowFlags_NoScrollbar);
@@ -326,9 +335,9 @@ void WalletPanel::RenderExternalWalletDialog() {
             }
 
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "1. Open your Phantom/Solflare wallet");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "2. Sign the message above");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "3. Paste the signature below");
+            ImGui::TextColored(t.text_dim, "1. Open your Phantom/Solflare wallet");
+            ImGui::TextColored(t.text_dim, "2. Sign the message above");
+            ImGui::TextColored(t.text_dim, "3. Paste the signature below");
 
             ImGui::Spacing();
             ImGui::Separator();

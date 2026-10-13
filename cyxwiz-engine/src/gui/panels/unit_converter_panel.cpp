@@ -1,5 +1,6 @@
 #include "unit_converter_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
@@ -93,7 +94,7 @@ void UnitConverterPanel::RenderCategorySelector() {
 
         bool is_selected = (static_cast<int>(i) == category_idx_);
         if (is_selected) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ui::CurrentTokens().accent);
         }
 
         if (ImGui::Button(categories_[i].c_str(), ImVec2(button_width, 0))) {
@@ -171,7 +172,7 @@ void UnitConverterPanel::RenderConversionInput() {
             }
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##Result", const_cast<char*>(result_str.c_str()),
                         result_str.size() + 1, ImGuiInputTextFlags_ReadOnly);
@@ -198,7 +199,7 @@ void UnitConverterPanel::RenderConversionInput() {
 
 void UnitConverterPanel::RenderResults() {
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
@@ -236,7 +237,7 @@ void UnitConverterPanel::RenderAllConversions() {
         // Highlight current selection
         bool is_selected = (conv.first == result_.output_unit);
         if (is_selected) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
         }
 
         ImGui::Text("%s", conv.first.c_str());

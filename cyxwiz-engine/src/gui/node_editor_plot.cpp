@@ -6,12 +6,16 @@
 #include "icons.h"
 #include "plot/plot_node_lane.h"
 #include "plot/plot_window.h"
+#include "dashboard/dashboard_links.h"
+#include "dashboard/dashboard_window.h"
+#include "../core/dashboard/dashboard_model.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
 #include <imnodes.h>
+#include <spdlog/spdlog.h>
 
 namespace gui {
 
@@ -75,7 +79,17 @@ cyxwiz::plot::PlotSpec SpecOf(const MLNode& node) {
 void NodeEditor::DrawPlotNodeStatus(const MLNode& node) {
     if (!plot_lane_) return;
     const Lane::Status& st = plot_lane_->StatusOf(node.id);
-    const auto [line1, line2] = StatusLines(st, SpecOf(node));
+    auto [line1, line2] = StatusLines(st, SpecOf(node));
+    if (node.type == NodeType::Dashboard && (st.state == State::Ready || st.state == State::Idle)) {
+        cyxwiz::dashboard::DashboardSpec spec;
+        auto it = node.parameters.find("dashboard_spec");
+        if (it != node.parameters.end() && !it->second.empty()) cyxwiz::dashboard::DashboardFromJson(it->second, spec);
+        if (st.state == State::Ready)
+            line1 = spec.widgets.empty() ? std::string("Dashboard \xC2\xB7 automatic layout on open")
+                                         : "Dashboard \xC2\xB7 " + std::to_string(spec.widgets.size()) + " widgets";
+        else
+            line2 = "Open the dashboard to read " + (st.feeder_name.empty() ? std::string("its input") : st.feeder_name) + ".";
+    }
     const auto& t = cyxwiz::ui::CurrentTokens();
     const ImVec2 pos = ImNodes::GetNodeScreenSpacePos(node.id);
     const ImVec2 dims = ImNodes::GetNodeDimensions(node.id);
@@ -199,11 +213,185 @@ void NodeEditor::DrawPlotNodeHeader(int node_id) {
     }
 }
 
-void NodeEditor::RenderPlotNodes() {
-    bool any_plot = false;
-    for (const auto& n : nodes_) any_plot = any_plot || n.type == NodeType::Plot;
-    if (!any_plot && plot_windows_.empty()) return;
+void NodeEditor::OpenDashboardNode(int node_id) {
+    MLNode* node = FindNodeById(node_id);
+    if (!node) return;
     if (!plot_lane_) plot_lane_ = std::make_shared<cyxwiz::plot::PlotNodeLane>();
+    auto& window = dashboard_windows_[node_id];
+    if (!window) {
+        window = std::make_shared<cyxwiz::dashboard::DashboardWindow>("dashboard_node_" + std::to_string(node_id));
+        auto it = node->parameters.find("dashboard_spec");
+        if (it != node->parameters.end()) window->SetSpecJson(it->second);
+        window->draw_header = [this, node_id]() { DrawPlotNodeHeader(node_id); };
+        // The layout and filters are saved in the node.
+        window->on_spec_changed = [this, node_id](const std::string& json) {
+            if (MLNode* n = FindNodeById(node_id))
+                if (n->parameters["dashboard_spec"] != json) n->parameters["dashboard_spec"] = json;
+        };
+        window->on_edit_roles = [this](const std::string& dataset) {
+            if (open_data_studio_profile_) open_data_studio_profile_(dataset);
+        };
+        window->on_open_query = [this](const std::string& dataset, const std::string& sql) {
+            if (open_data_studio_query_) open_data_studio_query_(dataset, sql);
+        };
+        dashboard_data_versions_[node_id] = ~0ull;
+    }
+    window->visible = true;
+    const Lane::Status& st = plot_lane_->StatusOf(node_id);
+    if (!st.table && st.state != State::Running) plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
+}
+
+int NodeEditor::DataInputOf(const std::string& dataset) const {
+    if (dataset.empty()) return -1;
+    for (const auto& n : nodes_) {
+        if (n.type != NodeType::DataInput) continue;
+        if (dataset == "ds_datainput_" + std::to_string(n.id)) return n.id;
+        auto it = n.parameters.find("dataset_name");
+        if (it != n.parameters.end() && it->second == dataset) return n.id;
+    }
+    return -1;
+}
+
+std::vector<cyxwiz::dashboard::DashboardTarget> NodeEditor::DashboardTargets(const std::string& dataset) {
+    // Data is "the same" when both name one Data Input (or the same dataset).
+    const auto key_of = [this](const std::string& name) {
+        const int id = DataInputOf(name);
+        return id >= 0 ? "node:" + std::to_string(id) : name;
+    };
+    const std::string want = key_of(dataset);
+    std::vector<cyxwiz::dashboard::DashboardTarget> out;
+    for (const auto& n : nodes_) {
+        if (n.type != NodeType::Dashboard) continue;
+        cyxwiz::dashboard::DashboardTarget d;
+        d.node_id = n.id;
+        d.name = n.name;
+        auto spec_it = n.parameters.find("dashboard_spec");
+        cyxwiz::dashboard::DashboardSpec spec;
+        if (spec_it != n.parameters.end() && cyxwiz::dashboard::DashboardFromJson(spec_it->second, spec)) d.widgets = static_cast<int>(spec.widgets.size());
+        // What it shows: the table its lane read, else the node connected to it.
+        std::string key;
+        if (plot_lane_) {
+            const Lane::Status& st = plot_lane_->StatusOf(n.id);
+            d.feeder = st.feeder_name;
+            if (!st.dataset_name.empty()) key = key_of(st.dataset_name);
+        }
+        if (key.empty())
+            for (const auto& l : links_)
+                if (l.to_node == n.id)
+                    if (const MLNode* from = FindNodeById(l.from_node)) {
+                        if (d.feeder.empty()) d.feeder = from->name;
+                        if (from->type == NodeType::DataInput) key = "node:" + std::to_string(from->id);
+                    }
+        d.same_data = !key.empty() && key == want;
+        if (!d.same_data)
+            d.reason = d.feeder.empty() ? "Nothing is connected to this dashboard."
+                       : key.empty()    ? "It shows " + d.feeder + ", not this dataset (open it once to read its data)."
+                                        : "It shows " + d.feeder + ", not this dataset.";
+        out.push_back(std::move(d));
+    }
+    return out;
+}
+
+std::string NodeEditor::DashboardSourceFor(const std::string& dataset) const {
+    const int id = DataInputOf(dataset);
+    for (const auto& n : nodes_)
+        if (n.id == id) return n.name;
+    return {};
+}
+
+void NodeEditor::QueueDashboardWidget(int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget) {
+    pending_dashboard_widgets_.push_back({node_id, dataset, std::make_shared<cyxwiz::dashboard::WidgetSpec>(widget)});
+}
+
+void NodeEditor::ApplyPendingDashboardWidgets() {
+    auto pending = std::move(pending_dashboard_widgets_);
+    pending_dashboard_widgets_.clear();
+    for (const auto& add : pending) {
+        int id = add.node_id;
+        if (id == 0) {
+            // A new Dashboard node to the right of the Data Input, connected to it.
+            const int source_id = DataInputOf(add.dataset);
+            const MLNode* source = FindNodeById(source_id);
+            if (!source || source->outputs.empty()) {
+                spdlog::warn("Add to Dashboard: no Data Input in the graph reads '{}'", add.dataset);
+                continue;
+            }
+            const int source_pin = source->outputs.front().id;
+            const ImVec2 at = ImNodes::GetNodeGridSpacePos(source_id);
+            SaveUndoState();
+            MLNode node = CreateNode(NodeType::Dashboard, "Dashboard");
+            id = node.id;
+            const int input_pin = node.inputs.empty() ? -1 : node.inputs.front().id;
+            nodes_.push_back(std::move(node));
+            pending_positions_[id] = ImVec2(at.x + 320.0f, at.y + 140.0f);
+            pending_positions_frames_ = 3;
+            if (input_pin >= 0) CreateLink(source_pin, input_pin, source_id, id);
+            RebuildPinLookup();
+        }
+        MLNode* node = FindNodeById(id);
+        if (!node || node->type != NodeType::Dashboard) continue;
+        cyxwiz::dashboard::DashboardSpec spec;
+        auto it = node->parameters.find("dashboard_spec");
+        if (it != node->parameters.end() && !it->second.empty() && !cyxwiz::dashboard::DashboardFromJson(it->second, spec)) {
+            spdlog::warn("Add to Dashboard: the layout of '{}' could not be read; not changed", node->name);
+            continue;
+        }
+        cyxwiz::dashboard::WidgetSpec w = *add.widget;
+        w.id = spec.NewId();
+        w.automatic = false;
+        w.at = {0, 1000, 6, 3};  // after the others, half the width
+        spec.widgets.push_back(w);
+        const std::string json = cyxwiz::dashboard::DashboardToJson(spec);
+        node->parameters["dashboard_spec"] = json;
+        auto win = dashboard_windows_.find(id);
+        if (win != dashboard_windows_.end()) win->second->SetSpecJson(json);
+        OpenDashboardNode(id);
+        dashboard_windows_[id]->Select(w.id);
+        spdlog::info("Add to Dashboard: {} of '{}'{} into {} (node {})", cyxwiz::plot::Info(w.plot.kind).label, w.plot.x_column,
+                     w.IsQuery() ? " (query widget)" : "", node->name, id);
+    }
+}
+
+void NodeEditor::RenderDashboardWindows() {
+    for (auto it = dashboard_windows_.begin(); it != dashboard_windows_.end();) {
+        const int id = it->first;
+        MLNode* node = FindNodeById(id);
+        if (!node || node->type != NodeType::Dashboard) {  // the node was deleted
+            plot_lane_->Forget(id);
+            dashboard_data_versions_.erase(id);
+            it = dashboard_windows_.erase(it);
+            continue;
+        }
+        auto& window = it->second;
+        // The node's layout changed elsewhere (undo, redo, a reload): the window follows.
+        {
+            auto spec_it = node->parameters.find("dashboard_spec");
+            if (spec_it != node->parameters.end() && !spec_it->second.empty() && spec_it->second != window->SavedJson())
+                window->SetSpecJson(spec_it->second);
+        }
+        const Lane::Status& st = plot_lane_->StatusOf(id);
+        const bool has_data = (st.table || st.sparse) && !st.dataset_name.empty() &&
+                              (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);
+        if (has_data) {
+            window->SetData(st.dataset_name, node->name + " \xC2\xB7 " + st.feeder_name);
+        } else {
+            // The header banner already gives the reason when not available or
+            // failed (it was shown twice); the body then only names the state.
+            const auto [line1, line2] = StatusLines(st, cyxwiz::plot::PlotSpec{});
+            const bool banner = st.state == State::Unavailable || st.state == State::Failed;
+            window->ClearData(banner ? line1 + "." : line1 + ". " + line2);
+        }
+        window->Render();
+        ++it;
+    }
+}
+
+void NodeEditor::RenderPlotNodes() {
+    bool any_plot = !pending_dashboard_widgets_.empty();
+    for (const auto& n : nodes_) any_plot = any_plot || n.type == NodeType::Plot || n.type == NodeType::Dashboard;
+    if (!any_plot && plot_windows_.empty() && dashboard_windows_.empty()) return;
+    if (!plot_lane_) plot_lane_ = std::make_shared<cyxwiz::plot::PlotNodeLane>();
+    if (!pending_dashboard_widgets_.empty()) ApplyPendingDashboardWidgets();
     plot_lane_->Poll(nodes_, links_, task_owner_token_);
 
     for (auto it = plot_windows_.begin(); it != plot_windows_.end();) {
@@ -216,12 +404,23 @@ void NodeEditor::RenderPlotNodes() {
             continue;
         }
         auto& window = it->second;
+        // The node's settings changed elsewhere (undo, redo, a reload): the window follows.
+        {
+            auto spec_it = node->parameters.find("plot_spec");
+            if (spec_it != node->parameters.end() && !spec_it->second.empty() &&
+                spec_it->second != cyxwiz::plot::SpecToJson(window->Spec()))
+                window->SetSpec(SpecOf(*node));
+        }
         const Lane::Status& st = plot_lane_->StatusOf(id);
         uint64_t& shown = plot_window_data_versions_[id];
         const bool has_data = st.table && (st.state == State::Ready || st.state == State::OutOfDate || st.state == State::Running);
         if (has_data && shown != st.data_version) {
             window->SetArrowTable(node->name + " \xC2\xB7 " + st.feeder_name, st.table);
             shown = st.data_version;
+        } else if (!has_data && st.sparse) {
+            // Sparse features (a vectorizer's sparse output): a Dashboard shows them.
+            window->ClearData(node->name, "Sparse features: a Plot reads tables. Connect a Dashboard to see rows, density and top features.");
+            shown = 0;
         } else if (!has_data) {
             // The header banner already gives the reason when not available
             // or failed; the plot area then only names the state.
@@ -233,6 +432,7 @@ void NodeEditor::RenderPlotNodes() {
         window->Render();
         ++it;
     }
+    RenderDashboardWindows();
 }
 
 }  // namespace gui

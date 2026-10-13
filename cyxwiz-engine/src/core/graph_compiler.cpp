@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
 #include "training_randomness.h"
@@ -9,6 +10,9 @@
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
+#include "spatial_layer_shapes.h"
+#include "spatial_sequential_head.h"
+#include "sequence_conv_section.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -16,7 +20,6 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
-#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
@@ -40,6 +43,25 @@
 #include <unordered_set>
 
 namespace cyxwiz {
+
+namespace {
+// "28, 28, 1"
+std::string ShapeListText(const std::vector<size_t>& shape) {
+    std::string out;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i) out += ", ";
+        out += std::to_string(shape[i]);
+    }
+    return out;
+}
+}  // namespace
+
+cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config) {
+    const auto& image = config.image_preprocessing;
+    return {image.target_height > 0 ? static_cast<size_t>(image.target_height) : 224,
+            image.target_width > 0 ? static_cast<size_t>(image.target_width) : 224, 3};
+}
+
 
 namespace {
 // Local helpers for issue collection. Kept in an anonymous namespace so
@@ -128,11 +150,16 @@ void CollectDatasetSourceOrigins(
         return;
     }
 
+    // The Quality Analyzer filters which files of the source train (the
+    // image batcher skips its rejects): the source stays the Data Input.
+    const bool training_filter = node->type == gui::NodeType::QualityAnalyzer;
     const auto runtime_support = ResolvePipelineRuntimeSupport(node->type);
-    if (runtime_support.mode != PipelineRuntimeSupportMode::OperatorBacked ||
-        runtime_support.implementation_owner !=
-            PipelineRuntimeImplementationOwner::PipelineOperatorFactory ||
-        !runtime_support.materializer_arrow_table_supported) {
+    const bool table_operator =
+        runtime_support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+        runtime_support.implementation_owner ==
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
+        runtime_support.materializer_arrow_table_supported;
+    if (!training_filter && !table_operator) {
         invalid_path = true;
         return;
     }
@@ -217,6 +244,8 @@ DatasetModality DatasetModalityFromNode(const gui::MLNode& node) {
 DatasetStorageKind DatasetStorageKindFromRegistry(
     const std::string& dataset_name) {
     if (dataset_name.empty()) return DatasetStorageKind::Unknown;
+    // The Engine's dataset catalog decides; a Server Node job's catalog may not.
+    if (auto kind = GraphDatasetStorageKind(dataset_name)) return *kind;
     if (GraphArrowDataset(dataset_name)) {
         return DatasetStorageKind::InMemoryArrow;
     }
@@ -789,7 +818,10 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::NLLLoss ||
            type == gui::NodeType::SoftDiceLoss ||
            type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss;
+           type == gui::NodeType::JaccardLoss ||
+           type == gui::NodeType::TripletLoss ||
+           type == gui::NodeType::ContrastiveLoss ||
+           type == gui::NodeType::CosineEmbeddingLoss;
 }
 
 bool IsTrueParameter(const gui::MLNode& node, const char* key) {
@@ -1146,7 +1178,8 @@ bool IsGraphRuntimeBinaryMaskOp(gui::NodeType type) {
 }
 
 bool IsGraphRuntimeLinalgOp(gui::NodeType type) {
-    return type == gui::NodeType::TensorDot;
+    return type == gui::NodeType::TensorDot ||
+           type == gui::NodeType::TensorBatchMatMul;
 }
 
 bool IsGraphRuntimeFanInOp(gui::NodeType type) {
@@ -1814,39 +1847,18 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
 bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
                                            std::string& matched_key) {
     switch (node.type) {
-        case gui::NodeType::PairDatasetBuilder:
-            matched_key = "PairDatasetBuilder";
-            return true;
-        case gui::NodeType::TripletDatasetBuilder:
-            matched_key = "TripletDatasetBuilder";
-            return true;
-        case gui::NodeType::SharedEncoder:
-            matched_key = "SharedEncoder";
-            return true;
-        case gui::NodeType::SiameseBranch:
-            matched_key = "SiameseBranch";
-            return true;
-        case gui::NodeType::ContrastiveLoss:
-            matched_key = "ContrastiveLoss";
-            return true;
-        case gui::NodeType::CosineEmbeddingLoss:
-            matched_key = "CosineEmbeddingLoss";
-            return true;
-        case gui::NodeType::TripletLoss:
-            matched_key = "TripletLoss";
-            return true;
+        // These train or measure (ExtractMetricSamplingConfiguration,
+        // ExtractMetricEvaluationConfiguration).
         case gui::NodeType::PairMetrics:
-            matched_key = "PairMetrics";
-            return true;
         case gui::NodeType::RetrievalMetrics:
-            matched_key = "RetrievalMetrics";
-            return true;
         case gui::NodeType::EmbeddingOutput:
-            matched_key = "EmbeddingOutput";
-            return true;
         case gui::NodeType::PairScoreOutput:
-            matched_key = "PairScoreOutput";
-            return true;
+        case gui::NodeType::PairDatasetBuilder:
+        case gui::NodeType::TripletDatasetBuilder:
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss:
+        case gui::NodeType::TripletLoss:
+            return false;
         default:
             break;
     }
@@ -1854,8 +1866,6 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
     const char* sketch_names[] = {
         "PairDatasetBuilder",
         "TripletDatasetBuilder",
-        "SharedEncoder",
-        "SiameseBranch",
         "ContrastiveLoss",
         "CosineEmbeddingLoss",
         "TripletLoss",
@@ -1874,9 +1884,7 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
 
     const auto& params = node.parameters;
     const char* enabled_keys[] = {
-        "metric_learning",
-        "shared_encoder",
-        "tied_weights"
+        "metric_learning"
     };
 
     for (const char* key : enabled_keys) {
@@ -2058,6 +2066,19 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
     return out.str();
 }
 
+// An image Data Input feeds [H, W, C] samples: the Resize node's target (or
+// the batcher's 224x224 default) with three channels, then the shape the image
+// transforms leave (crops, Grayscale). The image batcher uses the same plan,
+// so the As compiled card's shapes are the training shapes (TOFIX140 A1).
+void ApplyImageInputShape(TrainingConfiguration& config) {
+    if (config.preprocessing_domain != PreprocessingDomain::Image) {
+        return;
+    }
+    const auto shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    config.input_shape = {shape.height, shape.width, shape.channels};
+    config.input_size = shape.Size();
+}
+
 void ApplyTextInputShape(TrainingConfiguration& config) {
     if (config.preprocessing_domain != PreprocessingDomain::Text) {
         return;
@@ -2132,53 +2153,6 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 }
                 continue;
             }
-            case backend_placement::LayerCapabilityKind::CpuBackedModelLayer: {
-                auto placement =
-                    backend_placement::BuildCpuBackedModelLayerPlacement(layer);
-                if (layer.type == gui::NodeType::RNN) {
-                    // tofix68 provider 0.7.0: the simple RNN trains on the
-                    // native neural provider when one serves the run's
-                    // device and the exact tuple; otherwise it stays on the
-                    // CPU reference (the placement built above).
-                    NeuralOpRequest provider_request;
-                    provider_request.target = CaptureCurrentNeuralDeviceTarget();
-                    provider_request.op = NeuralOp::RnnForward;
-                    provider_request.training = true;
-                    provider_request.dtype = DataType::Float32;
-                    provider_request.batch =
-                        static_cast<size_t>(std::max(1, config.batch_size));
-                    provider_request.seq = EstimateSequenceLength(layer);
-                    provider_request.input =
-                        layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-                    provider_request.hidden =
-                        ParseSizeParam(layer.parameters, "hidden_size", 128);
-                    const bool rnn_bidirectional =
-                        ParseBoolParam(layer.parameters, "bidirectional", false);
-                    // Split-path bidirectional: each branch runs as a
-                    // single-direction, single-layer tuple (first level).
-                    provider_request.layers = rnn_bidirectional
-                        ? 1
-                        : ParseSizeParam(layer.parameters, "num_layers", 1);
-                    provider_request.directions = 1;
-                    if (rnn_bidirectional) {
-                        placement.explanation +=
-                            " Bidirectional runs as split forward/reverse "
-                            "branches; the native provider verdict below "
-                            "applies per branch (first level).";
-                    }
-                    const auto nonlinearity =
-                        layer.parameters.find("nonlinearity");
-                    provider_request.activation =
-                        (nonlinearity != layer.parameters.end() &&
-                         nonlinearity->second == "relu")
-                            ? NeuralActivation::Relu
-                            : NeuralActivation::Tanh;
-                    backend_placement::ApplyNativeProviderPlacement(
-                        placement, provider_request);
-                }
-                config.backend_placements.push_back(placement);
-                continue;
-            }
             case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
                 config.backend_placements.push_back(
                     backend_placement::BuildUnsupportedSequentialModelPlacement(
@@ -2213,164 +2187,55 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 break;
         }
 
+        // LSTM / GRU / RNN run on the device: the native provider op where it
+        // serves the run's device and the exact tuple, else the ArrayFire
+        // per-timestep plan (every backend, CUDA included; no CPU path).
         const size_t hidden_size =
             ParseSizeParam(layer.parameters, "hidden_size", 128);
         const bool bidirectional =
             ParseBoolParam(layer.parameters, "bidirectional", false);
-        const bool return_sequences =
-            ParseBoolParam(layer.parameters, "return_sequences", false);
-        const size_t num_layers =
-            ParseSizeParam(layer.parameters, "num_layers", 1);
-        const size_t seq_len = EstimateSequenceLength(layer);
-        const size_t input_size =
-            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-
-        RecurrentCudaPlacementRequest request;
-        request.kind = layer.type == gui::NodeType::GRU
-            ? RecurrentLayerKind::GRU
-            : RecurrentLayerKind::LSTM;
-        request.batch_size = static_cast<size_t>(std::max(1, config.batch_size));
-        request.seq_len = seq_len;
-        request.input_size = input_size;
-        request.hidden_size = hidden_size;
-        request.num_layers = num_layers;
-        request.bidirectional = bidirectional;
-        request.return_sequences = return_sequences;
-
-        const auto decision = EvaluateRecurrentCudaPlacement(request);
-        BackendPlacementObservation cached_observation;
-        bool has_cached_observation =
-            decision.should_attempt_arrayfire_cuda &&
-            TryGetRecurrentCudaPlacementObservation(request, cached_observation);
-        if (decision.should_attempt_arrayfire_cuda && !has_cached_observation) {
-            has_cached_observation =
-                TryRunRecurrentCudaPreflightProbe(request, cached_observation);
-        }
-        const bool cached_cuda_overflow =
-            has_cached_observation &&
-            cached_observation.reason_code ==
-                BackendPlacementObservationReason::CudaJitParamOverflow;
-        const bool cached_failure_observation = has_cached_observation;
-        BackendPlacementEntry placement;
-        placement.node_id = layer.node_id;
-        placement.node_name = layer.name;
-        placement.node_type = decision.layer_name;
-        placement.requested_backend = "auto";
-        placement.expected_backend =
-            cached_failure_observation ? "CPU" : decision.expected_backend;
-        placement.fallback_backend = decision.fallback_backend;
-        placement.status = cached_failure_observation
-            ? BackendPlacementStatus::Cpu
-            : (decision.should_attempt_arrayfire_cuda
-                   ? BackendPlacementStatus::Gpu
-                   : BackendPlacementStatus::Cpu);
-        placement.reason_code = cached_failure_observation
-            ? (cached_cuda_overflow
-                   ? RecurrentCudaPlacementReason::CudaJitParamOverflowRisk
-                   : cached_observation.reason_code)
-            : decision.reason_code;
-        if (cached_failure_observation) {
-            placement.observation_source = cached_observation.source;
-            placement.observation_device = cached_observation.device;
-            placement.observation_dtype = cached_observation.dtype;
-            placement.observation_shape_signature =
-                cached_observation.shape_signature;
-            placement.observation_detail = cached_observation.detail;
-            placement.observation_timestamp = cached_observation.timestamp;
-            placement.observation_probe_outcome =
-                cached_observation.probe_outcome;
-            placement.observation_probe_scope =
-                cached_observation.probe_scope;
-        }
-        const std::string observation_source_label =
-            cached_observation.source ==
-                    BackendPlacementObservationSource::PreflightProbe
-                ? "preflight probe observation"
-                : cached_observation.source ==
-                          BackendPlacementObservationSource::RuntimeFallback
-                      ? "runtime fallback observation"
-                      : "runtime/probe observation";
-        placement.explanation = cached_failure_observation
-            ? (cached_cuda_overflow
-                   ? decision.layer_name +
-                         " recurrent step is expected to run on CPU because a previous " +
-                         observation_source_label + " for this exact "
-                         "backend/device/dtype/shape reported CUDA generated-kernel "
-                         "formal-parameter overflow (reason=" +
-                         cached_observation.reason_code +
-                         ", source=" + cached_observation.source +
-                         "). This is separate from VRAM capacity. Device: " +
-                         cached_observation.device + ". Shape signature: " +
-                         cached_observation.shape_signature + "."
-                   : decision.layer_name +
-                         " recurrent step is expected to run on CPU because a previous " +
-                         observation_source_label + " for this exact "
-                         "backend/device/dtype/shape reported a backend failure "
-                         "(reason=" + cached_observation.reason_code +
-                         ", source=" + cached_observation.source +
-                         "). Device: " + cached_observation.device +
-                         ". Shape signature: " +
-                         cached_observation.shape_signature + ".")
-            : (decision.should_attempt_arrayfire_cuda
-                   ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
-                   : decision.reason);
-        placement.suggested_action = cached_failure_observation
-            ? "Training can continue. Use CPU for this recurrent shape until "
-              "a fused/native CUDA recurrent kernel or exact successful "
-              "backend probe proves the shape safe on this device."
-            : (decision.should_attempt_arrayfire_cuda
-                   ? "No action needed."
-                   : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.");
+        BackendPlacementEntry placement =
+            backend_placement::BuildArrayFireTensorPlacement(layer);
+        placement.explanation += std::string(" Staged plan: ") +
+                                 RecurrentStagedArrayFirePlanName + ".";
         backend_placement::StampDeclaredExecutionMode(
             placement,
             DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
-        placement.explanation += std::string(" Staged plan: ") +
-                                 RecurrentStagedArrayFirePlanName + ".";
-        {
-            NeuralOpRequest provider_request;
-            provider_request.target = CaptureCurrentNeuralDeviceTarget();
-            provider_request.op = layer.type == gui::NodeType::GRU
-                ? NeuralOp::GruForward
-                : NeuralOp::LstmForward;
-            provider_request.training = true;  // this is the training path
-            provider_request.dtype = DataType::Float32;
-            provider_request.batch = request.batch_size;
-            provider_request.seq = request.seq_len;
-            provider_request.input = request.input_size;
-            provider_request.hidden = request.hidden_size;
-            // Split-path bidirectional (LSTMModule/GRUModule): each
-            // direction and level runs as an independent single-direction,
-            // single-layer tuple, so that is what the provider is asked
-            // about (first level shown; deeper levels have input 2*hidden).
-            provider_request.layers =
-                request.bidirectional ? 1 : request.num_layers;
-            provider_request.directions = 1;
-            if (request.bidirectional) {
-                placement.explanation +=
-                    " Bidirectional runs as split forward/reverse branches; "
-                    "the native provider verdict below applies per branch "
-                    "(first level).";
-            }
-            backend_placement::ApplyNativeProviderPlacement(
-                placement, provider_request);
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = layer.type == gui::NodeType::GRU   ? NeuralOp::GruForward
+                            : layer.type == gui::NodeType::RNN ? NeuralOp::RnnForward
+                                                               : NeuralOp::LstmForward;
+        if (layer.type == gui::NodeType::RNN) {
+            const auto nonlinearity = layer.parameters.find("nonlinearity");
+            provider_request.activation =
+                nonlinearity != layer.parameters.end() && nonlinearity->second == "relu"
+                    ? NeuralActivation::Relu
+                    : NeuralActivation::Tanh;
         }
+        provider_request.training = true;  // this is the training path
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = static_cast<size_t>(std::max(1, config.batch_size));
+        provider_request.seq = EstimateSequenceLength(layer);
+        provider_request.input =
+            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
+        provider_request.hidden = hidden_size;
+        // Bidirectional layers run each direction and level as a
+        // single-direction, single-layer child, so that is what the provider
+        // is asked about (first level shown; deeper levels have input
+        // 2*hidden).
+        provider_request.layers = bidirectional
+            ? 1
+            : ParseSizeParam(layer.parameters, "num_layers", 1);
+        provider_request.directions = 1;
+        if (bidirectional) {
+            placement.explanation +=
+                " Bidirectional runs as split forward/reverse branches; "
+                "the native provider verdict below applies per branch "
+                "(first level).";
+        }
+        backend_placement::ApplyNativeProviderPlacement(placement, provider_request);
         config.backend_placements.push_back(placement);
-
-        if (decision.should_attempt_arrayfire_cuda &&
-            !cached_failure_observation) {
-            continue;
-        }
-
-        const std::string issue_name =
-            decision.layer_name + " hidden_size=" + std::to_string(hidden_size);
-        std::ostringstream msg;
-        msg << decision.layer_name << " layer is valid, but "
-            << placement.explanation
-            << " Reason code: " << placement.reason_code << ". "
-            << "Runtime will use the same placement policy instead of "
-            << "repeatedly attempting CUDA and falling back every batch.";
-        AddIssue(config, IssueLevel::Warning, msg.str(),
-                 layer.node_id, issue_name);
     }
 
     for (const int graph_op_node_id : config.graph_op_node_ids) {
@@ -2455,6 +2320,481 @@ bool ParseFloatParam(const std::map<std::string, std::string>& params,
     } catch (...) {
         error = key + " must be a float";
         return false;
+    }
+}
+
+bool IsSchedulerNode(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::StepLR:
+        case gui::NodeType::CosineAnnealing:
+        case gui::NodeType::ReduceOnPlateau:
+        case gui::NodeType::ExponentialLR:
+        case gui::NodeType::WarmupScheduler:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Scheduler nodes (TOFIX140 A3): the one node fed by the training optimizer
+// becomes config.scheduler, which TrainingExecutor attaches, steps on its
+// cadence and checkpoints. Parameters follow torch.optim.lr_scheduler; the
+// ranges are TrainingSchedulerSpec's own (ValidateTrainingSchedulerSpec).
+void ExtractSchedulerConfiguration(const std::vector<gui::MLNode>& nodes,
+                                   const std::vector<gui::NodeLink>& links,
+                                   const gui::MLNode* optimizer_node,
+                                   TrainingConfiguration& config) {
+    std::vector<const gui::MLNode*> attached;
+    for (const auto& node : nodes) {
+        if (!IsSchedulerNode(node.type)) continue;
+        const bool fed_by_optimizer =
+            optimizer_node && std::any_of(links.begin(), links.end(), [&](const gui::NodeLink& link) {
+                return link.to_node == node.id && link.from_node == optimizer_node->id;
+            });
+        if (!fed_by_optimizer) {
+            AddIssue(config, IssueLevel::Error,
+                     "Scheduler '" + node.name + "' is not connected to the training optimizer: link the "
+                     "optimizer's output to its Optimizer input",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        attached.push_back(&node);
+    }
+    if (attached.empty()) return;
+    const gui::MLNode& node = *attached.front();
+    if (attached.size() > 1) {
+        for (size_t i = 1; i < attached.size(); ++i) {
+            AddIssue(config, IssueLevel::Error,
+                     "The optimizer already has the scheduler '" + node.name + "'; one scheduler per optimizer: "
+                     "remove '" + attached[i]->name + "'",
+                     attached[i]->id, attached[i]->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+    if (config.lr_schedule != "none") {
+        AddIssue(config, IssueLevel::Error,
+                 "The optimizer's lr_schedule (" + config.lr_schedule + ") and the scheduler '" + node.name +
+                 "' both set the learning rate: set lr_schedule to none or remove the scheduler",
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        return;
+    }
+
+    bool ok = true;
+    const auto number = [&](const char* key, const char* fallback) {
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? fallback : it->second;
+        try {
+            size_t used = 0;
+            const double value = std::stod(text, &used);
+            if (used == text.size() && std::isfinite(value)) return value;
+        } catch (const std::exception&) {
+        }
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid scheduler parameter '" + std::string(key) + "': '" + text + "' is not a number",
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        ok = false;
+        return 0.0;
+    };
+    const auto whole = [&](const char* key, const char* fallback) {
+        const double value = number(key, fallback);
+        if (value != std::floor(value) || std::abs(value) > std::numeric_limits<int>::max()) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid scheduler parameter '" + std::string(key) + "': must be a whole number",
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            ok = false;
+            return 0;
+        }
+        return static_cast<int>(value);
+    };
+
+    TrainingSchedulerSpec spec;
+    switch (node.type) {
+        case gui::NodeType::StepLR:
+            spec = StepLRSchedulerSpec{whole("step_size", "10"), number("gamma", "0.1")};
+            break;
+        case gui::NodeType::CosineAnnealing:
+            spec = CosineAnnealingLRSchedulerSpec{whole("T_max", "100"), number("eta_min", "0")};
+            break;
+        case gui::NodeType::ExponentialLR:
+            spec = ExponentialLRSchedulerSpec{number("gamma", "0.95")};
+            break;
+        case gui::NodeType::ReduceOnPlateau: {
+            ReduceLROnPlateauSchedulerSpec plateau;
+            plateau.mode = "min";  // it watches the validation loss
+            plateau.factor = number("factor", "0.1");
+            plateau.patience = whole("patience", "10");
+            plateau.threshold = number("threshold", "0.0001");
+            plateau.min_lr = number("min_lr", "0");
+            spec = plateau;
+            if (config.val_ratio <= 0.0f && !config.dataset_roles.dev.IsSupplied()) {
+                AddIssue(config, IssueLevel::Error,
+                         "Reduce LR steps on the validation loss, and this graph has no validation data: set "
+                         "Data Split val_ratio above 0 or supply a Dev dataset",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                ok = false;
+            }
+            break;
+        }
+        default: {  // WarmupScheduler: torch LinearLR(start_factor, 1.0, total_iters=warmup_epochs)
+            const double start_factor = number("start_factor", "0.1");
+            if (ok && (start_factor <= 0.0 || start_factor > 1.0)) {
+                AddIssue(config, IssueLevel::Error,
+                         "Invalid scheduler parameter 'start_factor': must be above 0 and at most 1",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                ok = false;
+            }
+            spec = LinearWarmupLRSchedulerSpec{whole("warmup_epochs", "5"), config.learning_rate,
+                                               start_factor * config.learning_rate};
+            break;
+        }
+    }
+    if (!ok) return;
+    std::string error;
+    if (!ValidateTrainingSchedulerSpec(spec, error)) {
+        AddIssue(config, IssueLevel::Error, "Scheduler '" + node.name + "': " + error, node.id, node.name,
+                 errors::Compiler::InvalidParameter);
+        return;
+    }
+    config.scheduler = spec;
+    config.scheduler_node_id = node.id;
+}
+
+bool IsRegularizationNode(gui::NodeType type) {
+    return type == gui::NodeType::L1Regularization || type == gui::NodeType::L2Regularization ||
+           type == gui::NodeType::ElasticNet;
+}
+
+// Regularization nodes (TOFIX140 A4): the one node wired loss -> node ->
+// optimizer becomes config.regularization_l1/l2, whose gradient
+// TrainingExecutor adds to every optimizer step.
+void ExtractRegularizationConfiguration(const std::vector<gui::MLNode>& nodes,
+                                        const std::vector<gui::NodeLink>& links,
+                                        const gui::MLNode* loss_node,
+                                        const gui::MLNode* optimizer_node,
+                                        TrainingConfiguration& config) {
+    const auto linked = [&](int from, int to) {
+        return std::any_of(links.begin(), links.end(), [&](const gui::NodeLink& link) {
+            return link.from_node == from && link.to_node == to;
+        });
+    };
+    std::vector<const gui::MLNode*> attached;
+    for (const auto& node : nodes) {
+        if (!IsRegularizationNode(node.type)) continue;
+        if (!loss_node || !optimizer_node || !linked(loss_node->id, node.id) ||
+            !linked(node.id, optimizer_node->id)) {
+            AddIssue(config, IssueLevel::Error,
+                     "Regularization '" + node.name + "' must sit between the training loss and the optimizer: "
+                     "link the loss's output to its Loss input and its Loss output to the optimizer's Loss input",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        attached.push_back(&node);
+    }
+    if (attached.empty()) return;
+    const gui::MLNode& node = *attached.front();
+    if (attached.size() > 1) {
+        for (size_t i = 1; i < attached.size(); ++i) {
+            AddIssue(config, IssueLevel::Error,
+                     "The loss already has the regularization '" + node.name + "'; one per loss (Elastic Net "
+                     "combines L1 and L2): remove '" + attached[i]->name + "'",
+                     attached[i]->id, attached[i]->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+
+    bool ok = true;
+    const auto number = [&](const char* key, const char* fallback, double low, double high,
+                            const char* range) {
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? fallback : it->second;
+        try {
+            size_t used = 0;
+            const double value = std::stod(text, &used);
+            if (used == text.size() && std::isfinite(value) && value >= low && value <= high) return value;
+        } catch (const std::exception&) {
+        }
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid regularization parameter '" + std::string(key) + "': '" + text +
+                     "' must be a number from " + range,
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+        ok = false;
+        return 0.0;
+    };
+    const double lambda = number("lambda", "0.01", 0.0, 1.0e6, "0 to 1000000");
+    double l1_ratio = node.type == gui::NodeType::L1Regularization ? 1.0 : 0.0;
+    if (node.type == gui::NodeType::ElasticNet) l1_ratio = number("l1_ratio", "0.5", 0.0, 1.0, "0 to 1");
+    if (!ok) return;
+    config.regularization_l1 = static_cast<float>(lambda * l1_ratio);
+    config.regularization_l2 = static_cast<float>(lambda * (1.0 - l1_ratio));
+    config.regularization_node_id = node.id;
+}
+
+// Metric learning (TOFIX140 A5): a Pair / Triplet Dataset Builder on the
+// training path and its loss come as a pair; together they set
+// config.metric_sampling, which TrainingExecutor turns into a
+// MetricBatchSampler around every batcher.
+struct MetricLossSpec {
+    gui::NodeType loss;
+    gui::NodeType builder;
+    const char* loss_name;
+    const char* builder_name;
+    const char* stack;
+    MetricSampling sampling;
+    double low;
+    bool low_inclusive;
+    double high;
+    const char* range_text;
+    const char* default_margin;
+};
+
+constexpr MetricLossSpec kMetricLossSpecs[] = {
+    {gui::NodeType::TripletLoss, gui::NodeType::TripletDatasetBuilder, "Triplet Loss", "Triplet Dataset Builder",
+     "[anchors; positives; negatives]", MetricSampling::Triplets, 0.0, false, 1.0e6,
+     "greater than 0, up to 1000000", "1.0"},
+    {gui::NodeType::ContrastiveLoss, gui::NodeType::PairDatasetBuilder, "Contrastive Loss", "Pair Dataset Builder",
+     "[firsts; seconds]", MetricSampling::Pairs, 0.0, true, 1.0e6, "from 0 to 1000000", "1.0"},
+    {gui::NodeType::CosineEmbeddingLoss, gui::NodeType::PairDatasetBuilder, "Cosine Embedding Loss",
+     "Pair Dataset Builder", "[firsts; seconds]", MetricSampling::Pairs, -1.0, true, 1.0, "from -1 to 1", "0.0"},
+};
+
+void ExtractMetricSamplingConfiguration(const std::vector<gui::MLNode>& nodes,
+                                        const std::unordered_set<int>& training_path_ids,
+                                        const gui::MLNode* loss_node,
+                                        TrainingConfiguration& config) {
+    std::vector<const gui::MLNode*> builders;
+    for (const auto& node : nodes) {
+        if ((node.type == gui::NodeType::PairDatasetBuilder || node.type == gui::NodeType::TripletDatasetBuilder) &&
+            training_path_ids.count(node.id) > 0) {
+            builders.push_back(&node);
+        }
+    }
+    const MetricLossSpec* spec = nullptr;
+    for (const auto& candidate : kMetricLossSpecs) {
+        if (loss_node && loss_node->type == candidate.loss) spec = &candidate;
+    }
+    if (builders.empty()) {
+        if (spec) {
+            AddIssue(config, IssueLevel::Error,
+                     std::string(spec->loss_name) + " '" + loss_node->name + "' needs a " + spec->builder_name +
+                         " between the Data node and the encoder: it scores stacked " + spec->stack + " embeddings",
+                     loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
+        }
+        return;
+    }
+    const gui::MLNode& builder = *builders.front();
+    for (size_t i = 1; i < builders.size(); ++i) {
+        AddIssue(config, IssueLevel::Error,
+                 "The training path already has the dataset builder '" + builder.name + "'; remove '" +
+                     builders[i]->name + "'",
+                 builders[i]->id, builders[i]->name, errors::Compiler::InvalidConnectivity);
+    }
+    if (!spec || spec->builder != builder.type) {
+        const bool triplets = builder.type == gui::NodeType::TripletDatasetBuilder;
+        AddIssue(config, IssueLevel::Error,
+                 std::string(triplets ? "Triplet Dataset Builder '" : "Pair Dataset Builder '") + builder.name +
+                     (triplets ? "' feeds the model stacked [anchors; positives; negatives] rows, which only a "
+                                 "Triplet Loss scores: use a Triplet Loss"
+                               : "' feeds the model stacked [firsts; seconds] rows, which only a Contrastive or "
+                                 "Cosine Embedding Loss scores: use one of them"),
+                 builder.id, builder.name, errors::Compiler::InvalidConnectivity);
+        return;
+    }
+    if (builders.size() > 1) return;
+
+    const bool triplets = builder.type == gui::NodeType::TripletDatasetBuilder;
+    const auto mining_it = builder.parameters.find("mining");
+    const std::string mining = mining_it == builder.parameters.end() || mining_it->second.empty()
+        ? "random" : mining_it->second;
+    MetricMining metric_mining = MetricMining::Random;
+    if (mining == "hard") {
+        metric_mining = MetricMining::Hard;
+    } else if (mining == "semi_hard" && triplets) {
+        metric_mining = MetricMining::SemiHard;
+    } else if (mining != "random") {
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid mining '" + mining + "' on '" + builder.name + "': choose " +
+                     (triplets ? "random, hard or semi_hard" : "random or hard"),
+                 builder.id, builder.name, errors::Compiler::InvalidParameter);
+        return;
+    }
+
+    const auto it = loss_node->parameters.find("margin");
+    const std::string text =
+        it == loss_node->parameters.end() || it->second.empty() ? spec->default_margin : it->second;
+    double margin = 0.0;
+    bool margin_ok = false;
+    try {
+        size_t used = 0;
+        margin = std::stod(text, &used);
+        margin_ok = used == text.size() && std::isfinite(margin) &&
+                    (spec->low_inclusive ? margin >= spec->low : margin > spec->low) && margin <= spec->high;
+    } catch (const std::exception&) {
+    }
+    if (!margin_ok) {
+        AddIssue(config, IssueLevel::Error,
+                 "Invalid " + std::string(spec->loss_name) + " margin '" + text + "': must be a number " +
+                     spec->range_text,
+                 loss_node->id, loss_node->name, errors::Compiler::InvalidParameter);
+        return;
+    }
+    if (config.target.value_kind != TargetValueKind::Categorical) {
+        AddIssue(config, IssueLevel::Error,
+                 std::string(spec->loss_name) + " reads the label column as class ids; the graph turns it into a "
+                 "non-categorical target",
+                 loss_node->id, loss_node->name, errors::Compiler::InvalidConnectivity);
+        return;
+    }
+    config.metric_sampling = spec->sampling;
+    config.metric_mining = metric_mining;
+    config.metric_builder_node_id = builder.id;
+    // Pair accuracy calls a pair similar halfway between the loss's targets:
+    // distance 0 vs the margin, cosine 1 vs the margin.
+    if (spec->loss == gui::NodeType::ContrastiveLoss) {
+        config.pair_decision_threshold = static_cast<float>(margin / 2.0);
+    } else if (spec->loss == gui::NodeType::CosineEmbeddingLoss) {
+        config.pair_decision_threshold = static_cast<float>((1.0 + margin) / 2.0);
+    }
+}
+
+// Pair / Retrieval Metrics (TOFIX140 A5): side nodes that measure a metric
+// model. Their Embeddings input must come from the layer that feeds the loss
+// (the evaluation embeds rows with the trained model's output).
+void ExtractMetricEvaluationConfiguration(const std::vector<gui::MLNode>& nodes,
+                                          const std::vector<gui::NodeLink>& links,
+                                          const gui::MLNode* loss_node,
+                                          TrainingConfiguration& config) {
+    const auto source_of = [&](const gui::MLNode& node, size_t input) -> int {
+        if (input >= node.inputs.size()) return -1;
+        for (const auto& link : links) {
+            if (link.to_node == node.id && link.to_pin == node.inputs[input].id) return link.from_node;
+        }
+        return -1;
+    };
+    const int embedding_source = loss_node ? source_of(*loss_node, 0) : -1;
+    bool seen_pair = false;
+    bool seen_retrieval = false;
+    bool seen_embedding_output = false;
+    bool seen_pair_score_output = false;
+    for (const auto& node : nodes) {
+        const bool embedding_output = node.type == gui::NodeType::EmbeddingOutput;
+        const bool pair_score_output = node.type == gui::NodeType::PairScoreOutput;
+        if (embedding_output || pair_score_output) {
+            const std::string what = embedding_output ? "Embedding Output" : "Pair Score Output";
+            bool& seen = embedding_output ? seen_embedding_output : seen_pair_score_output;
+            if (seen) {
+                AddIssue(config, IssueLevel::Error, "The graph already has a " + what + " node; remove '" + node.name + "'",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            seen = true;
+            if (config.metric_sampling == MetricSampling::None) {
+                AddIssue(config, IssueLevel::Error,
+                         what + " '" + node.name + "' exports a metric-learning model: train it with a Pair or "
+                         "Triplet Dataset Builder and its loss",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            if (embedding_source < 0 || source_of(node, 0) != embedding_source) {
+                AddIssue(config, IssueLevel::Error,
+                         what + " '" + node.name + "' takes the encoder output: link its Embeddings input from the "
+                         "layer that feeds the loss",
+                         node.id, node.name, errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+            const auto param = [&](const char* key, const char* fallback) {
+                const auto it = node.parameters.find(key);
+                return it == node.parameters.end() || it->second.empty() ? std::string(fallback) : it->second;
+            };
+            if (embedding_output) {
+                const std::string path = param("file_path", "exports/embeddings.parquet");
+                const std::string partition = param("partition", "all");
+                if (partition != "all" && partition != "train" && partition != "validation" && partition != "test") {
+                    AddIssue(config, IssueLevel::Error,
+                             "Invalid Embedding Output partition '" + partition + "': choose all, train, validation "
+                             "or test",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                config.embedding_output = true;
+                config.embedding_output_path = path;
+                config.embedding_output_partition = partition;
+                config.embedding_output_metadata = param("include_metadata", "true") != "false";
+            } else {
+                const std::string mode = param("score_mode", "distance");
+                const std::string threshold_text = param("threshold", "0.5");
+                double threshold = 0.0;
+                bool ok = mode == "distance" || mode == "negative_distance" || mode == "cosine_similarity";
+                try {
+                    size_t used = 0;
+                    threshold = std::stod(threshold_text, &used);
+                    ok = ok && used == threshold_text.size() && std::isfinite(threshold);
+                } catch (const std::exception&) {
+                    ok = false;
+                }
+                if (!ok) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Invalid Pair Score Output settings: score_mode '" + mode +
+                                 "' (distance, negative_distance or cosine_similarity), threshold '" +
+                                 threshold_text + "' (a number)",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                config.pair_score_output = true;
+                config.pair_score_mode = mode;
+                config.pair_score_threshold = threshold;
+            }
+            continue;
+        }
+        const bool pair = node.type == gui::NodeType::PairMetrics;
+        if (!pair && node.type != gui::NodeType::RetrievalMetrics) continue;
+        const std::string what = pair ? "Pair Metrics" : "Retrieval Metrics";
+        if ((pair && seen_pair) || (!pair && seen_retrieval)) {
+            AddIssue(config, IssueLevel::Error, "The graph already has a " + what + " node; remove '" + node.name + "'",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        (pair ? seen_pair : seen_retrieval) = true;
+        if (config.metric_sampling == MetricSampling::None) {
+            AddIssue(config, IssueLevel::Error,
+                     what + " '" + node.name + "' measures a metric-learning model: train it with a Pair or Triplet "
+                     "Dataset Builder and its loss",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        if (embedding_source < 0 || source_of(node, 0) != embedding_source) {
+            AddIssue(config, IssueLevel::Error,
+                     what + " '" + node.name + "' measures the encoder output: link its Embeddings input from the "
+                     "layer that feeds the loss",
+                     node.id, node.name, errors::Compiler::InvalidConnectivity);
+            continue;
+        }
+        const char* key = pair ? "threshold" : "k";
+        const auto it = node.parameters.find(key);
+        const std::string text = it == node.parameters.end() || it->second.empty() ? (pair ? "0.5" : "10")
+                                                                                     : it->second;
+        bool ok = false;
+        double value = 0.0;
+        try {
+            size_t used = 0;
+            value = std::stod(text, &used);
+            ok = used == text.size() && std::isfinite(value) &&
+                 (pair ? value >= 0.0 && value <= 1.0e6 : value >= 1.0 && value <= 1000.0 && value == std::floor(value));
+        } catch (const std::exception&) {
+        }
+        if (!ok) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid " + what + " " + key + " '" + text + "': must be " +
+                         (pair ? "a number from 0 to 1000000" : "a whole number from 1 to 1000"),
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            continue;
+        }
+        if (pair) {
+            config.pair_metrics = true;
+            config.pair_metric_threshold = value;
+        } else {
+            config.retrieval_metrics = true;
+            config.retrieval_k = static_cast<size_t>(value);
+        }
     }
 }
 
@@ -3609,8 +3949,15 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
+        // A setting the node's own implemented contract declares (Multi-Head
+        // or Linear Attention's causal mask) is not a generative sketch.
+        gui::MLNode undeclared_settings = node;
+        if (const auto* meta = registry.GetMetadata(node.type);
+            meta && meta->status == NodeImplementationStatus::Implemented) {
+            for (const auto& parameter : meta->parameters) undeclared_settings.parameters.erase(parameter.name);
+        }
         std::string generative_key;
-        if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
+        if (LooksLikeGenerativeTrainingSketch(undeclared_settings, generative_key)) {
             std::ostringstream msg;
             msg << "Node '" << node.name
                 << "' sketches decoder/generative training via '"
@@ -3711,19 +4058,11 @@ void ValidateTrainingPathImplementationStatus(
         if (LooksLikeMetricLearningTrainingSketch(node,
                                                   metric_learning_key)) {
             std::ostringstream msg;
-            const auto support =
-                ResolvePipelineTrainingBackendSupport(node.type);
-            if (support.mode == PipelineTrainingBackendSupportMode::
-                                    UnsupportedTrainingWorkflow &&
-                support.reason != nullptr) {
-                msg << "Node '" << node.name << "' " << support.reason;
-            } else {
-                msg << "Node '" << node.name
-                    << "' sketches metric-learning/Siamese training via '"
-                    << metric_learning_key
-                    << "', but no typed visual graph or TrainingExecutor "
-                       "owner is registered for the workflow.";
-            }
+            msg << "Node '" << node.name
+                << "' sketches metric-learning training via '"
+                << metric_learning_key
+                << "', but no typed visual graph or TrainingExecutor "
+                   "owner is registered for the workflow.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name,
                      errors::Compiler::UnsupportedTrainingNode);
             continue;
@@ -3782,26 +4121,6 @@ void ValidateTrainingPathImplementationStatus(
         if (!metadata->brief_description.empty()) {
             msg << " (" << metadata->brief_description << ")";
         }
-        AddIssue(config, IssueLevel::Error, msg.str(), node.id,
-                 node.name, errors::Compiler::UnsupportedTrainingNode);
-    }
-}
-
-void ValidateUnsupportedTrainingControlNodes(
-    const std::vector<gui::MLNode>& nodes,
-    TrainingConfiguration& config) {
-
-    for (const auto& node : nodes) {
-        const auto training_support =
-            ResolvePipelineTrainingBackendSupport(node.type);
-        if (training_support.compile_supported ||
-            training_support.mode !=
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
-            continue;
-        }
-
-        std::ostringstream msg;
-        msg << "Node '" << node.name << "' is " << training_support.reason;
         AddIssue(config, IssueLevel::Error, msg.str(), node.id,
                  node.name, errors::Compiler::UnsupportedTrainingNode);
     }
@@ -3893,6 +4212,38 @@ void CollectGraphRuntimeOpNodeIds(
             continue;
         }
         const gui::MLNode& node = *it->second;
+        if (node.type == gui::NodeType::Split) {
+            // Fan-out (TOFIX140 A2): one input, Output 1 = the first
+            // split_size entries along dim, Output 2 = the rest.
+            if (CountConnectedSelectedTensorInputs(node, links, training_path_ids) != 1) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split '" + node.name + "' needs its input connected",
+                         node.id, node.name);
+                continue;
+            }
+            try {
+                const int dim = spatial::ParseIntParam(node.parameters, "dim", 1);
+                const int split_size = spatial::ParseIntParam(node.parameters, "split_size", 1);
+                if (dim == 0) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Split dim 0 is the batch; split a sample dimension (dim 1 = features)",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+                if (split_size < 1) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Split split_size must be at least 1",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                    continue;
+                }
+            } catch (const std::invalid_argument& error) {
+                AddIssue(config, IssueLevel::Error, std::string("Split ") + error.what(),
+                         node.id, node.name, errors::Compiler::InvalidParameter);
+                continue;
+            }
+            config.graph_op_node_ids.push_back(node.id);
+            continue;
+        }
         if (!IsGraphRuntimeFanInOp(node.type) || node.id == fused_concat_node_id) {
             continue;
         }
@@ -4005,7 +4356,6 @@ TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     bool allow_unloaded_data,
-    const std::string& placement_observation_cache_path,
     Purpose purpose)
 {
     const auto compile_started = std::chrono::steady_clock::now();
@@ -4116,7 +4466,6 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateOptimizerReachesLoss(nodes, links, config);
         ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
         ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
-        ValidateUnsupportedTrainingControlNodes(nodes, config);
         ValidateExtensionNodes(nodes, training_path_ids, config);
 
         if (dataset_node && !HasReachablePreTrainInspectionNode(nodes, dataset_reachable)) {
@@ -4732,6 +5081,10 @@ TrainingConfiguration GraphCompiler::Compile(
             if (total_input > 0) {
                 config.input_size = static_cast<size_t>(total_input);
                 config.input_shape = {static_cast<size_t>(total_input)};
+                // Each row is one block of input_width values per feature
+                // (time_series_window_operator.h): torch [N, C, L].
+                config.sequence_input_shape = {static_cast<size_t>(input_width),
+                                               static_cast<size_t>(num_features)};
             }
             CYXWIZ_BUILDER_INFO("GraphCompiler: TimeSeriesWindow found - regression mode, "
                          "input_size={} (input_width={} x num_features={}), "
@@ -4759,6 +5112,8 @@ TrainingConfiguration GraphCompiler::Compile(
     }
 
     // Get topologically sorted node IDs
+    ApplyImageInputShape(config);
+
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
     ValidateSparseFeatureTrainingContract(
@@ -4772,6 +5127,12 @@ TrainingConfiguration GraphCompiler::Compile(
         training_path_ids,
         sequence_fusion ? sequence_fusion->concat_node_id : -1,
         config);
+    for (const int id : sorted_ids) {
+        const gui::MLNode* node = FindNodeById(id, nodes);
+        if (node && node->type == gui::NodeType::CrossAttention && ContainsWhenFiltered(training_path_ids, id)) {
+            config.multi_input_layer_node_ids.push_back(id);
+        }
+    }
     config.graph_plan = BuildCompiledGraphPlan(
         nodes,
         links,
@@ -4812,6 +5173,31 @@ TrainingConfiguration GraphCompiler::Compile(
     std::vector<size_t> current_shape = config.input_shape;
     bool sequence_fusion_emitted = false;
 
+    // A branched graph (TOFIX140 A2): every node takes the sample shape of the
+    // pin that feeds it, not of the node before it in sort order.
+    const bool branched = !config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty();
+    std::unordered_map<int, std::vector<size_t>> pin_shapes;
+    const auto source_shape = [&](const gui::MLNode& n, size_t input_index)
+        -> const std::vector<size_t>* {
+        if (n.inputs.size() <= input_index) return nullptr;
+        for (const auto& link : links) {
+            if (link.to_node == n.id && link.to_pin == n.inputs[input_index].id) {
+                const auto found = pin_shapes.find(link.from_pin);
+                return found != pin_shapes.end() ? &found->second : nullptr;
+            }
+        }
+        return nullptr;
+    };
+    const auto record_outputs = [&](const gui::MLNode& n, const std::vector<size_t>& shape) {
+        for (const auto& pin : n.outputs) pin_shapes[pin.id] = shape;
+    };
+    // The sample axis of a batched dim (dim 1 = the first sample axis).
+    const auto sample_axis = [](int dim, size_t rank) -> std::optional<size_t> {
+        const long long axis = dim > 0 ? dim - 1LL : static_cast<long long>(rank) + dim;
+        if (dim == 0 || axis < 0 || axis >= static_cast<long long>(rank)) return std::nullopt;
+        return static_cast<size_t>(axis);
+    };
+
     for (int node_id : sorted_ids) {
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
@@ -4826,12 +5212,95 @@ TrainingConfiguration GraphCompiler::Compile(
             continue;
         }
 
+        if (branched) {
+            if (node->id == config.data_source_node_id) {
+                record_outputs(*node, config.input_shape);
+            } else if (const auto* fed = source_shape(*node, 0)) {
+                current_shape = *fed;
+            }
+        }
+
+        if (node->type == gui::NodeType::CrossAttention && branched) {
+            // Query [Tq, E] over Key / Value [Tk, E] (TOFIX140 Group C).
+            const char* names[] = {"Query", "Key", "Value"};
+            const std::vector<size_t>* fed[3] = {source_shape(*node, 0), source_shape(*node, 1),
+                                                 source_shape(*node, 2)};
+            const int embed_dim = spatial::ParseIntParam(node->parameters, "embed_dim", 512);
+            const int heads = spatial::ParseIntParam(node->parameters, "num_heads", 8);
+            bool ok = true;
+            for (int i = 0; i < 3 && ok; ++i) {
+                if (!fed[i]) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string("Cross Attention needs its ") + names[i] + " input connected",
+                             node->id, node->name, errors::Compiler::InvalidConnectivity);
+                    ok = false;
+                } else if (fed[i]->size() != 2 || static_cast<int>(fed[i]->back()) != embed_dim) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string("Cross Attention ") + names[i] + " must be a [length, " +
+                                 std::to_string(embed_dim) + "] sequence (embed_dim), got [" +
+                                 ShapeListText(*fed[i]) + "]",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                    ok = false;
+                }
+            }
+            if (ok && (*fed[1])[0] != (*fed[2])[0]) {
+                AddIssue(config, IssueLevel::Error,
+                         "Cross Attention Key and Value must have the same length, got " +
+                             std::to_string((*fed[1])[0]) + " and " + std::to_string((*fed[2])[0]),
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            }
+            if (heads <= 0 || embed_dim <= 0 || embed_dim % heads != 0) {
+                AddIssue(config, IssueLevel::Error,
+                         "Cross Attention embed_dim " + std::to_string(embed_dim) +
+                             " must divide evenly into num_heads " + std::to_string(heads),
+                         node->id, node->name, errors::Compiler::InvalidParameter);
+            }
+        }
+
+        if (node->type == gui::NodeType::Split) {
+            // Only a Split the runtime-op pass accepted (valid parameters).
+            if (std::find(config.graph_op_node_ids.begin(), config.graph_op_node_ids.end(),
+                          node->id) == config.graph_op_node_ids.end()) continue;
+            std::vector<size_t> first = current_shape, second = current_shape;
+            const int dim = spatial::ParseIntParam(node->parameters, "dim", 1);
+            const int split_size = spatial::ParseIntParam(node->parameters, "split_size", 1);
+            const auto axis = sample_axis(dim, current_shape.size());
+            if (spatial::IsSpatialLayer(config.layers.empty() ? gui::NodeType::Dense
+                                                              : config.layers.front().type) &&
+                current_shape.size() == 3) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split runs on rows; in a CNN split after Flatten",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else if (!axis) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split dim " + std::to_string(dim) + " is outside the input [" +
+                             ShapeListText(current_shape) + "]",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else if (split_size < 1 || static_cast<size_t>(split_size) >= current_shape[*axis]) {
+                AddIssue(config, IssueLevel::Error,
+                         "Split split_size " + std::to_string(split_size) +
+                             " must be less than the split dimension's size " +
+                             std::to_string(current_shape[*axis]) + ", so both outputs keep entries",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            } else {
+                first[*axis] = static_cast<size_t>(split_size);
+                second[*axis] = current_shape[*axis] - static_cast<size_t>(split_size);
+            }
+            if (node->outputs.size() == 2) {
+                pin_shapes[node->outputs[0].id] = first;
+                pin_shapes[node->outputs[1].id] = second;
+            }
+            continue;
+        }
+
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
             CYXWIZ_BUILDER_INFO("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
             ExtractPreprocessing(*node, config);
             ApplyTextInputShape(config);
+            ApplyImageInputShape(config);
             current_shape = config.input_shape;
+            if (branched) record_outputs(*node, current_shape);
             if (node->type == gui::NodeType::Normalize) {
                 CYXWIZ_BUILDER_INFO("GraphCompiler: Normalization enabled - mean={}, std={}",
                              config.preprocessing.norm_mean, config.preprocessing.norm_std);
@@ -4850,6 +5319,66 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (IsGraphRuntimeFanInOp(node->type) &&
             HasConnectedInputAfterFirst(*node, links)) {
+            if (branched && ContainsWhenFiltered(training_path_ids, node->id)) {
+                // The merged sample shape: Concatenate adds along dim, the
+                // element-wise ops need equal shapes, TensorDot gives one value.
+                std::vector<std::vector<size_t>> inputs;
+                for (size_t i = 0; i < node->inputs.size(); ++i) {
+                    if (const auto* fed = source_shape(*node, i)) inputs.push_back(*fed);
+                }
+                std::vector<size_t> merged = inputs.empty() ? current_shape : inputs.front();
+                std::string mismatch;
+                if (node->type == gui::NodeType::TensorDot) {
+                    merged = {1};
+                } else if (node->type == gui::NodeType::TensorBatchMatMul) {
+                    // Per sample [n, k] x [k, m] -> [n, m] (Input 1 times Input 2).
+                    if (inputs.size() != 2 || inputs[0].size() != 2 || inputs[1].size() != 2) {
+                        mismatch = "Tensor Batch MatMul needs two [rows, columns] matrices per sample";
+                    } else if (inputs[0][1] != inputs[1][0]) {
+                        mismatch = "Tensor Batch MatMul inner sizes differ: [" + ShapeListText(inputs[0]) +
+                                   "] x [" + ShapeListText(inputs[1]) + "] (A's columns must equal B's rows)";
+                    } else {
+                        merged = {inputs[0][0], inputs[1][1]};
+                    }
+                } else if (node->type == gui::NodeType::Concatenate && !inputs.empty()) {
+                    const int dim = spatial::ParseIntParam(node->parameters, "dim", 1);
+                    const auto axis = sample_axis(dim, merged.size());
+                    if (!axis) {
+                        mismatch = "Concatenate dim " + std::to_string(dim) +
+                                   " is outside the input [" + ShapeListText(merged) + "]";
+                    } else {
+                        for (size_t i = 1; i < inputs.size() && mismatch.empty(); ++i) {
+                            auto other = inputs[i];
+                            if (other.size() != merged.size()) {
+                                mismatch = "Concatenate inputs have different ranks";
+                                break;
+                            }
+                            other[*axis] = merged[*axis];
+                            if (other != merged) {
+                                mismatch = "Concatenate inputs differ outside dim " + std::to_string(dim) +
+                                           ": [" + ShapeListText(merged) + "] and [" +
+                                           ShapeListText(inputs[i]) + "]";
+                                break;
+                            }
+                            merged[*axis] += inputs[i][*axis];
+                        }
+                    }
+                } else {
+                    for (size_t i = 1; i < inputs.size(); ++i) {
+                        if (inputs[i] != merged) {
+                            mismatch = node->name + " needs inputs of one shape: [" +
+                                       ShapeListText(merged) + "] and [" +
+                                       ShapeListText(inputs[i]) + "]";
+                            break;
+                        }
+                    }
+                }
+                if (!mismatch.empty()) {
+                    AddIssue(config, IssueLevel::Error, mismatch, node->id, node->name,
+                             errors::Compiler::TensorShapeMismatch);
+                }
+                record_outputs(*node, merged);
+            }
             continue;
         }
 
@@ -4908,6 +5437,41 @@ TrainingConfiguration GraphCompiler::Compile(
             }
             CompiledLayer layer = ExtractLayerConfig(*node);
             layer.input_shape = current_shape;
+            if (node->type == gui::NodeType::LinearAttention) {
+                // [length, embed_dim] in and out (TOFIX140 Group C).
+                const int embed_dim = spatial::ParseIntParam(node->parameters, "embed_dim", 512);
+                const int heads = spatial::ParseIntParam(node->parameters, "num_heads", 8);
+                const auto feature_map = node->parameters.find("feature_map");
+                const auto eps = node->parameters.find("eps");
+                if (feature_map != node->parameters.end() && feature_map->second != "elu" &&
+                    feature_map->second != "relu") {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention feature_map must be elu or relu, got '" + feature_map->second + "'",
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                float eps_value = 1e-6f;
+                try {
+                    if (eps != node->parameters.end()) eps_value = std::stof(eps->second);
+                } catch (const std::exception&) {
+                    eps_value = -1.0f;
+                }
+                if (!std::isfinite(eps_value) || eps_value <= 0.0f) {
+                    AddIssue(config, IssueLevel::Error, "Linear Attention eps must be a positive number",
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                if (heads <= 0 || embed_dim <= 0 || embed_dim % heads != 0) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention embed_dim " + std::to_string(embed_dim) +
+                                 " must divide evenly into num_heads " + std::to_string(heads),
+                             node->id, node->name, errors::Compiler::InvalidParameter);
+                }
+                if (current_shape.size() != 2 || static_cast<int>(current_shape.back()) != embed_dim) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Linear Attention needs a [length, " + std::to_string(embed_dim) +
+                                 "] sequence (embed_dim), got [" + ShapeListText(current_shape) + "]",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                }
+            }
 
             if (const auto reason =
                     ResolvePipelineUnsupportedSequentialModelConfigurationReason(
@@ -4932,22 +5496,77 @@ TrainingConfiguration GraphCompiler::Compile(
             }
 
             // Infer output shape
-            if (node->type == gui::NodeType::Upsample ||
-                node->type == gui::NodeType::PixelShuffle) {
-                // Diagnostic geometry does not promote Studio executability.
-                // Keep unsupported-node issues until the batch/head path is qualified.
-                layer.output_shape = current_shape;
-                UpsamplingConfiguration resolved;
-                if (const auto reason = ResolveUpsamplingConfiguration(
-                        node->type, layer.parameters, resolved)) {
-                    AddIssue(config, IssueLevel::Error, *reason, node->id,
-                             node->name, errors::Compiler::InvalidParameter);
+            if (node->type == gui::NodeType::Conv1D) {
+                // sequence_conv_section.h: first in the model, the input rows
+                // are its [L, C] sample; after an Embedding, [L, E].
+                if (config.layers.empty()) {
+                    current_shape = SequenceInputSample(config);
+                    layer.input_shape = current_shape;
+                }
+                layer.output_shape.clear();
+                try {
+                    if (current_shape.size() == 2) {
+                        layer.output_shape = spatial::Conv1DSampleShapeAfter(layer.parameters, current_shape);
+                    } else if (current_shape.empty()) {
+                        spatial::ResolveGeometry(node->type, layer.parameters, 0);
+                    } else {
+                        AddIssue(config, IssueLevel::Error,
+                                 node->name + " needs an [L, C] sequence and gets [" +
+                                     ShapeListText(current_shape) + "]: make it the first model layer "
+                                     "(time-series windows, audio features, table rows) or put it after an "
+                                     "Embedding",
+                                 node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                    }
+                } catch (const std::invalid_argument& error) {
+                    AddIssue(config, IssueLevel::Error, error.what(), node->id, node->name,
+                             errors::Compiler::TensorShapeMismatch);
+                }
+            } else if (node->type == gui::NodeType::Conv3D) {
+                // [D, H, W, C] volume rows (TOFIX140 Group C): the Data Input's
+                // shape, or a Conv3D output (spatial_layer_shapes.h).
+                layer.output_shape.clear();
+                if (current_shape.size() != 4) {
+                    AddIssue(config, IssueLevel::Error,
+                             node->name + " needs a [D, H, W, C] volume and gets " +
+                                 (current_shape.empty() ? std::string("no shape yet")
+                                                        : "[" + ShapeListText(current_shape) + "]") +
+                                 ": set the Data Input's shape to [D, H, W, C] and make Conv3D the first "
+                                 "model layer, or put it after another Conv3D",
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
                 } else {
-                    layer.scale_factor = resolved.factor;
-                    layer.upsample_mode = resolved.mode;
                     try {
-                        layer.output_shape = InferUpsamplingSampleShape(
-                            node->type, resolved, current_shape);
+                        layer.output_shape = spatial::Conv3DSampleShapeAfter(layer.parameters, current_shape);
+                    } catch (const std::invalid_argument& error) {
+                        AddIssue(config, IssueLevel::Error, error.what(), node->id, node->name,
+                                 errors::Compiler::TensorShapeMismatch);
+                    }
+                }
+            } else if (spatial::IsSpatialLayer(node->type)) {
+                // The one spatial rule (spatial_layer_shapes.h): the same
+                // formulas feed the model builder and the training ingress.
+                layer.output_shape = current_shape;
+                if (node->type == gui::NodeType::Upsample ||
+                    node->type == gui::NodeType::PixelShuffle) {
+                    UpsamplingConfiguration resolved;
+                    if (const auto reason = ResolveUpsamplingConfiguration(
+                            node->type, layer.parameters, resolved)) {
+                        AddIssue(config, IssueLevel::Error, *reason, node->id,
+                                 node->name, errors::Compiler::InvalidParameter);
+                    } else {
+                        layer.scale_factor = resolved.factor;
+                        layer.upsample_mode = resolved.mode;
+                    }
+                }
+                if (current_shape.size() != 3) {
+                    AddIssue(config, IssueLevel::Error,
+                             node->name + " needs an image-shaped input [H, W, C]; it has " +
+                                 (current_shape.empty() ? std::string("no shape yet")
+                                                        : "[" + ShapeListText(current_shape) + "]"),
+                             node->id, node->name, errors::Compiler::TensorShapeMismatch);
+                } else {
+                    try {
+                        layer.output_shape = spatial::SampleShapeAfter(
+                            node->type, layer.parameters, current_shape);
                     } catch (const std::logic_error& error) {
                         AddIssue(config, IssueLevel::Error, error.what(), node->id,
                                  node->name, errors::Compiler::TensorShapeMismatch);
@@ -5043,6 +5662,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 layer.output_shape = InferOutputShape(layer, current_shape);
             }
             current_shape = layer.output_shape;
+            if (branched) record_outputs(*node, current_shape);
 
             config.layers.push_back(layer);
 
@@ -5050,6 +5670,18 @@ TrainingConfiguration GraphCompiler::Compile(
             if (node->type == gui::NodeType::Dense ||
                 node->type == gui::NodeType::TimeDistributed) {
                 config.output_size = layer.units;
+            }
+        }
+    }
+
+    // In a branched graph the model output is whatever feeds the loss.
+    if (branched) {
+        for (const auto& edge : config.graph_plan.edges) {
+            if (edge.to_node_id != config.graph_plan.loss_node_id ||
+                edge.to_pin_id != config.graph_plan.prediction_pin_id) continue;
+            const auto found = pin_shapes.find(edge.from_pin_id);
+            if (found != pin_shapes.end() && !found->second.empty()) {
+                config.output_size = found->second.back();
             }
         }
     }
@@ -5145,6 +5777,10 @@ TrainingConfiguration GraphCompiler::Compile(
     if (optimizer_node) {
         ExtractOptimizerConfiguration(*optimizer_node, config);
     }
+    ExtractSchedulerConfiguration(nodes, links, optimizer_node, config);
+    ExtractRegularizationConfiguration(nodes, links, loss_node, optimizer_node, config);
+    ExtractMetricSamplingConfiguration(nodes, training_path_ids, loss_node, config);
+    ExtractMetricEvaluationConfiguration(nodes, links, loss_node, config);
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
     if (config.loss_type == gui::NodeType::CrossEntropyLoss ||
@@ -5168,10 +5804,6 @@ TrainingConfiguration GraphCompiler::Compile(
                 output_node->type == gui::NodeType::SequenceTagOutput
                     ? "num_tags"
                     : "num_classes");
-            if (output_node->type == gui::NodeType::Output &&
-                it == output_node->parameters.end()) {
-                it = output_node->parameters.find("classes");
-            }
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
                     config.preprocessing.num_classes = std::stoul(it->second);
@@ -5244,17 +5876,6 @@ TrainingConfiguration GraphCompiler::Compile(
     // These need the values populated by the layer-extraction passes
     // above, so they live at the end of Compile().
 
-    if (!placement_observation_cache_path.empty()) {
-        std::string cache_error;
-        if (!LoadBackendPlacementObservationCache(
-                placement_observation_cache_path,
-                &cache_error)) {
-            AddIssue(config,
-                     IssueLevel::Warning,
-                     "Backend placement observation cache could not be loaded: " +
-                         cache_error);
-        }
-    }
     timing("data_and_layers");
     AddBackendPlacementReports(config);
     config.compiler_placement_fingerprint =
@@ -5431,9 +6052,9 @@ TrainingConfiguration GraphCompiler::Compile(
             // Estimate total model memory (weights + gradients + optimizer)
             // and warn if it's likely to exceed reasonable GPU memory.
             if (has_resize && config.image_preprocessing.target_width > 0) {
-                size_t img_features = static_cast<size_t>(
-                    config.image_preprocessing.target_width) *
-                    config.image_preprocessing.target_height * 3;
+                // The model's input after the image transforms (crops, Grayscale).
+                const auto image_shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+                size_t img_features = image_shape.Size();
                 size_t total_params = 0;
                 size_t prev_size = img_features;
                 for (const auto& layer : config.layers) {
@@ -5458,8 +6079,8 @@ TrainingConfiguration GraphCompiler::Compile(
                         << std::setprecision(0) << est_mb << " MB ("
                         << total_params << " parameters, batch_size="
                         << config.batch_size << ", input="
-                        << config.image_preprocessing.target_width << "x"
-                        << config.image_preprocessing.target_height << "x3)";
+                        << image_shape.width << "x" << image_shape.height << "x"
+                        << image_shape.channels << ")";
 
                 // Real GPU usage is ~3-5x the raw parameter estimate due to
                 // CUDA context (~300 MB), forward/backward activations,
@@ -5485,6 +6106,44 @@ TrainingConfiguration GraphCompiler::Compile(
                     AddIssue(config, IssueLevel::Warning, mem_msg.str());
                 } else {
                     AddIssue(config, IssueLevel::Info, mem_msg.str());
+                }
+            }
+
+            // mixup / cutmix mix the one-hot labels, which only Cross Entropy takes.
+            if (config.image_mix_node_id >= 0 &&
+                (!config.preprocessing.has_onehot || UsesScalarBinaryTargets(config.loss_type))) {
+                const gui::MLNode* mix_node = FindNodeById(config.image_mix_node_id, nodes);
+                AddIssue(config, IssueLevel::Error,
+                         "mixup and cutmix mix the one-hot labels too: use Cross Entropy as the loss",
+                         config.image_mix_node_id, mix_node ? mix_node->name : std::string(),
+                         errors::Compiler::TensorShapeMismatch);
+            }
+
+            // The Quality Analyzer's cached analysis must match these images
+            // at the Resize size; its verdict lists the files to leave out.
+            // An unloaded dataset is reported by the data checks instead.
+            if (config.image_quality_node_id >= 0 && has_resize &&
+                GraphDatasetIsKind(config.dataset_name, GraphDatasetKind::Image)) {
+                const gui::MLNode* quality = FindNodeById(config.image_quality_node_id, nodes);
+                const auto decoded = DecodedImageShape(config);
+                const auto verdict = quality
+                    ? GraphImageQuality(config.dataset_name, static_cast<int>(decoded.width),
+                                        static_cast<int>(decoded.height), quality->parameters)
+                    : std::nullopt;
+                const std::string quality_name = quality ? quality->name : std::string();
+                if (!verdict) {
+                    AddIssue(config, IssueLevel::Error,
+                             "Quality Analyzer: this host cannot check the image analysis; train it in the Engine",
+                             config.image_quality_node_id, quality_name);
+                } else if (!verdict->error.empty()) {
+                    AddIssue(config, IssueLevel::Error, "Quality Analyzer: " + verdict->error,
+                             config.image_quality_node_id, quality_name);
+                } else {
+                    config.image_excluded_files = verdict->excluded;
+                    AddIssue(config, IssueLevel::Info,
+                             "Quality Analyzer leaves out " + std::to_string(verdict->rejected) + " of " +
+                                 std::to_string(verdict->total) + " images",
+                             config.image_quality_node_id, quality_name);
                 }
             }
 
@@ -5584,6 +6243,96 @@ TrainingConfiguration GraphCompiler::Compile(
         } catch (const std::exception& error) {
             AddIssue(config, IssueLevel::Error, std::string("Generation preview: ")+error.what(),
                      loader_node->id, loader_node->name, errors::Compiler::InvalidParameter);
+        }
+    }
+
+    // The model builder's spatial section rules (layer order, Flatten, shared
+    // PReLU slope): reported here so the graph shows them before training.
+    // Skipped when the graph already has errors, which these would repeat.
+    // Reports a section rule's "index N" on that layer's node.
+    const auto report_layer_rule = [&config](const std::string& message) {
+        int node_id = -1;
+        std::string node_name;
+        const auto at = message.find("index ");
+        if (at != std::string::npos) {
+            const size_t index = std::strtoul(message.c_str() + at + 6, nullptr, 10);
+            if (index < config.layers.size()) {
+                node_id = config.layers[index].node_id;
+                node_name = config.layers[index].name;
+            }
+        }
+        AddIssue(config, IssueLevel::Error, message, node_id, node_name,
+                 errors::Compiler::TensorShapeMismatch);
+    };
+    std::optional<SequenceConvSection> sequence_section;
+    if (!config.HasErrors()) {
+        try {
+            sequence_section = ResolveSequenceConvSection(config);
+        } catch (const std::invalid_argument& error) {
+            report_layer_rule(error.what());
+        }
+    }
+    if (!config.HasErrors()) {
+        // The volume section (TOFIX140 Group C): Conv3D runs on [D,H,W,C]
+        // volume rows from the model input to the Flatten that hands each
+        // sample to Dense; only Conv3D, activations and Dropout run inside it.
+        bool in_volume = false;
+        bool rows_untouched = true;  // only activations / Dropout so far
+        for (size_t i = 0; i < config.layers.size() && !config.HasErrors(); ++i) {
+            const auto& layer = config.layers[i];
+            if (layer.type == gui::NodeType::Output) continue;
+            if (layer.type == gui::NodeType::Conv3D) {
+                if (!in_volume && !rows_untouched) {
+                    AddIssue(config, IssueLevel::Error,
+                             layer.name + " runs on the model's [D, H, W, C] input rows: make it the first "
+                             "model layer or put it after another Conv3D",
+                             layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+                }
+                in_volume = true;
+                continue;
+            }
+            if (spatial::IsShapePreservingLayer(layer.type)) continue;
+            rows_untouched = false;
+            if (!in_volume) continue;
+            if (layer.type == gui::NodeType::Flatten) {
+                in_volume = false;
+                continue;
+            }
+            AddIssue(config, IssueLevel::Error,
+                     layer.name + " cannot take Conv3D's [D, H, W, C] volume: only Conv3D, activations and "
+                     "Dropout run on volumes, so end the section with Flatten before it",
+                     layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+        }
+        if (in_volume && !config.HasErrors()) {
+            AddIssue(config, IssueLevel::Error,
+                     "End the Conv3D section with Flatten before Dense and the loss",
+                     config.layers.back().node_id, config.layers.back().name,
+                     errors::Compiler::TensorShapeMismatch);
+        }
+    }
+    if (!config.HasErrors()) {
+        // A global pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
+        for (size_t i = 0; i < config.layers.size(); ++i) {
+            const auto& layer = config.layers[i];
+            if (!spatial::IsGlobalPoolLayer(layer.type)) continue;
+            if (sequence_section && sequence_section->close_index == i) continue;
+            const bool after_spatial =
+                i == 0 ? UsesSpatialSequentialInput(config)
+                       : spatial::IsSpatialLayer(config.layers[i - 1].type) ||
+                             spatial::IsShapePreservingLayer(config.layers[i - 1].type);
+            if (!UsesSpatialSequentialInput(config) || !after_spatial) {
+                AddIssue(config, IssueLevel::Error,
+                         layer.name + " pools each channel of an [H,W,C] or [L,C] sample: place it after a "
+                         "convolution, pooling or normalisation layer (and their activations), before Dense",
+                         layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+            }
+        }
+    }
+    if (!config.HasErrors() && UsesSpatialSequentialInput(config)) {
+        try {
+            ResolveSpatialSequentialHead(config);
+        } catch (const std::invalid_argument& error) {
+            report_layer_rule(error.what());
         }
     }
 
@@ -5863,11 +6612,15 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
 
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::GlobalMaxPool:
         case gui::NodeType::GlobalAvgPool:
+        case gui::NodeType::AdaptiveAvgPool:
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
@@ -5896,7 +6649,10 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::LayerNorm:
+        case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
+        case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
@@ -5915,7 +6671,6 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
         case gui::NodeType::RNN:
-        case gui::NodeType::Bidirectional:
         case gui::NodeType::TimeDistributed:
             return true;
         default:
@@ -5951,25 +6706,6 @@ struct PreprocessingNodeSpec {
 
 // --- Tabular extractors (migrated from the old switch) ---
 
-static void ExtractReshape(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.preprocessing.has_reshape = true;
-    if (node.parameters.count("shape")) {
-        std::string shape_str = node.parameters.at("shape");
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
-        shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
-
-        size_t pos = 0;
-        while ((pos = shape_str.find(',')) != std::string::npos) {
-            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str.substr(0, pos)));
-            shape_str.erase(0, pos + 1);
-        }
-        if (!shape_str.empty()) {
-            config.preprocessing.reshape_dims.push_back(std::stoi(shape_str));
-        }
-    }
-}
-
 static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config) {
     config.preprocessing.has_onehot = true;
     if (node.parameters.count("num_classes"))
@@ -5979,6 +6715,13 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 // --- Image extractors (Phase 1) ---
 
 static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
+    if (!config.image_augmentation.ops.empty()) {
+        AddIssue(config, IssueLevel::Error,
+                 "Resize must come before the image transforms: the batcher decodes every image at "
+                 "the Resize size first",
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return;  // the transforms were checked against the earlier size
+    }
     config.image_preprocessing.resize_mode = ResizeMode::Exact;
     if (node.parameters.count("width"))
         config.image_preprocessing.target_width = std::stoi(node.parameters.at("width"));
@@ -5998,18 +6741,8 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
 }
 
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
-    // Domain-aware Normalize: when upstream is image data, populate
-    // both the legacy GraphPreprocessingConfig (for backward-compat
-    // with the tabular training path) and the image-specific config.
-    // The image batcher reads image_preprocessing; the tabular batcher
-    // reads config.preprocessing. Both work.
-    if (config.preprocessing_domain == PreprocessingDomain::Image) {
-        config.image_preprocessing.enable_denoise = false;  // not related but clear the field
-        // Image normalize is handled by the ImageTransformPipeline;
-        // the legacy fields are also set so existing tabular code paths
-        // don't break if they run accidentally.
-    }
-    // Always populate the legacy tabular fields (backward-compat).
+    // Every batcher takes these through SetNormalization; the image batcher
+    // applies them on the device after the image transforms.
     config.preprocessing.has_normalization = true;
     if (node.parameters.count("mean"))
         config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
@@ -6017,17 +6750,236 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
         config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
 }
 
-static void ExtractGrayscale(const gui::MLNode& /*node*/, TrainingConfiguration& config) {
-    config.image_preprocessing.convert_to_grayscale = true;
+// --- Image transforms (TOFIX140): appended in graph order, run by the image
+// batcher on the device after Resize and before Normalize. ---
+
+// The [H, W, C] image the next transform receives: the Resize size with three
+// channels, after the transforms already compiled.
+cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
+    return config.image_augmentation.ShapeAfter(DecodedImageShape(config));
 }
 
-static void ExtractImageGaussianBlur(const gui::MLNode& node, TrainingConfiguration& config) {
-    config.image_preprocessing.blur_config.enabled = true;
-    config.image_preprocessing.blur_config.type = BlurType::Gaussian;
-    if (node.parameters.count("kernel_size"))
-        config.image_preprocessing.blur_config.kernel_size = std::stoi(node.parameters.at("kernel_size"));
-    if (node.parameters.count("sigma"))
-        config.image_preprocessing.blur_config.sigma = std::stof(node.parameters.at("sigma"));
+void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
+                   const std::string& parse_error, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name,
+                 errors::Compiler::TensorShapeMismatch);
+    };
+    if (!parse_error.empty()) {
+        refuse(parse_error);
+        return;
+    }
+    if (config.preprocessing.has_normalization) {
+        refuse("Image transforms work on [0, 1] pixels: put this node between Resize and Normalize");
+        return;
+    }
+    const std::string reason = cyxwiz::image::ValidateImageOp(op, CurrentImageShape(config));
+    if (!reason.empty()) {
+        refuse(reason);
+        return;
+    }
+    config.image_augmentation.ops.push_back(op);
+}
+
+// mixup / cutmix mix whole training batches and their one-hot labels; the
+// loss check (Cross Entropy) runs with the image checks once the loss is known.
+void ExtractImageBatchMix(const gui::MLNode& node, const std::string& method, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    float alpha = 1.0f, probability = 0.5f;
+    std::string error;
+    if (ParseFloatParam(node.parameters, "alpha", 1.0f, alpha, error)) {
+        ParseFloatParam(node.parameters, "probability", 0.5f, probability, error);
+    }
+    if (!error.empty()) return refuse(error);
+    if (config.preprocessing.has_normalization) {
+        return refuse("Image transforms work on [0, 1] pixels: put this node between Resize and Normalize");
+    }
+    if (!(alpha > 0.0f)) return refuse("alpha must be greater than 0");
+    if (!(probability >= 0.0f && probability <= 1.0f)) return refuse("probability must be between 0 and 1");
+    if (config.image_augmentation.mix != cyxwiz::image::BatchMix::None) {
+        return refuse("Only one mixup or cutmix per graph: each training batch is mixed once");
+    }
+    config.image_augmentation.mix =
+        method == "mixup" ? cyxwiz::image::BatchMix::MixUp : cyxwiz::image::BatchMix::CutMix;
+    config.image_augmentation.mix_alpha = alpha;
+    config.image_augmentation.mix_probability = probability;
+    config.image_mix_node_id = node.id;
+}
+
+// Quality Analyzer: a dataset filter. The image checks below judge its cached
+// analysis once the dataset and the Resize size are known.
+void ExtractImageQuality(const gui::MLNode& node, TrainingConfiguration& config) {
+    const auto refuse = [&](const std::string& message) {
+        AddIssue(config, IssueLevel::Error, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    if (config.image_quality_node_id >= 0) {
+        return refuse("Only one Quality Analyzer per graph");
+    }
+    config.image_quality_node_id = node.id;
+}
+
+// Augmentation Preset: the recipe's ops, appended as if the nodes were wired.
+void ExtractAugmentationPreset(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::image::ImageOp;
+    using cyxwiz::image::ImageOpKind;
+    const auto it = node.parameters.find("preset");
+    const std::string preset = it == node.parameters.end() ? "cifar" : it->second;
+    ImageOp flip;
+    flip.kind = ImageOpKind::HorizontalFlip;
+    flip.probability = 0.5f;
+    std::vector<ImageOp> ops;
+    if (preset == "flip") {
+        ops = {flip};
+    } else if (preset == "cifar" || preset == "cifar_cutout") {
+        const auto shape = CurrentImageShape(config);
+        ImageOp crop;
+        crop.kind = ImageOpKind::RandomCrop;
+        crop.height = static_cast<int>(shape.height);
+        crop.width = static_cast<int>(shape.width);
+        crop.padding = 4;
+        ops = {crop, flip};
+        if (preset == "cifar_cutout") {
+            ImageOp cutout;
+            cutout.kind = ImageOpKind::Erase;
+            cutout.erase_method = cyxwiz::image::EraseMethod::Cutout;
+            cutout.cutout_size = 16;
+            cutout.probability = 1.0f;
+            ops.push_back(cutout);
+        }
+    } else if (preset == "randaugment") {
+        ImageOp rand;
+        rand.kind = ImageOpKind::RandAugment;
+        rand.num_ops = 2;
+        rand.magnitude = 9;
+        rand.probability = 1.0f;
+        ops = {flip, rand};
+    } else {
+        AppendImageOp(node, flip, "preset must be flip, cifar, cifar_cutout or randaugment", config);
+        return;
+    }
+    for (const auto& op : ops) {
+        const size_t before = config.issues.size();
+        AppendImageOp(node, op, "", config);
+        if (config.issues.size() != before) return;  // the first refusal names the problem
+    }
+}
+
+static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::image::ImageOpKind;
+    if (node.type == gui::NodeType::AugmentationPreset) {
+        ExtractAugmentationPreset(node, config);
+        return;
+    }
+    cyxwiz::image::ImageOp op;
+    std::string error;
+    const auto& p = node.parameters;
+    switch (node.type) {
+        case gui::NodeType::CenterCrop:
+        case gui::NodeType::RandomCrop:
+            op.kind = node.type == gui::NodeType::CenterCrop ? ImageOpKind::CenterCrop : ImageOpKind::RandomCrop;
+            if (ParseIntParam(p, "width", 224, op.width, error) && ParseIntParam(p, "height", 224, op.height, error) &&
+                node.type == gui::NodeType::RandomCrop) {
+                ParseIntParam(p, "padding", 0, op.padding, error);
+            }
+            break;
+        case gui::NodeType::HorizontalFlip:
+        case gui::NodeType::VerticalFlip:
+            op.kind = node.type == gui::NodeType::HorizontalFlip ? ImageOpKind::HorizontalFlip
+                                                                 : ImageOpKind::VerticalFlip;
+            ParseFloatParam(p, "probability", 0.5f, op.probability, error);
+            break;
+        case gui::NodeType::ImageRotate: {
+            op.kind = ImageOpKind::Rotate;
+            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error)) {
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error);
+            }
+            const auto it = p.find("interpolation");
+            const std::string interpolation = it == p.end() ? "nearest" : it->second;
+            if (interpolation == "bilinear") {
+                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
+            } else if (interpolation != "nearest" && error.empty()) {
+                error = "interpolation must be nearest or bilinear";
+            }
+            break;
+        }
+        case gui::NodeType::ColorJitter:
+            op.kind = ImageOpKind::ColorJitter;
+            if (ParseFloatParam(p, "brightness", 0.2f, op.brightness, error) &&
+                ParseFloatParam(p, "contrast", 0.2f, op.contrast, error) &&
+                ParseFloatParam(p, "saturation", 0.2f, op.saturation, error)) {
+                ParseFloatParam(p, "hue", 0.1f, op.hue, error);
+            }
+            break;
+        case gui::NodeType::ImageGaussianBlur:
+            op.kind = ImageOpKind::GaussianBlur;
+            if (ParseIntParam(p, "kernel_size", 5, op.kernel_size, error)) {
+                ParseFloatParam(p, "sigma", 1.0f, op.sigma, error);
+            }
+            break;
+        case gui::NodeType::Grayscale:
+            op.kind = ImageOpKind::Grayscale;
+            break;
+        case gui::NodeType::MorphologyTransform: {
+            op.kind = ImageOpKind::Morphology;
+            op.kernel_size = 3;
+            using cyxwiz::image::MorphologyOp;
+            static const std::map<std::string, MorphologyOp> operations = {
+                {"erode", MorphologyOp::Erode},       {"dilate", MorphologyOp::Dilate},
+                {"open", MorphologyOp::Open},         {"close", MorphologyOp::Close},
+                {"gradient", MorphologyOp::Gradient}, {"tophat", MorphologyOp::TopHat},
+                {"blackhat", MorphologyOp::BlackHat},
+            };
+            const auto it = p.find("operation");
+            const std::string operation = it == p.end() ? "open" : it->second;
+            if (const auto found = operations.find(operation); found != operations.end()) {
+                op.morphology = found->second;
+            } else if (operation == "blur") {
+                error = "Morphology operation 'blur' is retired; use Image Gaussian Blur";
+            } else {
+                error = "operation must be erode, dilate, open, close, gradient, tophat or blackhat";
+            }
+            if (error.empty()) ParseIntParam(p, "kernel_size", 3, op.kernel_size, error);
+            break;
+        }
+        case gui::NodeType::AdvancedAugment: {
+            op.kind = ImageOpKind::Erase;
+            const auto it = p.find("method");
+            const std::string method = it == p.end() ? "cutout" : it->second;
+            if (method == "mixup" || method == "cutmix") {
+                ExtractImageBatchMix(node, method, config);
+                return;
+            }
+            if (method == "randaugment") {
+                op.kind = ImageOpKind::RandAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                    ParseIntParam(p, "num_ops", 2, op.num_ops, error)) {
+                    ParseIntParam(p, "magnitude", 9, op.magnitude, error);
+                }
+                break;
+            }
+            if (method == "cutout") {
+                op.erase_method = cyxwiz::image::EraseMethod::Cutout;
+            } else if (method == "random_erasing") {
+                op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
+            } else {
+                error = "method must be cutout, random_erasing, mixup, cutmix or randaugment";
+            }
+            if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&
+                ParseFloatParam(p, "scale_min", 0.02f, op.scale_min, error) &&
+                ParseFloatParam(p, "scale_max", 0.33f, op.scale_max, error) &&
+                ParseFloatParam(p, "ratio_min", 0.3f, op.ratio_min, error) &&
+                ParseFloatParam(p, "ratio_max", 3.3f, op.ratio_max, error)) {
+                ParseFloatParam(p, "value", 0.0f, op.value, error);
+            }
+            break;
+        }
+        default:
+            return;
+    }
+    AppendImageOp(node, op, error, config);
 }
 
 // --- Audio extractors (Phase 2.1) ---
@@ -6158,25 +7110,31 @@ static void ExtractTextVectorizerShape(
 // --- The table ---
 
 static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
+    // Normalize works on every batcher (SetNormalization), tabular or image.
     // Tabular (existing, migrated from switch)
-    {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractImageNormalize},
-    {gui::NodeType::TensorReshape,      PreprocessingDomain::Tabular,     ExtractReshape},
+    {gui::NodeType::Normalize,          PreprocessingDomain::General,     ExtractImageNormalize},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
+    // Metric learning: compiled by ExtractMetricSamplingConfiguration
+    {gui::NodeType::PairDatasetBuilder,    PreprocessingDomain::General,  nullptr},
+    {gui::NodeType::TripletDatasetBuilder, PreprocessingDomain::General,  nullptr},
     // Image (Phase 1)
     {gui::NodeType::Resize,             PreprocessingDomain::Image,       ExtractImageResize},
-    {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::RandomCrop,         PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::HorizontalFlip,     PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::VerticalFlip,       PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ImageRotate,        PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       nullptr},
-    {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageGaussianBlur},
-    {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractGrayscale},
-    {gui::NodeType::Augmentation,       PreprocessingDomain::Image,       nullptr},
+    {gui::NodeType::CenterCrop,         PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomCrop,         PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::HorizontalFlip,     PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::VerticalFlip,       PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ImageRotate,        PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ColorJitter,        PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::ImageGaussianBlur,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::Grayscale,          PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::MorphologyTransform, PreprocessingDomain::Image,      ExtractImageTransform},
+    {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::QualityAnalyzer,    PreprocessingDomain::Image,       ExtractImageQuality},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},
@@ -6210,7 +7168,7 @@ bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
     return false;
 }
 
-std::optional<PreprocessingDomain> GraphCompiler::GetPreprocessingNodeDomain(gui::NodeType type) const {
+std::optional<PreprocessingDomain> GraphCompiler::GetPreprocessingNodeDomain(gui::NodeType type) {
     for (const auto& spec : kPreprocessingSpecs) {
         if (spec.type == type) {
             return spec.domain;
@@ -6263,23 +7221,23 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             // the struct slim; the raw parameter passthrough is enough.
             break;
 
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
-            if (node.parameters.count("filters"))
-                layer.filters = std::stoi(node.parameters.at("filters"));
-            if (node.parameters.count("kernel_size"))
-                layer.kernel_size = std::stoi(node.parameters.at("kernel_size"));
-            if (node.parameters.count("stride"))
-                layer.stride = std::stoi(node.parameters.at("stride"));
-            if (node.parameters.count("padding"))
-                layer.padding = std::stoi(node.parameters.at("padding"));
-            break;
-
+        case gui::NodeType::Conv3D:
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
-            if (node.parameters.count("pool_size"))
-                layer.pool_size = std::stoi(node.parameters.at("pool_size"));
-            if (node.parameters.count("stride"))
-                layer.stride = std::stoi(node.parameters.at("stride"));
+            // The spatial rule resolves the geometry ("same" and "valid" are
+            // words); a bad value becomes a compile issue in the shape loop.
+            try {
+                const auto g = spatial::ResolveGeometry(node.type, node.parameters, 0);
+                layer.filters = g.channels_out;
+                layer.kernel_size = g.kernel;
+                layer.pool_size = g.kernel;
+                layer.stride = g.stride;
+                layer.padding = g.padding;
+            } catch (const std::invalid_argument&) {
+            }
             break;
 
         case gui::NodeType::BatchNorm:
@@ -6416,22 +7374,26 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         }
 
         case gui::NodeType::Conv2D:
-            // Conv2D: [H, W, C] -> [(H + 2*padding - kernel_size) / stride + 1, W', filters]
-            if (input_shape.size() >= 2) {
-                size_t out_h = (input_shape[0] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
-                size_t out_w = (input_shape[1] + 2 * layer.padding - layer.kernel_size) / layer.stride + 1;
-                output_shape = {out_h, out_w, static_cast<size_t>(layer.filters)};
+        case gui::NodeType::MaxPool2D:
+        case gui::NodeType::AvgPool2D:
+        case gui::NodeType::ConvTranspose2D:
+        case gui::NodeType::GroupNorm:
+        case gui::NodeType::InstanceNorm:
+        case gui::NodeType::AdaptiveAvgPool:
+        case gui::NodeType::DepthwiseConv2D:
+            // spatial_layer_shapes.h; the compile loop reports the reasons.
+            try {
+                output_shape = spatial::SampleShapeAfter(layer.type, layer.parameters, input_shape);
+            } catch (const std::exception&) {
+                output_shape = input_shape;
             }
             break;
 
-        case gui::NodeType::MaxPool2D:
-        case gui::NodeType::AvgPool2D:
-            // Pool2D: [H, W, C] -> [H/pool_size, W/pool_size, C]
-            if (input_shape.size() >= 3) {
-                int stride = layer.stride > 0 ? layer.stride : layer.pool_size;
-                size_t out_h = (input_shape[0] - layer.pool_size) / stride + 1;
-                size_t out_w = (input_shape[1] - layer.pool_size) / stride + 1;
-                output_shape = {out_h, out_w, input_shape[2]};
+        case gui::NodeType::Conv3D:
+            try {
+                output_shape = spatial::Conv3DSampleShapeAfter(layer.parameters, input_shape);
+            } catch (const std::exception&) {
+                output_shape = input_shape;
             }
             break;
 
@@ -6506,6 +7468,8 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::BatchNorm:
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:
+        case gui::NodeType::PReLU:
+        case gui::NodeType::SELU:
         case gui::NodeType::ELU:
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
@@ -6751,21 +7715,6 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
         node_input_pins[node.id] = std::move(ids);
     }
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     // For each loss node, find its Targets input pin (the one tagged
     // PinType::Labels) and BFS backwards. If no ancestor output pin is
     // PinType::Labels, the targets stream isn't real labels — the user
@@ -6773,7 +7722,7 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
     // a random preprocessing tensor, etc.). That's the canonical "pin
     // is fooling user" case.
     for (const auto& node : nodes) {
-        if (!is_loss_node(node.type)) continue;
+        if (!IsLossNodeType(node.type)) continue;
 
         // Identify Targets pin. Every loss node above creates the
         // Targets input as PinType::Labels (see node_editor_nodes.cpp);
@@ -6888,21 +7837,6 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
         node_input_pins[node.id] = std::move(ids);
     }
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     // Build node_id → node* lookup so the BFS can check owning node
     // type without a linear search per visited pin.
     std::unordered_map<int, const gui::MLNode*> node_by_id;
@@ -6910,7 +7844,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     for (const auto& node : nodes) node_by_id[node.id] = &node;
 
     for (const auto& node : nodes) {
-        if (!is_loss_node(node.type)) continue;
+        if (!IsLossNodeType(node.type)) continue;
 
         // Predictions is the FIRST input on every loss node above —
         // it's PinType::Tensor. Match by name "Predictions" for older
@@ -7037,21 +7971,6 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                t == gui::NodeType::NAdam;
     };
 
-    auto is_loss_node = [](gui::NodeType t) {
-        return t == gui::NodeType::MSELoss ||
-               t == gui::NodeType::CrossEntropyLoss ||
-               t == gui::NodeType::FocalLoss ||
-               t == gui::NodeType::BCELoss ||
-               t == gui::NodeType::BCEWithLogits ||
-               t == gui::NodeType::L1Loss ||
-               t == gui::NodeType::SmoothL1Loss ||
-               t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss ||
-               t == gui::NodeType::SoftDiceLoss ||
-               t == gui::NodeType::TverskyLoss ||
-               t == gui::NodeType::JaccardLoss;
-    };
-
     for (const auto& node : nodes) {
         if (!is_optimizer(node.type)) continue;
 
@@ -7092,7 +8011,7 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                 auto node_it = node_by_id.find(owner_it->second);
                 if (node_it == node_by_id.end()) continue;
 
-                if (is_loss_node(node_it->second->type)) {
+                if (IsLossNodeType(node_it->second->type)) {
                     found_loss_node = true;
                     break;
                 }

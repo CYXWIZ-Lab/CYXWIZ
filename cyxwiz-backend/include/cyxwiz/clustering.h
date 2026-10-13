@@ -4,16 +4,6 @@
 #include <vector>
 #include <string>
 #include <functional>
-#include <random>
-#include <cmath>
-#include <limits>
-#include <algorithm>
-#include <map>
-
-// Forward declare ArrayFire array to avoid header dependency in public interface
-namespace af {
-    class array;
-}
 
 namespace cyxwiz {
 
@@ -27,7 +17,7 @@ struct CYXWIZ_API KMeansResult {
     int n_clusters = 0;
     int n_iterations = 0;
     bool converged = false;
-    std::vector<double> inertia_history;              // Inertia per iteration (for elbow plot)
+    std::vector<double> inertia_history;              // Inertia at each iteration of the best run
 
     bool success = false;
     std::string error_message;
@@ -50,10 +40,12 @@ struct CYXWIZ_API DBSCANResult {
  * HierarchicalResult - Result of Hierarchical clustering
  */
 struct CYXWIZ_API HierarchicalResult {
-    std::vector<std::vector<double>> linkage_matrix;  // For dendrogram: [idx1, idx2, distance, count]
-    std::vector<int> labels;                          // Cluster labels at cut level
+    // One row per merge, as scipy.cluster.hierarchy.linkage: [id1, id2, distance, count];
+    // ids < n are samples, id n + i is the cluster made by row i; id1 < id2.
+    std::vector<std::vector<double>> linkage_matrix;
+    std::vector<int> labels;                          // Cluster labels after n - n_clusters merges
     int n_clusters = 0;
-    double cophenetic_correlation = 0.0;              // Quality measure
+    double cophenetic_correlation = 0.0;              // scipy cophenet against the input distances
 
     bool success = false;
     std::string error_message;
@@ -66,9 +58,9 @@ struct CYXWIZ_API GMMResult {
     std::vector<int> labels;                          // Hard cluster assignments
     std::vector<std::vector<double>> responsibilities; // Soft assignments [n_samples x n_components]
     std::vector<std::vector<double>> means;           // Component means
-    std::vector<std::vector<std::vector<double>>> covariances; // Covariance matrices
+    std::vector<std::vector<std::vector<double>>> covariances; // d x d per component (tied: the shared one)
     std::vector<double> weights;                      // Component weights
-    double log_likelihood = 0.0;
+    double log_likelihood = 0.0;                      // Total log-likelihood of the data
     double bic = 0.0;                                 // Bayesian Information Criterion
     double aic = 0.0;                                 // Akaike Information Criterion
     int n_components = 0;
@@ -80,17 +72,18 @@ struct CYXWIZ_API GMMResult {
 };
 
 /**
- * ClusterMetrics - Cluster quality evaluation metrics
+ * ClusterMetrics - Cluster quality evaluation metrics. Noise points (label -1)
+ * are left out; labels may be any integers.
  */
 struct CYXWIZ_API ClusterMetrics {
     double silhouette_score = 0.0;                    // -1 to 1, higher is better
     double davies_bouldin_index = 0.0;                // Lower is better
     double calinski_harabasz_score = 0.0;             // Higher is better
-    std::vector<double> per_sample_silhouette;        // Silhouette for each sample
-    std::vector<double> cluster_silhouettes;          // Average silhouette per cluster
+    std::vector<double> per_sample_silhouette;        // One per sample; 0 for noise points
+    std::vector<double> cluster_silhouettes;          // Mean per cluster, in ascending label order
 
     int n_clusters = 0;
-    int n_samples = 0;
+    int n_samples = 0;                                // Samples evaluated (noise excluded)
 
     bool success = false;
     std::string error_message;
@@ -103,37 +96,32 @@ struct CYXWIZ_API ElbowAnalysis {
     std::vector<int> k_values;
     std::vector<double> inertias;
     std::vector<double> silhouette_scores;
-    int suggested_k = 0;                              // Elbow point
+    int suggested_k = 0;                              // Largest second difference of the inertias
 
     bool success = false;
     std::string error_message;
 };
 
 /**
- * Clustering - Static class with ArrayFire-backed clustering algorithms
- *
- * These algorithms require an ArrayFire-enabled build for computation.
- * ArrayFire may run on CUDA, OpenCL, or its CPU backend depending on the
- * active ArrayFire backend. Non-ArrayFire builds keep the API available but
- * return unsuccessful/empty results with an error message.
- * Public interface uses std::vector for easy integration with GUI panels.
+ * Clustering - K-Means, DBSCAN, hierarchical, Gaussian mixture and cluster
+ * metrics on ArrayFire on the active device (its CPU backend is the CPU
+ * option; TOFIX140). Semantics
+ * follow scikit-learn (KMeans, DBSCAN, GaussianMixture, silhouette_score,
+ * davies_bouldin_score, calinski_harabasz_score) and scipy linkage / cophenet.
+ * Rows are samples; every row needs the same number of features.
  */
 class CYXWIZ_API Clustering {
 public:
     // ==================== K-Means ====================
 
     /**
-     * K-Means clustering algorithm (ArrayFire-backed when available)
+     * Lloyd's K-Means. Stops when the total squared centroid shift is at most
+     * tol * mean feature variance (scikit-learn). An empty cluster keeps its
+     * previous centroid. The best of n_init runs (lowest inertia) is returned.
      *
-     * @param data Input data [n_samples x n_features]
-     * @param n_clusters Number of clusters (k)
-     * @param max_iter Maximum iterations
-     * @param init Initialization method: "random" or "kmeans++"
-     * @param n_init Number of random initializations to try
-     * @param tol Convergence tolerance
-     * @param seed Random seed (0 = random)
-     * @param progress_callback Optional callback (iteration, inertia)
-     * @return KMeansResult
+     * @param init "kmeans++" or "random"
+     * @param seed Random seed (0 = a fresh random seed)
+     * @param progress_callback Optional (iteration, inertia) of the first run
      */
     static KMeansResult KMeans(
         const std::vector<std::vector<double>>& data,
@@ -147,13 +135,10 @@ public:
     );
 
     /**
-     * Elbow method analysis for optimal k selection
+     * K-Means inertia and silhouette for k = k_min .. k_max (k_max is capped
+     * at n_samples - 1).
      *
-     * @param data Input data
-     * @param k_min Minimum k to try
-     * @param k_max Maximum k to try
-     * @param progress_callback Optional callback (current_k, total_k)
-     * @return ElbowAnalysis with inertias and silhouette scores
+     * @param progress_callback Optional (current_k_index, total_k)
      */
     static ElbowAnalysis ComputeElbowAnalysis(
         const std::vector<std::vector<double>>& data,
@@ -165,14 +150,12 @@ public:
     // ==================== DBSCAN ====================
 
     /**
-     * DBSCAN (Density-Based Spatial Clustering of Applications with Noise)
-     * ArrayFire-backed distance matrix computation when available
+     * DBSCAN as scikit-learn: a point is core when at least min_samples points
+     * (itself included) lie within eps (inclusive); clusters are numbered in
+     * order of their lowest-index core point, and a border point joins the
+     * earliest cluster that reaches it.
      *
-     * @param data Input data [n_samples x n_features]
-     * @param eps Maximum distance for neighborhood
-     * @param min_samples Minimum points to form a dense region
-     * @param metric Distance metric: "euclidean", "manhattan", "cosine"
-     * @return DBSCANResult
+     * @param metric "euclidean", "manhattan" or "cosine"
      */
     static DBSCANResult DBSCAN(
         const std::vector<std::vector<double>>& data,
@@ -182,12 +165,9 @@ public:
     );
 
     /**
-     * Suggest epsilon for DBSCAN using an ArrayFire-backed k-distance graph
-     * when available
-     *
-     * @param data Input data
-     * @param k Number of nearest neighbors (usually min_samples)
-     * @return Sorted k-distances for plotting
+     * Each point's euclidean distance to its k-th nearest other point, sorted
+     * ascending (the k-distance graph for choosing eps). Empty on failure; the
+     * reason is logged.
      */
     static std::vector<double> ComputeKDistances(
         const std::vector<std::vector<double>>& data,
@@ -197,14 +177,10 @@ public:
     // ==================== Hierarchical ====================
 
     /**
-     * Agglomerative Hierarchical Clustering with an ArrayFire-backed distance
-     * matrix when available
+     * Agglomerative clustering (scipy linkage via Lance-Williams updates).
      *
-     * @param data Input data [n_samples x n_features]
-     * @param n_clusters Number of clusters (for cutting dendrogram)
-     * @param linkage Linkage method: "ward", "complete", "average", "single"
-     * @param metric Distance metric: "euclidean", "manhattan", "cosine"
-     * @return HierarchicalResult with linkage matrix for dendrogram
+     * @param linkage "ward" (euclidean only), "complete", "average" or "single"
+     * @param metric "euclidean", "manhattan" or "cosine"
      */
     static HierarchicalResult Hierarchical(
         const std::vector<std::vector<double>>& data,
@@ -214,12 +190,9 @@ public:
     );
 
     /**
-     * Cut dendrogram at a specific height
-     *
-     * @param linkage_matrix Linkage matrix from Hierarchical()
-     * @param height Cut height
-     * @param n_samples Original number of samples
-     * @return Cluster labels
+     * Labels after applying every merge whose distance is at most `height`
+     * (scipy fcluster, criterion "distance"); clusters are numbered in order of
+     * first appearance.
      */
     static std::vector<int> CutDendrogram(
         const std::vector<std::vector<double>>& linkage_matrix,
@@ -230,17 +203,13 @@ public:
     // ==================== Gaussian Mixture Model ====================
 
     /**
-     * Gaussian Mixture Model (EM algorithm, ArrayFire-backed when available)
+     * Gaussian mixture by EM (scikit-learn GaussianMixture: reg_covar 1e-6,
+     * k-means++ seeded start). Stops when the mean per-sample log-likelihood
+     * changes by less than tol; the best of n_init runs is returned.
      *
-     * @param data Input data [n_samples x n_features]
-     * @param n_components Number of Gaussian components
-     * @param covariance_type "full", "tied", "diag", "spherical"
-     * @param max_iter Maximum EM iterations
-     * @param tol Convergence tolerance
-     * @param n_init Number of random initializations
-     * @param seed Random seed
-     * @param progress_callback Optional callback (iteration, log_likelihood)
-     * @return GMMResult
+     * @param covariance_type "full", "tied", "diag" or "spherical"
+     * @param seed Random seed (0 = a fresh random seed)
+     * @param progress_callback Optional (iteration, total log-likelihood) of the first run
      */
     static GMMResult GMM(
         const std::vector<std::vector<double>>& data,
@@ -256,11 +225,8 @@ public:
     // ==================== Cluster Evaluation ====================
 
     /**
-     * Compute clustering quality metrics (ArrayFire-backed when available)
-     *
-     * @param data Input data [n_samples x n_features]
-     * @param labels Cluster labels
-     * @return ClusterMetrics with silhouette, Davies-Bouldin, etc.
+     * Silhouette, Davies-Bouldin and Calinski-Harabasz scores (euclidean).
+     * Needs 2 to n - 1 clusters among the non-noise points.
      */
     static ClusterMetrics EvaluateClustering(
         const std::vector<std::vector<double>>& data,
@@ -268,128 +234,12 @@ public:
     );
 
     /**
-     * Compute silhouette score only
+     * Mean silhouette, or NaN when it cannot be computed.
      */
     static double ComputeSilhouetteScore(
         const std::vector<std::vector<double>>& data,
         const std::vector<int>& labels
     );
-
-    /**
-     * Compute Davies-Bouldin index only
-     */
-    static double ComputeDaviesBouldinIndex(
-        const std::vector<std::vector<double>>& data,
-        const std::vector<int>& labels
-    );
-
-    /**
-     * Compute Calinski-Harabasz score (Variance Ratio Criterion)
-     */
-    static double ComputeCalinskiHarabaszScore(
-        const std::vector<std::vector<double>>& data,
-        const std::vector<int>& labels
-    );
-
-private:
-    // ==================== ArrayFire Conversion Helpers ====================
-
-    // Convert std::vector<std::vector<double>> to af::array [n_samples x n_features]
-    static af::array ToAfArray(const std::vector<std::vector<double>>& data);
-
-    // Convert af::array to std::vector<std::vector<double>>
-    static std::vector<std::vector<double>> FromAfArray(const af::array& arr);
-
-    // Convert af::array to std::vector<int> (for labels)
-    static std::vector<int> AfArrayToIntVector(const af::array& arr);
-
-    // Convert af::array to std::vector<double>
-    static std::vector<double> AfArrayToDoubleVector(const af::array& arr);
-
-    // ==================== GPU Distance Functions ====================
-
-    // Compute pairwise Euclidean distance matrix using GPU
-    static af::array ComputeEuclideanDistanceMatrix(const af::array& data);
-
-    // Compute pairwise Manhattan distance matrix using GPU
-    static af::array ComputeManhattanDistanceMatrix(const af::array& data);
-
-    // Compute pairwise Cosine distance matrix using GPU
-    static af::array ComputeCosineDistanceMatrix(const af::array& data);
-
-    // Compute distance matrix based on metric name
-    static af::array ComputeDistanceMatrix(const af::array& data, const std::string& metric);
-
-    // Compute distances from points to centroids
-    static af::array ComputePointToCentroidDistances(const af::array& data, const af::array& centroids);
-
-    // ==================== K-Means GPU Helpers ====================
-
-    // Initialize centroids using k-means++ on GPU
-    static af::array InitializeCentroidsKMeansPP(const af::array& data, int n_clusters, unsigned int seed);
-
-    // Initialize centroids randomly on GPU
-    static af::array InitializeCentroidsRandom(const af::array& data, int n_clusters, unsigned int seed);
-
-    // Assign points to nearest centroid (returns label indices)
-    static af::array AssignClusters(const af::array& data, const af::array& centroids);
-
-    // Update centroids based on cluster assignments
-    static af::array UpdateCentroids(const af::array& data, const af::array& labels, int n_clusters);
-
-    // Compute inertia (sum of squared distances to centroids)
-    static double ComputeInertia(const af::array& data, const af::array& labels, const af::array& centroids);
-
-    // ==================== GMM GPU Helpers ====================
-
-    // Initialize GMM parameters
-    static void InitializeGMM(
-        const af::array& data,
-        int n_components,
-        af::array& means,
-        std::vector<af::array>& covariances,
-        af::array& weights,
-        const std::string& covariance_type,
-        unsigned int seed
-    );
-
-    // E-Step: Compute responsibilities
-    static af::array EStep(
-        const af::array& data,
-        const af::array& means,
-        const std::vector<af::array>& covariances,
-        const af::array& weights
-    );
-
-    // M-Step: Update parameters
-    static void MStep(
-        const af::array& data,
-        const af::array& responsibilities,
-        af::array& means,
-        std::vector<af::array>& covariances,
-        af::array& weights,
-        const std::string& covariance_type
-    );
-
-    // Compute multivariate Gaussian PDF for each component
-    static af::array GaussianPDF(
-        const af::array& data,
-        const af::array& mean,
-        const af::array& covariance
-    );
-
-    // Compute log-likelihood
-    static double ComputeLogLikelihood(
-        const af::array& data,
-        const af::array& means,
-        const std::vector<af::array>& covariances,
-        const af::array& weights
-    );
-
-    // ==================== Cluster Evaluation GPU Helpers ====================
-
-    // Compute silhouette coefficients for all samples
-    static af::array ComputeSilhouetteCoefficients(const af::array& dist_matrix, const af::array& labels, int n_clusters);
 };
 
 } // namespace cyxwiz

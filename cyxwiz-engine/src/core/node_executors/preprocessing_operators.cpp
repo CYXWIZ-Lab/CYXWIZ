@@ -6,6 +6,7 @@
 #include "text_column_utils.h"
 #include "ts_column_utils.h"
 
+#include <cyxwiz/data_transform.h>
 #include <cyxwiz/stats_utils.h>
 
 #include <arrow/api.h>
@@ -537,9 +538,14 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     "artifact.");
             }
         } else {
-            mean = with_mean_ ? stats::Mean(data) : 0.0;
-            const double sd = with_std_ ? stats::StdDev(data) : 1.0;
-            denom = (sd == 0.0) ? 1.0 : sd;
+            // Fit on the device, as the Standardization tool: population std
+            // (scikit-learn), a zero std divides by 1.
+            StandardizeOptions options;
+            options.with_mean = with_mean_;
+            options.with_std = with_std_;
+            const TransformResult fitted = DataTransform::Standardize({data}, options);
+            mean = fitted.success ? fitted.params.at("col0_mean") : std::numeric_limits<double>::quiet_NaN();
+            denom = fitted.success ? fitted.params.at("col0_std") : std::numeric_limits<double>::quiet_NaN();
             if (!std::isfinite(mean) || !std::isfinite(denom)) {
                 return arrow::Status::Invalid(
                     GetName() + ": fitted non-finite statistics for column '" +
@@ -558,8 +564,11 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             state.features.push_back(std::move(feature));
         }
 
-        for (auto& v : data) v = (v - mean) / denom;
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, data));
+        TransformResult scaled = DataTransform::ScaleColumns({std::move(data)}, {mean}, {denom});
+        if (!scaled.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + scaled.error_message);
+        }
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
         transformed++;
     }
 
@@ -649,7 +658,6 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.15, 0, static_cast<uint64_t>(resolved.size()),
                    estimated_bytes);
 
-    const double target_span = range_max_ - range_min_;
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
@@ -664,15 +672,12 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
 
-        const double dmin = stats::Min(data);
-        const double dmax = stats::Max(data);
-        const double span = dmax - dmin;
-        const double denom = (span == 0.0) ? 1.0 : span;
-
-        for (auto& v : data) {
-            v = (v - dmin) / denom * target_span + range_min_;
+        // One implementation with the Normalization tool, on the selected device.
+        TransformResult scaled = DataTransform::Normalize({std::move(data)}, range_min_, range_max_);
+        if (!scaled.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + scaled.error_message);
         }
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, data));
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
         transformed++;
     }
 
@@ -754,6 +759,12 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.15, 0, static_cast<uint64_t>(resolved.size()),
                    estimated_bytes);
 
+    // One implementation with the scaling tools, on the selected device.
+    RobustScaleOptions options;
+    options.quantile_min = quantile_min_;
+    options.quantile_max = quantile_max_;
+    options.with_centering = with_centering_;
+    options.with_scaling = with_scaling_;
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
@@ -767,15 +778,11 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
-
-        const double center = with_centering_ ? stats::Median(data) : 0.0;
-        const double q_low = stats::Percentile(data, quantile_min_ / 100.0);
-        const double q_high = stats::Percentile(data, quantile_max_ / 100.0);
-        const double iqr = q_high - q_low;
-        const double scale = (with_scaling_ && iqr != 0.0) ? iqr : 1.0;
-
-        for (auto& v : data) v = (v - center) / scale;
-        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, data));
+        TransformResult scaled = DataTransform::RobustScale({std::move(data)}, options);
+        if (!scaled.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + scaled.error_message);
+        }
+        ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, scaled.transformed_data[0]));
         transformed++;
     }
 
@@ -1147,15 +1154,13 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(input, name, GetName(), data, idx));
-        std::vector<size_t> col_outliers;
-        if (method_ == "iqr") {
-            col_outliers = stats::DetectOutliersIQR(data, threshold_);
-        } else {
-            col_outliers = stats::DetectOutliersZScore(data, threshold_);
+        const OutlierFlags col_outliers = DataTransform::FindOutliers(data, method_, threshold_);
+        if (!col_outliers.success) {
+            return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + col_outliers.error_message);
         }
-        for (size_t i : col_outliers) {
-            if (static_cast<int64_t>(i) < n && is_outlier[i] == 0) {
-                is_outlier[i] = 1;
+        for (int64_t i = 0; i < n && i < static_cast<int64_t>(col_outliers.is_outlier.size()); ++i) {
+            if (col_outliers.is_outlier[static_cast<size_t>(i)] && is_outlier[static_cast<size_t>(i)] == 0) {
+                is_outlier[static_cast<size_t>(i)] = 1;
                 total_flagged++;
             }
         }

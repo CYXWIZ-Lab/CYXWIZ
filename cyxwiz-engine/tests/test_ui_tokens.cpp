@@ -105,6 +105,37 @@ int main() {
               std::string(set.name) + " plot area is the window colour, a shade off");
     }
 
+    // Data colours: 18 category colours stay apart, scales hit their stops,
+    // heatmap text reads on every scale colour.
+    for (const auto& set : sets) {
+        const Tokens& t = *set.tokens;
+        for (size_t i = 0; i < 18; ++i) {
+            for (size_t j = i + 1; j < 18; ++j) {
+                const ImVec4 a = SeriesColour(t, i), b = SeriesColour(t, j);
+                const float d = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+                Check(d >= 0.05f, std::string(set.name) + " category " + std::to_string(i) + " and " + std::to_string(j) +
+                                      " differ (distance " + std::to_string(d) + ")");
+            }
+        }
+        Check(Near(SeriesColour(t, 6 * 3), t.series[0].x, t.series[0].y, t.series[0].z), "categories wrap after 18");
+        Check(Near(SequentialAt(t, 0.0f), t.scale_sequential[0].x, t.scale_sequential[0].y, t.scale_sequential[0].z) &&
+                  Near(SequentialAt(t, 1.0f), t.scale_sequential[3].x, t.scale_sequential[3].y, t.scale_sequential[3].z) &&
+                  Near(SequentialAt(t, 2.0f), t.scale_sequential[3].x, t.scale_sequential[3].y, t.scale_sequential[3].z),
+              std::string(set.name) + " sequential scale ends (clamped)");
+        Check(Near(DivergingAt(t, -1.0f), t.scale_diverging[0].x, t.scale_diverging[0].y, t.scale_diverging[0].z) &&
+                  Near(DivergingAt(t, 0.0f), t.scale_diverging[1].x, t.scale_diverging[1].y, t.scale_diverging[1].z) &&
+                  Near(DivergingAt(t, 1.0f), t.scale_diverging[2].x, t.scale_diverging[2].y, t.scale_diverging[2].z),
+              std::string(set.name) + " diverging scale stops");
+        for (int k = 0; k <= 10; ++k) {
+            const float v = static_cast<float>(k) / 10.0f;
+            for (const ImVec4 fill : {SequentialAt(t, v), DivergingAt(t, v * 2.0f - 1.0f)}) {
+                const float ratio = Contrast(ReadableOn(t, fill), fill);
+                Check(ratio >= 3.0f, std::string(set.name) + " heatmap text contrast >= 3 at " + std::to_string(v) +
+                                         " (got " + std::to_string(ratio) + ")");
+            }
+        }
+    }
+
     // Status vocabulary: the words users see, with an icon each.
     const struct { Status status; const char* label; } words[] = {
         {Status::Verified, "Verified"}, {Status::NotVerifiedYet, "Not verified yet"}, {Status::Failed, "Failed"},

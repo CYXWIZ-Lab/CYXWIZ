@@ -1,14 +1,21 @@
 #include "feature_importance_panel.h"
+#include "../../core/label_vocabulary.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
 #include <cyxwiz/sequential.h>
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include "../../core/training_manager.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <fstream>
 #include <cmath>
+#include <filesystem>
 
 namespace cyxwiz {
 
@@ -26,102 +33,92 @@ FeatureImportancePanel::~FeatureImportancePanel() {
 void FeatureImportancePanel::Render() {
     if (!visible_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(650, 700), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin(ICON_FA_STAR " Feature Importance###FeatureImportance", &visible_)) {
         RenderToolbar();
-        ImGui::Separator();
 
+        // The active model: the last trained model or a loaded checkpoint, the
+        // same one Test and Inference use. A result for another model is stale.
+        auto& training = TrainingManager::Instance();
+        const std::shared_ptr<SequentialModel> model = training.GetActiveModel();
+        if (model.get() != result_model_ && !is_computing_.load()) {
+            has_result_ = false;
+            result_model_ = nullptr;
+        }
+
+        ui::BeginSettingsColumn("feature_importance", 300.0f);
+        RenderModel(model != nullptr, training.GetActiveModelInfo(), model ? model->Size() : 0);
+        RenderDataSelector();
+        RenderConfiguration(model != nullptr);
+        ui::BeginResultsArea();
         if (is_computing_.load()) {
             RenderLoadingIndicator();
+        } else if (has_result_) {
+            RenderResults();
+        } else if (!model) {
+            ui::EmptyState(ICON_FA_STAR, "Nothing to measure yet",
+                           "Run training (Train menu) or load a checkpoint. The model then shows here, "
+                           "and in Test and Inference.");
         } else {
-            RenderDataSelector();
-            ImGui::Spacing();
-            RenderConfiguration();
-
-            if (has_result_) {
-                ImGui::Separator();
-                RenderResults();
-            }
+            ui::EmptyState(ICON_FA_STAR, "No importance yet",
+                           "Pick a dataset, the target and the features, then Compute importance.");
         }
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void FeatureImportancePanel::RenderToolbar() {
-    if (!has_result_) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
+    if (ui::SecondaryButton(ICON_FA_FILE_EXPORT " Export", has_result_, "Compute importance first")) {
         ImGui::OpenPopup("ExportImportance");
     }
-
-    if (!has_result_) ImGui::EndDisabled();
-
     RenderExportOptions();
 }
 
-void FeatureImportancePanel::RenderDataSelector() {
-    ImGui::Text("%s Data & Model Selection", ICON_FA_DATABASE);
-    ImGui::Spacing();
-
-    // Model status
-    if (has_model_) {
-        ImGui::TextColored(ImVec4(0.5f, 1, 0.5f, 1), ICON_FA_CHECK " Model loaded (%zu layers)",
-                          model_->Size());
-    } else {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), ICON_FA_TIMES " No model loaded");
-        ImGui::TextDisabled("Call SetModel() with a trained SequentialModel");
-    }
-
-    // Table selector
-    auto& registry = DataTableRegistry::Instance();
-    auto table_names = registry.GetTableNames();
-
-    ImGui::Text("Dataset:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("##TableSelect", selected_table_.empty() ?
-                          "Select table..." : selected_table_.c_str())) {
-        for (const auto& name : table_names) {
-            bool is_selected = (name == selected_table_);
-            if (ImGui::Selectable(name.c_str(), is_selected)) {
-                selected_table_ = name;
-                current_table_ = registry.GetTable(name);
-                selected_features_.clear();
-                target_column_ = -1;
-                has_result_ = false;
-
-                // Find columns
-                feature_columns_.clear();
-                if (current_table_) {
-                    const auto& headers = current_table_->GetHeaders();
-                    for (size_t i = 0; i < current_table_->GetColumnCount(); i++) {
-                        auto dtype = DataAnalyzer::DetectColumnType(*current_table_, i);
-                        if (dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer) {
-                            feature_columns_.push_back(i < headers.size() ? headers[i] : "Column " + std::to_string(i));
-                        }
-                    }
-                    // Select all features by default
-                    for (size_t i = 0; i < feature_columns_.size(); i++) {
-                        selected_features_.push_back(static_cast<int>(i));
-                    }
-                }
-            }
+void FeatureImportancePanel::RenderModel(bool has_model, const ActiveModelInfo& info, size_t layers) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::SettingsSection("Model");
+    ui::BeginCard("active_model");
+    if (has_model) {
+        ImGui::TextColored(t.success, ICON_FA_CIRCLE);
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Active model");
+        std::string origin = "Trained this session";
+        if (info.origin == ActiveModelOrigin::LoadedCheckpoint) {
+            origin = "Checkpoint " + std::filesystem::path(info.checkpoint_path).filename().string();
         }
-        ImGui::EndCombo();
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::Text("%s - %zu layers", origin.c_str(), layers);
+        ImGui::TextUnformatted("The same model Test and Inference use.");
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextColored(t.pending, ICON_FA_CIRCLE);
+        ImGui::SameLine();
+        ImGui::TextUnformatted("No active model yet");
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+        ImGui::TextWrapped("Train a graph, or load a checkpoint. Feature Importance measures the active model.");
+        ImGui::PopStyleColor();
     }
+    ui::EndCard();
 
-    if (!current_table_) {
-        ImGui::TextDisabled("Select a dataset to continue");
-        return;
+    if (ui::SecondaryButton("Load checkpoint...", load_checkpoint_ != nullptr && !is_computing_.load(),
+                            "Wait for the computation to finish", ui::ButtonSize::Regular, -FLT_MIN)) {
+        load_checkpoint_();
     }
+}
+
+void FeatureImportancePanel::RenderDataSelector() {
+    ui::SettingsSection("Data");
+    source_.Render("importance_dataset", [this](std::shared_ptr<DataTable> table) { SetDataset(std::move(table)); });
+    if (!current_table_) return;
 
     // Feature selection
-    ImGui::Text("Features:");
-    ImGui::SameLine();
+    ui::FieldLabel("Features");
     std::string preview = std::to_string(selected_features_.size()) + " selected";
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::BeginCombo("##Features", preview.c_str())) {
+    if (ImGui::BeginCombo("##features", preview.c_str())) {
         for (size_t i = 0; i < feature_columns_.size(); i++) {
             bool is_selected = std::find(selected_features_.begin(), selected_features_.end(),
                                         static_cast<int>(i)) != selected_features_.end();
@@ -140,15 +137,11 @@ void FeatureImportancePanel::RenderDataSelector() {
     }
 
     // Target column
-    ImGui::Text("Target:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
-
     const auto& headers = current_table_->GetHeaders();
     std::string target_preview = target_column_ >= 0 && target_column_ < static_cast<int>(headers.size())
         ? headers[target_column_] : "Select...";
-
-    if (ImGui::BeginCombo("##Target", target_preview.c_str())) {
+    ui::FieldLabel("Target column");
+    if (ImGui::BeginCombo("##target", target_preview.c_str())) {
         for (size_t i = 0; i < headers.size(); i++) {
             if (ImGui::Selectable(headers[i].c_str(), target_column_ == static_cast<int>(i))) {
                 target_column_ = static_cast<int>(i);
@@ -159,65 +152,40 @@ void FeatureImportancePanel::RenderDataSelector() {
     }
 }
 
-void FeatureImportancePanel::RenderConfiguration() {
-    if (!current_table_ || !has_model_) {
-        ImGui::TextDisabled("Load a model and select a dataset to continue");
-        return;
-    }
-
-    ImGui::Text("%s Configuration", ICON_FA_GEAR);
-    ImGui::Spacing();
-
-    // Method selector
+void FeatureImportancePanel::RenderConfiguration(bool has_model) {
+    ui::SettingsSection("Method");
     const char* methods[] = {"Permutation Importance", "Drop-Column Importance", "Weight-Based"};
-    ImGui::Text("Method:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::Combo("##Method", &method_, methods, IM_ARRAYSIZE(methods))) {
+    ui::FieldLabel("Method");
+    if (ImGui::Combo("##method", &method_, methods, IM_ARRAYSIZE(methods))) {
         has_result_ = false;
     }
 
     // Method-specific options
     if (method_ == 0) {
-        ImGui::Text("Repeats:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::SliderInt("##Repeats", &n_repeats_, 1, 50)) {
+        ui::FieldLabel("Repeats (more = less variance)");
+        if (ImGui::SliderInt("##repeats", &n_repeats_, 1, 50)) {
             has_result_ = false;
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(more = less variance)");
     }
 
     // Scoring method (for permutation and drop-column)
     if (method_ < 2) {
         const char* scoring_methods[] = {"Accuracy", "MSE"};
-        ImGui::Text("Scoring:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::Combo("##Scoring", &scoring_method_, scoring_methods, IM_ARRAYSIZE(scoring_methods))) {
+        ui::FieldLabel("Scoring");
+        if (ImGui::Combo("##scoring", &scoring_method_, scoring_methods, IM_ARRAYSIZE(scoring_methods))) {
             has_result_ = false;
         }
     }
 
     ImGui::Spacing();
-
-    // Run button
-    bool can_run = has_model_ && current_table_ && target_column_ >= 0 && !selected_features_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Compute Importance", ImVec2(180, 0))) {
+    const char* reason = !has_model                 ? "Needs an active model"
+                       : !current_table_            ? "Pick a dataset first"
+                       : target_column_ < 0         ? "Pick the target column"
+                       : selected_features_.empty() ? "Select at least one feature"
+                                                    : nullptr;
+    if (ui::PrimaryButton("Compute importance", reason == nullptr && !is_computing_.load(), reason,
+                          ui::ButtonSize::Regular, -FLT_MIN)) {
         RunImportanceAnalysis();
-    }
-
-    if (!can_run) ImGui::EndDisabled();
-
-    if (!has_model_) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("Load a model first");
-    } else if (target_column_ < 0) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("Select a target column");
     }
 }
 
@@ -257,7 +225,7 @@ void FeatureImportancePanel::RenderImportanceChart() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", result_.error_message.c_str());
         return;
     }
 
@@ -275,24 +243,22 @@ void FeatureImportancePanel::RenderImportanceChart() {
         sorted_names.push_back(result_.feature_names[idx].c_str());
     }
 
-    // Horizontal bar chart
-    if (ImPlot::BeginPlot("Feature Importance", ImVec2(-1, std::max(200.0f, 25.0f * sorted_indices.size())))) {
-        ImPlot::SetupAxes("Importance", "Feature", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+    // Horizontal bar chart, most important at the top; the feature names
+    // are the axis ticks (labels drawn beside the bars sat on the wrong bars
+    // and under the legend).
+    if (ImPlot::BeginPlot("Feature Importance", ImVec2(-1, std::max(200.0f, 28.0f * sorted_indices.size())),
+                          ImPlotFlags_NoLegend)) {
+        ImPlot::SetupAxes("Importance", nullptr, ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 
-        // Plot bars
         std::vector<double> positions(sorted_indices.size());
         for (size_t i = 0; i < positions.size(); i++) {
             positions[i] = static_cast<double>(sorted_indices.size() - 1 - i);
         }
-
-        // Use PlotBars with horizontal flag (ImPlot 0.14+)
-        ImPlot::PlotBars("Importance", sorted_importances.data(), static_cast<int>(sorted_importances.size()), 0.6, 0, ImPlotBarsFlags_Horizontal);
-
-        // Add feature name labels
-        for (size_t i = 0; i < sorted_names.size(); i++) {
-            const double y = static_cast<double>(sorted_indices.size() - 1 - i);
-            ImPlot::PlotText(sorted_names[i], sorted_importances[i] + 0.02, y);
+        if (!positions.empty()) {
+            ImPlot::SetupAxisTicks(ImAxis_Y1, positions.data(), static_cast<int>(positions.size()), sorted_names.data());
         }
+        ImPlot::PlotBars("Importance", sorted_importances.data(), positions.data(),
+                         static_cast<int>(sorted_importances.size()), 0.6, ImPlotBarsFlags_Horizontal);
 
         // Error bars if available
         if (!result_.importances_std.empty() && method_ == 0) {
@@ -312,8 +278,10 @@ void FeatureImportancePanel::RenderImportanceChart() {
 void FeatureImportancePanel::RenderRankingTable() {
     std::lock_guard<std::mutex> lock(result_mutex_);
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(t.error, "Error: %s", result_.error_message.c_str());
         return;
     }
 
@@ -341,11 +309,11 @@ void FeatureImportancePanel::RenderRankingTable() {
             float importance = static_cast<float>(result_.importances[idx]);
             ImVec4 color;
             if (importance >= 0.7f) {
-                color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green - high
+                color = t.success;  // high
             } else if (importance >= 0.3f) {
-                color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);  // Yellow - medium
+                color = t.warning;  // medium
             } else {
-                color = ImVec4(0.8f, 0.4f, 0.2f, 1.0f);  // Orange - low
+                color = t.caution;  // low
             }
 
             ImGui::TableNextColumn();
@@ -414,21 +382,6 @@ void FeatureImportancePanel::RenderExportOptions() {
     }
 }
 
-void FeatureImportancePanel::SetModel(std::shared_ptr<SequentialModel> model) {
-    model_ = model;
-    has_model_ = (model != nullptr);
-    has_result_ = false;
-}
-
-void FeatureImportancePanel::SetDataset(const std::string& table_name) {
-    auto& registry = DataTableRegistry::Instance();
-    auto table = registry.GetTable(table_name);
-    if (table) {
-        selected_table_ = table_name;
-        SetDataset(table);
-    }
-}
-
 void FeatureImportancePanel::SetDataset(std::shared_ptr<DataTable> table) {
     current_table_ = table;
     selected_features_.clear();
@@ -481,16 +434,36 @@ void FeatureImportancePanel::PrepareData() {
         }
     }
 
-    // Extract y data
+    // Extract y data. A text target (class names) maps through the sorted
+    // label vocabulary training uses, so the classes match the model's
+    // outputs; reading it as numbers made every target 0 (TOFIX145).
     y_data_.resize(n_rows);
-    for (size_t row = 0; row < n_rows; row++) {
-        auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
-        y_data_[row] = val.value_or(0.0);
+    bool text_target = false;
+    for (size_t row = 0; row < n_rows && !text_target; row++) {
+        const auto cell = current_table_->GetCell(row, target_column_);
+        text_target = !DataAnalyzer::ToDouble(cell).has_value() &&
+                      !current_table_->GetCellAsString(row, static_cast<size_t>(target_column_)).empty();
+    }
+    if (text_target) {
+        std::vector<std::string> names(n_rows);
+        for (size_t row = 0; row < n_rows; row++)
+            names[row] = current_table_->GetCellAsString(row, static_cast<size_t>(target_column_));
+        const LabelVocabulary vocabulary = BuildLabelVocabulary(names);
+        for (size_t row = 0; row < n_rows; row++)
+            y_data_[row] = std::max(0, vocabulary.IndexOf(names[row]));
+    } else {
+        for (size_t row = 0; row < n_rows; row++) {
+            auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
+            y_data_[row] = val.value_or(0.0);
+        }
     }
 }
 
 void FeatureImportancePanel::RunImportanceAnalysis() {
-    if (is_computing_.load() || !model_ || !current_table_ || target_column_ < 0) return;
+    auto& training = TrainingManager::Instance();
+    std::shared_ptr<SequentialModel> model = training.GetActiveModel();
+    if (is_computing_.load() || !model || !current_table_ || target_column_ < 0) return;
+    const std::optional<ProcessDeviceSelection> model_device = training.GetActiveModelInfo().model_device;
 
     if (compute_thread_ && compute_thread_->joinable()) {
         compute_thread_->join();
@@ -508,7 +481,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
     progress_feature_ = 0;
     total_features_ = static_cast<int>(X_data_[0].size());
 
-    auto model = model_;
+    result_model_ = model.get();
     auto X = X_data_;
     auto y = y_data_;
     auto names = feature_names_;
@@ -516,8 +489,23 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
     int repeats = n_repeats_;
     std::string scoring = scoring_method_ == 0 ? "accuracy" : "mse";
 
-    compute_thread_ = std::make_unique<std::thread>([this, model, X, y, names, method, repeats, scoring]() {
+    compute_thread_ = std::make_unique<std::thread>([this, model, model_device, X, y, names, method, repeats,
+                                                     scoring]() {
         try {
+            // A new thread starts on ArrayFire's default backend, which can differ
+            // from the one holding the weights (as in the export dialog).
+            if (model_device) {
+                const auto activation = Device(model_device->type, model_device->device_id).ActivateExact(false);
+                if (!activation.success) {
+                    std::lock_guard<std::mutex> lock(result_mutex_);
+                    result_ = FeatureImportanceResult{};
+                    result_.error_message = "Could not switch to the device that holds the model: " +
+                                            activation.message;
+                    has_result_ = true;
+                    is_computing_ = false;
+                    return;
+                }
+            }
             FeatureImportanceResult result;
 
             switch (method) {

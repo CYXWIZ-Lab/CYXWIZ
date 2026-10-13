@@ -1,9 +1,15 @@
 #pragma once
 
+#include "../core/plot/python_plot_request.h"
 #include "../core/thread_inbox.h"
 
+#include <memory>
 #include <string>
 #include <vector>
+
+namespace arrow {
+class Table;
+}
 
 namespace scripting {
 
@@ -22,6 +28,16 @@ struct CapturedPlot {
 // every frame, so no figure depends on the window being visible or on the
 // UI seeing the run's running -> finished edge.
 using PlotInbox = cyxwiz::ThreadInbox<CapturedPlot>;
+
+// A plot a script asked for with the cyxwiz module (TOFIX134 P5): checked on
+// the script thread, its columns as an Arrow table, for Plot Output. With
+// `close` set it closes the window of that title instead.
+struct PythonPlot {
+    cyxwiz::plot::PythonPlotRequest request;
+    std::shared_ptr<arrow::Table> table;
+    std::string close;
+};
+using PythonPlotInbox = cyxwiz::ThreadInbox<PythonPlot>;
 
 // One value a script reported with pycyxwiz.rl_update_metric (TOFIX134 P0
 // item 7), for the RL Training Dashboard.

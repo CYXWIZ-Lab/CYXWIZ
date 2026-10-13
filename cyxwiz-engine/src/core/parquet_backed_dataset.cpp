@@ -156,6 +156,19 @@ std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadRowGroups(
     return table;
 }
 
+std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadColumn(const std::string& name) const {
+    if (!reader_ || !schema_) return nullptr;
+    const int index = schema_->GetFieldIndex(name);
+    if (index < 0) return nullptr;
+    std::shared_ptr<arrow::ChunkedArray> column;
+    auto status = reader_->ReadColumn(index, &column);
+    if (!status.ok()) {
+        spdlog::error("ParquetBackedDataset::ReadColumn({}): {}", name, status.ToString());
+        return nullptr;
+    }
+    return column;
+}
+
 std::vector<std::string> ParquetBackedDataset::GetColumnNames() const {
     std::vector<std::string> names;
     if (!schema_) return names;
@@ -416,6 +429,8 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         read_options.block_size = 64 * 1024 * 1024;
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
+        // Quoted values may span lines (free text, reviews): read them as one value.
+        parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(

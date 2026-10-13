@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../core/data_analyzer.h"
+#include "../dataset_source.h"
 #include <string>
 #include <memory>
 #include <thread>
@@ -33,7 +34,6 @@ public:
     void Toggle() { visible_ = !visible_; }
     bool* GetVisiblePtr() { return &visible_; }
 
-    void AnalyzeTable(const std::string& table_name);
     void AnalyzeTable(std::shared_ptr<DataTable> table);
 
     bool IsAnalyzing() const { return is_analyzing_.load(); }
@@ -52,7 +52,7 @@ private:
     bool visible_ = false;
 
     // Current data
-    std::string selected_table_;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::shared_ptr<DataTable> current_table_;
 
     // Analysis results

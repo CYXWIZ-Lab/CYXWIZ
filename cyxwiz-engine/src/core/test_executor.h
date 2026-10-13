@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
@@ -9,6 +10,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/model_evaluation.h>
 #include <functional>
 #include <atomic>
 #include <cmath>
@@ -17,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -76,6 +79,13 @@ struct TestingMetrics {
     float test_mae = 0.0f;
     float test_rmse = 0.0f;
     size_t total_target_values = 0;
+    // Metric-learning model (TOFIX140 A5): accuracy, confusion matrix and
+    // per-class metrics are those of a 1-NN classifier over the test rows
+    // (each row takes the class of its nearest other row); the Pair /
+    // Retrieval Metrics nodes add their results.
+    bool metric_learning_mode = false;
+    std::optional<PairMetricResult> pair_metrics;
+    std::optional<RetrievalMetricResult> retrieval_metrics;
 
     // Detailed results
     ConfusionMatrix confusion_matrix;
@@ -85,6 +95,19 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+
+    // Per-sample class probabilities, row-major [total_samples][probability_classes]
+    // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when
+    // the test set is too large to keep them; curves_note then says so.
+    std::vector<float> class_probabilities;
+    int probability_classes = 0;
+    // ROC and precision-recall over the test set, on the device at the end:
+    // binary - the positive class (1); multi-class - one-vs-rest per class,
+    // skipping a class the test set has no sample of. curves_note says why
+    // there are no curves, or which classes were skipped.
+    std::optional<ROCCurveData> roc;
+    std::optional<PRCurveData> pr;
+    std::string curves_note;
 
     // Timing
     float total_time_seconds = 0.0f;
@@ -223,6 +246,9 @@ private:
      * Process a single batch
      */
     void ProcessBatch(const Batch& batch);
+    // Metric-learning models: the loss over the builder's pairs / triplets and
+    // the 1-NN / Pair / Retrieval evaluation of the test rows.
+    void TestMetricLearning(IBatcher& rows, int batch_size);
 
     /**
      * Compute per-class metrics from confusion matrix
@@ -233,6 +259,9 @@ private:
      * Compute macro and weighted averages
      */
     void ComputeAggregateMetrics();
+    // ROC / precision-recall from the kept class probabilities (TOFIX140).
+    void ComputeCurves();
+    void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**
      * Update metrics (thread-safe)

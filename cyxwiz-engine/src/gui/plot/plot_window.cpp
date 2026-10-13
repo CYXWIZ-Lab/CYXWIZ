@@ -4,33 +4,43 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "plot_style.h"
 #include "../../core/plot/plot_arrow_source.h"
+#include "../../core/plot/plot_image.h"
 #include "../../core/plot/plot_presets.h"
+#include "../../core/plot/plot_scales.h"
 #include "../../core/plot/plot_table_source.h"
 #include "../../core/plot_script.h"
 #include "../../data/data_table.h"
+#include "../separate_windows.h"
 
 #include <arrow/api.h>
 #include <imgui.h>
+#include <imgui_internal.h>  // GetActiveID
+#include <implot.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
+#include <numeric>
 
 namespace cyxwiz::plot {
 
 namespace {
 
 bool NumericX(Kind k) {
-    return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap;
+    return k != Kind::Bar && k != Kind::Pie && k != Kind::ErrorBars && k != Kind::Heatmap && k != Kind::Confusion && k != Kind::Roc &&
+           k != Kind::PrCurve && k != Kind::Calibration && k != Kind::Importance && k != Kind::MapRegions && k != Kind::Network && k != Kind::Tree;
 }
 
 std::string DefaultTitle(const PlotSpec& s) {
     const std::string kind = Info(s.kind).label;
     if (s.kind == Kind::Histogram && !s.x_column.empty()) return "Histogram of " + s.x_column;
+    if (Info(s.kind).group == Group::ModelResults) return kind;
     if (!s.y_columns.empty() && !s.x_column.empty()) return s.y_columns.front() + " by " + s.x_column;
     if (!s.y_columns.empty()) return kind + " of " + s.y_columns.front();
     if (!s.x_column.empty()) return kind + " of " + s.x_column;
@@ -39,9 +49,17 @@ std::string DefaultTitle(const PlotSpec& s) {
 
 }  // namespace
 
-PlotWindow::PlotWindow(std::string id) : id_(std::move(id)), view_(id_ + "_view") {}
+PlotWindow::PlotWindow(std::string id) : id_(std::move(id)), view_(id_ + "_view") {
+    // 3D: the view the user turned to is saved with the plot (no new data needed).
+    view_.on_view_changed = [this](double elevation, double azimuth) {
+        spec_.view_elevation = elevation;
+        spec_.view_azimuth = azimuth;
+        if (on_spec_changed) on_spec_changed(spec_);
+    };
+}
 
 PlotWindow::~PlotWindow() {
+    stop_->store(true);
     if (job_.valid()) job_.wait();
 }
 
@@ -73,6 +91,22 @@ void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<a
         }
     }
     ReadColumns();
+    // A trained tree model's table: the names of its trees (forest, boosting).
+    model_tree_names_.clear();
+    const auto has = [&](const char* name) { return std::find(headers_.begin(), headers_.end(), name) != headers_.end(); };
+    if (arrow_table_ && has("tree") && has("tree_name") && has("trees") && has("rule")) {
+        const Source src = SourceFromArrow(*arrow_table_, {"tree", "tree_name"});
+        if (src.columns.size() == 2 && src.columns[0].numeric && !src.columns[1].numeric) {
+            const auto& number = src.columns[0].numbers;
+            const auto& name = src.columns[1].text;
+            for (size_t i = 0; i < number.size() && i < name.size(); ++i) {
+                if (!std::isfinite(number[i]) || number[i] < 1 || number[i] > 100000) continue;
+                const size_t k = static_cast<size_t>(number[i]) - 1;
+                if (k >= model_tree_names_.size()) model_tree_names_.resize(k + 1);
+                if (model_tree_names_[k].empty()) model_tree_names_[k] = name[i];
+            }
+        }
+    }
     // First plot of an evaluation table (Confusion Matrix, ROC, PR): its
     // preset (board 5).
     if (spec_.x_column.empty() && spec_.y_columns.empty() && arrow_table_) {
@@ -199,6 +233,43 @@ void PlotWindow::Rebuild() {
         return;
     }
     const std::vector<std::string> needed = ColumnsNeeded(spec_);
+    if (arrow_table_ && spec_.kind == Kind::Image) {
+        // Image: the label and filter columns in full, then the pixels only
+        // for the rows shown (the mean per class reads them in chunks).
+        busy_ = true;
+        dirty_ = false;
+        job_ = std::async(std::launch::async, [spec = spec_, table = arrow_table_, stop = stop_]() {
+            std::vector<std::string> meta_cols;
+            if (!spec.y_columns.empty()) meta_cols.push_back(spec.y_columns.front());  // the row count
+            if (!spec.color_column.empty()) meta_cols.push_back(spec.color_column);
+            if (spec.rows == RowMode::Filter)
+                for (const auto& c : spec.conditions) meta_cols.push_back(c.column);
+            const Source meta = SourceFromArrow(*table, meta_cols);
+            const RowSelection selection = SelectRows(spec, meta);
+            if (!selection.problem.empty()) {
+                Prepared failed;
+                failed.spec = spec;
+                failed.problem = selection.problem;
+                return failed;
+            }
+            std::vector<size_t> chosen;
+            if (selection.all) {
+                chosen.resize(meta.Rows());
+                std::iota(chosen.begin(), chosen.end(), 0);
+            } else {
+                for (double r : selection.source.row_index) chosen.push_back(static_cast<size_t>(r));
+            }
+            std::vector<std::string> read_cols = spec.y_columns;
+            if (!spec.color_column.empty()) read_cols.push_back(spec.color_column);
+            Prepared p = PrepareImage(spec, chosen, [&](const std::vector<size_t>& rows) {
+                return stop->load() ? Source{} : SourceFromArrowRows(*table, read_cols, rows);
+            });
+            p.rows_total = meta.Rows();
+            if (!selection.text.empty()) p.label.selection = selection.text;
+            return p;
+        });
+        return;
+    }
     if (arrow_table_) {
         // An Arrow table does not change: read and prepare off the UI thread.
         busy_ = true;
@@ -244,8 +315,19 @@ void PlotWindow::Render() {
     view_.DrawOwnWindow(vo);
     if (!visible) return;
     ImGui::SetNextWindowSize(ImVec2(1200, 720), ImGuiCond_FirstUseEver);
+    if (first_position.x >= 0.0f) ImGui::SetNextWindowPos(first_position, ImGuiCond_FirstUseEver);
+    if (focus_next_) {
+        ImGui::SetNextWindowFocus();
+        focus_next_ = false;
+    }
+    // Room for the type list, the plot and the settings: the window id follows
+    // the node id, so a small size saved for another graph's node would carry over.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(960, 560), ImVec2(FLT_MAX, FLT_MAX));
     const std::string title = "Plot" + (source_name_.empty() ? std::string() : " \xC2\xB7 " + source_name_) + "###" + id_;
-    if (!ImGui::Begin(title.c_str(), &visible)) {
+    ::gui::NextWindowMayLeave(title.c_str());
+    const bool expanded = ImGui::Begin(title.c_str(), &visible);
+    ::gui::TabMenu(title.c_str(), &visible);
+    if (!expanded) {
         ImGui::End();
         return;
     }
@@ -266,6 +348,16 @@ void PlotWindow::Render() {
             ImGui::SameLine();
             ImGui::TextColored(t.text_dim, "preparing...");
         }
+    } else if (arrow_table_) {
+        // An Arrow table handed over directly (a Data Studio query result).
+        ImGui::PushStyleColor(ImGuiCol_Text, t.success);
+        ImGui::Bullet();
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextUnformatted(source_name_.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%s rows \xC3\x97 %d columns", Thousands(static_cast<long long>(arrow_table_->num_rows())).c_str(),
+                           arrow_table_->num_columns());
     } else {
         ImGui::TextDisabled("%s", empty_message_.c_str());
     }
@@ -323,7 +415,9 @@ void PlotWindow::DrawKinds() {
                 const bool auto_title = spec_.title == DefaultTitle(spec_);
                 spec_.kind = k.kind;
                 // Keep what still fits; Box/Violin read values from Y.
-                if ((k.kind == Kind::Box || k.kind == Kind::Violin) && spec_.y_columns.empty() && !spec_.x_column.empty())
+                if ((k.kind == Kind::Box || k.kind == Kind::Violin || k.kind == Kind::Kde || k.kind == Kind::Matrix ||
+                     k.kind == Kind::PairPlot || k.kind == Kind::Parallel || k.kind == Kind::Image) &&
+                    spec_.y_columns.empty() && !spec_.x_column.empty())
                     spec_.y_columns = {spec_.x_column};
                 if ((k.required & kEncX) && spec_.x_column.empty() && !spec_.y_columns.empty())
                     spec_.x_column = spec_.y_columns.front();
@@ -344,7 +438,7 @@ void PlotWindow::DrawKinds() {
         }
     }
     ImGui::Spacing();
-    ImGui::TextColored(t.text_faint, "Model results: P2");
+    ImGui::TextColored(t.text_faint, "More kinds: P2b");
     ImGui::TextColored(t.text_faint, "3D: P4");
 }
 
@@ -422,6 +516,10 @@ bool PlotWindow::DrawRows(float w) {
                 }
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(std::max(30.0f, w - col_w - op_w - remove_w - gap * 3));
+                // A value changed elsewhere (the Tree picker, a spec from the node)
+                // shows here unless the field is being typed in.
+                if (c.value != condition_values_[i].data() && ImGui::GetActiveID() != ImGui::GetID("##value"))
+                    std::snprintf(condition_values_[i].data(), condition_values_[i].size(), "%s", c.value.c_str());
                 if (ImGui::InputTextWithHint("##value", "value", condition_values_[i].data(), condition_values_[i].size())) {
                     c.value = condition_values_[i].data();
                     changed = true;
@@ -457,6 +555,147 @@ bool PlotWindow::DrawRows(float w) {
     return changed;
 }
 
+namespace {
+
+// A gradient of a colormap (the scale picker's preview).
+void Gradient(ImPlotColormap map, ImVec2 size) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    constexpr int kSteps = 16;
+    for (int i = 0; i < kSteps; ++i) {
+        const ImU32 a = ImGui::ColorConvertFloat4ToU32(ImPlot::SampleColormap(static_cast<float>(i) / kSteps, map));
+        const ImU32 b = ImGui::ColorConvertFloat4ToU32(ImPlot::SampleColormap(static_cast<float>(i + 1) / kSteps, map));
+        const float x0 = at.x + size.x * i / kSteps, x1 = at.x + size.x * (i + 1) / kSteps;
+        dl->AddRectFilledMultiColor(ImVec2(x0, at.y), ImVec2(x1, at.y + size.y), a, b, b, a);
+    }
+    ImGui::Dummy(size);
+}
+
+std::string Hex(const ImVec4& c) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", static_cast<int>(std::lround(c.x * 255)), static_cast<int>(std::lround(c.y * 255)),
+                  static_cast<int>(std::lround(c.z * 255)));
+    return buf;
+}
+
+}  // namespace
+
+// Colour picker (P4.4, board 16): the scale (Theme or a named one), Reverse,
+// its range, and a colour per series. Saved in the spec.
+bool PlotWindow::DrawColours(float w) {
+    if (!view_.HasData() || !view_.Data().problem.empty()) return false;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const Prepared& d = view_.Data();
+    const bool scaled = d.colour_scale || !d.grid.empty() || !d.mesh_tri.empty() || !d.hex_v.empty() || !d.region_value.empty() || !d.qx.empty() ||
+                        !d.stream_lines.empty() || (d.spec.kind == Kind::Image && !d.spec.image_grey);
+    std::vector<std::string> names;
+    if (!d.graph_groups.empty()) names = d.graph_groups;  // Network / Tree: a colour per group or label
+    else if (!d.colour_scale) {
+        if (d.spec.kind == Kind::Pie) names = d.categories;
+        else
+            for (const auto& s : d.series) names.push_back(s.label);
+    }
+    if (!scaled && names.empty()) return false;
+    bool changed = false;
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "COLOUR");
+    if (scaled) {
+        const bool two_sided = d.colour_scale ? d.colour_diverging : d.grid_diverging;
+        const float bar_w = std::min(110.0f, w * 0.4f);
+        const ImVec2 bar(bar_w, ImGui::GetTextLineHeight() * 0.8f);
+        const ScaleInfo* picked = FindScale(spec_.colour_scale);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::BeginCombo("##scale", picked ? picked->label : "Theme", ImGuiComboFlags_HeightLarge)) {
+            const auto row = [&](const char* id, const char* label) {
+                PlotSpec probe = spec_;
+                probe.colour_scale = id;
+                const bool on = spec_.colour_scale == id;
+                ImGui::PushID(id[0] ? id : "theme");
+                const ImVec2 at = ImGui::GetCursorPos();
+                if (ImGui::Selectable("##pick", on, 0, ImVec2(0, ImGui::GetTextLineHeight() + 2))) {
+                    spec_.colour_scale = id;
+                    changed = true;
+                }
+                ImGui::SetCursorPos(ImVec2(at.x + 4, at.y + ImGui::GetTextLineHeight() * 0.15f + 1));
+                Gradient(ScaleColormap(probe, std::string(id) == "coolwarm" || (!id[0] && two_sided)), bar);
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(at.y + 1);
+                ImGui::TextUnformatted(label);
+                ImGui::PopID();
+            };
+            row("", "Theme");
+            for (const auto& s : Scales()) {
+                if (s.two_sided) ImGui::TextColored(t.text_faint, "Two-sided (around 0)");
+                row(s.id, s.label);
+            }
+            ImGui::EndCombo();
+        }
+        Gradient(ScaleColormap(spec_, picked ? picked->two_sided : two_sided), ImVec2(w, bar.y));
+        changed |= ImGui::Checkbox("Reverse", &spec_.colour_reverse);
+        ImGui::SameLine();
+        bool automatic = !(std::isfinite(spec_.scale_lo) && std::isfinite(spec_.scale_hi));
+        if (ImGui::Checkbox("Range: data", &automatic)) {
+            if (automatic) {
+                spec_.scale_lo = spec_.scale_hi = NAN;
+            } else {
+                spec_.scale_lo = d.colour_scale ? d.colour_min : d.grid_lo;
+                spec_.scale_hi = d.colour_scale ? d.colour_max : d.grid_hi;
+            }
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scale spans the drawn values; untick to set its ends.");
+        if (!automatic) {
+            ImGui::SetNextItemWidth(w * 0.5f - ImGui::GetStyle().ItemSpacing.x * 0.5f);
+            bool edit = ImGui::InputDouble("##scale_lo", &spec_.scale_lo, 0, 0, "%g");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            edit |= ImGui::InputDouble("##scale_hi", &spec_.scale_hi, 0, 0, "%g");
+            if (edit && spec_.scale_hi > spec_.scale_lo) changed = true;
+        }
+    }
+    if (!names.empty()) {
+        // A swatch per series (pie: per slice), at most 12; a click opens the picker.
+        const size_t n = std::min<size_t>(names.size(), 12);
+        for (size_t i = 0; i < n; ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec4 now = view_.DrawnColour(i);
+            if (ImGui::ColorButton("##swatch", now, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder)) ImGui::OpenPopup("##series_colour");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(names[i].c_str());
+            if (ImGui::BeginPopup("##series_colour")) {
+                ImGui::TextColored(t.text_dim, "Theme colours");
+                for (int k = 0; k < ui::Tokens::kSeriesCount; ++k) {
+                    ImGui::PushID(k);
+                    if (k > 0) ImGui::SameLine();
+                    if (ImGui::ColorButton("##theme", t.series[k], ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, ImVec2(22, 22))) {
+                        if (spec_.series_colours.size() <= i) spec_.series_colours.resize(i + 1);
+                        spec_.series_colours[i] = Hex(t.series[k]);
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TextColored(t.text_dim, "Custom");
+                ImVec4 c = now;
+                if (ImGui::ColorPicker3("##custom", &c.x, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview | ImGuiColorEditFlags_DisplayHex)) {
+                    if (spec_.series_colours.size() <= i) spec_.series_colours.resize(i + 1);
+                    spec_.series_colours[i] = Hex(c);
+                    changed = true;
+                }
+                if (ui::LinkButton("Theme colour")) {
+                    if (i < spec_.series_colours.size()) spec_.series_colours[i].clear();
+                    while (!spec_.series_colours.empty() && spec_.series_colours.back().empty()) spec_.series_colours.pop_back();
+                    changed = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        if (names.size() > n) ImGui::TextColored(t.text_faint, "+%zu more in the theme colours", names.size() - n);
+    }
+    return changed;
+}
+
 void PlotWindow::DrawSettings() {
     const ui::Tokens& t = ui::CurrentTokens();
     const KindInfo& k = Info(spec_.kind);
@@ -472,19 +711,47 @@ void PlotWindow::DrawSettings() {
 
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "DATA");
+    // Surface: from X, Y, Z columns or from grid columns (board 16).
+    const bool surface = spec_.kind == Kind::Surface;
+    const bool grid_surface = surface && spec_.surface_from == PlotSpec::SurfaceFrom::Grid;
+    if (surface) {
+        ImGui::TextColored(t.text_dim, "Surface from");
+        static const char* const kFrom[] = {"X, Y, Z columns", "Grid columns"};
+        int from = static_cast<int>(spec_.surface_from);
+        if (ui::SegmentedControl("##surface_from", kFrom, 2, &from)) {
+            spec_.surface_from = static_cast<PlotSpec::SurfaceFrom>(from);
+            changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("X, Y, Z columns: one point per row (a grid, or scattered rows put on a grid).\n"
+                              "Grid columns: a table of numbers; its columns are X, its rows Y.");
+    }
+    if (grid_surface) {
+        ImGui::TextColored(t.text_dim, "Grid columns (two or more; the rows are the grid's rows)");
+        changed |= picker_.PickMany("##grid_columns", spec_.y_columns, columns_, true, w);
+    }
     // X / categories / values.
-    if ((k.required | k.optional) & kEncX) {
+    if (((k.required | k.optional) & kEncX) && !grid_surface) {
         ImGui::TextColored(t.text_dim, "%s", k.x_hint);
         changed |= picker_.Pick("##x", spec_.x_column, columns_, NumericX(spec_.kind),
                                 (k.required & kEncX) ? nullptr : "(row number)", w);
     }
-    // Y: several (one series each) or one.
-    if ((k.required | k.optional) & kEncY) {
+    // Y: several (one series each) or one; an X, Y, Z surface takes one.
+    if (((k.required | k.optional) & kEncY) && surface && !grid_surface) {
+        ImGui::TextColored(t.text_dim, "Y");
+        std::string y = spec_.y_columns.empty() ? std::string() : spec_.y_columns.front();
+        if (picker_.Pick("##y_surface", y, columns_, true, nullptr, w)) {
+            spec_.y_columns.assign(1, y);
+            changed = true;
+        }
+    } else if (((k.required | k.optional) & kEncY) && !surface) {
         ImGui::TextColored(t.text_dim, "%s", k.y_hint);
-        const bool numeric_only = spec_.kind != Kind::Heatmap;
+        const bool numeric_only = spec_.kind != Kind::Heatmap && spec_.kind != Kind::Confusion && spec_.kind != Kind::Sankey &&
+                                  spec_.kind != Kind::Treemap && spec_.kind != Kind::Network && spec_.kind != Kind::Tree;
         if (k.multi_y) {
             changed |= picker_.PickMany("##y_many", spec_.y_columns, columns_, numeric_only, w);
-            if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin) {
+            if (spec_.y_columns.size() > kMaxLegendSeries && spec_.kind != Kind::Box && spec_.kind != Kind::Violin &&
+                spec_.kind != Kind::Image && spec_.kind != Kind::Matrix && spec_.kind != Kind::PairPlot && spec_.kind != Kind::Parallel) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(t.text_dim, "%zu series: the legend lists %zu, hover shows all.", spec_.y_columns.size(),
                                    kMaxLegendSeries);
@@ -499,12 +766,22 @@ void PlotWindow::DrawSettings() {
             }
         }
     }
+    // 3D: the Z column.
+    if (((k.required | k.optional) & kEncZ) && !grid_surface) {
+        ImGui::TextColored(t.text_dim, "Z");
+        changed |= picker_.Pick("##z", spec_.z_column, columns_, true, nullptr, w);
+    }
     if (k.optional & kEncColor) {
-        ImGui::TextColored(t.text_dim, "Colour by");
-        changed |= picker_.Pick("##colour", spec_.color_column, columns_, false, "(none)", w);
+        const bool treemap = spec_.kind == Kind::Treemap;
+        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Image ? "Label (captions, mean per class)"
+                                             : treemap                ? "Colour (a number; empty: by the top group)"
+                                             : spec_.kind == Kind::Tree    ? "Label (colours the boxes)"
+                                             : spec_.kind == Kind::Network ? "Node column (for Colour nodes by: A column)"
+                                                                      : "Colour by");
+        changed |= picker_.Pick("##colour", spec_.color_column, columns_, treemap, treemap ? "(top group)" : "(none)", w);
         // A number column on a scatter: groups or a colour scale.
         const int c = ColumnIndex(spec_.color_column);
-        if (spec_.kind == Kind::Scatter && c >= 0 && numeric_[static_cast<size_t>(c)]) {
+        if ((spec_.kind == Kind::Scatter || spec_.kind == Kind::Scatter3D) && c >= 0 && numeric_[static_cast<size_t>(c)]) {
             static const char* const kModes[] = {"Groups", "Scale"};
             int mode = view_.HasData() && view_.Data().colour_scale ? 1 : 0;
             if (ui::SegmentedControl("##colour_mode", kModes, 2, &mode)) {
@@ -515,7 +792,8 @@ void PlotWindow::DrawSettings() {
     }
     if (k.optional & kEncValue) {
         ImGui::TextColored(t.text_dim, "%s", k.value_hint);
-        changed |= picker_.Pick("##value", spec_.value_column, columns_, true, "(count rows)", w);
+        changed |= picker_.Pick("##value", spec_.value_column, columns_, true,
+                                spec_.kind == Kind::MapPoints || spec_.kind == Kind::Scatter3D ? "(one size)" : "(count rows)", w);
     }
     if (spec_.x_column != x_before) spec_.x_label.clear();
     if (spec_.y_columns != y_before) spec_.y_label.clear();
@@ -523,13 +801,426 @@ void PlotWindow::DrawSettings() {
         changed |= ImGui::Checkbox("Show the y = x line", &spec_.show_diagonal);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A reference line where y equals x (chance on a ROC curve)");
     }
-    if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D) {
-        ImGui::TextColored(t.text_dim, "Bins");
+    if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D || spec_.kind == Kind::Hexbin ||
+        spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour) {
+        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Hexbin ? "Hexagons across"
+                                             : spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ? "Grid cells across"
+                                                                                                               : "Bins");
         ImGui::SetNextItemWidth(w);
         if (ImGui::InputInt("##bins", &spec_.bins, 0, 0)) {
-            spec_.bins = std::clamp(spec_.bins, 1, spec_.kind == Kind::Histogram2D ? 400 : 1000);
+            spec_.bins = std::clamp(spec_.bins, spec_.kind == Kind::Histogram ? 1 : 2,
+                                    spec_.kind == Kind::Histogram ? 1000 : spec_.kind == Kind::Histogram2D ? 400 : 200);
             changed = true;
         }
+    }
+    // P2b group 1 options (board 8).
+    if (spec_.kind == Kind::Bar && !spec_.color_column.empty()) {
+        ImGui::TextColored(t.text_dim, "Layout");
+        static const char* const kLayouts[] = {"Grouped", "Stacked", "100%"};
+        int layout = static_cast<int>(spec_.bar_layout);
+        if (ui::SegmentedControl("##bar_layout", kLayouts, 3, &layout)) {
+            spec_.bar_layout = static_cast<PlotSpec::BarLayout>(layout);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Bar && spec_.color_column.empty()) {
+        changed |= ImGui::Checkbox("Horizontal bars", &spec_.bar_horizontal);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Categories down the side, so long names read across.");
+    }
+    if (spec_.kind == Kind::Pie) changed |= ImGui::Checkbox("Donut (the total in the middle)", &spec_.donut);
+    if (spec_.kind == Kind::Kde) {
+        ImGui::TextColored(t.text_dim, "Bandwidth (times Silverman's)");
+        float bw = static_cast<float>(spec_.kde_bandwidth);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::SliderFloat("##kde_bw", &bw, 0.2f, 5.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+            spec_.kde_bandwidth = bw;
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Matrix) {
+        ImGui::TextColored(t.text_dim, "Values");
+        static const char* const kMatrix[] = {"Correlation (Pearson)", "Correlation (Spearman, ranks)", "The values (rows x columns)"};
+        int mode = static_cast<int>(spec_.matrix_values);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##matrix_values", &mode, kMatrix, 3)) {
+            spec_.matrix_values = static_cast<PlotSpec::MatrixValues>(mode);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Hexbin && spec_.value_column.empty())
+        changed |= ImGui::Checkbox("Colour by the log of the count", &spec_.log_colour);
+    // P2b group 3 options (board 10).
+    if (spec_.kind == Kind::Image) {
+        ImGui::TextColored(t.text_dim, "Show");
+        static const char* const kModes[] = {"One row", "Gallery", "Mean per class"};
+        int mode = static_cast<int>(spec_.image_mode);
+        if (ui::SegmentedControl("##image_mode", kModes, 3, &mode)) {
+            spec_.image_mode = static_cast<PlotSpec::ImageMode>(mode);
+            changed = true;
+        }
+        if (spec_.image_mode == PlotSpec::ImageMode::OneRow) {
+            const int rows = view_.HasData() ? static_cast<int>(view_.Data().img_rows) : 0;
+            ImGui::TextColored(t.text_dim, "Row (of %s)", Thousands(rows).c_str());
+            ImGui::SetNextItemWidth(w * 0.4f);
+            if (ImGui::InputInt("##image_row", &spec_.image_row, 0, 0)) {
+                spec_.image_row = std::clamp(spec_.image_row, 1, std::max(1, rows));
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Previous") && spec_.image_row > 1) {
+                --spec_.image_row;
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Next") && spec_.image_row < rows) {
+                ++spec_.image_row;
+                changed = true;
+            }
+        } else if (spec_.image_mode == PlotSpec::ImageMode::Gallery) {
+            ImGui::TextColored(t.text_dim, "Pictures at most");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##gallery_max", &spec_.gallery_max, 0, 0)) {
+                spec_.gallery_max = std::clamp(spec_.gallery_max, 1, 400);
+                changed = true;
+            }
+        }
+        ImGui::TextColored(t.text_dim, "Width (0: square)");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##image_width", &spec_.image_width, 0, 0)) {
+            spec_.image_width = std::clamp(spec_.image_width, 0, 4096);
+            changed = true;
+        }
+        ImGui::TextColored(t.text_dim, "Channels");
+        static const char* const kChannels[] = {"Auto", "1 (grey or scale)", "3 (red, green, blue)"};
+        int ch = spec_.image_channels == 3 ? 2 : spec_.image_channels == 1 ? 1 : 0;
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##image_channels", &ch, kChannels, 3)) {
+            spec_.image_channels = ch == 2 ? 3 : ch == 1 ? 1 : 0;
+            changed = true;
+        }
+        const bool rgb = view_.HasData() && view_.Data().img_channels == 3;
+        if (rgb) changed |= ImGui::Checkbox("Three planes (all red, then green, then blue)", &spec_.image_planar);
+        ImGui::TextColored(t.text_dim, "Values");
+        static const char* const kRange[] = {"Auto (lowest to highest)", "0 to 255", "0 to 1"};
+        int range = static_cast<int>(spec_.image_range);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##image_range", &range, kRange, 3)) {
+            spec_.image_range = static_cast<PlotSpec::ImageRange>(range);
+            changed = true;
+        }
+        if (!rgb) changed |= ImGui::Checkbox("Grey", &spec_.image_grey);
+        changed |= ImGui::Checkbox("Invert", &spec_.image_invert);
+    }
+    if (spec_.kind == Kind::PairPlot) changed |= ImGui::Checkbox("Histograms on the diagonal", &spec_.pair_histogram);
+    // P2b group 2 options (board 9).
+    if (spec_.kind == Kind::Polar) {
+        ImGui::TextColored(t.text_dim, "Angle in");
+        static const char* const kUnits[] = {"Auto (categories for text, degrees for numbers)", "Degrees", "Radians",
+                                             "Categories (share the turn)"};
+        int unit = static_cast<int>(spec_.angle_unit);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##angle_unit", &unit, kUnits, 4)) {
+            spec_.angle_unit = static_cast<PlotSpec::AngleUnit>(unit);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Points instead of lines", &spec_.polar_points);
+    }
+    if (k.required & kEncVector) {
+        ImGui::TextColored(t.text_dim, "Arrows from");
+        static const char* const kFrom[] = {"u, v", "Direction + length"};
+        int from = static_cast<int>(spec_.vector_from);
+        if (ui::SegmentedControl("##vector_from", kFrom, 2, &from)) {
+            spec_.vector_from = static_cast<PlotSpec::VectorFrom>(from);
+            changed = true;
+        }
+        const bool uv = spec_.vector_from == PlotSpec::VectorFrom::UV;
+        ImGui::TextColored(t.text_dim, "%s", uv ? "Arrow X (u)" : "Direction (degrees clockwise from north)");
+        changed |= picker_.Pick("##u", spec_.u_column, columns_, true, nullptr, w);
+        ImGui::TextColored(t.text_dim, "%s", uv ? "Arrow Y (v)" : "Length");
+        changed |= picker_.Pick("##v", spec_.v_column, columns_, true, nullptr, w);
+        if (!uv) {
+            changed |= ImGui::Checkbox("Wind: the direction is where it comes from", &spec_.wind_from);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Weather data gives where the wind comes from; the arrows then point the other way");
+        }
+        if (spec_.kind == Kind::Quiver) {
+            ImGui::TextColored(t.text_dim, "Show every Nth arrow (0: as many as fit)");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##arrow_every", &spec_.arrow_every, 0, 0)) {
+                spec_.arrow_every = std::clamp(spec_.arrow_every, 0, 1000);
+                changed = true;
+            }
+        } else {
+            ImGui::TextColored(t.text_dim, "Density");
+            float density = static_cast<float>(spec_.stream_density);
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::SliderFloat("##stream_density", &density, 0.2f, 5.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+                spec_.stream_density = density;
+                changed = true;
+            }
+        }
+    }
+    if (spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour) {
+        ImGui::TextColored(t.text_dim, "Levels");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##levels", &spec_.levels, 0, 0)) {
+            spec_.levels = std::clamp(spec_.levels, 1, 50);
+            changed = true;
+        }
+    }
+    // P2b group 4 options (board 11).
+    if (spec_.kind == Kind::Confusion) {
+        ImGui::TextColored(t.text_dim, "Colour and share by");
+        static const char* const kShow[] = {"Counts", "Share of actual (each row adds to 100%)",
+                                            "Share of predicted (each column adds to 100%)", "Share of all rows"};
+        int show = static_cast<int>(spec_.confusion_show);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##confusion_show", &show, kShow, 4)) {
+            spec_.confusion_show = static_cast<PlotSpec::ConfusionShow>(show);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Roc || spec_.kind == Kind::PrCurve || spec_.kind == Kind::Calibration) {
+        if (positive_for_ != spec_.positive_class) {
+            std::snprintf(positive_buf_, sizeof(positive_buf_), "%s", spec_.positive_class.c_str());
+            positive_for_ = spec_.positive_class;
+        }
+        ImGui::TextColored(t.text_dim, "Positive class");
+        const Prepared& d = view_.Data();
+        const std::string hint = view_.HasData() && !d.positive_label.empty() && spec_.positive_class.empty()
+                                     ? "auto: " + d.positive_label : std::string("auto");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputTextWithHint("##positive", hint.c_str(), positive_buf_, sizeof(positive_buf_))) {
+            spec_.positive_class = positive_for_ = positive_buf_;
+            changed = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The actual label the score is for. Auto picks 1, true, yes or positive, else the last label.");
+    }
+    if (spec_.kind == Kind::Calibration) {
+        ImGui::TextColored(t.text_dim, "Bins");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##calibration_bins", &spec_.calibration_bins, 0, 0)) {
+            spec_.calibration_bins = std::clamp(spec_.calibration_bins, 2, 100);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::LearningCurve || spec_.kind == Kind::Importance) {
+        // A spread (standard deviation) column per curve: a band or bars.
+        const size_t curves = spec_.kind == Kind::Importance ? 1 : spec_.y_columns.size();
+        if (spec_.spread_columns.size() > curves) {
+            spec_.spread_columns.resize(curves);
+            changed = true;
+        }
+        for (size_t i = 0; i < curves; ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const std::string of = i < spec_.y_columns.size() ? spec_.y_columns[i] : std::string("the values");
+            ImGui::TextColored(t.text_dim, "Spread of %s (\xC2\xB1)", of.c_str());
+            std::string spread = i < spec_.spread_columns.size() ? spec_.spread_columns[i] : std::string();
+            if (picker_.Pick("##spread", spread, columns_, true, "(none)", w)) {
+                if (spec_.spread_columns.size() <= i) spec_.spread_columns.resize(i + 1);
+                spec_.spread_columns[i] = spread;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+    }
+    if (spec_.kind == Kind::LearningCurve) {
+        ImGui::TextColored(t.text_dim, "Best point of the last curve");
+        static const char* const kBest[] = {"Auto", "Highest", "Lowest"};
+        int best = static_cast<int>(spec_.best);
+        if (ui::SegmentedControl("##best", kBest, 3, &best)) {
+            spec_.best = static_cast<PlotSpec::Best>(best);
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto: lowest for a loss or an error, else highest");
+    }
+    if (spec_.kind == Kind::Importance) {
+        ImGui::TextColored(t.text_dim, "Show the top");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##top_n", &spec_.top_n, 0, 0)) {
+            spec_.top_n = std::clamp(spec_.top_n, 1, 500);
+            changed = true;
+        }
+    }
+    // P2b group 5 options (board 12).
+    if (spec_.kind == Kind::Sankey) {
+        ImGui::TextColored(t.text_dim, "Largest per step (the rest as other)");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##sankey_top", &spec_.sankey_top, 0, 0)) {
+            spec_.sankey_top = std::clamp(spec_.sankey_top, 1, 50);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Treemap) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Click a group to zoom into it; right-click or the path at the top goes back.");
+        ImGui::PopTextWrapPos();
+    }
+    if (spec_.kind == Kind::MapRegions) {
+        ImGui::TextColored(t.text_dim, "Several rows for one country");
+        static const char* const kAgg[] = {"Sum", "Mean"};
+        int agg = static_cast<int>(spec_.region_agg);
+        if (ui::SegmentedControl("##region_agg", kAgg, 2, &agg)) {
+            spec_.region_agg = static_cast<PlotSpec::RegionAgg>(agg);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Colour by the log of the value", &spec_.log_colour);
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && !d.unmatched.empty()) {
+            std::string names;
+            for (size_t i = 0; i < d.unmatched.size() && i < 8; ++i)
+                names += (i ? ", " : "") + d.unmatched[i].first + " (" + Thousands(static_cast<long long>(d.unmatched[i].second)) + ")";
+            if (d.unmatched.size() > 8) names += ", ...";
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.warning, "%zu %s not matched: %s", d.unmatched.size(), d.unmatched.size() == 1 ? "name" : "names", names.c_str());
+            ImGui::TextColored(t.text_faint, "Use a country name or its ISO code (FRA or FR). The CSV export lists every name.");
+            ImGui::PopTextWrapPos();
+        }
+    }
+    // P4 group 2 (board 17): the graph options.
+    if (spec_.kind == Kind::Network) {
+        const auto segmented = [&](const char* label, const char* id, const char* const* names, int count, auto& field) {
+            ImGui::TextColored(t.text_dim, "%s", label);
+            int v = static_cast<int>(field);
+            if (ui::SegmentedControl(id, names, count, &v)) {
+                field = static_cast<std::remove_reference_t<decltype(field)>>(v);
+                changed = true;
+            }
+        };
+        static const char* const kLayout[] = {"Force", "Layered", "Circle"};
+        segmented("Layout", "##graph_layout", kLayout, 3, spec_.graph_layout);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Force: linked nodes pull together. Layered: left to right along the links (pipelines, model graphs). Circle: by group.");
+        static const char* const kColour[] = {"Groups found", "A column", "One colour"};
+        segmented("Colour nodes by", "##node_colour", kColour, 3, spec_.node_colour);
+        static const char* const kSize[] = {"Links", "Weight", "Same"};
+        segmented("Node size", "##node_size", kSize, 3, spec_.node_size);
+        static const char* const kLabels[] = {"Top", "All", "None"};
+        segmented("Labels", "##node_labels", kLabels, 3, spec_.node_labels);
+        if (spec_.node_labels == PlotSpec::NodeLabels::Top) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputInt("##label_top", &spec_.label_top, 0, 0)) {
+                spec_.label_top = std::clamp(spec_.label_top, 1, 1000);
+                changed = true;
+            }
+        }
+        changed |= ImGui::Checkbox("Directed (arrows)", &spec_.directed);
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && d.metrics.size() >= 2 && d.metrics[0].first == "nodes") {
+            ImGui::TextColored(t.text_faint, "%s nodes \xC2\xB7 %s links \xC2\xB7 %zu %s", Thousands(static_cast<long long>(d.metrics[0].second)).c_str(),
+                               Thousands(static_cast<long long>(d.metrics[1].second)).c_str(), d.graph_groups.size(),
+                               spec_.node_colour == PlotSpec::NodeColour::Groups ? "groups found" : "colours");
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Drag to pan, wheel to zoom, drag a node to move it; hover a node for its links.");
+        ImGui::PopTextWrapPos();
+    }
+    if (spec_.kind == Kind::Tree) {
+        ImGui::TextColored(t.text_dim, "Direction");
+        static const char* const kDir[] = {"Top-down", "Left-right"};
+        int dir = spec_.tree_left_right ? 1 : 0;
+        if (ui::SegmentedControl("##tree_dir", kDir, 2, &dir)) {
+            spec_.tree_left_right = dir == 1;
+            changed = true;
+        }
+        // A forest or boosted model: which tree (a "tree = N" row filter, so
+        // Rows shows it and it is saved like any filter).
+        if (model_tree_names_.size() > 1) {
+            const int total = static_cast<int>(model_tree_names_.size());
+            RowCondition* pick = nullptr;
+            if (spec_.rows == RowMode::Filter)
+                for (auto& c : spec_.conditions)
+                    if (c.column == "tree" && c.op == "=") pick = &c;
+            int current = 0;  // 0: every tree
+            if (pick) {
+                try {
+                    current = std::clamp(std::stoi(pick->value), 1, total);
+                } catch (...) {
+                    current = 1;
+                }
+            }
+            const auto choose = [&](int k) {
+                if (!pick) {
+                    spec_.rows = RowMode::Filter;
+                    spec_.conditions.push_back({"tree", "=", "1"});
+                    pick = &spec_.conditions.back();
+                }
+                pick->value = std::to_string(k);
+                changed = true;
+            };
+            ImGui::TextColored(t.text_dim, "Tree in the model");
+            if (ui::GhostButton("<##model_tree", current > 1)) choose(current - 1);
+            ImGui::SameLine();
+            int shown = current;
+            ImGui::SetNextItemWidth(64);
+            if (ImGui::InputInt("##model_tree_n", &shown, 0, 0) && shown != current) choose(std::clamp(shown, 1, total));
+            ImGui::SameLine();
+            if (ui::GhostButton(">##model_tree", current < total)) choose(std::max(1, current + 1));
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_faint, "of %d", total);
+            if (current >= 1) ImGui::TextColored(t.text_faint, "%s", model_tree_names_[static_cast<size_t>(current - 1)].c_str());
+            else ImGui::TextColored(t.text_faint, "Every tree (pick one to read it)");
+        }
+        const Prepared& d = view_.Data();
+        if (view_.HasData() && d.metrics.size() >= 3 && d.metrics[0].first == "nodes") {
+            ImGui::TextColored(t.text_faint, "%s nodes \xC2\xB7 %.0f %s \xC2\xB7 %.0f levels", Thousands(static_cast<long long>(d.metrics[0].second)).c_str(),
+                               d.metrics[1].second, d.metrics[1].second == 1 ? "root" : "roots", d.metrics[2].second + 1);
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Click a box to fold its branch; drag to pan, wheel to zoom. A parent that is not a node makes a root.");
+        ImGui::PopTextWrapPos();
+    }
+    // P4 group 1 (board 16): how a surface is drawn, and how scattered rows go on a grid.
+    if (surface || spec_.kind == Kind::Mesh) {
+        ImGui::TextColored(t.text_dim, "Draw");
+        static const char* const kDraw[] = {"Fill", "Lines", "Both"};
+        int draw = static_cast<int>(spec_.surface_draw);
+        if (ui::SegmentedControl("##surface_draw", kDraw, 3, &draw)) {
+            spec_.surface_draw = static_cast<PlotSpec::SurfaceDraw>(draw);
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("Shade", &spec_.shade);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Light from the upper left, so slopes show");
+        if (surface) {
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Contours on the floor", &spec_.floor_contours);
+        } else {
+            const Prepared& d = view_.Data();
+            if (view_.HasData() && !d.metrics.empty() && d.metrics[0].first == "triangles")
+                ImGui::TextColored(t.text_faint, "%s points joined into %s triangles", Thousands(static_cast<long long>(d.mesh_x.size())).c_str(),
+                                   Thousands(static_cast<long long>(d.metrics[0].second)).c_str());
+        }
+        if (surface && !grid_surface) {
+            ImGui::TextColored(t.text_dim, "Grid cells across (scattered rows)");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##surface_bins", &spec_.bins, 0, 0)) {
+                spec_.bins = std::clamp(spec_.bins, 4, 200);
+                changed = true;
+            }
+            ImGui::TextColored(t.text_dim, "Leave cells with fewer rows open");
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputInt("##min_cell_rows", &spec_.min_cell_rows, 0, 0)) {
+                spec_.min_cell_rows = std::clamp(spec_.min_cell_rows, 1, 100000);
+                changed = true;
+            }
+            const Prepared& d = view_.Data();
+            if (view_.HasData() && !d.metrics.empty() && d.metrics[0].first == "open cells" && d.metrics[0].second > 0) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_faint, "%s of %d cells open (fewer than %d rows); a regular grid of points keeps its own cells.",
+                                   Thousands(static_cast<long long>(d.metrics[0].second)).c_str(), d.grid_rows * d.grid_cols, spec_.min_cell_rows);
+                ImGui::PopTextWrapPos();
+            }
+        }
+    }
+    if (Info(spec_.kind).group == Group::ThreeD) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Drag to turn the plot, right-drag to move it, wheel to zoom; Turn / Top / Front / Side above. The view is saved with the plot.");
+        ImGui::PopTextWrapPos();
+    }
+    if (spec_.kind == Kind::MapPoints) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_faint, "Built-in world map (Natural Earth country outlines, offline). Fit zooms to the points.");
+        ImGui::PopTextWrapPos();
     }
     if (spec_.kind == Kind::Histogram) {
         changed |= ImGui::Checkbox("Show median", &spec_.show_median);
@@ -545,6 +1236,8 @@ void PlotWindow::DrawSettings() {
         }
     }
 
+    changed |= DrawColours(w);
+
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "LABELS");
     ImGui::TextColored(t.text_dim, "Title");
@@ -554,8 +1247,25 @@ void PlotWindow::DrawSettings() {
         changed = true;
     }
 
+    // Model results: their figures.
+    if (view_.HasData() && view_.Data().problem.empty() && !view_.Data().metrics.empty()) {
+        const Prepared& d = view_.Data();
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "RESULTS");
+        if (ImGui::BeginTable("##results", 2, ImGuiTableFlags_SizingStretchSame)) {
+            const auto row = [&](const std::string& name, const std::string& value) {
+                ImGui::TableNextColumn();
+                ImGui::TextColored(t.text_dim, "%s", name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(value.c_str());
+            };
+            if (!d.positive_label.empty()) row("positive class", d.positive_label);
+            for (const auto& [name, v] : d.metrics) row(name, MetricText(name, v));
+            ImGui::EndTable();
+        }
+    }
     // Values of the plotted column.
-    if (view_.HasData() && view_.Data().problem.empty() && view_.Data().stats.count > 0) {
+    if (view_.HasData() && view_.Data().problem.empty() && view_.Data().stats.count > 0 && view_.Data().metrics.empty()) {
         const ColumnStats& st = view_.Data().stats;
         ImGui::Spacing();
         ImGui::TextColored(t.text_dim, "VALUES");
@@ -583,8 +1293,15 @@ void PlotWindow::DrawSettings() {
 
     ImGui::Spacing();
     // The script is built on click (a histogram reads the whole column).
+    const bool new_kind = spec_.kind == Kind::Kde || spec_.kind == Kind::Matrix || spec_.kind == Kind::Hexbin ||
+                          spec_.kind == Kind::Polar || spec_.kind == Kind::Quiver || spec_.kind == Kind::Stream ||
+                          spec_.kind == Kind::Image || spec_.kind == Kind::PairPlot || spec_.kind == Kind::Parallel ||
+                          spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
+                          Info(spec_.kind).group == Group::ModelResults || Info(spec_.kind).group == Group::FlowsHierarchies ||
+                          Info(spec_.kind).group == Group::Maps ||
+                          (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&
-                            spec_.kind != Kind::Histogram2D && view_.HasData() && view_.Data().problem.empty();
+                            spec_.kind != Kind::Histogram2D && !new_kind && view_.HasData() && view_.Data().problem.empty();
     if (ui::SecondaryButton("Plot with Python (copy script)", scriptable, "Not for this plot type",
                             ui::ButtonSize::Small, w)) {
         const std::string script = PythonScript();

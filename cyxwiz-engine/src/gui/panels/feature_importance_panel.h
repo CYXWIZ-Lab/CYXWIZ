@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cyxwiz/feature_importance.h>
+#include "../dataset_source.h"
 #include <imgui.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +15,7 @@ namespace cyxwiz {
 
 class DataTable;
 class SequentialModel;
+struct ActiveModelInfo;
 
 /**
  * FeatureImportancePanel - Feature Importance Analysis Tool
@@ -39,17 +42,17 @@ public:
     void Toggle() { visible_ = !visible_; }
     bool* GetVisiblePtr() { return &visible_; }
 
-    // Set the trained model
-    void SetModel(std::shared_ptr<SequentialModel> model);
+    // Train > Load Checkpoint for Testing, run from the panel's Load checkpoint button.
+    void SetLoadCheckpointCallback(std::function<void()> cb) { load_checkpoint_ = std::move(cb); }
 
     // Set the dataset for evaluation
-    void SetDataset(const std::string& table_name);
     void SetDataset(std::shared_ptr<DataTable> table);
 
 private:
     void RenderToolbar();
+    void RenderModel(bool has_model, const ActiveModelInfo& info, size_t layers);
     void RenderDataSelector();
-    void RenderConfiguration();
+    void RenderConfiguration(bool has_model);
     void RenderLoadingIndicator();
     void RenderResults();
     void RenderImportanceChart();
@@ -61,12 +64,12 @@ private:
 
     bool visible_ = false;
 
-    // Model
-    std::shared_ptr<SequentialModel> model_;
-    bool has_model_ = false;
+    // Model: TrainingManager's active model, read each frame.
+    std::function<void()> load_checkpoint_;
+    const SequentialModel* result_model_ = nullptr;  // the model the current result is for
 
     // Dataset
-    std::string selected_table_;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::shared_ptr<DataTable> current_table_;
     std::vector<std::string> feature_columns_;
     std::vector<int> selected_features_;

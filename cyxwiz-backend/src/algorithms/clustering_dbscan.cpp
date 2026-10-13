@@ -1,80 +1,52 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// DBSCAN and the k-distance graph on ArrayFire (TOFIX140). Clusters are the
+// connected components of the core points, found by min-label propagation with
+// pointer jumping; numbering and border assignment reproduce scikit-learn's
+// index-order expansion.
+
 #ifdef _WIN32
-#ifndef NOMINMAX
 #define NOMINMAX
-#endif
 #endif
 
 #include "cyxwiz/clustering.h"
-#include "arrayfire_backend_utils.h"
-#include "arrayfire_host_materialization.h"
+#include "analysis_device.h"
+
 #include <spdlog/spdlog.h>
+
 #include <algorithm>
-#include <queue>
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
-// Ensure Windows min/max macros are undefined
-#ifdef _WIN32
 #ifdef min
 #undef min
 #endif
 #ifdef max
 #undef max
 #endif
-#endif
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+using namespace analysis_detail;
 
-static std::string BuildClusteringContext(
-    const std::vector<std::vector<double>>& data,
-    const std::string& extra = {})
-{
-    std::string context = "samples=" + std::to_string(data.size()) +
-        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
-    if (!extra.empty()) {
-        context += "; ";
-        context += extra;
+namespace {
+
+// For every point, the smallest `labels` value among its core neighbours
+// (`none` when it has none). adjacency is [n, n] b8, labels [n, 1] s32.
+af::array MinCoreNeighbourLabel(const af::array& adjacency, const af::array& core, const af::array& labels, int none) {
+    const dim_t n = adjacency.dims(0);
+    const dim_t block = RowBlock(n);
+    const af::array candidate_row = af::select(core, labels, static_cast<double>(none)).T();  // [1, n]
+    af::array result = af::constant(none, n, s32);
+    for (dim_t start = 0; start < n; start += block) {
+        const dim_t stop = std::min(n, start + block);
+        const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
+        const af::array candidates = af::tile(candidate_row, static_cast<unsigned>(stop - start), 1);
+        const af::array masked = af::select(adjacency(rows, af::span), candidates, static_cast<double>(none));
+        result(rows) = af::min(masked, 1);
     }
-    return context;
+    return result;
 }
 
-static void LogClusteringBackendFailureOnce(
-    const char* operation_name,
-    const char* error_message,
-    const std::string& data_context)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
-    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        return;
-    }
-
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "clustering operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); clustering operation cannot complete on the current ArrayFire backend.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
-        error_message != nullptr &&
-        error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    spdlog::error("{}", message);
-}
-
-// ==================== DBSCAN Implementation ====================
+}  // namespace
 
 DBSCANResult Clustering::DBSCAN(
     const std::vector<std::vector<double>>& data,
@@ -83,116 +55,64 @@ DBSCANResult Clustering::DBSCAN(
     const std::string& metric
 ) {
     DBSCANResult result;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
+    if (const std::string refusal = MatrixRefusal(data); !refusal.empty()) {
+        result.error_message = refusal;
         return result;
     }
-
-    int n = static_cast<int>(data.size());
-
+    if (!(eps > 0.0) || min_samples < 1) {
+        result.error_message = "eps must be positive and min_samples at least 1";
+        return result;
+    }
+    if (!IsKnownMetric(metric)) {
+        result.error_message = "Unknown metric '" + metric + "' (euclidean, manhattan or cosine)";
+        return result;
+    }
     try {
-        // Compute distance matrix on GPU
-        af::array af_data = ToAfArray(data);
-        af::array dist_matrix = ComputeDistanceMatrix(af_data, metric);
+        const af::array x = MatrixToDevice(data);
+        const dim_t n = x.dims(0);
+        const int none = static_cast<int>(n);
+        const double none_value = static_cast<double>(none);
 
-        // Transfer distance matrix to CPU for DBSCAN logic
-        // (DBSCAN requires sequential cluster expansion which is hard to parallelize)
-        std::vector<double> dist_flat(n * n);
-        dist_matrix.eval();
-        MaterializeArrayFireToHost(
-            dist_matrix,
-            dist_flat.data(),
-            ArrayFireHostSyncCategory::AlgorithmCpuPath,
-            "Clustering::DBSCAN::DistanceMatrix",
-            "arrayfire_column_major");
-
-        // Initialize labels
-        result.labels.assign(n, -1);  // -1 = unvisited/noise
-        result.core_samples.assign(n, false);
-
-        int cluster_id = 0;
-        std::vector<bool> visited(n, false);
-
-        // Find core samples and their neighbors using GPU-computed distances
-        std::vector<std::vector<int>> neighborhoods(n);
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                if (dist_flat[j * n + i] <= eps) {  // Column-major
-                    neighborhoods[i].push_back(j);
-                }
-            }
-            if (static_cast<int>(neighborhoods[i].size()) >= min_samples) {
-                result.core_samples[i] = true;
-            }
+        // Neighbourhoods (distance <= eps, the point itself included), in row blocks.
+        af::array adjacency = af::constant(0, n, n, b8);
+        const dim_t block = RowBlock(n);
+        for (dim_t start = 0; start < n; start += block) {
+            const dim_t stop = std::min(n, start + block);
+            const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
+            adjacency(rows, af::span) = PairwiseDistances(x(rows, af::span), x, metric) <= eps;
         }
+        const af::array core = af::count(adjacency, 1) >= static_cast<unsigned>(min_samples);
 
-        // DBSCAN clustering
-        for (int i = 0; i < n; ++i) {
-            if (visited[i]) continue;
-            visited[i] = true;
-
-            if (!result.core_samples[i]) {
-                // Noise point (may be reassigned later)
-                continue;
-            }
-
-            // Expand cluster from core point
-            result.labels[i] = cluster_id;
-            std::queue<int> to_expand;
-
-            for (int neighbor : neighborhoods[i]) {
-                if (result.labels[neighbor] == -1) {
-                    result.labels[neighbor] = cluster_id;
-                }
-                if (!visited[neighbor]) {
-                    to_expand.push(neighbor);
-                }
-            }
-
-            while (!to_expand.empty()) {
-                int p = to_expand.front();
-                to_expand.pop();
-
-                if (visited[p]) continue;
-                visited[p] = true;
-
-                result.labels[p] = cluster_id;
-
-                if (result.core_samples[p]) {
-                    for (int neighbor : neighborhoods[p]) {
-                        if (result.labels[neighbor] == -1) {
-                            result.labels[neighbor] = cluster_id;
-                        }
-                        if (!visited[neighbor]) {
-                            to_expand.push(neighbor);
-                        }
-                    }
-                }
-            }
-
-            cluster_id++;
+        // Component of each core point = its lowest core index: propagate the minimum
+        // label over core-core edges, jumping labels to their label's label each round.
+        const af::array index = af::range(af::dim4(n), 0, s32);
+        af::array labels = af::select(core, index, none_value);
+        for (dim_t round = 0; round <= n; ++round) {
+            af::array next = af::min(labels, MinCoreNeighbourLabel(adjacency, core, labels, none));
+            next = af::select(core, af::lookup(next, af::min(next, af::constant(none - 1, next.dims(), s32))), none_value);
+            next.eval();
+            const bool changed = af::anyTrue<bool>(next != labels);
+            labels = next;
+            if (!changed) break;
         }
+        // Border points take the earliest (lowest-root) cluster among their core neighbours.
+        const af::array assigned = af::select(core, labels, MinCoreNeighbourLabel(adjacency, core, labels, none));
+        // Number clusters 0, 1, ... in order of their root index.
+        const af::array roots = (core && labels == index).as(s32);
+        const af::array rank = af::accum(roots) - 1;
+        const af::array safe = af::min(assigned, af::constant(none - 1, assigned.dims(), s32));
+        const af::array final_labels = af::select(assigned < none, af::lookup(rank, safe), -1.0);
 
-        result.n_clusters = cluster_id;
+        result.labels = LabelsFromDevice(final_labels, "Clustering::DBSCAN");
+        const std::vector<int> core_flags = LabelsFromDevice(core, "Clustering::DBSCAN");
+        result.core_samples.assign(core_flags.begin(), core_flags.end());
+        result.n_clusters = static_cast<int>(af::sum<double>(roots));
         result.n_noise_points = static_cast<int>(std::count(result.labels.begin(), result.labels.end(), -1));
         result.success = true;
-
-        spdlog::info("DBSCAN completed: {} clusters, {} noise points",
-                     result.n_clusters, result.n_noise_points);
-
     } catch (const af::exception& e) {
-        result.error_message = std::string("ArrayFire error: ") + e.what();
-        LogClusteringBackendFailureOnce(
-            "Clustering::DBSCAN",
-            e.what(),
-            BuildClusteringContext(
-                data,
-                "eps=" + std::to_string(eps) +
-                "; min_samples=" + std::to_string(min_samples) +
-                "; metric=" + metric));
+        result = DBSCANResult{};
+        result.error_message = DeviceError("Clustering::DBSCAN", e);
     }
-
     return result;
 }
 
@@ -200,63 +120,27 @@ std::vector<double> Clustering::ComputeKDistances(
     const std::vector<std::vector<double>>& data,
     int k
 ) {
-    if (data.empty()) return {};
-
+    if (const std::string refusal = MatrixRefusal(data); !refusal.empty() || k < 1 || data.size() < 2) {
+        spdlog::error("Clustering::ComputeKDistances: {}", refusal.empty() ? "needs k >= 1 and 2 samples" : refusal);
+        return {};
+    }
     try {
-        af::array af_data = ToAfArray(data);
-        af::array dist_matrix = ComputeEuclideanDistanceMatrix(af_data);
-
-        int n = static_cast<int>(data.size());
-
-        // Sort each row and get k-th distance
-        af::array sorted_dists;
-        af::array indices;
-        af::sort(sorted_dists, indices, dist_matrix, 1);
-        sorted_dists.eval();
-
-        // Get k-th column (k-th nearest neighbor distance)
-        int k_idx = std::min(k, n - 1);
-        af::array k_distances = sorted_dists(af::span, k_idx);
-        k_distances.eval();
-
-        // Sort k-distances for plotting
-        af::array sorted_k_dists;
-        af::sort(sorted_k_dists, indices, k_distances);
-        sorted_k_dists.eval();
-
-        return AfArrayToDoubleVector(sorted_k_dists);
-
+        const af::array x = MatrixToDevice(data);
+        const dim_t n = x.dims(0);
+        const int column = static_cast<int>(std::min<dim_t>(k, n - 1));  // column 0 of a sorted row is the point itself
+        af::array kth = af::constant(0.0, n, x.type());
+        const dim_t block = RowBlock(n);
+        for (dim_t start = 0; start < n; start += block) {
+            const dim_t stop = std::min(n, start + block);
+            const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
+            const af::array sorted = af::sort(PairwiseDistances(x(rows, af::span), x, "euclidean"), 1);
+            kth(rows) = sorted(af::span, column);
+        }
+        return DeviceToHostValues(af::sort(kth), "Clustering::ComputeKDistances");
     } catch (const af::exception& e) {
-        LogClusteringBackendFailureOnce(
-            "Clustering::ComputeKDistances",
-            e.what(),
-            BuildClusteringContext(data, "k=" + std::to_string(k)));
+        spdlog::error("{}", DeviceError("Clustering::ComputeKDistances", e));
         return {};
     }
 }
-
-
-#else  // No ArrayFire - CPU fallback stubs
-
-DBSCANResult Clustering::DBSCAN(
-    const std::vector<std::vector<double>>& data,
-    double eps,
-    int min_samples,
-    const std::string& metric
-) {
-    DBSCANResult result;
-    result.error_message = "ArrayFire not available";
-    return result;
-}
-
-std::vector<double> Clustering::ComputeKDistances(
-    const std::vector<std::vector<double>>& data,
-    int k
-) {
-    return {};
-}
-
-
-#endif  // CYXWIZ_HAS_ARRAYFIRE
 
 } // namespace cyxwiz

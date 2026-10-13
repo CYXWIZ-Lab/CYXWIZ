@@ -1,5 +1,6 @@
 #include "custom_node_editor.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -53,7 +54,7 @@ void CustomNodeEditorPanel::CreateNewDefinition() {
     current_def_.name = "New Custom Node";
     current_def_.category = "Custom";
     current_def_.description = "A custom node type";
-    current_def_.color = ImVec4(0.4f, 0.4f, 0.8f, 1.0f);
+    current_def_.color = cyxwiz::ui::CurrentTokens().accent;  // user data; default from the theme
 
     // Add default input/output
     PinDefinition default_input;
@@ -280,7 +281,7 @@ void CustomNodeEditorPanel::Render() {
         ImGui::Text(ICON_FA_CUBE " Editing: %s", current_def_.name.c_str());
         if (has_unsaved_changes_) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "(unsaved)");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, "(unsaved)");
         }
         ImGui::Separator();
 
@@ -806,6 +807,7 @@ void CustomNodeEditorPanel::RenderPreviewTab() {
 }
 
 void CustomNodeEditorPanel::RenderNodePreview() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     // Draw a simple representation of the node
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -821,9 +823,9 @@ void CustomNodeEditorPanel::RenderNodePreview() {
     float total_height = header_height + body_height;
 
     // Node background
-    ImU32 bg_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+    ImU32 bg_color = cyxwiz::ui::ToU32(t.bg_panel);
     ImU32 header_color = ImGui::ColorConvertFloat4ToU32(current_def_.color);
-    ImU32 border_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.4f, 0.4f, 0.5f, 1.0f));
+    ImU32 border_color = cyxwiz::ui::ToU32(t.border);
 
     // Draw header
     draw_list->AddRectFilled(pos, ImVec2(pos.x + node_width, pos.y + header_height), header_color, 5.0f, ImDrawFlags_RoundCornersTop);
@@ -836,11 +838,11 @@ void CustomNodeEditorPanel::RenderNodePreview() {
 
     // Draw title
     ImGui::SetCursorScreenPos(ImVec2(pos.x + 10, pos.y + 5));
-    ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", current_def_.name.c_str());
+    ImGui::TextColored(cyxwiz::ui::ReadableOn(t, current_def_.color), "%s", current_def_.name.c_str());
 
     // Draw input pins
     float pin_y = pos.y + header_height + 10;
-    ImU32 pin_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+    ImU32 pin_color = cyxwiz::ui::ToU32(t.series[3]);
 
     for (const auto& pin : current_def_.inputs) {
         // Pin circle
@@ -849,14 +851,14 @@ void CustomNodeEditorPanel::RenderNodePreview() {
 
         // Pin name
         ImGui::SetCursorScreenPos(ImVec2(pos.x + 10, pin_y));
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", pin.name.c_str());
+        ImGui::TextColored(t.text, "%s", pin.name.c_str());
 
         pin_y += pin_spacing;
     }
 
     // Draw output pins
     pin_y = pos.y + header_height + 10;
-    ImU32 output_pin_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+    ImU32 output_pin_color = cyxwiz::ui::ToU32(t.series[4]);
 
     for (const auto& pin : current_def_.outputs) {
         // Pin circle
@@ -866,7 +868,7 @@ void CustomNodeEditorPanel::RenderNodePreview() {
         // Pin name (right-aligned)
         ImVec2 text_size = ImGui::CalcTextSize(pin.name.c_str());
         ImGui::SetCursorScreenPos(ImVec2(pos.x + node_width - text_size.x - 10, pin_y));
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", pin.name.c_str());
+        ImGui::TextColored(t.text, "%s", pin.name.c_str());
 
         pin_y += pin_spacing;
     }

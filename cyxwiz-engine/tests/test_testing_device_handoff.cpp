@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
         config.drop_last = false;
         config.train_ratio = 1.0f;
         config.val_ratio = config.test_ratio = 0.0f;
-        config.forbid_native_cpu_fallback = true;
+        config.strict_execution = true;
         config.loss_type = gui::NodeType::CrossEntropyLoss;
         config.loss_params["ignore_index"] = "-100";
         config.loss_params["reduction"] = "mean";

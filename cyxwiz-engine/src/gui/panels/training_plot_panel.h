@@ -6,7 +6,6 @@
 #include "../../core/training_progress_estimate.h"
 #include <chrono>
 #include <functional>
-#include "../../plotting/plot_manager.h"
 #include <imgui.h>
 #include <vector>
 #include <string>

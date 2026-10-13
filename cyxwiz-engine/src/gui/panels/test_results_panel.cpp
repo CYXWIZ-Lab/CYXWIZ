@@ -2,6 +2,10 @@
 #include "../../core/test_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../theme.h"
+#include "../ui_fonts.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -58,6 +62,7 @@ void TestResultsPanel::Render() {
             std::string failure_message;
             bool regression_mode = false;
             bool causal_lm_mode = false;
+            bool metric_learning_mode = false;
             {
                 std::lock_guard<std::mutex> lock(results_mutex_);
                 failed = !results_.is_complete &&
@@ -65,9 +70,10 @@ void TestResultsPanel::Render() {
                 failure_message = results_.status_message;
                 regression_mode = results_.regression_mode;
                 causal_lm_mode = results_.causal_lm_mode;
+                metric_learning_mode = results_.metric_learning_mode;
             }
             if (failed) {
-                ImGui::TextColored(ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
+                ImGui::TextColored(ui::CurrentTokens().error,
                                    "Test failed");
                 ImGui::Separator();
                 ImGui::TextWrapped("%s", failure_message.c_str());
@@ -102,6 +108,13 @@ void TestResultsPanel::Render() {
                     ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
                     selected_tab_ = 2;
                     RenderPerClassTab();
+                    ImGui::EndTabItem();
+                }
+
+                if (!regression_mode && !causal_lm_mode && !metric_learning_mode &&
+                    ImGui::BeginTabItem(ICON_FA_CHART_AREA " Curves")) {
+                    selected_tab_ = 5;
+                    RenderCurvesTab();
                     ImGui::EndTabItem();
                 }
 
@@ -224,11 +237,17 @@ void TestResultsPanel::RenderOverviewTab() {
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);  // Use default font
     ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
 
-    ImGui::TextColored(acc_color, "Accuracy");
+    // A metric-learning model is tested as a 1-NN classifier (TOFIX140 A5).
+    ImGui::TextColored(acc_color, results_.metric_learning_mode ? "1-NN Accuracy" : "Accuracy");
     ImGui::SameLine();
     ImGui::SetCursorPosX(150);
     ImGui::TextColored(acc_color, "%.2f%%", results_.test_accuracy * 100);
     ImGui::PopFont();
+    if (results_.metric_learning_mode) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Each test row takes the class of its nearest other test row in the embedding space.");
+        ImGui::PopTextWrapPos();
+    }
 
     ImGui::Separator();
 
@@ -283,6 +302,35 @@ void TestResultsPanel::RenderOverviewTab() {
 
     ImGui::Separator();
 
+    if (results_.pair_metrics || results_.retrieval_metrics) {
+        if (results_.retrieval_metrics) {
+            const auto& r = *results_.retrieval_metrics;
+            ImGui::Text("Recall@%zu", r.k);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(r.recall_at_k)), "%.4f", r.recall_at_k);
+            ImGui::Text("MRR");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(r.mean_reciprocal_rank)), "%.4f",
+                               r.mean_reciprocal_rank);
+        }
+        if (results_.pair_metrics) {
+            const auto& pm = *results_.pair_metrics;
+            ImGui::Text("Pair Accuracy");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::TextColored(GetMetricColor(static_cast<float>(pm.accuracy)), "%.4f", pm.accuracy);
+            ImGui::SameLine();
+            ImGui::TextDisabled("threshold %g, %zu pairs", pm.threshold, pm.pair_count);
+            ImGui::Text("Mean Distance");
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(170);
+            ImGui::Text("same class %.4f / other class %.4f", pm.positive_distance_mean, pm.negative_distance_mean);
+        }
+        ImGui::Separator();
+    }
+
     // Class summary
     if (!results_.per_class_metrics.empty()) {
         ImGui::Text("Classes: %d", static_cast<int>(results_.per_class_metrics.size()));
@@ -305,12 +353,12 @@ void TestResultsPanel::RenderOverviewTab() {
 
         ImGui::Text("Best Class:");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s (F1: %.4f)",
+        ImGui::TextColored(ui::CurrentTokens().success, "%s (F1: %.4f)",
                            results_.per_class_metrics[best_class].class_name.c_str(), best_f1);
 
         ImGui::Text("Worst Class:");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s (F1: %.4f)",
+        ImGui::TextColored(ui::CurrentTokens().error, "%s (F1: %.4f)",
                            results_.per_class_metrics[worst_class].class_name.c_str(), worst_f1);
     }
 
@@ -367,12 +415,14 @@ void TestResultsPanel::RenderConfusionMatrixTab() {
             ImVec4 bg_color = GetConfusionCellColor(value, max_value);
             if (i == j) {
                 // Diagonal cells - good predictions
-                bg_color = ImVec4(0.1f, 0.5f + 0.5f * (static_cast<float>(value) / max_value), 0.1f, 1.0f);
+                bg_color = ui::Mix(ui::CurrentTokens().bg_raised, ui::CurrentTokens().success,
+                                   0.5f + 0.5f * (static_cast<float>(value) / max_value));
             }
 
             ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg_color);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg_color);
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::ReadableOn(ui::CurrentTokens(), bg_color));
 
             char label[32];
             if (normalize_confusion_) {
@@ -384,7 +434,7 @@ void TestResultsPanel::RenderConfusionMatrixTab() {
             ImGui::SetCursorPosX((j + 1) * (cell_size_ + 5) + 30);
             ImGui::Button(label, ImVec2(cell_size_, cell_size_));
 
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             // Tooltip
             if (ImGui::IsItemHovered()) {
@@ -485,6 +535,86 @@ void TestResultsPanel::RenderPerClassTab() {
     }
 }
 
+void TestResultsPanel::RenderCurvesTab() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto& roc = results_.roc;
+    const auto& pr = results_.pr;
+    if (!roc || !roc->success || !pr || !pr->success) {
+        ui::EmptyState(ICON_FA_CHART_AREA, "No curves for this run",
+                       results_.curves_note.empty() ? "Run the test again to compute ROC and precision-recall."
+                                                    : results_.curves_note.c_str());
+        return;
+    }
+
+    const bool multiclass = !roc->class_auc.empty();
+    const auto class_name = [this](size_t c) {
+        return c < results_.per_class_metrics.size() && !results_.per_class_metrics[c].class_name.empty()
+                   ? results_.per_class_metrics[c].class_name
+                   : "Class " + std::to_string(c);
+    };
+
+    // Headline: AUC and AP (macro over classes for multi-class).
+    {
+        ui::FontScope heading(ui::Font::Heading);
+        ImGui::Text("AUC %.4f", roc->auc);
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::Text("AP %.4f", pr->average_precision);
+    }
+    ImGui::TextColored(t.text_dim, "%s",
+                       multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
+                                  : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
+    if (!results_.curves_note.empty()) {  // classes left out
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.caution, "%s", results_.curves_note.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::Spacing();
+
+    const float plot_height = std::max(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
+    if (!ImGui::BeginTable("##curves", 2, ImGuiTableFlags_SizingStretchSame)) return;
+    ImGui::TableNextColumn();
+    if (ImPlot::BeginPlot("ROC", ImVec2(-1, plot_height), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("False positive rate", "True positive rate");
+        ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.02, ImPlotCond_Always);
+        const double diagonal[] = {0.0, 1.0};
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.6f));
+        ImPlot::PlotLine("##chance", diagonal, diagonal, 2);
+        if (multiclass) {
+            for (size_t c = 0; c < roc->class_fpr.size(); ++c) {
+                if (roc->class_fpr[c].empty()) continue;  // skipped: no test sample of the class
+                const std::string label = class_name(c) + " (AUC " + std::to_string(roc->class_auc[c]).substr(0, 5) + ")";
+                ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
+                ImPlot::PlotLine(label.c_str(), roc->class_fpr[c].data(), roc->class_tpr[c].data(),
+                                 static_cast<int>(roc->class_fpr[c].size()));
+            }
+        } else {
+            ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+            ImPlot::PlotLine("ROC", roc->fpr.data(), roc->tpr.data(), static_cast<int>(roc->fpr.size()));
+        }
+        ImPlot::EndPlot();
+    }
+    ImGui::TableNextColumn();
+    if (ImPlot::BeginPlot("Precision-recall", ImVec2(-1, plot_height), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("Recall", "Precision");
+        ImPlot::SetupAxesLimits(-0.02, 1.02, -0.02, 1.02, ImPlotCond_Always);
+        if (multiclass) {
+            for (size_t c = 0; c < pr->class_recall.size(); ++c) {
+                if (pr->class_recall[c].empty()) continue;
+                const std::string label = class_name(c) + " (AP " + std::to_string(pr->class_ap[c]).substr(0, 5) + ")";
+                ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
+                ImPlot::PlotLine(label.c_str(), pr->class_recall[c].data(), pr->class_precision[c].data(),
+                                 static_cast<int>(pr->class_recall[c].size()));
+            }
+        } else {
+            ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+            ImPlot::PlotLine("PR", pr->recall.data(), pr->precision.data(), static_cast<int>(pr->recall.size()));
+        }
+        ImPlot::EndPlot();
+    }
+    ImGui::EndTable();
+}
+
 void TestResultsPanel::RenderPredictionsTab() {
     std::lock_guard<std::mutex> lock(results_mutex_);
 
@@ -537,9 +667,9 @@ void TestResultsPanel::RenderPredictionsTab() {
                 // Predicted
                 ImGui::TableNextColumn();
                 if (correct) {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%d", pred);
+                    ImGui::TextColored(ui::CurrentTokens().success, "%d", pred);
                 } else {
-                    ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%d", pred);
+                    ImGui::TextColored(ui::CurrentTokens().error, "%d", pred);
                 }
 
                 // Actual
@@ -548,9 +678,10 @@ void TestResultsPanel::RenderPredictionsTab() {
 
                 // Confidence bar
                 ImGui::TableNextColumn();
-                ImVec4 conf_color = conf > 0.8f ? ImVec4(0.2f, 0.7f, 0.2f, 1.0f) :
-                                    conf > 0.5f ? ImVec4(0.7f, 0.7f, 0.2f, 1.0f) :
-                                                  ImVec4(0.7f, 0.3f, 0.2f, 1.0f);
+                const ui::Tokens& t = ui::CurrentTokens();
+                ImVec4 conf_color = conf > 0.8f ? t.success :
+                                    conf > 0.5f ? t.warning :
+                                                  t.caution;
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, conf_color);
                 ImGui::ProgressBar(conf, ImVec2(-1, 0), "");
                 ImGui::PopStyleColor();
@@ -564,24 +695,27 @@ void TestResultsPanel::RenderPredictionsTab() {
 }
 
 ImVec4 TestResultsPanel::GetAccuracyColor(float accuracy) {
-    if (accuracy >= 0.95f) return ImVec4(0.2f, 0.9f, 0.2f, 1.0f);  // Green
-    if (accuracy >= 0.85f) return ImVec4(0.5f, 0.9f, 0.2f, 1.0f);  // Yellow-green
-    if (accuracy >= 0.70f) return ImVec4(0.9f, 0.9f, 0.2f, 1.0f);  // Yellow
-    if (accuracy >= 0.50f) return ImVec4(0.9f, 0.6f, 0.2f, 1.0f);  // Orange
-    return ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (accuracy >= 0.95f) return t.success;
+    if (accuracy >= 0.85f) return ui::Mix(t.success, t.warning, 0.5f);
+    if (accuracy >= 0.70f) return t.warning;
+    if (accuracy >= 0.50f) return t.caution;
+    return t.error;
 }
 
 ImVec4 TestResultsPanel::GetMetricColor(float value) {
-    if (value >= 0.9f) return ImVec4(0.2f, 0.9f, 0.2f, 1.0f);
-    if (value >= 0.7f) return ImVec4(0.9f, 0.9f, 0.2f, 1.0f);
-    if (value >= 0.5f) return ImVec4(0.9f, 0.6f, 0.2f, 1.0f);
-    return ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (value >= 0.9f) return t.success;
+    if (value >= 0.7f) return t.warning;
+    if (value >= 0.5f) return t.caution;
+    return t.error;
 }
 
 ImVec4 TestResultsPanel::GetConfusionCellColor(int value, int max_value) {
-    if (max_value == 0) return ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (max_value == 0) return t.bg_raised;
     float intensity = static_cast<float>(value) / max_value;
-    return ImVec4(0.3f + 0.5f * intensity, 0.2f, 0.2f, 1.0f);
+    return ui::Mix(t.bg_raised, t.error, 0.3f + 0.5f * intensity);
 }
 
 void TestResultsPanel::ExportToCSV() {
@@ -675,7 +809,7 @@ void TestResultsPanel::RenderComparisonTab() {
             const bool better = r.lower_is_better ? delta < 0.0f : delta > 0.0f;
             const bool same = delta == 0.0f;
             const ImVec4 colour = same ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                                       : (better ? ImVec4(0.24f, 0.84f, 0.55f, 1.0f) : ImVec4(0.96f, 0.63f, 0.29f, 1.0f));
+                                       : (better ? ui::CurrentTokens().success : ui::CurrentTokens().caution);
             ImGui::TextColored(colour, r.percent ? "%+.2f%%" : "%+.4f", delta);
         }
         ImGui::EndTable();

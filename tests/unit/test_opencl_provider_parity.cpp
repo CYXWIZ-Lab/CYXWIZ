@@ -6,7 +6,6 @@
 
 #include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/neural_provider.h>
-#include <cyxwiz/recurrent_cuda_placement.h>
 #include <cyxwiz/tensor.h>
 
 #ifndef NOMINMAX
@@ -14,6 +13,7 @@
 #endif
 #include <arrayfire.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -142,7 +142,7 @@ TEST_CASE("OpenCL provider registers as the opencl tenant and serves only opencl
           cyxwiz::BackendFallbackReason::OpenclProviderUnavailable);
 }
 
-TEST_CASE("OpenCL provider rnn/lstm/gru forward match the CPU references",
+TEST_CASE("OpenCL provider rnn/lstm/gru forward match the reference layers",
           "[gpu_execution][neural_provider][opencl][parity]") {
     auto provider = OpenclProvider();
     if (!provider) {
@@ -154,11 +154,9 @@ TEST_CASE("OpenCL provider rnn/lstm/gru forward match the CPU references",
     {
         cyxwiz::LSTMLayer reference(6, 16);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         reference.Forward(input);
         const auto expected = reference.Forward(input);
         const auto expected_c = reference.GetCellState();
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         const auto p = reference.GetParameters();
         const cyxwiz::Tensor W_ih = p.at("layer0_W_ih"), W_hh = p.at("layer0_W_hh"),
@@ -180,10 +178,8 @@ TEST_CASE("OpenCL provider rnn/lstm/gru forward match the CPU references",
     {
         cyxwiz::GRULayer reference(6, 16);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         reference.Forward(input);
         const auto expected = reference.Forward(input);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         const auto p = reference.GetParameters();
         const cyxwiz::Tensor W_ih = p.at("layer0_W_ih"), W_hh = p.at("layer0_W_hh"),
@@ -217,7 +213,7 @@ TEST_CASE("OpenCL provider rnn/lstm/gru forward match the CPU references",
     }
 }
 
-TEST_CASE("OpenCL provider lstm/gru backward match the CPU BPTT references",
+TEST_CASE("OpenCL provider lstm/gru backward match the ArrayFire BPTT",
           "[gpu_execution][neural_provider][opencl][parity]") {
     auto provider = OpenclProvider();
     if (!provider) {
@@ -234,24 +230,20 @@ TEST_CASE("OpenCL provider lstm/gru backward match the CPU BPTT references",
         if (lstm) {
             cyxwiz::LSTMLayer reference(6, 16);
             cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-            cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
             reference.Forward(input);
             params = reference.GetParameters();
             reference.Forward(input);
             expected_dx = reference.Backward(upstream);
             grads = reference.GetParameters();
-            cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
             cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         } else {
             cyxwiz::GRULayer reference(6, 16);
             cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-            cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
             reference.Forward(input);
             params = reference.GetParameters();
             reference.Forward(input);
             expected_dx = reference.Backward(upstream);
             grads = reference.GetParameters();
-            cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
             cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         }
         const size_t gate_width = lstm ? 64 : 48;
@@ -376,14 +368,12 @@ TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an O
     {
         cyxwiz::LSTMLayer layer(5, 10, 2);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         layer.Forward(input);
         const auto expected = layer.Forward(input);
         const auto expected_h = layer.GetHiddenState();
         const auto expected_c = layer.GetCellState();
         const auto expected_dx = layer.Backward(upstream);
         const auto oracle = layer.GetParameters();
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         const auto actual = layer.Forward(input);
         const auto actual_h = layer.GetHiddenState();
@@ -402,13 +392,11 @@ TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an O
     {
         cyxwiz::GRULayer layer(5, 10, 2);
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
         layer.Forward(input);
         const auto expected = layer.Forward(input);
         const auto expected_h = layer.GetHiddenState();
         const auto expected_dx = layer.Backward(upstream);
         const auto oracle = layer.GetParameters();
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
         cyxwiz::SetNeuralProvidersDisabledForTesting(false);
         const auto actual = layer.Forward(input);
         const auto actual_h = layer.GetHiddenState();
@@ -460,7 +448,7 @@ TEST_CASE("OpenCL provider declines tuples below the retention floor and serves 
     REQUIRE_FALSE(provider->QueryCapability(below).supported);
 }
 
-TEST_CASE("OpenCL provider survives repeated training runs and reports its speed vs native CPU",
+TEST_CASE("OpenCL provider survives repeated training runs and reports its speed vs ArrayFire",
           "[gpu_execution][neural_provider][opencl][leak]") {
     auto provider = OpenclProvider();
     if (!provider) {
@@ -504,29 +492,27 @@ TEST_CASE("OpenCL provider survives repeated training runs and reports its speed
         bb.gradients = {&dW_ih, &dW_hh, &db_ih, &db_hh};
         REQUIRE(provider->Execute(backward, bb).ok);
     }
-    // Native CPU LSTM forward on the same shape for the retention record.
+    // ArrayFire LSTM forward on the same shape for the retention record.
     cyxwiz::LSTMLayer reference(64, 64);
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
     reference.Forward(x);
-    std::vector<double> native_ms;
+    std::vector<double> arrayfire_ms;
     for (int i = 0; i < 3; ++i) {
         reference.ResetState();
         const auto start = std::chrono::steady_clock::now();
         reference.Forward(x);
         const auto end = std::chrono::steady_clock::now();
-        native_ms.push_back(
+        arrayfire_ms.push_back(
             std::chrono::duration<double, std::milli>(end - start).count());
     }
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     std::sort(forward_ms.begin(), forward_ms.end());
-    std::sort(native_ms.begin(), native_ms.end());
+    std::sort(arrayfire_ms.begin(), arrayfire_ms.end());
     const double provider_median = forward_ms[forward_ms.size() / 2];
-    const double native_median = native_ms[native_ms.size() / 2];
+    const double arrayfire_median = arrayfire_ms[arrayfire_ms.size() / 2];
     WARN("opencl lstm_forward 32x32x64x64: provider "
-         << provider_median << " ms vs native CPU " << native_median
-         << " ms (" << native_median / provider_median << "x)");
+         << provider_median << " ms vs ArrayFire " << arrayfire_median
+         << " ms (" << arrayfire_median / provider_median << "x)");
 }
 
 #endif // CYXWIZ_HAS_OPENCL_DNN_PROVIDER

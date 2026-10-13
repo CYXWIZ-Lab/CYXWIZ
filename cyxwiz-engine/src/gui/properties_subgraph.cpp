@@ -43,7 +43,7 @@ std::string StepIcon(NodeType type) {
 void Properties::RenderSubgraph(MLNode& node, const cyxwiz::NodeMetadata* metadata) {
     const ui::Tokens& t = ui::CurrentTokens();
     if (!node_editor_) {
-        RenderGenericSections(node, metadata, false);
+        RenderGenericSections(node);
         return;
     }
     const auto summary = node_editor_->GetSubgraphSummary(node.id);
@@ -160,7 +160,7 @@ void Properties::RenderSubgraph(MLNode& node, const cyxwiz::NodeMetadata* metada
     Dim("Name");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##subgraph_name", &node.name);
+    if (ImGui::InputText("##subgraph_name", &node.name)) NotifyEdited();
 
     std::vector<std::pair<std::string, std::string>> rows;
     rows.emplace_back("Node ID", std::to_string(node.id));

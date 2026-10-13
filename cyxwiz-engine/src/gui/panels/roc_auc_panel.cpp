@@ -1,5 +1,9 @@
 #include "roc_auc_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -20,16 +24,16 @@ void ROCAUCPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_AREA) + " ROC Curve / AUC###ROCAUCPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("roc_auc", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (roc_result_.success) {
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::Text("AUC %.4f", roc_result_.auc);
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "%d points", static_cast<int>(roc_result_.fpr.size()));
             if (ImGui::BeginTabBar("ROCTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_AREA " ROC Curve")) {
                     RenderROCCurve();
@@ -46,84 +50,66 @@ void ROCAUCPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select true labels and prediction scores, then click Compute.");
+            ui::EmptyState(ICON_FA_CHART_AREA, "No ROC curve yet",
+                           "Pick the true labels and the prediction scores, then Compute ROC.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void ROCAUCPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("roc_auc_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_TAGS " Column Selection");
-        ImGui::Spacing();
-
+        ui::SettingsSection("Columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("True Labels (0/1)", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Prediction Scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("True labels (0 / 1)");
+        ImGui::Combo("##true_labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Prediction scores");
+        ImGui::Combo("##scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_CALCULATOR " Compute ROC", ImVec2(-1, 30))) {
+        if (ui::PrimaryButton("Compute ROC", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             ComputeROC();
         }
     }
 
-    if (roc_result_.success) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_CIRCLE_INFO " Results");
-        ImGui::BulletText("AUC: %.4f", roc_result_.auc);
-        ImGui::BulletText("Points: %d", static_cast<int>(roc_result_.fpr.size()));
-    }
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void ROCAUCPanel::RenderROCCurve() {
     if (!roc_result_.success) return;
 
-    ImGui::Text("ROC Curve (AUC = %.4f)", roc_result_.auc);
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
+
 
     if (ImPlot::BeginPlot("##ROCCurve", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("False Positive Rate", "True Positive Rate");
-        ImPlot::SetupAxisLimits(ImAxis_X1, 0, 1);
-        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1);
+        // A little past [0, 1], so curve segments along x = 0 and y = 1 are
+        // not hidden under the plot frame.
+        ImPlot::SetupAxisLimits(ImAxis_X1, -0.02, 1.02);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.02, 1.02);
 
         // Random classifier line (diagonal)
         double diag_x[] = {0.0, 1.0};
         double diag_y[] = {0.0, 1.0};
-        ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 0.7f), 1.0f);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.7f), 1.0f);
         ImPlot::PlotLine("Random", diag_x, diag_y, 2);
 
         // ROC curve
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("ROC", roc_result_.fpr.data(), roc_result_.tpr.data(), static_cast<int>(roc_result_.fpr.size()));
 
         // Shade area under curve
-        ImPlot::SetNextFillStyle(ImVec4(0.0f, 0.5f, 1.0f, 0.2f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
         ImPlot::PlotShaded("AUC Area", roc_result_.fpr.data(), roc_result_.tpr.data(), static_cast<int>(roc_result_.fpr.size()), 0);
 
         // Current threshold point
@@ -142,7 +128,7 @@ void ROCAUCPanel::RenderROCCurve() {
 
             double point_x = roc_result_.fpr[best_idx];
             double point_y = roc_result_.tpr[best_idx];
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, t.series[4], 2, t.series[4]);
             ImPlot::PlotScatter("Current", &point_x, &point_y, 1);
         }
 
@@ -255,23 +241,24 @@ void ROCAUCPanel::RenderMetrics() {
     ImGui::Text("AUC Score: %.4f", roc_result_.auc);
     ImGui::Spacing();
 
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation;
     ImVec4 color;
     if (roc_result_.auc >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+        color = t.success;
     } else if (roc_result_.auc >= 0.8) {
         interpretation = "Good";
-        color = ImVec4(0.6f, 0.8f, 0.0f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (roc_result_.auc >= 0.7) {
         interpretation = "Fair";
-        color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+        color = t.warning;
     } else if (roc_result_.auc >= 0.6) {
         interpretation = "Poor";
-        color = ImVec4(1.0f, 0.5f, 0.0f, 1.0f);
+        color = t.caution;
     } else {
         interpretation = "Fail";
-        color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        color = t.error;
     }
 
     ImGui::TextColored(color, "Interpretation: %s", interpretation);
@@ -305,22 +292,18 @@ void ROCAUCPanel::RenderMetrics() {
             fpr_rev.push_back(roc_result_.fpr[index]);
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("TPR", thresh_rev.data(), tpr_rev.data(), static_cast<int>(thresh_rev.size()));
 
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[4], 2.0f);
         ImPlot::PlotLine("FPR", thresh_rev.data(), fpr_rev.data(), static_cast<int>(thresh_rev.size()));
 
         ImPlot::EndPlot();
     }
 }
 
-void ROCAUCPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void ROCAUCPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     true_label_column_ = 0;
     int max_col = static_cast<int>(column_names_.size()) - 1;

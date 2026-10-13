@@ -287,8 +287,8 @@ int RunBenchmarkCommand(const char* argv0) {
         std::string error;
         if (code == 0 && cyxwiz::LoadTrainingBenchmarkResults(out, loaded, error) && loaded.size() == 1) {
             const auto& r = loaded.front();
-            std::cout << fmt::format("{:.0f} tokens/s, {:.1f} ms/step, {} CPU fallbacks\n", r.tokens_per_second,
-                                     r.step_ms_median, r.native_cpu_fallbacks);
+            std::cout << fmt::format("{:.0f} tokens/s, {:.1f} ms/step\n", r.tokens_per_second,
+                                     r.step_ms_median);
             results.push_back(r);
             continue;
         }

@@ -1,7 +1,5 @@
 #include "arrayfire_host_materialization.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 #include <arrayfire.h>
 
 #include <stdexcept>
@@ -82,4 +80,3 @@ void MaterializeArrayFireToHost(
 
 } // namespace cyxwiz
 
-#endif

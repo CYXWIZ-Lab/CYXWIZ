@@ -48,6 +48,10 @@ int main() {
     Check(SaveAsPath("C:/w/x", "eda.ipynb") == "C:/w/x.ipynb", "a notebook stays a notebook");
     Check(IsNotebookJson("C:/w/EDA.IPYNB") && !IsNotebookJson("C:/w/eda.cyx") && !IsNotebookJson(""), "ipynb by extension");
     Check(SaveAsPath("C:/w/x", "Untitled") == "C:/w/x.cyx", "no extension anywhere: .cyx");
+    Check(IsPythonSource("C:/w/a.PY") && IsPythonSource("C:/w/a.cyx") && IsPythonSource("C:/w/e.ipynb") &&
+              IsPythonSource(""), "scripts and unsaved tabs are Python");
+    Check(!IsPythonSource("C:/w/helix.csv") && !IsPythonSource("C:/w/env.json") && !IsPythonSource("C:/w/x.md"),
+          "data and text files are not Python");
 
     // Item 3: BOM and CRLF are kept.
     const std::string crlf_bom = "\xEF\xBB\xBFimport os\r\nprint(1)\r\n";

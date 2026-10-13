@@ -1,6 +1,6 @@
 #pragma once
 
-#include "algorithms/arrayfire_backend_utils.h"
+#include "execution_policy.h"
 
 #include <cyxwiz/device.h>
 
@@ -17,10 +17,11 @@ struct PreferredComputeRoute {
 };
 
 struct ComputeRuntimeConfig {
-    int schema = 1;
+    // 2: default_execution_policy (compatibility / strict), TOFIX140 F9.
+    int schema = 2;
     std::optional<PreferredComputeRoute> preferred_route;
-    ArrayFireFallbackPolicy default_fallback_policy =
-        ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+    ExecutionPolicy default_execution_policy =
+        ExecutionPolicy::Compatibility;
 };
 
 struct ComputeRuntimeConfigLoadResult {
@@ -40,9 +41,9 @@ bool UpdatePreferredComputeRouteAtomic(
     const std::filesystem::path& path,
     const PreferredComputeRoute& route,
     std::string& error);
-bool UpdateDefaultFallbackPolicyAtomic(
+bool UpdateDefaultExecutionPolicyAtomic(
     const std::filesystem::path& path,
-    ArrayFireFallbackPolicy policy,
+    ExecutionPolicy policy,
     std::string& error);
 
 } // namespace cyxwiz

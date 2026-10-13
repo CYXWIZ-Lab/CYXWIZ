@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace cyxwiz {
@@ -15,8 +16,9 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     bool shuffle,
     int num_workers,
     uint32_t seed)
-    : batch_size_(batch_size), shuffle_(shuffle),
-      num_workers_(std::max(0, num_workers)), rng_(seed)
+    : train_split_(train_split), seed_(seed), batch_size_(batch_size), shuffle_(shuffle),
+      num_workers_(std::max(0, num_workers)),
+      augmentation_rng_(seed ^ 0x9E3779B9u), rng_(seed)
 {
     // Extract target dimensions from the Resize config. If no Resize node
     // was in the graph, fall back to 224x224 which is the most common
@@ -30,12 +32,12 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     // (Phase 1.4) should have caught it as an error. The member defaults
     // (224x224) only apply as a last-resort fallback.
 
-    channels_ = preprocess_config.convert_to_grayscale ? 1 : 3;
+    decoded_shape_ = {static_cast<size_t>(target_height_), static_cast<size_t>(target_width_), 3};
+    sample_shape_ = decoded_shape_;
 
-    // Create the underlying dataset with the target size baked in. This
-    // avoids double resize: the dataset decodes+resizes in one pass via
-    // ImageUtils::LoadImage + ResizeImage. The ImageTransform below then
-    // only handles augmentation / blur / enhancement — NOT resize.
+    // Create the underlying dataset with the target size baked in, so the
+    // dataset decodes and resizes in one pass (ImageUtils::LoadImage +
+    // ResizeImage). The image transforms run on the device afterwards.
     if (entry.layout == 1 && !entry.labels_csv.empty()) {
         auto csv_ds = std::make_shared<ImageCSVDataset>(
             entry.folder_path, entry.labels_csv,
@@ -44,7 +46,8 @@ ImageDatasetBatcher::ImageDatasetBatcher(
         spdlog::info("ImageDatasetBatcher: created ImageCSVDataset {}x{}, {} samples",
                      target_width_, target_height_, csv_ds->Size());
     } else {
-        auto folder_ds = std::make_shared<ImageFolderDataset>(entry.folder_path);
+        auto folder_ds = std::make_shared<ImageFolderDataset>(
+            entry.folder_path, target_width_, target_height_);
         dataset_ = folder_ds;
         spdlog::info("ImageDatasetBatcher: created ImageFolderDataset {}x{}, {} samples",
                      target_width_, target_height_, folder_ds->Size());
@@ -55,28 +58,9 @@ ImageDatasetBatcher::ImageDatasetBatcher(
         return;
     }
 
-    // Build the ImageTransform for augmentation / blur / enhancement.
-    // Set resize_mode to None since the dataset already resized to target.
-    ImagePreprocessingConfig aug_config = preprocess_config;
-    aug_config.resize_mode = ResizeMode::None;
-    aug_config.target_width = 0;
-    aug_config.target_height = 0;
-    transform_ = std::make_unique<ImageTransform>(aug_config);
-
-    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
-    // full rationale). Sequential split was leaking class-imbalanced
-    // val sets that made the reported val metrics meaningless.
-    size_t total = dataset_->Size();
-    size_t train_count = static_cast<size_t>(total * train_split);
-    if (train_count == 0) train_count = total;
-    if (train_count > total) train_count = total;
-
-    std::vector<size_t> all_indices(total);
+    std::vector<size_t> all_indices(dataset_->Size());
     std::iota(all_indices.begin(), all_indices.end(), 0);
-    std::shuffle(all_indices.begin(), all_indices.end(), rng_);
-
-    train_indices_.assign(all_indices.begin(), all_indices.begin() + train_count);
-    val_indices_.assign(all_indices.begin() + train_count, all_indices.end());
+    Split(std::move(all_indices));
 
     num_classes_ = entry.num_classes;
     if (num_classes_ == 0) {
@@ -89,6 +73,35 @@ ImageDatasetBatcher::ImageDatasetBatcher(
                  train_indices_.size(), val_indices_.size(), num_classes_, batch_size_, num_workers_);
 }
 
+void ImageDatasetBatcher::Split(std::vector<size_t> indices) {
+    // Shuffled train/val split (see audio_dataset_batcher.cpp for the
+    // full rationale). Sequential split was leaking class-imbalanced
+    // val sets that made the reported val metrics meaningless.
+    rng_.seed(seed_);
+    const size_t total = indices.size();
+    size_t train_count = static_cast<size_t>(total * train_split_);
+    if (train_count == 0) train_count = total;
+    if (train_count > total) train_count = total;
+    std::shuffle(indices.begin(), indices.end(), rng_);
+    train_indices_.assign(indices.begin(), indices.begin() + train_count);
+    val_indices_.assign(indices.begin() + train_count, indices.end());
+}
+
+void ImageDatasetBatcher::ExcludeFiles(const std::vector<std::string>& files) {
+    if (!dataset_ || files.empty()) return;
+    const std::unordered_set<std::string> excluded(files.begin(), files.end());
+    std::vector<size_t> kept;
+    kept.reserve(dataset_->Size());
+    for (size_t i = 0; i < dataset_->Size(); ++i) {
+        if (!excluded.count(dataset_->GetItemSource(i))) kept.push_back(i);
+    }
+    const size_t left_out = dataset_->Size() - kept.size();
+    Split(std::move(kept));
+    Reset();
+    spdlog::info("ImageDatasetBatcher: Quality Analyzer leaves out {} of {} images; split again: {} train / {} val",
+                 left_out, dataset_->Size(), train_indices_.size(), val_indices_.size());
+}
+
 Batch ImageDatasetBatcher::GetNextBatch() {
     Batch batch;
     if (!dataset_ || IsEpochComplete()) return batch;
@@ -97,12 +110,9 @@ Batch ImageDatasetBatcher::GetNextBatch() {
                                    epoch_order_.size() - current_idx_);
     if (actual_size == 0) return batch;
 
-    size_t sample_dim = static_cast<size_t>(target_width_) *
-                        static_cast<size_t>(target_height_) *
-                        static_cast<size_t>(channels_);
+    const size_t sample_dim = decoded_shape_.Size();
 
-    std::vector<float> batch_data;
-    batch_data.reserve(actual_size * sample_dim);
+    std::vector<float> batch_data(actual_size * sample_dim, 0.0f);
     std::vector<float> batch_labels;
 
     if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
@@ -111,12 +121,17 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         batch_labels.reserve(actual_size);
     }
 
-    std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
-
+    // Decode on the CPU workers straight into the batch rows; a sample that
+    // fails to load stays zeros with label 0.
+    std::vector<int> labels(actual_size, 0);
     auto load_range = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
-            size_t idx = epoch_order_[current_idx_ + i];
-            samples[i] = dataset_->GetItem(idx);
+            const size_t idx = epoch_order_[current_idx_ + i];
+            auto [pixels, label] = dataset_->GetItem(idx);
+            if (pixels.size() == sample_dim) {
+                std::copy(pixels.begin(), pixels.end(), batch_data.begin() + i * sample_dim);
+                labels[i] = label;
+            }
         }
     };
 
@@ -141,37 +156,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     }
 
     for (size_t i = 0; i < actual_size; ++i) {
-        auto& [pixels, label] = samples[i];
-
-        if (pixels.empty()) {
-            // Fill with zeros on bad samples
-            pixels.resize(sample_dim, 0.0f);
-            label = 0;
-        }
-
-        // Apply augmentation transforms (resize already done by dataset)
-        if (transform_) {
-            std::vector<size_t> shape = {
-                static_cast<size_t>(target_height_),
-                static_cast<size_t>(target_width_),
-                static_cast<size_t>(channels_)};
-            Tensor img_tensor(shape, pixels.data(), DataType::Float32);
-            Tensor transformed = transform_->Apply(img_tensor);
-            const float* tdata = transformed.ReadData<float>();
-            size_t tcount = transformed.NumElements();
-            pixels.assign(tdata, tdata + tcount);
-        }
-
-        // Normalize if requested
-        if (do_normalize_) {
-            for (float& v : pixels) {
-                v = (v - norm_mean_) / norm_std_;
-            }
-        }
-
-        // Flatten is default for image → Dense head
-        batch_data.insert(batch_data.end(), pixels.begin(), pixels.end());
-
+        const int label = labels[i];
         if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
             if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
                 batch_labels[i * num_classes_ + label] = 1.0f;
@@ -181,23 +166,25 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         }
     }
 
-    if (flatten_) {
-        batch.data = Tensor({actual_size, sample_dim}, batch_data.data(), DataType::Float32);
-    } else {
-        batch.data = Tensor({actual_size,
-                             static_cast<size_t>(target_height_),
-                             static_cast<size_t>(target_width_),
-                             static_cast<size_t>(channels_)},
-                            batch_data.data(), DataType::Float32);
-    }
-
-    if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
+    const bool onehot = !scalar_label_mode_ && do_onehot_ && num_classes_ > 0;
+    if (onehot) {
         batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);
     } else if (scalar_label_mode_) {
         batch.labels = Tensor({actual_size, 1}, batch_labels.data(), DataType::Float32);
     } else {
         batch.labels = Tensor({actual_size}, batch_labels.data(), DataType::Float32);
     }
+
+    // One upload, then the transforms, the batch mix (one-hot labels mixed
+    // alongside) and Normalize on the device; the batch stays there for the model.
+    Tensor rows({actual_size, sample_dim}, batch_data.data(), DataType::Float32);
+    if (!augmentation_.Empty()) {
+        rows = augmentation_.Apply(rows, decoded_shape_, current_phase_ == BatcherPhase::Train,
+                                   augmentation_rng_, onehot ? &batch.labels : nullptr);
+    }
+    batch.data = flatten_
+        ? rows
+        : rows.Reshape({actual_size, sample_shape_.height, sample_shape_.width, sample_shape_.channels});
 
     batch.size = actual_size;
     current_idx_ += actual_size;
@@ -244,9 +231,17 @@ size_t ImageDatasetBatcher::GetNumSamples() const {
 }
 
 void ImageDatasetBatcher::SetNormalization(float mean, float std_dev) {
-    norm_mean_ = mean;
-    norm_std_ = (std_dev > 0.0f) ? std_dev : 1.0f;
-    do_normalize_ = true;
+    augmentation_.normalize = true;
+    augmentation_.mean = mean;
+    augmentation_.std_dev = (std_dev > 0.0f) ? std_dev : 1.0f;
+}
+
+void ImageDatasetBatcher::SetImageTransforms(const image::ImageAugmentation& compiled) {
+    augmentation_.ops = compiled.ops;
+    augmentation_.mix = compiled.mix;
+    augmentation_.mix_alpha = compiled.mix_alpha;
+    augmentation_.mix_probability = compiled.mix_probability;
+    sample_shape_ = augmentation_.ShapeAfter(decoded_shape_);
 }
 
 void ImageDatasetBatcher::SetOneHotEncoding(size_t num_classes) {

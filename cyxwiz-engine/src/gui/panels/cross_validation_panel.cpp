@@ -1,8 +1,12 @@
 #include "cross_validation_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
-#include "../../core/data_analyzer.h"
+#include "../../core/table_class_labels.h"
+#include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -23,17 +27,10 @@ void CrossValidationPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_REPEAT) + " Cross-Validation###CrossValidationPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);
+        ui::BeginSettingsColumn("cross_validation", 300.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderCVSettings();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (!fold_splits_.empty()) {
             if (ImGui::BeginTabBar("CVTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_BAR " Results")) {
@@ -47,37 +44,28 @@ void CrossValidationPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Configure settings and click 'Generate Folds' or 'Run CV'.");
+            ui::EmptyState(ICON_FA_REPEAT, "No folds yet",
+                           "Pick a dataset, set the CV settings, then Generate Folds.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void CrossValidationPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("cross_validation_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
+        ui::SettingsSection("Columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("Target Column", &target_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Target column");
+        ImGui::Combo("##target_column", &target_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
-        ImGui::Spacing();
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("FeatureSelect", ImVec2(0, 120), true);
+        ui::FieldLabel("Feature columns");
+        ui::BeginInsetList("##columns", 120.0f);
         for (size_t i = 0; i < column_names_.size(); ++i) {
             if (static_cast<int>(i) == target_column_) continue;  // Skip target
             bool selected = selected_features_[i];
@@ -85,15 +73,15 @@ void CrossValidationPanel::RenderDataSelector() {
                 selected_features_[i] = selected;
             }
         }
-        ImGui::EndChild();
+        ui::EndInsetList();
     }
 }
 
 void CrossValidationPanel::RenderCVSettings() {
-    ImGui::Text(ICON_FA_COG " CV Settings");
-    ImGui::Spacing();
+    ui::SettingsSection("CV settings");
 
-    ImGui::SliderInt("K Folds", &n_folds_, 2, 20);
+    ui::FieldLabel("K folds");
+    ImGui::SliderInt("##k_folds", &n_folds_, 2, 20);
 
     ImGui::Checkbox("Stratified", &stratified_);
     if (ImGui::IsItemHovered()) {
@@ -103,34 +91,33 @@ void CrossValidationPanel::RenderCVSettings() {
     ImGui::Checkbox("Shuffle", &shuffle_);
 
     if (shuffle_) {
-        ImGui::InputInt("Random Seed", &random_seed_);
+        ui::FieldLabel("Random seed");
+        ImGui::InputInt("##random_seed", &random_seed_);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
 
     bool can_run = !is_computing_ && current_table_ != nullptr;
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_LAYER_GROUP " Generate Folds", ImVec2(-1, 30))) {
+    const char* run_reason = is_computing_ ? "Generating folds" : "Pick a dataset first";
+    if (ui::PrimaryButton("Generate Folds", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunCrossValidation();
     }
 
-    if (!can_run) ImGui::EndDisabled();
-
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     if (is_computing_) {
-        ImGui::Text("Computing...");
+        ImGui::TextWrapped("Computing...");
     }
 
     if (!status_message_.empty()) {
-        ImGui::Spacing();
         ImGui::TextWrapped("%s", status_message_.c_str());
     }
+    ImGui::PopStyleColor();
 }
 
 void CrossValidationPanel::RenderResults() {
     if (fold_splits_.empty()) return;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text(ICON_FA_CHART_BAR " Cross-Validation Summary");
     ImGui::Separator();
@@ -157,12 +144,13 @@ void CrossValidationPanel::RenderResults() {
     if (ImPlot::BeginPlot("##FoldSizes", ImVec2(-1, 200))) {
         ImPlot::SetupAxes("Fold", "Samples");
         ImPlot::SetupAxisLimits(ImAxis_X1, 0.5, n_folds_ + 0.5);
+        ImPlot::SetupAxisTicks(ImAxis_X1, 1, n_folds_, n_folds_);  // one tick per fold
 
-        ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.5f, 0.8f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("Train", train_positions.data(), train_sizes.data(),
                          n_folds_, 0.4);
 
-        ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.3f, 0.2f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[4], 0.8f));
         ImPlot::PlotBars("Validation", val_positions.data(), val_sizes.data(),
                          n_folds_, 0.4);
 
@@ -177,28 +165,27 @@ void CrossValidationPanel::RenderResults() {
     ImGui::Text("Average Train Size: %.1f samples", mean_train);
     ImGui::Text("Average Validation Size: %.1f samples", mean_val);
 
-    // If stratified, show class distribution
-    if (stratified_ && current_table_) {
+    // If the folds were stratified, show the class distribution they kept
+    if (!class_labels_.columns.empty()) {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Class Distribution (Stratified):");
 
-        // Count classes in original data
+        const auto& labels = class_labels_.columns[0];
         std::map<int, int> class_counts;
-        int n_rows = static_cast<int>(current_table_->GetRowCount());
-        for (int row = 0; row < n_rows; ++row) {
-            auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
-            if (val.has_value()) {
-                int cls = static_cast<int>(val.value());
-                class_counts[cls]++;
-            }
+        for (const auto& label : labels) {
+            if (label) class_counts[*label]++;
         }
 
         for (const auto& [cls, count] : class_counts) {
-            double ratio = static_cast<double>(count) / n_rows * 100;
-            ImGui::BulletText("Class %d: %d (%.1f%%)", cls, count, ratio);
+            double ratio = static_cast<double>(count) / labels.size() * 100;
+            ImGui::BulletText("%s: %d (%.1f%%)", ClassName(cls).c_str(), count, ratio);
         }
     }
+}
+
+std::string CrossValidationPanel::ClassName(int cls) const {
+    return class_labels_.IsText() ? class_labels_.Name(cls) : "Class " + class_labels_.Name(cls);
 }
 
 void CrossValidationPanel::RenderFoldDetails() {
@@ -233,21 +220,19 @@ void CrossValidationPanel::RenderFoldDetails() {
             ImGui::TextWrapped("%s", indices_str.c_str());
 
             // Class distribution in this fold's validation set
-            if (current_table_) {
+            if (!class_labels_.columns.empty()) {
+                const auto& labels = class_labels_.columns[0];
                 std::map<int, int> val_class_counts;
                 for (int idx : fold_splits_[f].second) {
-                    if (idx < static_cast<int>(current_table_->GetRowCount())) {
-                        auto val = DataAnalyzer::ToDouble(current_table_->GetCell(idx, target_column_));
-                        if (val.has_value()) {
-                            val_class_counts[static_cast<int>(val.value())]++;
-                        }
+                    if (idx < static_cast<int>(labels.size()) && labels[idx]) {
+                        val_class_counts[*labels[idx]]++;
                     }
                 }
 
                 ImGui::Text("Validation Class Distribution:");
                 for (const auto& [cls, count] : val_class_counts) {
                     double ratio = static_cast<double>(count) / fold_splits_[f].second.size() * 100;
-                    ImGui::BulletText("Class %d: %d (%.1f%%)", cls, count, ratio);
+                    ImGui::BulletText("%s: %d (%.1f%%)", ClassName(cls).c_str(), count, ratio);
                 }
             }
 
@@ -256,12 +241,8 @@ void CrossValidationPanel::RenderFoldDetails() {
     }
 }
 
-void CrossValidationPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void CrossValidationPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     selected_features_.assign(column_names_.size(), true);
 
@@ -272,6 +253,7 @@ void CrossValidationPanel::LoadSelectedData() {
     }
 
     fold_splits_.clear();
+    class_labels_ = TableClassLabels{};
     result_ = CrossValidationResult();
     status_message_ = "Data loaded. Configure CV settings.";
 }
@@ -291,23 +273,30 @@ void CrossValidationPanel::RunCrossValidation() {
 
     if (compute_thread_.joinable()) compute_thread_.join();
 
-    compute_thread_ = std::thread([this, n_samples]() {
-        if (stratified_) {
-            // Get labels for stratified split
+    // The worker gets copies of its inputs and hands the folds to the UI thread.
+    compute_thread_ = std::thread([this, n_samples, table = current_table_, target = target_column_, stratified = stratified_,
+                                   folds = n_folds_, shuffle = shuffle_, seed = static_cast<unsigned int>(random_seed_)]() {
+        std::vector<std::pair<std::vector<int>, std::vector<int>>> splits;
+        TableClassLabels class_labels;
+        if (stratified) {
+            // Stratify on the target's classes, text ("north") or numbers;
+            // rows without a label form their own stratum.
+            class_labels = ReadTableClassLabels(*table, {target});
             std::vector<int> labels;
             labels.reserve(n_samples);
-            for (int row = 0; row < n_samples; ++row) {
-                auto val = DataAnalyzer::ToDouble(current_table_->GetCell(row, target_column_));
-                labels.push_back(val.has_value() ? static_cast<int>(val.value()) : 0);
-            }
-            fold_splits_ = ModelEvaluation::StratifiedKFoldSplit(labels, n_folds_, shuffle_, static_cast<unsigned int>(random_seed_));
+            for (const auto& label : class_labels.columns[0]) labels.push_back(label.value_or(-1));
+            splits = ModelEvaluation::StratifiedKFoldSplit(labels, folds, shuffle, seed);
         } else {
-            fold_splits_ = ModelEvaluation::KFoldSplit(n_samples, n_folds_, shuffle_, static_cast<unsigned int>(random_seed_));
+            splits = ModelEvaluation::KFoldSplit(n_samples, folds, shuffle, seed);
         }
-
-        result_.n_folds = n_folds_;
-        is_computing_ = false;
-        status_message_ = std::to_string(n_folds_) + " folds generated successfully.";
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, splits = std::move(splits),
+                                                               class_labels = std::move(class_labels), folds]() mutable {
+            fold_splits_ = std::move(splits);
+            class_labels_ = std::move(class_labels);
+            result_.n_folds = folds;
+            status_message_ = std::to_string(folds) + " folds generated successfully.";
+            is_computing_ = false;
+        });
     });
 }
 

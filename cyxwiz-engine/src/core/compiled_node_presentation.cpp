@@ -127,6 +127,13 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
                                        const CompiledNodeInputs& inputs) {
     CompiledNodeCard card;
     const gui::MLNode* node = NodeById(nodes, node_id);
+    if (inputs.data_pipeline) {
+        card.status = "Not compiled for training";
+        card.kind = CompiledStatusKind::None;
+        card.status_note = "Data Pipeline mode: the graph runs with Execute Pipeline or a Plot node; the training compile does not apply.";
+        card.no_shapes_text = node ? "Shapes and parameters belong to training graphs." : "This node no longer exists.";
+        return card;
+    }
     switch (inputs.state) {
         case LiveCompileState::NotCompiled:
             card.status = "Not compiled yet";

@@ -1,5 +1,4 @@
 #include "scripting_engine.h"
-#include "../gui/panels/training_plot_panel.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../data/data_table.h"
@@ -7,6 +6,8 @@
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <arrow/api.h>
+#include <cmath>
 #include <fstream>
 #include <optional>
 #include <filesystem>
@@ -163,6 +164,7 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
         std::lock_guard<std::mutex> lock(init_error_mutex_);
         last_init_error_.clear();
     }
+    InstallFigureCapture();
     return true;
 }
 
@@ -255,7 +257,6 @@ bool ScriptingEngine::ResetSession(std::string* error_out) {
         return false;
     }
     matlab_aliases_initialized_ = false;
-    training_dashboard_registered_ = false;
     return true;
 }
 
@@ -989,9 +990,6 @@ ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
         return result;
     }
 
-    // Lazily register training dashboard on first script execution
-    EnsureTrainingDashboardRegistered();
-
     // If sandbox is enabled, use it
     if (sandbox_enabled_ && sandbox_) {
         auto sandbox_result = sandbox_->Execute(script);
@@ -1034,33 +1032,6 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
     }
 
     return result;
-}
-
-void ScriptingEngine::RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel) {
-    // Defer Python module import - importing cyxwiz_plotting at startup can segfault
-    // when stdin is not a terminal. The panel pointer is stored and registration
-    // happens lazily on first script execution that needs it.
-    training_plot_panel_ = panel;
-    spdlog::info("Training Dashboard panel stored for deferred registration");
-}
-
-void ScriptingEngine::EnsureTrainingDashboardRegistered() {
-    if (!training_plot_panel_ || training_dashboard_registered_) return;
-
-    try {
-        py::gil_scoped_acquire acquire;
-        py::module_ plotting_module = py::module_::import("cyxwiz_plotting");
-        py::object set_func = plotting_module.attr("set_training_plot_panel");
-        set_func(py::cast(training_plot_panel_, py::return_value_policy::reference));
-        training_dashboard_registered_ = true;
-        spdlog::info("Training Dashboard registered with Python successfully");
-    } catch (const py::error_already_set& e) {
-        spdlog::warn("Failed to register Training Dashboard with Python: {}", e.what());
-    } catch (const std::exception& e) {
-        spdlog::warn("Exception while registering Training Dashboard: {}", e.what());
-    } catch (...) {
-        spdlog::warn("Unknown error registering Training Dashboard with Python");
-    }
 }
 
 // ========== Async Execution Implementation ==========
@@ -1286,6 +1257,89 @@ cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
     return py::str(v).cast<std::string>();
 }
 }  // namespace
+
+namespace {
+// The columns the cyxwiz module sends ([(name, 'num' | 'text', values)]) as
+// an Arrow table: numbers from a buffer of doubles (NaN as missing), text as
+// strings. Needs the GIL.
+std::shared_ptr<arrow::Table> PythonColumnsTable(const py::list& columns, std::string* error) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    for (const auto& item : columns) {
+        const py::tuple column = py::reinterpret_borrow<py::tuple>(item);
+        const std::string name = column[0].cast<std::string>();
+        const std::string kind = column[1].cast<std::string>();
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status status;
+        if (kind == "num") {
+            const py::buffer_info buffer = py::buffer(column[2]).request();
+            if (buffer.itemsize != sizeof(double) || buffer.ndim != 1) {
+                *error = "column '" + name + "' is not a column of numbers";
+                return nullptr;
+            }
+            const double* values = static_cast<const double*>(buffer.ptr);
+            arrow::DoubleBuilder builder;
+            status = builder.Reserve(buffer.shape[0]);
+            for (py::ssize_t i = 0; status.ok() && i < buffer.shape[0]; ++i)
+                status = std::isnan(values[i]) ? builder.AppendNull() : builder.Append(values[i]);
+            if (status.ok()) status = builder.Finish(&array);
+        } else {
+            arrow::StringBuilder builder;
+            for (const auto& v : py::reinterpret_borrow<py::list>(column[2])) {
+                status = builder.Append(v.cast<std::string>());
+                if (!status.ok()) break;
+            }
+            if (status.ok()) status = builder.Finish(&array);
+        }
+        if (!status.ok()) {
+            *error = "column '" + name + "': " + status.ToString();
+            return nullptr;
+        }
+        fields.push_back(arrow::field(name, array->type()));
+        arrays.push_back(std::move(array));
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays);
+}
+}  // namespace
+
+// plt.show() anywhere (script, notebook cell, Console) sends the open figures
+// here through the bundled matplotlib backend (python_tools/cyxwiz_capture.py,
+// TOFIX134 P5.2): queued for the running script (its result, or the cell's
+// outputs), straight to Plot Output otherwise. cyxwiz module plots (P5) are
+// checked here on the script thread, so a mistake is raised in Python, and
+// go to Plot Output.
+void ScriptingEngine::InstallFigureCapture() {
+    try {
+        py::gil_scoped_acquire acquire;
+        auto figure_sink = py::cpp_function([this](py::bytes png_data, int width, int height, const std::string& label) {
+            CapturedPlot plot;
+            const std::string data = png_data;
+            plot.png_data.assign(data.begin(), data.end());
+            plot.width = width;
+            plot.height = height;
+            plot.label = label;
+            if (script_running_) QueuePlot(plot);
+            else published_plots_.Publish({plot});
+        });
+        auto plot_sink = py::cpp_function([this](const std::string& request_json, const py::list& columns) -> std::string {
+            PythonPlot plot;
+            std::string error;
+            if (!cyxwiz::plot::ParsePythonPlotRequest(request_json, plot.request, &error)) return error;
+            plot.table = PythonColumnsTable(columns, &error);
+            if (!plot.table) return error;
+            python_plots_.Publish({std::move(plot)});
+            return std::string();
+        });
+        auto close_sink = py::cpp_function([this](const std::string& title) {
+            PythonPlot plot;
+            plot.close = title;
+            python_plots_.Publish({std::move(plot)});
+        });
+        BundledTool("cyxwiz_capture").attr("install")(figure_sink, plot_sink, close_sink);
+    } catch (const std::exception& e) {
+        spdlog::warn("Figures from matplotlib will not reach the Engine: {}", e.what());
+    }
+}
 
 ScriptingEngine::DebugSnapshot ScriptingEngine::GetDebugSnapshot() const {
     std::lock_guard<std::mutex> lock(debug_mutex_);
@@ -1659,22 +1713,6 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
             if (callbacks.on_stderr) callbacks.on_stderr(text);
         };
 
-        // Create plot capture callback wrapper
-        auto plot_capture_func = [this](py::bytes png_data, int width, int height, const std::string& label) {
-            CapturedPlot plot;
-            std::string data_str = png_data;  // Convert py::bytes to std::string
-            plot.png_data = std::vector<unsigned char>(data_str.begin(), data_str.end());
-            plot.width = width;
-            plot.height = height;
-            plot.label = label;
-            // The capture stays installed after the run: a Console plt.show()
-            // goes straight to Plot Output instead of a run queue the next
-            // script clears (TOFIX134 P0 item 6).
-            if (script_running_) QueuePlot(plot);
-            else published_plots_.Publish({plot});
-            spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
-        };
-
         // Register cancellation through a C++ callback instead of ctypes.
         // Some project virtual environments lack _ctypes, and importing ctypes there
         // caused script runs to fail before user code executed.
@@ -1791,87 +1829,12 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
         out['traceback'] = ''.join(traceback.format_list(frames)) + ''.join(traceback.format_exception_only(type(e), e))
     return out
 
-# Matplotlib capture setup
-_cyxwiz_plot_capture_callback = None
-_cyxwiz_captured_plots = []
-
-def _cyxwiz_setup_matplotlib_capture(capture_callback):
-    """Setup matplotlib to capture plots instead of showing windows"""
-    global _cyxwiz_plot_capture_callback
-    _cyxwiz_plot_capture_callback = capture_callback
-
-    try:
-        import matplotlib
-        # Use non-interactive backend
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
-        # Store original show function
-        _original_show = plt.show
-
-        def _cyxwiz_show(*args, **kwargs):
-            """Capture all figures and send to C++"""
-            global _cyxwiz_plot_capture_callback, _cyxwiz_captured_plots
-            import io
-
-            # Get all figure numbers
-            fig_nums = plt.get_fignums()
-
-            for fig_num in fig_nums:
-                fig = plt.figure(fig_num)
-
-                # Get figure size in pixels
-                dpi = fig.dpi
-                width = int(fig.get_figwidth() * dpi)
-                height = int(fig.get_figheight() * dpi)
-
-                # Get title if available
-                title = ""
-                if fig._suptitle:
-                    title = fig._suptitle.get_text()
-                elif len(fig.axes) > 0 and fig.axes[0].get_title():
-                    title = fig.axes[0].get_title()
-
-                # Render to PNG bytes
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-                buf.seek(0)
-                png_data = buf.read()
-                buf.close()
-
-                # Send to C++ callback
-                if _cyxwiz_plot_capture_callback is not None:
-                    _cyxwiz_plot_capture_callback(png_data, width, height, title)
-                else:
-                    # Store locally if no callback
-                    _cyxwiz_captured_plots.append({
-                        'data': png_data,
-                        'width': width,
-                        'height': height,
-                        'label': title
-                    })
-
-            # Close all figures after capturing
-            plt.close('all')
-
-        # Replace plt.show with our capture function
-        plt.show = _cyxwiz_show
-
-    except ImportError:
-        # matplotlib not installed, silently skip
-        pass
-
-
 )";
         py::exec(setup_code);
         py::globals()["_cyxwiz_is_cancelled"] = py::cpp_function([this]() {
             return shared_cancel_flag_.load() != 0;
         });
 
-
-        // Setup matplotlib capture with our callback
-        py::object setup_matplotlib = py::eval("_cyxwiz_setup_matplotlib_capture");
-        setup_matplotlib(py::cpp_function(plot_capture_func));
 
         // Create output object
         py::object output_class = py::eval("_CyxWizOutput");

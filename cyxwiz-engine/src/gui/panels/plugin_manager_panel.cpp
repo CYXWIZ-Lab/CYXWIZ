@@ -4,6 +4,7 @@
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/security/permission_store.h"
 #include "../../core/async_task_manager.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -23,18 +24,19 @@ static bool ContainsCI(const std::string& haystack, const std::string& needle) {
 }
 
 static ImVec4 StateColor(plugin::PluginState state) {
+    const ui::Tokens& t = ui::CurrentTokens();
     switch (state) {
         case plugin::PluginState::Initialized:
         case plugin::PluginState::Active:
-            return ImVec4(0.3f, 0.9f, 0.3f, 1.0f);  // green
+            return t.success;  // green
         case plugin::PluginState::Loaded:
-            return ImVec4(0.9f, 0.9f, 0.3f, 1.0f);  // yellow
+            return t.warning;  // yellow
         case plugin::PluginState::Failed:
-            return ImVec4(0.9f, 0.3f, 0.3f, 1.0f);  // red
+            return t.error;  // red
         case plugin::PluginState::Disabled:
-            return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);  // gray
+            return t.pending;  // gray
         default:
-            return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            return t.pending;
     }
 }
 
@@ -59,10 +61,11 @@ static std::string TrimCopy(std::string value) {
 }
 
 static void ShowInstallSpinner(const std::string& status) {
+    const ui::Tokens& t = ui::CurrentTokens();
     float time = static_cast<float>(ImGui::GetTime());
     const char* spinner_chars[] = {"|", "/", "-", "\\"};
     int spinner_idx = static_cast<int>(time * 8) % 4;
-    ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s %s",
+    ImGui::TextColored(t.running, "%s %s",
                        spinner_chars[spinner_idx], status.c_str());
 }
 
@@ -182,6 +185,7 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
 // ============================================================================
 
 void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
+    const ui::Tokens& t = ui::CurrentTokens();
     float card_width = ImGui::GetContentRegionAvail().x;
 
     // State dot + Name + Version
@@ -215,7 +219,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 
     // Error message for failed plugins
     if (p->state == plugin::PluginState::Failed && !p->error_message.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "  ERROR: %s", p->error_message.c_str());
+        ImGui::TextColored(t.error, "  ERROR: %s", p->error_message.c_str());
     }
 
     // Permission badges + action buttons on same line
@@ -293,9 +297,10 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 // ============================================================================
 
 void PluginManagerPanel::RenderPermissionBadge(plugin::PluginPermission perm, bool is_dangerous) {
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* name = plugin::security::PermissionStore::PermissionDisplayName(perm);
-    ImVec4 bg = is_dangerous ? ImVec4(0.7f, 0.2f, 0.2f, 0.8f) : ImVec4(0.2f, 0.5f, 0.2f, 0.8f);
-    ImVec4 text_col = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    ImVec4 bg = is_dangerous ? ui::WithAlpha(t.error, 0.8f) : ui::WithAlpha(t.success, 0.8f);
+    ImVec4 text_col = ui::ReadableOn(t, bg);
 
     ImGui::PushStyleColor(ImGuiCol_Button, bg);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg);
@@ -352,6 +357,7 @@ void PluginManagerPanel::RenderStatusBar(const std::vector<const plugin::LoadedP
 // ============================================================================
 
 void PluginManagerPanel::RenderInstallPopup() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (show_install_popup_) {
         ImGui::OpenPopup("Install Plugin###InstallPluginPopup");
         show_install_popup_ = false;
@@ -554,7 +560,7 @@ void PluginManagerPanel::RenderInstallPopup() {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Install Error###InstallErrorPopup", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", install_error_.c_str());
+        ImGui::TextColored(t.error, "%s", install_error_.c_str());
         ImGui::Spacing();
         float ok_width = 80.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ok_width) * 0.5f);

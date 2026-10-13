@@ -195,17 +195,18 @@ void DataInputDialog::Apply() {
         node_->parameters["label_column"] = effective_label_column;
         ApplySequenceSettings();
 
-        // Auto-generate description
+        // Description under the node: the source it names, not a status
+        // ("Reading helix.csv" read like a load still running).
         if (strlen(file_path_) > 0) {
             fs::path p(file_path_);
-            std::string desc = "Reading " + p.filename().string();
+            std::string desc = p.filename().string();
             if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
-                desc += " [label: " + available_columns_[label_column_idx_] + "]";
+                desc += " \xC2\xB7 label " + available_columns_[label_column_idx_];
             }
             node_->description = desc;
         } else if (strlen(folder_path_) > 0) {
             fs::path p(folder_path_);
-            node_->description = "Loading from " + p.filename().string();
+            node_->description = p.filename().string() + "/";
         }
     }
     else if (source_type_ == SourceType::MLDataset) {
@@ -220,7 +221,7 @@ void DataInputDialog::Apply() {
             node_->parameters["kaggle_slug"] = kaggle_slug_;
         }
 
-        node_->description = std::string("Loading ") + dataset_name_;
+        node_->description = dataset_name_;
     }
     else if (source_type_ == SourceType::Database) {
         node_->parameters["database_type"] = data_input::DatabaseTypeParam(database_type_);
@@ -231,14 +232,14 @@ void DataInputDialog::Apply() {
         node_->parameters["db_file"] = db_file_;
         node_->parameters["sql_query"] = sql_query_;
 
-        node_->description = "Query from " + std::string(db_name_);
+        node_->description = std::string(db_name_) + " \xC2\xB7 SQL query";
     }
     else if (source_type_ == SourceType::Cloud) {
         node_->parameters["cloud_bucket"] = cloud_bucket_;
         node_->parameters["cloud_path"] = cloud_path_;
         node_->parameters["cloud_credentials"] = cloud_credentials_;
 
-        node_->description = "Loading from " + std::string(cloud_bucket_);
+        node_->description = std::string(cloud_bucket_) + " \xC2\xB7 cloud";
     }
 
     // === NEW: Actually load data and provide feedback ===

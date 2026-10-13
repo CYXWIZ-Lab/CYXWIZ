@@ -2,6 +2,7 @@
 #include "../core/transformer_configuration_policy.h"
 #include "properties_parameter_rules.h"
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -129,7 +130,7 @@ void RenderParameter(
 
     bool has_error = validation_errors.count(param.name) > 0;
     if (has_error) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().error);
     }
 
     const std::string label = GetParameterLabel(param);
@@ -341,10 +342,10 @@ void RenderParameter(
 
     if (has_error) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors[param.name].c_str());
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", validation_errors[param.name].c_str());
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors[param.name].c_str());
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", validation_errors[param.name].c_str());
             ImGui::EndTooltip();
         }
     }

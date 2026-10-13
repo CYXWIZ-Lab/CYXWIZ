@@ -44,4 +44,9 @@ std::string SaveAsPath(const std::string& chosen, const std::string& current_nam
 // A Jupyter notebook (.ipynb, any case): stored as JSON, always shown as cells.
 bool IsNotebookJson(const std::string& path);
 
+// Python source (.py, .pyw, .cyx, .ipynb, any case; an unsaved tab has no
+// path and is a script). Other files (CSV, JSON, Markdown...) open as plain
+// text: no Python highlighting, problems or completions.
+bool IsPythonSource(const std::string& path);
+
 }  // namespace cyxwiz::scriptfile

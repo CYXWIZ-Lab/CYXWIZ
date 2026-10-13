@@ -1,6 +1,5 @@
 #include "tensor_utils.h"
 
-#include <cstring>
 #include <limits>
 #include <stdexcept>
 
@@ -67,13 +66,6 @@ std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape,
         stride = next;
     }
     return strides;
-}
-
-void CopyElement(const Tensor& src_tensor, Tensor& dst_tensor, size_t src_linear, size_t dst_linear) {
-    const size_t element_size = ElementSize(src_tensor.GetDataType());
-    const auto* src = static_cast<const unsigned char*>(src_tensor.Data());
-    auto* dst = static_cast<unsigned char*>(dst_tensor.Data());
-    std::memcpy(dst + dst_linear * element_size, src + src_linear * element_size, element_size);
 }
 
 } // namespace cyxwiz::tensor_utils
