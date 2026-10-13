@@ -70,7 +70,8 @@ void SqlTransform::Interrupt() {
 }
 
 SqlTransformResult SqlTransform::Run(const std::string& query,
-                                     const std::vector<SqlTransformInput>& inputs) {
+                                     const std::vector<SqlTransformInput>& inputs,
+                                     SqlRunMode mode) {
     SqlTransformResult result;
     const auto fail = [&result](std::string message) {
         result.error = "SQL: " + std::move(message);
@@ -113,6 +114,38 @@ SqlTransformResult SqlTransform::Run(const std::string& query,
     // types are reported without executing the query.
     if (const auto why = connector_->UnsupportedResultColumns(query); !why.empty()) {
         return fail(why);
+    }
+    if (mode == SqlRunMode::Check) {
+        result.ok = true;
+        return result;
+    }
+    if (mode == SqlRunMode::Explain || mode == SqlRunMode::Profile) {
+        // The query passed the read-only single-SELECT check above. EXPLAIN
+        // plans it; EXPLAIN ANALYZE also runs it once and times it.
+        const auto plan_value = [&](const std::string& prefix, std::string& out) {
+            auto plan = connector_->Query(prefix + query);
+            if (!plan) return false;
+            for (int64_t row = 0; row < plan->num_rows(); ++row) {
+                for (int column = 0; column < plan->num_columns(); ++column) {
+                    if (plan->schema()->field(column)->name() == "explain_key") continue;
+                    auto value = plan->column(column)->GetScalar(row);
+                    if (value.ok() && (*value)->is_valid) out += (*value)->ToString();
+                }
+            }
+            return true;
+        };
+        const char* json_prefix = mode == SqlRunMode::Profile ? "EXPLAIN (ANALYZE, FORMAT JSON) " : "EXPLAIN (FORMAT JSON) ";
+        if (!plan_value(json_prefix, result.plan)) {
+            std::lock_guard<std::mutex> lock(interrupt_mutex_);
+            if (interrupted_) {
+                result.cancelled = true;
+                return fail("the query was cancelled");
+            }
+            return fail(connector_->GetLastError());
+        }
+        if (!plan_value("EXPLAIN ", result.plan_text)) return fail(connector_->GetLastError());
+        result.ok = true;
+        return result;
     }
 
     auto table = connector_->Query(query);

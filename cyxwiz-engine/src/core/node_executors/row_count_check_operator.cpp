@@ -149,6 +149,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::Apply(
                                       ". Nothing downstream ran; fix the data or the expectation.");
     }
     spdlog::info("[Data Studio] {} passed: {} {} (expected {})", label, counted, what, expectation);
+    last_outcome_ = "passed: " + std::to_string(counted) + " " + what + " (expected " + expectation + ")";
     return input;
 }
 

@@ -1,10 +1,20 @@
 #include "duckdb_connector.h"
+#include <arrow/c/bridge.h>
+#include <duckdb/common/arrow/arrow_converter.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <unordered_map>
 #include <chrono>
 #include <sstream>
 
 namespace cyxwiz {
 namespace {
+
+// DuckDB 1.x exceptions carry their message as JSON in what(); ErrorData
+// turns it back into the readable "Parser Error: ..." text.
+std::string ErrorText(const std::exception& e) {
+    return duckdb::ErrorData(e).Message();
+}
 
 std::string QuoteIdentifier(const std::string& identifier) {
     std::string quoted = "\"";
@@ -17,6 +27,35 @@ std::string QuoteIdentifier(const std::string& identifier) {
     }
     quoted += '"';
     return quoted;
+}
+
+// "VIEW", "BASE TABLE", or empty when no object in the main schema has this
+// name. DROP VIEW IF EXISTS fails when the name is a table (and DROP TABLE
+// when it is a view), so callers drop by the kind found here.
+std::string ExistingObjectKind(duckdb::Connection& conn, const std::string& name) {
+    auto lookup = conn.Prepare(
+        "SELECT table_type FROM information_schema.tables WHERE table_schema = 'main' AND table_name = $1");
+    if (lookup->HasError()) return {};
+    auto found = lookup->Execute(name);
+    if (found->HasError()) return {};
+    auto chunk = found->Fetch();
+    return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).ToString() : std::string();
+}
+
+// Result types Arrow export gives exactly as ArrowTypeForDuckDBType does.
+bool ConvertsNatively(const duckdb::LogicalType& type) {
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN:
+        case duckdb::LogicalTypeId::INTEGER:
+        case duckdb::LogicalTypeId::BIGINT:
+        case duckdb::LogicalTypeId::UBIGINT:
+        case duckdb::LogicalTypeId::FLOAT:
+        case duckdb::LogicalTypeId::DOUBLE:
+        case duckdb::LogicalTypeId::VARCHAR:
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
@@ -284,8 +323,8 @@ DuckDBConnector::DuckDBConnector() {
         spdlog::info("DuckDB connector initialized (in-memory mode)");
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Failed to initialize DuckDB: {}", e.what());
-        last_error_ = e.what();
+        spdlog::error("Failed to initialize DuckDB: {}", ErrorText(e));
+        last_error_ = ErrorText(e);
     }
 }
 
@@ -304,8 +343,8 @@ DuckDBConnector::DuckDBConnector(const DuckDBConnectorPolicy& policy) {
         spdlog::debug("DuckDB connector initialized (in-memory, external access {})",
                       policy.allow_external_access ? "allowed" : "disabled");
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize restricted DuckDB: {}", e.what());
-        last_error_ = e.what();
+        spdlog::error("Failed to initialize restricted DuckDB: {}", ErrorText(e));
+        last_error_ = ErrorText(e);
         conn_.reset();
         db_.reset();
     }
@@ -324,7 +363,7 @@ std::string DuckDBConnector::ReadOnlySelectRejection(const std::string& sql) {
         }
         return {};
     } catch (const std::exception& e) {
-        return std::string("the SQL does not parse: ") + e.what();
+        return std::string("the SQL does not parse: ") + ErrorText(e);
     }
 }
 
@@ -363,7 +402,7 @@ std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
         }
         return {};
     } catch (const std::exception& e) {
-        return e.what();
+        return ErrorText(e);
     }
 }
 
@@ -409,17 +448,17 @@ bool DuckDBConnector::RegisterTable(
 
     try {
         const std::string quoted_table_name = QuoteIdentifier(table_name);
-        auto drop_view = conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
-        if (drop_view->HasError()) {
-            last_error_ = drop_view->GetError();
-            spdlog::error("Failed to drop existing view '{}': {}", table_name, last_error_);
-            return false;
-        }
-        auto drop_table = conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
-        if (drop_table->HasError()) {
-            last_error_ = drop_table->GetError();
-            spdlog::error("Failed to drop existing table '{}': {}", table_name, last_error_);
-            return false;
+        // Replace whatever holds the name (a table registered earlier on
+        // this connection, or a view).
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            const char* kind = existing == "VIEW" ? "VIEW" : "TABLE";
+            auto drop = conn_->Query(std::string("DROP ") + kind + " " + quoted_table_name);
+            if (drop->HasError()) {
+                last_error_ = drop->GetError();
+                spdlog::error("Failed to drop existing {} '{}': {}", existing, table_name, last_error_);
+                return false;
+            }
         }
 
         std::ostringstream create_sql;
@@ -467,7 +506,7 @@ bool DuckDBConnector::RegisterTable(
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to register table '{}': {}", table_name, last_error_);
         return false;
     }
@@ -475,9 +514,11 @@ bool DuckDBConnector::RegisterTable(
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
     try {
-        const std::string quoted_table_name = QuoteIdentifier(table_name);
-        conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
-        conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
+        const std::string existing = ExistingObjectKind(*conn_, table_name);
+        if (!existing.empty()) {
+            conn_->Query(std::string(existing == "VIEW" ? "DROP VIEW " : "DROP TABLE ") +
+                         QuoteIdentifier(table_name));
+        }
 
         // Remove from tracking
         registered_tables_.erase(table_name);
@@ -486,7 +527,7 @@ bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Failed to unregister table '{}': {}", table_name, last_error_);
         return false;
     }
@@ -529,7 +570,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::Query(const std::string& sql) {
         return arrow_result;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Query exception: {}", last_error_);
         return nullptr;
     }
@@ -580,7 +621,7 @@ bool DuckDBConnector::Execute(const std::string& sql) {
         return true;
 
     } catch (const duckdb::Exception& e) {
-        last_error_ = e.what();
+        last_error_ = ErrorText(e);
         spdlog::error("Execute exception: {}", last_error_);
         return false;
     }
@@ -627,7 +668,7 @@ std::vector<DuckDBConnector::ColumnInfo> DuckDBConnector::GetTableSchema(
         }
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting schema: {}", e.what());
+        spdlog::error("Exception getting schema: {}", ErrorText(e));
     }
 
     return schema;
@@ -649,7 +690,7 @@ int64_t DuckDBConnector::GetRowCount(const std::string& table_name) {
         }
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception getting row count: {}", e.what());
+        spdlog::error("Exception getting row count: {}", ErrorText(e));
     }
 
     return -1;
@@ -685,7 +726,7 @@ std::string DuckDBConnector::ExplainQuery(const std::string& sql) {
         return plan.str();
 
     } catch (const duckdb::Exception& e) {
-        return "Exception: " + std::string(e.what());
+        return "Exception: " + std::string(ErrorText(e));
     }
 }
 
@@ -718,7 +759,7 @@ void DuckDBConnector::SetProfilingEnabled(bool enabled) {
             conn_->Query("PRAGMA disable_profiling");
         }
     } catch (const duckdb::Exception& e) {
-        spdlog::warn("Failed to set profiling: {}", e.what());
+        spdlog::warn("Failed to set profiling: {}", ErrorText(e));
     }
 }
 
@@ -956,6 +997,41 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         auto& types = result->types;
         auto& names = result->names;
 
+        // Booleans, integers, floats, doubles and text: export whole chunks
+        // through the Arrow C interface (same Arrow types as below).
+        if (std::all_of(types.begin(), types.end(), ConvertsNatively)) {
+            duckdb::ClientProperties options = result->client_properties;
+            options.arrow_offset_size = duckdb::ArrowOffsetSize::REGULAR;
+            options.produce_arrow_string_view = false;
+            ArrowSchema c_schema;
+            duckdb::ArrowConverter::ToArrowSchema(&c_schema, types, names, options);
+            auto schema = arrow::ImportSchema(&c_schema);
+            if (!schema.ok()) {
+                spdlog::error("Arrow schema import failed: {}", schema.status().ToString());
+                return nullptr;
+            }
+            const std::unordered_map<duckdb::idx_t, const duckdb::shared_ptr<duckdb::ArrowTypeExtensionData>> no_extensions;
+            std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+            while (true) {
+                auto chunk = result->Fetch();
+                if (!chunk || chunk->size() == 0) break;
+                ArrowArray c_array;
+                duckdb::ArrowConverter::ToArrowArray(*chunk, &c_array, options, no_extensions);
+                auto batch = arrow::ImportRecordBatch(&c_array, *schema);
+                if (!batch.ok()) {
+                    spdlog::error("Arrow batch import failed: {}", batch.status().ToString());
+                    return nullptr;
+                }
+                batches.push_back(std::move(*batch));
+            }
+            auto table = arrow::Table::FromRecordBatches(*schema, batches);
+            if (!table.ok()) {
+                spdlog::error("Arrow table assembly failed: {}", table.status().ToString());
+                return nullptr;
+            }
+            return *table;
+        }
+
         // Initialize builders for each column
         std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
         for (size_t i = 0; i < types.size(); ++i) {
@@ -1000,7 +1076,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         return table;
 
     } catch (const duckdb::Exception& e) {
-        spdlog::error("Exception converting result to Arrow: {}", e.what());
+        spdlog::error("Exception converting result to Arrow: {}", ErrorText(e));
         return nullptr;
     }
 }

@@ -10,6 +10,8 @@
 #include "properties_node_editors.h"
 #include "properties_parameter_rules.h"
 #include "properties_rows.h"
+#include "properties_sql_step.h"
+#include "sql_workbench.h"
 #include "properties_truth.h"
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
@@ -35,6 +37,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <vector>
 
 namespace gui {
@@ -185,6 +188,9 @@ bool Properties::ConfigureNode(MLNode* node) {
         return false;
     }
     active_dialog_->SetNodeEditor(node_editor_);
+    if (auto* workbench = dynamic_cast<SqlWorkbenchDialog*>(active_dialog_.get())) {
+        workbench->SetOpenTableCallback(open_table_);
+    }
     active_dialog_->Open();
     return true;
 }
@@ -266,6 +272,12 @@ void Properties::RefreshView(MLNode& node) {
     }
     if (!backend_placement_facts_.empty()) truth_context.backend_placements = &backend_placement_facts_;
     if (!dataset_facts_.empty()) truth_context.dataset_facts = &dataset_facts_;
+    // Parameters the node type declares are current, not stale (TOFIX146).
+    std::set<std::string> declared_parameters;
+    if (metadata) {
+        for (const auto& param : metadata->parameters) declared_parameters.insert(param.name);
+    }
+    truth_context.declared_parameters = &declared_parameters;
 
     cyxwiz::properties_view::Inputs in;
     in.node = &node;
@@ -323,14 +335,15 @@ void Properties::Render() {
             // widget IDs, and a text box still active when the selection
             // changes writes its buffer into the newly selected node.
             ImGui::PushID(node.id);
-            RenderHeader(node);
-            RenderSettings(node);
-            RenderCompiledCard(node);
-            RenderFusionCard(node);
-            RenderAdvanced(node);
-            if (view_.has_executor) {
-                ImGui::Spacing();
-                RenderExecutorSection(node);
+            // SQL steps and subgraphs have their own views; an SQL step keeps
+            // the generic sections under its Details (TOFIX146).
+            const cyxwiz::NodeMetadata* metadata = view_metadata_ ? &*view_metadata_ : nullptr;
+            if (node.type == NodeType::SQLQuery) {
+                RenderSqlStep(node, metadata);
+            } else if (node.type == NodeType::Subgraph) {
+                RenderSubgraph(node, metadata);
+            } else {
+                RenderGenericSections(node);
             }
             ImGui::PopID();
             properties_rows::BeginFrame(nullptr, nullptr, false);
@@ -344,6 +357,18 @@ void Properties::Render() {
             // Dialog was closed
             active_dialog_.reset();
         }
+    }
+}
+
+void Properties::RenderGenericSections(MLNode& node) {
+    RenderHeader(node);
+    RenderSettings(node);
+    RenderCompiledCard(node);
+    RenderFusionCard(node);
+    RenderAdvanced(node);
+    if (view_.has_executor) {
+        ImGui::Spacing();
+        RenderExecutorSection(node);
     }
 }
 
@@ -627,6 +652,18 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
     const ImGuiStyle& style = ImGui::GetStyle();
     const bool step_buttons = editor_width >= 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x) +
                                                   ImGui::CalcTextSize("0.0000").x + 2.0f * style.FramePadding.x;
+
+    if (param.type == "fixed") {
+        // Set by the engine (a contract version): shown, never edited here.
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(row.differs_from_default ? t.caution : t.text_dim, "%s", value.c_str());
+        const std::string why = row.differs_from_default ? "Unsupported value; expected " + param.default_value
+                                                         : std::string("Set by the engine; not editable");
+        cyxwiz::ui::Tooltip(why.c_str());
+        properties_rows::Status(param.name.c_str());
+        ImGui::PopID();
+        return;
+    }
 
     if (param.type == "int") {
         int int_val = 0;

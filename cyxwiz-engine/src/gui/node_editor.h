@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/pipeline_node_run_facts.h"
 
 namespace scripting { class ScriptingEngine; }
 
@@ -367,6 +369,34 @@ public:
 
     // Execute data pipeline using DuckDB (Phase 2)
     bool ExecuteDataPipeline();
+    // Run only what `node_id` needs: its upstream steps and itself, plus the
+    // Row Count Checks chained right after it when `with_checks` (TOFIX146
+    // "Run step" / "Preview output"). `include_step` false runs only the
+    // steps before it (the SQL Workbench's "Load inputs").
+    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true);
+    bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
+
+    // A data step's neighbours in the executable graph (recipes lowered to
+    // their steps): what feeds each input pin and the Row Count Checks that
+    // follow it. `error` says why the graph could not be read.
+    struct DataStepNeighbour {
+        int id = -1;
+        int pin = 0;  // the step's input pin it feeds (inputs only)
+        std::string name;
+        std::string type;  // pipeline type name, e.g. "DataInput"
+        std::map<std::string, std::string> parameters;
+    };
+    struct DataStepContext {
+        std::vector<DataStepNeighbour> inputs;
+        std::vector<DataStepNeighbour> checks;
+        std::string recipe_name;  // the Preparation Recipe the step belongs to, if any
+        int recipe_steps = 0;
+        std::string error;
+    };
+    DataStepContext GetDataStepContext(int node_id) const;
+    // Each node's latest run facts (rows, columns, time, outcome), kept
+    // across runs in this session.
+    const std::map<int, cyxwiz::PipelineNodeRunFacts>& GetNodeRunFacts() const { return node_run_facts_; }
 
     // Unified Canvas Phase 6: Execution visualization
     void SetNodeExecutionState(int node_id, NodeExecutionState state);
@@ -541,6 +571,28 @@ public:
 
     // Select a node in the canvas and frame it into view.
     void FocusNode(int node_id);
+
+    // A Subgraph as its Properties view shows it (TOFIX146 D5): its role and
+    // its steps in run order (the live canvas copies while it is expanded).
+    struct SubgraphStep {
+        int id = -1;
+        NodeType type{};
+        std::string name;
+    };
+    struct SubgraphSummary {
+        bool found = false;
+        bool expanded = false;
+        bool recipe = false;            // a Preparation Recipe, not a visual group
+        std::string recipe_contract;    // recipe_contract_version, when a recipe
+        std::vector<SubgraphStep> steps;
+        size_t inputs = 0;
+        size_t outputs = 0;
+    };
+    SubgraphSummary GetSubgraphSummary(int node_id) const;
+    // Applied at the start of the next canvas frame, so a Properties button
+    // never changes the node list while Properties is drawing one of its nodes.
+    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep };
+    void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
 
 private:
     void ShowToolbar();
@@ -843,6 +895,14 @@ private:
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
     int pending_focus_node_id_ = -1;
+    struct PendingSubgraphRequest {
+        int subgraph_id = -1;
+        SubgraphRequest request = SubgraphRequest::Expand;
+        int step_id = -1;
+        int frames_to_wait = 0;  // newly expanded steps are drawn before they can be selected
+    };
+    PendingSubgraphRequest pending_subgraph_request_;
+    void ApplySubgraphRequest();
 
     // Training animation state
     std::atomic<bool> is_training_{false};
@@ -917,7 +977,12 @@ private:
     bool pipeline_notice_pending_ = false;
     std::string pipeline_notice_;
     void ShowPipelineNotice(std::string message);
-    bool SubmitDataPipelineJson(nlohmann::json pipeline_json);
+    // `only` (optional): the node ids this run executes, for a partial run.
+    bool SubmitDataPipelineJson(nlohmann::json pipeline_json, const std::set<int>* only = nullptr);
+    // The executable pipeline document for this graph (recipes lowered, Plot
+    // nodes left out); `recipe_steps` receives recipe -> step ids when given.
+    bool BuildDataPipelineJson(nlohmann::json& out, std::map<int, std::vector<int>>* recipe_steps,
+                               std::string& error) const;
     // Recipe node -> its step node ids for the pipeline run in flight; the
     // executor reports step states, the recipe node shows their roll-up.
     std::map<int, std::vector<int>> recipe_step_ids_;
@@ -1043,6 +1108,11 @@ private:
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
     std::shared_ptr<cyxwiz::PipelineExecutionTracker> pipeline_execution_tracker_;
+    // The executor of the run in flight or last run; its facts are copied
+    // into node_run_facts_ while it runs and once when it ends.
+    std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    bool pipeline_facts_final_ = true;
+    std::map<int, cyxwiz::PipelineNodeRunFacts> node_run_facts_;
     // Lifetime token for background work this editor owns; destroying the
     // editor cancels that work and discards its pending UI delivery.
     std::shared_ptr<const void> task_owner_token_ = std::make_shared<int>(0);

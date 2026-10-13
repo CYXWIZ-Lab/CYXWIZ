@@ -539,6 +539,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_editor_highlight_folding.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/python_highlight.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/sql_highlight.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/folding.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/outline.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/python_tokenizer.cpp"

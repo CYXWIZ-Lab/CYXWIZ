@@ -82,7 +82,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
-        tab->editor.SetLanguageIsPython(scriptfile::IsPythonSource(path));
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
@@ -97,7 +97,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
-        tab->editor.SetLanguageIsPython(scriptfile::IsPythonSource(path));
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
@@ -423,7 +423,7 @@ void ScriptEditorPanel::SaveFileAs() {
     if (SaveFileContent(path, content, tab->format, &error)) {
         tab->filepath = path;
         tab->filename = std::filesystem::path(path).filename().string();
-        tab->editor.SetLanguageIsPython(scriptfile::IsPythonSource(path));
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
         tab->editor.Doc().MarkSaved();

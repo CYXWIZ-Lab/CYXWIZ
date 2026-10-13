@@ -37,7 +37,10 @@ public:
     arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(
         const std::shared_ptr<arrow::Schema>& input_schema) override;
 
+    std::string OutcomeSummary() const override { return last_outcome_; }
+
 private:
+    std::string last_outcome_;  // "passed: <counted> <what> (expected <rule>)"
     std::string check_name_;
     std::string count_true_column_;
     std::string count_column_;

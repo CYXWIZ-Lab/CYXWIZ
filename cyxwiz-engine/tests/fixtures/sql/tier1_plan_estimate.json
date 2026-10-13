@@ -1,0 +1,313 @@
+[
+ {
+  "name": "PROJECTION",
+  "children": [
+   {
+    "name": "ORDER_BY",
+    "children": [
+     {
+      "name": "PROJECTION",
+      "children": [
+       {
+        "name": "PROJECTION",
+        "children": [
+         {
+          "name": "PROJECTION",
+          "children": [
+           {
+            "name": "FILTER",
+            "children": [
+             {
+              "name": "PROJECTION",
+              "children": [
+               {
+                "name": "PROJECTION",
+                "children": [
+                 {
+                  "name": "FILTER",
+                  "children": [
+                   {
+                    "name": "UNNEST",
+                    "children": [
+                     {
+                      "name": "PROJECTION",
+                      "children": [
+                       {
+                        "name": "PROJECTION",
+                        "children": [
+                         {
+                          "name": "PROJECTION",
+                          "children": [
+                           {
+                            "name": "PROJECTION",
+                            "children": [
+                             {
+                              "name": "PROJECTION",
+                              "children": [
+                               {
+                                "name": "PROJECTION",
+                                "children": [
+                                 {
+                                  "name": "HASH_JOIN",
+                                  "children": [
+                                   {
+                                    "name": "COLUMN_DATA_SCAN",
+                                    "children": [],
+                                    "extra_info": {
+                                     "Estimated Cardinality": "7"
+                                    }
+                                   },
+                                   {
+                                    "name": "ARROW_SCAN ",
+                                    "children": [],
+                                    "extra_info": {
+                                     "Function": "ARROW_SCAN",
+                                     "Projections": [
+                                      "member_path",
+                                      "member_sha256",
+                                      "text"
+                                     ],
+                                     "Estimated Cardinality": "1"
+                                    }
+                                   }
+                                  ],
+                                  "extra_info": {
+                                   "Join Type": "INNER",
+                                   "Conditions": "source_id = CASE  WHEN ((member_path IS NOT NULL)) THEN (COALESCE(array_extract(string_split(member_path, '/'), 1), '')) ELSE NULL END",
+                                   "Estimated Cardinality": "7"
+                                  }
+                                 }
+                                ],
+                                "extra_info": {
+                                 "Projections": [
+                                  "source_id",
+                                  "title",
+                                  "author",
+                                  "work_family",
+                                  "role",
+                                  "format",
+                                  "member_path",
+                                  "member_sha256",
+                                  "t"
+                                 ],
+                                 "Estimated Cardinality": "7"
+                                }
+                               }
+                              ],
+                              "extra_info": {
+                               "Projections": [
+                                "source_id",
+                                "title",
+                                "author",
+                                "work_family",
+                                "role",
+                                "format",
+                                "member_path",
+                                "member_sha256",
+                                "b"
+                               ],
+                               "Estimated Cardinality": "7"
+                              }
+                             }
+                            ],
+                            "extra_info": {
+                             "Projections": [
+                              "source_id",
+                              "title",
+                              "author",
+                              "work_family",
+                              "role",
+                              "format",
+                              "member_path",
+                              "member_sha256",
+                              "b"
+                             ],
+                             "Estimated Cardinality": "7"
+                            }
+                           }
+                          ],
+                          "extra_info": {
+                           "Projections": [
+                            "source_id",
+                            "title",
+                            "author",
+                            "work_family",
+                            "role",
+                            "format",
+                            "member_path",
+                            "member_sha256",
+                            "b"
+                           ],
+                           "Estimated Cardinality": "7"
+                          }
+                         }
+                        ],
+                        "extra_info": {
+                         "Projections": [
+                          "source_id",
+                          "title",
+                          "author",
+                          "work_family",
+                          "role",
+                          "format",
+                          "member_path",
+                          "member_sha256",
+                          "body"
+                         ],
+                         "Estimated Cardinality": "7"
+                        }
+                       }
+                      ],
+                      "extra_info": {
+                       "Projections": [
+                        "source_id",
+                        "title",
+                        "author",
+                        "work_family",
+                        "role",
+                        "format",
+                        "member_path",
+                        "member_sha256",
+                        "paras"
+                       ],
+                       "Estimated Cardinality": "7"
+                      }
+                     }
+                    ],
+                    "extra_info": {}
+                   }
+                  ],
+                  "extra_info": {
+                   "Expression": "((\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) != '') AND (NOT regexp_full_match(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '(?is)\\s*(footnotes|(table of )?contents)\\.?:?\\s*')) AND (\"trim\"(regexp_replace(regexp_replace(regexp_replace(CASE  WHEN (((format = 'gutenberg') OR (format = 'ccel_law'))) THEN (regexp_replace(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '\\s?\\[[0-9a-z]{1,3}\\]', '', 'g')) ELSE \"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) END, '_([^_\\n]+)_', '\\1', 'g'), '=([^=\\n]+)=', '\\1', 'g'), '\\s+', ' ', 'g')) != '') AND (NOT regexp_full_match(\"trim\"(regexp_replace(regexp_replace(regexp_replace(CASE  WHEN (((format = 'gutenberg') OR (format = 'ccel_law'))) THEN (regexp_replace(\"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')), '\\s?\\[[0-9a-z]{1,3}\\]', '', 'g')) ELSE \"trim\"(regexp_replace(raw, '(?m)^\\s*_{10,}\\s*$', '', 'g')) END, '_([^_\\n]+)_', '\\1', 'g'), '=([^=\\n]+)=', '\\1', 'g'), '\\s+', ' ', 'g')), '([A-Z] ){2,}[A-Z]|Page|Indexes|by|[* ]+|END OF VOL\\. I\\.|JOHN CHILDS AND SON, BUNGAY\\.')))",
+                   "Estimated Cardinality": "1"
+                  }
+                 }
+                ],
+                "extra_info": {
+                 "Projections": [
+                  "#0",
+                  "#1",
+                  "#2",
+                  "#3",
+                  "#4",
+                  "#5",
+                  "#6",
+                  "#7",
+                  "#9",
+                  "#10"
+                 ],
+                 "Estimated Cardinality": "1"
+                }
+               }
+              ],
+              "extra_info": {
+               "Projections": [
+                "source_id",
+                "title",
+                "author",
+                "work_family",
+                "role",
+                "format",
+                "member_path",
+                "member_sha256",
+                "paragraph_index",
+                "p"
+               ],
+               "Estimated Cardinality": "1"
+              }
+             }
+            ],
+            "extra_info": {
+             "Expression": [
+              "((NOT regexp_matches(p, '(ISBN|P\\.O\\. Box|FAX|www\\.|https?:|Produced by|Distributed Proofreading|Print Basis:|CCEL Subjects|LC Call no|LC Subjects|Creator\\(s\\):|Rights: Public Domain)')) AND (NOT (((format = 'gutenberg') OR (format = 'ccel_law')) AND regexp_matches(p, '^\\[[0-9a-z]+\\]\\s'))) AND ((len(list_filter(string_split(p, '",
+              "'))) * 2) < len(string_split(p, '",
+              "'))) AND ((len(p) - len(\"replace\"(p, '{', ''))) < 3))"
+             ],
+             "Estimated Cardinality": "1"
+            }
+           }
+          ],
+          "extra_info": {
+           "Projections": [
+            "source_id",
+            "title",
+            "author",
+            "work_family",
+            "role",
+            "member_path",
+            "member_sha256",
+            "paragraph_index",
+            "text"
+           ],
+           "Estimated Cardinality": "1"
+          }
+         }
+        ],
+        "extra_info": {
+         "Projections": [
+          "source_id",
+          "paragraph_id",
+          "paragraph_index",
+          "title",
+          "author",
+          "work_family",
+          "role",
+          "member_path",
+          "member_sha256",
+          "text",
+          "word_count",
+          "training_admitted",
+          "split"
+         ],
+         "Estimated Cardinality": "1"
+        }
+       }
+      ],
+      "extra_info": {
+       "Projections": [
+        "#0",
+        "#1",
+        "#2",
+        "#3",
+        "#4",
+        "#5",
+        "#6",
+        "#7",
+        "#8",
+        "#9",
+        "#10",
+        "#11",
+        "__internal_compress_string_uhugeint(#12)"
+       ],
+       "Estimated Cardinality": "1"
+      }
+     }
+    ],
+    "extra_info": {
+     "Order By": [
+      "cleaned.source_id ASC",
+      "CAST(cleaned.paragraph_index AS BIGINT) ASC"
+     ]
+    }
+   }
+  ],
+  "extra_info": {
+   "Projections": [
+    "#0",
+    "#1",
+    "#2",
+    "#3",
+    "#4",
+    "#5",
+    "#6",
+    "#7",
+    "#8",
+    "#9",
+    "#10",
+    "#11",
+    "__internal_decompress_string(#12)"
+   ],
+   "Estimated Cardinality": "0"
+  }
+ }
+]

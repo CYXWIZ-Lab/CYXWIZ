@@ -8,6 +8,21 @@ namespace cyxwiz {
 void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
     if (!table) return;
 
+    // The same in-memory table opened again (a step's output after a rerun)
+    // refreshes its tab instead of adding a second one.
+    for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
+        auto& open = tabs_[i];
+        if (open->filepath.empty() && !open->live.on && open->filename == table->GetName()) {
+            auto fresh = std::make_unique<TableTab>();
+            fresh->filename = table->GetName();
+            fresh->table = table;
+            open = std::move(fresh);
+            active_tab_index_ = i;
+            select_tab_ = i;
+            return;
+        }
+    }
+
     auto tab = std::make_unique<TableTab>();
     tab->filename = table->GetName();
     tab->filepath = "";  // In-memory table

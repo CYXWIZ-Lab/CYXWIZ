@@ -226,7 +226,7 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     } else if (!editing && cell.editor.GetText() != cell.source) {
         cell.SyncEditorFromSource();
     }
-    cell.editor.SetLanguageIsPython(python);
+    cell.editor.SetLanguage(python ? editor::Language::Python : editor::Language::Plain);
     cell.editor.SetShowLineNumbers(false);
     cell.editor.SetWordWrap(true);
     cell.editor.SetScrollPastEnd(false);

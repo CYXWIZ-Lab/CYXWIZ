@@ -97,7 +97,9 @@ public:
      *
      * Note: The current DuckDB 1.4.x adapter copies supported Arrow scalar
      * values into an in-memory DuckDB table. This avoids the version-specific
-     * arrow_scan pointer ABI while preserving SQL transform behavior.
+     * arrow_scan pointer ABI while preserving SQL transform behavior
+     * (duckdb.dll does not export ArrowArrayStreamWrapper, which the C++
+     * arrow_scan needs; checked TOFIX146 step 4c).
      */
     bool RegisterTable(const std::string& table_name,
                        std::shared_ptr<arrow::Table> arrow_table);

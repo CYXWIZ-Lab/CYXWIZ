@@ -218,12 +218,36 @@ void CheckBerean() {
     }
 }
 
+void CheckDataOnlyGraph() {
+    // A data recipe (a source and an SQL step, no model) is not a failed compile.
+    std::vector<gui::MLNode> nodes(2);
+    nodes[0].id = 1;
+    nodes[0].type = gui::NodeType::DataInput;
+    nodes[0].name = "Books";
+    nodes[1].id = 2;
+    nodes[1].type = gui::NodeType::SQLQuery;
+    nodes[1].name = "Paragraphs";
+    nodes[1].parameters = {{"query", "SELECT * FROM input"}, {"input_alias", "input"}, {"sql_contract_version", "1"}};
+    const std::vector<gui::NodeLink> links;
+    const auto config = cyxwiz::GraphCompiler{}.Compile(nodes, links, true);
+    Check(!config.is_valid, "a data-only graph does not compile for training");
+    cyxwiz::CompiledNodeInputs inputs;
+    inputs.state = cyxwiz::LiveCompileState::Failed;
+    inputs.config = &config;
+    const auto card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
+    Check(card.status == "No model to compile" && card.kind == cyxwiz::CompiledStatusKind::None,
+          "a data step in a data-only graph is not shown as a failed compile: " + card.status);
+    Check(card.issues.empty() && card.no_shapes_text.find("rejected") == std::string::npos,
+          "training-graph complaints are not listed as the data step's errors");
+}
+
 }  // namespace
 
 int main() {
     CheckFormatting();
     CheckNer();
     CheckBerean();
+    CheckDataOnlyGraph();
     std::cout << "Compiled node presentation passed\n";
     return 0;
 }

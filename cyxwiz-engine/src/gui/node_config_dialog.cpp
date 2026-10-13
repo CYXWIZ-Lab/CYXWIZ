@@ -1,6 +1,7 @@
 #include "node_config_dialog.h"
 #include "quality_analyzer_dialog.h"
 #include "node_editor.h"
+#include "sql_workbench.h"
 #include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
@@ -133,7 +134,10 @@ bool NodeConfigDialog::Render() {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
     // Begin the dialog window
-    if (ImGui::Begin(title_.c_str(), &is_open_, flags)) {
+    const bool visible = ImGui::Begin(title_.c_str(), &is_open_, flags);
+    if (visible && !UsesStandardButtons()) {
+        RenderContent();
+    } else if (visible) {
         // Content area
         ImVec2 avail = ImGui::GetContentRegionAvail();
 
@@ -1870,6 +1874,11 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
 
     RegisterDialog(NT::DataSplit, [](MLNode* node) {
         return std::make_unique<DataSplitDialog>(node);
+    });
+
+    // SQL step: the SQL Workbench (TOFIX146), a dockable window.
+    RegisterDialog(NT::SQLQuery, [](MLNode* node) {
+        return std::make_unique<SqlWorkbenchDialog>(node);
     });
 
     RegisterDialog(NT::QualityAnalyzer, [](MLNode* node) {

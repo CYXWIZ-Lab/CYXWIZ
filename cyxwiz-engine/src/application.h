@@ -102,4 +102,7 @@ private:
     std::string startup_project_path_;
     std::string startup_graph_path_;
     std::vector<std::string> startup_scripts_;  // .py / .cyx files named on the command line
+    // A .cyxgraph named on the command line opens attached to its file (Save
+    // writes it); a start-page starter opens detached.
+    bool startup_graph_from_command_line_ = false;
 };

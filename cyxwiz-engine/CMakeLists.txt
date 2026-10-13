@@ -122,6 +122,11 @@ set(ENGINE_SOURCES
     src/core/python_repl_presentation.cpp
     src/core/runtime_log_presentation.cpp
     src/core/console_commands_presentation.cpp
+    src/core/sql_step_presentation.cpp
+    src/core/table_profile.cpp
+    src/core/sql_plan.cpp
+    src/core/sql_editing.cpp
+    src/core/guided_sql.cpp
     src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_publication.cpp
@@ -346,6 +351,12 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_sequence_fusion.cpp
+    src/gui/properties_sql_step.cpp
+    src/gui/properties_subgraph.cpp
+    src/gui/sql_workbench.cpp
+    src/gui/sql_workbench_plan.cpp
+    src/gui/sql_workbench_editing.cpp
+    src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
     src/gui/properties_metadata_editor.cpp
@@ -378,6 +389,7 @@ set(ENGINE_SOURCES
     src/core/editor/text_document.cpp
     src/core/editor/breakpoint_lines.cpp
     src/core/editor/python_highlight.cpp
+    src/core/editor/sql_highlight.cpp
     src/core/editor/folding.cpp
     src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
@@ -617,6 +629,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
+    src/data/arrow_data_table.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -2762,6 +2775,10 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
     src/core/sql_transform.cpp
+    src/core/sql_step_presentation.cpp
+    src/core/table_profile.cpp
+    src/core/sql_plan.cpp
+    src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
@@ -6444,6 +6461,36 @@ add_executable(test_subgraph_presentation tests/test_subgraph_presentation.cpp
 target_include_directories(test_subgraph_presentation PRIVATE src external/imnodes)
 target_link_libraries(test_subgraph_presentation PRIVATE imgui::imgui nlohmann_json::nlohmann_json)
 set_target_properties(test_subgraph_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# SQL step presentation model (TOFIX146): query outline, check rules, input names.
+add_executable(test_sql_step_presentation tests/test_sql_step_presentation.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_step_presentation PRIVATE src)
+target_compile_definitions(test_sql_step_presentation PRIVATE
+    CYXWIZ_SQL_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql/tier1_paragraphs.sql")
+set_target_properties(test_sql_step_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlStepPresentation COMMAND test_sql_step_presentation)
+
+# SQL Workbench plan model (TOFIX146 board 4): DuckDB plan JSON of the real tier1 query.
+add_executable(test_sql_plan tests/test_sql_plan.cpp src/core/sql_plan.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_plan PRIVATE src)
+target_link_libraries(test_sql_plan PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(test_sql_plan PRIVATE CYXWIZ_SQL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql")
+set_target_properties(test_sql_plan PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlPlan COMMAND test_sql_plan)
+
+# SQL Workbench editing helpers (TOFIX146 4b-2).
+add_executable(test_sql_editing tests/test_sql_editing.cpp src/core/sql_editing.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_sql_editing PRIVATE src)
+target_compile_definitions(test_sql_editing PRIVATE CYXWIZ_SQL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sql")
+set_target_properties(test_sql_editing PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SqlEditing COMMAND test_sql_editing)
+
+# Guided SQL steps (TOFIX146 step 5); DuckDB runs them in the routing test --guided.
+add_executable(test_guided_sql tests/test_guided_sql.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_guided_sql PRIVATE src)
+target_link_libraries(test_guided_sql PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_guided_sql PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME GuidedSql COMMAND test_guided_sql)
 
 # Shared task cancellation gate; real task and trace implementations.
 add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp

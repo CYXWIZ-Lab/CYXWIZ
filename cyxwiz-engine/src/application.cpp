@@ -206,8 +206,9 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
             startup_scripts_.push_back(script.string());
             spdlog::info("Startup script: {}", startup_scripts_.back());
         } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
-            // A graph opens on the canvas (cyxwiz-engine project.cyxwiz graphs/train.cyxgraph).
+            // cyxwiz-engine <project> graph.cyxgraph opens the graph in the Node Editor.
             startup_graph_path_ = script.string();
+            startup_graph_from_command_line_ = true;
             spdlog::info("Startup graph: {}", startup_graph_path_);
         }
     }
@@ -234,11 +235,15 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
 
     if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
         // A starter is a copy to work on: Save asks for a name instead of
-        // overwriting the example next to the Engine.
-        if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
-        spdlog::info("Opened startup graph: {}", startup_graph_path_);
+        // overwriting the example next to the Engine. A graph named on the
+        // command line is the user's own file.
+        if (!startup_graph_from_command_line_) {
+            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
+        }
+        spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
+                     startup_graph_path_);
     } else {
-        spdlog::error("Failed to open startup graph: {}", startup_graph_path_);
+        spdlog::error("Failed to open graph: {}", startup_graph_path_);
     }
 }
 
@@ -752,6 +757,7 @@ void CyxWizApp::Render() {
                 spdlog::info("Starter graph selected from start page");
                 startup_project_path_.clear();
                 startup_graph_path_ = start_page_->GetSelectedGraphPath();
+                startup_graph_from_command_line_ = false;
                 project_selected_ = true;
                 start_page_.reset();
 

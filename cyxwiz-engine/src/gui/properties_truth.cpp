@@ -2614,7 +2614,7 @@ const DatasetTruthFact* FindUniqueDatasetClassFact(const NodeTruthContext& conte
     return selected;
 }
 
-void AddRawParameters(NodeTruthReport& report, const MLNode& node) {
+void AddRawParameters(NodeTruthReport& report, const MLNode& node, const NodeTruthContext& context) {
     std::map<std::string, std::string> canonical_by_key;
     std::set<std::string> canonical_keys;
     for (const auto& property : report.properties) {
@@ -2647,6 +2647,9 @@ void AddRawParameters(NodeTruthReport& report, const MLNode& node) {
                    !HasNonEmptyParameter(node, "dataset_name")) {
             raw.maps_to = "dataset_name";
             AddStatus(raw, TruthStatus::AliasUsed);
+        } else if (context.declared_parameters && context.declared_parameters->count(key) > 0) {
+            raw.maps_to = key;
+            AddStatus(raw, TruthStatus::OK);
         } else {
             AddStatus(raw, TruthStatus::Stale);
             raw.maps_to = "";
@@ -3392,7 +3395,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         report.properties.push_back(std::move(width));
     }
 
-    AddRawParameters(report, node);
+    AddRawParameters(report, node, context);
     MarkIssues(report);
     return report;
 }

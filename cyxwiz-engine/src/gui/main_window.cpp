@@ -167,6 +167,7 @@
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
 #include "../core/arrow_dataset.h"
+#include "../data/arrow_data_table.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
@@ -872,6 +873,23 @@ MainWindow::MainWindow()
 
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
+    // A step's input or output opens in the Table Viewer (TOFIX146). The
+    // viewer holds rows in memory, so a very large output opens its first rows.
+    properties_->SetOpenTableCallback([this](const std::string& dataset_name, const std::string& title) {
+        if (!table_viewer_) return;
+        auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(dataset_name);
+        auto arrow_table = dataset ? dataset->GetArrowTable() : nullptr;
+        if (!arrow_table) {
+            spdlog::warn("Open in Table Viewer: '{}' is not in memory; run the step again", dataset_name);
+            return;
+        }
+        constexpr int64_t kMaxRows = 200000;
+        std::string name = title + " (" + dataset_name + ")";
+        if (arrow_table->num_rows() > kMaxRows) name += ", first 200,000 rows";
+        table_viewer_->SetTable(cyxwiz::DataTableFromArrow(*arrow_table, name, kMaxRows));
+        table_viewer_->SetVisible(true);
+        ImGui::SetWindowFocus(table_viewer_->GetName());
+    });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
     properties_->SetLiveCompile(live_compile_.get());

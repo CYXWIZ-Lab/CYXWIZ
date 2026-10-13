@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1604,6 +1605,33 @@ int main() {
         report = gui::properties_truth::ResolveNodeTruth(loader);
         seed = FindProperty(report, "model_seed");
         Check(seed && HasStatus(*seed, gui::properties_truth::TruthStatus::Conflicting), "invalid seed must be visible in Properties");
+    }
+
+    {
+        // A "fixed" parameter (the SQL contract version) accepts only its default.
+        cyxwiz::ParameterDefinition contract{"sql_contract_version", "fixed", "1", "SQL step contract version"};
+        std::string error;
+        Check(gui::properties_rules::ValidateParameter("1", contract, error), "fixed parameter accepts its default");
+        Check(!gui::properties_rules::ValidateParameter("2", contract, error) && error.find("expected 1") != std::string::npos,
+              "fixed parameter rejects another value");
+        Check(!gui::properties_rules::ValidateParameter("", contract, error), "fixed parameter rejects an empty value");
+    }
+
+    {
+        // A parameter the node type declares is current, not stale, without a truth rule.
+        auto sql = MakeNode(950, gui::NodeType::SQLQuery, "SQL step");
+        sql.parameters["query"] = "SELECT * FROM input";
+        sql.parameters["leftover"] = "x";
+        const std::set<std::string> declared = {"query", "input_alias", "input_aliases", "sql_contract_version"};
+        gui::properties_truth::NodeTruthContext context;
+        context.declared_parameters = &declared;
+        const auto report = gui::properties_truth::ResolveNodeTruth(sql, context);
+        const auto* query = FindRaw(report, "query");
+        Check(query && HasStatus(*query, gui::properties_truth::TruthStatus::OK) && query->maps_to == "query",
+              "declared parameter is not stale");
+        const auto* leftover = FindRaw(report, "leftover");
+        Check(leftover && HasStatus(*leftover, gui::properties_truth::TruthStatus::Stale),
+              "undeclared parameter stays stale");
     }
     std::cout << "Properties truth resolver tests passed\n";
     return 0;

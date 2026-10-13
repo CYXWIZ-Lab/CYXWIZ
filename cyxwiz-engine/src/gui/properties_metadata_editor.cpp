@@ -113,11 +113,13 @@ void RenderParameter(
     const InvalidateCallback& invalidate) {
     ImGui::PushID(param.name.c_str());
 
-    std::string& value = node.parameters[param.name];
-
-    if (value.empty() && !param.default_value.empty()) {
-        value = param.default_value;
+    // Seed the default only when the parameter is absent: an empty value the
+    // user cleared stays empty instead of being refilled every frame.
+    auto found = node.parameters.find(param.name);
+    if (found == node.parameters.end()) {
+        found = node.parameters.emplace(param.name, param.default_value).first;
     }
+    std::string& value = found->second;
 
     std::string initial_error;
     if (!properties_rules::ValidateParameter(value, param, initial_error)) {
@@ -154,7 +156,14 @@ void RenderParameter(
 
     bool changed = false;
 
-    if (param.type == "int") {
+    if (param.type == "fixed") {
+        // Set by the engine (a contract version): shown, never edited here.
+        ImGui::TextDisabled("%s", value.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Set by the engine; not editable");
+        }
+    }
+    else if (param.type == "int") {
         int int_val = 0;
         properties_rules::TryParseIntStrict(value, int_val);
         ImGui::SetNextItemWidth(120.0f);
@@ -309,7 +318,7 @@ void RenderParameter(
 
     if (!param.default_value.empty() && value != param.default_value) {
         ImGui::SameLine();
-        if (ImGui::SmallButton("Reset")) {
+        if (ImGui::SmallButton(param.type == "fixed" ? "Set to supported" : "Reset")) {
             value = param.default_value;
             changed = true;
         }

@@ -1153,7 +1153,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
         {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
         {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
-        {NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", {"workflow", "subgraph"}},
         {NodeType::DNNClassify, NodeCategory::DNN, "DNN Classify", {"dnn", "classification"}},
         {NodeType::DNNPoseEstimate, NodeCategory::DNN, "DNN Pose Estimate", {"dnn", "pose"}},
         {NodeType::DNNFaceDetect, NodeCategory::DNN, "DNN Face Detect", {"dnn", "face", "detection"}},
@@ -1332,8 +1331,25 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"input_aliases", "string", "",
           "Several inputs: comma-separated table names, one input pin each (e.g. chapters, manifest)",
           {}, ""},
-         {"sql_contract_version", "string", "1", "SQL step contract version", {}, ""}},
+         {"sql_contract_version", "fixed", "1", "SQL step contract version (set by the engine)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    // Subgraph (TOFIX146 D5): made by grouping nodes, never from the palette.
+    // A visual group only tidies the canvas; a Preparation Recipe
+    // (recipe_role) runs its steps as one stage. The role is set from the
+    // canvas menu or Properties, which validate it, so its parameters are
+    // engine-owned rather than declared as editable fields.
+    {
+        NodeMetadata subgraph{NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", ICON_FA_OBJECT_GROUP,
+            {"workflow", "subgraph", "group", "recipe", "preparation"}, 0, false,
+            "A group of nodes; as a Preparation Recipe it runs its steps as one stage",
+            "A visual group only tidies the canvas and does not run. A Preparation Recipe takes one dataset, "
+            "runs its steps in order and gives one prepared dataset, exactly as the steps would as separate "
+            "nodes.", ""};
+        subgraph.made_by = "Select two or more nodes, then right-click the canvas: Actions > Create Subgraph "
+                           "(Ctrl+Shift+U).";
+        RegisterNode(std::move(subgraph));
+    }
 
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
     // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput

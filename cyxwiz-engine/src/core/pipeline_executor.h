@@ -13,6 +13,8 @@
 #include <optional>
 #include <utility>
 
+#include "pipeline_node_run_facts.h"
+
 namespace gui {
 enum class NodeType;
 }
@@ -144,6 +146,9 @@ public:
     void SetNodeExecutionCallback(
         std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback);
 
+    /** Facts about each node's latest run (thread-safe; readable during a run). */
+    std::map<int, PipelineNodeRunFacts> GetNodeRunFacts() const;
+
     /**
      * Register a completion callback
      * Called when pipeline execution finishes (success or failure)
@@ -195,6 +200,7 @@ private:
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
         std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
+        std::map<int, std::string> node_outcomes;   // Node ID -> operator outcome summary
         std::string input_dataset;                // Initial dataset name
         std::string output_dataset;               // Final result dataset name
         std::string deployment_dataset;           // Dataset ready for Node Editor deployment
@@ -222,6 +228,14 @@ private:
     std::function<void(bool)> completion_callback_;
     std::function<void(int, PipelineNodeExecutionEvent, const std::string&)>
         node_execution_callback_;
+
+    // Latest run facts per node (GetNodeRunFacts); start times of running nodes.
+    mutable std::mutex node_run_facts_mutex_;
+    std::map<int, PipelineNodeRunFacts> node_run_facts_;
+    std::map<int, double> node_started_seconds_;
+    void RecordNodeRunFacts(const Node& node, PipelineNodeExecutionEvent event,
+                            const std::string& output_dataset, const std::string& outcome,
+                            const std::string& error);
 
     // DuckDB connector for SQL transformations
     std::unique_ptr<DuckDBConnector> duckdb_;

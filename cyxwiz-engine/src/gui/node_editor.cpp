@@ -230,6 +230,7 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 }
 
 void NodeEditor::Render() {
+    ApplySubgraphRequest();
     if (!show_window_) return;
 
     SyncParameterDrivenPins();
@@ -4367,10 +4368,95 @@ bool NodeEditor::ExecuteDataPipeline() {
         return false;
     }
 
-    // Convert node graph to JSON for PipelineExecutor
     nlohmann::json pipeline_json;
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_step_ids_, error)) {
+        spdlog::error("Pipeline not started: {}", error);
+        if (!subgraphs_.empty()) ShowPipelineNotice("The pipeline was not started.\n\n" + error);
+        return false;
+    }
+    return SubmitDataPipelineJson(std::move(pipeline_json));
+}
+
+bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step) {
+    if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
+        spdlog::warn("Data transformation pipeline is already running (task ID: {})",
+                     pipeline_task_id_);
+        return false;
+    }
+    nlohmann::json pipeline_json;
+    std::string error;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_step_ids_, error)) {
+        spdlog::error("Step not run: {}", error);
+        ShowPipelineNotice("The step was not run.\n\n" + error);
+        return false;
+    }
+    // Keep the step, everything upstream of it and, when asked, the Row
+    // Count Checks chained right after it.
+    std::map<int, std::vector<int>> upstream;
+    std::map<int, std::vector<int>> downstream;
+    for (const auto& link : pipeline_json.at("links")) {
+        const int from = link.at("start_node").get<int>();
+        const int to = link.at("end_node").get<int>();
+        upstream[to].push_back(from);
+        downstream[from].push_back(to);
+    }
+    std::map<int, std::string> types;
+    for (const auto& node : pipeline_json.at("nodes")) {
+        types[node.at("id").get<int>()] = node.at("type").get<std::string>();
+    }
+    if (!types.count(node_id)) {
+        ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
+        return false;
+    }
+    std::set<int> keep;
+    std::vector<int> pending{node_id};
+    while (!pending.empty()) {
+        const int id = pending.back();
+        pending.pop_back();
+        if (!keep.insert(id).second) continue;
+        for (int from : upstream[id]) pending.push_back(from);
+    }
+    if (!include_step) {
+        keep.erase(node_id);
+        if (keep.empty()) {
+            ShowPipelineNotice("Nothing runs before this step.");
+            return false;
+        }
+    }
+    if (with_checks && include_step) {
+        int at = node_id;
+        for (;;) {
+            const auto& next = downstream[at];
+            if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
+            at = next.front();
+            keep.insert(at);
+        }
+    }
+    nlohmann::json nodes = nlohmann::json::array();
+    for (auto& node : pipeline_json.at("nodes")) {
+        if (keep.count(node.at("id").get<int>())) nodes.push_back(std::move(node));
+    }
+    nlohmann::json links = nlohmann::json::array();
+    for (auto& link : pipeline_json.at("links")) {
+        if (keep.count(link.at("start_node").get<int>()) && keep.count(link.at("end_node").get<int>())) {
+            links.push_back(std::move(link));
+        }
+    }
+    pipeline_json["nodes"] = std::move(nodes);
+    pipeline_json["links"] = std::move(links);
+    spdlog::info("Running step {} ({} of the graph's steps{})", node_id, keep.size(),
+                 with_checks ? ", with its checks" : "");
+    return SubmitDataPipelineJson(std::move(pipeline_json), &keep);
+}
+
+bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
+                                       std::map<int, std::vector<int>>* recipe_steps,
+                                       std::string& error) const {
+    // Convert node graph to JSON for PipelineExecutor
+    pipeline_json = nlohmann::json::object();
     pipeline_json["nodes"] = nlohmann::json::array();
-    recipe_step_ids_.clear();
+    if (recipe_steps) recipe_steps->clear();
 
     if (!subgraphs_.empty()) {
         // Preparation Recipes run as their steps: lower the same saved-document
@@ -4381,13 +4467,13 @@ bool NodeEditor::ExecuteDataPipeline() {
             gui::detail::WriteEditorGraphContent(document, nodes_, links_, subgraphs_, {});
             lowered = cyxwiz::LowerPreparationRecipes(document);
         } catch (const std::exception& e) {
-            spdlog::error("Pipeline not started: {}", e.what());
-            ShowPipelineNotice(std::string("The pipeline was not started.\n\n") + e.what());
+            error = e.what();
             return false;
         }
-        recipe_step_ids_.clear();
-        for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
-            recipe_step_ids_[recipe_id.get<int>()].push_back(std::stoi(step_id));
+        if (recipe_steps) {
+            for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
+                (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
+            }
         }
         for (const auto& node : lowered.at("nodes")) {
             nlohmann::json node_json;
@@ -4405,7 +4491,7 @@ bool NodeEditor::ExecuteDataPipeline() {
                 {"start_pin_index", link.value("from_pin_index", 0)},
                 {"end_pin_index", link.value("to_pin_index", 0)}});
         }
-        return SubmitDataPipelineJson(std::move(pipeline_json));
+        return true;
     }
 
     for (const auto& node : nodes_) {
@@ -4433,7 +4519,7 @@ bool NodeEditor::ExecuteDataPipeline() {
         const MLNode* from_node = FindNodeById(link.from_node);
         const MLNode* to_node = FindNodeById(link.to_node);
         if (!from_node || !to_node) {
-            spdlog::error("Pipeline link {} references a missing node", link.id);
+            error = "Pipeline link " + std::to_string(link.id) + " references a missing node";
             return false;
         }
         if (to_node->type == NodeType::Plot || to_node->type == NodeType::Dashboard) continue;
@@ -4445,7 +4531,7 @@ bool NodeEditor::ExecuteDataPipeline() {
             [&link](const NodePin& pin) { return pin.id == link.to_pin; });
         if (from_pin == from_node->outputs.end() ||
             to_pin == to_node->inputs.end()) {
-            spdlog::error("Pipeline link {} references a missing pin", link.id);
+            error = "Pipeline link " + std::to_string(link.id) + " references a missing pin";
             return false;
         }
         pipeline_json["links"].push_back({
@@ -4457,11 +4543,57 @@ bool NodeEditor::ExecuteDataPipeline() {
                 std::distance(to_node->inputs.begin(), to_pin))}
         });
     }
-
-    return SubmitDataPipelineJson(std::move(pipeline_json));
+    return true;
 }
 
-bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json) {
+NodeEditor::DataStepContext NodeEditor::GetDataStepContext(int node_id) const {
+    DataStepContext context;
+    nlohmann::json pipeline_json;
+    std::map<int, std::vector<int>> recipe_steps;
+    if (!BuildDataPipelineJson(pipeline_json, &recipe_steps, context.error)) return context;
+    for (const auto& [recipe_id, steps] : recipe_steps) {
+        if (std::find(steps.begin(), steps.end(), node_id) == steps.end()) continue;
+        const MLNode* recipe = FindNodeById(recipe_id);
+        context.recipe_name = recipe ? recipe->name : std::string("#") + std::to_string(recipe_id);
+        context.recipe_steps = static_cast<int>(steps.size());
+    }
+    std::map<int, const nlohmann::json*> by_id;
+    for (const auto& node : pipeline_json.at("nodes")) by_id[node.at("id").get<int>()] = &node;
+    const auto neighbour = [&](int id, int pin) {
+        DataStepNeighbour out;
+        out.id = id;
+        out.pin = pin;
+        const auto it = by_id.find(id);
+        if (it == by_id.end()) return out;
+        out.name = it->second->value("name", std::string());
+        out.type = it->second->value("type", std::string());
+        for (const auto& [key, value] : it->second->at("parameters").items()) {
+            if (value.is_string()) out.parameters[key] = value.get<std::string>();
+        }
+        return out;
+    };
+    std::map<int, std::vector<int>> downstream;
+    for (const auto& link : pipeline_json.at("links")) {
+        const int from = link.at("start_node").get<int>();
+        const int to = link.at("end_node").get<int>();
+        downstream[from].push_back(to);
+        if (to == node_id) context.inputs.push_back(neighbour(from, link.value("end_pin_index", 0)));
+    }
+    std::sort(context.inputs.begin(), context.inputs.end(),
+              [](const DataStepNeighbour& a, const DataStepNeighbour& b) { return a.pin < b.pin; });
+    int at = node_id;
+    for (;;) {
+        const auto& next = downstream[at];
+        if (next.size() != 1) break;
+        auto check = neighbour(next.front(), 0);
+        if (check.type != "RowCountCheck") break;
+        at = check.id;
+        context.checks.push_back(std::move(check));
+    }
+    return context;
+}
+
+bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std::set<int>* only) {
     // Snapshot the graph on the UI thread, then execute through the shared
     // task system. The worker owns its PipelineExecutor, so it never reads
     // mutable editor state and remains safe if the editor closes mid-run.
@@ -4481,10 +4613,14 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json) {
         std::move(executor), task_owner_token_);
     pipeline_task_id_ = submission.task_id;
     pipeline_execution_tracker_ = std::move(submission.tracker);
+    pipeline_executor_ = std::move(submission.executor);
+    pipeline_facts_final_ = false;
     pipeline_execution_active_ = pipeline_task_id_ != 0;
     ClearExecutionStates();
     if (pipeline_execution_active_) {
         for (const auto& node : nodes_) {
+            // A partial run (Run step) leaves the steps it does not run idle.
+            if (only && !only->count(node.id)) continue;
             SetNodeExecutionState(node.id, NodeExecutionState::Pending);
         }
     }
@@ -4517,6 +4653,12 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
     pipeline_execution_active_ =
         task_info.state == cyxwiz::TaskState::Pending ||
         task_info.state == cyxwiz::TaskState::Running;
+    // Run facts for Properties (TOFIX146): copied while the run is live and
+    // once more when it ends; earlier runs' facts stay for nodes not rerun.
+    if (pipeline_executor_ && !pipeline_facts_final_) {
+        for (auto& [id, facts] : pipeline_executor_->GetNodeRunFacts()) node_run_facts_[id] = std::move(facts);
+        pipeline_facts_final_ = !pipeline_execution_active_;
+    }
 
     const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     for (const auto& [node_id, event] : snapshot.node_states) {

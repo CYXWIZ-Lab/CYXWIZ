@@ -266,7 +266,7 @@ void TableViewerPanel::RenderTabBar() {
             if (tab->is_dirty) {
                 tab_name += " *";  // Unsaved changes indicator
             }
-            tab_name = ICON_FA_TABLE " " + tab_name;
+            tab_name = ICON_FA_TABLE " " + tab_name + "###table_tab" + std::to_string(tab->uid);
 
             // Make tab closable
             bool tab_open = true;

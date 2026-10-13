@@ -40,6 +40,7 @@
 #include <limits>
 #include <thread>
 #include <chrono>
+#include <ctime>
 #include <set>
 #include <mutex>
 #include <optional>
@@ -3313,6 +3314,55 @@ void PipelineExecutor::SetNodeExecutionCallback(
     node_execution_callback_ = std::move(callback);
 }
 
+std::map<int, PipelineNodeRunFacts> PipelineExecutor::GetNodeRunFacts() const {
+    std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+    return node_run_facts_;
+}
+
+void PipelineExecutor::RecordNodeRunFacts(const Node& node,
+                                          PipelineNodeExecutionEvent event,
+                                          const std::string& output_dataset,
+                                          const std::string& outcome,
+                                          const std::string& error) {
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
+    if (event == PipelineNodeExecutionEvent::Executing) {
+        node_started_seconds_[node.id] = now;
+        return;
+    }
+    if (event != PipelineNodeExecutionEvent::Completed &&
+        event != PipelineNodeExecutionEvent::Error) {
+        return;
+    }
+    PipelineNodeRunFacts facts;
+    facts.output_dataset = output_dataset;
+    facts.outcome = outcome;
+    facts.error = error;
+    if (const auto started = node_started_seconds_.find(node.id);
+        started != node_started_seconds_.end()) {
+        facts.seconds = now - started->second;
+        node_started_seconds_.erase(started);
+    }
+    if (!output_dataset.empty()) {
+        if (const auto dataset = DataRegistry::Instance().GetArrowDataset(output_dataset)) {
+            facts.rows = dataset->GetNumRows();
+            facts.columns = dataset->GetNumColumns();
+        }
+    }
+    const std::time_t wall = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &wall);
+#else
+    localtime_r(&wall, &local);
+#endif
+    std::ostringstream clock;
+    clock << std::put_time(&local, "%H:%M:%S");
+    facts.finished_at = clock.str();
+    node_run_facts_[node.id] = std::move(facts);
+}
+
 void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback) {
     completion_callback_ = callback;
 }
@@ -5838,6 +5888,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     ctx.node_results[node.id] = output_dataset_name;
     ctx.output_dataset = output_dataset_name;
+    if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
+        ctx.node_outcomes[node.id] = std::move(outcome);
+    }
 
     if (type == gui::NodeType::LinearRegressionNode ||
         type == gui::NodeType::PolynomialRegressionNode ||
@@ -7036,6 +7089,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     std::lock_guard<std::mutex> lock(execution_mutex);
                     NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
                                         "Executing " + node->name);
+                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Executing, "", "", "");
                     result.success = ExecuteNode(*node, result.ctx);
                     return result;
                 }
@@ -7071,10 +7125,21 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     ctx.deployment_dataset = result.ctx.deployment_dataset;
                 }
 
+                for (const auto& [result_node_id, outcome] : result.ctx.node_outcomes) {
+                    ctx.node_outcomes[result_node_id] = outcome;
+                }
+
                 completed.insert(node_id);
                 nodes_executed++;
                 NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Completed,
                                     "Completed " + node->name);
+                {
+                    const auto dataset = result.ctx.node_results.find(node_id);
+                    const auto outcome = result.ctx.node_outcomes.find(node_id);
+                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Completed,
+                                       dataset == result.ctx.node_results.end() ? "" : dataset->second,
+                                       outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "");
+                }
 
                 // Cache the output dataset name
                 auto result_it = ctx.node_results.find(node_id);
@@ -7094,10 +7159,11 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             } else {
                 // Execution failed
                 if (node) {
-                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error,
-                                        last_error_.empty()
-                                            ? "Pipeline node execution failed"
-                                            : last_error_);
+                    const std::string error = last_error_.empty()
+                        ? "Pipeline node execution failed"
+                        : last_error_;
+                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error, error);
+                    RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Error, "", "", error);
                 }
                 return false;
             }

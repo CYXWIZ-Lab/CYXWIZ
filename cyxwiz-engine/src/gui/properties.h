@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -57,6 +58,11 @@ public:
     // The background compile of the canvas (TOFIX123); the AS COMPILED card
     // reads it. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+
+    // Opens a registered dataset (a step's output) in the Table Viewer
+    // (TOFIX146 "Open in Table Viewer"); `title` names the tab.
+    using OpenTableCallback = std::function<void(const std::string& dataset_name, const std::string& title)>;
+    void SetOpenTableCallback(OpenTableCallback callback) { open_table_ = std::move(callback); }
 
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
@@ -126,6 +132,24 @@ private:
 
     // KNIME-style configuration dialogs
     std::unique_ptr<NodeConfigDialog> active_dialog_;
+
+    // Header, settings, AS COMPILED, fusion, Advanced and executor: the panel
+    // for every node without a view of its own, and the SQL step's Details.
+    void RenderGenericSections(MLNode& node);
+
+    // SQL step (TOFIX146 board 1, gui/properties_sql_step.cpp): replaces the
+    // generic sections for SQLQuery nodes; they stay under its Details.
+    struct SqlStepView;
+    std::unique_ptr<SqlStepView> sql_view_;
+    OpenTableCallback open_table_;
+    void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
+    void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
+
+    // Subgraph (TOFIX146 D5, gui/properties_subgraph.cpp): role, steps in run
+    // order, Expand / Collapse and the role switch, in place of the generic
+    // sections.
+    std::set<int> subgraph_details_open_;
+    void RenderSubgraph(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 };
 
 } // namespace gui
