@@ -2665,6 +2665,26 @@ void CheckBlockedClassifierFamilyContract(
 
 // TOFIX145 Group C: the classic ML classifiers are table-path operators like
 // the tree family: Data in, Predictions plus the saved Model out.
+// The fitted model is always saved, so a graph need not consume the Model pin:
+// it is optional, or the compiler fails every graph that only uses Predictions.
+bool ModelOutputOptional(const cyxwiz::NodeMetadata* meta) {
+    if (!meta) return false;
+    for (const auto& output : meta->outputs) {
+        if (output.name == "Model") return !output.required;
+    }
+    return false;
+}
+
+void CheckModelOutputsOptional(cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::DecisionTreeClassifier, gui::NodeType::RandomForestClassifier,
+                            gui::NodeType::GradientBoostingClassifier, gui::NodeType::NaiveBayesClassifier,
+                            gui::NodeType::KNNClassifier, gui::NodeType::LinearRegressionNode,
+                            gui::NodeType::PolynomialRegressionNode}) {
+        Check(ModelOutputOptional(metadata.GetMetadata(type)),
+              "a fitted model output should be optional: " + TypeId(type));
+    }
+}
+
 void CheckClassicMLClassifierFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
@@ -3506,6 +3526,7 @@ int main() {
     CheckClassicalRegressionFamilyContract(metadata);
     CheckBlockedClassifierFamilyContract(metadata);
     CheckClassicMLClassifierFamilyContract(metadata);
+    CheckModelOutputsOptional(metadata);
     CheckSchedulerFamilyContract(metadata);
     CheckRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);
