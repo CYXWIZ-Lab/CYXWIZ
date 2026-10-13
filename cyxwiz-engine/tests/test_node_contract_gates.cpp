@@ -109,6 +109,13 @@ void CheckParameterSchema(const cyxwiz::NodeMetadata& metadata) {
         Check(IsSupportedParameterType(parameter.type),
               "unsupported metadata parameter type " + context + ": " +
                   parameter.type);
+        // Help text belongs in description: a label is a few words, and a
+        // validation rule is a range or pattern, not a sentence (TOFIX143).
+        Check(parameter.display_name.size() <= 40,
+              "display name is a sentence, not a label: " + context);
+        Check(parameter.validation.find(". ") == std::string::npos &&
+                  parameter.validation.find(", ") == std::string::npos,
+              "validation holds prose, not a rule: " + context);
 
         std::set<std::string> choices;
         for (const auto& choice : parameter.enum_values) {
