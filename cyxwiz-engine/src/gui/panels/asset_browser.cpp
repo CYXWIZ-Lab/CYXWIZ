@@ -832,7 +832,17 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // Render tree node with icon
     // Keyed by path, not by address: a rescan builds new items, and an address
     // key would make ImGui forget which folders were open.
+    // Rows in the theme's selection / hover washes: the Unreal preset's
+    // selected Header is a grey barely off the panel while its hovered row is
+    // a 50 % orange, so the clicked file glowed and the selection vanished.
+    {
+        const ui::Tokens& tokens = ui::CurrentTokens();
+        ImGui::PushStyleColor(ImGuiCol_Header, ui::WithAlpha(tokens.accent, 0.28f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tokens.hover);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.accent, 0.36f));
+    }
     bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s", "");
+    ImGui::PopStyleColor(3);
     {
         // Icon in its kind's colour, then the name. Drawn, not submitted, so
         // the tree node stays the last item for the context menu and drag.
