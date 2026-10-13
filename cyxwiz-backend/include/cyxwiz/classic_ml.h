@@ -108,8 +108,9 @@ public:
                                      double C = 1.0, int max_iter = 100, double tol = 1e-4);
     static ClassicPrediction PredictLogistic(const LogisticModel& model, const ClassicMatrix& x);
 
-    // gamma "scale" (1 / (d * X.var())), "auto" (1 / d) or a number; 0 when unreadable.
-    static double ResolveSVMGamma(const ClassicMatrix& x, const std::string& gamma);
+    // gamma "scale" (1 / (d * X.var())), "auto" (1 / d) or a number; 0 when
+    // unreadable, or when the device fails (then `error` says why).
+    static double ResolveSVMGamma(const ClassicMatrix& x, const std::string& gamma, std::string* error = nullptr);
     static SVMModel FitSVC(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes, double C = 1.0,
                            const std::string& kernel = "rbf", double gamma = 1.0, int degree = 3,
                            double coef0 = 0.0, double tol = 1e-3);

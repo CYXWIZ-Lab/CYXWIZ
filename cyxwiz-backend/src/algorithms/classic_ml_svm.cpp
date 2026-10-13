@@ -258,7 +258,7 @@ void KeepSupport(const DualSolution& solution, const std::vector<int>& data_rows
 
 }  // namespace
 
-double ClassicML::ResolveSVMGamma(const ClassicMatrix& x, const std::string& gamma) {
+double ClassicML::ResolveSVMGamma(const ClassicMatrix& x, const std::string& gamma, std::string* error) {
     if (x.empty() || x.front().empty()) return 0.0;
     const double d = static_cast<double>(x.front().size());
     if (gamma == "auto") return 1.0 / d;
@@ -270,7 +270,8 @@ double ClassicML::ResolveSVMGamma(const ClassicMatrix& x, const std::string& gam
             const af::array centred = all - mean;
             const double var = af::mean<double>(centred * centred);
             return var > 0.0 ? 1.0 / (d * var) : 1.0;
-        } catch (const af::exception&) {
+        } catch (const af::exception& e) {
+            if (error) *error = DeviceError("ClassicML::ResolveSVMGamma", e);
             return 0.0;
         }
     }

@@ -77,7 +77,9 @@ arrow::Result<std::shared_ptr<arrow::Table>> SVMClassifierOperator::Apply(const 
     ARROW_RETURN_NOT_OK(ReadClassicTrainingData(input, columns_, GetName(), GetCancellationQuery(), data));
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
-    const double gamma = ClassicML::ResolveSVMGamma(data.x, settings_.gamma);
+    std::string gamma_error;
+    const double gamma = ClassicML::ResolveSVMGamma(data.x, settings_.gamma, &gamma_error);
+    if (!(gamma > 0.0)) return arrow::Status::Invalid(GetName() + ": gamma: " + gamma_error);
     const auto model = ClassicML::FitSVC(data.x, data.labels, static_cast<int>(data.classes.size()), settings_.C,
                                          settings_.kernel, gamma, settings_.degree, settings_.coef0, settings_.tol);
     if (!model.success) return arrow::Status::Invalid(GetName() + ": " + model.error_message);
