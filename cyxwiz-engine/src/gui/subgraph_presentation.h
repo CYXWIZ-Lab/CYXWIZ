@@ -8,8 +8,15 @@ std::optional<NodeLink> DisplaySubgraphLink(const NodeLink& link, const std::vec
                              const std::vector<SubgraphData>& subgraphs);
 bool CrossesExpandedSubgraphBoundary(int from_node, int to_node,
                                     const std::vector<SubgraphData>& subgraphs);
+// What a click on an expanded subgraph's frame asked for (subgraph ids, -1 for none).
+struct SubgraphFrameActions {
+    int collapse = -1;  // the Collapse button
+    int select = -1;    // the header: show the subgraph in Properties
+    bool header_hovered = false;
+};
 // Call after visible nodes are submitted, within the ImNodes editor scope.
-// Returns a requested collapse ID; the caller must mutate after EndNodeEditor.
-int DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
-    const std::vector<SubgraphData>& subgraphs, float zoom, const std::string& busy_reason);
+// `selected` is the subgraph shown in Properties (its header is highlighted).
+// The caller must mutate after EndNodeEditor.
+SubgraphFrameActions DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
+    const std::vector<SubgraphData>& subgraphs, float zoom, const std::string& busy_reason, int selected);
 }

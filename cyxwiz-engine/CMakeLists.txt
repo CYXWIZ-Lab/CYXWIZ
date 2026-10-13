@@ -6348,7 +6348,8 @@ set_target_properties(test_subgraph_document PROPERTIES RUNTIME_OUTPUT_DIRECTORY
 
 # Expanded subgraph presentation and boundary projection, with headless ImGui input.
 add_executable(test_subgraph_presentation tests/test_subgraph_presentation.cpp
-    src/gui/subgraph_presentation.cpp external/imnodes/imnodes.cpp)
+    src/gui/subgraph_presentation.cpp src/gui/ui_buttons.cpp src/gui/ui_tokens.cpp src/core/appearance_options.cpp
+    external/imnodes/imnodes.cpp)
 target_include_directories(test_subgraph_presentation PRIVATE src external/imnodes)
 target_link_libraries(test_subgraph_presentation PRIVATE imgui::imgui nlohmann_json::nlohmann_json)
 set_target_properties(test_subgraph_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

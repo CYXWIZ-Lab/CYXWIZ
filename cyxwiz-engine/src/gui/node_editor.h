@@ -891,6 +891,9 @@ private:
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
     int pending_focus_node_id_ = -1;
+    // An expanded subgraph selected by its frame header (TOFIX147): shown in
+    // Properties while no canvas node is selected.
+    int frame_selected_subgraph_id_ = -1;
     struct PendingSubgraphRequest {
         int subgraph_id = -1;
         SubgraphRequest request = SubgraphRequest::Expand;
