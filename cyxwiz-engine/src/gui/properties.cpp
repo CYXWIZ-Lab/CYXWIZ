@@ -622,6 +622,11 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
     const bool has_reset = row.differs_from_default;
     const float reset_width = has_reset ? ImGui::CalcTextSize("Reset").x + t.space_md : 0.0f;
     const float editor_width = ImGui::GetContentRegionAvail().x - reset_width;
+    // The -/+ step buttons only when the number keeps room beside them; in a
+    // narrow panel they would leave no space for the value itself.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const bool step_buttons = editor_width >= 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x) +
+                                                  ImGui::CalcTextSize("0.0000").x + 2.0f * style.FramePadding.x;
 
     if (param.type == "int") {
         int int_val = 0;
@@ -635,7 +640,7 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
                 value = std::to_string(int_val);
                 changed = true;
             }
-        } else if (ImGui::InputInt("##value", &int_val)) {
+        } else if (ImGui::InputInt("##value", &int_val, step_buttons ? 1 : 0)) {
             if (range.has_range) int_val = std::clamp(int_val, static_cast<int>(range.min_value), static_cast<int>(range.max_value));
             value = std::to_string(int_val);
             changed = true;
@@ -653,8 +658,10 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
                 value = buf;
                 changed = true;
             }
-        } else if (ImGui::InputFloat("##value", &float_val, 0.01f, 0.1f, "%.4f")) {
-            std::snprintf(buf, sizeof(buf), "%.4f", float_val);
+        } else if (ImGui::InputFloat("##value", &float_val, step_buttons ? 0.01f : 0.0f, step_buttons ? 0.1f : 0.0f,
+                                     "%.6g")) {
+            // %g keeps small values such as var_smoothing 1e-9 (%.4f showed 0.0000).
+            std::snprintf(buf, sizeof(buf), "%.6g", float_val);
             value = buf;
             changed = true;
         }
