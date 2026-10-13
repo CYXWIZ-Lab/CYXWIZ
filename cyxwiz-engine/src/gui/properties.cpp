@@ -648,6 +648,18 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
     const float reset_width = has_reset ? ImGui::CalcTextSize("Reset").x + t.space_md : 0.0f;
     const float editor_width = ImGui::GetContentRegionAvail().x - reset_width;
 
+    if (param.type == "fixed") {
+        // Set by the engine (a contract version): shown, never edited here.
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(row.differs_from_default ? t.caution : t.text_dim, "%s", value.c_str());
+        const std::string why = row.differs_from_default ? "Unsupported value; expected " + param.default_value
+                                                         : std::string("Set by the engine; not editable");
+        cyxwiz::ui::Tooltip(why.c_str());
+        properties_rows::Status(param.name.c_str());
+        ImGui::PopID();
+        return;
+    }
+
     if (param.type == "int") {
         int int_val = 0;
         properties_rules::TryParseIntStrict(value, int_val);
