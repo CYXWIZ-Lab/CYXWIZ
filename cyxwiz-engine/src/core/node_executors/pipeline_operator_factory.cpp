@@ -11,6 +11,7 @@
 #include "random_forest_operator.h"
 #include "naive_bayes_operator.h"
 #include "knn_operator.h"
+#include "logistic_regression_operator.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
@@ -142,6 +143,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::KNNClassifier, []() {
         return std::make_unique<KNNClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogisticRegressionNode, []() {
+        return std::make_unique<LogisticRegressionOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

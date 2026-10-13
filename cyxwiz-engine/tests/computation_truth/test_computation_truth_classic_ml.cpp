@@ -104,6 +104,26 @@ void RunKNN(const json& c, const std::string& name) {
     CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test");
 }
 
+void RunLogistic(const json& c, const std::string& name) {
+    const auto x = c.at("x").get<Matrix>();
+    // The reference is converged to 1e-12; so is the fit here.
+    const auto model = ClassicML::FitLogistic(x, c.at("y").get<std::vector<int>>(), c.at("n_classes").get<int>(),
+                                              c.at("C").get<double>(), 100000, 1e-12);
+    Check(model.success, name + " fit: " + model.error_message);
+    CheckMatrix(model.coef, c.at("coef"), name + " coef", 1e-6);
+    const auto intercept = c.at("intercept").get<std::vector<double>>();
+    Check(model.intercept.size() == intercept.size(), name + " intercept count");
+    for (size_t i = 0; i < intercept.size(); ++i) CheckValue(model.intercept[i], intercept[i], name + " intercept", 1e-6);
+    const auto train = ClassicML::PredictLogistic(model, x);
+    Check(train.success, name + " predict: " + train.error_message);
+    CheckLabels(train.labels, c.at("predict"), name + " predict");
+    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", 1e-6);
+    const auto held_out = ClassicML::PredictLogistic(model, c.at("x_test").get<Matrix>());
+    Check(held_out.success, name + " predict test: " + held_out.error_message);
+    CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
+    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", 1e-6);
+}
+
 }  // namespace
 
 int main(int, char** argv) {
@@ -117,6 +137,7 @@ int main(int, char** argv) {
         const std::string name = op + " " + c.at("label").get<std::string>();
         if (op == "gaussian_nb") RunGaussianNB(c, name);
         else if (op == "knn") RunKNN(c, name);
+        else if (op == "logistic") RunLogistic(c, name);
         else Check(false, "unknown case " + op);
         ++passed;
     }
@@ -129,6 +150,10 @@ int main(int, char** argv) {
     Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 3).success, "more neighbours than rows is refused");
     Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 1, "median").success, "an unknown weighting is refused");
     Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 1, "uniform", "chebyshev").success, "an unknown metric is refused");
+    Check(!ClassicML::FitLogistic({{0.0}, {1.0}}, {0, 0}, 1).success, "one class is refused");
+    Check(!ClassicML::FitLogistic({{0.0}, {1.0}}, {0, 1}, 2, 0.0).success, "C = 0 is refused");
+    const auto short_fit = ClassicML::FitLogistic({{0.0}, {0.4}, {0.6}, {1.0}}, {0, 1, 0, 1}, 2, 1.0, 1, 1e-12);
+    Check(short_fit.success && !short_fit.converged && short_fit.n_iter == 1, "max_iter stops the fit unconverged");
 
     std::cout << "classic ML matches scikit-learn: " << passed << " cases" << std::endl;
     return 0;

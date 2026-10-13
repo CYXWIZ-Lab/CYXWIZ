@@ -34,6 +34,7 @@ std::string PipelineTypeName(gui::NodeType type) {
         case NodeType::RandomForestClassifier: return "RandomForestClassifier";
         case NodeType::NaiveBayesClassifier: return "NaiveBayesClassifier";
         case NodeType::KNNClassifier: return "KNNClassifier";
+        case NodeType::LogisticRegressionNode: return "LogisticRegressionNode";
         case NodeType::GradientBoostingClassifier: return "GradientBoostingClassifier";
         case NodeType::TreeModelPredictor: return "TreeModelPredictor";
         case NodeType::RegressionModelPredictor: return "RegressionModelPredictor";

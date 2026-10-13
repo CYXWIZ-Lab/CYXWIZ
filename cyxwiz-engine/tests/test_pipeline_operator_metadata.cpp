@@ -366,13 +366,19 @@ bool ShouldAuditRuntimeParametersAgainstMetadata(
                gui::properties_contract::PanelContractPath::MetadataRenderer;
 }
 
+// Parameter names say what they are; "C" is allowed as scikit-learn's own
+// name for inverse regularisation (Logistic Regression, SVM).
+bool IsDescriptiveParameterName(const std::string& name) {
+    return name.size() > 1 || name == "C";
+}
+
 void CheckMetadataHasRuntimeParameter(
     cyxwiz::NodeMetadataRegistry& metadata,
     const char* legacy_type_name,
     const char* parameter_name,
     const char* capability_kind,
     bool metadata_renderer_only = true) {
-    Check(parameter_name != nullptr && std::string(parameter_name).size() > 1,
+    Check(parameter_name != nullptr && IsDescriptiveParameterName(parameter_name),
           std::string("runtime parameter name is too weak: ") +
               (legacy_type_name ? legacy_type_name : "(null)"));
 
@@ -2615,7 +2621,6 @@ void CheckBlockedClassifierFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
         gui::NodeType::SVMClassifier,
-        gui::NodeType::LogisticRegressionNode,
     };
 
     for (const auto type : types) {
@@ -2647,20 +2652,11 @@ void CheckBlockedClassifierFamilyContract(
     }
 
     const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
-    const auto* logistic =
-        metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
     Check(svm->parameters.size() == 3 &&
               ParameterMatches(svm, "kernel", "enum", "rbf") &&
               ParameterMatches(svm, "C", "float", "1.0") &&
               ParameterMatches(svm, "gamma", "enum", "scale"),
           "SVM preview should preserve its legacy saved parameters");
-    Check(logistic->parameters.size() == 3 &&
-              ParameterMatches(logistic, "C", "float", "1.0") &&
-              ParameterMatches(logistic, "solver", "enum", "lbfgs") &&
-              ParameterMatches(logistic, "max_iter", "int", "100") &&
-              !HasParameter(logistic, "penalty") &&
-              !HasOutputType(logistic, "Probabilities", gui::PinType::Dataset),
-          "Logistic preview should not advertise uncreated parameters or outputs");
 }
 
 // TOFIX145 Group C: the classic ML classifiers are table-path operators like
@@ -2678,7 +2674,8 @@ bool ModelOutputOptional(const cyxwiz::NodeMetadata* meta) {
 void CheckModelOutputsOptional(cyxwiz::NodeMetadataRegistry& metadata) {
     for (const auto type : {gui::NodeType::DecisionTreeClassifier, gui::NodeType::RandomForestClassifier,
                             gui::NodeType::GradientBoostingClassifier, gui::NodeType::NaiveBayesClassifier,
-                            gui::NodeType::KNNClassifier, gui::NodeType::LinearRegressionNode,
+                            gui::NodeType::KNNClassifier, gui::NodeType::LogisticRegressionNode,
+                            gui::NodeType::LinearRegressionNode,
                             gui::NodeType::PolynomialRegressionNode}) {
         Check(ModelOutputOptional(metadata.GetMetadata(type)),
               "a fitted model output should be optional: " + TypeId(type));
@@ -2690,6 +2687,7 @@ void CheckClassicMLClassifierFamilyContract(
     const std::vector<gui::NodeType> types = {
         gui::NodeType::NaiveBayesClassifier,
         gui::NodeType::KNNClassifier,
+        gui::NodeType::LogisticRegressionNode,
     };
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
@@ -2756,6 +2754,19 @@ void CheckClassicMLClassifierFamilyContract(
     Check(knn_op && !knn_op->Configure({{"target_col", "y"}, {"n_neighbors", "0"}}, error) &&
               !knn_op->Configure({{"target_col", "y"}, {"metric", "chebyshev"}}, error),
           "KNN should refuse zero neighbours and an unknown metric");
+
+    const auto* logistic = metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
+    Check(logistic->parameters.size() == 7 &&
+              ParameterMatches(logistic, "C", "float", "1.0") &&
+              ParameterMatches(logistic, "max_iter", "int", "100") &&
+              ParameterMatches(logistic, "tol", "float", "1e-4") &&
+              !HasParameter(logistic, "solver"),
+          "Logistic metadata should match every consumed operator field");
+    auto logistic_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::LogisticRegressionNode);
+    Check(logistic_op && !logistic_op->Configure({{"target_col", "y"}, {"C", "0"}}, error) &&
+              !logistic_op->Configure({{"target_col", "y"}, {"max_iter", "0"}}, error),
+          "Logistic should refuse C = 0 and max_iter = 0");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.
@@ -5555,7 +5566,7 @@ int main() {
               std::string("runtime support should carry required-parameter axis: ") +
                   capability.legacy_type_name);
         for (const char* parameter : capability.required_parameters) {
-            Check(parameter != nullptr && std::string(parameter).size() > 1,
+            Check(parameter != nullptr && IsDescriptiveParameterName(parameter),
                   std::string("required parameter name is too weak: ") +
                       capability.legacy_type_name);
         }
@@ -5590,7 +5601,7 @@ int main() {
               std::string("runtime support should carry allowed-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("allowed parameter name is too weak: ") +
                   capability.legacy_type_name);
         Check(capability.default_value != nullptr,
@@ -5632,7 +5643,7 @@ int main() {
               std::string("runtime support should carry integer-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("integer parameter name is too weak: ") +
                   capability.legacy_type_name);
     }
@@ -5671,7 +5682,7 @@ int main() {
               std::string("runtime support should carry float-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("float parameter name is too weak: ") +
                   capability.legacy_type_name);
         const bool range_has_bound =

@@ -210,6 +210,7 @@ set(BACKEND_SOURCES
     src/algorithms/clustering_gmm.cpp
     src/algorithms/classic_ml_naive_bayes.cpp
     src/algorithms/classic_ml_knn.cpp
+    src/algorithms/classic_ml_logistic.cpp
     src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp

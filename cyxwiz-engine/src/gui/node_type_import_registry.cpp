@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 204> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 205> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -181,6 +181,7 @@ constexpr std::array<NodeTypeImportName, 204> kNodeTypeImportNames = {{
         {"RandomForestClassifier", NodeType::RandomForestClassifier},
         {"NaiveBayesClassifier", NodeType::NaiveBayesClassifier},
         {"KNNClassifier", NodeType::KNNClassifier},
+        {"LogisticRegressionNode", NodeType::LogisticRegressionNode},
         {"GradientBoostingClassifier", NodeType::GradientBoostingClassifier},
         {"TreeModelPredictor", NodeType::TreeModelPredictor},
         {"TextCleanNode", NodeType::TextCleanNode},

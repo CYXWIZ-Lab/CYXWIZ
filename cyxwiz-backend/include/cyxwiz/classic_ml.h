@@ -52,6 +52,23 @@ struct CYXWIZ_API KNNModel {
     std::string error_message;
 };
 
+// sklearn.linear_model.LogisticRegression (lbfgs, L2): two classes fit one
+// coefficient row (sigmoid), more a multinomial softmax. Minimises the mean log
+// loss + ||coef||^2 / (2 C n) (intercept not penalised); converged when the
+// largest gradient entry is at most tol or a step lowers the loss by no more
+// than 64 eps of it (sklearn's ftol); otherwise stops after max_iter.
+struct CYXWIZ_API LogisticModel {
+    ClassicMatrix coef;              // [1 or k, d]
+    std::vector<double> intercept;   // [1 or k]
+    int n_classes = 0;
+    int n_iter = 0;
+    double loss = 0.0;
+    bool converged = false;
+
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API ClassicML {
 public:
     // labels in 0..n_classes-1; every class must have at least one row.
@@ -63,6 +80,10 @@ public:
     static KNNModel FitKNN(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes, int n_neighbors = 5,
                            const std::string& weights = "uniform", const std::string& metric = "euclidean");
     static ClassicPrediction PredictKNN(const KNNModel& model, const ClassicMatrix& x);
+
+    static LogisticModel FitLogistic(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes,
+                                     double C = 1.0, int max_iter = 100, double tol = 1e-4);
+    static ClassicPrediction PredictLogistic(const LogisticModel& model, const ClassicMatrix& x);
 };
 
 }  // namespace cyxwiz

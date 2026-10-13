@@ -729,6 +729,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML nearest-neighbour classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
+        NodeType::LogisticRegressionNode,
+        "classic_ml",
+        "Table-path classical ML linear classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
@@ -2012,17 +2016,20 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
-        {"logistic", "regression", "classifier"}, 0, false,
-        "Blocked legacy logistic-regression classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, probability output, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"C", "float", "1.0", "Legacy inverse regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"solver", "enum", "lbfgs", "Legacy solver selection retained for saved graphs", {"lbfgs"}, "", "Solver", "Compatibility"},
-         {"max_iter", "int", "100", "Legacy iteration limit retained for saved graphs", {}, "1-2147483647", "Maximum iterations", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"logistic", "regression", "classifier", "softmax", "classic ml"}, 0, false, "Logistic regression classifier",
+        "Fits an L2-regularised logistic regression on the selected device (scikit-learn's LogisticRegression with "
+        "lbfgs; softmax for more than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted logistic model (coefficients and intercepts)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Inverse of the L2 regularisation strength; smaller is stronger", {}, "", "Regularisation (C)", "Model"},
+         {"max_iter", "int", "100", "Most L-BFGS iterations; the log warns when the fit stops before tol", {}, "", "Maximum iterations", "Model"},
+         {"tol", "float", "1e-4", "Stop when the largest gradient entry is at most this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,

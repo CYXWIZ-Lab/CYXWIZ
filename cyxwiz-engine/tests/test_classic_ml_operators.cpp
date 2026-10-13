@@ -3,6 +3,7 @@
 // cyxwiz_classic_model artifact.
 
 #include "../src/core/node_executors/knn_operator.h"
+#include "../src/core/node_executors/logistic_regression_operator.h"
 #include "../src/core/node_executors/naive_bayes_operator.h"
 
 #include <arrow/api.h>
@@ -158,6 +159,23 @@ void CheckKNN(const fs::path& model_path) {
     Check(!too_many.Apply(TextLabelTable()).ok(), "KNN refuses more neighbours than rows");
 }
 
+void CheckLogistic(const fs::path& model_path) {
+    cyxwiz::LogisticRegressionOperator op;
+    std::string error;
+    Check(op.Configure({{"target_col", "animal"}, {"C", "10"}, {"model_path", model_path.string()}}, error),
+          "Logistic configures: " + error);
+    auto result = op.Apply(TextLabelTable());
+    Check(result.ok(), "Logistic applies on text labels: " + result.status().ToString());
+    const auto chunk =
+        std::static_pointer_cast<arrow::StringArray>((*result)->GetColumnByName("prediction")->chunk(0));
+    Check(chunk->GetString(0) == "zebra" && chunk->GetString(5) == "apple", "Logistic predicts the separable rows");
+    const auto doc = ReadJson(model_path);
+    const auto& params = doc["model"]["parameters"];
+    Check(doc["model_type"] == "LogisticRegressionNode" && params["coef"].size() == 1 &&
+              params["coef"][0].size() == 2 && params["intercept"].size() == 1 && params["converged"] == true,
+          "two classes save one coefficient row: " + params.dump());
+}
+
 void CheckRefusals() {
     cyxwiz::NaiveBayesClassifierOperator op;
     std::string error;
@@ -176,6 +194,7 @@ int main() {
     CheckTextLabels(dir / "nb_text.cyxclassic.json");
     CheckNumericLabels(dir / "nb_numeric.cyxclassic.json");
     CheckKNN(dir / "knn_text.cyxclassic.json");
+    CheckLogistic(dir / "logistic_text.cyxclassic.json");
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "classic ML operator tests passed\n";

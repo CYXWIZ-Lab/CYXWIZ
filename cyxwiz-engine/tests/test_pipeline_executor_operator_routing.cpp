@@ -299,6 +299,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "KNNClassifier",
         "LabelEncoder",
         "LinearRegressionNode",
+        "LogisticRegressionNode",
         "LogTransform",
         "MathFormula",
         "NaiveBayesClassifier",
@@ -2067,6 +2068,8 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_naive_bayes_model.json";
     const fs::path knn_model_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_knn_model.json";
+    const fs::path logistic_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_logistic_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -2651,6 +2654,34 @@ int main(int argc, char** argv) {
           "KNNClassifier model_path should write a model artifact");
     registry.UnloadDataset("ds_operator_KNNClassifier_9606");
     fs::remove(knn_model_path);
+
+    const std::string logistic_json =
+        R"({"nodes":[)"
+        R"({"id":9609,"type":"DataInput","name":"LogisticInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9610,"type":"LogisticRegressionNode","name":"Logistic","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"lr_pred",)"
+        R"("C":"100","model_path":")" +
+        JsonEscapePath(logistic_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9609,"end_node":9610}]})";
+
+    cyxwiz::PipelineExecutor logistic_executor;
+    Check(logistic_executor.ExecutePipeline(logistic_json),
+          "PipelineExecutor routes LogisticRegressionNode through PipelineOperatorFactory: " +
+              logistic_executor.GetLastError());
+    auto logistic_output = registry.GetArrowDataset("ds_operator_LogisticRegressionNode_9610");
+    auto logistic_table = logistic_output ? logistic_output->GetArrowTable() : nullptr;
+    Check(logistic_table != nullptr && logistic_table->num_rows() == 4 &&
+              ReadNumericValue(logistic_table, "lr_pred", 0) == 0.0 &&
+              ReadNumericValue(logistic_table, "lr_pred", 3) == 1.0,
+          "LogisticRegressionNode predicts the separable training rows");
+    Check(fs::exists(logistic_model_path),
+          "LogisticRegressionNode model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_LogisticRegressionNode_9610");
+    fs::remove(logistic_model_path);
 
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
@@ -4100,6 +4131,21 @@ int main(int argc, char** argv) {
               bad_knn_metric_executor.GetLastError().find("metric") != std::string::npos,
           "KNNClassifier unknown metric should fail validation: " +
               bad_knn_metric_executor.GetLastError());
+
+    const std::string bad_logistic_c_json =
+        R"({"nodes":[)"
+        R"({"id":9611,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9612,"type":"LogisticRegressionNode","name":"BadC","parameters":{)"
+        R"("target_col":"y","C":"0"}})"
+        R"(],"links":[{"start_node":9611,"end_node":9612}]})";
+
+    cyxwiz::PipelineExecutor bad_logistic_c_executor;
+    Check(!bad_logistic_c_executor.ExecutePipeline(bad_logistic_c_json) &&
+              bad_logistic_c_executor.GetLastError().find("C") != std::string::npos,
+          "LogisticRegressionNode C = 0 should fail validation: " +
+              bad_logistic_c_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
