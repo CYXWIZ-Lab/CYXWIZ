@@ -300,6 +300,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "LinearRegressionNode",
         "LogTransform",
         "MathFormula",
+        "NaiveBayesClassifier",
         "NERSequenceBuilder",
         "NERTagVocabulary",
         "OrdinalEncoder",
@@ -2061,6 +2062,8 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_random_forest_model.json";
     const fs::path gradient_boosting_model_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_gradient_boosting_model.json";
+    const fs::path naive_bayes_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_naive_bayes_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -2583,6 +2586,40 @@ int main(int argc, char** argv) {
           "GradientBoostingClassifier predicts the last training row");
     Check(fs::exists(gradient_boosting_model_path),
           "GradientBoostingClassifier model_path should write a model artifact");
+
+    const std::string naive_bayes_json =
+        R"({"nodes":[)"
+        R"({"id":9601,"type":"DataInput","name":"BayesInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9602,"type":"NaiveBayesClassifier","name":"Bayes","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"nb_pred",)"
+        R"("model_path":")" +
+        JsonEscapePath(naive_bayes_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9601,"end_node":9602}]})";
+
+    cyxwiz::PipelineExecutor naive_bayes_executor;
+    Check(naive_bayes_executor.ExecutePipeline(naive_bayes_json),
+          "PipelineExecutor routes NaiveBayesClassifier through "
+          "PipelineOperatorFactory: " +
+              naive_bayes_executor.GetLastError());
+    auto naive_bayes_output =
+        registry.GetArrowDataset("ds_operator_NaiveBayesClassifier_9602");
+    auto naive_bayes_table =
+        naive_bayes_output ? naive_bayes_output->GetArrowTable() : nullptr;
+    Check(naive_bayes_table != nullptr && naive_bayes_table->num_rows() == 4 &&
+              naive_bayes_table->schema()->GetFieldIndex("nb_pred") >= 0,
+          "NaiveBayesClassifier operator appends its prediction column");
+    Check(naive_bayes_table != nullptr &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 0) == 0.0 &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 3) == 1.0,
+          "NaiveBayesClassifier predicts the separable training rows");
+    Check(fs::exists(naive_bayes_model_path),
+          "NaiveBayesClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_NaiveBayesClassifier_9602");
+    fs::remove(naive_bayes_model_path);
 
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
@@ -4000,6 +4037,23 @@ int main(int argc, char** argv) {
               "missing required parameter 'target_col'") != std::string::npos,
           "GradientBoostingClassifier missing target_col validation should be specific: " +
               missing_gradient_boosting_target_executor.GetLastError());
+
+    const std::string missing_naive_bayes_target_json =
+        R"({"nodes":[)"
+        R"({"id":9603,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9604,"type":"NaiveBayesClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":9603,"end_node":9604}]})";
+
+    cyxwiz::PipelineExecutor missing_naive_bayes_target_executor;
+    Check(!missing_naive_bayes_target_executor.ExecutePipeline(
+              missing_naive_bayes_target_json) &&
+              missing_naive_bayes_target_executor.GetLastError().find(
+                  "missing required parameter 'target_col'") != std::string::npos,
+          "NaiveBayesClassifier missing target_col should fail validation: " +
+              missing_naive_bayes_target_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"

@@ -2616,7 +2616,6 @@ void CheckBlockedClassifierFamilyContract(
     const std::vector<gui::NodeType> types = {
         gui::NodeType::SVMClassifier,
         gui::NodeType::KNNClassifier,
-        gui::NodeType::NaiveBayesClassifier,
         gui::NodeType::LogisticRegressionNode,
     };
 
@@ -2650,8 +2649,6 @@ void CheckBlockedClassifierFamilyContract(
 
     const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
     const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
-    const auto* naive_bayes =
-        metadata.GetMetadata(gui::NodeType::NaiveBayesClassifier);
     const auto* logistic =
         metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
     Check(svm->parameters.size() == 3 &&
@@ -2664,10 +2661,6 @@ void CheckBlockedClassifierFamilyContract(
               ParameterMatches(knn, "weights", "enum", "uniform") &&
               ParameterMatches(knn, "metric", "enum", "euclidean"),
           "KNN preview should preserve its legacy saved parameters");
-    Check(naive_bayes->parameters.size() == 1 &&
-              ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9") &&
-              !HasParameter(naive_bayes, "variant"),
-          "Naive Bayes preview should not advertise an unseeded variant");
     Check(logistic->parameters.size() == 3 &&
               ParameterMatches(logistic, "C", "float", "1.0") &&
               ParameterMatches(logistic, "solver", "enum", "lbfgs") &&
@@ -2675,6 +2668,68 @@ void CheckBlockedClassifierFamilyContract(
               !HasParameter(logistic, "penalty") &&
               !HasOutputType(logistic, "Probabilities", gui::PinType::Dataset),
           "Logistic preview should not advertise uncreated parameters or outputs");
+}
+
+// TOFIX145 Group C: the classic ML classifiers are table-path operators like
+// the tree family: Data in, Predictions plus the saved Model out.
+void CheckClassicMLClassifierFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::NaiveBayesClassifier,
+    };
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "classic ML classifier should be implemented Analytics: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
+                  meta->outputs.size() == 2 &&
+                  HasOutputType(meta, "Predictions", gui::PinType::Dataset) &&
+                  HasOutputType(meta, "Model", gui::PinType::Parameters),
+              "classic ML classifier should expose table-in, predictions + model out: " +
+                  TypeId(type));
+        Check(FindParameter(meta, "target_col") != nullptr &&
+                  FindParameter(meta, "target_col")->required &&
+                  ParameterMatches(meta, "feature_cols", "string", "") &&
+                  ParameterMatches(meta, "prediction_col", "string", "prediction") &&
+                  ParameterMatches(meta, "model_path", "string", ""),
+              "classic ML classifier should expose the shared table/artifact fields: " +
+                  TypeId(type));
+        CheckRuntimeOwnerContract(
+            cyxwiz::ResolvePipelineRuntimeSupport(type),
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "classic ML classifier " + TypeId(type));
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "classic ML classifier should have a pipeline operator: " + TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        params["target_col"] = "target";
+        std::string error;
+        Check(op && op->Configure(params, error),
+              "classic ML classifier defaults should configure its operator: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* naive_bayes =
+        metadata.GetMetadata(gui::NodeType::NaiveBayesClassifier);
+    Check(naive_bayes->parameters.size() == 5 &&
+              ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9"),
+          "Naive Bayes metadata should match every consumed operator field");
+    auto naive_bayes_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::NaiveBayesClassifier);
+    std::string error;
+    Check(naive_bayes_op &&
+              !naive_bayes_op->Configure({{"target_col", "y"}, {"var_smoothing", "-1"}}, error) &&
+              error.find("var_smoothing") != std::string::npos,
+          "Naive Bayes should refuse a negative var_smoothing");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.
@@ -3444,6 +3499,7 @@ int main() {
     CheckPcaContract(metadata);
     CheckClassicalRegressionFamilyContract(metadata);
     CheckBlockedClassifierFamilyContract(metadata);
+    CheckClassicMLClassifierFamilyContract(metadata);
     CheckSchedulerFamilyContract(metadata);
     CheckRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);

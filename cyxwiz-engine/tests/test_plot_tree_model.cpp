@@ -87,6 +87,8 @@ int main() {
 
     // Not a tree model, broken JSON, unknown type.
     Check(!ReadTreeModel(R"({"format":"cyxwiz_regression"})").error.empty(), "other artifact refused");
+    const auto classic = ReadTreeModel(R"({"format":"cyxwiz_classic_model","model_type":"NaiveBayesClassifier","model":{}})");
+    Check(classic.error.find("Plot its Predictions") != std::string::npos, "classic model refused with a way on: " + classic.error);
     Check(!ReadTreeModel("{not json").error.empty(), "broken JSON refused");
     Check(!ReadTreeModel(R"({"format":"cyxwiz_tree_model","model_type":"Svm","model":{}})").error.empty(), "unknown type refused");
     Check(ReadTreeModel(R"({"format":"cyxwiz_tree_model","model_type":"DecisionTreeClassifier","model":{"nodes":"x"}})").node.empty(),

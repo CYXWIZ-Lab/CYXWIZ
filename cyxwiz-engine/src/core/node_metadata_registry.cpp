@@ -721,6 +721,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path boosted classical ML classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
+        NodeType::NaiveBayesClassifier,
+        "classic_ml",
+        "Table-path classical ML probabilistic classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
@@ -1987,15 +1991,18 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
-        {"naive", "bayes", "classifier"}, 0, false,
-        "Blocked legacy Gaussian Naive Bayes preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"var_smoothing", "float", "1e-9", "Legacy Gaussian variance smoothing retained for saved graphs", {}, "", "Variance smoothing", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"naive", "bayes", "gaussian", "classifier", "classic ml"}, 0, false, "Gaussian naive Bayes classifier",
+        "Fits scikit-learn's Gaussian naive Bayes on the selected device (per-class means and variances) and "
+        "appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, true, "Fitted naive Bayes model (class means, variances and priors)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"var_smoothing", "float", "1e-9", "Share of the largest feature variance added to every variance (scikit-learn var_smoothing)", {}, "", "Variance smoothing", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
         {"logistic", "regression", "classifier"}, 0, false,

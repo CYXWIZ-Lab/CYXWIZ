@@ -255,6 +255,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/random_forest_model.cpp          # Tool-to-Node Band 1
     src/core/node_executors/random_forest_trainer.cpp        # Tool-to-Node Band 1
     src/core/node_executors/random_forest_operator.cpp       # Tool-to-Node Band 1
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp      # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_trainer.cpp    # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_operator.cpp   # Tool-to-Node Band 1
@@ -766,6 +768,8 @@ set(ENGINE_HEADERS
     src/core/node_executors/regression_operators.h
     src/core/node_executors/model_artifact_json_io.h
     src/core/node_executors/regression_model_artifact.h
+    src/core/node_executors/classic_model_common.h
+    src/core/node_executors/naive_bayes_operator.h
     src/core/node_executors/regression_model_predictor_operator.h
     src/core/node_executors/preprocessing_operators.h
     src/core/node_executors/time_series_analysis_operators.h
@@ -2356,6 +2360,39 @@ set_target_properties(test_random_forest_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Classic ML Operators (TOFIX145 Group C) =====
+add_executable(test_classic_ml_operators
+    tests/test_classic_ml_operators.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+)
+
+target_include_directories(test_classic_ml_operators PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_classic_ml_operators PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_classic_ml_operators PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_classic_ml_operators PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+add_test(NAME classic_ml_operators COMMAND test_classic_ml_operators)
+
 # ===== Test: Gradient Boosting Operator =====
 add_executable(test_gradient_boosting_operator
     tests/test_gradient_boosting_operator.cpp
@@ -2481,6 +2518,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2730,6 +2769,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2823,6 +2864,8 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2913,6 +2956,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -3516,6 +3561,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -6492,6 +6539,8 @@ add_executable(test_engine_node_parity
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
