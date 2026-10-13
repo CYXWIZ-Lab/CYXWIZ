@@ -593,6 +593,11 @@ public:
     // never changes the node list while Properties is drawing one of its nodes.
     enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep };
     void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
+    // Adds an empty guided SQL step after an SQL step (TOFIX147 item 3): it
+    // takes over the step's outgoing links (and its place as a recipe's
+    // output), joins the step's recipe, and is selected. Applied, like
+    // RequestSubgraphAction, at the start of the next canvas frame.
+    void RequestGuidedStepAfter(int sql_step_id) { pending_guided_after_ = sql_step_id; }
 
 private:
     void ShowToolbar();
@@ -902,6 +907,15 @@ private:
     };
     PendingSubgraphRequest pending_subgraph_request_;
     void ApplySubgraphRequest();
+    int pending_guided_after_ = -1;
+    void ApplyGuidedStepInsert();
+    // A node to select once ImNodes has drawn it (a new node is dropped from
+    // the selection before its first frame).
+    struct DeferredFocus {
+        int node_id = -1;
+        int frames = 0;
+    };
+    DeferredFocus deferred_focus_;
 
     // Training animation state
     std::atomic<bool> is_training_{false};
