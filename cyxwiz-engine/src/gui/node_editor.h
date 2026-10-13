@@ -664,6 +664,10 @@ private:
     void HandleKeyboardShortcuts();
     void FrameSelected();
     void FrameAll();
+    // Pans (and for FrameNodes zooms, at most to 100%) so grid-space points
+    // sit in the middle of the canvas at the current zoom.
+    void CenterViewOn(ImVec2 grid_point);
+    void FrameNodes(const std::vector<int>& node_ids);
 
     // Search functionality
     void ShowSearchBar();
@@ -848,7 +852,8 @@ private:
 
     // Zoom state
     float zoom_ = 1.0f;
-    static constexpr float ZOOM_MIN = 0.5f;
+    ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
+    static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
     static constexpr float ZOOM_MAX = 2.0f;
 
     // Icon pack selection (for node icons)

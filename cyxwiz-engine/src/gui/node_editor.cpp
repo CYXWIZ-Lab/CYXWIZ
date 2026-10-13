@@ -293,6 +293,7 @@ void NodeEditor::Render() {
         ImGui::SetWindowFontScale(zoom_);
         ImNodes::EditorContextSetZoom(zoom_);
 
+        canvas_size_ = ImGui::GetContentRegionAvail();
         ImNodes::BeginNodeEditor();
 
         if (pending_focus_node_id_ >= 0) {
@@ -307,13 +308,9 @@ void NodeEditor::Render() {
                 const auto position = cached_node_positions_.find(
                     pending_focus_node_id_);
                 if (position != cached_node_positions_.end()) {
-                    const ImVec2 window_size = ImGui::GetWindowSize();
-                    const ImVec2 center(
-                        window_size.x * 0.5f - 100.0f,
-                        window_size.y * 0.5f - 50.0f);
-                    ImNodes::EditorContextResetPanning(ImVec2(
-                        -position->second.x + center.x,
-                        -position->second.y + center.y));
+                    const ImVec2 size = ImNodes::GetNodeDimensions(pending_focus_node_id_);
+                    CenterViewOn(ImVec2(position->second.x + size.x * 0.5f / zoom_,
+                                        position->second.y + size.y * 0.5f / zoom_));
                 }
                 if (properties_panel_) {
                     properties_panel_->SetSelectedNode(&(*it));
@@ -1300,13 +1297,10 @@ void NodeEditor::RenderMinimap() {
         }
     }
 
-    // Draw viewport rectangle
+    // Draw viewport rectangle: the canvas in grid space (screen = grid * zoom + panning)
     ImVec2 panning = ImNodes::EditorContextGetPanning();
-    ImVec2 canvas_size = ImGui::GetContentRegionAvail();
-
-    // Viewport in grid space (note: panning is negated)
-    ImVec2 viewport_min_grid = ImVec2(-panning.x, -panning.y);
-    ImVec2 viewport_max_grid = ImVec2(-panning.x + canvas_size.x, -panning.y + canvas_size.y);
+    ImVec2 viewport_min_grid = ImVec2(-panning.x / zoom_, -panning.y / zoom_);
+    ImVec2 viewport_max_grid = ImVec2((-panning.x + canvas_size_.x) / zoom_, (-panning.y + canvas_size_.y) / zoom_);
 
     ImVec2 viewport_mm_min = gridToMinimap(viewport_min_grid);
     ImVec2 viewport_mm_max = gridToMinimap(viewport_max_grid);
@@ -1364,13 +1358,7 @@ void NodeEditor::RenderMinimap() {
             float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
             float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
 
-            // Center viewport on clicked position
-            ImVec2 new_panning = ImVec2(
-                -(rel_x - canvas_size.x * 0.5f),
-                -(rel_y - canvas_size.y * 0.5f)
-            );
-
-            ImNodes::EditorContextResetPanning(new_panning);
+            CenterViewOn(ImVec2(rel_x, rel_y));
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         } else {
             minimap_navigating_ = false;
@@ -1405,13 +1393,7 @@ void NodeEditor::RenderMinimap() {
             float rel_x = (mouse_pos.x - window_pos.x - offset_x) / scale + min_x;
             float rel_y = (mouse_pos.y - window_pos.y - offset_y) / scale + min_y;
 
-            // Center viewport on clicked position
-            ImVec2 new_panning = ImVec2(
-                -(rel_x - canvas_size.x * 0.5f),
-                -(rel_y - canvas_size.y * 0.5f)
-            );
-
-            ImNodes::EditorContextResetPanning(new_panning);
+            CenterViewOn(ImVec2(rel_x, rel_y));
         }
 
         // Show tooltip
