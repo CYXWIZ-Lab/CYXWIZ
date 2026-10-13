@@ -3583,7 +3583,8 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
         if (node.type == "NaiveBayesClassifier" ||
             node.type == "KNNClassifier" ||
             node.type == "LogisticRegressionNode" ||
-            node.type == "SVMClassifier") {
+            node.type == "SVMClassifier" ||
+            node.type == "SVMRegressor") {
             const std::string configured_path = TrimString(
                 ParameterOrDefault(node.parameters, "model_path", ""));
             if (configured_path.empty()) {
@@ -5846,7 +5847,8 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         type == gui::NodeType::NaiveBayesClassifier ||
         type == gui::NodeType::KNNClassifier ||
         type == gui::NodeType::LogisticRegressionNode ||
-        type == gui::NodeType::SVMClassifier) {
+        type == gui::NodeType::SVMClassifier ||
+        type == gui::NodeType::SVMRegressor) {
         const auto model_path = operator_parameters.find("model_path");
         if (model_path == operator_parameters.end() ||
             model_path->second.empty() ||

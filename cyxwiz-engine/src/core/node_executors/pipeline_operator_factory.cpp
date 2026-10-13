@@ -151,6 +151,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::SVMClassifier, []() {
         return std::make_unique<SVMClassifierOperator>();
     });
+    RegisterCreator(gui::NodeType::SVMRegressor, []() {
+        return std::make_unique<SVMRegressorOperator>();
+    });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {
         return std::make_unique<StandardScalerOperator>();

@@ -709,6 +709,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML baseline for polynomial regression.");
     apply_workflow_lane_guidance(
+        NodeType::SVMRegressor,
+        "classic_ml",
+        "Table-path classical ML kernel regression for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::DecisionTreeClassifier,
         "classic_ml",
         "Table-path classical ML classifier for numeric tabular features.");
@@ -1167,7 +1171,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
         {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
-        {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
@@ -2062,6 +2065,26 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
          {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", ICON_FA_BORDER_ALL,
+        {"svm", "svr", "support", "vector", "kernel", "regression", "classic ml"}, 0, false, "Support vector regression",
+        "Fits epsilon-insensitive kernel support vector regression on the selected device (scikit-learn's SVR) and "
+        "appends a numeric prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with numeric features and a numeric target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVR (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Numeric target column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for errors beyond epsilon; smaller is smoother", {}, "", "Regularisation (C)", "Model"},
+         {"epsilon", "float", "0.1", "Errors smaller than this cost nothing (the width of the tube)", {}, "", "Epsilon", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RegressionModelPredictor, NodeCategory::Analytics, "Regression Model Predictor", ICON_FA_FILE_IMPORT,

@@ -2607,14 +2607,26 @@ void CheckClassicalRegressionFamilyContract(
     Check(predictor_support.required_input_count == 2,
           "RegressionModelPredictor should require Data and Model links");
 
-    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMRegressor);
-    Check(svm != nullptr && svm->IsTemplate() &&
-              cyxwiz::ResolvePipelineRuntimeSupport(
-                  gui::NodeType::SVMRegressor).mode ==
-                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
-              cyxwiz::PipelineOperatorFactory::Instance().Create(
-                  gui::NodeType::SVMRegressor) == nullptr,
-          "SVMRegressor should remain blocked without a runtime owner");
+    const auto* svr = metadata.GetMetadata(gui::NodeType::SVMRegressor);
+    Check(svr != nullptr && svr->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              svr->inputs.size() == 1 && HasInputType(svr, "Data", gui::PinType::Dataset) &&
+              HasOutputType(svr, "Predictions", gui::PinType::Dataset) &&
+              HasOutputType(svr, "Model", gui::PinType::Parameters) &&
+              svr->parameters.size() == 11 &&
+              ParameterMatches(svr, "epsilon", "float", "0.1") &&
+              ParameterMatches(svr, "kernel", "enum", "rbf") &&
+              ParameterMatches(svr, "gamma", "string", "scale"),
+          "SVMRegressor should expose the table contract and every consumed field");
+    CheckRuntimeOwnerContract(
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMRegressor),
+        cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+        "SVMRegressor");
+    auto svr_op = cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::SVMRegressor);
+    std::string svr_error;
+    Check(svr_op && svr_op->Configure({{"target_col", "y"}}, svr_error) &&
+              !svr_op->Configure({{"target_col", "y"}, {"epsilon", "-0.1"}}, svr_error),
+          "SVMRegressor configures from defaults and refuses a negative epsilon");
 }
 
 // TOFIX145 Group C: the classic ML classifiers are table-path operators like
@@ -2633,7 +2645,7 @@ void CheckModelOutputsOptional(cyxwiz::NodeMetadataRegistry& metadata) {
     for (const auto type : {gui::NodeType::DecisionTreeClassifier, gui::NodeType::RandomForestClassifier,
                             gui::NodeType::GradientBoostingClassifier, gui::NodeType::NaiveBayesClassifier,
                             gui::NodeType::KNNClassifier, gui::NodeType::LogisticRegressionNode,
-                            gui::NodeType::SVMClassifier,
+                            gui::NodeType::SVMClassifier, gui::NodeType::SVMRegressor,
                             gui::NodeType::LinearRegressionNode,
                             gui::NodeType::PolynomialRegressionNode}) {
         Check(ModelOutputOptional(metadata.GetMetadata(type)),
@@ -5245,7 +5257,6 @@ int main() {
           "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
         gui::NodeType::UMAPNode,
-        gui::NodeType::SVMRegressor,
         gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::CrossValidationNode,

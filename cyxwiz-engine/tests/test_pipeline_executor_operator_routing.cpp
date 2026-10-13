@@ -333,6 +333,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "StandardScaler",
         "StringManipulation",
         "SVMClassifier",
+        "SVMRegressor",
         "TableCropper",
         "TargetEncoder",
         "TreeModelPredictor",
@@ -2714,6 +2715,37 @@ int main(int argc, char** argv) {
     registry.UnloadDataset("ds_operator_SVMClassifier_9614");
     fs::remove(svm_model_path);
 
+    // SVR on the 4-row table: x, z -> label as a number; a linear kernel with
+    // a large C fits the straight line within epsilon.
+    const std::string svr_json =
+        R"({"nodes":[)"
+        R"({"id":9617,"type":"DataInput","name":"SvrInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9618,"type":"SVMRegressor","name":"Svr","parameters":{)"
+        R"("target_col":"label","feature_cols":"x","prediction_col":"svr_pred",)"
+        R"("kernel":"linear","C":"100","epsilon":"0.05","model_path":")" +
+        JsonEscapePath(svm_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9617,"end_node":9618}]})";
+
+    cyxwiz::PipelineExecutor svr_executor;
+    Check(svr_executor.ExecutePipeline(svr_json),
+          "PipelineExecutor routes SVMRegressor through PipelineOperatorFactory: " +
+              svr_executor.GetLastError());
+    auto svr_output = registry.GetArrowDataset("ds_operator_SVMRegressor_9618");
+    auto svr_table = svr_output ? svr_output->GetArrowTable() : nullptr;
+    Check(svr_table != nullptr && svr_table->num_rows() == 4 &&
+              svr_table->schema()->GetFieldIndex("svr_pred") >= 0 &&
+              ReadNumericValue(svr_table, "svr_pred", 0) < 0.5 &&
+              ReadNumericValue(svr_table, "svr_pred", 3) > 0.5,
+          "SVMRegressor appends a numeric prediction that follows the target");
+    Check(fs::exists(svm_model_path),
+          "SVMRegressor model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_SVMRegressor_9618");
+    fs::remove(svm_model_path);
+
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
         R"({"id":224,"type":"DataInput","name":"PredictInput","parameters":{)"
@@ -3010,7 +3042,6 @@ int main(int argc, char** argv) {
 
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
-        {"SVMRegressor", false},
         {"TrainTestSplit", false},
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},

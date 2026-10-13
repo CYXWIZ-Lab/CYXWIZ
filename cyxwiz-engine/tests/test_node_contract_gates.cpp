@@ -32,7 +32,7 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 206,
+    Check(import_names.size() == 207,
           "accepted graph-import name count drifted");
 
     std::set<std::string> names;

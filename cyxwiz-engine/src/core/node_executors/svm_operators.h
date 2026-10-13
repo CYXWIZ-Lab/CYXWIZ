@@ -1,7 +1,8 @@
 #pragma once
 
 // SVM nodes (TOFIX145 Group C): support vector machines fitted on the device
-// (ClassicML::FitSVC / FitSVR, scikit-learn's SVC / SVR on libsvm's SMO).
+// (ClassicML::FitSVC / FitSVR, scikit-learn's SVC / SVR on libsvm's SMO). The
+// regressor appends a numeric prediction column; its target must be numeric.
 
 #include "classic_model_common.h"
 
@@ -22,6 +23,20 @@ bool ParseSVMKernelSettings(const std::map<std::string, std::string>& params, co
 
 // The fitted model's learned values for the cyxwiz_classic_model artifact.
 nlohmann::json SVMModelParameters(const SVMModel& model, const SVMKernelSettings& settings);
+
+class SVMRegressorOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "SVMRegressor"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    ClassicColumns columns_;
+    SVMKernelSettings settings_;
+    double epsilon_ = 0.1;
+};
 
 class SVMClassifierOperator : public IPipelineOperator {
 public:

@@ -10,6 +10,7 @@
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -197,6 +198,33 @@ void CheckSVC(const fs::path& model_path) {
           "SVC artifact keeps the support vectors and resolved gamma: " + params.dump());
 }
 
+void CheckSVR(const fs::path& model_path) {
+    // y = 2 x + 1 on six rows; a linear SVR with a tight tube recovers it.
+    auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64())});
+    const auto table = arrow::Table::Make(schema, {Doubles({0.0, 1.0, 2.0, 3.0, 4.0, 5.0}),
+                                                   Doubles({1.0, 3.0, 5.0, 7.0, 9.0, 11.0})});
+    cyxwiz::SVMRegressorOperator op;
+    std::string error;
+    Check(op.Configure({{"target_col", "y"}, {"kernel", "linear"}, {"C", "100"}, {"epsilon", "0.01"},
+                        {"model_path", model_path.string()}},
+                       error),
+          "SVR configures: " + error);
+    auto result = op.Apply(table);
+    Check(result.ok(), "SVR applies: " + result.status().ToString());
+    const auto chunk = std::static_pointer_cast<arrow::DoubleArray>((*result)->GetColumnByName("prediction")->chunk(0));
+    for (int64_t r = 0; r < 6; ++r)
+        Check(std::abs(chunk->Value(r) - (2.0 * static_cast<double>(r) + 1.0)) <= 0.011,
+              "SVR follows y = 2x + 1 within epsilon at row " + std::to_string(r));
+    const auto doc = ReadJson(model_path);
+    Check(doc["model_type"] == "SVMRegressor" && doc["model"]["parameters"]["epsilon"] == 0.01 &&
+              doc["model"]["target"] == "y",
+          "SVR artifact names its target and epsilon");
+
+    cyxwiz::SVMRegressorOperator text_target;
+    Check(text_target.Configure({{"target_col", "animal"}}, error), "SVR configures on text");
+    Check(!text_target.Apply(TextLabelTable()).ok(), "SVR refuses a text target");
+}
+
 void CheckRefusals() {
     cyxwiz::NaiveBayesClassifierOperator op;
     std::string error;
@@ -217,6 +245,7 @@ int main() {
     CheckKNN(dir / "knn_text.cyxclassic.json");
     CheckLogistic(dir / "logistic_text.cyxclassic.json");
     CheckSVC(dir / "svc_text.cyxclassic.json");
+    CheckSVR(dir / "run_folder_not_made_yet" / "svr_line.cyxclassic.json");  // the writer makes the folder
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "classic ML operator tests passed\n";
