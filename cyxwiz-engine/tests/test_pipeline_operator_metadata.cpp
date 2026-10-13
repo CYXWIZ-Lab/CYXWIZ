@@ -2615,7 +2615,6 @@ void CheckBlockedClassifierFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
         gui::NodeType::SVMClassifier,
-        gui::NodeType::KNNClassifier,
         gui::NodeType::LogisticRegressionNode,
     };
 
@@ -2648,7 +2647,6 @@ void CheckBlockedClassifierFamilyContract(
     }
 
     const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
-    const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
     const auto* logistic =
         metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
     Check(svm->parameters.size() == 3 &&
@@ -2656,11 +2654,6 @@ void CheckBlockedClassifierFamilyContract(
               ParameterMatches(svm, "C", "float", "1.0") &&
               ParameterMatches(svm, "gamma", "enum", "scale"),
           "SVM preview should preserve its legacy saved parameters");
-    Check(knn->parameters.size() == 3 &&
-              ParameterMatches(knn, "n_neighbors", "int", "5") &&
-              ParameterMatches(knn, "weights", "enum", "uniform") &&
-              ParameterMatches(knn, "metric", "enum", "euclidean"),
-          "KNN preview should preserve its legacy saved parameters");
     Check(logistic->parameters.size() == 3 &&
               ParameterMatches(logistic, "C", "float", "1.0") &&
               ParameterMatches(logistic, "solver", "enum", "lbfgs") &&
@@ -2676,6 +2669,7 @@ void CheckClassicMLClassifierFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
         gui::NodeType::NaiveBayesClassifier,
+        gui::NodeType::KNNClassifier,
     };
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
@@ -2730,6 +2724,18 @@ void CheckClassicMLClassifierFamilyContract(
               !naive_bayes_op->Configure({{"target_col", "y"}, {"var_smoothing", "-1"}}, error) &&
               error.find("var_smoothing") != std::string::npos,
           "Naive Bayes should refuse a negative var_smoothing");
+
+    const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
+    Check(knn->parameters.size() == 7 &&
+              ParameterMatches(knn, "n_neighbors", "int", "5") &&
+              ParameterMatches(knn, "weights", "enum", "uniform") &&
+              ParameterMatches(knn, "metric", "enum", "euclidean"),
+          "KNN metadata should match every consumed operator field");
+    auto knn_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::KNNClassifier);
+    Check(knn_op && !knn_op->Configure({{"target_col", "y"}, {"n_neighbors", "0"}}, error) &&
+              !knn_op->Configure({{"target_col", "y"}, {"metric", "chebyshev"}}, error),
+          "KNN should refuse zero neighbours and an unknown metric");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.

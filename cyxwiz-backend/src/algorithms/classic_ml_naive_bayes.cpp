@@ -10,6 +10,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
+#include "classic_ml_detail.h"
 
 #include <cmath>
 #include <string>
@@ -18,23 +19,11 @@
 namespace cyxwiz {
 
 using namespace analysis_detail;
+using classic_detail::LabelRefusal;
 
 namespace {
 
 constexpr double kTwoPi = 6.283185307179586476925286766559;
-
-std::string LabelRefusal(const std::vector<int>& labels, size_t rows, int n_classes, std::vector<double>& counts) {
-    if (labels.size() != rows) return "Labels and rows differ in number";
-    if (n_classes < 1) return "At least one class is needed";
-    counts.assign(static_cast<size_t>(n_classes), 0.0);
-    for (const int label : labels) {
-        if (label < 0 || label >= n_classes) return "A label is outside 0..n_classes-1";
-        counts[static_cast<size_t>(label)] += 1.0;
-    }
-    for (const double count : counts)
-        if (count == 0.0) return "Every class needs at least one row";
-    return {};
-}
 
 // Joint log-likelihood [n, k] of every row under every class.
 af::array JointLogLikelihood(const af::array& x, const af::array& theta, const af::array& var,

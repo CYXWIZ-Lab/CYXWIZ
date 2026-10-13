@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from sklearn import __version__ as sklearn_version
 from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
 
 
 def blobs(rng, centers, spread, per_class):
@@ -43,6 +44,25 @@ def gaussian_nb_case(label, x, y, x_test, var_smoothing=1e-9):
     }
 
 
+def knn_case(label, x, y, x_test, n_neighbors, weights, metric):
+    model = KNeighborsClassifier(n_neighbors=n_neighbors, weights=weights, metric=metric, algorithm="brute").fit(x, y)
+    return {
+        "op": "knn",
+        "label": label,
+        "x": x.tolist(),
+        "y": y.astype(int).tolist(),
+        "x_test": x_test.tolist(),
+        "n_classes": int(len(model.classes_)),
+        "n_neighbors": n_neighbors,
+        "weights": weights,
+        "metric": metric,
+        "predict": model.predict(x).astype(int).tolist(),
+        "predict_proba": model.predict_proba(x).tolist(),
+        "predict_test": model.predict(x_test).astype(int).tolist(),
+        "predict_proba_test": model.predict_proba(x_test).tolist(),
+    }
+
+
 def main():
     rng = np.random.default_rng(145)
     cases = []
@@ -64,6 +84,15 @@ def main():
     x[:, 1] = 5.0
     cases.append(gaussian_nb_case("constant column, larger smoothing", x, y,
                                   np.column_stack([rng.normal(2, 2, 10), np.full(10, 5.0)]), var_smoothing=1e-3))
+
+    # k-nearest neighbours: each metric and weighting; k = 4 makes vote ties
+    # (the first class wins, as in sklearn).
+    x, y = blobs(rng, [[0, 0, 0], [1.5, 1.0, -0.5], [-1.0, 1.5, 1.0]], 0.8, 20)
+    x_test = rng.normal(0.2, 1.3, size=(30, 3))
+    cases.append(knn_case("euclidean uniform k=5", x, y, x_test, 5, "uniform", "euclidean"))
+    cases.append(knn_case("euclidean distance k=7", x, y, x_test, 7, "distance", "euclidean"))
+    cases.append(knn_case("manhattan uniform k=4 (vote ties)", x, y, x_test, 4, "uniform", "manhattan"))
+    cases.append(knn_case("cosine distance k=3", x + 3.0, y, x_test + 3.0, 3, "distance", "cosine"))
 
     out = {"sklearn": sklearn_version, "cases": cases}
     path = Path(__file__).resolve().parent.parent / "fixtures" / "classic_ml_sklearn.json"

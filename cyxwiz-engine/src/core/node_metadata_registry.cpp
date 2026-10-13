@@ -725,6 +725,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML probabilistic classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
+        NodeType::KNNClassifier,
+        "classic_ml",
+        "Table-path classical ML nearest-neighbour classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
@@ -1978,17 +1982,20 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
-        {"knn", "nearest", "neighbor"}, 0, false,
-        "Blocked legacy K-nearest-neighbors classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"n_neighbors", "int", "5", "Legacy neighbor count retained for saved graphs", {}, "1-100", "Neighbors", "Compatibility"},
-         {"weights", "enum", "uniform", "Legacy neighbor weighting retained for saved graphs", {"uniform", "distance"}, "", "Weights", "Compatibility"},
-         {"metric", "enum", "euclidean", "Legacy distance metric retained for saved graphs", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"knn", "nearest", "neighbor", "neighbour", "classifier", "classic ml"}, 0, false, "k-nearest neighbours classifier",
+        "Classifies each row by the votes of its nearest training rows, computed on the selected device "
+        "(scikit-learn's KNeighborsClassifier), and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, true, "Fitted KNN model (its training rows and settings)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"n_neighbors", "int", "5", "Training rows that vote for each prediction", {}, "", "Neighbours", "Model"},
+         {"weights", "enum", "uniform", "Every neighbour votes equally, or closer neighbours count more (1/distance)", {"uniform", "distance"}, "", "Weights", "Model"},
+         {"metric", "enum", "euclidean", "Distance between rows", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
         {"naive", "bayes", "gaussian", "classifier", "classic ml"}, 0, false, "Gaussian naive Bayes classifier",

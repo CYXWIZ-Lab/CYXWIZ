@@ -3580,7 +3580,8 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
         }
         // Classic ML classifiers (TOFIX145): the Model output is the saved
         // fitted model, so one is always written.
-        if (node.type == "NaiveBayesClassifier") {
+        if (node.type == "NaiveBayesClassifier" ||
+            node.type == "KNNClassifier") {
             const std::string configured_path = TrimString(
                 ParameterOrDefault(node.parameters, "model_path", ""));
             if (configured_path.empty()) {
@@ -5840,7 +5841,8 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         type == gui::NodeType::DecisionTreeClassifier ||
         type == gui::NodeType::RandomForestClassifier ||
         type == gui::NodeType::GradientBoostingClassifier ||
-        type == gui::NodeType::NaiveBayesClassifier) {
+        type == gui::NodeType::NaiveBayesClassifier ||
+        type == gui::NodeType::KNNClassifier) {
         const auto model_path = operator_parameters.find("model_path");
         if (model_path == operator_parameters.end() ||
             model_path->second.empty() ||

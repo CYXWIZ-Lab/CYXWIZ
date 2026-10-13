@@ -84,6 +84,26 @@ void RunGaussianNB(const json& c, const std::string& name) {
     CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", 1e-7);
 }
 
+void RunKNN(const json& c, const std::string& name) {
+    const auto x = c.at("x").get<Matrix>();
+    const auto model = ClassicML::FitKNN(x, c.at("y").get<std::vector<int>>(), c.at("n_classes").get<int>(),
+                                         c.at("n_neighbors").get<int>(), c.at("weights").get<std::string>(),
+                                         c.at("metric").get<std::string>());
+    Check(model.success, name + " fit: " + model.error_message);
+    const auto train = ClassicML::PredictKNN(model, x);
+    Check(train.success, name + " predict: " + train.error_message);
+    CheckLabels(train.labels, c.at("predict"), name + " predict");
+    // Distance weighting on the training rows: sklearn's euclidean expansion
+    // (|a|^2 + |b|^2 - 2ab) leaves a row's distance to itself near 1e-8, not 0,
+    // so its share is 1 - ~5e-8 where the exact zero distance gives 1.
+    const double train_tolerance = c.at("weights") == "distance" ? 1e-6 : kTolerance;
+    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", train_tolerance);
+    const auto held_out = ClassicML::PredictKNN(model, c.at("x_test").get<Matrix>());
+    Check(held_out.success, name + " predict test: " + held_out.error_message);
+    CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
+    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test");
+}
+
 }  // namespace
 
 int main(int, char** argv) {
@@ -96,6 +116,7 @@ int main(int, char** argv) {
         const std::string op = c.at("op").get<std::string>();
         const std::string name = op + " " + c.at("label").get<std::string>();
         if (op == "gaussian_nb") RunGaussianNB(c, name);
+        else if (op == "knn") RunKNN(c, name);
         else Check(false, "unknown case " + op);
         ++passed;
     }
@@ -105,6 +126,9 @@ int main(int, char** argv) {
     Check(!ClassicML::FitGaussianNB({{0.0}, {1.0}}, {0, 3}, 2).success, "a label out of range is refused");
     const auto fitted = ClassicML::FitGaussianNB({{0.0, 1.0}, {1.0, 0.0}}, {0, 1}, 2);
     Check(fitted.success && !ClassicML::PredictGaussianNB(fitted, {{1.0}}).success, "a feature-count mismatch is refused");
+    Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 3).success, "more neighbours than rows is refused");
+    Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 1, "median").success, "an unknown weighting is refused");
+    Check(!ClassicML::FitKNN({{0.0}, {1.0}}, {0, 1}, 2, 1, "uniform", "chebyshev").success, "an unknown metric is refused");
 
     std::cout << "classic ML matches scikit-learn: " << passed << " cases" << std::endl;
     return 0;

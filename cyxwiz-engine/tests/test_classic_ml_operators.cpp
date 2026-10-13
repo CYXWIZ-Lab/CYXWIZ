@@ -2,6 +2,7 @@
 // scikit-learn's sorted class order, the prediction column, and the saved
 // cyxwiz_classic_model artifact.
 
+#include "../src/core/node_executors/knn_operator.h"
 #include "../src/core/node_executors/naive_bayes_operator.h"
 
 #include <arrow/api.h>
@@ -130,6 +131,33 @@ void CheckNumericLabels(const fs::path& model_path) {
           "numeric classes sort by value: " + doc["model"]["class_labels"].dump());
 }
 
+void CheckKNN(const fs::path& model_path) {
+    cyxwiz::KNNClassifierOperator op;
+    std::string error;
+    Check(op.Configure({{"target_col", "animal"}, {"n_neighbors", "3"}, {"weights", "distance"},
+                        {"metric", "manhattan"}, {"model_path", model_path.string()}},
+                       error),
+          "KNN configures: " + error);
+    auto result = op.Apply(TextLabelTable());
+    Check(result.ok(), "KNN applies on text labels: " + result.status().ToString());
+    const auto chunk =
+        std::static_pointer_cast<arrow::StringArray>((*result)->GetColumnByName("prediction")->chunk(0));
+    Check(chunk->GetString(0) == "zebra" && chunk->GetString(5) == "apple", "KNN predicts the separable rows");
+    const auto doc = ReadJson(model_path);
+    const auto& model = doc["model"];
+    Check(doc["model_type"] == "KNNClassifier" &&
+              model["class_labels"] == nlohmann::json::array({"apple", "zebra"}),
+          "KNN artifact in sorted class order");
+    const auto& params = model["parameters"];
+    Check(params["n_neighbors"] == 3 && params["weights"] == "distance" && params["metric"] == "manhattan" &&
+              params["x"].size() == 6 && params["labels"][0] == 1,
+          "KNN artifact keeps its training rows and settings: " + params.dump());
+
+    cyxwiz::KNNClassifierOperator too_many;
+    Check(too_many.Configure({{"target_col", "animal"}, {"n_neighbors", "7"}}, error), "KNN configures k=7");
+    Check(!too_many.Apply(TextLabelTable()).ok(), "KNN refuses more neighbours than rows");
+}
+
 void CheckRefusals() {
     cyxwiz::NaiveBayesClassifierOperator op;
     std::string error;
@@ -147,6 +175,7 @@ int main() {
     fs::create_directories(dir);
     CheckTextLabels(dir / "nb_text.cyxclassic.json");
     CheckNumericLabels(dir / "nb_numeric.cyxclassic.json");
+    CheckKNN(dir / "knn_text.cyxclassic.json");
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "classic ML operator tests passed\n";

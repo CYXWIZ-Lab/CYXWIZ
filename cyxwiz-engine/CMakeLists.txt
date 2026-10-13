@@ -257,6 +257,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/random_forest_operator.cpp       # Tool-to-Node Band 1
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp      # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_trainer.cpp    # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_operator.cpp   # Tool-to-Node Band 1
@@ -770,6 +771,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/regression_model_artifact.h
     src/core/node_executors/classic_model_common.h
     src/core/node_executors/naive_bayes_operator.h
+    src/core/node_executors/knn_operator.h
     src/core/node_executors/regression_model_predictor_operator.h
     src/core/node_executors/preprocessing_operators.h
     src/core/node_executors/time_series_analysis_operators.h
@@ -2366,6 +2368,7 @@ add_executable(test_classic_ml_operators
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
 )
 
 target_include_directories(test_classic_ml_operators PRIVATE
@@ -2520,6 +2523,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2771,6 +2775,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2866,6 +2871,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2958,6 +2964,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -3563,6 +3570,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -6541,6 +6549,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
     src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp

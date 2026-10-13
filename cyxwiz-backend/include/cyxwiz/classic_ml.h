@@ -37,12 +37,32 @@ struct CYXWIZ_API GaussianNBModel {
     std::string error_message;
 };
 
+// sklearn.neighbors.KNeighborsClassifier (brute force): the training rows are
+// the model. weights "uniform" or "distance" (1/d; rows at distance 0 take all
+// the weight), metric "euclidean", "manhattan" or "cosine".
+struct CYXWIZ_API KNNModel {
+    ClassicMatrix x;            // [n, d] training rows
+    std::vector<int> labels;    // [n]
+    int n_classes = 0;
+    int n_neighbors = 5;
+    std::string weights = "uniform";
+    std::string metric = "euclidean";
+
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API ClassicML {
 public:
     // labels in 0..n_classes-1; every class must have at least one row.
     static GaussianNBModel FitGaussianNB(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes,
                                          double var_smoothing = 1e-9);
     static ClassicPrediction PredictGaussianNB(const GaussianNBModel& model, const ClassicMatrix& x);
+
+    // Checks and keeps the training rows; n_neighbors <= rows.
+    static KNNModel FitKNN(const ClassicMatrix& x, const std::vector<int>& labels, int n_classes, int n_neighbors = 5,
+                           const std::string& weights = "uniform", const std::string& metric = "euclidean");
+    static ClassicPrediction PredictKNN(const KNNModel& model, const ClassicMatrix& x);
 };
 
 }  // namespace cyxwiz

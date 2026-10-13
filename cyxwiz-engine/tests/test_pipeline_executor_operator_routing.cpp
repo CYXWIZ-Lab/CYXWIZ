@@ -296,6 +296,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "Join",
         "JSONPathExtractor",
         "KMeansCluster",
+        "KNNClassifier",
         "LabelEncoder",
         "LinearRegressionNode",
         "LogTransform",
@@ -2064,6 +2065,8 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_gradient_boosting_model.json";
     const fs::path naive_bayes_model_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_naive_bayes_model.json";
+    const fs::path knn_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_knn_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -2620,6 +2623,34 @@ int main(int argc, char** argv) {
           "NaiveBayesClassifier model_path should write a model artifact");
     registry.UnloadDataset("ds_operator_NaiveBayesClassifier_9602");
     fs::remove(naive_bayes_model_path);
+
+    const std::string knn_json =
+        R"({"nodes":[)"
+        R"({"id":9605,"type":"DataInput","name":"KnnInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9606,"type":"KNNClassifier","name":"Knn","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"knn_pred",)"
+        R"("n_neighbors":"1","model_path":")" +
+        JsonEscapePath(knn_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9605,"end_node":9606}]})";
+
+    cyxwiz::PipelineExecutor knn_executor;
+    Check(knn_executor.ExecutePipeline(knn_json),
+          "PipelineExecutor routes KNNClassifier through PipelineOperatorFactory: " +
+              knn_executor.GetLastError());
+    auto knn_output = registry.GetArrowDataset("ds_operator_KNNClassifier_9606");
+    auto knn_table = knn_output ? knn_output->GetArrowTable() : nullptr;
+    Check(knn_table != nullptr && knn_table->num_rows() == 4 &&
+              ReadNumericValue(knn_table, "knn_pred", 0) == 0.0 &&
+              ReadNumericValue(knn_table, "knn_pred", 3) == 1.0,
+          "KNNClassifier (k=1) predicts each training row's own class");
+    Check(fs::exists(knn_model_path),
+          "KNNClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_KNNClassifier_9606");
+    fs::remove(knn_model_path);
 
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
@@ -4054,6 +4085,21 @@ int main(int argc, char** argv) {
                   "missing required parameter 'target_col'") != std::string::npos,
           "NaiveBayesClassifier missing target_col should fail validation: " +
               missing_naive_bayes_target_executor.GetLastError());
+
+    const std::string bad_knn_metric_json =
+        R"({"nodes":[)"
+        R"({"id":9607,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9608,"type":"KNNClassifier","name":"BadMetric","parameters":{)"
+        R"("target_col":"y","metric":"chebyshev"}})"
+        R"(],"links":[{"start_node":9607,"end_node":9608}]})";
+
+    cyxwiz::PipelineExecutor bad_knn_metric_executor;
+    Check(!bad_knn_metric_executor.ExecutePipeline(bad_knn_metric_json) &&
+              bad_knn_metric_executor.GetLastError().find("metric") != std::string::npos,
+          "KNNClassifier unknown metric should fail validation: " +
+              bad_knn_metric_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
