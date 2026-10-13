@@ -2617,48 +2617,6 @@ void CheckClassicalRegressionFamilyContract(
           "SVMRegressor should remain blocked without a runtime owner");
 }
 
-void CheckBlockedClassifierFamilyContract(
-    cyxwiz::NodeMetadataRegistry& metadata) {
-    const std::vector<gui::NodeType> types = {
-        gui::NodeType::SVMClassifier,
-    };
-
-    for (const auto type : types) {
-        const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr && meta->IsTemplate() &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unimplemented classifier should remain blocked: " +
-                  TypeId(type));
-        Check(meta->inputs.size() == 2 &&
-                  HasInputType(meta, "Train Data", gui::PinType::Dataset) &&
-                  HasInputType(meta, "Labels", gui::PinType::Labels) &&
-                  meta->outputs.size() == 2 &&
-                  HasOutputType(meta, "Model", gui::PinType::Parameters) &&
-                  HasOutputType(meta, "Predictions", gui::PinType::Labels),
-              "blocked classifier should preserve its saved-graph pin contract: " +
-                  TypeId(type));
-        Check(meta->brief_description.find("Blocked") != std::string::npos &&
-                  meta->help_text.find("No classifier executor") !=
-                      std::string::npos,
-              "blocked classifier help should state missing runtime ownership: " +
-                  TypeId(type));
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(type).mode ==
-                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
-                  cyxwiz::PipelineOperatorFactory::Instance().Create(type) ==
-                      nullptr,
-              "blocked classifier should fail closed without an operator: " +
-                  TypeId(type));
-    }
-
-    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
-    Check(svm->parameters.size() == 3 &&
-              ParameterMatches(svm, "kernel", "enum", "rbf") &&
-              ParameterMatches(svm, "C", "float", "1.0") &&
-              ParameterMatches(svm, "gamma", "enum", "scale"),
-          "SVM preview should preserve its legacy saved parameters");
-}
-
 // TOFIX145 Group C: the classic ML classifiers are table-path operators like
 // the tree family: Data in, Predictions plus the saved Model out.
 // The fitted model is always saved, so a graph need not consume the Model pin:
@@ -2675,6 +2633,7 @@ void CheckModelOutputsOptional(cyxwiz::NodeMetadataRegistry& metadata) {
     for (const auto type : {gui::NodeType::DecisionTreeClassifier, gui::NodeType::RandomForestClassifier,
                             gui::NodeType::GradientBoostingClassifier, gui::NodeType::NaiveBayesClassifier,
                             gui::NodeType::KNNClassifier, gui::NodeType::LogisticRegressionNode,
+                            gui::NodeType::SVMClassifier,
                             gui::NodeType::LinearRegressionNode,
                             gui::NodeType::PolynomialRegressionNode}) {
         Check(ModelOutputOptional(metadata.GetMetadata(type)),
@@ -2688,6 +2647,7 @@ void CheckClassicMLClassifierFamilyContract(
         gui::NodeType::NaiveBayesClassifier,
         gui::NodeType::KNNClassifier,
         gui::NodeType::LogisticRegressionNode,
+        gui::NodeType::SVMClassifier,
     };
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
@@ -2767,6 +2727,23 @@ void CheckClassicMLClassifierFamilyContract(
     Check(logistic_op && !logistic_op->Configure({{"target_col", "y"}, {"C", "0"}}, error) &&
               !logistic_op->Configure({{"target_col", "y"}, {"max_iter", "0"}}, error),
           "Logistic should refuse C = 0 and max_iter = 0");
+
+    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
+    Check(svm->parameters.size() == 10 &&
+              ParameterMatches(svm, "C", "float", "1.0") &&
+              ParameterMatches(svm, "kernel", "enum", "rbf") &&
+              ParameterMatches(svm, "gamma", "string", "scale") &&
+              ParameterMatches(svm, "degree", "int", "3") &&
+              ParameterMatches(svm, "coef0", "float", "0.0") &&
+              ParameterMatches(svm, "tol", "float", "1e-3"),
+          "SVM metadata should match every consumed operator field");
+    auto svm_op = cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::SVMClassifier);
+    Check(svm_op && svm_op->Configure({{"target_col", "y"}, {"gamma", "0.5"}}, error) &&
+              svm_op->Configure({{"target_col", "y"}, {"gamma", "auto"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"gamma", "fast"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"gamma", "-1"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"kernel", "laplacian"}}, error),
+          "SVM gamma takes scale, auto or a positive number; kernels are sklearn's four");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.
@@ -3535,7 +3512,6 @@ int main() {
     CheckClusteringFamilyContract(metadata);
     CheckPcaContract(metadata);
     CheckClassicalRegressionFamilyContract(metadata);
-    CheckBlockedClassifierFamilyContract(metadata);
     CheckClassicMLClassifierFamilyContract(metadata);
     CheckModelOutputsOptional(metadata);
     CheckSchedulerFamilyContract(metadata);
@@ -5263,10 +5239,10 @@ int main() {
           "StandardScaler enum support should resolve to operator-backed");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::SVMClassifier)) == "SVMClassifier",
-          "fail-closed runtime enum lookup for SVMClassifier is stable");
+          "operator runtime enum lookup for SVMClassifier is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMClassifier).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
-          "SVMClassifier enum support should resolve to fail-closed");
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+          "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
         gui::NodeType::UMAPNode,
         gui::NodeType::SVMRegressor,

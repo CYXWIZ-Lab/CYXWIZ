@@ -5,6 +5,7 @@
 #include "../src/core/node_executors/knn_operator.h"
 #include "../src/core/node_executors/logistic_regression_operator.h"
 #include "../src/core/node_executors/naive_bayes_operator.h"
+#include "../src/core/node_executors/svm_operators.h"
 
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
@@ -176,6 +177,26 @@ void CheckLogistic(const fs::path& model_path) {
           "two classes save one coefficient row: " + params.dump());
 }
 
+void CheckSVC(const fs::path& model_path) {
+    cyxwiz::SVMClassifierOperator op;
+    std::string error;
+    Check(op.Configure({{"target_col", "animal"}, {"kernel", "rbf"}, {"gamma", "auto"},
+                        {"model_path", model_path.string()}},
+                       error),
+          "SVC configures: " + error);
+    auto result = op.Apply(TextLabelTable());
+    Check(result.ok(), "SVC applies on text labels: " + result.status().ToString());
+    const auto chunk =
+        std::static_pointer_cast<arrow::StringArray>((*result)->GetColumnByName("prediction")->chunk(0));
+    Check(chunk->GetString(0) == "zebra" && chunk->GetString(5) == "apple", "SVC predicts the separable rows");
+    const auto doc = ReadJson(model_path);
+    const auto& params = doc["model"]["parameters"];
+    Check(doc["model_type"] == "SVMClassifier" && params["gamma"] == 0.5 && params["gamma_setting"] == "auto" &&
+              params["pair_first"].size() == 1 && params["rho"].size() == 1 && params["converged"] == true &&
+              !params["support_vectors"].empty(),
+          "SVC artifact keeps the support vectors and resolved gamma: " + params.dump());
+}
+
 void CheckRefusals() {
     cyxwiz::NaiveBayesClassifierOperator op;
     std::string error;
@@ -195,6 +216,7 @@ int main() {
     CheckNumericLabels(dir / "nb_numeric.cyxclassic.json");
     CheckKNN(dir / "knn_text.cyxclassic.json");
     CheckLogistic(dir / "logistic_text.cyxclassic.json");
+    CheckSVC(dir / "svc_text.cyxclassic.json");
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "classic ML operator tests passed\n";

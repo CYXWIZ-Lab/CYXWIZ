@@ -1490,13 +1490,12 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
+        // Classic ML classifiers (TOFIX145 Group C): Data in, Predictions and
+        // Model out, from their metadata.
         case NodeType::SVMClassifier:
         case NodeType::KNNClassifier:
         case NodeType::NaiveBayesClassifier:
         case NodeType::LogisticRegressionNode: {
-            // Saved graphs retain their historical static preview contract,
-            // but runtime capability truth keeps these nodes blocked until a
-            // real fit/artifact/predict owner exists.
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

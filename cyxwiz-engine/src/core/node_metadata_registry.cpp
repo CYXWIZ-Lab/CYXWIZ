@@ -733,6 +733,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML linear classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
+        NodeType::SVMClassifier,
+        "classic_ml",
+        "Table-path classical ML kernel classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
@@ -1973,17 +1977,23 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
-        {"svm", "support", "vector"}, 0, false,
-        "Blocked legacy SVM classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"kernel", "enum", "rbf", "Legacy kernel selection retained for saved graphs", {"linear", "rbf", "poly", "sigmoid"}, "", "Kernel", "Compatibility"},
-         {"C", "float", "1.0", "Legacy regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"gamma", "enum", "scale", "Legacy kernel coefficient retained for saved graphs", {"scale", "auto"}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"svm", "svc", "support", "vector", "kernel", "classifier", "classic ml"}, 0, false, "Support vector classifier",
+        "Fits a kernel support vector machine on the selected device (scikit-learn's SVC; one-vs-one for more "
+        "than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVM (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for margin violations; smaller is a softer, more regularised margin", {}, "", "Regularisation (C)", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
         {"knn", "nearest", "neighbor", "neighbour", "classifier", "classic ml"}, 0, false, "k-nearest neighbours classifier",

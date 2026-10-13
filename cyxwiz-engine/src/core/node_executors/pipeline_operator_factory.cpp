@@ -12,6 +12,7 @@
 #include "naive_bayes_operator.h"
 #include "knn_operator.h"
 #include "logistic_regression_operator.h"
+#include "svm_operators.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
@@ -146,6 +147,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::LogisticRegressionNode, []() {
         return std::make_unique<LogisticRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMClassifier, []() {
+        return std::make_unique<SVMClassifierOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {
