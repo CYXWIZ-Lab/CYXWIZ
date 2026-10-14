@@ -793,6 +793,7 @@ MainWindow::MainWindow()
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
+    data_studio_panel_->SetNodeEditor(node_editor_.get());
 
     // Cross-navigation: Data Studio's "Open Node Editor" button raises
     // the CyxWiz Studio (NodeEditor) panel. Tracked in tofix.md as the

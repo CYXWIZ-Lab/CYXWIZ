@@ -90,6 +90,14 @@ void NodeEditor::FocusNode(int node_id) {
     pending_focus_node_id_ = node_id;
 }
 
+void NodeEditor::ShowNodes(std::vector<int> node_ids) {
+    if (node_ids.size() == 1) {
+        FocusNode(node_ids.front());
+        return;
+    }
+    pending_show_nodes_ = std::move(node_ids);
+}
+
 void NodeEditor::ClearValidationState() {
     node_pin_state_.clear();
 }
@@ -259,7 +267,7 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (pending_focus_node_id_ >= 0) {
+    if (pending_focus_node_id_ >= 0 || !pending_show_nodes_.empty()) {
         ImGui::SetNextWindowFocus();
     }
     ::gui::NextWindowMayLeave("CyxWiz Studio");
@@ -321,6 +329,17 @@ void NodeEditor::Render() {
                 spdlog::warn("NodeEditor: deferred focus node {} not found", pending_focus_node_id_);
             }
             pending_focus_node_id_ = -1;
+        }
+        if (!pending_show_nodes_.empty()) {
+            ImNodes::ClearNodeSelection();
+            std::vector<int> present;
+            for (int id : pending_show_nodes_) {
+                if (!FindNodeById(id) || !cached_node_positions_.count(id)) continue;
+                ImNodes::SelectNode(id);
+                present.push_back(id);
+            }
+            FrameNodes(present);
+            pending_show_nodes_.clear();
         }
 
         // Handle deferred ImNodes clear (must be inside BeginNodeEditor scope)

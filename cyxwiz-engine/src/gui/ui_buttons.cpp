@@ -2,6 +2,8 @@
 #include "ui_tokens.h"
 
 #include <imgui.h>
+#include <algorithm>
+#include <cfloat>
 #include <imgui_internal.h>
 
 namespace cyxwiz::ui {
@@ -198,6 +200,36 @@ bool FilterChip(const char* id, const char* label, const char* count, bool chose
     dl->AddText(ImVec2(pos.x + 10.0f, text_y), ImGui::GetColorU32(chosen ? t.text_bright : t.text), label, label_end);
     dl->AddText(ImVec2(pos.x + 10.0f + ImGui::CalcTextSize(label, nullptr, true).x + 5.0f, text_y),
                 ImGui::GetColorU32(t.text_dim), count);
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
+float JobTabWidth(const char* label, const char* caption) {
+    const float small = ImGui::GetFontSize() * 0.85f;
+    return std::max(ImGui::CalcTextSize(label, nullptr, true).x, ImGui::GetFont()->CalcTextSizeA(small, FLT_MAX, 0.0f, caption).x) +
+           24.0f;
+}
+
+bool JobTab(const char* id, const char* label, const char* caption, bool chosen) {
+    RefreshColors();
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImFont* font = ImGui::GetFont();
+    const float small = ImGui::GetFontSize() * 0.85f;
+    const ImVec2 name = ImGui::CalcTextSize(label, nullptr, true);
+    const ImVec2 sub = font->CalcTextSizeA(small, FLT_MAX, 0.0f, caption);
+    const float width = JobTabWidth(label, caption);
+    const float height = name.y + sub.y + 14.0f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hovered && !chosen) dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(ui::WithAlpha(t.text, 0.04f)), 4.0f);
+    dl->AddText(ImVec2(pos.x + 12.0f, pos.y + 5.0f), ImGui::GetColorU32(chosen ? t.text_bright : t.text_dim), label,
+                ImGui::FindRenderedTextEnd(label));
+    dl->AddText(font, small, ImVec2(pos.x + 12.0f, pos.y + 6.0f + name.y), ImGui::GetColorU32(t.text_faint), caption);
+    // The one line that means something: which job is open.
+    if (chosen) dl->AddRectFilled(ImVec2(pos.x + 6.0f, pos.y + height - 2.0f), ImVec2(pos.x + width - 6.0f, pos.y + height),
+                                  ImGui::GetColorU32(t.accent));
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     return clicked;
 }

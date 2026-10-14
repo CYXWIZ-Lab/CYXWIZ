@@ -1,16 +1,49 @@
+// Data Studio's shell (TOFIX148 step 3, approved mockup v8): header, the
+// data rail, the job tabs, each job's "In the graph" strip and body, the
+// status bar.
+
 #include "data_studio_panel.h"
 
-#include "../dataset_picker.h"
 #include "../icons.h"
+#include "../separate_windows.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
-#include "../separate_windows.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <string>
 
 namespace cyxwiz {
+
+namespace {
+
+ImVec4 ToneColour(studio::Tone tone) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (tone) {
+        case studio::Tone::Ok: return t.success;
+        case studio::Tone::Warn: return t.warning;
+        case studio::Tone::Error: return t.error;
+        default: return t.text_dim;
+    }
+}
+
+const char* KindIcon(studio::RailItem::Kind kind) {
+    switch (kind) {
+        case studio::RailItem::Kind::DataInput: return ICON_FA_RIGHT_TO_BRACKET;
+        case studio::RailItem::Kind::NodeResult: return ICON_FA_SHARE_NODES;
+        case studio::RailItem::Kind::Published: return ICON_FA_FILE_EXPORT;
+        default: return ICON_FA_TABLE;
+    }
+}
+
+// Moves to the next line when `width` does not fit after the last item.
+void SameLineOrWrap(float width, float right_edge) {
+    ImGui::SameLine(0.0f, 4.0f);
+    if (ImGui::GetCursorScreenPos().x + width > right_edge) ImGui::NewLine();
+}
+
+}  // namespace
 
 void DataStudioPanel::Render() {
     if (query_editor_) query_editor_->RenderWindows();
@@ -19,88 +52,228 @@ void DataStudioPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
     // Opened from elsewhere (a dashboard): bring the panel forward, also when
     // it is a hidden dock tab (its Begin returns false until focused).
-    if (show_profile_ || show_query_) ImGui::SetNextWindowFocus();
+    if (focus_next_) ImGui::SetNextWindowFocus();
+    focus_next_ = false;
     ::gui::NextWindowMayLeave("Data Studio");
     const bool expanded = ImGui::Begin("Data Studio", &visible_);
     ::gui::TabMenu("Data Studio", &visible_);
     if (expanded) {
-        RenderToolbar();
+        const double now = ImGui::GetTime();
+        if (view_time_ < 0.0 || now - view_time_ > 0.5) {
+            RefreshView();
+            view_time_ = now;
+        }
+        RenderHeader();
+        const float status_h = ImGui::GetFrameHeightWithSpacing() + 2.0f;
+        const float body_h = std::max(120.0f, ImGui::GetContentRegionAvail().y - status_h);
+        RenderRail(body_h);
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::BeginChild("##studio_main", ImVec2(0.0f, body_h), ImGuiChildFlags_AlwaysUseWindowPadding);
+        RenderJobTabs();
+        RenderNodeStrip(view_.jobs[static_cast<size_t>(job_)]);
         ImGui::Spacing();
-        RenderTabBar();
-        ImGui::Spacing();
+        RenderJobBody();
+        ImGui::EndChild();
         RenderStatusBar();
     }
     ImGui::End();
 }
 
-void DataStudioPanel::RenderToolbar() {
+void DataStudioPanel::RenderHeader() {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Data Studio");
-    ImGui::SameLine();
-    RenderDatasetSelector();
+    ImGui::TextColored(t.text_bright, "Data Studio");
+    ImGui::SameLine(0.0f, 14.0f);
 
-    ImGui::SameLine();
-    if (ui::SecondaryButton(ICON_FA_ROTATE " Refresh", !active_dataset_.empty(), "Pick a dataset first")) SetActiveDataset(active_dataset_);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the picked dataset again (after it was re-loaded)");
+    // The graph it works on: a tinted chip, no outline.
+    const std::string graph = view_.graph_label;
+    const float pad = 9.0f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float label_w = ImGui::CalcTextSize("Graph").x;
+    const float w = pad * 2.0f + label_w + 8.0f + ImGui::CalcTextSize(graph.c_str()).x;
+    const float h = ImGui::GetFrameHeight();
+    ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), ui::ToU32(t.bg_raised), 6.0f);
+    const float ty = pos.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
+    ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + pad, ty), ui::ToU32(t.text_dim), "Graph");
+    ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + pad + label_w + 8.0f, ty), ui::ToU32(t.text), graph.c_str());
+    ImGui::Dummy(ImVec2(w, h));
+    const char* note = "Everything here is a node in this graph; changes show on the canvas.";
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", note);
 
-    // Cross-navigation: one click opens the Engine's Node Editor panel.
+    const float show_w = ui::ButtonWidth("Show graph", ui::ButtonSize::Small);
+    const float publish_w = ui::ButtonWidth("Publish...", ui::ButtonSize::Regular);
+    const float right = show_w + publish_w + ImGui::GetStyle().ItemSpacing.x;
+    const float note_w = ImGui::CalcTextSize(note).x;
+    const float room = ImGui::GetContentRegionAvail().x - w - right - 40.0f;
+    if (room > note_w) {
+        ImGui::SameLine(0.0f, 14.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_faint, "%s", note);
+    }
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - right);
+    if (ui::SecondaryButton("Show graph", static_cast<bool>(open_node_editor_callback_), "CyxWiz Studio is not available"))
+        open_node_editor_callback_();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open CyxWiz Studio on this graph");
     ImGui::SameLine();
-    if (open_node_editor_callback_) {
-        if (ui::SecondaryButton("Open Node Editor")) open_node_editor_callback_();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Open the CyxWiz Studio (Node Editor) panel. "
-                              "Switch to 'Data Pipeline' execution mode "
-                              "there to build visual transformation graphs.");
+    ui::PrimaryButton("Publish...", false, "Publishing with lineage comes with the Publish job (TOFIX148 step 3)");
+    ImGui::Spacing();
+}
+
+void DataStudioPanel::RenderRail(float height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    // A tinted area, no outline (owner rule: no lines around areas).
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.text, 0.03f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 10.0f));
+    ImGui::BeginChild("##studio_rail", ImVec2(rail_width_, height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    for (const auto& section : view_.rail) {
+        ImGui::TextColored(t.text_dim, "%s", section.title.c_str());
+        if (section.items.empty()) {
+            ImGui::TextColored(t.text_faint, section.title == "Data Inputs" ? "None in this graph" : "None yet");
         }
-    } else {
-        ImGui::TextColored(t.text_dim, "For visual pipelines, use CyxWiz Studio");
+        for (const auto& item : section.items) {
+            ImGui::PushID(item.node_id >= 0 ? item.node_id : static_cast<int>(std::hash<std::string>{}(item.dataset)));
+            const bool chosen = !item.dataset.empty() && item.dataset == active_dataset_;
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const float w = ImGui::GetContentRegionAvail().x;
+            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, 0.0f))) {
+                if (!item.dataset.empty()) SetActiveDataset(item.dataset);
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item.node_id >= 0) ShowOnCanvas({item.node_id});
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                std::string tip = item.tip;
+                tip += std::string(tip.empty() ? "" : "\n") +
+                       (item.dataset.empty() ? "No table to show yet." : "Click: show it in Explore.");
+                if (item.node_id >= 0) tip += "\nDouble-click: show the node on the canvas.";
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float meta_w = ImGui::CalcTextSize(item.meta.c_str()).x;
+            const float icon_w = ImGui::CalcTextSize(ICON_FA_TABLE).x + 6.0f;
+            dl->AddText(ImVec2(pos.x + 2.0f, pos.y), ui::ToU32(t.text_faint), KindIcon(item.kind));
+            const ImVec4 clip(pos.x, pos.y, pos.x + w - meta_w - 10.0f, pos.y + ImGui::GetTextLineHeight());
+            dl->AddText(nullptr, 0.0f, ImVec2(pos.x + icon_w, pos.y), ui::ToU32(item.dataset.empty() ? t.text_dim : t.text),
+                        item.label.c_str(), nullptr, 0.0f, &clip);
+            dl->AddText(ImVec2(pos.x + w - meta_w, pos.y), ui::ToU32(ToneColour(item.tone)), item.meta.c_str());
+            ImGui::PopID();
+        }
+        ImGui::Spacing();
+        ImGui::Spacing();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Data enters the graph through a Data Input (Bring in).");
+    ImGui::PopTextWrapPos();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void DataStudioPanel::RenderJobTabs() {
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    for (size_t j = 0; j < studio::kJobCount; ++j) {
+        const auto& job = view_.jobs[j];
+        const std::string caption = std::to_string(j + 1) + " \xC2\xB7 " + job.state;
+        if (j > 0) SameLineOrWrap(ui::JobTabWidth(job.name.c_str(), caption.c_str()), right_edge);
+        if (ui::JobTab(("##job" + std::to_string(j)).c_str(), job.name.c_str(), caption.c_str(), job.job == job_))
+            job_ = job.job;
     }
 }
 
-void DataStudioPanel::RenderDatasetSelector() {
+void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::TextColored(t.text_dim, "Dataset");
-    ImGui::SameLine();
-    // Every dataset the catalog knows: Data Input tables, node results, files.
-    std::string picked = active_dataset_;
-    ui::DatasetPickerOptions options;
-    options.tabular_only = false;
-    options.width = std::min(520.0f, ImGui::GetContentRegionAvail().x * 0.45f);
-    if (ui::DatasetPicker("dataset_selector", picked, options)) SetActiveDataset(picked);
+    ImGui::Spacing();
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->ChannelsSplit(2);
+    dl->ChannelsSetCurrent(1);
+    ImGui::SetCursorScreenPos(ImVec2(start.x + 10.0f, start.y + 6.0f));
+    ImGui::BeginGroup();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_faint, "In the graph:");
+    const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f;
+    const float right_edge = start.x + width - link_w - 16.0f;
+    if (job.chips.empty()) {
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "no node does this yet");
+    }
+    for (size_t i = 0; i < job.chips.size(); ++i) {
+        const auto& chip = job.chips[i];
+        const std::string text = chip.name + (chip.note.empty() ? "" : "  " + chip.note);
+        const float cw = ImGui::CalcTextSize(text.c_str()).x + 18.0f;
+        SameLineOrWrap(cw, right_edge);
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetFrameHeight() - 2.0f;
+        if (ImGui::InvisibleButton("##chip", ImVec2(cw, h))) ShowOnCanvas(chip.ids);
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Show on the canvas");
+        }
+        dl->AddRectFilled(p, ImVec2(p.x + cw, p.y + h), ui::ToU32(ui::Mix(t.bg_window, t.info, hovered ? 0.30f : 0.18f)), h * 0.5f);
+        const float ty = p.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
+        dl->AddText(ImVec2(p.x + 9.0f, ty), ui::ToU32(t.info), chip.name.c_str());
+        if (!chip.note.empty())
+            dl->AddText(ImVec2(p.x + 9.0f + ImGui::CalcTextSize((chip.name + "  ").c_str()).x, ty), ui::ToU32(t.text_dim),
+                        chip.note.c_str());
+        ImGui::PopID();
+    }
+    ImGui::EndGroup();
+    const float strip_h = ImGui::GetItemRectMax().y - start.y + 6.0f;
+    ImGui::SetCursorScreenPos(ImVec2(start.x + width - link_w - 6.0f, start.y + 6.0f));
+    ImGui::AlignTextToFramePadding();
+    if (ui::LinkButton("Show on canvas", !job.node_ids.empty())) ShowOnCanvas(job.node_ids);
+    dl->ChannelsSetCurrent(0);
+    dl->AddRectFilled(start, ImVec2(start.x + width, start.y + strip_h), ui::ToU32(ui::Mix(t.bg_window, t.text, 0.035f)), 8.0f);
+    dl->ChannelsMerge();
+    ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + strip_h));
+    ImGui::Dummy(ImVec2(width, 0.0f));
 }
 
-void DataStudioPanel::RenderTabBar() {
-    // Unified Canvas Phase 5: Removed Pipeline tab (moved to Node Editor)
-    if (ImGui::BeginTabBar("DataStudioTabs")) {
-        if (ImGui::BeginTabItem("Query", nullptr, show_query_ ? ImGuiTabItemFlags_SetSelected : 0)) {
-            show_query_ = false;
-            if (query_editor_) query_editor_->Render();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Profile", nullptr, show_profile_ ? ImGuiTabItemFlags_SetSelected : 0)) {
-            show_profile_ = false;
-            if (profile_) profile_->Render();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Visualize")) {
-            if (visualizer_) visualizer_->Render();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+void DataStudioPanel::RenderJobBody() {
+    if (job_ == studio::Job::Explore) {
+        RenderExplore();
+        return;
+    }
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s is the next part of Data Studio being built (TOFIX148 step 3). Its nodes are listed above; "
+                                   "Show on canvas opens them in CyxWiz Studio.",
+                       studio::JobName(job_));
+    ImGui::PopTextWrapPos();
+}
+
+void DataStudioPanel::RenderExplore() {
+    static const char* kTabs[] = {"Query", "Profile", "Visualize"};
+    for (int i = 0; i < 3; ++i) {
+        if (i) ImGui::SameLine(0.0f, 4.0f);
+        if (ui::FilterChip(kTabs[i], kTabs[i], "", static_cast<int>(explore_tab_) == i)) explore_tab_ = static_cast<ExploreTab>(i);
+    }
+    ImGui::Spacing();
+    switch (explore_tab_) {
+        case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
+        case ExploreTab::Profile: if (profile_) profile_->Render(); break;
+        case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
     }
 }
 
 void DataStudioPanel::RenderStatusBar() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (!active_dataset_.empty()) ImGui::TextColored(t.text_dim, "Dataset: %s", active_dataset_.c_str());
-    else ImGui::TextColored(t.text_dim, "No dataset selected");
-    ImGui::SameLine();
-    ImGui::TextColored(t.text_faint, "\xC2\xB7");
-    ImGui::SameLine();
-    if (query_editor_ && query_editor_->IsRunning()) ImGui::TextColored(t.info, "Query running");
-    else if (profile_ && profile_->IsRunning()) ImGui::TextColored(t.info, "Profiling");
-    else ImGui::TextColored(t.text_dim, "Ready");
+    ImGui::AlignTextToFramePadding();
+    if (query_editor_ && query_editor_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Query running");
+    else if (profile_ && profile_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Profiling");
+    else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");
+    ImGui::SameLine(0.0f, 14.0f);
+    if (view_.last_run.empty()) ImGui::TextColored(t.text_dim, "No run in this session");
+    else ImGui::TextColored(view_.last_run_tone == studio::Tone::Ok ? t.text_dim : ToneColour(view_.last_run_tone), "Last run: %s",
+                            view_.last_run.c_str());
+    const char* how = "Runs through the Data Pipeline executor";
+    const float how_w = ImGui::CalcTextSize(how).x;
+    if (ImGui::GetContentRegionAvail().x > how_w + 20.0f) {
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - how_w);
+        ImGui::TextColored(t.text_faint, "%s", how);
+    }
 }
 
 }  // namespace cyxwiz

@@ -571,6 +571,9 @@ public:
 
     // Select a node in the canvas and frame it into view.
     void FocusNode(int node_id);
+    // Select these nodes and frame them all into view (Data Studio's Show on
+    // canvas); applied in the canvas's next frame, like FocusNode.
+    void ShowNodes(std::vector<int> node_ids);
 
     // A Subgraph as its Properties view shows it (TOFIX146 D5): its role and
     // its steps in run order (the live canvas copies while it is expanded).
@@ -900,6 +903,7 @@ private:
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
     int pending_focus_node_id_ = -1;
+    std::vector<int> pending_show_nodes_;  // ShowNodes, applied in the next canvas frame
     // An expanded subgraph selected by its frame header (TOFIX147): shown in
     // Properties while no canvas node is selected.
     int frame_selected_subgraph_id_ = -1;
