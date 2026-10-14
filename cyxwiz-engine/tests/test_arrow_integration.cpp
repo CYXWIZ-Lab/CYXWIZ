@@ -18,6 +18,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cmath>
 
 // Include ArrayFire header for tests
 #include <arrayfire.h>
@@ -334,19 +335,53 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(typed != nullptr, "typed query");
     TEST_ASSERT(typed->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
                     typed->schema()->field(1)->type()->id() == arrow::Type::UINT32 &&
-                    typed->schema()->field(2)->type()->id() == arrow::Type::STRING,
-                "TINYINT int32, UINTEGER uint32, DATE text");
+                    typed->schema()->field(2)->type()->id() == arrow::Type::DATE32,
+                "TINYINT int32, UINTEGER uint32, DATE date32");
     auto day = typed->column(2)->GetScalar(0);
-    TEST_ASSERT(day.ok() && (*day)->ToString() == "2024-01-02", "a date as its text");
+    TEST_ASSERT(day.ok() && (*day)->ToString() == "2024-01-02", "the date itself");
+    // Natively exported dates and timestamps; a decimal beside them takes the per-value path.
+    auto when = db.Query("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts");
+    TEST_ASSERT(when != nullptr && when->schema()->field(0)->type()->id() == arrow::Type::DATE32 &&
+                    when->schema()->field(1)->type()->id() == arrow::Type::TIMESTAMP,
+                "native export: DATE date32, TIMESTAMP timestamp");
+    auto when_slow = db.Query("SELECT TIMESTAMP '2024-01-02 03:04:05' AS ts, 0.5 AS w");
+    TEST_ASSERT(when_slow != nullptr && when->column(1)->GetScalar(0).ValueOrDie()->Equals(
+                                            *when_slow->column(0)->GetScalar(0).ValueOrDie()),
+                "a timestamp is the same on both paths");
+    // Dates, timestamps and decimals going in stay dates, timestamps and numbers.
+    {
+        arrow::Date32Builder db32;
+        arrow::TimestampBuilder tsb(arrow::timestamp(arrow::TimeUnit::MILLI), arrow::default_memory_pool());
+        arrow::Decimal128Builder decb(arrow::decimal128(10, 2));
+        TEST_ASSERT(db32.Append(19724).ok() && tsb.Append(1704164645000).ok() && decb.Append(arrow::Decimal128(1234)).ok(),
+                    "typed input builders");
+        std::shared_ptr<arrow::Array> d_arr, t_arr, m_arr;
+        TEST_ASSERT(db32.Finish(&d_arr).ok() && tsb.Finish(&t_arr).ok() && decb.Finish(&m_arr).ok(), "typed input arrays");
+        auto typed_in = arrow::Table::Make(arrow::schema({arrow::field("d", arrow::date32()),
+                                                          arrow::field("t", arrow::timestamp(arrow::TimeUnit::MILLI)),
+                                                          arrow::field("m", arrow::decimal128(10, 2))}),
+                                           {d_arr, t_arr, m_arr});
+        TEST_ASSERT(db.RegisterTable("typed_in", typed_in), "register dates, timestamps, decimals");
+        auto back = db.Query("SELECT d + 1 AS next_day, year(t) AS y, m * 2 AS doubled FROM typed_in");
+        TEST_ASSERT(back != nullptr, "SQL on typed input");
+        TEST_ASSERT(back->column(0)->GetScalar(0).ValueOrDie()->ToString() == "2024-01-03", "date arithmetic");
+        TEST_ASSERT(back->column(1)->GetScalar(0).ValueOrDie()->ToString() == "2024", "timestamp functions");
+        TEST_ASSERT(std::abs(std::static_pointer_cast<arrow::DoubleScalar>(back->column(2)->GetScalar(0).ValueOrDie())->value - 24.68) < 1e-9,
+                    "a decimal input is a number");
+        db.UnregisterTable("typed_in");
+    }
     auto native = db.Query("SELECT CAST(1 AS INTEGER) AS i, 'x' AS s");
     TEST_ASSERT(native != nullptr && native->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
                     native->schema()->field(1)->type()->id() == arrow::Type::STRING,
                 "native export: INTEGER int32, VARCHAR text");
     TEST_ASSERT(db.UnsupportedResultColumns("SELECT 1 AS a, 'x' AS b").empty(), "exact columns pass the check");
-    const std::string why = db.UnsupportedResultColumns("SELECT DATE '2024-01-02' AS d, 0.5 AS w, 1 AS a");
-    TEST_ASSERT(why.find("'d'") != std::string::npos && why.find("'w'") != std::string::npos &&
-                    why.find("'a'") == std::string::npos,
-                "DATE and DECIMAL are named as not exact");
+    TEST_ASSERT(db.UnsupportedResultColumns("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04' AS t, 0.5 AS w").empty(),
+                "DATE, TIMESTAMP and a short DECIMAL pass the check");
+    const std::string why = db.UnsupportedResultColumns(
+        "SELECT CAST(1 AS DECIMAL(18,2)) AS wide, CAST(1 AS HUGEINT) AS h, TIMESTAMPTZ '2024-01-02 03:04+00' AS tz, 1 AS a");
+    TEST_ASSERT(why.find("'wide'") != std::string::npos && why.find("'h'") != std::string::npos &&
+                    why.find("'tz'") != std::string::npos && why.find("'a'") == std::string::npos,
+                "a DECIMAL past 15 digits, HUGEINT and a time-zone timestamp are named as not exact");
 
     // Cleanup
     db.UnregisterTable("employees");

@@ -2,9 +2,24 @@
 
 An **SQL step** (node type *SQL Query*) transforms one or more input tables
 with one read-only `SELECT`. It runs in DuckDB with no file or network
-access, and its result must be flat columns (numbers, text, true/false).
+access, and its result must be flat columns that come back exactly (see
+**Result types** below).
 Steps are usually kept inside a **Preparation Recipe** (below), with **Row
 Count Checks** after them.
+
+## Result types
+
+| DuckDB type of a result column | Comes back as | Accepted by an SQL step |
+|---|---|---|
+| BOOLEAN, integers, FLOAT, DOUBLE, VARCHAR | the same | yes |
+| DATE, TIMESTAMP | a date, a timestamp (microseconds) | yes |
+| DECIMAL up to 15 digits (`0.5`, `round(x, 2)` of a decimal) | a number (double), exactly | yes |
+| DECIMAL past 15 digits, HUGEINT, TIMESTAMP WITH TIME ZONE, BLOB, lists, structs | text | no: CAST them in the query (for example to VARCHAR, BIGINT or DOUBLE) |
+
+Inputs keep their types too: a date, a timestamp or a decimal column going
+into a step is a DATE, a TIMESTAMP or a number there, so `d + 1`, `year(t)`
+and arithmetic work on them. Data Studio's Query tab shows the text column
+types instead of refusing them.
 
 ## In Properties
 

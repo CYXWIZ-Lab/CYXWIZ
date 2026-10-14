@@ -67,9 +67,15 @@ ResultType ResultTypeFor(const duckdb::LogicalType& type) {
         case duckdb::LogicalTypeId::FLOAT: return {arrow::float32(), true, true};
         case duckdb::LogicalTypeId::DOUBLE: return {arrow::float64(), true, true};
         case duckdb::LogicalTypeId::VARCHAR: return {arrow::utf8(), true, true};
-        // 0.1, 1234567.5, SUM of decimals: numbers, as double (not exact past 15 digits).
-        case duckdb::LogicalTypeId::DECIMAL: return {arrow::float64(), false, false};
-        // Dates, timestamps, HUGEINT, BLOB, nested types: their text.
+        // Dates and timestamps stay dates (owner 2026-10-14).
+        case duckdb::LogicalTypeId::DATE: return {arrow::date32(), true, true};
+        case duckdb::LogicalTypeId::TIMESTAMP: return {arrow::timestamp(arrow::TimeUnit::MICRO), true, true};
+        // 0.1, 1234567.5, SUM of decimals: numbers, as double; exact up to 15
+        // digits, so the SQL step accepts those (owner 2026-10-14).
+        case duckdb::LogicalTypeId::DECIMAL:
+            return {arrow::float64(), false, duckdb::DecimalType::GetWidth(type) <= 15};
+        // Timestamps with a time zone or another unit, HUGEINT, BLOB, nested
+        // types: their text.
         default: return {arrow::utf8(), false, false};
     }
 }
@@ -98,6 +104,13 @@ std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type)
         case arrow::Type::STRING:
         case arrow::Type::LARGE_STRING:
             return "VARCHAR";
+        case arrow::Type::DATE32:
+            return "DATE";
+        case arrow::Type::TIMESTAMP:  // a time zone stays text (below)
+            if (std::static_pointer_cast<arrow::TimestampType>(type)->timezone().empty()) return "TIMESTAMP";
+            return "VARCHAR";
+        case arrow::Type::DECIMAL128:
+            return "DOUBLE";
         // Nested columns (TOFIX143): lists and structs keep their structure so
         // SQL can read them; previously they arrived as their text form.
         case arrow::Type::LIST:
@@ -135,7 +148,14 @@ duckdb::LogicalType DuckDBLogicalTypeForArrowType(const std::shared_ptr<arrow::D
         case arrow::Type::FLOAT:
             return duckdb::LogicalType::FLOAT;
         case arrow::Type::DOUBLE:
+        case arrow::Type::DECIMAL128:
             return duckdb::LogicalType::DOUBLE;
+        case arrow::Type::DATE32:
+            return duckdb::LogicalType::DATE;
+        case arrow::Type::TIMESTAMP:
+            if (std::static_pointer_cast<arrow::TimestampType>(type)->timezone().empty())
+                return duckdb::LogicalType::TIMESTAMP;
+            return duckdb::LogicalType::VARCHAR;
         case arrow::Type::LIST:
             return duckdb::LogicalType::LIST(DuckDBLogicalTypeForArrowType(
                 std::static_pointer_cast<arrow::ListType>(type)->value_type()));
@@ -201,6 +221,26 @@ duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& s
         case arrow::Type::STRING:
         case arrow::Type::LARGE_STRING:
             return duckdb::Value(scalar->ToString());
+        case arrow::Type::DATE32:
+            return duckdb::Value::DATE(duckdb::date_t(std::static_pointer_cast<arrow::Date32Scalar>(scalar)->value));
+        case arrow::Type::TIMESTAMP: {
+            const auto& ts = static_cast<const arrow::TimestampScalar&>(*scalar);
+            const auto& tt = static_cast<const arrow::TimestampType&>(*scalar->type);
+            if (!tt.timezone().empty()) return duckdb::Value(scalar->ToString());
+            int64_t micros = ts.value;
+            switch (tt.unit()) {
+                case arrow::TimeUnit::SECOND: micros *= 1000000; break;
+                case arrow::TimeUnit::MILLI: micros *= 1000; break;
+                case arrow::TimeUnit::MICRO: break;
+                case arrow::TimeUnit::NANO: micros /= 1000; break;
+            }
+            return duckdb::Value::TIMESTAMP(duckdb::timestamp_t(micros));
+        }
+        case arrow::Type::DECIMAL128: {
+            const auto& dec = static_cast<const arrow::Decimal128Scalar&>(*scalar);
+            const int32_t scale = static_cast<const arrow::Decimal128Type&>(*scalar->type).scale();
+            return duckdb::Value::DOUBLE(dec.value.ToDouble(scale));
+        }
         case arrow::Type::LIST: {
             const auto& list = static_cast<const arrow::ListScalar&>(*scalar);
             const auto child_type = std::static_pointer_cast<arrow::ListType>(scalar->type)->value_type();
@@ -238,6 +278,10 @@ arrow::Status AppendDuckDBValueToArrowBuilder(const duckdb::Value& value, arrow:
         case arrow::Type::UINT64: return static_cast<arrow::UInt64Builder*>(builder)->Append(value.GetValue<uint64_t>());
         case arrow::Type::FLOAT: return static_cast<arrow::FloatBuilder*>(builder)->Append(value.GetValue<float>());
         case arrow::Type::DOUBLE: return static_cast<arrow::DoubleBuilder*>(builder)->Append(value.GetValue<double>());
+        case arrow::Type::DATE32:
+            return static_cast<arrow::Date32Builder*>(builder)->Append(value.GetValue<duckdb::date_t>().days);
+        case arrow::Type::TIMESTAMP:
+            return static_cast<arrow::TimestampBuilder*>(builder)->Append(value.GetValue<duckdb::timestamp_t>().value);
         default: return static_cast<arrow::StringBuilder*>(builder)->Append(value.ToString());
     }
 }

@@ -62,7 +62,8 @@ public:
     // Binds `sql` without running it. Returns why it cannot bind, or which
     // result columns have a type that does not come back exactly (the result
     // type table in the .cpp: anything but boolean, integers, float, double,
-    // text); empty when every column round-trips.
+    // text, DATE, TIMESTAMP and DECIMAL up to 15 digits); empty when every
+    // column round-trips.
     std::string UnsupportedResultColumns(const std::string& sql);
 
     // Thread-safe request to stop the query running on this connection.
