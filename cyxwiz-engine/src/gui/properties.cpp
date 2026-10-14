@@ -918,8 +918,13 @@ void Properties::RenderAdvanced(MLNode& node) {
     ImGui::SameLine(0.0f, t.space_sm);
     ImGui::TextColored(t.text_dim, "what the graph file stores for this node");
     const float remove_width = cyxwiz::ui::ButtonWidth("Remove", cyxwiz::ui::ButtonSize::Small);
+    // Keys are identifiers: size their column to the longest one (up to
+    // 40% of the panel) rather than breaking them mid-word.
+    float key_width = 0.0f;
+    for (const auto& raw : view_.raw) key_width = std::max(key_width, ImGui::CalcTextSize(raw.key.c_str()).x);
+    key_width = std::min(key_width + t.space_sm, ImGui::GetContentRegionAvail().x * 0.4f);
     if (ImGui::BeginTable("##raw", 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, key_width);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.4f);
         ImGui::TableSetupColumn("Maps to", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("##remove", ImGuiTableColumnFlags_WidthFixed, remove_width);
@@ -933,13 +938,15 @@ void Properties::RenderAdvanced(MLNode& node) {
             ImGui::PushID(raw.key.c_str());
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::PushTextWrapPos(0.0f);
             ImGui::TextUnformatted(raw.key.c_str());
-            ImGui::PopTextWrapPos();
             ImGui::TableSetColumnIndex(1);
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(t.text_bright, "%s", raw.value.c_str());
             ImGui::PopTextWrapPos();
+            if (!raw.value_note.empty()) {
+                ImGui::TextColored(t.text_dim, "%s", raw.value_note.c_str());
+                if (cyxwiz::ui::LinkButton("Copy full value")) ImGui::SetClipboardText(raw.value_full.c_str());
+            }
             ImGui::TableSetColumnIndex(2);
             ImGui::PushTextWrapPos(0.0f);
             if (!raw.maps_to.empty()) ImGui::TextUnformatted(raw.maps_to.c_str());
