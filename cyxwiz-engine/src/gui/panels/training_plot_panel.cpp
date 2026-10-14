@@ -2697,7 +2697,8 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         return;
     }
 
-    if (ImGui::Button("Export Run CSV")) {
+    const DashColors c = CurrentDashColors();
+    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c)) {
         std::string error;
         if (!WriteTrainingRunComparisonCsv(
                 "training_run_comparison.csv",
@@ -2708,7 +2709,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear Runs")) {
+    if (DashButton("Clear Runs", DashButtonKind::Danger, c)) {
         run_comparison_records_.clear();
     }
     ImGui::SameLine();
