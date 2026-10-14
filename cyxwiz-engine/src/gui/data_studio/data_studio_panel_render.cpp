@@ -52,10 +52,6 @@ void DataStudioPanel::Render() {
     if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
-    // Opened from elsewhere (a dashboard): bring the panel forward, also when
-    // it is a hidden dock tab (its Begin returns false until focused).
-    if (focus_next_) ImGui::SetNextWindowFocus();
-    focus_next_ = false;
     ::gui::NextWindowMayLeave("Data Studio");
     const bool expanded = ImGui::Begin("Data Studio", &visible_);
     ::gui::TabMenu("Data Studio", &visible_);

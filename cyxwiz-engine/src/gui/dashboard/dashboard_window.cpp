@@ -87,8 +87,13 @@ DashboardWindow::DashboardWindow(std::string id, Mode mode) : id_(std::move(id))
 
 void DashboardWindow::Select(const std::string& widget_id) {
     selected_ = widget_id;
-    focus_ = true;
     scroll_to_selected_ = true;
+    if (mode_ == Mode::Dashboard) Focus();  // Visualize draws inside Data Studio
+}
+
+void DashboardWindow::Focus() {
+    visible = true;
+    ::gui::BringToFront("###" + id_);  // the window's id part, whatever its title
 }
 
 void DashboardWindow::RemoveWidget(const std::string& id) {
@@ -329,10 +334,6 @@ void DashboardWindow::Render() {
     if (!visible) return;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(1360, 860), ImGuiCond_FirstUseEver);
-    if (focus_) {
-        ImGui::SetNextWindowFocus();
-        focus_ = false;
-    }
     const std::string title = "Dashboard" + (title_.empty() ? std::string() : " \xC2\xB7 " + title_) + "###" + id_;
     ::gui::NextWindowMayLeave(title.c_str());
     const bool expanded = ImGui::Begin(title.c_str(), &visible);

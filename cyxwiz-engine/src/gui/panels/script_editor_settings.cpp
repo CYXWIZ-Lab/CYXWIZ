@@ -1,6 +1,7 @@
 // Script Editor settings and tab accessors.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include <string>
 #include <vector>
@@ -60,7 +61,7 @@ void ScriptEditorPanel::SetActiveTabIndex(int index) {
         return;
     }
     active_tab_index_ = index;
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 }
 
 } // namespace cyxwiz

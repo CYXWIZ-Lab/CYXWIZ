@@ -76,7 +76,6 @@ private:
     TableGrid grid_;
     std::string grid_key_;           // dataset + finish time shown
     std::shared_ptr<PartCounts> parts_;
-    int pending_open_ = -1;          // open this step's dialog once its recipe is expanded
 };
 
 }  // namespace cyxwiz

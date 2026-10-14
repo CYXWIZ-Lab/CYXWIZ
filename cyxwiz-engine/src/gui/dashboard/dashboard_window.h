@@ -58,6 +58,8 @@ public:
     void RenderEmbedded();
     // Selects a widget (its settings open) and brings the window forward.
     void Select(const std::string& widget_id);
+    // Shown and brought to the front on the next frame.
+    void Focus();
 
 private:
     void EnsureProfile();
@@ -97,7 +99,6 @@ private:
 
     std::string id_;
     Mode mode_ = Mode::Dashboard;
-    bool focus_ = false;
     bool scroll_to_selected_ = false;
     double roles_at_ = 0;
     std::string title_;

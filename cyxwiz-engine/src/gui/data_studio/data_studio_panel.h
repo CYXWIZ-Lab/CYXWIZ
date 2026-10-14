@@ -75,7 +75,6 @@ private:
 
     std::string active_dataset_;
     bool visible_ = true;
-    bool focus_next_ = false;      // opened from elsewhere: bring the window forward
     studio::Job job_ = studio::Job::Explore;
     ExploreTab explore_tab_ = ExploreTab::Query;
 

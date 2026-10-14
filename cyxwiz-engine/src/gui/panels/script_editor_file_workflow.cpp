@@ -1,6 +1,7 @@
 // Script Editor file workflow orchestration.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -45,7 +46,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
             active_tab_index_ = i;
             if (tabs_[i]->load_failed) RetryLoad(i);
             request_focus_ = true;
-            request_window_focus_ = true;  // Focus the Script Editor window
+            ::gui::BringToFront(GetName());  // Focus the Script Editor window
             spdlog::info("File already open: {}", path);
             return;
         }
@@ -112,7 +113,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
 
     active_tab_index_ = tab_index;
     request_focus_ = true;
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 
     const auto document_id = tabs_[tab_index]->document_id;
     if (use_large_file_view) {
@@ -129,7 +130,7 @@ void ScriptEditorPanel::OpenFileAtLine(const std::string& path, int line) {
         if (tabs_[i]->filepath == path && !tabs_[i]->is_loading) {
             active_tab_index_ = i;
             request_focus_ = true;
-            request_window_focus_ = true;
+            ::gui::BringToFront(GetName());
             if (!tabs_[i]->cell_mode) tabs_[i]->editor.GoToLine(std::max(0, line - 1));
             return;
         }
@@ -344,7 +345,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tab->editor.Doc().Paste(code);  // undoable, marks the tab modified
         active_tab_index_ = existing_tab_index;
         request_focus_ = true;
-        request_window_focus_ = true;
+        ::gui::BringToFront(GetName());
         spdlog::info("Updated existing {} code tab", framework_name);
     } else {
         // Create new tab with generated code
@@ -361,7 +362,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tabs_.push_back(std::move(tab));
         active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
         request_focus_ = true;
-        request_window_focus_ = true;
+        ::gui::BringToFront(GetName());
 
         spdlog::info("Loaded generated {} code into new tab", framework_name);
     }

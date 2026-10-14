@@ -63,7 +63,7 @@ void PlotOutputPanel::ShowImage(const std::vector<unsigned char>& png_data, cons
     AddPlot(plot);
     if (filter_ == 2) filter_ = 0;  // the image must be in the list
     visible_ = true;
-    focus_next_ = true;
+    ::gui::BringToFront(GetName());
 }
 
 void PlotOutputPanel::ClearPlots() {
@@ -152,10 +152,6 @@ void PlotOutputPanel::Render() {
         if (entry.window) entry.window->Render();
     if (!visible_) return;
 
-    if (focus_next_) {
-        ImGui::SetNextWindowFocus();
-        focus_next_ = false;
-    }
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     ::gui::NextWindowMayLeave(GetName());
     const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);

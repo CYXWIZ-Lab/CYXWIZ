@@ -72,7 +72,12 @@ void PlotWindow::Open(const std::string& source_name, std::shared_ptr<DataTable>
     visible = true;
     view_.RequestFit();
     SetTable(std::move(table), row_limit, total_rows);
-    ImGui::SetWindowFocus(("Plot###" + id_).c_str());
+    Focus();
+}
+
+void PlotWindow::Focus() {
+    visible = true;
+    ::gui::BringToFront("###" + id_);  // the window's id part, whatever its title
 }
 
 void PlotWindow::SetArrowTable(const std::string& source_name, std::shared_ptr<arrow::Table> table, size_t row_limit,
@@ -316,10 +321,6 @@ void PlotWindow::Render() {
     if (!visible) return;
     ImGui::SetNextWindowSize(ImVec2(1200, 720), ImGuiCond_FirstUseEver);
     if (first_position.x >= 0.0f) ImGui::SetNextWindowPos(first_position, ImGuiCond_FirstUseEver);
-    if (focus_next_) {
-        ImGui::SetNextWindowFocus();
-        focus_next_ = false;
-    }
     // Room for the type list, the plot and the settings: the window id follows
     // the node id, so a small size saved for another graph's node would carry over.
     ImGui::SetNextWindowSizeConstraints(ImVec2(960, 560), ImVec2(FLT_MAX, FLT_MAX));

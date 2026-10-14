@@ -128,7 +128,7 @@ void NodeEditor::OpenPlotNode(int node_id) {
         };
         plot_window_data_versions_[node_id] = ~0ull;
     }
-    window->visible = true;
+    window->Focus();
     // Opening is the user asking for the data: read or run once if there is
     // none yet (later edits above only mark it out of date).
     const Lane::Status& st = plot_lane_->StatusOf(node_id);
@@ -236,7 +236,7 @@ void NodeEditor::OpenDashboardNode(int node_id) {
         };
         dashboard_data_versions_[node_id] = ~0ull;
     }
-    window->visible = true;
+    window->Focus();
     const Lane::Status& st = plot_lane_->StatusOf(node_id);
     if (!st.table && st.state != State::Running) plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
 }

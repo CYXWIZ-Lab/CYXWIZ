@@ -3,6 +3,7 @@
 // data_studio_panel_render.cpp.
 
 #include "data_studio_panel.h"
+#include "../separate_windows.h"
 
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
@@ -36,7 +37,7 @@ DataStudioPanel::DataStudioPanel() {
 void DataStudioPanel::ShowQuery(const std::string& dataset_name, const std::string& sql) {
     SetActiveDataset(dataset_name);
     visible_ = true;
-    focus_next_ = true;
+    ::gui::BringToFront("Data Studio");
     job_ = studio::Job::Explore;
     explore_tab_ = ExploreTab::Query;
     if (query_editor_) {
@@ -48,7 +49,7 @@ void DataStudioPanel::ShowQuery(const std::string& dataset_name, const std::stri
 void DataStudioPanel::ShowProfile(const std::string& dataset_name) {
     SetActiveDataset(dataset_name);
     visible_ = true;
-    focus_next_ = true;
+    ::gui::BringToFront("Data Studio");
     job_ = studio::Job::Explore;
     explore_tab_ = ExploreTab::Profile;
 }

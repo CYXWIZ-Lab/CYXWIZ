@@ -447,8 +447,8 @@ public:
 
     // Show the node editor window
     void Show() { show_window_ = true; }
-    // Show and bring the CyxWiz Studio tab to the front (next frame).
-    void Raise() { show_window_ = true; raise_requested_ = true; }
+    // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
+    void Raise();
 
     // ===== Data Studio Integration (Phase 5 Week 7) =====
 
@@ -596,7 +596,9 @@ public:
     SubgraphSummary GetSubgraphSummary(int node_id) const;
     // Applied at the start of the next canvas frame, so a Properties button
     // never changes the node list while Properties is drawing one of its nodes.
-    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep };
+    // OpenStep is ShowStep, then the step's dialog opens in the frame the step
+    // is focused, so the dialog ends up in front of the canvas.
+    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep, OpenStep };
     void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
     // Adds an empty guided SQL step after an SQL step (TOFIX147 item 3): it
     // takes over the step's outgoing links (and its place as a recipe's
@@ -840,7 +842,6 @@ private:
     bool HasMergeNodes() const;
 
     bool show_window_;
-    bool raise_requested_ = false;
 
     // Node graph state
     std::vector<MLNode> nodes_;

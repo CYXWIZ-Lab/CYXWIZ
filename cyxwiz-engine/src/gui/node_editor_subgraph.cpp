@@ -510,14 +510,14 @@ void NodeEditor::ApplySubgraphRequest() {
     const int id = pending.subgraph_id;
     // Expanding adds the steps to the canvas; select one only once ImNodes
     // has drawn it, or the selection is dropped.
-    const auto expand_then_show = [&](int step_id) {
+    const auto expand_then_show = [&](int step_id, SubgraphRequest then) {
         ExpandSubgraph(id);
-        if (step_id >= 0) pending_subgraph_request_ = {id, SubgraphRequest::ShowStep, step_id, 2};
+        if (step_id >= 0) pending_subgraph_request_ = {id, then, step_id, 2};
     };
     switch (pending.request) {
         case SubgraphRequest::Expand: {
             const auto summary = GetSubgraphSummary(id);
-            expand_then_show(summary.steps.empty() ? -1 : summary.steps.front().id);
+            expand_then_show(summary.steps.empty() ? -1 : summary.steps.front().id, SubgraphRequest::ShowStep);
             break;
         }
         case SubgraphRequest::Collapse:
@@ -531,10 +531,12 @@ void NodeEditor::ApplySubgraphRequest() {
             SetSubgraphPreparationRecipe(id, false);
             break;
         case SubgraphRequest::ShowStep:
+        case SubgraphRequest::OpenStep:
             if (const SubgraphData* data = GetSubgraphData(id); data && !data->expanded) {
-                expand_then_show(pending.step_id);
+                expand_then_show(pending.step_id, pending.request);
             } else {
                 FocusNode(pending.step_id);
+                if (pending.request == SubgraphRequest::OpenStep) ConfigureNode(pending.step_id);
             }
             break;
     }

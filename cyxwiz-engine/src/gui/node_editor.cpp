@@ -88,6 +88,7 @@ void NodeEditor::FocusNode(int node_id) {
         node_id = data->internal_nodes.front().id;
     }
     pending_focus_node_id_ = node_id;
+    Raise();
 }
 
 void NodeEditor::ShowNodes(std::vector<int> node_ids) {
@@ -96,6 +97,12 @@ void NodeEditor::ShowNodes(std::vector<int> node_ids) {
         return;
     }
     pending_show_nodes_ = std::move(node_ids);
+    Raise();
+}
+
+void NodeEditor::Raise() {
+    show_window_ = true;
+    ::gui::BringToFront("CyxWiz Studio");
 }
 
 void NodeEditor::ClearValidationState() {
@@ -267,10 +274,6 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (raise_requested_ || pending_focus_node_id_ >= 0 || !pending_show_nodes_.empty()) {
-        ImGui::SetNextWindowFocus();
-        raise_requested_ = false;
-    }
     ::gui::NextWindowMayLeave("CyxWiz Studio");
     const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
     ::gui::TabMenu("CyxWiz Studio", &show_window_);

@@ -1,6 +1,7 @@
 #include "node_config_dialog.h"
 #include "quality_analyzer_dialog.h"
 #include "node_editor.h"
+#include "separate_windows.h"
 #include "sql_workbench.h"
 #include "ui_tokens.h"
 #include "../core/file_dialogs.h"
@@ -105,6 +106,9 @@ NodeConfigDialog::NodeConfigDialog(const std::string& title, MLNode* node)
 void NodeConfigDialog::Open() {
     is_open_ = true;
     first_open_ = true;
+    // In front also when its window is already open behind another one (a
+    // dock tab, the canvas raised by the same double-click).
+    ::gui::BringToFront(title_);
     has_changes_ = false;
     if (node_) {
         original_params_ = node_->parameters;

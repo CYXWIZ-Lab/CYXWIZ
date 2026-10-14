@@ -169,6 +169,27 @@ int main() {
     Frame();
     Check(gui::FocusedWindowName() == kDashboard, "focused window is the dashboard: " + gui::FocusedWindowName());
 
+    // Bring to front: both windows as tabs of one dock node; the latest
+    // request wins and its tab shows, whichever window draws later.
+    ImGui::DockBuilderDockWindow(kDashboard, kDockSpace);
+    ImGui::DockBuilderDockWindow(kProperties, kDockSpace);
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(Window(kDashboard)->DockNode && Window(kDashboard)->DockNode == Window(kProperties)->DockNode, "one dock node");
+    gui::BringToFront(kProperties);
+    gui::BringToFront(kDashboard);
+    for (int i = 0; i < 2; ++i) Frame();
+    Check(Window(kDashboard)->DockTabIsVisible && !Window(kProperties)->DockTabIsVisible, "the latest request's tab shows");
+    Check(gui::FocusedWindowName() == kDashboard, "and it has the focus: " + gui::FocusedWindowName());
+    gui::BringToFront(kProperties);  // drawn after the dashboard: wins by request, not by draw order
+    for (int i = 0; i < 2; ++i) Frame();
+    Check(Window(kProperties)->DockTabIsVisible && !Window(kDashboard)->DockTabIsVisible, "the hidden tab comes forward");
+    gui::BringToFront("###dash_1");  // by its id part, as a window whose title changes
+    for (int i = 0; i < 2; ++i) Frame();
+    Check(Window(kDashboard)->DockTabIsVisible, "found by the id part of its name");
+    gui::BringToFront("Never drawn");  // let go after a while, no harm
+    for (int i = 0; i < 40; ++i) Frame();
+    Check(Window(kDashboard)->DockTabIsVisible, "a request for a missing window changes nothing");
+
     // Between sessions: outside at the end of one, outside at the start of
     // the next (also when its window overlaps the main window).
     gui::MoveWindowOut(kDashboard);

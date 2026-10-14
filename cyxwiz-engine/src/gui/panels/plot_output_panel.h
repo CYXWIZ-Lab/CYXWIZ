@@ -69,7 +69,6 @@ private:
     bool show_thumbnails_ = true;
     int filter_ = 0;  // 0 all, 1 figures, 2 Python plots
     int next_window_id_ = 1;
-    bool focus_next_ = false;
 
     // Zoom and pan state
     float zoom_level_ = 1.0f;           // 1.0 = 100%, 2.0 = 200%

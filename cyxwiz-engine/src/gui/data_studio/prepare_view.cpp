@@ -196,11 +196,9 @@ void PrepareView::OpenInDialog(int step_id) {
         editor_->OpenNodeConfiguration(step_id);
         return;
     }
-    // Inside a collapsed recipe: show the step on the canvas, then open it.
+    // Inside a collapsed recipe: the canvas expands it, shows the step, then opens it.
     const int recipe = RecipeOf(step_id);
-    if (recipe < 0) return;
-    editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::ShowStep, step_id);
-    pending_open_ = step_id;
+    if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::OpenStep, step_id);
 }
 
 void PrepareView::AddStepAfter(int step_id, bool guided) {
@@ -273,10 +271,6 @@ void PrepareView::StartPartCounts(const studio::GraphNode& node) {
 
 void PrepareView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (pending_open_ >= 0 && editor_ && editor_->GetNodeForConfiguration(pending_open_)) {
-        editor_->OpenNodeConfiguration(pending_open_);
-        pending_open_ = -1;
-    }
     if (!editor_) {
         ImGui::TextColored(t.text_dim, "No graph is open.");
         return;

@@ -5,6 +5,7 @@
 // the code; the current one is stronger. Matching is core/text_search.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include "../../core/text_search.h"
 #include "../icons.h"
@@ -65,7 +66,7 @@ void ScriptEditorPanel::OpenFind(bool replace) {
         find_.query[sizeof(find_.query) - 1] = 0;
     }
     find_.version = ~0ull;  // recount
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 }
 
 void ScriptEditorPanel::CloseFind() {

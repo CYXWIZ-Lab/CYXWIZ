@@ -824,7 +824,7 @@ MainWindow::MainWindow()
         if (table_viewer_ && table) {
             table_viewer_->SetTable(table);
             table_viewer_->Show();
-            ImGui::SetWindowFocus(table_viewer_->GetName());  // in front, as from the other routes
+            ::gui::BringToFront(table_viewer_->GetName());  // in front, as from the other routes
         }
     });
 
@@ -889,7 +889,7 @@ MainWindow::MainWindow()
         if (arrow_table->num_rows() > kMaxRows) name += ", first 200,000 rows";
         table_viewer_->SetTable(cyxwiz::DataTableFromArrow(*arrow_table, name, kMaxRows));
         table_viewer_->SetVisible(true);
-        ImGui::SetWindowFocus(table_viewer_->GetName());
+        ::gui::BringToFront(table_viewer_->GetName());
     });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
@@ -2335,7 +2335,7 @@ MainWindow::MainWindow()
                                     const scripting::VariablesService::Result& result) {
             if (!table_viewer_) return;
             table_viewer_->OpenVariable(request, result);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         };
         view.on_insert_name = [this](const std::string& name) {
             if (script_editor_) script_editor_->InsertTextAtCursor(name);
@@ -2347,13 +2347,13 @@ MainWindow::MainWindow()
                                                        const scripting::VariablesService::Result& result) {
             if (!table_viewer_) return;
             table_viewer_->OpenVariable(request, result);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         });
         script_editor_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
             if (!table_viewer_) return;
             table_viewer_->SetTable(std::move(table));
             table_viewer_->SetVisible(true);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         });
     }
     toolbar_->SetGoToLineCallback([this](int line) {
@@ -2515,7 +2515,6 @@ MainWindow::MainWindow()
     asset_browser_->SetOnOpenInDataStudio([this](const std::string& dataset) {
         if (!data_studio_panel_) return;
         data_studio_panel_->ShowQuery(dataset, "SELECT * FROM \"" + dataset + "\" LIMIT 100");
-        ImGui::SetWindowFocus("Data Studio");
     });
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)
