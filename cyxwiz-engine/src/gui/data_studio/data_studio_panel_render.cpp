@@ -31,9 +31,9 @@ ImVec4 ToneColour(studio::Tone tone) {
 const char* KindIcon(studio::RailItem::Kind kind) {
     switch (kind) {
         case studio::RailItem::Kind::DataInput: return ICON_FA_RIGHT_TO_BRACKET;
-        case studio::RailItem::Kind::NodeResult: return ICON_FA_SHARE_NODES;
+        case studio::RailItem::Kind::NodeResult: return ICON_FA_TABLE;
         case studio::RailItem::Kind::Published: return ICON_FA_FILE_EXPORT;
-        default: return ICON_FA_TABLE;
+        default: return ICON_FA_DATABASE;
     }
 }
 
