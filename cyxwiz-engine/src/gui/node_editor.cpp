@@ -2839,7 +2839,7 @@ void NodeEditor::HandleInteractions() {
     // Debug: Log selection count (only when it changes)
     static int last_selected_count = 0;
     if (num_selected_nodes != last_selected_count) {
-        spdlog::info("Selected nodes: {}", num_selected_nodes);
+        spdlog::debug("Selected nodes: {}", num_selected_nodes);
         last_selected_count = num_selected_nodes;
     }
 
@@ -4657,7 +4657,9 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // task system. The worker owns its PipelineExecutor, so it never reads
     // mutable editor state and remains safe if the editor closes mid-run.
     std::string pipeline_str = pipeline_json.dump(2);
-    spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
+    // One line: Debug is recorded in every build, and the indented form was
+    // about 140 lines per run.
+    spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
     auto executor = std::make_shared<cyxwiz::PipelineExecutor>();
     executor->SetArtifactRoot(
         cyxwiz::ProjectManager::Instance().GetArtifactsPath());
@@ -4683,7 +4685,7 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
             SetNodeExecutionState(node.id, NodeExecutionState::Pending);
         }
     }
-    spdlog::info("Data transformation pipeline queued as task ID: {}",
+    spdlog::debug("Data transformation pipeline queued as task ID: {}",
                  pipeline_task_id_);
     return pipeline_task_id_ != 0;
 }
