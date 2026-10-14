@@ -9,7 +9,10 @@ work runs on ArrayFire's CPU backend.
 
 Results are computed in float64 when the device supports it (NVIDIA CUDA and
 OpenCL, the CPU backend), otherwise in float32. Every operation is checked
-against PyTorch `torch.linalg` in float64 to 1e-8.
+against PyTorch `torch.linalg` in float64 to 1e-8, and passes at float32
+precision (5e-5 relative) on a GPU without float64 such as an Intel Iris Xe.
+Rank counts singular values above at least the compute precision's epsilon
+(as `torch.linalg.matrix_rank`), so float32 rounding is not counted as rank.
 
 ## What each tool returns
 

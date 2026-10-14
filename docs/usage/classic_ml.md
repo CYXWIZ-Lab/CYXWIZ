@@ -7,7 +7,9 @@ path. Results are float64 where the device supports it, otherwise float32.
 
 Each model is checked against scikit-learn 1.8: same parameters, same
 predictions and probabilities (within 1e-8 in float64; 1e-6 for the
-iteratively solved logistic coefficients).
+iteratively solved logistic coefficients). On a GPU without float64 (for example
+an Intel Iris Xe, OpenCL or oneAPI) the same checks pass at float32 precision:
+5e-5 relative for direct results, 1e-3 for solved ones, with the same labels.
 
 ## Using a node
 

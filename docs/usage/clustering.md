@@ -8,6 +8,8 @@ are float64 where the device supports it, otherwise float32.
 
 Each algorithm is checked against float64 references of the library it follows:
 scikit-learn's behaviour written in PyTorch, and scipy for hierarchical linkage.
+On a GPU without float64 (for example an Intel Iris Xe) the same checks pass at
+float32 precision (5e-5 relative; measured worst 4.9e-7), with the same labels.
 
 ## Algorithms
 

@@ -8,6 +8,9 @@ the device supports it, otherwise float32.
 
 Every transform is checked against float64 PyTorch references of the library it
 follows (and against scipy where scipy has the same function) to 1e-8.
+On a GPU without float64 (for example an Intel Iris Xe) the same checks pass at
+float32 precision: 5e-5 relative, and 2e-3 for a searched Box-Cox / Yeo-Johnson
+lambda, whose float32 likelihood is flat near its optimum.
 
 ## What each transform does
 

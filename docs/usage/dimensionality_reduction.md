@@ -12,7 +12,8 @@ As scikit-learn `PCA`: the components are the eigenvectors of the covariance
 (divided by n − 1), largest first, each signed so its largest entry is positive.
 "Scale" divides each feature by its standard deviation first (constant features
 are left as they are). Asking for more components than min(rows, features), or
-0, gives that minimum. Checked against PyTorch to 1e-8.
+0, gives that minimum. Checked against PyTorch to 1e-8 (5e-5 on a GPU without
+float64, such as an Intel Iris Xe).
 
 ## t-SNE
 
@@ -31,7 +32,9 @@ A rate much above n / 48 makes the early phase oscillate. t-SNE is chaotic: tiny
 differences grow about tenfold every 10–20 iterations, so runs on different
 devices end in different (equally valid) layouts. The parity test therefore
 compares runs step for step at a small learning rate, or for the first 60
-iterations, and checks that a full 1000-iteration run separates clusters.
+iterations, and checks that a full 1000-iteration run separates clusters. In
+float32 (a GPU without float64) those short runs agree to 5e-2 relative (1.5e-2
+measured on an Intel Iris Xe) and the KL divergence to 4e-4.
 
 ## UMAP
 
