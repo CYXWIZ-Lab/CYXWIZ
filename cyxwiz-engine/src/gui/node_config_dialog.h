@@ -34,6 +34,10 @@
 #include "../core/dataset_partitions.h"
 #include "../core/training_parameter_contract.h"
 
+namespace cyxwiz {
+class ProfileView;
+}
+
 namespace gui {
 
 /**
@@ -257,6 +261,7 @@ private:
 class DataInputDialog : public NodeConfigDialog {
 public:
     DataInputDialog(MLNode* node);
+    ~DataInputDialog() override;  // profile_view_ is complete in data_input_dialog_profile.cpp
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
@@ -574,24 +579,10 @@ private:
     std::string loaded_dataset_name_;
     std::vector<std::string> audit_issue_lines_;
 
-    // STATE: Data profiling
-    struct ColumnStats {
-        std::string name;
-        std::string dtype;      // "integer", "numeric", "string", "boolean"
-        size_t count = 0;
-        size_t unique_count = 0;
-        bool unique_known = false;  // false above kMaxDistinctValues
-        size_t null_count = 0;
-        float null_percentage = 0.0f;
-        double min_val = 0.0;
-        double max_val = 0.0;
-        double mean = 0.0;
-        double std_dev = 0.0;
-    };
-    bool profile_computed_ = false;
-    bool profile_in_progress_ = false;
-    std::vector<ColumnStats> column_stats_;
-    float data_quality_score_ = 0.0f;
+    // STATE: Data profiling: Data Studio's profile view of the loaded dataset
+    // (TOFIX148 D2), roles read-only here.
+    std::unique_ptr<cyxwiz::ProfileView> profile_view_;
+    std::string profile_dataset_;  // the dataset profile_view_ shows
 
     // STATE: Memory management
     enum class DataLoadState { NotLoaded, OnDisk, InMemory };
@@ -601,7 +592,6 @@ private:
     void UpdateTextLabelDistribution();
     void RenderTextLabelDistribution();
     void RenderDataProfilingTab();
-    void ComputeDataProfile();
     void UnloadDataset();
     std::string GenerateDatasetName() const;
     static std::string FormatBytes(size_t bytes);

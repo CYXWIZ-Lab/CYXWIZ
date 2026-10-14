@@ -270,11 +270,14 @@ void ProfileView::RenderColumns(float /*width*/) {
             if (cc) {
                 // The role as a chip; click to change (contract roles cannot be changed here).
                 const ImVec4 col = RoleColour(cc->role);
-                const std::string chip = std::string(RoleLabel(cc->role)) + (cc->source == RoleSource::Contract ? "" : " " ICON_FA_CARET_DOWN);
-                if (RoleChip(chip.c_str(), col) && cc->source != RoleSource::Contract) ImGui::OpenPopup("##role");
+                const bool settable = roles_editable_ && cc->source != RoleSource::Contract;
+                const std::string chip = std::string(RoleLabel(cc->role)) + (settable ? " " ICON_FA_CARET_DOWN : "");
+                if (RoleChip(chip.c_str(), col) && settable) ImGui::OpenPopup("##role");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(cc->source == RoleSource::Contract ? "%s (the graph sets it: change the Data Input label to change it)"
-                                                                         : "%s. Click to set the role.", cc->reason.c_str());
+                                      : settable                         ? "%s. Click to set the role."
+                                                                         : "%s. Roles are set in Data Studio > Profile.",
+                                      cc->reason.c_str());
                 if (ImGui::BeginPopup("##role")) {
                     for (ColumnRole r : kRoles) {
                         if (r == ColumnRole::Target && !target_column_.empty()) continue;  // the graph has a target
@@ -406,7 +409,7 @@ void ProfileView::RenderDetail() {
             ImGui::EndTable();
         }
         // Texts that mean missing (saved with the project; the profile counts them as missing).
-        if (!c.numeric) {
+        if (!c.numeric && roles_editable_) {
             if (missing_for_ != c.facts.name) {
                 missing_for_ = c.facts.name;
                 std::string joined;

@@ -13,6 +13,7 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "data_studio/profile_view.h"
 #include "node_editor.h"
 #include "ui_tokens.h"
 #include "loaders/audio_loader.h"
@@ -550,8 +551,8 @@ void DataInputDialog::UnloadDataset() {
     loaded_rows_ = 0;
     loaded_cols_ = 0;
     loaded_memory_bytes_ = 0;
-    profile_computed_ = false;
-    column_stats_.clear();
+    profile_view_.reset();
+    profile_dataset_.clear();
 
     if (node_) {
         node_->parameters["data_loaded"] = "false";

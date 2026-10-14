@@ -22,6 +22,9 @@ public:
 
     void Render();
     void SetActiveDataset(const std::string& dataset_name);
+    // Off where the view is embedded (the Data Input dialog): roles and
+    // missing-value texts are set in Data Studio's Profile only.
+    void SetRolesEditable(bool editable) { roles_editable_ = editable; }
     void Reprofile();
     bool IsRunning() const { return task_id_ != 0; }
     float Progress() const { return progress_; }
@@ -46,6 +49,7 @@ private:
     std::string error_;
     std::string profiled_at_;
     int selected_ = -1;
+    bool roles_editable_ = true;
     char missing_buf_[256] = {};
     std::string missing_for_;
     std::string save_error_;
