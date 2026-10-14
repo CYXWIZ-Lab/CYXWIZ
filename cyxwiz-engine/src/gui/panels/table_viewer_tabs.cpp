@@ -14,24 +14,25 @@ void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
         auto& open = tabs_[i];
         if (open->filepath.empty() && !open->live.on && open->filename == table->GetName()) {
-            auto fresh = std::make_unique<TableTab>();
-            fresh->filename = table->GetName();
-            fresh->table = table;
-            open = std::move(fresh);
+            open = MakeTab(table, table->GetName());
             active_tab_index_ = i;
             select_tab_ = i;
             return;
         }
     }
 
-    auto tab = std::make_unique<TableTab>();
-    tab->filename = table->GetName();
-    tab->filepath = "";  // In-memory table
-    tab->table = table;
-
-    tabs_.push_back(std::move(tab));
+    tabs_.push_back(MakeTab(table, table->GetName()));  // in memory: no file path
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
     select_tab_ = active_tab_index_;  // bring the new tab to the front
+}
+
+std::unique_ptr<TableViewerPanel::TableTab> TableViewerPanel::MakeTab(std::shared_ptr<DataTable> table, std::string filename) {
+    auto tab = std::make_unique<TableTab>();
+    tab->filename = std::move(filename);
+    tab->grid.SetTable(std::move(table));
+    TableTab* t = tab.get();
+    tab->grid.on_plot = [this, t](int column, plot::Kind kind) { OpenPlot(t, kind, column); };
+    return tab;
 }
 
 TableViewerPanel::~TableViewerPanel() {
@@ -47,9 +48,8 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
         const auto& live = tabs_[i]->live;
         if (live.on && live.request.scope.key == request.scope.key && live.request.path == request.path) index = i;
     }
-    auto tab = std::make_unique<TableTab>();
-    tab->filename = request.name + " \xC2\xB7 " + request.scope.label;
-    tab->table = result.table;
+    auto tab = MakeTab(result.table, request.name + " \xC2\xB7 " + request.scope.label);
+    tab->grid.captions = result.dtypes;
     tab->live.on = true;
     tab->live.request = request;
     tab->live.request.plot = false;
@@ -61,7 +61,7 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
     tab->live.slice = result.slice;
     tab->live.read_at = ClockNow();
     // Stats start on the first data column, not a frame's index.
-    if (result.table_kind == "frame" && result.table->GetColumnCount() > 1) tab->selected_column = 1;
+    if (result.table_kind == "frame" && result.table->GetColumnCount() > 1) tab->grid.selected_column = 1;
     TableTab* opened = tab.get();
     if (index < 0) {
         tabs_.push_back(std::move(tab));
@@ -75,10 +75,10 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
     if (request.plot) {
         // Plot: the first numeric column (not a frame's index), as a line for
         // a one-dimensional array, else a histogram.
-        ComputeColumnKinds(opened);
+        opened->grid.ComputeColumnKinds();
         const int first = result.table_kind == "frame" ? 1 : 0;
-        for (int c = first; c < static_cast<int>(opened->column_kinds.size()); ++c) {
-            if (opened->column_kinds[c].type != "Numeric") continue;
+        for (int c = first; c < static_cast<int>(opened->grid.column_kinds.size()); ++c) {
+            if (opened->grid.column_kinds[c].type != "Numeric") continue;
             const bool line = result.table_kind == "array" && result.shape.size() == 1;
             OpenPlot(opened, line ? plot::Kind::Line : plot::Kind::Histogram, c);
             break;
@@ -86,7 +86,7 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
     } else if (plot_window_ && plot_window_->visible && plot_window_->SourceName() == opened->filename) {
         // Read again: the open plot follows the new values, same settings.
         const bool cut = opened->live.shown >= 0 && opened->live.shown < opened->live.rows;
-        plot_window_->SetTable(opened->table, cut ? static_cast<size_t>(opened->live.shown) : 0,
+        plot_window_->SetTable(opened->grid.table, cut ? static_cast<size_t>(opened->live.shown) : 0,
                                cut ? static_cast<size_t>(opened->live.rows) : 0);
     }
 }

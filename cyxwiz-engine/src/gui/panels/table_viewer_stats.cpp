@@ -17,40 +17,11 @@
 
 namespace cyxwiz {
 
-void TableViewerPanel::ComputeColumnKinds(TableTab* tab) {
-    if (!tab || !tab->HasData()) return;
-    const size_t cols = tab->GetColumnCount();
-    const size_t rows = tab->GetRowCount();
-    tab->column_kinds.assign(cols, TableColumnKind{});
-    for (size_t c = 0; c < cols; c++) {
-        bool numeric = false;
-        double min_v = std::numeric_limits<double>::max();
-        double max_v = std::numeric_limits<double>::lowest();
-        for (size_t r = 0; r < rows; r++) {
-            const auto cell = tab->GetCell(r, c);
-            double v = 0.0;
-            if (const auto* d = std::get_if<double>(&cell)) v = *d;
-            else if (const auto* n = std::get_if<int64_t>(&cell)) v = static_cast<double>(*n);
-            else continue;
-            if (std::isnan(v) || std::isinf(v)) continue;
-            min_v = std::min(min_v, v);
-            max_v = std::max(max_v, v);
-            numeric = true;
-        }
-        auto& kind = tab->column_kinds[c];
-        kind.type = numeric ? "Numeric" : "Text";
-        if (numeric) {
-            kind.min_val = min_v;
-            kind.max_val = max_v;
-        }
-    }
-}
-
 void TableViewerPanel::StartProfile(TableTab* tab) {
-    if (!tab || !tab->table || tab->profile_task) return;
+    if (!tab || !tab->grid.table || tab->profile_task) return;
     tab->profile_stale = false;
     // Converted here: the worker must not read the table while a cell is edited.
-    auto table = ArrowFromDataTable(*tab->table);
+    auto table = ArrowFromDataTable(*tab->grid.table);
     auto result = std::make_shared<DatasetProfile>();
     const int uid = tab->uid;
     std::weak_ptr<int> alive = alive_;
@@ -74,42 +45,6 @@ void TableViewerPanel::StartProfile(TableTab* tab) {
         alive_);
 }
 
-void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
-    if (!tab || !tab->HasData() || column < 0) return;
-
-    size_t rows = tab->GetRowCount();
-
-    tab->sorted_indices.resize(rows);
-    std::iota(tab->sorted_indices.begin(), tab->sorted_indices.end(), size_t(0));
-
-    bool is_numeric = (column < static_cast<int>(tab->column_kinds.size()) &&
-                       tab->column_kinds[column].type == "Numeric");
-    bool ascending = tab->sort_ascending;
-
-    std::sort(tab->sorted_indices.begin(), tab->sorted_indices.end(),
-        [&](size_t a, size_t b) {
-            if (is_numeric) {
-                auto get_val = [&](size_t r) -> double {
-                    auto cell = tab->GetCell(r, column);
-                    if (std::holds_alternative<double>(cell))
-                        return std::get<double>(cell);
-                    if (std::holds_alternative<int64_t>(cell))
-                        return static_cast<double>(std::get<int64_t>(cell));
-                    return ascending ? std::numeric_limits<double>::max()
-                                    : std::numeric_limits<double>::lowest();
-                };
-                double va = get_val(a), vb = get_val(b);
-                return ascending ? va < vb : va > vb;
-            } else {
-                std::string sa = tab->GetCellAsString(a, column);
-                std::string sb = tab->GetCellAsString(b, column);
-                return ascending ? sa < sb : sa > sb;
-            }
-        });
-
-    spdlog::info("Sorted by column {} ({})", column, ascending ? "ascending" : "descending");
-}
-
 void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
     // A tinted area, no outline (owner rule: no lines around areas).
     const ui::Tokens& tk = ui::CurrentTokens();
@@ -120,16 +55,16 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
 
     // Cell selection info at top
     ImGui::TextDisabled("Selection");
-    if (tab->selected_row >= 0 && tab->selected_col >= 0) {
-        ImGui::Text(ICON_FA_CROSSHAIRS " Row %d, Col %d", tab->selected_row + 1, tab->selected_col + 1);
+    if (tab->grid.selected_row >= 0 && tab->grid.selected_col >= 0) {
+        ImGui::Text(ICON_FA_CROSSHAIRS " Row %d, Col %d", tab->grid.selected_row + 1, tab->grid.selected_col + 1);
     } else {
         ImGui::TextDisabled("No cell selected");
     }
     ImGui::Spacing();
     ImGui::Spacing();
 
-    const int column = tab->selected_column;
-    if (column < 0 || column >= static_cast<int>(tab->column_kinds.size())) {
+    const int column = tab->grid.selected_column;
+    if (column < 0 || column >= static_cast<int>(tab->grid.column_kinds.size())) {
         ImGui::TextDisabled("Click a cell to view");
         ImGui::TextDisabled("column statistics");
         ImGui::EndChild();
@@ -138,7 +73,7 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
     }
     if (tab->profile_stale) StartProfile(tab);
 
-    const auto& kind = tab->column_kinds[column];
+    const auto& kind = tab->grid.column_kinds[column];
     const bool numeric = kind.type == "Numeric";
     ImGui::Text(ICON_FA_CHART_COLUMN " %s", tab->GetHeaders()[column].c_str());
     ImGui::Spacing();
@@ -239,29 +174,6 @@ void TableViewerPanel::RenderMiniHistogram(TableTab* tab, int column) {
     ImGui::SameLine(stats_sidebar_width_ - 60);
     ImGui::TextDisabled("%.2g", pc.max);
 }
-
-std::vector<double> TableViewerPanel::GetColumnAsDoubles(TableTab* tab, int column) const {
-    std::vector<double> result;
-    if (!tab || !tab->table || column < 0) return result;
-
-    size_t row_count = tab->table->GetRowCount();
-    result.reserve(row_count);
-
-    for (size_t r = 0; r < row_count; r++) {
-        auto cell = tab->table->GetCell(r, column);
-        if (std::holds_alternative<double>(cell)) {
-            double val = std::get<double>(cell);
-            if (!std::isnan(val) && !std::isinf(val)) {
-                result.push_back(val);
-            }
-        } else if (std::holds_alternative<int64_t>(cell)) {
-            result.push_back(static_cast<double>(std::get<int64_t>(cell)));
-        }
-    }
-
-    return result;
-}
-
 
 }  // namespace cyxwiz
 

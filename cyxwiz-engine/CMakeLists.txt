@@ -500,16 +500,15 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_files.cpp
     src/gui/panels/script_editor_file_workflow.cpp
     src/gui/panels/script_editor_large_file.cpp
+    src/gui/table_grid.cpp
+    src/gui/table_grid_menus.cpp
     src/gui/panels/table_viewer.cpp
-    src/gui/panels/table_viewer_clipboard.cpp
     src/gui/panels/table_viewer_dialogs.cpp
     src/gui/panels/table_viewer_editing.cpp
     src/gui/panels/table_viewer_visualization.cpp
     src/gui/panels/table_viewer_stats.cpp
     src/gui/panels/table_viewer_tabs.cpp
-    src/gui/panels/table_viewer_transforms.cpp
     src/gui/panels/table_viewer_plot.cpp
-    src/gui/panels/table_viewer_context_menus.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
@@ -819,6 +818,7 @@ set(ENGINE_HEADERS
     src/gui/panels/plot_output_panel.h
     src/gui/panels/python_repl_session.h
     src/gui/panels/script_editor.h
+    src/gui/table_grid.h
     src/gui/panels/table_viewer.h
     src/gui/panels/connection_dialog.h
     src/gui/dialogs/python_setup_dialog.h

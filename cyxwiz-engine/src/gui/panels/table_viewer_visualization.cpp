@@ -1,4 +1,4 @@
-﻿#include "table_viewer.h"
+#include "table_viewer.h"
 #include "visualization_panel.h"
 
 #include <spdlog/spdlog.h>
@@ -19,12 +19,12 @@ void TableViewerPanel::SendToVisualizer(int column) {
     }
 
     TableTab* tab = GetActiveTab();
-    if (!tab || !tab->table) {
+    if (!tab || !tab->grid.table) {
         spdlog::warn("No active table to send to Visualizer");
         return;
     }
 
-    const auto& headers = tab->table->GetHeaders();
+    const auto& headers = tab->grid.table->GetHeaders();
     std::vector<std::string> col_names;
     std::vector<std::vector<std::string>> rows;
 
@@ -46,9 +46,9 @@ void TableViewerPanel::SendToVisualizer(int column) {
     }
 
     // Build rows - use filtered/sorted indices if active
-    const std::vector<size_t>& display_indices = (tab->filter_mode_hide && !tab->filtered_indices.empty())
-        ? tab->filtered_indices
-        : tab->sorted_indices;
+    const std::vector<size_t>& display_indices = (tab->grid.filter_mode_hide && !tab->grid.filtered_indices.empty())
+        ? tab->grid.filtered_indices
+        : tab->grid.sorted_indices;
 
     // Limit to reasonable number of rows for visualization
     size_t max_rows = std::min(display_indices.size(), size_t(10000));
@@ -57,7 +57,7 @@ void TableViewerPanel::SendToVisualizer(int column) {
         size_t actual_row = display_indices[i];
         std::vector<std::string> row_data;
         for (int col : columns_to_send) {
-            row_data.push_back(tab->table->GetCellAsString(actual_row, col));
+            row_data.push_back(tab->grid.table->GetCellAsString(actual_row, col));
         }
         rows.push_back(row_data);
     }
