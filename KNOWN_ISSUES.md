@@ -26,6 +26,21 @@ Last updated: 2026-10-14.
   [arrayfire/arrayfire#3732](https://github.com/arrayfire/arrayfire/issues/3732).
   The reproducer is in the source repository: `scripts/arrayfire_probes/oneapi_indexed_ops`.
 
+### ArrayFire oneAPI: indexing a slice with an index array ignores the slice's offset
+
+- **Affects:** the oneAPI compute route, ArrayFire 3.10.0. Seen on Intel Iris Xe. OpenCL on the
+  same GPU, CUDA and the CPU route are not affected.
+- **What happens:** for a 1-D slice that starts at a non-zero offset, such as
+  `data(af::seq(10, 29))`, indexing it with an index array (`slice(idx)`) returns elements
+  counted from the start of the whole array. `af::lookup(slice, idx)` is right.
+- **Effect in CyxWiz:** word2vec training (Word Embeddings) uses `af::lookup` there, so it trains
+  the same on oneAPI as elsewhere. The parity suites (classic ML, clustering, data transforms,
+  dimensionality reduction, linear algebra, ROC / PR, word vectors) pass on oneAPI.
+- **If you write your own ArrayFire code** for oneAPI: index slices with `af::lookup`, or
+  `copy()` the slice first.
+- **Status:** not reported upstream yet. Reproducer in the source repository:
+  `scripts/arrayfire_probes/oneapi_slice_index`.
+
 ### oneAPI does not run on Intel UHD 630
 
 - **Affects:** the oneAPI route on older Intel integrated graphics (UHD 630, 8th/9th generation Core).
