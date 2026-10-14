@@ -899,6 +899,10 @@ private:
     // An expanded subgraph selected by its frame header (TOFIX147): shown in
     // Properties while no canvas node is selected.
     int frame_selected_subgraph_id_ = -1;
+    // The node under the pointer before the left button went down. ImNodes
+    // reports no hovered node in the press frame (the press activates an
+    // item), so a double-click is matched against this one.
+    int node_under_press_ = -1;
     struct PendingSubgraphRequest {
         int subgraph_id = -1;
         SubgraphRequest request = SubgraphRequest::Expand;
