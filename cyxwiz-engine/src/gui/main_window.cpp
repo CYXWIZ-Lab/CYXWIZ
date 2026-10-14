@@ -824,6 +824,7 @@ MainWindow::MainWindow()
         if (table_viewer_ && table) {
             table_viewer_->SetTable(table);
             table_viewer_->Show();
+            ImGui::SetWindowFocus(table_viewer_->GetName());  // in front, as from the other routes
         }
     });
 
