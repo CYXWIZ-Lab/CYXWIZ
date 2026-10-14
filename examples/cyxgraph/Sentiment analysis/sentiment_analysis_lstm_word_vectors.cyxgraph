@@ -211,7 +211,6 @@
           "freeze": "false",
           "init_mode": "normal",
           "weights_file": "artifacts/word_embeddings/sentiment_word_vectors.vec",
-          "embedding_weights_file": "",
           "output_weights_file": ""
         }
       },

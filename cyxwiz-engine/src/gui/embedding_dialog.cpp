@@ -255,14 +255,14 @@ void EmbeddingDialog::RenderShapeTab() {
     ImGui::BeginDisabled(from_node);
     Label("Vocabulary size");
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##num_embeddings", &num_embeddings_)) {
+    if (ImGui::InputInt("##num_embeddings", &num_embeddings_, 0, 0)) {
         if (num_embeddings_ < 2) num_embeddings_ = 2;
         has_changes_ = true;
     }
     ui::Tooltip("Number of token ids the embedding table can look up. This must match the tokenizer/vocabulary size.");
     Label("Embedding dimension");
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##embedding_dim", &embedding_dim_)) {
+    if (ImGui::InputInt("##embedding_dim", &embedding_dim_, 0, 0)) {
         if (embedding_dim_ < 1) embedding_dim_ = 1;
         has_changes_ = true;
     }
@@ -275,7 +275,7 @@ void EmbeddingDialog::RenderShapeTab() {
     }
     Label("Padding index");
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##padding_idx", &padding_idx_)) {
+    if (ImGui::InputInt("##padding_idx", &padding_idx_, 0, 0)) {
         if (padding_idx_ < -1) padding_idx_ = -1;
         has_changes_ = true;
     }
@@ -491,7 +491,7 @@ void EmbeddingDialog::RenderAdvancedTab() {
     ImGui::Spacing();
     Label("Max norm");
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputFloat("##max_norm", &max_norm_, 0.1f, 1.0f, "%.4f")) {
+    if (ImGui::InputFloat("##max_norm", &max_norm_, 0.0f, 0.0f, "%.4f")) {
         if (max_norm_ < 0.0f) max_norm_ = 0.0f;
         has_changes_ = true;
     }
