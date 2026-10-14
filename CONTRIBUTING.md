@@ -71,6 +71,9 @@ For device-sensitive work, report the requested backend, resolved backend, physi
 - [ ] Relevant tests pass.
 - [ ] Affected targets build.
 - [ ] User-visible behavior and limitations are documented truthfully.
+- [ ] A confirmed bug users can meet (ours or in a dependency such as ArrayFire) that is not
+      fixed in this change is listed in [KNOWN_ISSUES.md](KNOWN_ISSUES.md), with a reproducer
+      and the upstream report where there is one. Remove the entry when the fix ships.
 - [ ] No generated, secret, private, or unlicensed material is included.
 - [ ] The diff contains no unrelated formatting or cleanup.
 

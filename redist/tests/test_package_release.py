@@ -76,6 +76,7 @@ class PackageReleaseTests(unittest.TestCase):
         resources.mkdir(parents=True)
         (resources / "resource.txt").write_text("resource", encoding="ascii")
         (self.root / "LICENSE").write_text("license", encoding="ascii")
+        (self.root / "KNOWN_ISSUES.md").write_text("# Known issues", encoding="ascii")
         notices = self.root / "build" / "vcpkg_installed" / "x64-windows" / "share" / "fmt"
         notices.mkdir(parents=True)
         (notices / "copyright").write_text("fmt license", encoding="ascii")
@@ -302,6 +303,15 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertFalse((stage / "python_tools" / "jedi" / "__pycache__").exists())
         self.assertFalse((stage / "python_tools" / ".unpacked").exists())
         self.assertIn("python-tools", {item.get("source") for item in manifest["components"]})
+        # The known-issues list ships beside the LICENSE.
+        self.assertTrue((stage / "KNOWN_ISSUES.md").is_file())
+        sources = {item["path"]: item.get("source") for item in manifest["components"]}
+        self.assertEqual("cyxwiz-package", sources.get("KNOWN_ISSUES.md"))
+
+    def test_missing_known_issues_fail_closed(self) -> None:
+        (self.root / "KNOWN_ISSUES.md").unlink()
+        with self.assertRaisesRegex(package_release.PackageError, "KNOWN_ISSUES"):
+            package_release.build_package(self.args("minimal"), self.script)
 
     def test_missing_python_tools_fail_closed(self) -> None:
         shutil.rmtree(self.root / "build" / "bin" / "Release" / "python_tools")

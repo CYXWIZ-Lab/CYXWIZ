@@ -502,6 +502,7 @@ def copy_build_payload(
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".unpacked"),
     )
     copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
+    copy_file(require_file(paths.root / "KNOWN_ISSUES.md", "CyxWiz KNOWN_ISSUES.md"), stage / "KNOWN_ISSUES.md")
     copy_vcpkg_notices(paths, stage, system)
 
 
@@ -864,7 +865,7 @@ def classify_source(relative_path: Path) -> str:
         return "cyxwiz-resources"
     if value.startswith("python_tools/"):
         return "python-tools"
-    if value in ("README.md", "LICENSE", "start_cyxwiz.bat", "cyxwiz"):
+    if value in ("README.md", "LICENSE", "KNOWN_ISSUES.md", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"
 
