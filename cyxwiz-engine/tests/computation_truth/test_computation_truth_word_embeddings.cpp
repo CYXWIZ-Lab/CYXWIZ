@@ -182,6 +182,43 @@ void RunQuality(const json& c) {
     Check(again.success && again.vectors.values == model.vectors.values, name + ": a run repeats for one seed");
 }
 
+// Nearest words by cosine, and row means of token vectors, against numpy.
+void RunNearest(const json& c, const fs::path& root) {
+    const auto vectors = WordEmbeddings::Load((root / "word_embeddings" / c.at("file").get<std::string>()).string());
+    const auto nearest = WordEmbeddings::Nearest(vectors, c.at("word").get<std::string>(), c.at("k").get<int>());
+    const auto words = c.at("words").get<std::vector<std::string>>();
+    const auto similarity = c.at("similarity").get<std::vector<double>>();
+    Check(nearest.size() == words.size(), "nearest " + c.at("word").get<std::string>() + ": count");
+    for (size_t i = 0; i < words.size(); ++i) {
+        Check(nearest[i].first == words[i], "nearest " + c.at("word").get<std::string>() + " [" + std::to_string(i) +
+                                                "]: " + nearest[i].first + ", numpy " + words[i]);
+        Check(std::abs(nearest[i].second - similarity[i]) <= 1e-5, "nearest similarity " + std::to_string(i));
+    }
+    Check(WordEmbeddings::Nearest(vectors, "not-a-word").empty(), "a word without a vector has no neighbours");
+}
+
+void RunRowMeans(const json& c, const fs::path& root) {
+    const auto vectors = WordEmbeddings::Load((root / "word_embeddings" / c.at("file").get<std::string>()).string());
+    std::string error;
+    const auto means = WordEmbeddings::RowMeans(vectors.values, vectors.dim, c.at("tokens").get<std::vector<int>>(),
+                                                c.at("tokens_per_row").get<int>(), &error);
+    Check(!means.empty(), "row means: " + error);
+    CheckValues(means, c.at("values"), 1e-6, "row means");
+    Check(WordEmbeddings::RowMeans(vectors.values, vectors.dim, {99}, 1, &error).empty(),
+          "a token outside the table is refused");
+}
+
+// Saved .vec text reads back as the same float32 values.
+void CheckSaveRoundTrip(const fs::path& root, const fs::path& dir) {
+    const auto vectors = WordEmbeddings::Load((root / "word_embeddings" / "vectors.bin").string());
+    std::string error;
+    const fs::path out = dir / "saved.vec";
+    Check(WordEmbeddings::SaveText(vectors, out.string(), &error), "save: " + error);
+    const auto again = WordEmbeddings::Load(out.string());
+    Check(again.success && again.words == vectors.words && again.dim == vectors.dim && again.values == vectors.values,
+          "saved vectors read back exactly");
+}
+
 void WriteBytes(const fs::path& path, const std::string& bytes) {
     std::ofstream(path, std::ios::binary) << bytes;
 }
@@ -230,6 +267,7 @@ void CheckOwnRules(const fs::path& root) {
     cyxwiz::WordAlignmentOptions wrong;
     wrong.missing = "ones";
     Check(!WordEmbeddings::Align(vectors, vocab, wrong).success, "an unknown missing rule is refused");
+    CheckSaveRoundTrip(root, dir);
     fs::remove_all(dir);
 }
 
@@ -244,6 +282,8 @@ int main(int, char** argv) {
     size_t passed = 0;
     for (const auto& c : fixture.at("cases")) {
         if (c.at("op") == "load") RunLoad(c, root);
+        else if (c.at("op") == "nearest") RunNearest(c, root);
+        else if (c.at("op") == "row_means") RunRowMeans(c, root);
         else RunAlign(c, root);
         ++passed;
     }

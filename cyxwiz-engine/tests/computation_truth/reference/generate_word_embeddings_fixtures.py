@@ -93,6 +93,24 @@ def main():
         cases.append({"op": "align", "label": label, "file": "vectors.vec", "vocabulary": vocab, "options": options,
                       **align(loaded["words"], loaded["values"], loaded["dim"], vocab, **kwargs)})
 
+    # Nearest words by cosine (numpy), and row means of token vectors.
+    table = np.asarray(loaded["values"], dtype=np.float32).reshape(len(loaded["words"]), loaded["dim"])
+    unit = table / np.linalg.norm(table, axis=1, keepdims=True)
+    for word in ("king", "London"):
+        i = loaded["words"].index(word)
+        sim = unit @ unit[i]
+        sim[i] = -2.0
+        top = np.argsort(-sim, kind="stable")[:3]
+        cases.append({"op": "nearest", "file": "vectors.vec", "word": word, "k": 3,
+                      "words": [loaded["words"][j] for j in top], "similarity": [float(sim[j]) for j in top]})
+    tokens = np.array([[0, 4, 5, -1], [2, 2, 2, 2], [-1, -1, -1, -1], [9, 1, 3, 7]])
+    means = []
+    for row in tokens:
+        ids = [t for t in row if t >= 0]
+        means.append(table[ids].mean(axis=0) if ids else np.zeros(loaded["dim"], dtype=np.float32))
+    cases.append({"op": "row_means", "file": "vectors.vec", "tokens": tokens.ravel().tolist(), "tokens_per_row": 4,
+                  "values": np.asarray(means, dtype=np.float64).ravel().tolist()})
+
     path = HERE.parent / "fixtures" / "word_embeddings_gensim.json"
     path.write_text(json.dumps({"gensim": gensim.__version__, "cases": cases}, indent=1, ensure_ascii=False),
                     encoding="utf-8")

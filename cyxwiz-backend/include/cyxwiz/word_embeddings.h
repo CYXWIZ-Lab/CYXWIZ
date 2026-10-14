@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -107,6 +108,23 @@ public:
     // The vectors in the order of `vocabulary` (token id = position).
     static WordAlignment Align(const WordVectors& vectors, const std::vector<std::string>& vocabulary,
                                const WordAlignmentOptions& options = {});
+
+    // Writes word2vec text (.vec): "count dim", then one word and its values per
+    // line (gensim's save_word2vec_format(binary=False)); float32 values written
+    // so they read back exactly.
+    static bool SaveText(const WordVectors& vectors, const std::string& path, std::string* error = nullptr);
+
+    // The `k` words most similar to `word` by cosine similarity, most similar
+    // first (the word itself left out), on the device. Empty when the word has
+    // no vector.
+    static std::vector<std::pair<std::string, double>> Nearest(const WordVectors& vectors, const std::string& word,
+                                                                int k = 10);
+
+    // One vector per text row: the mean of its tokens' rows of `table`
+    // (row-major [table_rows, dim]); `tokens` holds row-major token ids per text
+    // row (-1 = none), `tokens_per_row` per row. A row without a token is zeros.
+    static std::vector<float> RowMeans(const std::vector<float>& table, int dim, const std::vector<int>& tokens,
+                                       int tokens_per_row, std::string* error = nullptr);
 
     // Runs `batches` in order on row-major [vocab_size, dim] input / output
     // vectors (updated in place); `losses` gets each batch's summed loss.

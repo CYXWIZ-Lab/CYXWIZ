@@ -9,12 +9,14 @@
 #include "cyxwiz/word_embeddings.h"
 
 #include "arrayfire_host_materialization.h"
+#include "arrayfire_indexed.h"
 
 #include <arrayfire.h>
 
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -164,6 +166,109 @@ WordVectors WordEmbeddings::Load(const std::string& path, size_t max_words) {
     const auto dot = path.find_last_of('.');
     const std::string extension = dot == std::string::npos ? "" : AsciiLower(path.substr(dot));
     return extension == ".bin" ? LoadBinary(path, max_words) : LoadText(path, max_words);
+}
+
+bool WordEmbeddings::SaveText(const WordVectors& vectors, const std::string& path, std::string* error) {
+    if (!vectors.success || vectors.dim <= 0 ||
+        vectors.values.size() != vectors.words.size() * static_cast<size_t>(vectors.dim)) {
+        if (error) *error = "The word vectors are not loaded";
+        return false;
+    }
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        if (error) *error = "Cannot write " + path;
+        return false;
+    }
+    out << vectors.words.size() << ' ' << vectors.dim << '\n';
+    char buffer[32];
+    for (size_t r = 0; r < vectors.words.size(); ++r) {
+        out << vectors.words[r];
+        for (int d = 0; d < vectors.dim; ++d) {
+            // Shortest text that reads back as the same float32.
+            const auto result = std::to_chars(buffer, buffer + sizeof(buffer),
+                                              vectors.values[r * static_cast<size_t>(vectors.dim) + static_cast<size_t>(d)]);
+            out << ' ' << std::string_view(buffer, static_cast<size_t>(result.ptr - buffer));
+        }
+        out << '\n';
+    }
+    if (!out) {
+        if (error) *error = "Cannot write " + path;
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVectors& vectors,
+                                                                     const std::string& word, int k) {
+    std::vector<std::pair<std::string, double>> nearest;
+    if (!vectors.success || vectors.dim <= 0 || k <= 0 ||
+        vectors.values.size() != vectors.words.size() * static_cast<size_t>(vectors.dim))
+        return nearest;
+    const auto found = std::find(vectors.words.begin(), vectors.words.end(), word);
+    if (found == vectors.words.end()) return nearest;
+    const unsigned self = static_cast<unsigned>(found - vectors.words.begin());
+    try {
+        const dim_t n = static_cast<dim_t>(vectors.words.size()), dim = vectors.dim;
+        const af::array table = af::array(dim, n, vectors.values.data());  // [dim, n]
+        const af::array norms = af::max(af::sqrt(af::sum(table * table, 0)), 1e-12f);
+        const af::array unit = table / af::tile(norms, static_cast<unsigned>(dim), 1);
+        af::array similarity = af::flat(af::matmul(af::lookup(unit, af::array(1, &self), 1), unit, AF_MAT_TRANS, AF_MAT_NONE));
+        similarity(self) = -2.0f;  // leave the word itself out
+        af::array sorted, order;
+        SortWithIndex(sorted, order, similarity, 0, false);
+        const dim_t take = std::min<dim_t>(static_cast<dim_t>(k), n - 1);
+        if (take <= 0) return nearest;
+        std::vector<float> values(static_cast<size_t>(take));
+        std::vector<unsigned> rows(static_cast<size_t>(take));
+        af::array top_values = sorted(af::seq(0, static_cast<double>(take) - 1));
+        af::array top_rows = order(af::seq(0, static_cast<double>(take) - 1)).as(u32);
+        top_values.eval();
+        top_rows.eval();
+        MaterializeArrayFireToHost(top_values, values.data(), ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "WordEmbeddings::Nearest", "top_k_similarity");
+        MaterializeArrayFireToHost(top_rows, rows.data(), ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "WordEmbeddings::Nearest", "top_k_rows");
+        for (dim_t i = 0; i < take; ++i)
+            nearest.emplace_back(vectors.words[rows[static_cast<size_t>(i)]], static_cast<double>(values[static_cast<size_t>(i)]));
+    } catch (const af::exception&) {
+        nearest.clear();
+    }
+    return nearest;
+}
+
+std::vector<float> WordEmbeddings::RowMeans(const std::vector<float>& table, int dim, const std::vector<int>& tokens,
+                                            int tokens_per_row, std::string* error) {
+    const auto fail = [&](const std::string& message) {
+        if (error) *error = message;
+        return std::vector<float>{};
+    };
+    if (dim <= 0 || table.empty() || table.size() % static_cast<size_t>(dim) != 0)
+        return fail("The vector table must be [rows, dim]");
+    if (tokens_per_row <= 0 || tokens.empty() || tokens.size() % static_cast<size_t>(tokens_per_row) != 0)
+        return fail("The tokens must be [rows, tokens_per_row]");
+    const int table_rows = static_cast<int>(table.size() / static_cast<size_t>(dim));
+    for (const int id : tokens)
+        if (id < -1 || id >= table_rows) return fail("A token id is outside the vector table");
+    try {
+        const dim_t rows = static_cast<dim_t>(tokens.size() / static_cast<size_t>(tokens_per_row));
+        const dim_t width = tokens_per_row, d = dim;
+        const af::array vectors = af::array(d, static_cast<dim_t>(table_rows), table.data()).T();      // [table_rows, d]
+        const af::array ids = af::array(width, rows, tokens.data()).T();                            // [rows, width]
+        const af::array valid = (ids >= 0).as(f32);
+        const af::array count = af::max(af::sum(valid, 1), 1.0f);
+        const af::array gathered = af::lookup(vectors, af::flat(af::select(ids >= 0, ids, 0.0)), 0);  // [rows*width, d]
+        const af::array masked = af::moddims(gathered, rows, width, d) *
+                                 af::tile(af::moddims(valid, rows, width, 1), 1, 1, static_cast<unsigned>(d));
+        af::array mean = af::moddims(af::sum(masked, 1), rows, d) / af::tile(count, 1, static_cast<unsigned>(d));
+        af::array row_major = mean.T();
+        row_major.eval();
+        std::vector<float> out(static_cast<size_t>(rows * d));
+        MaterializeArrayFireToHost(row_major, out.data(), ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "WordEmbeddings::RowMeans", "row_major_rows_by_dim");
+        return out;
+    } catch (const af::exception& e) {
+        return fail(std::string("WordEmbeddings::RowMeans failed on the ArrayFire device: ") + e.what());
+    }
 }
 
 WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vector<std::string>& vocabulary,
