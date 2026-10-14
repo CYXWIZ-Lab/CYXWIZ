@@ -3,6 +3,7 @@
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <imgui.h>
 
@@ -116,11 +117,19 @@ int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numer
             ImGui::PushID(matches[static_cast<size_t>(k)]);
             const float x0 = ImGui::GetCursorPosX();
             const float avail = ImGui::GetContentRegionAvail().x;
+            // The range / value count sits right-aligned after the name; when a
+            // long name leaves no room it moves to the row's tooltip.
+            const float name_x = x0 + 4.0f + (many ? 20.0f : 0.0f) + 24.0f;
+            const float name_end = name_x + ImGui::CalcTextSize(c.name.c_str()).x;
+            const std::string stats = c.Text();
+            const float stats_x = stats.empty() ? 0.0f : x0 + avail - ImGui::CalcTextSize(stats.c_str()).x - 4.0f;
+            const bool stats_fit = !stats.empty() && stats_x >= name_end + 12.0f;
             if (ImGui::Selectable("##row", k == cursor_ || (!many && picked), ImGuiSelectableFlags_NoAutoClosePopups,
                                   ImVec2(avail, 0))) {
                 hit = matches[static_cast<size_t>(k)];
                 cursor_ = k;
             }
+            if (!stats.empty() && !stats_fit) ui::Tooltip((c.name + "\n" + stats).c_str());
             if (moved && k == cursor_) ImGui::SetScrollHereY();
             float x = x0 + 4.0f;
             if (many) {
@@ -132,10 +141,8 @@ int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numer
             ImGui::TextColored(t.text_dim, "%s", c.numeric ? "#" : "Aa");
             ImGui::SameLine(x + 24.0f);
             ImGui::TextUnformatted(c.name.c_str());
-            const std::string stats = c.Text();
-            if (!stats.empty()) {
-                const float w = ImGui::CalcTextSize(stats.c_str()).x;
-                ImGui::SameLine(std::max(x0 + avail - w - 4.0f, ImGui::GetCursorPosX() + 12.0f));
+            if (stats_fit) {
+                ImGui::SameLine(stats_x);
                 ImGui::TextColored(t.text_dim, "%s", stats.c_str());
             }
             ImGui::PopID();
