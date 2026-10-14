@@ -8,6 +8,7 @@
 #include "code_editor.h"
 #include "node_editor.h"
 #include "properties.h"
+#include "table_grid.h"
 
 #include <string>
 #include <vector>
@@ -30,7 +31,7 @@ struct Properties::SqlStepView {
 
     // First rows of the output, read from the registry once per run.
     std::string preview_key;  // dataset + finish time
-    cyxwiz::ArrowPreview preview;
+    cyxwiz::TableGrid preview;
     std::vector<std::string> input_columns;
     std::string input_columns_key;
 };
