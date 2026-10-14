@@ -8,15 +8,68 @@
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 
+#include <imgui_internal.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <numeric>
 
 namespace cyxwiz {
+
+namespace {
+// One line for the grid: line breaks and tabs become spaces, and a long
+// value shows its start (the whole value is in the cell's tooltip).
+constexpr size_t kMaxCellChars = 300;
+bool OneLine(std::string& text) {
+    bool changed = false;
+    for (char& ch : text) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+            changed = true;
+        }
+    }
+    if (text.size() > kMaxCellChars) {
+        size_t cut = kMaxCellChars;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;  // not inside a UTF-8 character
+        text.resize(cut);
+        text += "\xE2\x80\xA6";
+        changed = true;
+    }
+    return changed;
+}
+}  // namespace
+
+std::string TableGrid::CellText(size_t row, size_t col) const {
+    const DataTable::CellValue v = table->GetCell(row, col);
+    if (const auto* s = std::get_if<std::string>(&v)) return *s;
+    if (const auto* n = std::get_if<int64_t>(&v)) return std::to_string(*n);
+    if (const auto* d = std::get_if<double>(&v)) {
+        char buf[32];
+        const auto r = std::to_chars(buf, buf + sizeof(buf), *d);
+        return std::string(buf, r.ptr);
+    }
+    return "";
+}
+
+void TableGrid::ComputeInitialWidths() {
+    const size_t cols = table->GetColumnCount();
+    const size_t rows = std::min<size_t>(table->GetRowCount(), 200);
+    initial_widths_.assign(cols, 0.0f);
+    for (size_t c = 0; c < cols; ++c) {
+        if (c < column_kinds.size() && column_kinds[c].type == "Numeric") continue;
+        float widest = 0.0f;
+        for (size_t r = 0; r < rows && widest <= kMaxInitialWidth; ++r) {
+            std::string text = CellText(r, c);
+            OneLine(text);
+            widest = std::max(widest, ImGui::CalcTextSize(text.c_str()).x);
+        }
+        if (widest > kMaxInitialWidth) initial_widths_[c] = kMaxInitialWidth;
+    }
+}
 
 void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
     table = std::move(t);
@@ -26,6 +79,7 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
     filter_mode_hide = false;
     filtered_indices.clear();
     column_kinds.clear();
+    initial_widths_.clear();
     sort_column = -1;
     sort_ascending = true;
     sorted_indices.clear();
@@ -58,10 +112,11 @@ void TableGrid::Render(const char* id) {
         return;
     }
 
-    // Column kinds, once per table
+    // Column kinds and opening widths, once per table
     if (column_kinds.empty()) {
         ComputeColumnKinds();
     }
+    if (initial_widths_.size() != col_count) ComputeInitialWidths();
 
     // Initialize sorted indices if empty
     if (sorted_indices.empty()) {
@@ -123,7 +178,7 @@ void TableGrid::Render(const char* id) {
                 }
             }
 
-            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_DefaultSort, initial_widths_[i]);
         }
 
         // -----------------------------------------------------------
@@ -228,7 +283,8 @@ void TableGrid::Render(const char* id) {
                 for (size_t c = 0; c < col_count; c++) {
                     ImGui::TableSetColumnIndex(col_idx++);
 
-                    std::string cell_text = table->GetCellAsString(actual_row, c);
+                    std::string cell_text = CellText(actual_row, c);
+                    const bool is_null = std::holds_alternative<std::monostate>(table->GetCell(actual_row, c));
 
                     // Apply number formatting if configured for this column
                     if (c < column_formats.size() && c < column_kinds.size() &&
@@ -319,10 +375,6 @@ void TableGrid::Render(const char* id) {
                         ImGui::PushStyleColor(ImGuiCol_Header, ui::CurrentTokens().selection);
                     }
 
-                    if (has_filter_match) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().warning);
-                    }
-
                     // Push unique ID for each cell to avoid conflicts
                     ImGui::PushID(static_cast<int>(actual_row * col_count + c));
 
@@ -366,7 +418,28 @@ void TableGrid::Render(const char* id) {
                         // -----------------------------------------------------------
                         ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick;
 
-                        if (ImGui::Selectable(cell_text.c_str(), is_selected || in_multi_selection, sel_flags)) {
+                        const std::string full = cell_text;
+                        const bool shortened = OneLine(cell_text);
+                        const ImVec2 text_pos = ImGui::GetCursorScreenPos();
+                        const char* shown = is_null ? "null" : cell_text.c_str();
+                        // Laid out as wide as its text (the column fits it), hit and highlight across the cell.
+                        const bool clicked = ImGui::Selectable("##cell", is_selected || in_multi_selection,
+                                                               sel_flags | ImGuiSelectableFlags_SpanAvailWidth,
+                                                               ImVec2(ImGui::CalcTextSize(shown).x, 0.0f));
+                        {
+                            const ui::Tokens& tk = ui::CurrentTokens();
+                            const ImVec4 colour = is_null ? tk.text_faint : has_filter_match ? tk.warning : tk.text;
+                            ImGui::GetWindowDrawList()->AddText(text_pos, ui::ToU32(colour), shown);
+                        }
+                        if (shortened && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(640.0f, 420.0f));
+                            ImGui::BeginTooltip();
+                            ImGui::PushTextWrapPos(620.0f);
+                            ImGui::TextUnformatted(full.size() > 4000 ? (full.substr(0, 4000) + "\xE2\x80\xA6").c_str() : full.c_str());
+                            ImGui::PopTextWrapPos();
+                            ImGui::EndTooltip();
+                        }
+                        if (clicked) {
                             ImGuiIO& io = ImGui::GetIO();
 
                             // Check for double-click to edit
@@ -404,9 +477,6 @@ void TableGrid::Render(const char* id) {
 
                     ImGui::PopID();
 
-                    if (has_filter_match) {
-                        ImGui::PopStyleColor();
-                    }
                     if (in_multi_selection && !is_selected) {
                         ImGui::PopStyleColor();
                     }
@@ -514,8 +584,8 @@ void TableGrid::SortByColumn(int column) {
                 double va = get_val(a), vb = get_val(b);
                 return ascending ? va < vb : va > vb;
             } else {
-                std::string sa = table->GetCellAsString(a, column);
-                std::string sb = table->GetCellAsString(b, column);
+                std::string sa = CellText(a, column);
+                std::string sb = CellText(b, column);
                 return ascending ? sa < sb : sa > sb;
             }
         });
@@ -699,8 +769,7 @@ void TableGrid::ApplyFilter() {
     for (size_t idx : sorted_indices) {
         bool match = false;
         for (size_t c = 0; c < table->GetColumnCount(); c++) {
-            std::string cell = table->GetCellAsString(idx, c);
-            if (cell.find(filter_text) != std::string::npos) {
+            if (CellText(idx, c).find(filter_text) != std::string::npos) {
                 match = true;
                 break;
             }
@@ -733,7 +802,7 @@ void TableGrid::BeginCellEdit(int row, int col) {
     }
 
     // Get current cell value
-    std::string current_value = table->GetCellAsString(row, col);
+    std::string current_value = CellText(row, col);
 
     // Copy to edit buffer
     strncpy(edit_buffer, current_value.c_str(), sizeof(edit_buffer) - 1);
@@ -752,7 +821,7 @@ void TableGrid::EndCellEdit(bool save) {
 
     if (save && table) {
         std::string new_value = edit_buffer;
-        std::string old_value = table->GetCellAsString(editing_row, editing_col);
+        std::string old_value = CellText(editing_row, editing_col);
 
         // Only update if value changed
         if (new_value != old_value) {

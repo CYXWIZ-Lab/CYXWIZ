@@ -109,6 +109,9 @@ public:
     void EndCellEdit(bool save);
     bool IsEditing() const { return editing_row >= 0 && editing_col >= 0; }
 
+    // A cell as text: numbers in their shortest exact form, "" when empty.
+    std::string CellText(size_t row, size_t col) const;
+
     void CopyCellToClipboard(int row, int col) const;
     void CopyRowToClipboard(int row) const;
     void CopyColumnToClipboard(int col) const;
@@ -154,6 +157,10 @@ public:
     bool edit_just_started = false;  // focus the input on its first frame
 
 private:
+    // Text columns open no wider than this; a long cell shows its start.
+    static constexpr float kMaxInitialWidth = 420.0f;
+    std::vector<float> initial_widths_;  // per column, 0 = fit the content
+    void ComputeInitialWidths();
     void RenderColumnContextMenu(int column);
     void RenderCellContextMenu(int row, int col);
 };

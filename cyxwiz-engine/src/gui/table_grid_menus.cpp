@@ -195,7 +195,7 @@ void TableGrid::RenderCellContextMenu(int row, int col) {
     if (row < 0 || col < 0) return;
 
     // Note: This function is called from within BeginPopupContextItem, so no BeginPopup needed
-    std::string cell_value = table->GetCellAsString(row, col);
+    std::string cell_value = CellText(row, col);
     std::string preview = cell_value.length() > 20 ? cell_value.substr(0, 20) + "..." : cell_value;
 
     ImGui::TextDisabled("%s [%d, %d] = %s", ICON_FA_TABLE_CELLS, row + 1, col + 1, preview.c_str());
@@ -245,7 +245,7 @@ void TableGrid::RenderCellContextMenu(int row, int col) {
 void TableGrid::CopyCellToClipboard(int row, int col) const {
     if (!table) return;
 
-    std::string value = table->GetCellAsString(row, col);
+    std::string value = CellText(row, col);
     CopyToClipboard(value);
 }
 
@@ -256,7 +256,7 @@ void TableGrid::CopyRowToClipboard(int row) const {
     size_t col_count = table->GetColumnCount();
     for (size_t c = 0; c < col_count; c++) {
         if (c > 0) result += "\t";
-        result += table->GetCellAsString(row, c);
+        result += CellText(row, c);
     }
     CopyToClipboard(result);
 }
@@ -268,7 +268,7 @@ void TableGrid::CopyColumnToClipboard(int col) const {
     size_t row_count = table->GetRowCount();
     for (size_t r = 0; r < row_count; r++) {
         if (r > 0) result += "\n";
-        result += table->GetCellAsString(r, col);
+        result += CellText(r, col);
     }
     CopyToClipboard(result);
 }
@@ -284,7 +284,7 @@ void TableGrid::CopySelectionToClipboard() const {
         if (r > sel.row_start) result += "\n";
         for (int c = sel.col_start; c <= sel.col_end; c++) {
             if (c > sel.col_start) result += "\t";
-            result += table->GetCellAsString(r, c);
+            result += CellText(r, c);
         }
     }
     CopyToClipboard(result);
