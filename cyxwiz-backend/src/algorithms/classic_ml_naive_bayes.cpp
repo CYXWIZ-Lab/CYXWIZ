@@ -113,7 +113,7 @@ ClassicPrediction ClassicML::PredictGaussianNB(const GaussianNBModel& model, con
         std::vector<double> log_prior;
         for (const double prior : model.class_prior) log_prior.push_back(std::log(prior));
         const af::array log_prior_row =
-            af::array(1, static_cast<dim_t>(log_prior.size()), log_prior.data()).as(x.type());
+            af::moddims(HostValuesToDevice(log_prior), 1, static_cast<dim_t>(log_prior.size())).as(x.type());
         const af::array jll = JointLogLikelihood(x, theta, var, log_prior_row);
         const dim_t k = jll.dims(1);
         af::array peak, labels;
