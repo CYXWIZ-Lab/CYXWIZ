@@ -21,6 +21,8 @@ void ReadSVM(const artifact_json::Json& parameters, int n_classes, SVMModel& mod
     model.pair_support = parameters.at("pair_support").get<std::vector<std::vector<int>>>();
     model.pair_coef = parameters.at("pair_coef").get<std::vector<std::vector<double>>>();
     model.rho = parameters.at("rho").get<std::vector<double>>();
+    model.prob_a = parameters.value("prob_a", std::vector<double>{});
+    model.prob_b = parameters.value("prob_b", std::vector<double>{});
     model.iterations = parameters.value("iterations", 0);
     model.converged = parameters.value("converged", true);
     model.n_classes = n_classes;

@@ -19,7 +19,7 @@ bool ClassicModelPredictorOperator::Configure(const std::map<std::string, std::s
     }
     if (const auto it = params.find("prediction_col"); it != params.end() && !TrimAscii(it->second).empty())
         prediction_col_ = TrimAscii(it->second);
-    return true;
+    return ParseProbabilityColumns(params, GetName(), probability_columns_, error);
 }
 
 bool ClassicModelPredictorOperator::CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies,
@@ -51,6 +51,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> ClassicModelPredictorOperator::Appl
     if (n <= 0) return arrow::Status::Invalid(GetName() + ": input table has no rows");
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
+    if (probability_columns_ && artifact.IsRegressor())
+        return arrow::Status::Invalid(GetName() + ": an SVM Regressor predicts numbers; it has no class probabilities");
+    if (probability_columns_ && artifact.model_type == "SVMClassifier" && artifact.svm.prob_a.empty())
+        return arrow::Status::Invalid(GetName() + ": this SVM Classifier was saved without probabilities; turn on "
+                                                  "Probability columns on the SVM Classifier and run it again");
     if (artifact.IsRegressor()) {
         const std::vector<double> predicted = ClassicML::PredictSVR(artifact.svm, x, &error);
         if (predicted.size() != x.size()) return arrow::Status::Invalid(GetName() + ": " + error);
@@ -71,8 +76,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> ClassicModelPredictorOperator::Appl
     if (!prediction.success) return arrow::Status::Invalid(GetName() + ": " + prediction.error_message);
     spdlog::info("ClassicModelPredictor: {} on {} rows, {} classes", artifact.model_type, x.size(),
                  artifact.class_labels.size());
-    return AppendClassificationPredictions(input, prediction_col_, artifact.class_labels, artifact.numeric_labels,
-                                           prediction.labels, GetName());
+    return AppendClassicPredictions(input, prediction_col_, probability_columns_, artifact.class_labels,
+                                    artifact.numeric_labels, prediction, GetName());
 }
 
 }  // namespace cyxwiz

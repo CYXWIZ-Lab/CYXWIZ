@@ -1043,6 +1043,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"KNNClassifier", "n_neighbors", 1, false},
         {"LogisticRegressionNode", "max_iter", 1, false},
         {"SVMClassifier", "degree", 0, false},
+        {"SVMClassifier", "random_state", 0, false},
         {"SVMRegressor", "degree", 0, false},
         {"DecisionTreeClassifier", "min_samples_split", 2, false},
         {"DecisionTreeClassifier", "min_samples_leaf", 1, false},

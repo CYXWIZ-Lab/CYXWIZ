@@ -53,8 +53,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> KNNClassifierOperator::Apply(const 
     }
     spdlog::info("KNNClassifier: {} rows x {} features, {} classes, k={}", data.x.size(), data.features.size(),
                  data.classes.size(), n_neighbors_);
-    return AppendClassificationPredictions(input, columns_.prediction_col, data.classes, data.numeric_labels,
-                                           prediction.labels, GetName());
+    return AppendClassicPredictions(input, columns_.prediction_col, columns_.probability_columns, data.classes,
+                                    data.numeric_labels, prediction, GetName());
 }
 
 }  // namespace cyxwiz

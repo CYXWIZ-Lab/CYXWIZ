@@ -2681,6 +2681,7 @@ void CheckClassicMLClassifierFamilyContract(
                   FindParameter(meta, "target_col")->required &&
                   ParameterMatches(meta, "feature_cols", "string", "") &&
                   ParameterMatches(meta, "prediction_col", "string", "prediction") &&
+                  ParameterMatches(meta, "probability_columns", "bool", "false") &&
                   ParameterMatches(meta, "model_path", "string", ""),
               "classic ML classifier should expose the shared table/artifact fields: " +
                   TypeId(type));
@@ -2705,7 +2706,7 @@ void CheckClassicMLClassifierFamilyContract(
 
     const auto* naive_bayes =
         metadata.GetMetadata(gui::NodeType::NaiveBayesClassifier);
-    Check(naive_bayes->parameters.size() == 5 &&
+    Check(naive_bayes->parameters.size() == 6 &&
               ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9"),
           "Naive Bayes metadata should match every consumed operator field");
     auto naive_bayes_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
@@ -2717,7 +2718,7 @@ void CheckClassicMLClassifierFamilyContract(
           "Naive Bayes should refuse a negative var_smoothing");
 
     const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
-    Check(knn->parameters.size() == 7 &&
+    Check(knn->parameters.size() == 8 &&
               ParameterMatches(knn, "n_neighbors", "int", "5") &&
               ParameterMatches(knn, "weights", "enum", "uniform") &&
               ParameterMatches(knn, "metric", "enum", "euclidean"),
@@ -2729,7 +2730,7 @@ void CheckClassicMLClassifierFamilyContract(
           "KNN should refuse zero neighbours and an unknown metric");
 
     const auto* logistic = metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
-    Check(logistic->parameters.size() == 7 &&
+    Check(logistic->parameters.size() == 8 &&
               ParameterMatches(logistic, "C", "float", "1.0") &&
               ParameterMatches(logistic, "max_iter", "int", "100") &&
               ParameterMatches(logistic, "tol", "float", "1e-4") &&
@@ -2742,7 +2743,8 @@ void CheckClassicMLClassifierFamilyContract(
           "Logistic should refuse C = 0 and max_iter = 0");
 
     const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
-    Check(svm->parameters.size() == 10 &&
+    Check(svm->parameters.size() == 12 &&
+              ParameterMatches(svm, "random_state", "int", "0") &&
               ParameterMatches(svm, "C", "float", "1.0") &&
               ParameterMatches(svm, "kernel", "enum", "rbf") &&
               ParameterMatches(svm, "gamma", "string", "scale") &&
@@ -2755,8 +2757,9 @@ void CheckClassicMLClassifierFamilyContract(
               svm_op->Configure({{"target_col", "y"}, {"gamma", "auto"}}, error) &&
               !svm_op->Configure({{"target_col", "y"}, {"gamma", "fast"}}, error) &&
               !svm_op->Configure({{"target_col", "y"}, {"gamma", "-1"}}, error) &&
-              !svm_op->Configure({{"target_col", "y"}, {"kernel", "laplacian"}}, error),
-          "SVM gamma takes scale, auto or a positive number; kernels are sklearn's four");
+              !svm_op->Configure({{"target_col", "y"}, {"kernel", "laplacian"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"random_state", "-1"}}, error),
+          "SVM gamma takes scale, auto or a positive number; kernels are sklearn's four; random_state >= 0");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.

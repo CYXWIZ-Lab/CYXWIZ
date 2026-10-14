@@ -25,6 +25,7 @@ public:
 private:
     std::string model_path_;
     std::string prediction_col_ = "prediction";
+    bool probability_columns_ = false;
 };
 
 }  // namespace cyxwiz

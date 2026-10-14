@@ -2018,6 +2018,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"random_state", "int", "0", "Seed of the 5-fold split that calibrates the probabilities (scikit-learn random_state); used with Probability columns", {}, "0-2147483647", "Random state", "Model"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"C", "float", "1.0", "Penalty for margin violations; smaller is a softer, more regularised margin", {}, "", "Regularisation (C)", "Model"},
          {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
@@ -2037,6 +2039,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"n_neighbors", "int", "5", "Training rows that vote for each prediction", {}, "", "Neighbours", "Model"},
          {"weights", "enum", "uniform", "Every neighbour votes equally, or closer neighbours count more (1/distance)", {"uniform", "distance"}, "", "Weights", "Model"},
@@ -2053,6 +2056,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"var_smoothing", "float", "1e-9", "Share of the largest feature variance added to every variance (scikit-learn var_smoothing)", {}, "", "Variance smoothing", "Model"}},
         NodeImplementationStatus::Implemented, 0});
@@ -2067,6 +2071,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"C", "float", "1.0", "Inverse of the L2 regularisation strength; smaller is stronger", {}, "", "Regularisation (C)", "Model"},
          {"max_iter", "int", "100", "Most L-BFGS iterations; the log warns when the fit stops before tol", {}, "", "Maximum iterations", "Model"},
@@ -2135,7 +2140,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, false, "Fitted model from a classic ML node; when connected it is used instead of the saved model file"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
         {{"model_path", "file", "", "Saved classic model (.cyxclassic.json) to use when the Model input is not connected", {}, "*.cyxclassic.json;*.json", "Saved model", "Artifact"},
-         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
     // Model Evaluation

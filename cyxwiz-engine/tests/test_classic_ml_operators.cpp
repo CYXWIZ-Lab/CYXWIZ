@@ -265,6 +265,77 @@ void CheckPredictor(const fs::path& model_path, const std::shared_ptr<arrow::Tab
           "predictor reproduces the trainer's predictions for " + model_path.filename().string());
 }
 
+// Probability columns: <prediction>_p_<class> in class order, rows summing to 1;
+// the predictor writes the same ones from the saved model.
+void CheckProbabilityColumns(const fs::path& dir) {
+    std::string error;
+    const fs::path nb_path = dir / "nb_proba.cyxclassic.json";
+    cyxwiz::NaiveBayesClassifierOperator nb;
+    Check(nb.Configure({{"target_col", "animal"}, {"probability_columns", "true"}, {"model_path", nb_path.string()}},
+                       error),
+          "NB configures with probability columns: " + error);
+    auto nb_result = nb.Apply(TextLabelTable());
+    Check(nb_result.ok(), "NB applies with probability columns: " + nb_result.status().ToString());
+    const auto apple = (*nb_result)->GetColumnByName("prediction_p_apple");
+    const auto zebra = (*nb_result)->GetColumnByName("prediction_p_zebra");
+    Check(apple && zebra && apple->type()->id() == arrow::Type::DOUBLE, "NB writes one probability column per class");
+    const auto a = std::static_pointer_cast<arrow::DoubleArray>(apple->chunk(0));
+    const auto z = std::static_pointer_cast<arrow::DoubleArray>(zebra->chunk(0));
+    for (int64_t r = 0; r < a->length(); ++r)
+        Check(std::abs(a->Value(r) + z->Value(r) - 1.0) < 1e-9, "probabilities sum to 1 in row " + std::to_string(r));
+    Check(z->Value(0) > 0.5 && a->Value(3) > 0.5, "the probabilities favour the predicted class");
+
+    cyxwiz::NaiveBayesClassifierOperator bad;
+    Check(!bad.Configure({{"target_col", "animal"}, {"probability_columns", "maybe"}}, error) &&
+              error.find("probability_columns") != std::string::npos,
+          "probability_columns must be true or false");
+
+    // SVC: Platt calibration on 5 folds, saved with the model.
+    const fs::path svc_path = dir / "svc_proba.cyxclassic.json";
+    cyxwiz::SVMClassifierOperator svc;
+    Check(svc.Configure({{"target_col", "animal"}, {"kernel", "linear"}, {"probability_columns", "true"},
+                         {"random_state", "3"}, {"model_path", svc_path.string()}},
+                        error),
+          "SVC configures with probability columns: " + error);
+    auto svc_result = svc.Apply(TextLabelTable());
+    Check(svc_result.ok(), "SVC applies with probability columns: " + svc_result.status().ToString());
+    Check((*svc_result)->GetColumnByName("prediction_p_apple") && (*svc_result)->GetColumnByName("prediction_p_zebra"),
+          "SVC writes probability columns");
+    const auto doc = ReadJson(svc_path);
+    const auto& params = doc["model"]["parameters"];
+    Check(params["prob_a"].size() == 1 && params["prob_b"].size() == 1 && params["random_state"] == 3,
+          "SVC saves its Platt sigmoid and random_state: " + params.dump());
+
+    cyxwiz::SVMClassifierOperator negative_seed;
+    Check(!negative_seed.Configure({{"target_col", "animal"}, {"random_state", "-1"}}, error),
+          "SVC refuses a negative random_state");
+
+    // The predictor writes the trainer's probability columns from the saved models.
+    for (const auto& [path, trained] : {std::pair{nb_path, *nb_result}, std::pair{svc_path, *svc_result}}) {
+        cyxwiz::ClassicModelPredictorOperator predictor;
+        Check(predictor.Configure({{"model_path", path.string()}, {"probability_columns", "true"}}, error),
+              "predictor configures with probability columns: " + error);
+        auto scored = predictor.Apply(ScoringTable(TextLabelTable(), "animal"));
+        Check(scored.ok(), "predictor writes probability columns: " + scored.status().ToString());
+        for (const char* column : {"prediction_p_apple", "prediction_p_zebra"}) {
+            const auto got = (*scored)->GetColumnByName(column);
+            const auto want = trained->GetColumnByName(column);
+            Check(got && want && got->ApproxEquals(*want), std::string("predictor reproduces ") + column + " from " +
+                                                               path.filename().string());
+        }
+    }
+
+    // An SVC saved without probabilities: the predictor says how to get them.
+    cyxwiz::ClassicModelPredictorOperator no_probabilities;
+    Check(no_probabilities.Configure({{"model_path", (dir / "svc_text.cyxclassic.json").string()},
+                                      {"probability_columns", "true"}},
+                                     error),
+          "predictor configures");
+    auto refused = no_probabilities.Apply(ScoringTable(TextLabelTable(), "animal"));
+    Check(!refused.ok() && refused.status().ToString().find("without probabilities") != std::string::npos,
+          "predictor refuses SVC probabilities the model lacks: " + refused.status().ToString());
+}
+
 void CheckPredictorRefusals(const fs::path& dir) {
     std::string error;
     cyxwiz::ClassicModelPredictorOperator no_model;
@@ -321,6 +392,7 @@ int main() {
     const fs::path svr_path = dir / "run_folder_not_made_yet" / "svr_line.cyxclassic.json";  // the writer makes the folder
     CheckPredictor(svr_path, CheckSVR(svr_path), "y", "prediction");
     CheckPredictorRefusals(dir);
+    CheckProbabilityColumns(dir);
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "classic ML operator tests passed\n";

@@ -67,11 +67,19 @@ nlohmann::json SVMModelParameters(const SVMModel& model, const SVMKernelSettings
         {"rho", model.rho},
         {"iterations", model.iterations},
         {"converged", model.converged},
+        {"prob_a", model.prob_a},
+        {"prob_b", model.prob_b},
     };
 }
 
 bool SVMClassifierOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    random_state_ = 0;
     if (!ParseClassicColumns(params, GetName(), columns_, error)) return false;
+    if (!ParseIntParam(params, "random_state", random_state_, GetName(), error)) return false;
+    if (random_state_ < 0) {
+        error = GetName() + ": random_state must be >= 0";
+        return false;
+    }
     return ParseSVMKernelSettings(params, GetName(), settings_, error);
 }
 
@@ -83,24 +91,33 @@ arrow::Result<std::shared_ptr<arrow::Table>> SVMClassifierOperator::Apply(const 
     std::string gamma_error;
     const double gamma = ClassicML::ResolveSVMGamma(data.x, settings_.gamma, &gamma_error);
     if (!(gamma > 0.0)) return arrow::Status::Invalid(GetName() + ": gamma: " + gamma_error);
-    const auto model = ClassicML::FitSVC(data.x, data.labels, static_cast<int>(data.classes.size()), settings_.C,
-                                         settings_.kernel, gamma, settings_.degree, settings_.coef0, settings_.tol);
+    auto model = ClassicML::FitSVC(data.x, data.labels, static_cast<int>(data.classes.size()), settings_.C,
+                                   settings_.kernel, gamma, settings_.degree, settings_.coef0, settings_.tol);
     if (!model.success) return arrow::Status::Invalid(GetName() + ": " + model.error_message);
     if (!model.converged)
         spdlog::warn("SVMClassifier: the solver stopped at its iteration limit before reaching tol={}", settings_.tol);
+    if (columns_.probability_columns) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        std::string probability_error;
+        if (!ClassicML::FitSVCProbability(model, data.x, data.labels, settings_.C, settings_.tol,
+                                          ClassicML::SVCProbabilitySeed(static_cast<unsigned>(random_state_)),
+                                          &probability_error))
+            return arrow::Status::Invalid(GetName() + ": probabilities: " + probability_error);
+    }
     const auto prediction = ClassicML::PredictSVC(model, data.x);
     if (!prediction.success) return arrow::Status::Invalid(GetName() + ": " + prediction.error_message);
 
     if (!columns_.model_path.empty()) {
+        auto parameters = SVMModelParameters(model, settings_);
+        if (columns_.probability_columns) parameters["random_state"] = random_state_;
         std::string error;
-        if (!SaveClassicModelArtifact(columns_.model_path, GetName(), data, SVMModelParameters(model, settings_),
-                                      &error))
+        if (!SaveClassicModelArtifact(columns_.model_path, GetName(), data, parameters, &error))
             return arrow::Status::IOError(GetName() + ": failed to save the model: " + error);
     }
     spdlog::info("SVMClassifier: fit {} rows x {} features, {} classes, {} support vectors, {} kernel", data.x.size(),
                  data.features.size(), data.classes.size(), model.support_vectors.size(), settings_.kernel);
-    return AppendClassificationPredictions(input, columns_.prediction_col, data.classes, data.numeric_labels,
-                                           prediction.labels, GetName());
+    return AppendClassicPredictions(input, columns_.prediction_col, columns_.probability_columns, data.classes,
+                                    data.numeric_labels, prediction, GetName());
 }
 
 bool SVMRegressorOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {

@@ -24,7 +24,22 @@ bool ParseClassicColumns(const std::map<std::string, std::string>& params, const
         out.prediction_col = TrimAscii(it->second);
     if (const auto it = params.find("model_path"); it != params.end() && !TrimAscii(it->second).empty())
         out.model_path = TrimAscii(it->second);
-    return true;
+    return ParseProbabilityColumns(params, op_name, out.probability_columns, error);
+}
+
+bool ParseProbabilityColumns(const std::map<std::string, std::string>& params, const std::string& op_name, bool& out,
+                             std::string& error) {
+    out = false;
+    const auto it = params.find("probability_columns");
+    if (it == params.end()) return true;
+    const std::string value = TrimAscii(it->second);
+    if (value.empty() || value == "false" || value == "0") return true;
+    if (value == "true" || value == "1") {
+        out = true;
+        return true;
+    }
+    error = op_name + ": 'probability_columns' must be true or false";
+    return false;
 }
 
 void SortClassOrder(std::vector<int>& labels, std::vector<std::string>& classes, bool numeric_labels) {
@@ -70,6 +85,37 @@ bool SaveClassicModelArtifact(const std::string& path, const std::string& model_
     };
     return artifact_json::WriteJsonFile(path, artifact_json::MakeEnvelope("cyxwiz_classic_model", model_type, model),
                                         error);
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> AppendClassicPredictions(const std::shared_ptr<arrow::Table>& input,
+                                                                     const std::string& prediction_col,
+                                                                     bool probability_columns,
+                                                                     const std::vector<std::string>& classes,
+                                                                     bool numeric_labels,
+                                                                     const ClassicPrediction& prediction,
+                                                                     const std::string& op_name) {
+    ARROW_ASSIGN_OR_RAISE(auto table, AppendClassificationPredictions(input, prediction_col, classes, numeric_labels,
+                                                                      prediction.labels, op_name));
+    if (!probability_columns) return table;
+    if (prediction.probabilities.size() != prediction.labels.size())
+        return arrow::Status::Invalid(op_name + ": this model gives no class probabilities");
+    for (size_t k = 0; k < classes.size(); ++k) {
+        const std::string name = prediction_col + "_p_" + classes[k];
+        if (table->schema()->GetFieldIndex(name) >= 0)
+            return arrow::Status::Invalid(op_name + ": probability column '" + name + "' already exists");
+        arrow::DoubleBuilder builder;
+        ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(prediction.probabilities.size())));
+        for (const auto& row : prediction.probabilities) {
+            if (row.size() != classes.size())
+                return arrow::Status::Invalid(op_name + ": probabilities and classes differ in number");
+            builder.UnsafeAppend(row[k]);
+        }
+        std::shared_ptr<arrow::Array> array;
+        ARROW_RETURN_NOT_OK(builder.Finish(&array));
+        ARROW_ASSIGN_OR_RAISE(table, table->AddColumn(table->num_columns(), arrow::field(name, arrow::float64()),
+                                                      std::make_shared<arrow::ChunkedArray>(array)));
+    }
+    return table;
 }
 
 arrow::Result<std::shared_ptr<arrow::Table>> AppendNumericPredictions(const std::shared_ptr<arrow::Table>& input,
