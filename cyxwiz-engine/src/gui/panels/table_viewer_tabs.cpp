@@ -31,6 +31,7 @@ void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
 
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
+    select_tab_ = active_tab_index_;  // bring the new tab to the front
 }
 
 TableViewerPanel::~TableViewerPanel() {
