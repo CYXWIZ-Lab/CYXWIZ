@@ -56,6 +56,7 @@ ImVec4 RoleColour(ColumnRole role) {
         case ColumnRole::Category: return t.series[0];
         case ColumnRole::DateTime: return t.series[2];
         case ColumnRole::Id:
+        case ColumnRole::Group:
         case ColumnRole::Ignore: return t.text_faint;
         default: return t.text_dim;
     }

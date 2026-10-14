@@ -50,6 +50,7 @@ ImVec4 RoleColour(ColumnRole role) {
         case ColumnRole::Category: return t.series[0];
         case ColumnRole::DateTime: return t.series[2];
         case ColumnRole::Id: return t.text_faint;
+        case ColumnRole::Group: return t.text_faint;
         case ColumnRole::Ignore: return t.text_faint;
         default: return t.text_dim;
     }
@@ -68,8 +69,9 @@ bool RoleChip(const char* label, const ImVec4& colour) {
     return clicked;
 }
 
-constexpr ColumnRole kRoles[] = {ColumnRole::Id,   ColumnRole::Target,   ColumnRole::Numeric, ColumnRole::Category, ColumnRole::DateTime,
-                                 ColumnRole::Text, ColumnRole::FilePath, ColumnRole::Weight,  ColumnRole::Ignore};
+constexpr ColumnRole kRoles[] = {ColumnRole::Id,       ColumnRole::Group, ColumnRole::Target,   ColumnRole::Numeric,
+                                 ColumnRole::Category, ColumnRole::DateTime, ColumnRole::Text, ColumnRole::FilePath,
+                                 ColumnRole::Weight,   ColumnRole::Ignore};
 
 }  // namespace
 

@@ -487,7 +487,7 @@ bool RoleFits(ColumnRole role, FieldNeed need) {
         case FieldNeed::Number: return role == ColumnRole::Numeric || role == ColumnRole::Target || role == ColumnRole::Weight;
         case FieldNeed::Category:
             return role == ColumnRole::Category || role == ColumnRole::Target || role == ColumnRole::Text || role == ColumnRole::DateTime ||
-                   role == ColumnRole::Id || role == ColumnRole::FilePath;
+                   role == ColumnRole::Id || role == ColumnRole::Group || role == ColumnRole::FilePath;
     }
     return true;
 }

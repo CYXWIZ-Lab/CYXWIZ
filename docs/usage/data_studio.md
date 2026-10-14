@@ -142,9 +142,11 @@ range).
 
 ### Column roles
 
-Each column has one role: **ID**, **Target**, **Numeric**, **Category**,
-**Date**, **Text**, **File path**, **Weight** or **Ignore**. The *from*
-column says who decided:
+Each column has one role: **ID**, **Group**, **Target**, **Numeric**,
+**Category**, **Date**, **Text**, **File path**, **Weight** or **Ignore**.
+**Group** marks rows that belong together and must stay in one split (a
+family of passages, a document, a patient); it is never inferred, so set it
+here. The *from* column says who decided:
 
 - **contract**: the graph. The Data Input's label column is the Target. It
   cannot be changed here; change the label in the Data Input.

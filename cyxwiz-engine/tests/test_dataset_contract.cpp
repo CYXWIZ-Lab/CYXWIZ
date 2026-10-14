@@ -99,6 +99,9 @@ int main() {
     Check(RoleFromId("file_path") == ColumnRole::FilePath && !RoleFromId("x") && std::string(RoleLabel(ColumnRole::DateTime)) == "Date" &&
               std::string(RoleSourceLabel(RoleSource::User)) == "you" && !IsFeatureRole(ColumnRole::Id) && IsFeatureRole(ColumnRole::Category),
           "role names");
+    Check(RoleFromId("group") == ColumnRole::Group && std::string(RoleLabel(ColumnRole::Group)) == "Group" &&
+              !IsFeatureRole(ColumnRole::Group),
+          "the group role: saved as group, not a feature");
 
     // The project store: round trip, missing texts, clear, a broken file is not overwritten.
     const fs::path root = fs::temp_directory_path() / "cyxwiz_test_roles";

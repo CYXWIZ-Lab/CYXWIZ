@@ -22,14 +22,17 @@
 
 namespace cyxwiz {
 
-enum class ColumnRole { Id, Target, Numeric, Category, DateTime, Text, FilePath, Weight, Ignore };
+// Group: rows that belong together (a family, a document, a patient) and must
+// stay in one split; ML readiness counts groups found in two splits. Set by
+// the user, never inferred.
+enum class ColumnRole { Id, Group, Target, Numeric, Category, DateTime, Text, FilePath, Weight, Ignore };
 enum class RoleSource { Contract, User, Inferred };
 
 const char* RoleLabel(ColumnRole role);         // "ID", "Target", "Numeric", ...
 const char* RoleId(ColumnRole role);            // "id", "target", ... (saved)
 std::optional<ColumnRole> RoleFromId(const std::string& id);
 const char* RoleSourceLabel(RoleSource source); // "contract", "you", "inferred"
-// A feature for models and dashboards: not an ID, the target, a weight or ignored.
+// A feature for models and dashboards: not an ID, a group, the target, a weight or ignored.
 bool IsFeatureRole(ColumnRole role);
 
 // What the profiler knows about a column (the facts inference reads).
