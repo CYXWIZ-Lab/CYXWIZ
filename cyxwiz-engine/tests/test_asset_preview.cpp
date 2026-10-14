@@ -5,6 +5,13 @@
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
+#include <arrow/ipc/writer.h>
+#ifdef CYXWIZ_HAS_HDF5
+#include <highfive/H5File.hpp>
+#endif
+#ifdef CYXWIZ_HAS_XLSX
+#include <OpenXLSX.hpp>
+#endif
 
 #include <cstdio>
 #include <filesystem>
@@ -32,9 +39,12 @@ void WriteText(const fs::path& path, const std::string& text) {
 
 }  // namespace
 
-int main() {
-    const fs::path dir = fs::temp_directory_path() / "cyxwiz_asset_preview_test";
-    fs::remove_all(dir);
+int main(int argc, char** argv) {
+    // --keep <dir>: write the fixtures there and leave them (sample files for
+    // a screen check of the Asset Browser preview).
+    const bool keep = argc > 2 && std::string(argv[1]) == "--keep";
+    const fs::path dir = keep ? fs::path(argv[2]) : fs::temp_directory_path() / "cyxwiz_asset_preview_test";
+    if (!keep) fs::remove_all(dir);
     fs::create_directories(dir);
 
     // Kinds and labels.
@@ -123,7 +133,65 @@ int main() {
     peek = PeekFile((dir / "empty.csv").string());
     Check(!peek.ok && peek.error == "The file is empty.", "empty csv");
 
-    fs::remove_all(dir);
+    // Arrow IPC (Feather v2): row count from the footer, rows from the first batch.
+    {
+        arrow::Int64Builder ids;
+        for (int i = 0; i < 30; ++i) (void)ids.Append(i * 10);
+        std::shared_ptr<arrow::Array> a;
+        (void)ids.Finish(&a);
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("value", arrow::int64())}), {a});
+        auto out = arrow::io::FileOutputStream::Open((dir / "t.feather").string());
+        Check(out.ok(), "feather fixture opened");
+        if (out.ok()) {
+            auto writer = arrow::ipc::MakeFileWriter(*out, table->schema());
+            Check(writer.ok() && (*writer)->WriteTable(*table, 8).ok() && (*writer)->Close().ok(), "feather written");
+            (void)(*out)->Close();
+        }
+    }
+    peek = PeekFile((dir / "t.feather").string());
+    Check(peek.ok && peek.table && peek.total_rows == 30 && peek.rows.size() == 8 && peek.rows[2][0] == "20",
+          "feather: 30 rows from the footer, the first batch shown: " + peek.error);
+
+#ifdef CYXWIZ_HAS_HDF5
+    // HDF5: the top-level objects, metadata only.
+    {
+        HighFive::File file((dir / "t.h5").string(), HighFive::File::Overwrite);
+        file.createGroup("group");
+        std::vector<std::vector<float>> data(4, std::vector<float>(3, 1.0f));
+        file.createDataSet("features", data);
+    }
+    peek = PeekFile((dir / "t.h5").string());
+    Check(peek.ok && peek.lines.size() == 2 && peek.line_noun == "object", "hdf5 lists two objects: " + peek.note);
+    bool saw_dataset = false;
+    for (const auto& line : peek.lines) saw_dataset |= line.find("features") != std::string::npos && line.find("4 x 3") != std::string::npos;
+    Check(saw_dataset, "hdf5 dataset line shows its shape");
+#endif
+
+#ifdef CYXWIZ_HAS_XLSX
+    // Excel: the first sheet of a small workbook.
+    {
+        OpenXLSX::XLDocument doc;
+        doc.create((dir / "t.xlsx").string(), OpenXLSX::XLForceOverwrite);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+        sheet.cell("A1").value() = "segment";
+        sheet.cell("B1").value() = "spend";
+        for (int r = 2; r <= 6; ++r) {
+            sheet.cell("A" + std::to_string(r)).value() = r % 2 ? "east" : "delta";
+            sheet.cell("B" + std::to_string(r)).value() = r * 1.5;
+        }
+        doc.save();
+        doc.close();
+    }
+    peek = PeekFile((dir / "t.xlsx").string());
+    Check(peek.ok && peek.table && peek.total_rows == 5 && peek.columns.size() == 2 && peek.rows[0][0] == "delta",
+          "xlsx: first sheet rows: " + peek.note);
+    PeekLimits tiny;
+    tiny.max_workbook_bytes = 16;
+    peek = PeekFile((dir / "t.xlsx").string(), tiny);
+    Check(peek.ok && !peek.table && peek.note.find("Large workbook") != std::string::npos, "a large workbook is not read");
+#endif
+
+    if (!keep) fs::remove_all(dir);
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

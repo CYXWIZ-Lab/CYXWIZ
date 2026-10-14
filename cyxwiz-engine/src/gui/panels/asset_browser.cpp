@@ -832,7 +832,17 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // Render tree node with icon
     // Keyed by path, not by address: a rescan builds new items, and an address
     // key would make ImGui forget which folders were open.
+    // Rows in the theme's selection / hover washes: the Unreal preset's
+    // selected Header is a grey barely off the panel while its hovered row is
+    // a 50 % orange, so the clicked file glowed and the selection vanished.
+    {
+        const ui::Tokens& tokens = ui::CurrentTokens();
+        ImGui::PushStyleColor(ImGuiCol_Header, ui::WithAlpha(tokens.accent, 0.28f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tokens.hover);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.accent, 0.36f));
+    }
     bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s", "");
+    ImGui::PopStyleColor(3);
     {
         // Icon in its kind's colour, then the name. Drawn, not submitted, so
         // the tree node stays the last item for the context menu and drag.
@@ -1923,6 +1933,10 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
         RenderPreviewTable();
     } else if (!file_peek_.lines.empty()) {
         RenderPreviewLines();
+    } else if (!file_peek_.note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", file_peek_.note.c_str());
+        ImGui::PopTextWrapPos();
     } else if (kind == assets::FileKind::Image) {
         const float height = std::max(120.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f);
         ImGui::BeginChild("##image_preview", ImVec2(0.0f, height));
@@ -2024,7 +2038,8 @@ void AssetBrowserPanel::RenderPreviewLines() {
     for (const auto& line : file_peek_.lines) ImGui::TextUnformatted(line.c_str());
     if (code) ImGui::PopFont();
     ImGui::EndChild();
-    if (file_peek_.more_lines) ImGui::TextDisabled("First %d lines.", static_cast<int>(file_peek_.lines.size()));
+    if (file_peek_.more_lines)
+        ImGui::TextDisabled("First %d %ss.", static_cast<int>(file_peek_.lines.size()), file_peek_.line_noun.c_str());
 }
 
 void AssetBrowserPanel::RenderPreviewActions(const AssetItem& item) {

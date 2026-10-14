@@ -141,9 +141,9 @@ gui::MLNode MakeCustomPaddingNode() {
 gui::MLNode MakeFactoryOnlyUnsupportedNode() {
     gui::MLNode node;
     node.id = 6;
-    node.type = gui::NodeType::SVMClassifier;
+    node.type = gui::NodeType::UMAPNode;
     node.category = gui::NodeCategory::Analytics;
-    node.name = "Factory-only SVM";
+    node.name = "Factory-only UMAP";
     return node;
 }
 

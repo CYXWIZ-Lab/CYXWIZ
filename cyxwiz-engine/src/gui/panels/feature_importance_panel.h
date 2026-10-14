@@ -51,6 +51,8 @@ public:
 private:
     void RenderToolbar();
     void RenderModel(bool has_model, const ActiveModelInfo& info, size_t layers);
+    // Once per picked dataset: the model's label column becomes the target.
+    void SuggestTarget(const std::string& label_column);
     void RenderDataSelector();
     void RenderConfiguration(bool has_model);
     void RenderLoadingIndicator();
@@ -74,6 +76,7 @@ private:
     std::vector<std::string> feature_columns_;
     std::vector<int> selected_features_;
     int target_column_ = -1;
+    bool target_suggested_ = false;  // the model's label column was offered for this dataset
 
     // Configuration
     int method_ = 0;  // 0=Permutation, 1=Drop-Column, 2=Weight

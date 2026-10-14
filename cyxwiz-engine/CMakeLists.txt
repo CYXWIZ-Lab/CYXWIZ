@@ -260,6 +260,11 @@ set(ENGINE_SOURCES
     src/core/node_executors/random_forest_model.cpp          # Tool-to-Node Band 1
     src/core/node_executors/random_forest_trainer.cpp        # Tool-to-Node Band 1
     src/core/node_executors/random_forest_operator.cpp       # Tool-to-Node Band 1
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp      # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_trainer.cpp    # Tool-to-Node Band 1
     src/core/node_executors/gradient_boosting_operator.cpp   # Tool-to-Node Band 1
@@ -354,7 +359,6 @@ set(ENGINE_SOURCES
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
-    src/gui/properties_metadata_editor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_parameter_rules.cpp
@@ -779,6 +783,11 @@ set(ENGINE_HEADERS
     src/core/node_executors/regression_operators.h
     src/core/node_executors/model_artifact_json_io.h
     src/core/node_executors/regression_model_artifact.h
+    src/core/node_executors/classic_model_common.h
+    src/core/node_executors/naive_bayes_operator.h
+    src/core/node_executors/knn_operator.h
+    src/core/node_executors/logistic_regression_operator.h
+    src/core/node_executors/svm_operators.h
     src/core/node_executors/regression_model_predictor_operator.h
     src/core/node_executors/preprocessing_operators.h
     src/core/node_executors/time_series_analysis_operators.h
@@ -2369,6 +2378,42 @@ set_target_properties(test_random_forest_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Classic ML Operators (TOFIX145 Group C) =====
+add_executable(test_classic_ml_operators
+    tests/test_classic_ml_operators.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
+)
+
+target_include_directories(test_classic_ml_operators PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_classic_ml_operators PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_classic_ml_operators PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_classic_ml_operators PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+add_test(NAME classic_ml_operators COMMAND test_classic_ml_operators)
+
 # ===== Test: Gradient Boosting Operator =====
 add_executable(test_gradient_boosting_operator
     tests/test_gradient_boosting_operator.cpp
@@ -2494,6 +2539,11 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2747,6 +2797,11 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2840,6 +2895,11 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -2930,6 +2990,11 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -3533,6 +3598,11 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -5355,8 +5425,11 @@ add_test(NAME test_predictions_table COMMAND test_test_predictions_table)
 add_executable(test_asset_preview
     tests/test_asset_preview.cpp
     src/core/asset_preview.cpp
+    src/utils/hdf5_browser_page.cpp
 )
-target_link_libraries(test_asset_preview PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
+target_include_directories(test_asset_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_asset_preview PRIVATE Arrow::arrow_shared Parquet::parquet_shared spdlog::spdlog fmt::fmt)
+cyxwiz_target_data_convert(test_asset_preview)
 if(WIN32)
     target_compile_definitions(test_asset_preview PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -5523,6 +5596,41 @@ set_target_properties(test_computation_truth_clustering PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME clustering_parity COMMAND test_computation_truth_clustering)
+
+# ===== Test: classic ML against scikit-learn (TOFIX145 Group C, classic ML on the device) =====
+set(CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/classic_ml_sklearn.json"
+)
+add_executable(test_computation_truth_classic_ml
+    tests/computation_truth/test_computation_truth_classic_ml.cpp
+)
+target_include_directories(test_computation_truth_classic_ml PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_classic_ml PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_classic_ml PRIVATE
+    CYXWIZ_CLASSIC_ML_FIXTURE="${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+)
+add_custom_target(copy_test_computation_truth_classic_ml_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_classic_ml>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_classic_ml>/computation_truth_fixtures/classic_ml_sklearn.json"
+    SOURCES "${CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_classic_ml copy_test_computation_truth_classic_ml_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_classic_ml PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_classic_ml PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME classic_ml_sklearn_parity COMMAND test_computation_truth_classic_ml)
 
 # ===== Test: PCA / t-SNE / UMAP against PyTorch / scipy references (TOFIX140 dimensionality reduction on the device) =====
 set(CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE
@@ -6502,6 +6610,11 @@ add_executable(test_engine_node_parity
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/naive_bayes_operator.cpp
+    src/core/node_executors/knn_operator.cpp
+    src/core/node_executors/logistic_regression_operator.cpp
+    src/core/node_executors/svm_operators.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp

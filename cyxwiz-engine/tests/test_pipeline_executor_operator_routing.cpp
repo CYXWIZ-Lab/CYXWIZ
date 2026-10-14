@@ -301,10 +301,13 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "Join",
         "JSONPathExtractor",
         "KMeansCluster",
+        "KNNClassifier",
         "LabelEncoder",
         "LinearRegressionNode",
+        "LogisticRegressionNode",
         "LogTransform",
         "MathFormula",
+        "NaiveBayesClassifier",
         "NERSequenceBuilder",
         "NERTagVocabulary",
         "OrdinalEncoder",
@@ -334,6 +337,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "StationarityTest",
         "StandardScaler",
         "StringManipulation",
+        "SVMClassifier",
+        "SVMRegressor",
         "TableCropper",
         "TargetEncoder",
         "TreeModelPredictor",
@@ -2357,6 +2362,14 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_random_forest_model.json";
     const fs::path gradient_boosting_model_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_gradient_boosting_model.json";
+    const fs::path naive_bayes_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_naive_bayes_model.json";
+    const fs::path knn_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_knn_model.json";
+    const fs::path logistic_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_logistic_model.json";
+    const fs::path svm_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_svm_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -2880,6 +2893,155 @@ int main(int argc, char** argv) {
     Check(fs::exists(gradient_boosting_model_path),
           "GradientBoostingClassifier model_path should write a model artifact");
 
+    const std::string naive_bayes_json =
+        R"({"nodes":[)"
+        R"({"id":9601,"type":"DataInput","name":"BayesInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9602,"type":"NaiveBayesClassifier","name":"Bayes","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"nb_pred",)"
+        R"("model_path":")" +
+        JsonEscapePath(naive_bayes_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9601,"end_node":9602}]})";
+
+    cyxwiz::PipelineExecutor naive_bayes_executor;
+    Check(naive_bayes_executor.ExecutePipeline(naive_bayes_json),
+          "PipelineExecutor routes NaiveBayesClassifier through "
+          "PipelineOperatorFactory: " +
+              naive_bayes_executor.GetLastError());
+    auto naive_bayes_output =
+        registry.GetArrowDataset("ds_operator_NaiveBayesClassifier_9602");
+    auto naive_bayes_table =
+        naive_bayes_output ? naive_bayes_output->GetArrowTable() : nullptr;
+    Check(naive_bayes_table != nullptr && naive_bayes_table->num_rows() == 4 &&
+              naive_bayes_table->schema()->GetFieldIndex("nb_pred") >= 0,
+          "NaiveBayesClassifier operator appends its prediction column");
+    Check(naive_bayes_table != nullptr &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 0) == 0.0 &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 3) == 1.0,
+          "NaiveBayesClassifier predicts the separable training rows");
+    Check(fs::exists(naive_bayes_model_path),
+          "NaiveBayesClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_NaiveBayesClassifier_9602");
+    fs::remove(naive_bayes_model_path);
+
+    const std::string knn_json =
+        R"({"nodes":[)"
+        R"({"id":9605,"type":"DataInput","name":"KnnInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9606,"type":"KNNClassifier","name":"Knn","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"knn_pred",)"
+        R"("n_neighbors":"1","model_path":")" +
+        JsonEscapePath(knn_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9605,"end_node":9606}]})";
+
+    cyxwiz::PipelineExecutor knn_executor;
+    Check(knn_executor.ExecutePipeline(knn_json),
+          "PipelineExecutor routes KNNClassifier through PipelineOperatorFactory: " +
+              knn_executor.GetLastError());
+    auto knn_output = registry.GetArrowDataset("ds_operator_KNNClassifier_9606");
+    auto knn_table = knn_output ? knn_output->GetArrowTable() : nullptr;
+    Check(knn_table != nullptr && knn_table->num_rows() == 4 &&
+              ReadNumericValue(knn_table, "knn_pred", 0) == 0.0 &&
+              ReadNumericValue(knn_table, "knn_pred", 3) == 1.0,
+          "KNNClassifier (k=1) predicts each training row's own class");
+    Check(fs::exists(knn_model_path),
+          "KNNClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_KNNClassifier_9606");
+    fs::remove(knn_model_path);
+
+    const std::string logistic_json =
+        R"({"nodes":[)"
+        R"({"id":9609,"type":"DataInput","name":"LogisticInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9610,"type":"LogisticRegressionNode","name":"Logistic","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"lr_pred",)"
+        R"("C":"100","model_path":")" +
+        JsonEscapePath(logistic_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9609,"end_node":9610}]})";
+
+    cyxwiz::PipelineExecutor logistic_executor;
+    Check(logistic_executor.ExecutePipeline(logistic_json),
+          "PipelineExecutor routes LogisticRegressionNode through PipelineOperatorFactory: " +
+              logistic_executor.GetLastError());
+    auto logistic_output = registry.GetArrowDataset("ds_operator_LogisticRegressionNode_9610");
+    auto logistic_table = logistic_output ? logistic_output->GetArrowTable() : nullptr;
+    Check(logistic_table != nullptr && logistic_table->num_rows() == 4 &&
+              ReadNumericValue(logistic_table, "lr_pred", 0) == 0.0 &&
+              ReadNumericValue(logistic_table, "lr_pred", 3) == 1.0,
+          "LogisticRegressionNode predicts the separable training rows");
+    Check(fs::exists(logistic_model_path),
+          "LogisticRegressionNode model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_LogisticRegressionNode_9610");
+    fs::remove(logistic_model_path);
+
+    const std::string svm_json =
+        R"({"nodes":[)"
+        R"({"id":9613,"type":"DataInput","name":"SvmInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9614,"type":"SVMClassifier","name":"Svm","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"svm_pred",)"
+        R"("kernel":"linear","C":"10","model_path":")" +
+        JsonEscapePath(svm_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9613,"end_node":9614}]})";
+
+    cyxwiz::PipelineExecutor svm_executor;
+    Check(svm_executor.ExecutePipeline(svm_json),
+          "PipelineExecutor routes SVMClassifier through PipelineOperatorFactory: " +
+              svm_executor.GetLastError());
+    auto svm_output = registry.GetArrowDataset("ds_operator_SVMClassifier_9614");
+    auto svm_table = svm_output ? svm_output->GetArrowTable() : nullptr;
+    Check(svm_table != nullptr && svm_table->num_rows() == 4 &&
+              ReadNumericValue(svm_table, "svm_pred", 0) == 0.0 &&
+              ReadNumericValue(svm_table, "svm_pred", 3) == 1.0,
+          "SVMClassifier predicts the separable training rows");
+    Check(fs::exists(svm_model_path),
+          "SVMClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_SVMClassifier_9614");
+    fs::remove(svm_model_path);
+
+    // SVR on the 4-row table: x, z -> label as a number; a linear kernel with
+    // a large C fits the straight line within epsilon.
+    const std::string svr_json =
+        R"({"nodes":[)"
+        R"({"id":9617,"type":"DataInput","name":"SvrInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9618,"type":"SVMRegressor","name":"Svr","parameters":{)"
+        R"("target_col":"label","feature_cols":"x","prediction_col":"svr_pred",)"
+        R"("kernel":"linear","C":"100","epsilon":"0.05","model_path":")" +
+        JsonEscapePath(svm_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9617,"end_node":9618}]})";
+
+    cyxwiz::PipelineExecutor svr_executor;
+    Check(svr_executor.ExecutePipeline(svr_json),
+          "PipelineExecutor routes SVMRegressor through PipelineOperatorFactory: " +
+              svr_executor.GetLastError());
+    auto svr_output = registry.GetArrowDataset("ds_operator_SVMRegressor_9618");
+    auto svr_table = svr_output ? svr_output->GetArrowTable() : nullptr;
+    Check(svr_table != nullptr && svr_table->num_rows() == 4 &&
+              svr_table->schema()->GetFieldIndex("svr_pred") >= 0 &&
+              ReadNumericValue(svr_table, "svr_pred", 0) < 0.5 &&
+              ReadNumericValue(svr_table, "svr_pred", 3) > 0.5,
+          "SVMRegressor appends a numeric prediction that follows the target");
+    Check(fs::exists(svm_model_path),
+          "SVMRegressor model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_SVMRegressor_9618");
+    fs::remove(svm_model_path);
+
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
         R"({"id":224,"type":"DataInput","name":"PredictInput","parameters":{)"
@@ -3176,7 +3338,6 @@ int main(int argc, char** argv) {
 
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
-        {"SVMRegressor", false},
         {"TrainTestSplit", false},
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
@@ -4296,6 +4457,68 @@ int main(int argc, char** argv) {
               "missing required parameter 'target_col'") != std::string::npos,
           "GradientBoostingClassifier missing target_col validation should be specific: " +
               missing_gradient_boosting_target_executor.GetLastError());
+
+    const std::string missing_naive_bayes_target_json =
+        R"({"nodes":[)"
+        R"({"id":9603,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9604,"type":"NaiveBayesClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":9603,"end_node":9604}]})";
+
+    cyxwiz::PipelineExecutor missing_naive_bayes_target_executor;
+    Check(!missing_naive_bayes_target_executor.ExecutePipeline(
+              missing_naive_bayes_target_json) &&
+              missing_naive_bayes_target_executor.GetLastError().find(
+                  "missing required parameter 'target_col'") != std::string::npos,
+          "NaiveBayesClassifier missing target_col should fail validation: " +
+              missing_naive_bayes_target_executor.GetLastError());
+
+    const std::string bad_knn_metric_json =
+        R"({"nodes":[)"
+        R"({"id":9607,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9608,"type":"KNNClassifier","name":"BadMetric","parameters":{)"
+        R"("target_col":"y","metric":"chebyshev"}})"
+        R"(],"links":[{"start_node":9607,"end_node":9608}]})";
+
+    cyxwiz::PipelineExecutor bad_knn_metric_executor;
+    Check(!bad_knn_metric_executor.ExecutePipeline(bad_knn_metric_json) &&
+              bad_knn_metric_executor.GetLastError().find("metric") != std::string::npos,
+          "KNNClassifier unknown metric should fail validation: " +
+              bad_knn_metric_executor.GetLastError());
+
+    const std::string bad_logistic_c_json =
+        R"({"nodes":[)"
+        R"({"id":9611,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9612,"type":"LogisticRegressionNode","name":"BadC","parameters":{)"
+        R"("target_col":"y","C":"0"}})"
+        R"(],"links":[{"start_node":9611,"end_node":9612}]})";
+
+    cyxwiz::PipelineExecutor bad_logistic_c_executor;
+    Check(!bad_logistic_c_executor.ExecutePipeline(bad_logistic_c_json) &&
+              bad_logistic_c_executor.GetLastError().find("C") != std::string::npos,
+          "LogisticRegressionNode C = 0 should fail validation: " +
+              bad_logistic_c_executor.GetLastError());
+
+    const std::string bad_svm_kernel_json =
+        R"({"nodes":[)"
+        R"({"id":9615,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9616,"type":"SVMClassifier","name":"BadKernel","parameters":{)"
+        R"("target_col":"y","kernel":"laplacian"}})"
+        R"(],"links":[{"start_node":9615,"end_node":9616}]})";
+
+    cyxwiz::PipelineExecutor bad_svm_kernel_executor;
+    Check(!bad_svm_kernel_executor.ExecutePipeline(bad_svm_kernel_json) &&
+              bad_svm_kernel_executor.GetLastError().find("kernel") != std::string::npos,
+          "SVMClassifier unknown kernel should fail validation: " +
+              bad_svm_kernel_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"

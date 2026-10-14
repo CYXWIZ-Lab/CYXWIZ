@@ -709,6 +709,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML baseline for polynomial regression.");
     apply_workflow_lane_guidance(
+        NodeType::SVMRegressor,
+        "classic_ml",
+        "Table-path classical ML kernel regression for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::DecisionTreeClassifier,
         "classic_ml",
         "Table-path classical ML classifier for numeric tabular features.");
@@ -720,6 +724,22 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::GradientBoostingClassifier,
         "classic_ml",
         "Table-path boosted classical ML classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::NaiveBayesClassifier,
+        "classic_ml",
+        "Table-path classical ML probabilistic classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::KNNClassifier,
+        "classic_ml",
+        "Table-path classical ML nearest-neighbour classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::LogisticRegressionNode,
+        "classic_ml",
+        "Table-path classical ML linear classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::SVMClassifier,
+        "classic_ml",
+        "Table-path classical ML kernel classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
@@ -1150,7 +1170,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
         {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
-        {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
@@ -1928,7 +1947,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Learns decision rules from tabular features and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
-         {"Model", PinType::Parameters, true, "Fitted tree model; link it to a Plot to draw the trees"}},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
@@ -1944,7 +1963,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits a bagged ensemble of decision trees and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
-         {"Model", PinType::Parameters, true, "Fitted tree model; link it to a Plot to draw the trees"}},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
@@ -1963,7 +1982,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits one-vs-rest boosted regression trees and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
-         {"Model", PinType::Parameters, true, "Fitted tree model; link it to a Plot to draw the trees"}},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
@@ -1986,54 +2005,69 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
-        {"svm", "support", "vector"}, 0, false,
-        "Blocked legacy SVM classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"kernel", "enum", "rbf", "Legacy kernel selection retained for saved graphs", {"linear", "rbf", "poly", "sigmoid"}, "", "Kernel", "Compatibility"},
-         {"C", "float", "1.0", "Legacy regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"gamma", "enum", "scale", "Legacy kernel coefficient retained for saved graphs", {"scale", "auto"}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"svm", "svc", "support", "vector", "kernel", "classifier", "classic ml"}, 0, false, "Support vector classifier",
+        "Fits a kernel support vector machine on the selected device (scikit-learn's SVC; one-vs-one for more "
+        "than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVM (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for margin violations; smaller is a softer, more regularised margin", {}, "", "Regularisation (C)", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
-        {"knn", "nearest", "neighbor"}, 0, false,
-        "Blocked legacy K-nearest-neighbors classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"n_neighbors", "int", "5", "Legacy neighbor count retained for saved graphs", {}, "1-100", "Neighbors", "Compatibility"},
-         {"weights", "enum", "uniform", "Legacy neighbor weighting retained for saved graphs", {"uniform", "distance"}, "", "Weights", "Compatibility"},
-         {"metric", "enum", "euclidean", "Legacy distance metric retained for saved graphs", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"knn", "nearest", "neighbor", "neighbour", "classifier", "classic ml"}, 0, false, "k-nearest neighbours classifier",
+        "Classifies each row by the votes of its nearest training rows, computed on the selected device "
+        "(scikit-learn's KNeighborsClassifier), and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted KNN model (its training rows and settings)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"n_neighbors", "int", "5", "Training rows that vote for each prediction", {}, "", "Neighbours", "Model"},
+         {"weights", "enum", "uniform", "Every neighbour votes equally, or closer neighbours count more (1/distance)", {"uniform", "distance"}, "", "Weights", "Model"},
+         {"metric", "enum", "euclidean", "Distance between rows", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
-        {"naive", "bayes", "classifier"}, 0, false,
-        "Blocked legacy Gaussian Naive Bayes preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"var_smoothing", "float", "1e-9", "Legacy Gaussian variance smoothing retained for saved graphs", {}, "", "Variance smoothing", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"naive", "bayes", "gaussian", "classifier", "classic ml"}, 0, false, "Gaussian naive Bayes classifier",
+        "Fits scikit-learn's Gaussian naive Bayes on the selected device (per-class means and variances) and "
+        "appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted naive Bayes model (class means, variances and priors)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"var_smoothing", "float", "1e-9", "Share of the largest feature variance added to every variance (scikit-learn var_smoothing)", {}, "", "Variance smoothing", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
-        {"logistic", "regression", "classifier"}, 0, false,
-        "Blocked legacy logistic-regression classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, probability output, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"C", "float", "1.0", "Legacy inverse regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"solver", "enum", "lbfgs", "Legacy solver selection retained for saved graphs", {"lbfgs"}, "", "Solver", "Compatibility"},
-         {"max_iter", "int", "100", "Legacy iteration limit retained for saved graphs", {}, "1-2147483647", "Maximum iterations", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"logistic", "regression", "classifier", "softmax", "classic ml"}, 0, false, "Logistic regression classifier",
+        "Fits an L2-regularised logistic regression on the selected device (scikit-learn's LogisticRegression with "
+        "lbfgs; softmax for more than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted logistic model (coefficients and intercepts)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Inverse of the L2 regularisation strength; smaller is stronger", {}, "", "Regularisation (C)", "Model"},
+         {"max_iter", "int", "100", "Most L-BFGS iterations; the log warns when the fit stops before tol", {}, "", "Maximum iterations", "Model"},
+         {"tol", "float", "1e-4", "Stop when the largest gradient entry is at most this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,
@@ -2041,7 +2075,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits ordinary least squares from numeric table columns and appends Float32 prediction and residual columns.", "",
         {{"Data", PinType::Dataset, true, "Table containing numeric predictor and target columns"}},
         {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
-         {"Model", PinType::Parameters, true, "Reusable fitted linear-regression artifact"}},
+         {"Model", PinType::Parameters, false, "Reusable fitted linear-regression artifact"}},
         {{"feature_cols", "string", "", "Comma-separated numeric predictor columns", {}, "", "Predictor columns", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
          {"fit_intercept", "bool", "true", "Include a fitted intercept term", {}, "", "Fit intercept", "Fit Options", false, false}},
@@ -2052,10 +2086,30 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits one numeric predictor as powers from degree one through the selected degree, then appends Float32 prediction and residual columns.", "",
         {{"Data", PinType::Dataset, true, "Table containing one numeric predictor and a numeric target column"}},
         {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
-         {"Model", PinType::Parameters, true, "Reusable fitted polynomial-regression artifact"}},
+         {"Model", PinType::Parameters, false, "Reusable fitted polynomial-regression artifact"}},
         {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
          {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", ICON_FA_BORDER_ALL,
+        {"svm", "svr", "support", "vector", "kernel", "regression", "classic ml"}, 0, false, "Support vector regression",
+        "Fits epsilon-insensitive kernel support vector regression on the selected device (scikit-learn's SVR) and "
+        "appends a numeric prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with numeric features and a numeric target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVR (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Numeric target column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for errors beyond epsilon; smaller is smoother", {}, "", "Regularisation (C)", "Model"},
+         {"epsilon", "float", "0.1", "Errors smaller than this cost nothing (the width of the tube)", {}, "", "Epsilon", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RegressionModelPredictor, NodeCategory::Analytics, "Regression Model Predictor", ICON_FA_FILE_IMPORT,

@@ -367,13 +367,19 @@ bool ShouldAuditRuntimeParametersAgainstMetadata(
                gui::properties_contract::PanelContractPath::MetadataRenderer;
 }
 
+// Parameter names say what they are; "C" is allowed as scikit-learn's own
+// name for inverse regularisation (Logistic Regression, SVM).
+bool IsDescriptiveParameterName(const std::string& name) {
+    return name.size() > 1 || name == "C";
+}
+
 void CheckMetadataHasRuntimeParameter(
     cyxwiz::NodeMetadataRegistry& metadata,
     const char* legacy_type_name,
     const char* parameter_name,
     const char* capability_kind,
     bool metadata_renderer_only = true) {
-    Check(parameter_name != nullptr && std::string(parameter_name).size() > 1,
+    Check(parameter_name != nullptr && IsDescriptiveParameterName(parameter_name),
           std::string("runtime parameter name is too weak: ") +
               (legacy_type_name ? legacy_type_name : "(null)"));
 
@@ -2602,80 +2608,155 @@ void CheckClassicalRegressionFamilyContract(
     Check(predictor_support.required_input_count == 2,
           "RegressionModelPredictor should require Data and Model links");
 
-    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMRegressor);
-    Check(svm != nullptr && svm->IsTemplate() &&
-              cyxwiz::ResolvePipelineRuntimeSupport(
-                  gui::NodeType::SVMRegressor).mode ==
-                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
-              cyxwiz::PipelineOperatorFactory::Instance().Create(
-                  gui::NodeType::SVMRegressor) == nullptr,
-          "SVMRegressor should remain blocked without a runtime owner");
+    const auto* svr = metadata.GetMetadata(gui::NodeType::SVMRegressor);
+    Check(svr != nullptr && svr->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              svr->inputs.size() == 1 && HasInputType(svr, "Data", gui::PinType::Dataset) &&
+              HasOutputType(svr, "Predictions", gui::PinType::Dataset) &&
+              HasOutputType(svr, "Model", gui::PinType::Parameters) &&
+              svr->parameters.size() == 11 &&
+              ParameterMatches(svr, "epsilon", "float", "0.1") &&
+              ParameterMatches(svr, "kernel", "enum", "rbf") &&
+              ParameterMatches(svr, "gamma", "string", "scale"),
+          "SVMRegressor should expose the table contract and every consumed field");
+    CheckRuntimeOwnerContract(
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMRegressor),
+        cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+        "SVMRegressor");
+    auto svr_op = cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::SVMRegressor);
+    std::string svr_error;
+    Check(svr_op && svr_op->Configure({{"target_col", "y"}}, svr_error) &&
+              !svr_op->Configure({{"target_col", "y"}, {"epsilon", "-0.1"}}, svr_error),
+          "SVMRegressor configures from defaults and refuses a negative epsilon");
 }
 
-void CheckBlockedClassifierFamilyContract(
+// TOFIX145 Group C: the classic ML classifiers are table-path operators like
+// the tree family: Data in, Predictions plus the saved Model out.
+// The fitted model is always saved, so a graph need not consume the Model pin:
+// it is optional, or the compiler fails every graph that only uses Predictions.
+bool ModelOutputOptional(const cyxwiz::NodeMetadata* meta) {
+    if (!meta) return false;
+    for (const auto& output : meta->outputs) {
+        if (output.name == "Model") return !output.required;
+    }
+    return false;
+}
+
+void CheckModelOutputsOptional(cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::DecisionTreeClassifier, gui::NodeType::RandomForestClassifier,
+                            gui::NodeType::GradientBoostingClassifier, gui::NodeType::NaiveBayesClassifier,
+                            gui::NodeType::KNNClassifier, gui::NodeType::LogisticRegressionNode,
+                            gui::NodeType::SVMClassifier, gui::NodeType::SVMRegressor,
+                            gui::NodeType::LinearRegressionNode,
+                            gui::NodeType::PolynomialRegressionNode}) {
+        Check(ModelOutputOptional(metadata.GetMetadata(type)),
+              "a fitted model output should be optional: " + TypeId(type));
+    }
+}
+
+void CheckClassicMLClassifierFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> types = {
-        gui::NodeType::SVMClassifier,
-        gui::NodeType::KNNClassifier,
         gui::NodeType::NaiveBayesClassifier,
+        gui::NodeType::KNNClassifier,
         gui::NodeType::LogisticRegressionNode,
+        gui::NodeType::SVMClassifier,
     };
-
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr && meta->IsTemplate() &&
-                  meta->badge == "Blocked" &&
-                  !cyxwiz::CanAddNodeToGraph(*meta),
-              "unimplemented classifier should remain blocked: " +
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "classic ML classifier should be implemented Analytics: " +
                   TypeId(type));
-        Check(meta->inputs.size() == 2 &&
-                  HasInputType(meta, "Train Data", gui::PinType::Dataset) &&
-                  HasInputType(meta, "Labels", gui::PinType::Labels) &&
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
                   meta->outputs.size() == 2 &&
-                  HasOutputType(meta, "Model", gui::PinType::Parameters) &&
-                  HasOutputType(meta, "Predictions", gui::PinType::Labels),
-              "blocked classifier should preserve its saved-graph pin contract: " +
+                  HasOutputType(meta, "Predictions", gui::PinType::Dataset) &&
+                  HasOutputType(meta, "Model", gui::PinType::Parameters),
+              "classic ML classifier should expose table-in, predictions + model out: " +
                   TypeId(type));
-        Check(meta->brief_description.find("Blocked") != std::string::npos &&
-                  meta->help_text.find("No classifier executor") !=
-                      std::string::npos,
-              "blocked classifier help should state missing runtime ownership: " +
+        Check(FindParameter(meta, "target_col") != nullptr &&
+                  FindParameter(meta, "target_col")->required &&
+                  ParameterMatches(meta, "feature_cols", "string", "") &&
+                  ParameterMatches(meta, "prediction_col", "string", "prediction") &&
+                  ParameterMatches(meta, "model_path", "string", ""),
+              "classic ML classifier should expose the shared table/artifact fields: " +
                   TypeId(type));
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(type).mode ==
-                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
-                  cyxwiz::PipelineOperatorFactory::Instance().Create(type) ==
-                      nullptr,
-              "blocked classifier should fail closed without an operator: " +
-                  TypeId(type));
+        CheckRuntimeOwnerContract(
+            cyxwiz::ResolvePipelineRuntimeSupport(type),
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "classic ML classifier " + TypeId(type));
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "classic ML classifier should have a pipeline operator: " + TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        params["target_col"] = "target";
+        std::string error;
+        Check(op && op->Configure(params, error),
+              "classic ML classifier defaults should configure its operator: " +
+                  TypeId(type) + ": " + error);
     }
 
-    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
-    const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
     const auto* naive_bayes =
         metadata.GetMetadata(gui::NodeType::NaiveBayesClassifier);
-    const auto* logistic =
-        metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
-    Check(svm->parameters.size() == 3 &&
-              ParameterMatches(svm, "kernel", "enum", "rbf") &&
-              ParameterMatches(svm, "C", "float", "1.0") &&
-              ParameterMatches(svm, "gamma", "enum", "scale"),
-          "SVM preview should preserve its legacy saved parameters");
-    Check(knn->parameters.size() == 3 &&
+    Check(naive_bayes->parameters.size() == 5 &&
+              ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9"),
+          "Naive Bayes metadata should match every consumed operator field");
+    auto naive_bayes_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::NaiveBayesClassifier);
+    std::string error;
+    Check(naive_bayes_op &&
+              !naive_bayes_op->Configure({{"target_col", "y"}, {"var_smoothing", "-1"}}, error) &&
+              error.find("var_smoothing") != std::string::npos,
+          "Naive Bayes should refuse a negative var_smoothing");
+
+    const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
+    Check(knn->parameters.size() == 7 &&
               ParameterMatches(knn, "n_neighbors", "int", "5") &&
               ParameterMatches(knn, "weights", "enum", "uniform") &&
               ParameterMatches(knn, "metric", "enum", "euclidean"),
-          "KNN preview should preserve its legacy saved parameters");
-    Check(naive_bayes->parameters.size() == 1 &&
-              ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9") &&
-              !HasParameter(naive_bayes, "variant"),
-          "Naive Bayes preview should not advertise an unseeded variant");
-    Check(logistic->parameters.size() == 3 &&
+          "KNN metadata should match every consumed operator field");
+    auto knn_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::KNNClassifier);
+    Check(knn_op && !knn_op->Configure({{"target_col", "y"}, {"n_neighbors", "0"}}, error) &&
+              !knn_op->Configure({{"target_col", "y"}, {"metric", "chebyshev"}}, error),
+          "KNN should refuse zero neighbours and an unknown metric");
+
+    const auto* logistic = metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
+    Check(logistic->parameters.size() == 7 &&
               ParameterMatches(logistic, "C", "float", "1.0") &&
-              ParameterMatches(logistic, "solver", "enum", "lbfgs") &&
               ParameterMatches(logistic, "max_iter", "int", "100") &&
-              !HasParameter(logistic, "penalty") &&
-              !HasOutputType(logistic, "Probabilities", gui::PinType::Dataset),
-          "Logistic preview should not advertise uncreated parameters or outputs");
+              ParameterMatches(logistic, "tol", "float", "1e-4") &&
+              !HasParameter(logistic, "solver"),
+          "Logistic metadata should match every consumed operator field");
+    auto logistic_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::LogisticRegressionNode);
+    Check(logistic_op && !logistic_op->Configure({{"target_col", "y"}, {"C", "0"}}, error) &&
+              !logistic_op->Configure({{"target_col", "y"}, {"max_iter", "0"}}, error),
+          "Logistic should refuse C = 0 and max_iter = 0");
+
+    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
+    Check(svm->parameters.size() == 10 &&
+              ParameterMatches(svm, "C", "float", "1.0") &&
+              ParameterMatches(svm, "kernel", "enum", "rbf") &&
+              ParameterMatches(svm, "gamma", "string", "scale") &&
+              ParameterMatches(svm, "degree", "int", "3") &&
+              ParameterMatches(svm, "coef0", "float", "0.0") &&
+              ParameterMatches(svm, "tol", "float", "1e-3"),
+          "SVM metadata should match every consumed operator field");
+    auto svm_op = cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::SVMClassifier);
+    Check(svm_op && svm_op->Configure({{"target_col", "y"}, {"gamma", "0.5"}}, error) &&
+              svm_op->Configure({{"target_col", "y"}, {"gamma", "auto"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"gamma", "fast"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"gamma", "-1"}}, error) &&
+              !svm_op->Configure({{"target_col", "y"}, {"kernel", "laplacian"}}, error),
+          "SVM gamma takes scale, auto or a positive number; kernels are sklearn's four");
 }
 
 // TOFIX140 A3: scheduler nodes compile into TrainingConfiguration::scheduler.
@@ -3444,7 +3525,8 @@ int main() {
     CheckClusteringFamilyContract(metadata);
     CheckPcaContract(metadata);
     CheckClassicalRegressionFamilyContract(metadata);
-    CheckBlockedClassifierFamilyContract(metadata);
+    CheckClassicMLClassifierFamilyContract(metadata);
+    CheckModelOutputsOptional(metadata);
     CheckSchedulerFamilyContract(metadata);
     CheckRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);
@@ -5170,13 +5252,12 @@ int main() {
           "StandardScaler enum support should resolve to operator-backed");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::SVMClassifier)) == "SVMClassifier",
-          "fail-closed runtime enum lookup for SVMClassifier is stable");
+          "operator runtime enum lookup for SVMClassifier is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMClassifier).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
-          "SVMClassifier enum support should resolve to fail-closed");
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+          "SVMClassifier enum support should resolve to operator-backed");
     const gui::NodeType additional_fail_closed_enum_cases[] = {
         gui::NodeType::UMAPNode,
-        gui::NodeType::SVMRegressor,
         gui::NodeType::LearningCurvesNode,
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::CrossValidationNode,
@@ -5473,7 +5554,7 @@ int main() {
               std::string("runtime support should carry required-parameter axis: ") +
                   capability.legacy_type_name);
         for (const char* parameter : capability.required_parameters) {
-            Check(parameter != nullptr && std::string(parameter).size() > 1,
+            Check(parameter != nullptr && IsDescriptiveParameterName(parameter),
                   std::string("required parameter name is too weak: ") +
                       capability.legacy_type_name);
         }
@@ -5508,7 +5589,7 @@ int main() {
               std::string("runtime support should carry allowed-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("allowed parameter name is too weak: ") +
                   capability.legacy_type_name);
         Check(capability.default_value != nullptr,
@@ -5550,7 +5631,7 @@ int main() {
               std::string("runtime support should carry integer-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("integer parameter name is too weak: ") +
                   capability.legacy_type_name);
     }
@@ -5589,7 +5670,7 @@ int main() {
               std::string("runtime support should carry float-parameter axis: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
-                  std::string(capability.parameter_name).size() > 1,
+                  IsDescriptiveParameterName(capability.parameter_name),
               std::string("float parameter name is too weak: ") +
                   capability.legacy_type_name);
         const bool range_has_bound =

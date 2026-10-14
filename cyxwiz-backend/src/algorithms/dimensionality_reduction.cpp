@@ -9,6 +9,7 @@
 
 #include "cyxwiz/dimensionality_reduction.h"
 #include "analysis_device.h"
+#include "arrayfire_sort.h"
 
 #include <algorithm>
 #include <cmath>
@@ -191,7 +192,7 @@ af::array FuzzyGraph(const af::array& x, int k) {
         const dim_t stop = std::min(n, start + block);
         const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
         af::array sorted, order;
-        af::sort(sorted, order, PairwiseDistances(x(rows, af::span), x, "euclidean"), 1);
+        SortWithIndex(sorted, order, PairwiseDistances(x(rows, af::span), x, "euclidean"), 1);
         knn_dist(rows, af::span) = sorted(af::span, af::seq(0, k - 1));
         knn_index(rows, af::span) = order(af::span, af::seq(0, k - 1));
     }

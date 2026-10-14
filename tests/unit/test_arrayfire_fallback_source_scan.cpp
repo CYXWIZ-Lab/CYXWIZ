@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -551,7 +553,8 @@ TEST_CASE("ROC / PR curves run on the device without a fallback",
     std::vector<RawFallbackHit> hits;
     bool sorts_on_device = false;
     for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
-        if (lines[line_index].find("af::sort(") != std::string::npos) sorts_on_device = true;
+        // The device sort: SortWithIndex (ArrayFire sort-by-key, arrayfire_sort.h).
+        if (lines[line_index].find("SortWithIndex(") != std::string::npos) sorts_on_device = true;
         for (const auto& needle : forbidden_needles) {
             if (lines[line_index].find(needle) != std::string::npos) {
                 hits.push_back(RawFallbackHit{"roc_pr_curves.cpp", line_index + 1, needle, lines[line_index]});
@@ -611,4 +614,40 @@ TEST_CASE("Host-vector model evaluation has one native execution owner",
         CHECK(line.find("struct BinaryMetrics") == std::string::npos);
         CHECK(line.find("class ModelEvaluation") == std::string::npos);
     }
+}
+
+TEST_CASE("Argsorts go through SortWithIndex, not ArrayFire's sort-with-index",
+          "[arrayfire][source_scan]") {
+    // af::sort(sorted, indices, values, dim, ascending) never returns on the
+    // oneAPI backend (Iris Xe, 2026-10-14); SortWithIndex uses sort-by-key.
+    // Flags every five-argument af::sort call outside arrayfire_sort.h.
+    const fs::path repo_root = FindRepoRoot();
+    std::vector<std::string> hits;
+    for (const char* root : {"cyxwiz-backend/src", "cyxwiz-engine/src"}) {
+        for (const auto& entry : fs::recursive_directory_iterator(repo_root / root)) {
+            if (!entry.is_regular_file() || !IsSourceFile(entry.path())) continue;
+            const std::string relative = fs::relative(entry.path(), repo_root).generic_string();
+            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_sort.h") continue;
+            std::ifstream in(entry.path(), std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            for (size_t at = text.find("af::sort("); at != std::string::npos; at = text.find("af::sort(", at + 1)) {
+                int depth = 0;
+                int commas = 0;
+                for (size_t i = at + 8; i < text.size(); ++i) {
+                    const char c = text[i];
+                    if (c == '(') ++depth;
+                    else if (c == ')' && --depth == 0) break;
+                    else if (c == ',' && depth == 1) ++commas;
+                }
+                if (commas == 4) {
+                    const auto line = std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(at), '\n') + 1;
+                    hits.push_back(relative + ":" + std::to_string(line));
+                }
+            }
+        }
+    }
+    std::string list;
+    for (const auto& hit : hits) list += "\n  " + hit;
+    INFO("af::sort with indices (use SortWithIndex):" + list);
+    REQUIRE(hits.empty());
 }

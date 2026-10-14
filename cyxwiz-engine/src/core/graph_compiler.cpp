@@ -5815,11 +5815,15 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
 
-        // Fallback to output_size if Output node doesn't specify classes
+        // Fallback to output_size if Output node doesn't specify classes. A
+        // graph with no Output node (a data-only graph) has nothing to warn
+        // about; its missing model is reported as a compile issue.
         if (config.preprocessing.num_classes == 0) {
             config.preprocessing.num_classes = config.output_size;
-            spdlog::warn("GraphCompiler: num_classes not specified in Output node, using output_size={}",
-                         config.output_size);
+            if (output_node) {
+                spdlog::warn("GraphCompiler: num_classes not specified in Output node, using output_size={}",
+                             config.output_size);
+            }
         }
 
         if (config.output_size > 0 && config.output_size < 2) {

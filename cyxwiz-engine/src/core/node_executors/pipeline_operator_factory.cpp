@@ -9,6 +9,10 @@
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"
+#include "naive_bayes_operator.h"
+#include "knn_operator.h"
+#include "logistic_regression_operator.h"
+#include "svm_operators.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
@@ -112,9 +116,8 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::FilterDesigner, []() {
         return std::make_unique<FilterDesignerOperator>();
     });
-    // Tool-to-Node classical regression (Linear + Polynomial only;
-    // tree/forest/SVM/KNN/NaiveBayes/Logistic deferred — no backend
-    // implementation or different API shape).
+    // Tool-to-Node classical models: regression, the tree family, and the
+    // classic ML classifiers on the device (TOFIX145 Group C).
     RegisterCreator(gui::NodeType::LinearRegressionNode, []() {
         return std::make_unique<LinearRegressionOperator>();
     });
@@ -135,6 +138,21 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::TreeModelPredictor, []() {
         return std::make_unique<TreeModelPredictorOperator>();
+    });
+    RegisterCreator(gui::NodeType::NaiveBayesClassifier, []() {
+        return std::make_unique<NaiveBayesClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::KNNClassifier, []() {
+        return std::make_unique<KNNClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogisticRegressionNode, []() {
+        return std::make_unique<LogisticRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMClassifier, []() {
+        return std::make_unique<SVMClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMRegressor, []() {
+        return std::make_unique<SVMRegressorOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

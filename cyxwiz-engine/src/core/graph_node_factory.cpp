@@ -1490,56 +1490,21 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
+        // Classic ML classifiers (TOFIX145 Group C): Data in, Predictions and
+        // Model out, from their metadata.
         case NodeType::SVMClassifier:
         case NodeType::KNNClassifier:
         case NodeType::NaiveBayesClassifier:
         case NodeType::LogisticRegressionNode: {
-            // Saved graphs retain their historical static preview contract,
-            // but runtime capability truth keeps these nodes blocked until a
-            // real fit/artifact/predict owner exists.
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // Regression nodes
         case NodeType::LinearRegressionNode:
-        case NodeType::PolynomialRegressionNode: {
-            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
-            break;
-        }
-
+        case NodeType::PolynomialRegressionNode:
         case NodeType::SVMRegressor: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin target_in;
-            target_in.id = next_pin_id_++;
-            target_in.type = PinType::Tensor;
-            target_in.name = "Target";
-            target_in.is_input = true;
-            node.inputs.push_back(target_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Tensor;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["kernel"] = "rbf";
-            node.parameters["C"] = "1.0";
-            node.parameters["epsilon"] = "0.1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

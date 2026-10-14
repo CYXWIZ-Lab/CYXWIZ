@@ -54,9 +54,14 @@ struct FilePeek {
     int64_t total_rows = -1;       // -1: unknown
     bool rows_estimated = false;   // from the sampled head of a large file
 
-    // Text: the first lines.
+    // Text: the first lines (an HDF5 file lists its top-level objects).
     std::vector<std::string> lines;
     bool more_lines = false;
+    std::string line_noun = "line";  // "object" for an HDF5 listing
+
+    // Why rows are not shown although the file is fine (a large workbook,
+    // a format support not built in); shown under the details.
+    std::string note;
 };
 
 struct PeekLimits {
@@ -66,6 +71,9 @@ struct PeekLimits {
     // estimated from them instead of reading the whole file.
     std::uintmax_t head_bytes = 1u << 20;
     std::uintmax_t exact_count_bytes = 16u << 20;
+    // A workbook is read whole by the Excel adapter, so only small ones are
+    // peeked at.
+    std::uintmax_t max_workbook_bytes = 8u << 20;
 };
 
 FilePeek PeekFile(const std::string& path, const PeekLimits& limits = {});

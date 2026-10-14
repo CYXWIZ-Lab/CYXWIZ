@@ -37,7 +37,6 @@ float StatusWidth() {
         if (!truth.chips.empty() && truth.chips.front().kind != ChipKind::Ok)
             width = std::max(width, cyxwiz::ui::ChipWidth(truth.chips.front().text.c_str()));
     }
-    if (g_frame.view->data && !g_frame.view->data->loaded) width = std::max(width, cyxwiz::ui::ChipWidth("not loaded"));
     return width;
 }
 

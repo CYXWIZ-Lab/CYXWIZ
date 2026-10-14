@@ -3628,6 +3628,24 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             }
             continue;
         }
+        // Classic ML classifiers (TOFIX145): the Model output is the saved
+        // fitted model, so one is always written.
+        if (node.type == "NaiveBayesClassifier" ||
+            node.type == "KNNClassifier" ||
+            node.type == "LogisticRegressionNode" ||
+            node.type == "SVMClassifier" ||
+            node.type == "SVMRegressor") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "classic_model" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "classic") + ".cyxclassic.json");
+                node.parameters["model_path"] = path.string();
+            }
+            continue;
+        }
         if (node.type != "FillMissing" &&
             node.type != "StandardScaler") {
             continue;
@@ -5878,7 +5896,12 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         type == gui::NodeType::PolynomialRegressionNode ||
         type == gui::NodeType::DecisionTreeClassifier ||
         type == gui::NodeType::RandomForestClassifier ||
-        type == gui::NodeType::GradientBoostingClassifier) {
+        type == gui::NodeType::GradientBoostingClassifier ||
+        type == gui::NodeType::NaiveBayesClassifier ||
+        type == gui::NodeType::KNNClassifier ||
+        type == gui::NodeType::LogisticRegressionNode ||
+        type == gui::NodeType::SVMClassifier ||
+        type == gui::NodeType::SVMRegressor) {
         const auto model_path = operator_parameters.find("model_path");
         if (model_path == operator_parameters.end() ||
             model_path->second.empty() ||

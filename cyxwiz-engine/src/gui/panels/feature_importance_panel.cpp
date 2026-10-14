@@ -49,6 +49,7 @@ void FeatureImportancePanel::Render() {
 
         ui::BeginSettingsColumn("feature_importance", 300.0f);
         RenderModel(model != nullptr, training.GetActiveModelInfo(), model ? model->Size() : 0);
+        SuggestTarget(training.GetActiveModelInfo().effective_label_column);
         RenderDataSelector();
         RenderConfiguration(model != nullptr);
         ui::BeginResultsArea();
@@ -382,10 +383,27 @@ void FeatureImportancePanel::RenderExportOptions() {
     }
 }
 
+void FeatureImportancePanel::SuggestTarget(const std::string& label_column) {
+    if (target_suggested_ || !current_table_ || target_column_ >= 0 || label_column.empty()) return;
+    target_suggested_ = true;
+    const auto& headers = current_table_->GetHeaders();
+    const auto header = std::find(headers.begin(), headers.end(), label_column);
+    if (header == headers.end()) return;
+    target_column_ = static_cast<int>(header - headers.begin());
+    // A numeric label is also a feature column; it is the target, not an input.
+    const auto feature = std::find(feature_columns_.begin(), feature_columns_.end(), label_column);
+    if (feature != feature_columns_.end()) {
+        const int index = static_cast<int>(feature - feature_columns_.begin());
+        selected_features_.erase(std::remove(selected_features_.begin(), selected_features_.end(), index),
+                                 selected_features_.end());
+    }
+}
+
 void FeatureImportancePanel::SetDataset(std::shared_ptr<DataTable> table) {
     current_table_ = table;
     selected_features_.clear();
     target_column_ = -1;
+    target_suggested_ = false;
     has_result_ = false;
 
     feature_columns_.clear();
