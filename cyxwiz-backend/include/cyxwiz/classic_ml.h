@@ -85,6 +85,9 @@ struct CYXWIZ_API SVMModel {
     std::vector<std::vector<double>> pair_coef;    // per problem: y alpha of those rows
     std::vector<double> rho;                       // per problem: decision = sum coef K - rho
     int n_classes = 0;                             // 0 for SVR
+    // SVC with probabilities: Platt's sigmoid per problem, P(first class) =
+    // 1 / (1 + exp(prob_a * decision + prob_b)); empty otherwise.
+    std::vector<double> prob_a, prob_b;
     int iterations = 0;
     bool converged = false;
 
@@ -119,8 +122,20 @@ public:
                            int degree = 3, double coef0 = 0.0, double tol = 1e-3);
     // Decision values [n, problems] (SVC pair order: (0,1), (0,2), ..., (1,2), ...).
     static ClassicMatrix SVMDecision(const SVMModel& model, const ClassicMatrix& x, std::string* error = nullptr);
-    // One-vs-one votes; no probabilities.
+    // One-vs-one votes; with probabilities (prob_a / prob_b set) also the class
+    // probabilities, by pairwise coupling (libsvm's multiclass_probability). The
+    // labels stay the votes, as scikit-learn's predict.
     static ClassicPrediction PredictSVC(const SVMModel& model, const ClassicMatrix& x);
+
+    // scikit-learn's SVC(probability=True): per class pair, Platt's sigmoid fitted
+    // on 5-fold cross-validated decision values. The folds come from libsvm's
+    // generator (mt19937, newrand.h) seeded with `seed`; `model` is the SVC fitted
+    // on the same x, labels, C and tol. Sets prob_a / prob_b; false with `error`.
+    static bool FitSVCProbability(SVMModel& model, const ClassicMatrix& x, const std::vector<int>& labels, double C,
+                                  double tol, unsigned seed, std::string* error = nullptr);
+    // The libsvm seed scikit-learn draws for random_state:
+    // RandomState(random_state).randint(2**31 - 1).
+    static unsigned SVCProbabilitySeed(unsigned random_state);
     static std::vector<double> PredictSVR(const SVMModel& model, const ClassicMatrix& x, std::string* error = nullptr);
 };
 

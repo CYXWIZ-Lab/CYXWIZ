@@ -108,6 +108,31 @@ def svc_case(label, x, y, x_test, **params):
     }
 
 
+def svc_proba_case(label, x, y, x_test, random_state, **params):
+    # SVC(probability=True): Platt sigmoids fitted per class pair on 5-fold
+    # cross-validated decision values; the folds come from libsvm's generator
+    # seeded with RandomState(random_state).randint(2**31 - 1).
+    model = SVC(tol=1e-9, probability=True, random_state=random_state, **params).fit(x, y)
+    seed = int(np.random.RandomState(random_state).randint(np.iinfo("i").max))
+    return {
+        "op": "svc_proba",
+        "label": label,
+        "x": x.tolist(),
+        "y": y.astype(int).tolist(),
+        "x_test": x_test.tolist(),
+        "n_classes": int(len(model.classes_)),
+        "params": {k: v for k, v in params.items()},
+        "gamma_value": float(model._gamma),
+        "random_state": random_state,
+        "libsvm_seed": seed,
+        "prob_a": model.probA_.tolist(),
+        "prob_b": model.probB_.tolist(),
+        "predict": model.predict(x).astype(int).tolist(),
+        "predict_proba": model.predict_proba(x).tolist(),
+        "predict_proba_test": model.predict_proba(x_test).tolist(),
+    }
+
+
 def svr_case(label, x, t, x_test, **params):
     model = SVR(tol=1e-9, **params).fit(x, t)
     case = {
@@ -206,6 +231,17 @@ def main():
     x_test = rng.uniform(-3, 3, size=(25, 2))
     cases.append(svr_case("svr rbf eps=0.1 C=1", x, t, x_test, kernel="rbf", C=1.0, epsilon=0.1, gamma="scale"))
     cases.append(svr_case("svr linear eps=0.2 C=10", x, t, x_test, kernel="linear", C=10.0, epsilon=0.2))
+
+    # SVC probabilities (TOFIX145 follow-up): their own generator, so the cases
+    # above keep their data.
+    prng = np.random.default_rng(145)
+    x, y = blobs(prng, [[0, 0], [1.4, 0.9]], 0.9, 30)
+    x_test = prng.normal(0.7, 1.3, size=(25, 2))
+    cases.append(svc_proba_case("proba binary rbf C=1", x, y, x_test, 0, kernel="rbf", C=1.0, gamma="scale"))
+    x, y = blobs(prng, [[0, 0, 0], [1.5, 1.0, -0.5], [-1.0, 1.4, 1.0]], 0.8, 20)
+    x_test = prng.normal(0.2, 1.2, size=(30, 3))
+    cases.append(svc_proba_case("proba three classes rbf C=10", x, y, x_test, 42, kernel="rbf", C=10.0, gamma=0.5))
+    cases.append(svc_proba_case("proba three classes linear C=1", x, y, x_test, 7, kernel="linear", C=1.0))
 
     out = {"sklearn": sklearn_version, "cases": cases}
     path = Path(__file__).resolve().parent.parent / "fixtures" / "classic_ml_sklearn.json"

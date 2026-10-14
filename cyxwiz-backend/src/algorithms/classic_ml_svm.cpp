@@ -16,6 +16,7 @@
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
 #include "arrayfire_indexed.h"
+#include "classic_ml_svm_probability.h"
 #include "classic_ml_detail.h"
 
 #include <algorithm>
@@ -502,6 +503,11 @@ ClassicPrediction ClassicML::PredictSVC(const SVMModel& model, const ClassicMatr
         af::array peak, labels;
         MaxWithIndex(peak, labels, votes, 1);
         result.labels = LabelsFromDevice(labels, kOperation);
+        if (!model.prob_a.empty()) {
+            if (model.prob_a.size() != model.rho.size() || model.prob_b.size() != model.rho.size())
+                throw Refusal("The SVM probability sigmoids do not match its class pairs");
+            result.probabilities = MatrixFromDevice(classic_detail::SVCProbabilities(dec, model), kOperation);
+        }
         result.success = true;
     } catch (const Refusal& refusal) {
         result = ClassicPrediction{};

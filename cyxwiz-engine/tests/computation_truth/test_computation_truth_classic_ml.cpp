@@ -177,6 +177,36 @@ void RunSVC(const json& c, const std::string& name) {
     CheckMatrix(ClassicML::SVMDecision(model, x_test, &error), c.at("decision_test"), name + " decision " + error, SolvedTolerance());
 }
 
+// SVC(probability=True): Platt sigmoids per class pair from 5-fold decision
+// values, the folds drawn by libsvm's generator from scikit-learn's seed.
+void RunSVCProba(const json& c, const std::string& name) {
+    const auto x = c.at("x").get<Matrix>();
+    const auto labels = c.at("y").get<std::vector<int>>();
+    const double C = c.at("params").value("C", 1.0);
+    const double tol = DeviceTolerance(1e-9, 1e-4);
+    auto model = ClassicML::FitSVC(x, labels, c.at("n_classes").get<int>(), C, SvmKernel(c), SvmGamma(c, x),
+                                   SvmDegree(c), SvmCoef0(c), tol);
+    Check(model.success, name + " fit: " + model.error_message);
+    const unsigned seed = ClassicML::SVCProbabilitySeed(c.at("random_state").get<unsigned>());
+    Check(seed == c.at("libsvm_seed").get<unsigned>(),
+          name + " libsvm seed " + std::to_string(seed) + ", sklearn " + c.at("libsvm_seed").dump());
+    std::string error;
+    Check(ClassicML::FitSVCProbability(model, x, labels, C, tol, seed, &error), name + " probability fit: " + error);
+    const auto prob_a = c.at("prob_a").get<std::vector<double>>(), prob_b = c.at("prob_b").get<std::vector<double>>();
+    Check(model.prob_a.size() == prob_a.size() && model.prob_b.size() == prob_b.size(), name + " sigmoid count");
+    for (size_t p = 0; p < prob_a.size(); ++p) {
+        CheckValue(model.prob_a[p], prob_a[p], name + " probA", SolvedTolerance());
+        CheckValue(model.prob_b[p], prob_b[p], name + " probB", SolvedTolerance());
+    }
+    const auto train = ClassicML::PredictSVC(model, x);
+    Check(train.success, name + " predict: " + train.error_message);
+    CheckLabels(train.labels, c.at("predict"), name + " predict (votes, not the probabilities)");
+    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", SolvedTolerance());
+    const auto held_out = ClassicML::PredictSVC(model, c.at("x_test").get<Matrix>());
+    Check(held_out.success, name + " predict test: " + held_out.error_message);
+    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", SolvedTolerance());
+}
+
 void RunSVR(const json& c, const std::string& name) {
     const auto x = c.at("x").get<Matrix>();
     const auto& params = c.at("params");
@@ -214,6 +244,7 @@ int main(int, char** argv) {
         else if (op == "knn") RunKNN(c, name);
         else if (op == "logistic") RunLogistic(c, name);
         else if (op == "svc") RunSVC(c, name);
+        else if (op == "svc_proba") RunSVCProba(c, name);
         else if (op == "svr") RunSVR(c, name);
         else Check(false, "unknown case " + op);
         ++passed;
@@ -234,6 +265,11 @@ int main(int, char** argv) {
     Check(!ClassicML::FitSVC({{0.0}, {1.0}}, {0, 1}, 2, 1.0, "laplacian").success, "an unknown kernel is refused");
     Check(!ClassicML::FitSVC({{0.0}, {1.0}}, {0, 1}, 2, 1.0, "rbf", 0.0).success, "gamma = 0 is refused");
     Check(!ClassicML::FitSVR({{0.0}, {1.0}}, {0.0, 1.0}, 1.0, -0.1).success, "a negative epsilon is refused");
+    std::string probability_error;
+    cyxwiz::SVMModel unfitted;
+    Check(!ClassicML::FitSVCProbability(unfitted, {{0.0}}, {0}, 1.0, 1e-3, 0, &probability_error) &&
+              !probability_error.empty(),
+          "probabilities need a fitted SVC");
     Check(ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "auto") == 0.5 &&
               ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "0.25") == 0.25 &&
               ClassicML::ResolveSVMGamma({{1.0, 2.0}}, "fast") == 0.0 &&

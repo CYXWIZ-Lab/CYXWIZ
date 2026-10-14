@@ -212,6 +212,7 @@ set(BACKEND_SOURCES
     src/algorithms/classic_ml_knn.cpp
     src/algorithms/classic_ml_logistic.cpp
     src/algorithms/classic_ml_svm.cpp
+    src/algorithms/classic_ml_svm_probability.cpp
     src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
