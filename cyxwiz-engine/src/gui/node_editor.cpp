@@ -310,7 +310,11 @@ void NodeEditor::Render() {
         canvas_size_ = ImGui::GetContentRegionAvail();
         ImNodes::BeginNodeEditor();
 
-        if (pending_focus_node_id_ >= 0) {
+        // Moving the view while the left button is down (the second press of
+        // a double-click that opens the node's dialog) would drag the node
+        // under the pointer by the distance the view moves: wait for the release.
+        const bool press_in_progress = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        if (pending_focus_node_id_ >= 0 && !press_in_progress) {
             auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                    [this](const MLNode& node) {
                                        return node.id == pending_focus_node_id_;
@@ -334,7 +338,7 @@ void NodeEditor::Render() {
             }
             pending_focus_node_id_ = -1;
         }
-        if (!pending_show_nodes_.empty()) {
+        if (!pending_show_nodes_.empty() && !press_in_progress) {
             ImNodes::ClearNodeSelection();
             std::vector<int> present;
             for (int id : pending_show_nodes_) {
