@@ -359,7 +359,6 @@ set(ENGINE_SOURCES
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
-    src/gui/properties_metadata_editor.cpp
     src/gui/properties_node_editors.cpp
     src/gui/properties_plugin_node_editors.cpp
     src/gui/properties_parameter_rules.cpp
