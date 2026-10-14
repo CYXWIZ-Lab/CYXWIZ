@@ -229,9 +229,7 @@ void TableGrid::RenderCellContextMenu(int row, int col) {
 
     // Filtering
     if (ImGui::MenuItem(ICON_FA_FILTER " Filter by This Value")) {
-        filter_text = cell_value;
-        std::strncpy(filter_buffer, cell_value.c_str(), sizeof(filter_buffer) - 1);
-        ApplyFilter();
+        SetFilter(cell_value);
     }
 
     // Column stats

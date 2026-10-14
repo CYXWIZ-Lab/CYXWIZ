@@ -67,8 +67,7 @@ void TableViewerPanel::RenderExportDialog() {
                 }
 
                 // Data
-                const auto& indices = (filtered_only && tab->grid.filter_mode_hide && !tab->grid.filtered_indices.empty()) ?
-                    tab->grid.filtered_indices : tab->grid.sorted_indices;
+                const auto& indices = filtered_only ? tab->grid.DisplayIndices() : tab->grid.sorted_indices;
 
                 for (size_t idx : indices) {
                     for (size_t c = 0; c < tab->grid.table->GetColumnCount(); c++) {
@@ -80,8 +79,7 @@ void TableViewerPanel::RenderExportDialog() {
             } else {  // JSON
                 ss << "[\n";
                 const auto& headers = tab->grid.table->GetHeaders();
-                const auto& indices = (filtered_only && tab->grid.filter_mode_hide && !tab->grid.filtered_indices.empty()) ?
-                    tab->grid.filtered_indices : tab->grid.sorted_indices;
+                const auto& indices = filtered_only ? tab->grid.DisplayIndices() : tab->grid.sorted_indices;
 
                 for (size_t i = 0; i < indices.size(); i++) {
                     size_t idx = indices[i];
@@ -143,8 +141,7 @@ void TableViewerPanel::RenderFindDialog() {
 
         if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find All", ImVec2(120, 0)) || search_changed) {
             // Use filter functionality
-            tab->grid.filter_text = find_buffer_;
-            std::strncpy(tab->grid.filter_buffer, find_buffer_, sizeof(tab->grid.filter_buffer) - 1);
+            tab->grid.SetFilter(find_buffer_);
 
             // Count matches
             found_count = 0;
@@ -161,8 +158,7 @@ void TableViewerPanel::RenderFindDialog() {
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_XMARK " Clear", ImVec2(120, 0))) {
             std::memset(find_buffer_, 0, sizeof(find_buffer_));
-            tab->grid.filter_text.clear();
-            std::memset(tab->grid.filter_buffer, 0, sizeof(tab->grid.filter_buffer));
+            tab->grid.SetFilter("");
             found_count = -1;
         }
 

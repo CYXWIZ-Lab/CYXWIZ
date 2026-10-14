@@ -328,21 +328,13 @@ void TableViewerPanel::RenderToolbar() {
     ImGui::SetNextItemWidth(150);
     bool filter_changed = ImGui::InputText("##Filter", active_tab->grid.filter_buffer, sizeof(active_tab->grid.filter_buffer),
         ImGuiInputTextFlags_EnterReturnsTrue);
-    if (filter_changed) {
-        active_tab->grid.filter_text = active_tab->grid.filter_buffer;
-        if (active_tab->grid.filter_mode_hide) {
-            active_tab->grid.ApplyFilter();
-        }
-    }
+    if (filter_changed) active_tab->grid.SetFilter(active_tab->grid.filter_buffer);
 
     // Filter mode toggle
     ImGui::SameLine();
     if (ImGui::Checkbox("Hide", &active_tab->grid.filter_mode_hide)) {
-        if (active_tab->grid.filter_mode_hide && !active_tab->grid.filter_text.empty()) {
-            active_tab->grid.ApplyFilter();
-        } else {
-            active_tab->grid.filtered_indices.clear();
-        }
+        if (active_tab->grid.Hiding()) active_tab->grid.ApplyFilter();
+        active_tab->grid.current_page = 0;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide non-matching rows instead of highlighting");
 

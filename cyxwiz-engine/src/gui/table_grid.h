@@ -95,8 +95,11 @@ public:
 
     void ComputeColumnKinds();
     void SortByColumn(int column);
+    // The filter text: highlighted, or with filter_mode_hide the only rows shown.
+    void SetFilter(const std::string& text);
     void ApplyFilter();
     void ClearFilter();
+    bool Hiding() const { return filter_mode_hide && !filter_text.empty(); }
     void ApplyColorMap(int column, ColorMapType type);
     void ClearColorMap(int column);
     static ImVec4 GetColorMapColor(double normalized, ColorMapType type);

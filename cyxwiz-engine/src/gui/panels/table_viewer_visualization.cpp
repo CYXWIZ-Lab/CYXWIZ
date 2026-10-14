@@ -46,9 +46,7 @@ void TableViewerPanel::SendToVisualizer(int column) {
     }
 
     // Build rows - use filtered/sorted indices if active
-    const std::vector<size_t>& display_indices = (tab->grid.filter_mode_hide && !tab->grid.filtered_indices.empty())
-        ? tab->grid.filtered_indices
-        : tab->grid.sorted_indices;
+    const std::vector<size_t>& display_indices = tab->grid.DisplayIndices();
 
     // Limit to reasonable number of rows for visualization
     size_t max_rows = std::min(display_indices.size(), size_t(10000));

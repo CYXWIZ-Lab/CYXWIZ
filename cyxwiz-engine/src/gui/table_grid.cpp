@@ -43,7 +43,8 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
 }
 
 const std::vector<size_t>& TableGrid::DisplayIndices() const {
-    return (filter_mode_hide && !filtered_indices.empty()) ? filtered_indices : sorted_indices;
+    // Hiding with no row matching shows no rows, not all of them.
+    return Hiding() ? filtered_indices : sorted_indices;
 }
 
 void TableGrid::Render(const char* id) {
@@ -76,6 +77,8 @@ void TableGrid::Render(const char* id) {
     // Calculate pagination based on display count
     size_t total_pages = (display_count + options.rows_per_page - 1) / options.rows_per_page;
     if (total_pages == 0) total_pages = 1;
+    // A filter or a page size can leave the page past the last one.
+    current_page = std::clamp(current_page, 0, static_cast<int>(total_pages) - 1);
     size_t start_row = current_page * options.rows_per_page;
     size_t end_row = std::min(start_row + options.rows_per_page, display_count);
 
@@ -186,6 +189,7 @@ void TableGrid::Render(const char* id) {
                             sorted_indices[i] = row_count - 1 - i;
                         }
                     }
+                    if (Hiding()) ApplyFilter();
                     spdlog::info("Reset to original order ({})",
                         spec.SortDirection == ImGuiSortDirection_Ascending ? "ascending" : "descending");
                 } else {
@@ -445,7 +449,7 @@ void TableGrid::Render(const char* id) {
         }
 
         ImGui::SameLine();
-        if (filter_mode_hide && !filtered_indices.empty()) {
+        if (Hiding()) {
             ImGui::Text("(rows %zu - %zu of %zu | %zu filtered)",
                 start_row + 1, end_row, display_count, row_count - display_count);
         } else {
@@ -516,6 +520,7 @@ void TableGrid::SortByColumn(int column) {
             }
         });
 
+    if (Hiding()) ApplyFilter();  // the shown rows follow the new order
     spdlog::info("Sorted by column {} ({})", column, ascending ? "ascending" : "descending");
 }
 
@@ -671,6 +676,14 @@ ImVec4 TableGrid::GetColorMapColor(double normalized, ColorMapType type) {
 // Filtering
 // ============================================================================
 
+void TableGrid::SetFilter(const std::string& text) {
+    filter_text = text;
+    std::memset(filter_buffer, 0, sizeof(filter_buffer));
+    std::strncpy(filter_buffer, text.c_str(), sizeof(filter_buffer) - 1);
+    current_page = 0;
+    if (filter_mode_hide) ApplyFilter();
+}
+
 void TableGrid::ApplyFilter() {
     if (!table) return;
 
@@ -749,6 +762,7 @@ void TableGrid::EndCellEdit(bool save) {
 
                 // The column kinds follow the edit; the owner marks itself dirty.
                 ComputeColumnKinds();
+                if (Hiding()) ApplyFilter();  // the edited row may match now, or no longer
                 if (on_edited) on_edited();
             } else {
                 spdlog::warn("Failed to update cell [{}, {}]", editing_row + 1, editing_col + 1);
