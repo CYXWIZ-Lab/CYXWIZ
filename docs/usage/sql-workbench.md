@@ -81,8 +81,11 @@ the step's real input tables. Nothing is written until **Save to step**.
 
 ### Results
 
-- **Results**: the rows. **Copy shown rows**, and **Export** to CSV or
-  Parquet.
+- **Results**: the first 500 rows in the table grid (sort by a header,
+  select and copy cells, hover a long value; see
+  [Table Viewer and the table grid](table_viewer.md)). **Copy shown rows**
+  copies them in the grid's order; **Export** writes the whole result to CSV
+  or Parquet.
 - **Column profile**: per column, its type, missing, empty and distinct
   values, how many rows repeat an earlier value, and its most common values;
   numbers also get minimum, median, mean and maximum.

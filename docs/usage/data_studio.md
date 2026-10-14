@@ -54,7 +54,10 @@ ORDER BY tracks DESC
 
 The result line says **exact** (every row shown) or **first 100,000 rows**
 (more rows than are shown), then rows, columns, the tables read (with their
-rows) and the time. Then:
+rows) and the time. The rows are in the table grid: sort by a header, select
+and copy cells, `null` for empty cells, a long value whole on hover (see
+[Table Viewer and the table grid](table_viewer.md)). Decimals are numbers and
+dates stay dates. Then:
 
 - **Open in Table Viewer**: the result as a table you can sort, filter and
   plot from.
