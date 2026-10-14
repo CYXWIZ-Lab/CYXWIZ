@@ -3818,7 +3818,7 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         {"tokenize", "text", "nlp", "vocabulary", "padding"}, 0, false,
         "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Tokens", PinType::Tensor, true, "Token indices"}},
+        {{"Tokens", PinType::Dataset, true, "Token table: the token id columns and the label, for Data Split"}},
         {{"tokenizer_type", "enum", "1", "Mode (3: Byte BPE; 4: WordPiece; 5/6: optional SentencePiece; Byte BPE lowercase=false)", {"0", "1", "2", "3", "4", "5", "6"}, ""},
          {"text_col", "string", "", "Text column", {}, "Required for encoding and round-trip modes; ignored by decode mode."},
          {"output_mode", "enum", "wide", "Token output", {"wide", "causal_windows", "decode", "roundtrip"}, ""},
