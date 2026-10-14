@@ -96,15 +96,21 @@ struct Kind {
 
 }  // namespace
 
-Roles PickRoles(const DatasetContract& contract) {
+Roles PickRoles(const DatasetContract& contract, const std::vector<ColumnFacts>& facts) {
     Roles roles;
+    const auto length = [&](const std::string& column) {
+        for (const auto& f : facts)
+            if (f.name == column) return f.avg_length;
+        return 0.0;
+    };
     const auto pick = [&](ColumnRole role, std::string& into) {
-        for (RoleSource source : {RoleSource::User, RoleSource::Contract, RoleSource::Inferred})
+        for (RoleSource source : {RoleSource::User, RoleSource::Contract, RoleSource::Inferred}) {
             for (const auto& c : contract.columns)
-                if (c.role == role && c.source == source) {
+                if (c.role == role && c.source == source &&
+                    (into.empty() || (role == ColumnRole::Text && length(c.name) > length(into))))
                     into = c.name;
-                    return;
-                }
+            if (!into.empty()) return;
+        }
     };
     pick(ColumnRole::Text, roles.text);
     pick(ColumnRole::Id, roles.id);
@@ -220,18 +226,22 @@ View Build(const Facts& f) {
     }
     if (f.splits.size() < 2) {
         v.verdict = "One split only";
+        v.caption = "one split";
         v.verdict_tone = Tone::Warn;
         v.verdict_tip = "Leakage is checked between splits: connect a validation or test Data Input to the Data Split.";
     } else if (!leaks.empty()) {
         v.verdict = "Leakage: " + Join(leaks, " and ") + " in two splits";
+        v.caption = "leakage found";
         v.verdict_tone = Tone::Error;
         v.verdict_tip = "The same values are in more than one split, so validation and test scores read too high. Leakage across splits below says where.";
     } else if (!counted) {
         v.verdict = "Leakage not checked";
+        v.caption = "not checked";
         v.verdict_tone = Tone::Warn;
         v.verdict_tip = "Set a Group, ID or Text column in Explore > Profile.";
     } else {
         v.verdict = "No leakage found";
+        v.caption = "no leakage";
         v.verdict_tone = Tone::Ok;
         v.verdict_tip = "No group, ID or text of one split is in another (exact matches).";
     }

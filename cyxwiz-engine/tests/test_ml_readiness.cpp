@@ -88,9 +88,20 @@ int main() {
                      {"document_id", "text", ColumnRole::Id, RoleSource::Inferred, "", {}},
                      {"source_family_id", "text", ColumnRole::Group, RoleSource::User, "", {}},
                      {"partition_document_id", "text", ColumnRole::Id, RoleSource::User, "", {}}};
-        const Roles r = PickRoles(c);
+        // kjv80 as profiled: archive_sha256 (a book's hash, 64 characters) reads as Text before text.
+        c.columns.insert(c.columns.begin(), {"archive_sha256", "text", ColumnRole::Text, RoleSource::Inferred, "", {}});
+        std::vector<ColumnFacts> facts(3);
+        facts[0].name = "archive_sha256";
+        facts[0].avg_length = 64;
+        facts[1].name = "text";
+        facts[1].avg_length = 3790;
+        facts[2].name = "source_text";
+        facts[2].avg_length = 3790;
+        const Roles r = PickRoles(c, facts);
         Check(r.text == "text" && r.group == "source_family_id" && r.id == "partition_document_id" && r.target.empty(),
-              "roles: first Text, the Group, the ID you set over the inferred one");
+              "roles: the longest Text (not the hash), the Group, the ID you set over the inferred one: " + r.text);
+        c.columns[2].source = RoleSource::User;  // source_text set by you wins over longer inferred text
+        Check(PickRoles(c, facts).text == "source_text", "a Text you set wins");
     }
 
     // kjv80_base_v1 as the Engine measures it.
@@ -104,7 +115,7 @@ int main() {
             for (size_t b = a + 1; b < 3; ++b) f.overlaps.push_back({a, b, 0, 0, 0});
         const View v = Build(f);
         Check(v.title == "kjv80_base_v1" && v.splits == "train \xC2\xB7 validation \xC2\xB7 test", "header: " + v.splits);
-        Check(v.verdict == "No leakage found" && v.verdict_tone == Tone::Ok, "verdict: " + v.verdict);
+        Check(v.verdict == "No leakage found" && v.caption == "no leakage" && v.verdict_tone == Tone::Ok, "verdict: " + v.verdict);
         const Card* sizes = CardNamed(v, "Split sizes");
         Check(sizes && sizes->header == std::vector<std::string>({"", "rows", "groups", "IDs"}) && sizes->rows.size() == 3 &&
                   sizes->rows[0] == std::vector<std::string>({"train", "1,228", "1,066", "1,228"}) && sizes->lines.empty(),

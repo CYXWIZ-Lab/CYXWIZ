@@ -10,7 +10,6 @@
 #include "../node_editor.h"
 
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <set>
 
@@ -129,12 +128,9 @@ void DataStudioPanel::RefreshView() {
     view_ = studio::Build(in);
     if (readiness_) {
         readiness_->SetSplitSets(view_.split_sets, view_.balance);
-        // The tab's caption says what the last check found ("5 · no leakage found").
-        std::string verdict = readiness_->Verdict();
-        if (!verdict.empty()) {
-            verdict[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(verdict[0])));
-            view_.jobs[static_cast<size_t>(studio::Job::Ready)].state = verdict;
-        }
+        // The tab's caption says what the last check found ("5 · no leakage").
+        const std::string caption = readiness_->Caption();
+        if (!caption.empty()) view_.jobs[static_cast<size_t>(studio::Job::Ready)].state = caption;
     }
 }
 

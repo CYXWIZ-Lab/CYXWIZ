@@ -30,8 +30,8 @@ public:
     void Render();
 
     bool IsRunning() const { return task_id_ != 0; }
-    // The verdict of the set shown ("No leakage found"), "" before a result.
-    std::string Verdict() const { return result_ ? view_.verdict : std::string(); }
+    // The job tab's line for the set shown ("no leakage"), "" before a result.
+    std::string Caption() const { return result_ ? view_.caption : std::string(); }
     studio::Tone VerdictTone() const { return view_.verdict_tone; }
 
     // "Set roles in Profile" opens Explore > Profile on this dataset.

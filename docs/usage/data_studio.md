@@ -26,7 +26,7 @@ Data Pipeline executor.
   the canvas. Data enters the graph only through a Data Input.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
-  stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage found*,
+  stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage*,
   *1 output*). Bring in, Explore and ML readiness are built; the other jobs
   list their nodes and are being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Row Count Check
@@ -218,7 +218,8 @@ named in an orange line.
 
 **When.** Opening the job compares the splits in the background (Task View
 shows it); so do a change to a split's data and **Check again**. The tab's
-line then says what it found (*no leakage found*).
+line then says what it found (*no leakage*, *leakage found*, *not
+checked*).
 
 **The header** names the set and its splits, the verdict (*No leakage
 found*, *Leakage: 3 groups in two splits* in red, *Leakage not checked* when
@@ -236,4 +237,8 @@ train split).
 | Text length (words) | Median and mean words per row of the Text column; a split 10% or more shorter or longer than train is named (kjv80: *Validation and test are about 14% shorter than train.*). |
 | Class balance | With a Target: the largest classes' share per split, the train split's largest and smallest class, and a class whose share moves 10 points or more between train and another split. The Data Loader's balance mode. |
 
-Everything is counted with SQL on the whole tables; nothing is written.
+Everything is counted with SQL on the whole tables; the data is not
+changed. The train split's roles come from its profile, cached in the
+project's `cache/query_results` like Explore > Profile's. When several
+columns read as Text (a hash column does too), the longest one is used;
+set Text on another column in Profile to choose it.

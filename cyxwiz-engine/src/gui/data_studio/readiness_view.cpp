@@ -164,7 +164,7 @@ void ReadinessView::Measure() {
             }
             const DatasetContract contract = BuildContract(key, profile.Facts(), contract_roles, user_roles);
             task.ReportProgress(0.5f, "Comparing the splits");
-            *facts = readiness::Measure(name, tables, readiness::PickRoles(contract), run, stop);
+            *facts = readiness::Measure(name, tables, readiness::PickRoles(contract, profile.Facts()), run, stop);
             facts->balance = balance;
             if (!facts->error.empty()) task.MarkFailed(facts->error);
         },

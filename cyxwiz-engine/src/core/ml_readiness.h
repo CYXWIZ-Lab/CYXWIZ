@@ -26,7 +26,9 @@ struct Roles {
     std::string text, id, group, target;
 };
 // One column per role: one you set first, then the contract, then inferred.
-Roles PickRoles(const DatasetContract& contract);
+// Among inferred Text columns the longest (mean characters in `facts`) wins:
+// a hash or code column reads as text too, the body is the longest.
+Roles PickRoles(const DatasetContract& contract, const std::vector<ColumnFacts>& facts = {});
 
 struct SplitTable {
     std::string split;    // "train", "validation", "test"
@@ -86,6 +88,7 @@ struct View {
     std::string title;         // the split set
     std::string splits;        // "train · validation · test"
     std::string verdict;       // "No leakage found", "Leakage: 3 groups in two splits", "Leakage not checked"
+    std::string caption;       // the job tab's short line: "no leakage", "leakage found", "not checked", "one split"
     studio::Tone verdict_tone = studio::Tone::Plain;
     std::string verdict_tip;
     std::vector<Card> cards;
