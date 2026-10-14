@@ -10,7 +10,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <cstring>
 
 namespace cyxwiz {
 
@@ -25,7 +24,10 @@ constexpr const char* kPlaceholder = "SELECT * FROM \"your dataset\" LIMIT 100";
 }  // namespace
 
 QueryEditor::QueryEditor() {
-    std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", kPlaceholder);
+    pane_.Editor().SetShowMinimap(false);
+    pane_.Editor().SetScrollPastEnd(false);
+    SetQuery(kPlaceholder);
+    default_query_ = kPlaceholder;
 }
 
 QueryEditor::~QueryEditor() {
@@ -37,16 +39,18 @@ void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
     const auto entry = DatasetCatalog::Instance().Resolve(dataset_name);
     current_dataset_ = entry ? entry->Shown() : dataset_name;
     active_registry_ = dataset_name;
-    // A fresh editor names the picked dataset.
-    if (std::strcmp(query_buffer_, kPlaceholder) == 0 && !dataset_name.empty()) {
-        const std::string q = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(current_dataset_) + " LIMIT 100";
-        std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", q.c_str());
+    // An editor nobody typed in follows the picked dataset.
+    pane_.Refresh();
+    if (pane_.Text() == default_query_ && !dataset_name.empty()) {
+        default_query_ = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(current_dataset_) + " LIMIT 100";
+        SetQuery(default_query_);
     }
 }
 
 void QueryEditor::SetQuery(const std::string& sql) {
-    std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", sql.c_str());
-    last_error_ = sql.size() >= sizeof(query_buffer_) ? "The query is too long for the editor; it was cut." : std::string();
+    pane_.Editor().SetText(sql);
+    pane_.Refresh();
+    last_error_.clear();
 }
 
 std::string QueryEditor::ExampleTable() const {
@@ -57,13 +61,16 @@ std::string QueryEditor::ExampleTable() const {
 
 bool QueryEditor::ExecuteQuery() {
     if (task_id_) return false;
-    const std::string sql = query_buffer_;
+    pane_.Refresh();
+    const std::string sql = pane_.Text();
     if (sql.find_first_not_of(" \t\r\n") == std::string::npos) {
         last_error_ = "Write a query first.";
         return false;
     }
     last_error_.clear();
+    error_details_ = false;
     save_note_.clear();
+    step_note_.clear();
     running_sql_ = sql;
     started_at_ = ImGui::GetTime();
     QueryRequest request;

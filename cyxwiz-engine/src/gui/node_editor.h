@@ -600,7 +600,12 @@ public:
     // takes over the step's outgoing links (and its place as a recipe's
     // output), joins the step's recipe, and is selected. Applied, like
     // RequestSubgraphAction, at the start of the next canvas frame.
-    void RequestGuidedStepAfter(int sql_step_id) { pending_guided_after_ = sql_step_id; }
+    void RequestGuidedStepAfter(int sql_step_id) { pending_step_after_ = {sql_step_id, true, {}, {}}; }
+    // The same with an SQL step running `query` (Data Studio's "Turn into SQL
+    // step", TOFIX148): named `name`, selected and shown once added.
+    void RequestSqlStepAfter(int sql_step_id, std::string name, std::string query) {
+        pending_step_after_ = {sql_step_id, false, std::move(name), std::move(query)};
+    }
 
 private:
     void ShowToolbar();
@@ -919,8 +924,12 @@ private:
     };
     PendingSubgraphRequest pending_subgraph_request_;
     void ApplySubgraphRequest();
-    int pending_guided_after_ = -1;
-    void ApplyGuidedStepInsert();
+    struct PendingStepAfter {
+        int after = -1;      // the SQL step it follows; -1: nothing pending
+        bool guided = true;  // an empty guided step, else `query`
+        std::string name, query;
+    } pending_step_after_;
+    void ApplyStepAfterInsert();
     // A node to select once ImNodes has drawn it (a new node is dropped from
     // the selection before its first frame).
     struct DeferredFocus {

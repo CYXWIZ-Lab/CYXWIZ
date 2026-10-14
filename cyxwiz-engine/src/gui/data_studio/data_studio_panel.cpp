@@ -5,6 +5,7 @@
 #include "data_studio_panel.h"
 
 #include "../../core/dataset_catalog.h"
+#include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
 #include "../node_editor.h"
 
@@ -18,6 +19,10 @@ DataStudioPanel::DataStudioPanel() {
     query_editor_ = std::make_unique<QueryEditor>();
     profile_ = std::make_unique<ProfileView>();
     visualizer_ = std::make_unique<Visualizer>();
+    query_editor_->step_blocker = [this](const std::vector<std::string>& inputs) { return StepBlocker(inputs); };
+    query_editor_->on_turn_into_step = [this](const std::string& sql, const std::vector<std::string>& inputs) {
+        return TurnIntoStep(sql, inputs);
+    };
 }
 
 void DataStudioPanel::ShowQuery(const std::string& dataset_name, const std::string& sql) {
@@ -102,7 +107,37 @@ void DataStudioPanel::RefreshView() {
         d.tabular = IsTabularDataset(entry);
         in.datasets.push_back(std::move(d));
     }
+    graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
+}
+
+const studio::GraphNode* DataStudioPanel::NodeMaking(const std::string& table) const {
+    const std::string registry = DatasetCatalog::Instance().NameFor(table);
+    for (const auto& n : graph_nodes_)
+        if (!n.output_dataset.empty() && (n.output_dataset == registry || n.output_dataset == table)) return &n;
+    return nullptr;
+}
+
+std::string DataStudioPanel::StepBlocker(const std::vector<std::string>& inputs) const {
+    if (!node_editor_) return "No graph is open";
+    if (inputs.empty()) return "The query reads no table of the graph";
+    if (inputs.size() > 1) return "It reads " + std::to_string(inputs.size()) + " tables; an SQL step reads one input";
+    const studio::GraphNode* from = NodeMaking(inputs.front());
+    if (!from) return "\"" + inputs.front() + "\" is not a result of this graph's nodes (run the graph first)";
+    if (from->type != ::gui::NodeType::SQLQuery)
+        return "\"" + inputs.front() + "\" comes from \"" + from->name + "\"; a query step can follow an SQL step";
+    return "";
+}
+
+std::string DataStudioPanel::TurnIntoStep(const std::string& sql, const std::vector<std::string>& inputs) {
+    if (!StepBlocker(inputs).empty()) return "";
+    const studio::GraphNode* from = NodeMaking(inputs.front());
+    // A collapsed recipe opens first so the step joins it on the canvas.
+    if (const auto it = canvas_node_.find(from->id); it != canvas_node_.end())
+        node_editor_->RequestSubgraphAction(it->second, ::gui::NodeEditor::SubgraphRequest::Expand);
+    node_editor_->RequestSqlStepAfter(from->id, from->name + " (query)", sqledit::StepQueryFromScratch(sql, inputs.front()));
+    return "Added the SQL step \"" + from->name + " (query)\" after \"" + from->name +
+           "\" (it takes over what read that step). It shows on the canvas (Ctrl+Z there undoes it); run the graph to fill it.";
 }
 
 void DataStudioPanel::ShowOnCanvas(const std::vector<int>& node_ids) {

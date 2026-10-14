@@ -239,7 +239,7 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 
 void NodeEditor::Render() {
     ApplySubgraphRequest();
-    ApplyGuidedStepInsert();
+    ApplyStepAfterInsert();
     if (!show_window_) return;
 
     SyncParameterDrivenPins();

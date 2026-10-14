@@ -518,7 +518,7 @@ void NodeEditor::ApplySubgraphRequest() {
     }
 }
 
-void NodeEditor::ApplyGuidedStepInsert() {
+void NodeEditor::ApplyStepAfterInsert() {
     if (deferred_focus_.node_id >= 0) {
         if (deferred_focus_.frames > 0) {
             --deferred_focus_.frames;
@@ -527,12 +527,15 @@ void NodeEditor::ApplyGuidedStepInsert() {
             deferred_focus_ = {};
         }
     }
-    if (pending_guided_after_ < 0) return;
-    const int after_id = pending_guided_after_;
-    pending_guided_after_ = -1;
+    if (pending_step_after_.after < 0) return;
+    // A recipe being expanded first (Data Studio): its steps join the canvas then.
+    if (pending_subgraph_request_.subgraph_id >= 0) return;
+    const PendingStepAfter request = std::move(pending_step_after_);
+    pending_step_after_ = {};
+    const int after_id = request.after;
     const MLNode* after = FindNodeById(after_id);
     if (!after || after->type != NodeType::SQLQuery || after->outputs.empty()) return;
-    if (!CanReplaceGraph("add a guided step")) return;
+    if (!CanReplaceGraph(request.guided ? "add a guided step" : "add an SQL step")) return;
 
     SaveUndoState();
     if (properties_panel_) properties_panel_->ClearNodeReferences();
@@ -544,12 +547,17 @@ void NodeEditor::ApplyGuidedStepInsert() {
         position = ImVec2(cached->second.x, cached->second.y + 150.0f);
     }
 
-    // An empty guided step: its query passes the rows through until
-    // operations are added in the guided editor.
-    MLNode step = CreateNode(NodeType::SQLQuery, after->name + " (guided)");
-    const cyxwiz::guided::GuidedStep empty;
-    step.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(empty);
-    step.parameters["query"] = cyxwiz::guided::GenerateSql(empty, {}).sql;
+    // An empty guided step passes the rows through until operations are
+    // added in the guided editor; an SQL step runs the query it was given.
+    MLNode step = CreateNode(NodeType::SQLQuery, request.guided ? after->name + " (guided)"
+                                                 : request.name.empty() ? after->name + " (query)" : request.name);
+    if (request.guided) {
+        const cyxwiz::guided::GuidedStep empty;
+        step.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(empty);
+        step.parameters["query"] = cyxwiz::guided::GenerateSql(empty, {}).sql;
+    } else {
+        step.parameters["query"] = request.query;
+    }
     step.parameters["input_alias"] = "input";
     step.parameters[cyxwiz::kSqlContractParameter] = cyxwiz::kSqlContractVersion;
     step.initial_pos_x = position.x;
@@ -588,7 +596,7 @@ void NodeEditor::ApplyGuidedStepInsert() {
     RebuildPinLookup();
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
-    spdlog::info("Added guided step {} after SQL step {}", step_id, after_id);
+    spdlog::info("Added {} step {} after SQL step {}", request.guided ? "a guided" : "an SQL", step_id, after_id);
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {

@@ -12,8 +12,8 @@
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
+#include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 
 namespace cyxwiz {
@@ -44,13 +44,20 @@ void QueryEditor::Render() {
 
 void QueryEditor::RenderEditor() {
     const ui::Tokens& t = ui::CurrentTokens();
-    ImFont* mono = gui::GetCodeFont();
-    if (mono) ImGui::PushFont(mono);
-    ImGui::InputTextMultiline("##query", query_buffer_, sizeof(query_buffer_), ImVec2(-1, 150), ImGuiInputTextFlags_AllowTabInput);
-    if (mono) ImGui::PopFont();
+    // Completion offers the picked dataset's columns.
+    if (columns_for_ != current_dataset_) {
+        columns_for_ = current_dataset_;
+        std::vector<std::string> columns;
+        if (auto schema = SchemaOf(current_dataset_))
+            for (const auto& f : schema->fields()) columns.push_back(f->name());
+        pane_.SetCompletionColumns(std::move(columns));
+    }
+    pane_.Refresh();
+    pane_.Render(std::clamp(ImGui::GetContentRegionAvail().y * 0.35f, 120.0f, 260.0f));
     // Ctrl+Enter runs while the editor has focus (Preferences > Shortcuts, Data Studio).
-    const bool editor_focused = ImGui::IsItemActive() || ImGui::IsItemFocused();
-    if (editor_focused && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !IsRunning()) ExecuteQuery();
+    if (pane_.Editor().IsFocused() && ImGui::GetIO().KeyCtrl &&
+        (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) && !IsRunning())
+        ExecuteQuery();
 
     // The tables a query can name.
     const auto names = SessionQueryService::Instance().QueryableNames();
@@ -67,20 +74,44 @@ void QueryEditor::RenderEditor() {
     ImGui::SameLine();
     if (ui::SecondaryButton("Cancel", running, "Nothing is running")) CancelQuery();
     ImGui::SameLine();
+    // Turn into SQL step: the last result's query as a step of the graph.
+    {
+        std::string why = last_result_.table ? std::string() : "Run the query first";
+        if (why.empty() && step_blocker) why = step_blocker(last_result_.inputs);
+        else if (why.empty()) why = "No graph is open";
+        if (ui::SecondaryButton("Turn into SQL step", why.empty(), why.c_str()) && on_turn_into_step)
+            step_note_ = on_turn_into_step(result_sql_, last_result_.inputs);
+        if (why.empty() && ImGui::IsItemHovered())
+            ImGui::SetTooltip("Adds an SQL step running this query after the step whose result it reads (in its recipe)");
+    }
+    ImGui::SameLine();
     if (ui::SecondaryButton("Examples")) ImGui::OpenPopup("##query_examples");
     RenderExamples();
     ImGui::SameLine();
-    if (ui::GhostButton("Clear")) query_buffer_[0] = '\0';
+    if (ui::SecondaryButton("Format")) pane_.Format();
+    ImGui::SameLine();
+    if (ui::GhostButton("Clear")) SetQuery("");
     ImGui::SameLine();
     if (running) {
         ImGui::TextColored(t.info, ICON_FA_SPINNER " Running... %.1f s (Task View shows it)", ImGui::GetTime() - started_at_);
     } else {
         ImGui::TextColored(t.text_faint, "Ctrl+Enter");
     }
-    if (!last_error_.empty()) {
+    if (!step_note_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(last_error_ == "Cancelled." ? t.text_dim : t.error, "%s", last_error_.c_str());
+        ImGui::TextColored(t.text_dim, "%s", step_note_.c_str());
         ImGui::PopTextWrapPos();
+    }
+    if (!last_error_.empty()) {
+        // DuckDB's errors can list every candidate function: the first line
+        // here, the rest under Details.
+        const size_t eol = last_error_.find('\n');
+        const bool more = eol != std::string::npos && last_error_.find_first_not_of(" \r\n", eol) != std::string::npos;
+        ImGui::PushTextWrapPos(0.0f);
+        const ImVec4 colour = last_error_ == "Cancelled." ? t.text_dim : t.error;
+        ImGui::TextColored(colour, "%s", (error_details_ || !more ? last_error_ : last_error_.substr(0, eol)).c_str());
+        ImGui::PopTextWrapPos();
+        if (more && ui::LinkButton(error_details_ ? "Hide details##qerr" : "Details##qerr")) error_details_ = !error_details_;
     }
 }
 
@@ -105,7 +136,7 @@ void QueryEditor::RenderExamples() {
         }
     }
     const auto pick = [&](const char* label, const std::string& sql) {
-        if (ImGui::Selectable(label)) std::snprintf(query_buffer_, sizeof(query_buffer_), "%s", sql.c_str());
+        if (ImGui::Selectable(label)) SetQuery(sql);
     };
     pick("First 100 rows", "SELECT * FROM " + q + " LIMIT 100");
     pick("Count rows", "SELECT count(*) AS rows FROM " + q);

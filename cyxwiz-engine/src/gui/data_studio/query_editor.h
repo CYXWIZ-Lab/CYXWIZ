@@ -1,11 +1,15 @@
 #pragma once
 
-// Data Studio Query tab (TOFIX134 P3.3, approved board 14): SQL over the
-// datasets by their real names, run by the session query service in the
-// background (Task View, Cancel), results as an Arrow table shown here and
-// opened in the Table Viewer or the Plot window, or saved as a dataset.
+// Data Studio Explore > Query (TOFIX134 P3.3; TOFIX148 step 3): scratch SQL
+// over the datasets by their real names in the SQL Workbench's editor pane
+// (highlighting, completion with the picked dataset's columns, find,
+// Format), run by the session query service in the background (Task View,
+// Cancel); the result in the table grid, opened in the Table Viewer or the
+// Plot window, added to a dashboard, saved as a dataset, or turned into an
+// SQL step of the graph.
 
 #include "../../core/session_query_engine.h"
+#include "../sql_editor_pane.h"
 #include "../table_grid.h"
 
 #include <imgui.h>
@@ -48,6 +52,12 @@ public:
 
     std::function<void(std::shared_ptr<DataTable>)> on_open_table;  // Table Viewer (MainWindow)
 
+    // Turn into SQL step (the panel answers from the graph): why the last
+    // result's query cannot become a step ("" when it can), and making it.
+    // `inputs` are the tables the query read.
+    std::function<std::string(const std::vector<std::string>& inputs)> step_blocker;
+    std::function<std::string(const std::string& sql, const std::vector<std::string>& inputs)> on_turn_into_step;
+
 private:
     void RenderEditor();
     void RenderResult();
@@ -55,7 +65,11 @@ private:
     void OpenPlot();
     std::string ExampleTable() const;
 
-    char query_buffer_[8192] = {};
+    ::gui::SqlEditorPane pane_{"data_studio_query"};
+    std::string default_query_;     // what the editor holds until someone types (follows the picked dataset)
+    std::string columns_for_;       // the dataset completion offers columns of
+    bool error_details_ = false;    // the whole error, not its first line
+    std::string step_note_;         // what Turn into SQL step did
     std::string current_dataset_;   // as people call it (the examples, Add to Dashboard)
     std::string active_registry_;   // the picked dataset's catalog name
     std::string last_error_;
