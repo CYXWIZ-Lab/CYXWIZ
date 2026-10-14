@@ -4817,7 +4817,7 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
         "column on the selected device, lines them up with a vocabulary (the Text Tokenizer's vocabulary file) and "
         "saves them for an Embedding layer to load. Optionally adds each row's mean word vector as columns.", "",
         {{"Text", PinType::Dataset, true, "Table with the text column (for training and row vectors)"}},
-        {{"Vectors", PinType::Dataset, true, "word, v_0 .. v_{d-1}: one row per vocabulary token, in token-id order"},
+        {{"Vectors", PinType::Dataset, false, "word, v_0 .. v_{d-1}: one row per vocabulary token, in token-id order (also saved; an Embedding layer loads the file)"},
          {"Rows", PinType::Dataset, false, "The input plus emb_0 .. emb_{d-1}, each row's mean word vector (with Row vectors on)"}},
         {{"source", "enum", "pretrained", "Pretrained vector file, or train word2vec on the text column", {"pretrained", "train"}, "", "Source", "Source"},
          {"vectors_file", "file", "", "Pretrained vectors: GloVe .txt, fastText / word2vec .vec, word2vec .bin", {}, "*.txt;*.vec;*.bin", "Vector file", "Source"},

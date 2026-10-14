@@ -104,6 +104,34 @@ the model. **Build starter weights** (folded) writes a random table of the
 node's shape and chooses it. A relative weights file is read from the
 project folder.
 
+## Example graph: a classifier starting from word vectors
+
+`examples/cyxgraph/Sentiment analysis/sentiment_analysis_lstm_word_vectors.cyxgraph`:
+
+```
+Data Input (statement, status) -> Text Tokenizer (vocabulary file) -> Data Split -> Data Loader
+     |                                                                               |
+     +-> Word Embeddings (train word2vec, same vocabulary file)                      v
+            saves artifacts/word_embeddings/sentiment_word_vectors.vec ------> Embedding (5,000 x 100, loads the file)
+                                                                               -> LSTM -> Dense -> ... -> Output
+```
+
+The three pieces share one vocabulary file, so row *i* of the vectors is the
+vector of token id *i*:
+
+- the **Text Tokenizer** turns words into ids with `sentiment_analysis_vocab.txt`;
+- the **Word Embeddings** node lines its vectors up with the same file and
+  saves them;
+- the **Embedding** loads the saved file (Weights > From a Word Embeddings
+  node), which also sets its size to 5,000 x 100.
+
+Steps: open the graph, double-click **Word vectors (word2vec)** and **Train**
+(2 epochs, about 4 minutes on a GTX 1050 Ti), then **Train** the graph. Freeze
+is off, so the vectors are fine-tuned with the rest of the model; turn it on
+to keep them as trained. Training does not run the Word Embeddings node: if
+its file is missing, the Embedding stops with "could not open embedding
+weights file".
+
 ## Example: the mental-health sentiment set
 
 `D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv`

@@ -9,6 +9,7 @@ Example graph files (`.cyxgraph`) for CyxWiz Engine.
 | `mnist_mlp.cyxgraph` | End-to-end MLP classifier for `mnist_784.csv`. Loads, normalizes, splits, batches, and trains. |
 | `mnist_classifier.cyxgraph` | CNN-based MNIST digit classifier (legacy - may need updating). |
 | `sentiment_analysis_gru_classifier.cyxgraph` | Text sentiment classifier for `D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv`. Uses text tokenization, vocabulary building, padding, Embedding, and GRU layers. |
+| `sentiment_analysis_lstm_word_vectors.cyxgraph` | The LSTM classifier with its Embedding started from word2vec vectors: a Word Embeddings node trains them on the `statement` column, lines them up with the Tokenizer's vocabulary file and saves `artifacts/word_embeddings/sentiment_word_vectors.vec`, which the Embedding loads. Run the Word Embeddings node first, then Train. See `docs/usage/word_embeddings.md`. |
 | `sentiment_analysis_inference.py` | Local inference helper for the sentiment graph. Uses the prep metadata/vocab file and calls the embedded predict endpoint. |
 | `sentiment_analysis_tfidf_mlp_classifier.cyxgraph` | Canonical unigram TF-IDF benchmark graph. |
 | `sentiment_analysis_tfidf_mlp_classifier_unigram_bigram_candidate.cyxgraph` | Canonical unigram+bigram candidate graph. |
