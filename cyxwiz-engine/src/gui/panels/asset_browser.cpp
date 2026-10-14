@@ -194,8 +194,11 @@ void AssetBrowserPanel::Render() {
 
     ImGui::Separator();
 
-    // Keyboard shortcuts (when window is focused)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+    // Keyboard shortcuts: when this window has focus, not a dialog it opened
+    // (ImGui counts its popups as its children) and not while a text field
+    // takes the keys (Ctrl+A or Delete there edit the text, not the files).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_NoPopupHierarchy) &&
+        !ImGui::GetIO().WantTextInput) {
         // Get first selected item for single-item operations
         AssetItem* first_selected = selected_items_.empty() ? nullptr : *selected_items_.begin();
 
