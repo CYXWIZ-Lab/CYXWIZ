@@ -185,8 +185,10 @@ void DataStudioPanel::RenderJobTabs() {
         const auto& job = view_.jobs[j];
         const std::string caption = std::to_string(j + 1) + " \xC2\xB7 " + job.state;
         if (j > 0) SameLineOrWrap(ui::JobTabWidth(job.name.c_str(), caption.c_str()), right_edge);
-        if (ui::JobTab(("##job" + std::to_string(j)).c_str(), job.name.c_str(), caption.c_str(), job.job == job_))
+        if (ui::JobTab(("##job" + std::to_string(j)).c_str(), job.name.c_str(), caption.c_str(), job.job == job_) && job_ != job.job) {
             job_ = job.job;
+            if (job_ == studio::Job::Ready && readiness_) readiness_->Activate();  // roles may have changed in Profile
+        }
     }
 }
 
@@ -250,6 +252,10 @@ void DataStudioPanel::RenderJobBody() {
     }
     if (job_ == studio::Job::BringIn) {
         RenderBringIn();
+        return;
+    }
+    if (job_ == studio::Job::Ready) {
+        if (readiness_) readiness_->Render();
         return;
     }
     const ui::Tokens& t = ui::CurrentTokens();
@@ -344,6 +350,7 @@ void DataStudioPanel::RenderStatusBar() {
     ImGui::AlignTextToFramePadding();
     if (query_editor_ && query_editor_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Query running");
     else if (profile_ && profile_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Profiling");
+    else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");
     ImGui::SameLine(0.0f, 14.0f);
     if (view_.last_run.empty()) ImGui::TextColored(t.text_dim, "No run in this session");

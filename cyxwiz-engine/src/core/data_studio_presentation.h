@@ -28,6 +28,8 @@ struct GraphNode {
     std::string file_path;     // a Data Input's source or an export's target
     bool recipe = false;       // a Preparation Recipe (a Subgraph)
     int recipe_steps = 0;
+    std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)
+    std::string balance;       // a Data Loader's balance mode
     // Its latest run in this session.
     bool ran = false;
     int64_t rows = -1, columns = -1;
@@ -92,16 +94,38 @@ struct SourceRow {
     Tone tone = Tone::Plain;
 };
 
+// ML readiness: splits to compare. A Data Split's inputs (train, validation,
+// test in pin order) or catalog datasets named <stem>_train / _validation /
+// _test.
+struct SplitPart {
+    std::string split;         // "train", "validation", "test"
+    std::string dataset;       // registry name
+    std::string label;         // what the graph calls it
+};
+
+struct SplitSet {
+    std::string name;          // the Data Split's name, or the stem ("documents")
+    int node_id = -1;          // the Data Split (-1: from the catalog's names)
+    std::vector<SplitPart> parts;
+    std::string note;          // why a split is missing ("validation: Data Input not loaded")
+};
+
 struct View {
     std::string graph_label;   // "berean_v3_tier1_paragraphs · recipe tier1_paragraphs"
     std::vector<RailSection> rail;
     std::vector<SourceRow> sources;  // Bring in
+    std::vector<SplitSet> split_sets;  // ML readiness
+    std::string balance;       // the graph's Data Loader balance mode ("" without one)
     std::array<JobView, kJobCount> jobs;
     std::string last_run;      // "tier1_paragraphs · 15,349 rows · 4/4 checks · 3.1 s"; "" before any run
     Tone last_run_tone = Tone::Plain;
 };
 
 View Build(const Input& input);
+
+// The split a dataset name ends in ("documents_train" -> "train", stem
+// "documents"); "" when none.
+std::string SplitOfName(const std::string& name, std::string* stem = nullptr);
 
 // "15,349"
 std::string Thousands(int64_t n);

@@ -143,7 +143,53 @@ int main() {
               input_failed.sources[0].tone == Tone::Error,
           "Bring in: a Data Input that failed");
 
+    // ML readiness: the Berean base-corpus training graph (two Data Inputs into
+    // the Data Split's train and validation pins, a Data Loader without balance).
+    {
+        Input t;
+        GraphNode train = Node(1, NodeType::DataInput, "Base corpus v2 train: 100,235 windows");
+        GraphNode validation = Node(15, NodeType::DataInput, "Base corpus v2 validation: 2,310 windows");
+        GraphNode split = Node(2, NodeType::DataSplit, "Frozen train and validation families");
+        split.input_from = {1, 15, -1};
+        GraphNode loader = Node(3, NodeType::DataLoader, "3 passes over the schedule");
+        loader.balance = "none";
+        t.nodes = {train, validation, split, loader};
+        t.datasets = {{"train_schedule_windows_v2", "Base corpus v2 train: 100,235 windows", 100235, 19, true},
+                      {"validation_windows_v2", "Base corpus v2 validation: 2,310 windows", 2310, 17, true}};
+        const View rv = Build(t);
+        Check(rv.split_sets.size() == 1 && rv.split_sets[0].node_id == 2 && rv.split_sets[0].parts.size() == 2 &&
+                  rv.split_sets[0].parts[0].split == "train" && rv.split_sets[0].parts[0].dataset == "train_schedule_windows_v2" &&
+                  rv.split_sets[0].parts[1].split == "validation" && rv.split_sets[0].note.empty(),
+              "the Data Split's inputs are the splits");
+        Check(JobOfView(rv, Job::Ready).state == "2 splits" && rv.balance == "none", "ready state: " + JobOfView(rv, Job::Ready).state);
+
+        // Validation not loaded: named in the note.
+        t.datasets.pop_back();
+        const View half = Build(t);
+        Check(half.split_sets[0].parts.size() == 1 &&
+                  half.split_sets[0].note == "validation: \"Base corpus v2 validation: 2,310 windows\" is not loaded",
+              "a split not loaded: " + half.split_sets[0].note);
+
+        // No Data Split: kjv80_base_v1's files, grouped by name.
+        Input k;
+        k.datasets = {{"documents_test", "", 66, 20, true},
+                      {"documents_train", "", 1228, 20, true},
+                      {"documents_validation", "", 68, 20, true},
+                      {"interval_val", "", 3, 1, true},
+                      {"query_result", "", 3, 2, true}};
+        const View kv = Build(k);
+        Check(kv.split_sets.size() == 1 && kv.split_sets[0].name == "documents" && kv.split_sets[0].node_id == -1 &&
+                  kv.split_sets[0].parts.size() == 3 && kv.split_sets[0].parts[0].dataset == "documents_train" &&
+                  kv.split_sets[0].parts[2].split == "test",
+              "catalog names make a split set (train first; a set needs train)");
+        Check(JobOfView(kv, Job::Ready).state == "3 splits", "kjv80 ready state");
+        std::string stem;
+        Check(SplitOfName("documents_train", &stem) == "train" && stem == "documents" && SplitOfName("x-dev") == "validation" &&
+                  SplitOfName("interval").empty() && SplitOfName("train").empty(),
+              "split names");
+    }
+
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");
-    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph). OK\n";
+    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names). OK\n";
     return 0;
 }

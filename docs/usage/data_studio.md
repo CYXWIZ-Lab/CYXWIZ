@@ -26,14 +26,15 @@ Data Pipeline executor.
   the canvas. Data enters the graph only through a Data Input.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
-  stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no split*, *1
-  output*). Bring in and Explore are built; the other jobs list their nodes
-  and are being built (TOFIX148).
+  stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage found*,
+  *1 output*). Bring in, Explore and ML readiness are built; the other jobs
+  list their nodes and are being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Row Count Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
   CyxWiz Studio; a collapsed recipe stands for its steps.
-- **Status bar**: *Ready*, *Query running* or *Profiling*; the last run
+- **Status bar**: *Ready*, *Query running*, *Profiling* or *Comparing
+  splits*; the last run
   (*tier1_paragraphs - 15,349 rows - 4/4 checks - 3.1 s - at 12:39:04*,
   orange when a check failed, red when a step failed); *Runs through the
   Data Pipeline executor*.
@@ -201,3 +202,38 @@ settings as the Dashboard.
   greyed, with the reason), plus **New Dashboard node on Spotify**, which
   adds a Dashboard connected to the Data Input with the automatic layout
   and this plot. The dashboard opens with the plot selected.
+
+## ML readiness
+
+The splits a model trains and is scored on, side by side, before training.
+
+**Which splits.** A Data Split node's inputs, in pin order: train,
+validation, test (a graph that feeds separate Data Inputs into them, like a
+frozen family split). Without a Data Split, loaded datasets named
+`<name>_train`, `<name>_validation` (or `_val`, `_valid`, `_dev`) and
+`<name>_test` make a set called `<name>`. Several sets show as chips to
+pick from. A Data Split that splits one input by ratio does that during
+training; it is not previewed here. A Data Split input that is not loaded is
+named in an orange line.
+
+**When.** Opening the job compares the splits in the background (Task View
+shows it); so do a change to a split's data and **Check again**. The tab's
+line then says what it found (*no leakage found*).
+
+**The header** names the set and its splits, the verdict (*No leakage
+found*, *Leakage: 3 groups in two splits* in red, *Leakage not checked* when
+no Group, ID or Text column is set, *One split only*), **Show the Data
+Split** on the canvas and **Set roles in Profile** (Explore > Profile on the
+train split).
+
+**The cards:**
+
+| Card | What it shows |
+| --- | --- |
+| Roles | The Text, ID, Group and Target columns, read from the train split's roles (yours first, then the graph's, then inferred). Group is never inferred: set it in Profile. |
+| Split sizes | Rows per split, distinct groups and IDs; a split whose rows repeat an ID says how many. |
+| Leakage across splits | Groups, IDs and identical texts found in two splits (exact matches), with the pairs when there are any. |
+| Text length (words) | Median and mean words per row of the Text column; a split 10% or more shorter or longer than train is named (kjv80: *Validation and test are about 14% shorter than train.*). |
+| Class balance | With a Target: the largest classes' share per split, the train split's largest and smallest class, and a class whose share moves 10 points or more between train and another split. The Data Loader's balance mode. |
+
+Everything is counted with SQL on the whole tables; nothing is written.

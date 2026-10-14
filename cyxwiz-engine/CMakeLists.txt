@@ -137,6 +137,7 @@ set(ENGINE_SOURCES
     src/core/dataset_catalog_registry.cpp
     src/core/dataset_picker_presentation.cpp
     src/core/data_studio_presentation.cpp
+    src/core/ml_readiness.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -673,6 +674,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
+    src/gui/data_studio/readiness_view.cpp
     src/gui/dashboard/dashboard_window.cpp
     src/gui/dashboard/dashboard_sparse.cpp
     src/gui/dashboard/dashboard_links.cpp
@@ -5322,6 +5324,22 @@ set_target_properties(test_data_studio_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
+
+# ===== Test: Data Studio ML readiness (TOFIX148 step 3) =====
+add_executable(test_ml_readiness
+    tests/test_ml_readiness.cpp
+    src/core/ml_readiness.cpp
+    src/core/data_studio_presentation.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+)
+target_include_directories(test_ml_readiness PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_ml_readiness PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_ml_readiness PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_ml_readiness PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ml_readiness COMMAND test_ml_readiness)
 
 # ===== Test: hypothesis-test distributions against scipy (TOFIX140 analysis panels) =====
 add_executable(test_data_analyzer_distributions

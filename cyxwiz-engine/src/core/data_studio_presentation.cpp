@@ -1,7 +1,9 @@
 #include "data_studio_presentation.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <set>
 
@@ -181,6 +183,24 @@ void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
 
 }  // namespace
 
+std::string SplitOfName(const std::string& name, std::string* stem) {
+    static const std::pair<const char*, const char*> kSuffixes[] = {
+        {"train", "train"},           {"training", "train"}, {"validation", "validation"}, {"valid", "validation"},
+        {"val", "validation"},        {"dev", "validation"}, {"test", "test"},             {"testing", "test"}};
+    std::string lower = name;
+    for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (const auto& [suffix, split] : kSuffixes) {
+        const size_t n = std::strlen(suffix);
+        if (lower.size() < n + 2) continue;
+        const size_t at = lower.size() - n;
+        const char sep = lower[at - 1];
+        if (lower.compare(at, n, suffix) != 0 || (sep != '_' && sep != '-' && sep != ' ' && sep != '.')) continue;
+        if (stem) *stem = name.substr(0, at - 1);
+        return split;
+    }
+    return "";
+}
+
 View Build(const Input& in) {
     View v;
 
@@ -224,7 +244,7 @@ View Build(const Input& in) {
                            : !checks_ran ? Plural(checks, "check", "checks") + ", not run"
                                          : std::to_string(checks_passed) + " of " + std::to_string(checks_ran) + " pass";
                 break;
-            case Job::Ready: jv.state = count ? Plural(count, "node", "nodes") : "no split"; break;
+            case Job::Ready: break;  // after the split sets, below
             case Job::Publish: jv.state = count ? Plural(count, "output", "outputs") : "no output"; break;
             case Job::Results: jv.state = count ? Plural(count, "evaluation node", "evaluation nodes") : "nothing yet"; break;
         }
@@ -339,6 +359,61 @@ View Build(const Input& in) {
     }
     v.rail = {std::move(sources), std::move(results), std::move(published)};
     if (!other.items.empty()) v.rail.push_back(std::move(other));
+
+    // ML readiness: each Data Split's inputs, then the catalog's <stem>_train / ... names.
+    static const char* kSplits[] = {"train", "validation", "test"};
+    std::set<std::string> in_sets;
+    for (const auto& n : in.nodes) {
+        if (n.type == NodeType::DataLoader && v.balance.empty()) v.balance = n.balance.empty() ? "none" : n.balance;
+        if (n.type != NodeType::DataSplit) continue;
+        SplitSet set;
+        set.name = n.name;
+        set.node_id = n.id;
+        for (size_t pin = 0; pin < n.input_from.size() && pin < 3; ++pin) {
+            const int from = n.input_from[pin];
+            if (from < 0) continue;
+            const GraphNode* source = nullptr;
+            for (const auto& m : in.nodes)
+                if (m.id == from) source = &m;
+            const Dataset* d = source && IsDataInput(*source) ? DatasetOfInput(in, *source) : nullptr;
+            if (!d) {
+                set.note += std::string(set.note.empty() ? "" : "; ") + kSplits[pin] + ": " +
+                            (source && IsDataInput(*source) ? "\"" + source->name + "\" is not loaded" : "not read from a Data Input");
+                continue;
+            }
+            set.parts.push_back({kSplits[pin], d->name, source->name});
+            in_sets.insert(d->name);
+        }
+        v.split_sets.push_back(std::move(set));
+    }
+    std::map<std::string, SplitSet> by_stem;
+    for (const auto& d : in.datasets) {
+        if (!d.tabular || in_sets.count(d.name)) continue;
+        std::string stem;
+        const std::string display = d.label.empty() ? d.name : d.label;
+        std::string split = SplitOfName(display, &stem);
+        if (split.empty()) split = SplitOfName(d.name, &stem);
+        if (split.empty()) continue;
+        SplitSet& set = by_stem[stem];
+        set.name = stem;
+        if (std::none_of(set.parts.begin(), set.parts.end(), [&](const SplitPart& p) { return p.split == split; }))
+            set.parts.push_back({split, d.name, display});
+    }
+    for (auto& [stem, set] : by_stem) {
+        const bool has_train = std::any_of(set.parts.begin(), set.parts.end(), [](const SplitPart& p) { return p.split == "train"; });
+        if (!has_train || set.parts.size() < 2) continue;
+        std::sort(set.parts.begin(), set.parts.end(), [](const SplitPart& a, const SplitPart& b) {
+            const auto rank = [](const std::string& s) { return s == "train" ? 0 : s == "validation" ? 1 : 2; };
+            return rank(a.split) < rank(b.split);
+        });
+        v.split_sets.push_back(std::move(set));
+    }
+    {
+        JobView& ready = v.jobs[static_cast<size_t>(Job::Ready)];
+        if (v.split_sets.size() == 1) ready.state = Plural(v.split_sets[0].parts.size(), "split", "splits");
+        else if (!v.split_sets.empty()) ready.state = Plural(v.split_sets.size(), "split set", "split sets");
+        else ready.state = ready.node_ids.empty() ? "no split" : Plural(ready.node_ids.size(), "node", "nodes");
+    }
 
     // The last run: the latest node that finished with a table (checks count
     // separately, exports are in the rail), or the failure.

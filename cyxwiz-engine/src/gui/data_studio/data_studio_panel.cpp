@@ -10,6 +10,7 @@
 #include "../node_editor.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <set>
 
@@ -19,6 +20,9 @@ DataStudioPanel::DataStudioPanel() {
     query_editor_ = std::make_unique<QueryEditor>();
     profile_ = std::make_unique<ProfileView>();
     visualizer_ = std::make_unique<Visualizer>();
+    readiness_ = std::make_unique<ReadinessView>();
+    readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };
+    readiness_->on_show_node = [this](int id) { ShowOnCanvas({id}); };
     query_editor_->step_blocker = [this](const std::vector<std::string>& inputs) { return StepBlocker(inputs); };
     query_editor_->on_turn_into_step = [this](const std::string& sql, const std::vector<std::string>& inputs) {
         return TurnIntoStep(sql, inputs);
@@ -70,6 +74,8 @@ void DataStudioPanel::RefreshView() {
             if (parameters) {
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
+                const auto mode = parameters->find("balance_mode");
+                if (type == ::gui::NodeType::DataLoader && mode != parameters->end()) n.balance = mode->second;
             }
             if (const auto f = facts.find(id); f != facts.end()) {
                 n.ran = true;
@@ -84,8 +90,20 @@ void DataStudioPanel::RefreshView() {
             in.nodes.push_back(std::move(n));
             return true;
         };
+        const auto& links = node_editor_->GetLinks();
         for (const auto& node : node_editor_->GetNodes()) {
-            if (!add(node.id, node.type, node.name, &node.parameters) || node.type != ::gui::NodeType::Subgraph) continue;
+            if (!add(node.id, node.type, node.name, &node.parameters)) continue;
+            if (node.type == ::gui::NodeType::DataSplit) {
+                // The node linked to each input pin (ML readiness: train, validation, test).
+                auto& from = in.nodes.back().input_from;
+                for (const auto& pin : node.inputs) {
+                    int source = -1;
+                    for (const auto& link : links)
+                        if (link.to_node == node.id && link.to_pin == pin.id) source = link.from_node;
+                    from.push_back(source);
+                }
+            }
+            if (node.type != ::gui::NodeType::Subgraph) continue;
             // A recipe's steps count as the graph's nodes too (checks inside
             // it are Validate's); a collapsed recipe stands for them on the canvas.
             const auto summary = node_editor_->GetSubgraphSummary(node.id);
@@ -109,6 +127,15 @@ void DataStudioPanel::RefreshView() {
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
+    if (readiness_) {
+        readiness_->SetSplitSets(view_.split_sets, view_.balance);
+        // The tab's caption says what the last check found ("5 · no leakage found").
+        std::string verdict = readiness_->Verdict();
+        if (!verdict.empty()) {
+            verdict[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(verdict[0])));
+            view_.jobs[static_cast<size_t>(studio::Job::Ready)].state = verdict;
+        }
+    }
 }
 
 const studio::GraphNode* DataStudioPanel::NodeMaking(const std::string& table) const {
