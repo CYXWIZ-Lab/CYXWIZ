@@ -87,24 +87,33 @@ void DataStudioPanel::RenderHeader() {
     ImGui::TextColored(t.text_bright, "Data Studio");
     ImGui::SameLine(0.0f, 14.0f);
 
-    // The graph it works on: a tinted chip, no outline.
+    const float show_w = ui::ButtonWidth("Show graph", ui::ButtonSize::Small);
+    const float publish_w = ui::ButtonWidth("Publish...", ui::ButtonSize::Regular);
+    const float right = show_w + publish_w + ImGui::GetStyle().ItemSpacing.x;
+
+    // The graph it works on: a tinted chip, no outline. In a narrow panel the
+    // chip shrinks (its text clipped, whole on hover) so the buttons never
+    // draw over it.
     const std::string graph = view_.graph_label;
     const float pad = 9.0f;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const float label_w = ImGui::CalcTextSize("Graph").x;
-    const float w = pad * 2.0f + label_w + 8.0f + ImGui::CalcTextSize(graph.c_str()).x;
+    const float full_w = pad * 2.0f + label_w + 8.0f + ImGui::CalcTextSize(graph.c_str()).x;
+    const float w = std::min(full_w, std::max(pad * 2.0f + label_w, ImGui::GetContentRegionAvail().x - right - 14.0f));
     const float h = ImGui::GetFrameHeight();
-    ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), ui::ToU32(t.bg_raised), 6.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), ui::ToU32(t.bg_raised), 6.0f);
     const float ty = pos.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
-    ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + pad, ty), ui::ToU32(t.text_dim), "Graph");
-    ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + pad + label_w + 8.0f, ty), ui::ToU32(t.text), graph.c_str());
+    dl->PushClipRect(pos, ImVec2(pos.x + w - pad * 0.5f, pos.y + h), true);
+    dl->AddText(ImVec2(pos.x + pad, ty), ui::ToU32(t.text_dim), "Graph");
+    dl->AddText(ImVec2(pos.x + pad + label_w + 8.0f, ty), ui::ToU32(t.text), graph.c_str());
+    dl->PopClipRect();
     ImGui::Dummy(ImVec2(w, h));
     const char* note = "Everything here is a node in this graph; changes show on the canvas.";
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", note);
-
-    const float show_w = ui::ButtonWidth("Show graph", ui::ButtonSize::Small);
-    const float publish_w = ui::ButtonWidth("Publish...", ui::ButtonSize::Regular);
-    const float right = show_w + publish_w + ImGui::GetStyle().ItemSpacing.x;
+    if (ImGui::IsItemHovered()) {
+        if (w < full_w) ImGui::SetTooltip("%s\n%s", graph.c_str(), note);
+        else ImGui::SetTooltip("%s", note);
+    }
     const float note_w = ImGui::CalcTextSize(note).x;
     const float room = ImGui::GetContentRegionAvail().x - w - right - 40.0f;
     if (room > note_w) {
@@ -112,7 +121,8 @@ void DataStudioPanel::RenderHeader() {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_faint, "%s", note);
     }
-    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - right);
+    ImGui::SameLine(0.0f, 14.0f);
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - right));
     if (ui::SecondaryButton("Show graph", static_cast<bool>(open_node_editor_callback_), "CyxWiz Studio is not available"))
         open_node_editor_callback_();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open CyxWiz Studio on this graph");
