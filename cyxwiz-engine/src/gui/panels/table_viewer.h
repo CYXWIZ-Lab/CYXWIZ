@@ -142,10 +142,10 @@ private:
     void OpenPlot(TableTab* tab, plot::Kind kind, int x_column, int y_column = -1);
     void RenderMiniHistogram(TableTab* tab, int column);
 
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Export and Find dialogs
-    // ═══════════════════════════════════════════════════════════════
-    void RenderExportDialog();
+    // Export: a menu on the toolbar's Export (CSV, TSV, JSON, Parquet to a
+    // file, or CSV to the clipboard); Find: a window over the grid's filter.
+    void RenderExportMenu(TableTab* tab);
+    void ExportTable(TableTab* tab, int format);  // 0 CSV, 1 TSV, 2 JSON, 3 Parquet, 4 clipboard (CSV)
     void RenderFindDialog();
 
     // Saving an edited table to its file
@@ -179,13 +179,15 @@ private:
     // ═══════════════════════════════════════════════════════════════
     std::unique_ptr<plot::PlotWindow> plot_window_;
 
-    // ═══════════════════════════════════════════════════════════════
-    // NEW: Dialog states
-    // ═══════════════════════════════════════════════════════════════
-    bool show_export_dialog_ = false;
+    // Export and Find
+    bool export_shown_rows_only_ = false;  // the grid's rows (sorted, filtered) instead of the table
+    bool export_headers_ = true;           // CSV / TSV: the column names first
+    std::string status_note_;              // what the last export did, in the status bar
+    bool status_note_error_ = false;
     bool show_find_dialog_ = false;
     char find_buffer_[256] = {0};
-    char replace_buffer_[256] = {0};
+    int find_cells_ = -1;                  // cells matching (-1: nothing searched)
+    size_t find_rows_ = 0;
 
     // Visualization integration
     VisualizationPanel* visualization_panel_ = nullptr;

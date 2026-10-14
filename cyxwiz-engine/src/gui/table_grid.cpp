@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -80,6 +81,8 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
     filter_text.clear();
     std::memset(filter_buffer, 0, sizeof(filter_buffer));
     filter_mode_hide = false;
+    filter_case_sensitive = false;
+    filter_whole_cell = false;
     filtered_indices.clear();
     column_kinds.clear();
     initial_widths_.clear();
@@ -389,8 +392,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                     }
 
                     // Apply filter highlighting color
-                    bool has_filter_match = !filter_text.empty() &&
-                        cell_text.find(filter_text) != std::string::npos;
+                    bool has_filter_match = Matches(cell_text);
 
                     // Apply multi-selection background color
                     if (in_multi_selection && !is_selected) {
@@ -772,6 +774,18 @@ ImVec4 TableGrid::GetColorMapColor(double normalized, ColorMapType type) {
 // Filtering
 // ============================================================================
 
+bool TableGrid::Matches(const std::string& text) const {
+    if (filter_text.empty()) return false;
+    if (filter_case_sensitive)
+        return filter_whole_cell ? text == filter_text : text.find(filter_text) != std::string::npos;
+    const auto lower = [](std::string s) {
+        for (char& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return s;
+    };
+    const std::string t = lower(text), f = lower(filter_text);
+    return filter_whole_cell ? t == f : t.find(f) != std::string::npos;
+}
+
 void TableGrid::SetFilter(const std::string& text) {
     filter_text = text;
     std::memset(filter_buffer, 0, sizeof(filter_buffer));
@@ -795,7 +809,7 @@ void TableGrid::ApplyFilter() {
     for (size_t idx : sorted_indices) {
         bool match = false;
         for (size_t c = 0; c < table->GetColumnCount(); c++) {
-            if (CellText(idx, c).find(filter_text) != std::string::npos) {
+            if (Matches(CellText(idx, c))) {
                 match = true;
                 break;
             }

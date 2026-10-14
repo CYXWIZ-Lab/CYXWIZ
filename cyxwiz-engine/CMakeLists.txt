@@ -625,6 +625,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
     src/data/arrow_data_table.cpp
+    src/data/table_text_export.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -1470,6 +1471,21 @@ if(WIN32)
 endif()
 set_target_properties(test_arrow_data_table PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME arrow_data_table_contract COMMAND test_arrow_data_table)
+
+# ===== Test: Table Viewer export text (TOFIX148) =====
+add_executable(test_table_text_export
+    tests/test_table_text_export.cpp
+    src/data/table_text_export.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_table_text_export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_table_text_export PRIVATE spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_table_text_export PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_table_text_export PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME table_text_export_contract COMMAND test_table_text_export)
 
 # ===== Test: Dashboard runtime (TOFIX134 P3.7) =====
 add_executable(test_dashboard_runtime

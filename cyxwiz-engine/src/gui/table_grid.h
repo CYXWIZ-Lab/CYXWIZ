@@ -100,6 +100,8 @@ public:
     void ApplyFilter();
     void ClearFilter();
     bool Hiding() const { return filter_mode_hide && !filter_text.empty(); }
+    // Whether a cell's text matches the filter (its case and whole-cell options).
+    bool Matches(const std::string& text) const;
     void ApplyColorMap(int column, ColorMapType type);
     void ClearColorMap(int column);
     static ImVec4 GetColorMapColor(double normalized, ColorMapType type);
@@ -134,6 +136,8 @@ public:
     std::string filter_text;
     char filter_buffer[256] = {0};
     bool filter_mode_hide = false;
+    bool filter_case_sensitive = false;
+    bool filter_whole_cell = false;       // the whole cell, not a part of it
     std::vector<size_t> filtered_indices;  // Subset of sorted_indices
 
     std::vector<TableColumnKind> column_kinds;

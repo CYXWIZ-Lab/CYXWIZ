@@ -121,7 +121,6 @@ void TableViewerPanel::Render() {
     ImGui::End();
 
     // Render modal dialogs (must be outside main window)
-    RenderExportDialog();
     RenderFindDialog();
 }
 
@@ -378,10 +377,9 @@ void TableViewerPanel::RenderToolbar() {
 
         // Export button
         ImGui::SameLine();
-        if (ui::GhostButton(ICON_FA_FILE_EXPORT " Export")) {
-            show_export_dialog_ = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export table to file");
+        if (ui::GhostButton(ICON_FA_FILE_EXPORT " Export " ICON_FA_CHEVRON_DOWN)) ImGui::OpenPopup("##export");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the table to a file, or copy it");
+        RenderExportMenu(active_tab);
     }
 
     // Close tab button
@@ -431,6 +429,11 @@ void TableViewerPanel::RenderStatusBar() {
         ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));
     } else {
         ImGui::Text(ICON_FA_MEMORY " %.1f KB", mem_bytes / 1024.0);
+    }
+    if (!status_note_.empty()) {
+        ImGui::SameLine(0.0f, 18.0f);
+        const ui::Tokens& t = ui::CurrentTokens();
+        ImGui::TextColored(status_note_error_ ? t.error : t.text_dim, "%s", status_note_.c_str());
     }
 }
 
