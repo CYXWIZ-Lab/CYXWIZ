@@ -6,7 +6,7 @@
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
-#include "../dialogs/new_script_dialog.h"
+#include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
 #include <algorithm>
 #include <cstdint>
@@ -455,7 +455,7 @@ private:
 
     // Project creation state
     CreateProjectDialog create_project_dialog_;  // File > New Project
-    NewScriptDialog new_script_dialog_;          // File / Script > New Script
+    NewFileDialog new_script_dialog_;            // File / Script > New Script
     AboutDialog about_dialog_;                   // Help > About CyxWiz
 
     // Save As dialog state

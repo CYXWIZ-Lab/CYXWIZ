@@ -180,7 +180,7 @@ void ToolbarPanel::HandleAutoSaveTimer() {
 void ToolbarPanel::RenderEditorDialogs() {
     // New Script dialog
     // File > New Script and Script > New Script (TOFIX129 A2-4).
-    if (new_script_dialog_.Render() == NewScriptDialog::Result::Created && open_script_in_editor_callback_) {
+    if (new_script_dialog_.Render() == NewFileDialog::Result::Created && open_script_in_editor_callback_) {
         open_script_in_editor_callback_(new_script_dialog_.CreatedPath());
     }
 

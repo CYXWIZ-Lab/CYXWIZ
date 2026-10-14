@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../dialogs/new_script_dialog.h"
+#include "../dialogs/new_file_dialog.h"
 #include <chrono>
 #include <future>
 #include "../panel.h"
@@ -14,6 +14,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <optional>
 #include <set>
 #include <atomic>
 
@@ -116,7 +117,7 @@ private:
     void CreateDataInputFromItem(const AssetItem& item);
 
     // Dialogs
-    void RenderNewScriptDialog();
+    void RenderNewFileDialog();
     void RenderNewFolderDialog();
     void RenderRenameDialog();
     void RenderDeleteConfirmDialog();
@@ -180,10 +181,10 @@ private:
     // Dialogs
     bool show_rename_dialog_;
     bool show_delete_confirm_;
-    bool show_new_script_dialog_;
+    std::optional<NewFileDialog::Mode> new_file_request_;  // New > Script / New > File, opened next frame
     bool show_new_folder_dialog_;
     char rename_buffer_[256];
-    NewScriptDialog new_script_dialog_;  // New > Script (shared dialog)
+    NewFileDialog new_file_dialog_;  // New > Script and New > File (shared dialog)
     char new_folder_name_[256];
 
     // Callbacks

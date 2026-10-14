@@ -141,7 +141,6 @@ AssetBrowserPanel::AssetBrowserPanel()
     , context_menu_item_(nullptr)
     , show_rename_dialog_(false)
     , show_delete_confirm_(false)
-    , show_new_script_dialog_(false)
     , show_new_folder_dialog_(false)
 {
     std::memset(search_buffer_, 0, sizeof(search_buffer_));
@@ -239,7 +238,7 @@ void AssetBrowserPanel::Render() {
             } else {
                 context_menu_item_ = directory_root_.get();
             }
-            show_new_script_dialog_ = true;
+            new_file_request_ = NewFileDialog::Mode::Script;
         }
         // Ctrl+A - Select all
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A) && directory_root_) {
@@ -300,7 +299,10 @@ void AssetBrowserPanel::Render() {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -341,7 +343,7 @@ void AssetBrowserPanel::Render() {
     RenderStatusBar();
 
     // Dialogs (these are modal popups, render at parent level)
-    RenderNewScriptDialog();
+    RenderNewFileDialog();
     RenderNewFolderDialog();
     RenderRenameDialog();
     RenderDeleteConfirmDialog();
@@ -924,7 +926,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -1090,25 +1095,26 @@ void AssetBrowserPanel::RenderStatusBar() {
     }
 }
 
-void AssetBrowserPanel::RenderNewScriptDialog() {
+void AssetBrowserPanel::RenderNewFileDialog() {
     // Same dialog as File > New Script (TOFIX129 A2-4), opened in the folder
-    // that was right-clicked, else the project's scripts folder.
-    if (show_new_script_dialog_) {
-        show_new_script_dialog_ = false;
+    // that was right-clicked, else the project's scripts folder (a script) or
+    // the project folder (a file).
+    if (new_file_request_) {
         std::string folder;
         if (context_menu_item_ && context_menu_item_->is_directory) folder = context_menu_item_->absolute_path;
         else if (context_menu_item_) folder = fs::path(context_menu_item_->absolute_path).parent_path().string();
-        new_script_dialog_.Open(folder);
+        new_file_dialog_.Open(*new_file_request_, folder);
+        new_file_request_.reset();
     }
-    if (new_script_dialog_.Render() != NewScriptDialog::Result::Created) return;
+    if (new_file_dialog_.Render() != NewFileDialog::Result::Created) return;
     Refresh();
     if (on_double_click_) {
         AssetItem new_item;
-        const fs::path created(new_script_dialog_.CreatedPath());
+        const fs::path created(new_file_dialog_.CreatedPath());
         new_item.name = created.filename().string();
         new_item.absolute_path = created.string();
         new_item.relative_path = ProjectManager::Instance().MakeRelativePath(created.string());
-        new_item.type = AssetType::Script;
+        new_item.type = DetermineAssetType(created.string());
         new_item.is_directory = false;
         on_double_click_(new_item);
     }

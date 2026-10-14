@@ -451,7 +451,7 @@ set(ENGINE_SOURCES
     src/gui/code_editor.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
-    src/gui/dialogs/new_script_dialog.cpp
+    src/gui/dialogs/new_file_dialog.cpp
     src/gui/dialogs/about_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp

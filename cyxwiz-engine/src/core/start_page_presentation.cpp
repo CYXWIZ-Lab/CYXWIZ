@@ -172,10 +172,13 @@ std::string ScriptFileName(const ScriptInputs& in) {
     return name + (in.python ? ".py" : ".cyx");
 }
 
-CreateCheck CheckNewScript(const ScriptInputs& in) {
+namespace {
+
+// The checks shared by a new script and a new text file.
+CreateCheck CheckNewFile(const std::string& file, const std::string& raw_name, const std::string& raw_folder,
+                         bool target_exists, const char* noun) {
     CreateCheck c;
-    const std::string file = ScriptFileName(in);
-    const std::string folder = Trim(in.folder);
+    const std::string folder = Trim(raw_folder);
     if (!file.empty() && !folder.empty()) {
         c.target = (std::filesystem::path(folder) / file).string();
         c.preview = c.target;
@@ -183,10 +186,10 @@ CreateCheck CheckNewScript(const ScriptInputs& in) {
         c.preview = "The file named above, once you enter a name and a folder.";
     }
     if (file.empty()) {
-        c.reason = "Enter a script name.";
+        c.reason = std::string("Enter a ") + noun + " name.";
         return c;
     }
-    if (const std::string problem = NameProblem(Trim(in.name), in.name); !problem.empty()) {
+    if (const std::string problem = NameProblem(Trim(raw_name), raw_name); !problem.empty()) {
         c.reason = problem;
         c.warning = problem + " Avoid < > : \" / \\ | ? * and a trailing dot or space.";
         return c;
@@ -195,9 +198,15 @@ CreateCheck CheckNewScript(const ScriptInputs& in) {
         c.reason = "Choose a folder.";
         return c;
     }
-    if (in.target_exists) c.warning = "A file with this name already exists in that folder. Creating replaces it.";
+    if (target_exists) c.warning = "A file with this name already exists in that folder. Creating replaces it.";
     c.can_create = true;
     return c;
+}
+
+}  // namespace
+
+CreateCheck CheckNewScript(const ScriptInputs& in) {
+    return CheckNewFile(ScriptFileName(in), in.name, in.folder, in.target_exists, "script");
 }
 
 std::string ScriptTemplate(const std::string& file_name, bool python) {
@@ -205,6 +214,49 @@ std::string ScriptTemplate(const std::string& file_name, bool python) {
         return "# " + file_name + "\n\nimport pycyxwiz\n\n\ndef main():\n    pass\n\n\nif __name__ == \"__main__\":\n    main()\n";
     }
     return "# " + file_name + "\n# CyxWiz script: define your ML pipeline here.\n\n";
+}
+
+const char* TextFileKindLabel(TextFileKind kind) {
+    switch (kind) {
+        case TextFileKind::Text: return "Text";
+        case TextFileKind::Markdown: return "Markdown";
+        case TextFileKind::Json: return "JSON";
+        case TextFileKind::Yaml: return "YAML";
+        case TextFileKind::Csv: return "CSV";
+    }
+    return "Text";
+}
+
+const char* TextFileKindExtension(TextFileKind kind) {
+    switch (kind) {
+        case TextFileKind::Text: return ".txt";
+        case TextFileKind::Markdown: return ".md";
+        case TextFileKind::Json: return ".json";
+        case TextFileKind::Yaml: return ".yaml";
+        case TextFileKind::Csv: return ".csv";
+    }
+    return ".txt";
+}
+
+std::string TextFileName(const TextFileInputs& in) {
+    const std::string name = Trim(in.name);
+    if (name.empty()) return {};
+    // Its own extension: a dot after the first character, with text after it.
+    const auto dot = name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0 && dot + 1 < name.size()) return name;
+    return name + TextFileKindExtension(in.kind);
+}
+
+CreateCheck CheckNewTextFile(const TextFileInputs& in) {
+    return CheckNewFile(TextFileName(in), in.name, in.folder, in.target_exists, "file");
+}
+
+std::string TextFileTemplate(const std::string& file_name) {
+    const std::filesystem::path p(file_name);
+    const std::string ext = Lower(p.extension().string());
+    if (ext == ".md") return "# " + p.stem().string() + "\n\n";
+    if (ext == ".json") return "{\n}\n";
+    return {};
 }
 
 }  // namespace cyxwiz::startpage

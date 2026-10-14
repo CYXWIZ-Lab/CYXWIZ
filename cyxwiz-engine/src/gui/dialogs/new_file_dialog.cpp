@@ -1,4 +1,4 @@
-#include "new_script_dialog.h"
+#include "new_file_dialog.h"
 
 #include "../../core/file_dialogs.h"
 #include "../../core/project_manager.h"
@@ -18,7 +18,9 @@ namespace cyxwiz {
 
 namespace {
 
-constexpr const char* kTitle = "New script###new_script";
+// One popup id for both modes: only one of them is open at a time.
+constexpr const char* kScriptTitle = "New script###new_file";
+constexpr const char* kFileTitle = "New file###new_file";
 
 void Copy(char* dest, size_t size, const std::string& text) {
     std::strncpy(dest, text.c_str(), size - 1);
@@ -27,10 +29,11 @@ void Copy(char* dest, size_t size, const std::string& text) {
 
 }  // namespace
 
-void NewScriptDialog::Open(const std::string& folder) {
+void NewFileDialog::Open(Mode mode, const std::string& folder) {
+    mode_ = mode;
     std::string start = folder;
     auto& pm = ProjectManager::Instance();
-    if (start.empty() && pm.HasActiveProject()) start = pm.GetScriptsPath();
+    if (start.empty() && pm.HasActiveProject()) start = mode == Mode::Script ? pm.GetScriptsPath() : pm.GetProjectRoot();
     Copy(folder_, sizeof(folder_), start);
     name_[0] = '\0';
     error_.clear();
@@ -38,32 +41,39 @@ void NewScriptDialog::Open(const std::string& folder) {
     focus_name_ = true;
 }
 
-bool NewScriptDialog::TryCreate() {
+std::string NewFileDialog::FileName() const {
+    if (mode_ == Mode::Script) return startpage::ScriptFileName({name_, folder_, python_, false});
+    return startpage::TextFileName({name_, folder_, static_cast<startpage::TextFileKind>(text_kind_), false});
+}
+
+bool NewFileDialog::TryCreate() {
     namespace fs = std::filesystem;
-    const startpage::ScriptInputs in{name_, folder_, python_, false};
-    const std::string file_name = startpage::ScriptFileName(in);
+    const std::string file_name = FileName();
     const fs::path path = fs::path(folder_) / file_name;
+    const char* noun = mode_ == Mode::Script ? "script" : "file";
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out.is_open()) {
-        error_ = "The script could not be created in " + path.parent_path().string() +
+        error_ = std::string("The ") + noun + " could not be created in " + path.parent_path().string() +
                  ". Check that the folder is writable; details are in the log.";
-        spdlog::error("Failed to create script: {}", path.string());
+        spdlog::error("Failed to create {}: {}", noun, path.string());
         return false;
     }
-    out << startpage::ScriptTemplate(file_name, python_);
+    out << (mode_ == Mode::Script ? startpage::ScriptTemplate(file_name, python_) : startpage::TextFileTemplate(file_name));
     out.close();
     created_path_ = path.string();
-    spdlog::info("Created script: {}", created_path_);
+    spdlog::info("Created {}: {}", noun, created_path_);
     open_ = false;
     return true;
 }
 
-NewScriptDialog::Result NewScriptDialog::Render() {
+NewFileDialog::Result NewFileDialog::Render() {
     using namespace ui;
+    const bool script = mode_ == Mode::Script;
+    const char* title = script ? kScriptTitle : kFileTitle;
     if (request_open_) {
-        ImGui::OpenPopup(kTitle);
+        ImGui::OpenPopup(title);
         request_open_ = false;
         open_ = true;
     }
@@ -72,18 +82,19 @@ NewScriptDialog::Result NewScriptDialog::Render() {
     DialogOptions options;
     options.size = ImVec2(560.0f, 360.0f);
     options.min_size = ImVec2(460.0f, 300.0f);
-    if (!BeginDialog(kTitle, options)) {
+    if (!BeginDialog(title, options)) {
         open_ = false;
         return Result::None;
     }
     const Tokens& t = CurrentTokens();
 
     std::error_code ec;
-    const startpage::ScriptInputs probe{name_, folder_, python_, false};
-    const std::string file_name = startpage::ScriptFileName(probe);
+    const std::string file_name = FileName();
     const bool exists = !file_name.empty() && folder_[0] &&
                         std::filesystem::exists(std::filesystem::path(folder_) / file_name, ec);
-    const startpage::CreateCheck check = startpage::CheckNewScript({name_, folder_, python_, exists});
+    const startpage::CreateCheck check =
+        script ? startpage::CheckNewScript({name_, folder_, python_, exists})
+               : startpage::CheckNewTextFile({name_, folder_, static_cast<startpage::TextFileKind>(text_kind_), exists});
 
     bool submit = false;
     const float label_w = ImGui::CalcTextSize("Folder").x + t.space_xl;
@@ -101,16 +112,24 @@ NewScriptDialog::Result NewScriptDialog::Render() {
             focus_name_ = false;
         }
         ImGui::SetNextItemWidth(-FLT_MIN);
-        submit = ImGui::InputTextWithHint("##name", "train_model", name_, sizeof(name_), ImGuiInputTextFlags_EnterReturnsTrue);
+        submit = ImGui::InputTextWithHint("##name", script ? "train_model" : "notes", name_, sizeof(name_),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Type");
         ImGui::TableNextColumn();
-        const char* types[] = {"Python script (.py)", "CyxWiz script (.cyx)"};
-        int type = python_ ? 0 : 1;
-        if (SegmentedControl("##type", types, 2, &type)) python_ = type == 0;
+        if (script) {
+            const char* types[] = {"Python script (.py)", "CyxWiz script (.cyx)"};
+            int type = python_ ? 0 : 1;
+            if (SegmentedControl("##type", types, 2, &type)) python_ = type == 0;
+        } else {
+            const char* kinds[startpage::kTextFileKindCount];
+            for (int i = 0; i < startpage::kTextFileKindCount; ++i)
+                kinds[i] = startpage::TextFileKindLabel(static_cast<startpage::TextFileKind>(i));
+            SegmentedControl("##kind", kinds, startpage::kTextFileKindCount, &text_kind_);
+        }
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -119,10 +138,12 @@ NewScriptDialog::Result NewScriptDialog::Render() {
         ImGui::TableNextColumn();
         const float browse_w = ButtonWidth("Browse...", ButtonSize::Small);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_w - t.space_md);
-        ImGui::InputTextWithHint("##folder", "Choose a folder for the script", folder_, sizeof(folder_));
+        ImGui::InputTextWithHint("##folder", script ? "Choose a folder for the script" : "Choose a folder for the file",
+                                 folder_, sizeof(folder_));
         ImGui::SameLine(0.0f, t.space_md);
         if (SecondaryButton("Browse...")) {
-            if (auto folder = FileDialogs::SelectFolder("Folder for the new script", folder_)) Copy(folder_, sizeof(folder_), *folder);
+            const char* prompt = script ? "Folder for the new script" : "Folder for the new file";
+            if (auto folder = FileDialogs::SelectFolder(prompt, folder_)) Copy(folder_, sizeof(folder_), *folder);
         }
 
         ImGui::TableNextRow();
@@ -138,12 +159,15 @@ NewScriptDialog::Result NewScriptDialog::Render() {
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
     if (!ProjectManager::Instance().HasActiveProject())
-        ImGui::TextColored(t.text_dim, "No project is open, so choose where the script goes.");
-    else
+        ImGui::TextColored(t.text_dim, script ? "No project is open, so choose where the script goes."
+                                              : "No project is open, so choose where the file goes.");
+    else if (script)
         ImGui::TextColored(t.text_dim, "The project's scripts folder is the default.");
+    if (!script) ImGui::TextColored(t.text_dim, "Another kind: type its extension in the name (config.toml).");
     if (!check.warning.empty()) StatusText(Status::NeedsDriverUpdate, check.warning.c_str());
     if (!error_.empty()) StatusText(Status::NotSupported, error_.c_str());
-    ImGui::TextColored(t.text_dim, "The new script opens in the Script Editor.");
+    ImGui::TextColored(t.text_dim, script ? "The new script opens in the Script Editor."
+                                          : "A text file opens in the Script Editor.");
     ImGui::PopTextWrapPos();
 
     if (submit && check.can_create && TryCreate()) {
