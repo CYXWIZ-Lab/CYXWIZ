@@ -297,7 +297,13 @@ ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, doub
     try {
         const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::Rank");
         const double largest = singular.empty() ? 0.0 : singular.front();
-        const double threshold = tolerance * static_cast<double>(std::max(A.size(), A[0].size())) * largest;
+        // Singular values carry the compute precision's rounding: a float32 device
+        // leaves ~1e-7 relative where float64 has zeros, so the relative tolerance is
+        // at least that precision's epsilon (torch.linalg.matrix_rank's rtol).
+        const double epsilon =
+            DeviceHasDouble() ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
+        const double threshold =
+            std::max(tolerance, epsilon) * static_cast<double>(std::max(A.size(), A[0].size())) * largest;
         result.value = static_cast<double>(
             std::count_if(singular.begin(), singular.end(), [&](double s) { return s > threshold; }));
         result.success = true;
