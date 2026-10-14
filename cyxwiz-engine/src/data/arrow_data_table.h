@@ -22,6 +22,12 @@ class DataTable;
 std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const std::string& name,
                                               int64_t max_rows = -1);
 
+// The DataTable as Arrow, for profiling it (TOFIX148): a column whose cells
+// are all integers is int64, all numbers double, anything else text (numbers
+// written as text); empty cells are null. Blank or repeated headers get a
+// unique name ("column 3", "price 2").
+std::shared_ptr<arrow::Table> ArrowFromDataTable(const DataTable& table);
+
 // One cell as text ("" for null): integers without decimals, doubles to
 // 6 significant digits, booleans true / false, everything else Arrow's text.
 std::string ArrowCellText(const arrow::ChunkedArray& column, int64_t row);

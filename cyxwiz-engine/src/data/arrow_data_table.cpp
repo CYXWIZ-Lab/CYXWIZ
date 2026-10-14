@@ -77,6 +77,60 @@ std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const s
     return out;
 }
 
+std::shared_ptr<arrow::Table> ArrowFromDataTable(const DataTable& table) {
+    const size_t rows = table.GetRowCount();
+    const size_t columns = table.GetColumnCount();
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::string> used;
+    for (size_t c = 0; c < columns; ++c) {
+        std::string name = c < table.GetHeaders().size() ? table.GetHeaders()[c] : std::string();
+        if (name.empty()) name = "column " + std::to_string(c + 1);
+        const std::string base = name;
+        for (int n = 2; std::find(used.begin(), used.end(), name) != used.end(); ++n) name = base + " " + std::to_string(n);
+        used.push_back(name);
+        bool all_int = true, all_number = true;
+        for (size_t r = 0; r < rows && all_number; ++r) {
+            const auto cell = table.GetCell(r, c);
+            if (std::holds_alternative<std::monostate>(cell)) continue;
+            if (std::holds_alternative<double>(cell)) all_int = false;
+            else if (!std::holds_alternative<int64_t>(cell)) all_int = all_number = false;
+        }
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status st;
+        if (all_int) {
+            arrow::Int64Builder b;
+            for (size_t r = 0; r < rows; ++r) {
+                const auto cell = table.GetCell(r, c);
+                st = std::holds_alternative<int64_t>(cell) ? b.Append(std::get<int64_t>(cell)) : b.AppendNull();
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::int64()));
+        } else if (all_number) {
+            arrow::DoubleBuilder b;
+            for (size_t r = 0; r < rows; ++r) {
+                const auto cell = table.GetCell(r, c);
+                if (const auto* d = std::get_if<double>(&cell)) st = b.Append(*d);
+                else if (const auto* n = std::get_if<int64_t>(&cell)) st = b.Append(static_cast<double>(*n));
+                else st = b.AppendNull();
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::float64()));
+        } else {
+            arrow::StringBuilder b;
+            for (size_t r = 0; r < rows; ++r) {
+                if (std::holds_alternative<std::monostate>(table.GetCell(r, c))) st = b.AppendNull();
+                else st = b.Append(table.GetCellAsString(r, c));
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::utf8()));
+        }
+        if (!st.ok() || !array) return nullptr;
+        arrays.push_back(std::move(array));
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays, static_cast<int64_t>(rows));
+}
+
 ArrowPreview PreviewArrowRows(const arrow::Table& table, int64_t max_rows, size_t max_chars) {
     ArrowPreview preview;
     for (const auto& field : table.schema()->fields()) {

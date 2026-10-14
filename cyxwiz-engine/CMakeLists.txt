@@ -1456,6 +1456,21 @@ endif()
 set_target_properties(test_dataset_profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
 
+# ===== Test: Arrow <-> DataTable (TOFIX148) =====
+add_executable(test_arrow_data_table
+    tests/test_arrow_data_table.cpp
+    src/data/arrow_data_table.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_arrow_data_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_arrow_data_table PRIVATE Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_arrow_data_table PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_arrow_data_table PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME arrow_data_table_contract COMMAND test_arrow_data_table)
+
 # ===== Test: Dashboard runtime (TOFIX134 P3.7) =====
 add_executable(test_dashboard_runtime
     tests/test_dashboard_runtime.cpp
