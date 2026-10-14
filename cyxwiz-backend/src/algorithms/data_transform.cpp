@@ -611,15 +611,22 @@ TransformResult DataTransform::QuantileTransform(const Columns& data, const std:
             const double lower_x = af::min<double>(quantiles), upper_x = af::max<double>(quantiles);
 
             af::array y = QuantileInterpolate(quantiles, refs, x);
+            // x + 1e-7 > upper_x as QuantileTransformer writes it; the == keeps the
+            // bound values themselves on a float32 device, where x + 1e-7 rounds to x.
             constexpr double kBoundsThreshold = 1e-7;
-            const af::array upper = normal ? x + kBoundsThreshold > upper_x : x == upper_x;
-            const af::array lower = normal ? x - kBoundsThreshold < lower_x : x == lower_x;
+            const af::array upper = normal ? (x > upper_x - kBoundsThreshold) || (x == upper_x) : x == upper_x;
+            const af::array lower = normal ? (x < lower_x + kBoundsThreshold) || (x == lower_x) : x == lower_x;
             y = af::select(upper, 1.0, y);
             y = af::select(lower, 0.0, y);
             if (!normal) return y;
             const double clip = kBoundsThreshold - std::numeric_limits<double>::epsilon();
-            return NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
-                                          af::constant(clip, y.dims(), y.type())));
+            af::array z = NormalQuantile(af::max(af::min(y, af::constant(1.0 - clip, y.dims(), y.type())),
+                                                 af::constant(clip, y.dims(), y.type())));
+            // The bounds are scipy's norm.ppf(1 - clip) and norm.ppf(clip): float32
+            // cannot hold 1 - clip (it rounds to 1 - 1.19e-7, ppf 5.1666).
+            constexpr double kUpperZ = 5.19933758270342, kLowerZ = -5.199337582605575;
+            z = af::select(upper, kUpperZ, z);
+            return af::select(lower, kLowerZ, z);
         });
     result.params["output_distribution"] = normal ? 1.0 : 0.0;
     result.params["n_quantiles"] = static_cast<double>(n_quantiles);
