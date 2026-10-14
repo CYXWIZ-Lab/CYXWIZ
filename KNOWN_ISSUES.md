@@ -38,8 +38,9 @@ Last updated: 2026-10-14.
   dimensionality reduction, linear algebra, ROC / PR, word vectors) pass on oneAPI.
 - **If you write your own ArrayFire code** for oneAPI: index slices with `af::lookup`, or
   `copy()` the slice first.
-- **Status:** not reported upstream yet. Reproducer in the source repository:
-  `scripts/arrayfire_probes/oneapi_slice_index`.
+- **Status:** reported upstream as
+  [arrayfire/arrayfire#3733](https://github.com/arrayfire/arrayfire/issues/3733).
+  The reproducer is in the source repository: `scripts/arrayfire_probes/oneapi_slice_index`.
 
 ### oneAPI does not run on Intel UHD 630
 

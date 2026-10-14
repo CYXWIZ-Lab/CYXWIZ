@@ -1,7 +1,8 @@
 # oneAPI: indexing a slice with an index array ignores the slice's offset
 
-A standalone reproducer for an ArrayFire oneAPI backend bug, written to be filed upstream
-(https://github.com/arrayfire/arrayfire/issues; not filed yet). It depends on ArrayFire only.
+A standalone reproducer for an ArrayFire oneAPI backend bug, filed upstream on 2026-10-14 as
+https://github.com/arrayfire/arrayfire/issues/3733. It depends on ArrayFire only. When a release fixes
+it, run the probe with `oneapi`.
 
 ## Summary
 
