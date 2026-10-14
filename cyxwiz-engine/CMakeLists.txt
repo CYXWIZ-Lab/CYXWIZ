@@ -466,6 +466,9 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_dashboard_look.cpp
+    src/gui/panels/training_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
     src/core/plot/plot_model.cpp
@@ -3658,6 +3661,9 @@ add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_dashboard_look.cpp
+    src/gui/panels/training_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
@@ -3774,6 +3780,9 @@ add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_dashboard_look.cpp
+    src/gui/panels/training_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
@@ -4940,6 +4949,10 @@ add_executable(test_training_manager_session
     src/core/training_manager.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_dashboard_look.cpp
+    src/gui/panels/training_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
+    src/core/word_embeddings_presentation.cpp
     src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
@@ -6398,6 +6411,18 @@ set_target_properties(test_word_embeddings_presentation PROPERTIES
 )
 add_test(NAME word_embeddings_presentation COMMAND test_word_embeddings_presentation)
 
+# ===== Test: word-vector runs on the Training Dashboard (TOFIX152) =====
+add_executable(test_word_vector_runs
+    tests/test_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
+    src/core/word_embeddings_presentation.cpp
+)
+target_include_directories(test_word_vector_runs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_word_vector_runs PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME word_vector_runs COMMAND test_word_vector_runs)
+
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
@@ -6760,6 +6785,9 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/panels/training_dashboard_look.cpp
+    src/gui/panels/training_word_vector_runs.cpp
+    src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp

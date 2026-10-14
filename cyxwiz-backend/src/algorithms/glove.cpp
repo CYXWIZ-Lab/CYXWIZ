@@ -293,6 +293,7 @@ GloVeModel WordEmbeddings::TrainGloVe(const std::vector<std::vector<std::string>
         return fail("Fewer than two words appear at least min_count times");
     model.vectors.words = vocabulary.words;
     model.counts = vocabulary.counts;
+    if (options.on_vocabulary) options.on_vocabulary(vocabulary.words.size());
     const int v = static_cast<int>(vocabulary.words.size());
     const dim_t d = options.vector_size;
 
@@ -307,6 +308,7 @@ GloVeModel WordEmbeddings::TrainGloVe(const std::vector<std::vector<std::string>
         const dim_t n = counts.keys.elements();
         if (n == 0) return fail("The corpus gave no co-occurrences (sentences too short?)");
         model.pairs = static_cast<long long>(n);
+        if (options.on_counted) options.on_counted(vocabulary.words.size(), model.pairs);
         const af::array vv = af::constant(static_cast<unsigned long long>(v), n, u64);
         const af::array rows = (counts.keys / vv).as(s32);
         const af::array cols = (counts.keys % vv).as(s32);

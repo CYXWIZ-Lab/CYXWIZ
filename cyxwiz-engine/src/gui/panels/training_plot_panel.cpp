@@ -1,6 +1,7 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
+#include "training_dashboard_look.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
 // CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
@@ -46,6 +47,8 @@
 
 namespace cyxwiz {
 
+using namespace dash;
+
 namespace {
 
 bool IsSequenceMetricName(const std::string& name) {
@@ -69,224 +72,6 @@ constexpr float kTrainingPlotMinHeight = 320.0f;
 constexpr float kTrainingPlotMaxHeight = 480.0f;
 // Loss and accuracy go side by side from this content width.
 constexpr float kTrainingPlotSideBySideWidth = 860.0f;
-// ---- Dashboard look ----------------------------------------------------
-// This file is also compiled into test targets and the Python plotting
-// module; those targets compile ui_tokens.cpp too, so the dashboard reads
-// the shared tokens but keeps its own button helpers.
-
-struct DashColors {
-    ImVec4 text;
-    ImVec4 muted;
-    ImVec4 faint;
-    ImVec4 window;
-    ImVec4 card;
-    ImVec4 track;
-    ImVec4 border;
-    ImVec4 accent;
-    ImVec4 accent_text;
-    ImVec4 success;
-    ImVec4 warning;
-    ImVec4 caution;
-    ImVec4 error;
-    ImVec4 info;
-    bool light = false;
-};
-
-ImVec4 MixColor(const ImVec4& a, const ImVec4& b, float t) {
-    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-}
-
-ImVec4 WithAlpha(ImVec4 color, float alpha) {
-    color.w = alpha;
-    return color;
-}
-
-DashColors CurrentDashColors() {
-    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
-    DashColors c;
-    c.window = t.bg_window;
-    c.light = t.light;
-    const ImVec4 lift = t.text_bright;
-    c.text = t.text;
-    c.muted = t.text_dim;
-    c.faint = t.text_faint;
-    c.card = WithAlpha(MixColor(c.window, lift, c.light ? 0.035f : 0.03f), 1.0f);
-    c.track = WithAlpha(MixColor(c.window, lift, c.light ? 0.09f : 0.08f), 1.0f);
-    c.border = t.border;
-    c.accent = t.accent;
-    c.accent_text = t.accent_text;
-    c.success = t.success;
-    c.warning = t.warning;
-    c.caution = t.caution;
-    c.error = t.error;
-    c.info = t.info;
-    return c;
-}
-
-// Card: a filled, rounded, borderless group sized to its content.
-bool BeginDashCard(const char* id, const DashColors& c, float width = 0.0f) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, c.card);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 10.0f));
-    const bool open = ImGui::BeginChild(
-        id, ImVec2(width, 0.0f),
-        ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor();
-    return open;
-}
-
-void EndDashCard() {
-    ImGui::EndChild();
-}
-
-void DashCardTitle(const char* title, const char* subtitle, const DashColors& c) {
-    ImGui::TextColored(c.text, "%s", title);
-    if (subtitle && *subtitle) {
-        ImGui::SameLine(0.0f, 8.0f);
-        ImGui::TextColored(c.muted, "%s", subtitle);
-    }
-}
-
-// Status pill: tinted background, a dot and the label in the status colour.
-void DashPill(const char* label, const ImVec4& color, bool dot = true) {
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 text = ImGui::CalcTextSize(label);
-    const float pad_x = 9.0f;
-    const float pad_y = 3.0f;
-    const float dot_space = dot ? 12.0f : 0.0f;
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const ImVec2 size(text.x + pad_x * 2.0f + dot_space, text.y + pad_y * 2.0f);
-    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                        ImGui::GetColorU32(WithAlpha(color, 0.16f)), size.y * 0.5f);
-    if (dot) {
-        draw->AddCircleFilled(ImVec2(pos.x + pad_x + 3.5f, pos.y + size.y * 0.5f), 3.5f,
-                              ImGui::GetColorU32(color));
-    }
-    draw->AddText(ImVec2(pos.x + pad_x + dot_space, pos.y + pad_y),
-                  ImGui::GetColorU32(color), label);
-    ImGui::Dummy(size);
-}
-
-// Thin rounded progress bar.
-void DashProgress(float fraction, const ImVec4& color, const DashColors& c,
-                  float width = -1.0f, float height = 6.0f) {
-    fraction = std::clamp(fraction, 0.0f, 1.0f);
-    if (width <= 0.0f) {
-        width = ImGui::GetContentRegionAvail().x;
-    }
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float line_h = ImGui::GetTextLineHeight();
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float y = pos.y + (line_h - height) * 0.5f;
-    draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + width, y + height),
-                        ImGui::GetColorU32(c.track), height * 0.5f);
-    if (fraction > 0.0f) {
-        draw->AddRectFilled(ImVec2(pos.x, y),
-                            ImVec2(pos.x + std::max(height, width * fraction), y + height),
-                            ImGui::GetColorU32(color), height * 0.5f);
-    }
-    ImGui::Dummy(ImVec2(width, line_h));
-}
-
-enum class DashButtonKind { Secondary, Danger };
-
-bool DashButton(const char* label, DashButtonKind kind, const DashColors& c) {
-    const ImVec4 fg = kind == DashButtonKind::Danger ? c.error : c.text;
-    const ImVec4 hover = kind == DashButtonKind::Danger
-        ? WithAlpha(c.error, 0.14f)
-        : WithAlpha(c.text, 0.07f);
-    // A fill instead of an outline (no outlines on buttons).
-    ImGui::PushStyleColor(ImGuiCol_Button, kind == DashButtonKind::Danger ? ImVec4(0, 0, 0, 0) : WithAlpha(c.text, 0.05f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(hover, hover.w * 1.8f));
-    ImGui::PushStyleColor(ImGuiCol_Border,
-                          kind == DashButtonKind::Danger ? WithAlpha(c.error, 0.45f) : c.border);
-    ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 4.0f));
-    const bool pressed = ImGui::Button(label);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(5);
-    return pressed;
-}
-
-float DashButtonWidth(const char* label) {
-    return ImGui::CalcTextSize(label, nullptr, true).x + 20.0f;
-}
-
-// Toggle chip: filled with the accent tint while on.
-bool DashChip(const char* label, bool* value, const DashColors& c) {
-    const bool on = *value;
-    ImGui::PushStyleColor(ImGuiCol_Button, on ? WithAlpha(c.accent, 0.24f) : WithAlpha(c.text, 0.05f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                          on ? WithAlpha(c.accent, 0.34f) : WithAlpha(c.text, 0.07f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.45f));
-    ImGui::PushStyleColor(ImGuiCol_Border, on ? WithAlpha(c.accent, 0.55f) : c.border);
-    ImGui::PushStyleColor(ImGuiCol_Text, on ? c.accent_text : c.muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
-    const bool pressed = ImGui::Button(label);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(5);
-    if (pressed) {
-        *value = !*value;
-    }
-    return pressed;
-}
-
-// Bold UI font for metric values (falls back to the current font).
-ImFont* DashValueFont() {
-    ImGuiIO& io = ImGui::GetIO();
-    for (ImFont* font : io.Fonts->Fonts) {
-        if (!font || !font->Sources || font->SourcesCount <= 0) {
-            continue;
-        }
-        const char* name = font->Sources[0].Name;
-        if (std::strstr(name, "Bold") && !std::strstr(name, "Mono")) {
-            return font;
-        }
-    }
-    return ImGui::GetFont();
-}
-
-void DashBigValue(const char* text, const ImVec4& color) {
-    ImFont* font = DashValueFont();
-    const float size = ImGui::GetFontSize() * 1.45f;
-    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-    ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
-                                        ImGui::GetColorU32(color), text);
-    ImGui::Dummy(extent);
-}
-
-std::string FormatEpochValue(double epoch) {
-    char buffer[32];
-    if (std::abs(epoch - std::round(epoch)) < 1e-6) {
-        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(std::round(epoch)));
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "%.2f", epoch);
-    }
-    return buffer;
-}
-
-// Small borderless icon button, tinted with the accent while active.
-bool DashIconButton(const char* id_label, bool active, const DashColors& c) {
-    ImGui::PushStyleColor(ImGuiCol_Button, active ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, WithAlpha(c.text, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.40f));
-    ImGui::PushStyleColor(ImGuiCol_Text, active ? c.accent_text : c.muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-    const bool pressed = ImGui::Button(id_label);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
-    return pressed;
-}
 
 // Title and y-axis label of the custom metrics chart from the metric names.
 template <typename Series>
@@ -588,6 +373,11 @@ void TrainingPlotPanel::Render() {
     // Larger default size for better visibility
     ImGui::SetNextWindowSize(ImVec2(1000, 800), ImGuiCond_FirstUseEver);
 
+    if (focus_requested_) {
+        // A node dialog's "Show in Training Dashboard".
+        ImGui::SetNextWindowFocus();
+        focus_requested_ = false;
+    }
     ::gui::NextWindowMayLeave(name_.c_str());
     const bool expanded = ImGui::Begin(name_.c_str(), &visible_);
     ::gui::TabMenu(name_.c_str(), &visible_);
@@ -602,6 +392,18 @@ void TrainingPlotPanel::Render() {
     // Lock data for reading
     std::lock_guard<std::mutex> lock(data_mutex_);
     ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
+
+    // The Run switcher once a word-vector run exists; such a run has its own
+    // view (training_word_vector_runs.cpp) and the model run's stays as it is.
+    if (!word_vector_runs_.Runs().empty()) {
+        RenderRunSwitcher();
+        if (const WordVectorRun* run = word_vector_runs_.Find(shown_run_)) {
+            RenderWordVectorRun(*run);
+            ImGui::End();
+            RenderChartWindows();
+            return;
+        }
+    }
 
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
@@ -927,23 +729,8 @@ void TrainingPlotPanel::RenderKpiCards() {
                           ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
         for (const auto& card : cards) {
             ImGui::TableNextColumn();
-            if (BeginDashCard(card.id.c_str(), c)) {
-                const float line = ImGui::GetTextLineHeight();
-                const ImVec2 pos = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(pos.x + 4.0f, pos.y + line * 0.5f), 4.0f,
-                    ImGui::GetColorU32(card.dot));
-                ImGui::Dummy(ImVec2(8.0f, line));
-                ImGui::SameLine(0.0f, 6.0f);
-                ImGui::TextColored(c.muted, "%s", card.label.c_str());
-                DashBigValue(card.value.c_str(), c.text);
-                if (!card.tooltip.empty() && ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", card.tooltip.c_str());
-                }
-                ImGui::TextColored(card.sub1_color, "%s", card.sub1.c_str());
-                ImGui::TextColored(card.sub2_color, "%s", card.sub2.c_str());
-            }
-            EndDashCard();
+            DashKpiCard(card.id.c_str(), card.label.c_str(), card.dot, card.value.c_str(), card.tooltip.c_str(),
+                        card.sub1.c_str(), card.sub1_color, card.sub2.c_str(), card.sub2_color, c);
         }
         ImGui::EndTable();
     }
@@ -1320,6 +1107,10 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         checkpoint_step_ = 0;
         active_model_provenance_.clear();
         active_checkpoint_loaded_ = false;
+    } else {
+        // Preparation over: a word-vector run it trained that never finished
+        // was stopped with it.
+        word_vector_runs_.EndAllLive(true, "");
     }
 }
 
@@ -1340,6 +1131,7 @@ void TrainingPlotPanel::SetPreparationFailed(
     total_training_time_ = 0.0f;
     terminal_status_ = "failed";
     terminal_reason_ = error_message;
+    word_vector_runs_.EndAllLive(false, error_message);
 }
 
 void TrainingPlotPanel::RecordMaterializationProgress(

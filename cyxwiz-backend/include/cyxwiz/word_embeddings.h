@@ -65,6 +65,10 @@ struct CYXWIZ_API Word2VecOptions {
     // Called after each device step with the share of training done (0..1) and
     // the epoch; returning false stops the run (the model is then refused).
     std::function<bool(double done, int epoch)> on_progress;
+    // Called once the vocabulary is built, with its size.
+    std::function<void(size_t words)> on_vocabulary;
+    // Called after each epoch with its mean loss per example and its examples.
+    std::function<void(int epoch, double loss, long long examples)> on_epoch_loss;
 };
 
 // One device step of word2vec with negative sampling: SGD on the sum of the
@@ -114,6 +118,10 @@ struct CYXWIZ_API GloVeOptions {
     std::function<bool(double done, int epoch)> on_progress;
     // Called after each epoch with its mean cost per pair.
     std::function<void(int epoch, double cost)> on_epoch_cost;
+    // Called once the vocabulary is built, with its size.
+    std::function<void(size_t words)> on_vocabulary;
+    // Called once counting ends, with the vocabulary size and the distinct pairs.
+    std::function<void(size_t words, long long pairs)> on_counted;
 };
 
 // Co-occurrence counts: one entry per distinct (row, column) pair, ordered by

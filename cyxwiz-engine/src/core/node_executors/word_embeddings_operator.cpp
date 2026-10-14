@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -76,25 +77,6 @@ std::string WordEmbeddingsOperator::DefaultVectorsFile(int node_id, const std::s
                    [](unsigned char c) { return std::isalnum(c) ? static_cast<char>(std::tolower(c)) : '_'; });
     while (!slug.empty() && slug.back() == '_') slug.pop_back();
     return "word_embeddings/" + std::to_string(node_id) + "_" + (slug.empty() ? "vectors" : slug) + ".vec";
-}
-
-std::vector<double> WordEmbeddingsOperator::EpochLosses(const std::string& outcome) {
-    std::vector<double> losses;
-    const char* marker = kLossPerEpoch;
-    auto at = outcome.find(marker);
-    if (at == std::string::npos) at = outcome.find(marker = kCostPerEpoch);
-    if (at == std::string::npos) return losses;
-    const char* p = outcome.c_str() + at + std::char_traits<char>::length(marker);
-    for (;;) {
-        char* end = nullptr;
-        const double value = std::strtod(p, &end);
-        if (end == p) break;
-        losses.push_back(value);
-        p = end;
-        if (*p != ',') break;
-        ++p;
-    }
-    return losses;
 }
 
 bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
@@ -218,6 +200,32 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         event.progress = static_cast<float>(progress);
         progress_callback_(event);
     };
+    // A training run's figures, for the Training Dashboard (OperatorFigures):
+    // its settings at the start, the counts, each epoch's cost or loss, the
+    // line-up and the end; every event carries the seconds since the start.
+    const bool trained = source_ != "pretrained";
+    const auto started = std::chrono::steady_clock::now();
+    const auto publish = [&](const std::string& stage, const std::string& message, double progress,
+                             std::vector<std::pair<std::string, double>> values,
+                             std::vector<std::pair<std::string, std::string>> notes = {}) {
+        if (!progress_callback_ || !trained) return;
+        PipelineOperatorProgress event;
+        event.stage = stage;
+        event.message = message;
+        event.status = "running";
+        event.progress = static_cast<float>(progress);
+        values.emplace_back("elapsed",
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+        event.figures = std::move(values);
+        event.notes = std::move(notes);
+        progress_callback_(event);
+    };
+    const auto publish_start = [&](const std::string& stage, const std::string& message, const std::string& method,
+                                   int dims, int window, int epochs, int min_count) {
+        publish(stage, message, 0.05,
+                {{"dims", dims}, {"window", window}, {"epochs", epochs}, {"min_count", min_count}},
+                {{"method", method}, {"saved", vectors_path_}, {"vocabulary_file", vocab_file_}});
+    };
 
     // The text, split into words, when training or averaging rows needs it.
     std::vector<std::vector<std::string>> sentences;
@@ -248,8 +256,17 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         return text;
     };
     if (source_ == "word2vec") {
-        report("Training", "Training word2vec", 0.05);
+        publish_start("Training", "Training word2vec", word2vec_.cbow ? "word2vec CBOW" : "word2vec skip-gram",
+                      word2vec_.vector_size, word2vec_.window, word2vec_.epochs, word2vec_.min_count);
         Word2VecOptions options = word2vec_;
+        options.on_vocabulary = [&](size_t words) {
+            publish("Training", "Training word2vec", 0.05, {{"words", static_cast<double>(words)}});
+        };
+        options.on_epoch_loss = [&](int epoch, double loss, long long examples) {
+            publish("Training", "Training word2vec, epoch " + std::to_string(epoch),
+                    0.05 + 0.85 * epoch / std::max(1, word2vec_.epochs),
+                    {{"epoch", epoch}, {"loss", loss}, {"examples", static_cast<double>(examples)}});
+        };
         options.on_progress = [&](double done, int epoch) {
             report("Training", "Training word2vec, epoch " + std::to_string(epoch), 0.05 + 0.85 * done);
             return !IsCancellationRequested();
@@ -266,13 +283,25 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                          figures(model.epoch_loss) + ")";
     } else if (source_ == "glove") {
         // Two stages: counting the word pairs (to 15%), then the epochs.
-        report("Counting", "Counting word pairs", 0.05);
+        publish_start("Counting", "Counting word pairs", "GloVe", glove_.vector_size, glove_.window, glove_.epochs,
+                      glove_.min_count);
         GloVeOptions options = glove_;
         std::string last_cost;
-        options.on_epoch_cost = [&](int, double cost) {
+        options.on_vocabulary = [&](size_t words) {
+            publish("Counting", "Counting word pairs", 0.05, {{"words", static_cast<double>(words)}});
+        };
+        options.on_counted = [&](size_t words, long long pairs) {
+            publish("Counting", "Counted word pairs", 0.15,
+                    {{"words", static_cast<double>(words)}, {"pairs", static_cast<double>(pairs)}});
+        };
+        options.on_epoch_cost = [&](int epoch, double cost) {
             char number[32];
             std::snprintf(number, sizeof(number), "%.4g", cost);
             last_cost = number;
+            publish("Training",
+                    "Training GloVe, epoch " + std::to_string(epoch) + " of " + std::to_string(glove_.epochs) +
+                        ", cost " + last_cost,
+                    0.15 + 0.75 * epoch / std::max(1, glove_.epochs), {{"epoch", epoch}, {"cost", cost}});
         };
         options.on_progress = [&](double done, int epoch) {
             if (epoch == 0) {
@@ -318,6 +347,19 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         if (!aligned.success) return arrow::Status::Invalid(op + ": " + aligned.error_message);
         vectors.words = vocabulary.GetWords();
         vectors.values = aligned.values;
+        const auto token = [&](int id) {
+            return id >= 0 && static_cast<size_t>(id) < vectors.words.size() ? vectors.words[static_cast<size_t>(id)]
+                                                                              : std::string();
+        };
+        publish("Aligning", "Lined up with " + vocab_file_, 0.92,
+                {{"tokens", static_cast<double>(vectors.words.size())},
+                 {"found", static_cast<double>(aligned.exact)},
+                 {"lowercase", static_cast<double>(aligned.lowercase)},
+                 {"missing", static_cast<double>(aligned.missing)}},
+                {{"special", BuildWordCoverageView(aligned.exact, aligned.lowercase, aligned.missing, {},
+                                                   token(options.pad_id), token(options.unknown_id),
+                                                   alignment_.missing, alignment_.unknown)
+                                 .special}});
         coverage = "; vocabulary " + std::to_string(vectors.words.size()) + " tokens: " + std::to_string(aligned.exact) +
                    " found, " + std::to_string(aligned.lowercase) + " in lowercase, " +
                    std::to_string(aligned.missing) + " missing";
@@ -332,6 +374,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         if (!WordEmbeddings::SaveText(vectors, vectors_path_, &error))
             return arrow::Status::IOError(op + ": cannot save the vectors: " + error);
     }
+    publish("Done", vectors_path_.empty() ? "Trained the vectors" : "Saved the vectors", 0.94, {});
 
     // Pin 0: word, v_0 .. v_{d-1}.
     const int64_t n = static_cast<int64_t>(vectors.words.size());

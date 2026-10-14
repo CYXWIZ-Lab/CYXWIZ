@@ -3,6 +3,7 @@
 // word2vec training on the text column, and the refusals.
 
 #include "../src/core/node_executors/word_embeddings_operator.h"
+#include "../src/core/word_embeddings_presentation.h"
 
 #include <cyxwiz/word_embeddings.h>
 
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -155,6 +157,10 @@ void CheckTraining() {
         {"source", "word2vec"}, {"text_col", "text"}, {"vector_size", "8"}, {"window", "2"},
         {"min_count", "2"}, {"epochs", "3"}, {"train_seed", "4"}, {"architecture", "cbow"}};
     cyxwiz::WordEmbeddingsOperator first, second;
+    std::vector<cyxwiz::OperatorFigures> figures;
+    first.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+        if (!event.figures.empty()) figures.push_back(event.Figures());
+    });
     std::string error;
     Check(first.Configure(params, error) && second.Configure(params, error), "configures training: " + error);
     auto a = first.Apply(TextTable(texts));
@@ -164,9 +170,61 @@ void CheckTraining() {
     for (int64_t r = 0; r < 6; ++r)
         Check(Value(*a, "v_3", r) == Value(*b, "v_3", r), "a training run repeats for one seed");
     Check(first.OutcomeSummary().find("CBOW") != std::string::npos, "outcome names the model: " + first.OutcomeSummary());
-    const auto losses = cyxwiz::WordEmbeddingsOperator::EpochLosses(first.OutcomeSummary());
-    Check(losses.size() == 3 && losses[0] > 0.0, "the outcome carries the loss of each epoch: " + first.OutcomeSummary());
-    Check(cyxwiz::WordEmbeddingsOperator::EpochLosses("read 3 words x 2").empty(), "no losses for pretrained vectors");
+    // The Training Dashboard's figures: the settings, the vocabulary, each
+    // epoch's loss and examples, then the end.
+    Check(!figures.empty() && figures.front().Note("method") == "word2vec CBOW" &&
+              figures.front().Figure("dims") == 8 && figures.front().Figure("window") == 2 &&
+              figures.front().Figure("epochs") == 3 && figures.front().Figure("min_count") == 2,
+          "the first figures name the run's settings");
+    std::vector<double> losses;
+    double last_elapsed = -1.0;
+    bool words = false;
+    for (const auto& event : figures) {
+        Check(event.Figure("elapsed") >= last_elapsed, "every figure carries the seconds so far, in order");
+        last_elapsed = event.Figure("elapsed");
+        words = words || event.Figure("words") == 6;
+        if (!event.Has("epoch")) continue;
+        Check(event.Figure("epoch") == static_cast<double>(losses.size() + 1) && event.Figure("examples") > 0,
+              "epochs in order, with their examples");
+        losses.push_back(event.Figure("loss"));
+    }
+    Check(words && losses.size() == 3 && losses[0] > 0.0, "the vocabulary and the loss of each epoch");
+    char last[32];
+    std::snprintf(last, sizeof(last), "%.4g)", losses.back());
+    Check(first.OutcomeSummary().find(last) != std::string::npos,
+          "the last loss is the outcome's: " + first.OutcomeSummary());
+    Check(figures.back().stage == "Done", "the last figure ends the run");
+}
+
+// A trained run lined up with a vocabulary and saved: the line-up's figures.
+void CheckTrainingLineUpFigures(const fs::path& dir) {
+    std::vector<std::string> texts;
+    for (int i = 0; i < 300; ++i) texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
+    const fs::path vocab = dir / "line_up_vocab.txt";
+    std::ofstream(vocab) << "[PAD]\n[UNK]\ncat\nDog\nzebra\n";
+    const fs::path saved = dir / "line_up.vec";
+    cyxwiz::WordEmbeddingsOperator op;
+    std::vector<cyxwiz::OperatorFigures> figures;
+    op.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+        if (!event.figures.empty()) figures.push_back(event.Figures());
+    });
+    std::string error;
+    Check(op.Configure({{"source", "word2vec"}, {"text_col", "text"}, {"vector_size", "4"}, {"window", "2"},
+                        {"min_count", "2"}, {"epochs", "1"}, {"vocab_file", vocab.string()},
+                        {"vectors_path", saved.string()}},
+                       error),
+          "configures a lined-up run: " + error);
+    Check(op.Apply(TextTable(texts)).ok(), "trains and lines up");
+    Check(figures.front().Note("saved") == saved.string() && figures.front().Note("vocabulary_file") == vocab.string(),
+          "the first figures name the saved file and the vocabulary");
+    const auto line_up = std::find_if(figures.begin(), figures.end(),
+                                      [](const cyxwiz::OperatorFigures& event) { return event.Has("tokens"); });
+    Check(line_up != figures.end() && line_up->Figure("tokens") == 5 && line_up->Figure("found") == 1 &&
+              line_up->Figure("lowercase") == 1 && line_up->Figure("missing") == 1,
+          "5 tokens: cat found, Dog in lowercase, zebra missing");
+    Check(line_up->Note("special") == "[PAD] zeros \xC2\xB7 [UNK] mean", "special tokens: " + line_up->Note("special"));
+    Check(figures.back().stage == "Done" && figures.back().message == "Saved the vectors" && fs::exists(saved),
+          "the run ends saved");
 }
 
 void CheckGloVeTraining() {
@@ -181,8 +239,10 @@ void CheckGloVeTraining() {
         {"window", "1"}, {"epochs", "1"}};
     cyxwiz::WordEmbeddingsOperator first, second;
     std::vector<std::string> stages;
+    std::vector<cyxwiz::OperatorFigures> figures;
     first.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
         if (stages.empty() || stages.back() != event.stage) stages.push_back(event.stage);
+        if (!event.figures.empty()) figures.push_back(event.Figures());
     });
     std::string error;
     Check(first.Configure(params, error) && second.Configure(params, error), "configures GloVe: " + error);
@@ -198,8 +258,20 @@ void CheckGloVeTraining() {
     const std::string outcome = first.OutcomeSummary();
     Check(outcome.find("GloVe") != std::string::npos && outcome.find("word pairs") != std::string::npos,
           "outcome names GloVe and its pairs: " + outcome);
-    const auto costs = cyxwiz::WordEmbeddingsOperator::EpochLosses(outcome);
-    Check(costs.size() == 4 && costs.back() < costs.front(), "the outcome carries the cost of each epoch: " + outcome);
+    std::vector<double> costs;
+    double pairs = -1.0;
+    for (const auto& event : figures) {
+        if (event.Has("pairs")) pairs = event.Figure("pairs");
+        if (event.Has("epoch")) costs.push_back(event.Figure("cost"));
+    }
+    Check(figures.front().Note("method") == "GloVe" && figures.front().Figure("window") == 3 &&
+              figures.front().Figure("epochs") == 4,
+          "the GloVe run's settings");
+    Check(pairs > 0.0 && outcome.find(cyxwiz::GroupedCount(static_cast<size_t>(pairs)) + " word pairs") !=
+                             std::string::npos,
+          "the counted pairs are the outcome's: " + outcome);
+    Check(costs.size() == 4 && costs.back() < costs.front(), "the cost of each epoch falls: " + outcome);
+    Check(figures.back().stage == "Done" && !figures.back().Has("tokens"), "no vocabulary file, no line-up figures");
     cyxwiz::WordEmbeddingsOperator bad;
     Check(!bad.Configure({{"source", "glove"}, {"text_col", "text"}, {"x_max", "0"}}, error) &&
               error.find("x_max") != std::string::npos,
@@ -231,6 +303,7 @@ int main() {
     CheckPretrainedWithoutVocabulary(dir);
     CheckRowVectorBlocks(dir);
     CheckTraining();
+    CheckTrainingLineUpFigures(dir);
     CheckGloVeTraining();
     CheckRefusals();
     fs::remove_all(dir);

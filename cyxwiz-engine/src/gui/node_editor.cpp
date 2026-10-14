@@ -23,6 +23,7 @@
 #include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
+#include "../core/word_embeddings_presentation.h"
 #include "../core/preparation_recipe.h"
 #include "../core/sql_step_contract.h"
 #include "subgraph_document.h"
@@ -4655,6 +4656,10 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     pipeline_execution_tracker_ = std::move(submission.tracker);
     pipeline_executor_ = std::move(submission.executor);
     pipeline_facts_final_ = false;
+    figures_read_ = 0;
+    figures_node_ = -1;
+    figures_node_name_.clear();
+    figures_ended_ = false;
     pipeline_execution_active_ = pipeline_task_id_ != 0;
     ClearExecutionStates();
     if (pipeline_execution_active_) {
@@ -4700,6 +4705,8 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
         pipeline_facts_final_ = !pipeline_execution_active_;
     }
 
+    FeedWordVectorRuns(task_info);
+
     const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     for (const auto& [node_id, event] : snapshot.node_states) {
         switch (event) {
@@ -4742,6 +4749,31 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
         currently_executing_node_id_ = -1;
     }
     RollUpRecipeExecutionStates();
+}
+
+// A Word Embeddings step's figures, live status and end, to the dashboard.
+void NodeEditor::FeedWordVectorRuns(const cyxwiz::TaskInfo& task_info) {
+    if (!word_vector_feed_.figures || figures_ended_) return;
+    for (const auto& figures : pipeline_execution_tracker_->GetFigures(figures_read_)) {
+        ++figures_read_;
+        figures_node_ = figures.node_id;
+        figures_node_name_ = figures.node_name;
+        word_vector_feed_.figures(figures);
+    }
+    if (figures_node_ < 0) return;
+    // The step's own share between its figures ("<node>: Counting word pairs (9%)").
+    const std::string& status = task_info.status_message;
+    if (pipeline_execution_active_ && word_vector_feed_.progress && status.rfind(figures_node_name_ + ": ", 0) == 0) {
+        const float share = cyxwiz::StepShareFromStatus(status);
+        if (share >= 0.0f) word_vector_feed_.progress(figures_node_, share, cyxwiz::StepMessageFromStatus(status));
+    }
+    if (task_info.state == cyxwiz::TaskState::Failed || task_info.state == cyxwiz::TaskState::Cancelled) {
+        if (word_vector_feed_.ended) {
+            word_vector_feed_.ended(figures_node_, task_info.state == cyxwiz::TaskState::Cancelled,
+                                    task_info.error_message);
+        }
+        figures_ended_ = true;
+    }
 }
 
 void NodeEditor::RollUpRecipeExecutionStates() {

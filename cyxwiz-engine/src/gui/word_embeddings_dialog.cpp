@@ -757,27 +757,31 @@ void WordEmbeddingsDialog::RenderGloVeSettings() {
     }
 }
 
-// Training progress or the result of the latest run.
+// Training progress or the result of the latest run; the curve of each epoch
+// is on the Training Dashboard.
 void WordEmbeddingsDialog::RenderRunCard() {
     const auto& t = ui::CurrentTokens();
     const bool running = run_started_ && TaskLive(run_task_);
     if (!running && run_outcome_.empty() && run_error_.empty()) return;
+    const NodeEditor::WordVectorFeed* feed = node_editor_ ? &node_editor_->GetWordVectorFeed() : nullptr;
+    const int node_id = node_ ? node_->id : -1;
+    const bool on_dashboard = feed && feed->show_run && feed->has_run && feed->has_run(node_id);
     if (BeginCard("##run")) {
         if (running) {
             const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(run_task_);
             const std::string status = task ? task->GetInfo().status_message : std::string();
             const float share = cyxwiz::StepShareFromStatus(status);
             const std::string message = share >= 0.0f ? cyxwiz::StepMessageFromStatus(status) : "Running the steps before it";
-            // GloVe's two stages: counting, then the epochs.
-            if (message.rfind("Training GloVe", 0) == 0) {
-                Wrapped(t.success, std::string(ICON_FA_CIRCLE_CHECK "  ") + "Counted word pairs");
-            }
             Heading(std::string(ICON_FA_SPINNER "  ") + message);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, t.accent_text);
             ImGui::ProgressBar(share >= 0.0f ? share : 0.0f, ImVec2(-1.0f, 6.0f), "");
             ImGui::PopStyleColor(2);
-            Dim("Runs as a task (Task View); the dialog stays usable.");
+            // GloVe's counted pairs and the time left, from the dashboard's run.
+            const std::string line = feed && feed->run_line ? feed->run_line(node_id) : std::string();
+            if (!line.empty()) Dim(std::string(ICON_FA_CIRCLE_CHECK "  ") + line);
+            if (on_dashboard && ui::LinkButton("Show in Training Dashboard")) feed->show_run(node_id);
+            if (on_dashboard) ImGui::SameLine(0.0f, t.space_lg);
             if (ui::LinkButton("Cancel training")) cyxwiz::AsyncTaskManager::Instance().Cancel(run_task_);
         } else if (!run_error_.empty()) {
             Wrapped(t.caution, std::string(ICON_FA_TRIANGLE_EXCLAMATION "  ") + run_error_);
@@ -790,42 +794,8 @@ void WordEmbeddingsDialog::RenderRunCard() {
                                        (Training() ? "Trained in " : "Read in ") + seconds);
             }
             Dim(cyxwiz::ShortEpochFigures(run_outcome_));
-            const auto losses = cyxwiz::WordEmbeddingsOperator::EpochLosses(run_outcome_);
-            if (losses.size() >= 2) {
-                // Loss per epoch.
-                const float height = 60.0f;
-                const ImVec2 at = ImGui::GetCursorScreenPos();
-                const float width = ImGui::GetContentRegionAvail().x;
-                const auto [low, high] = std::minmax_element(losses.begin(), losses.end());
-                const double span = (*high - *low) > 1e-12 ? (*high - *low) : 1.0;
-                const float plot = height - ImGui::GetTextLineHeight() - 6.0f;
-                std::vector<ImVec2> points;
-                for (size_t i = 0; i < losses.size(); ++i) {
-                    const float x = at.x + 8.0f + (width - 16.0f) * static_cast<float>(i) / (losses.size() - 1);
-                    const float y = at.y + 4.0f + (plot - 8.0f) * static_cast<float>((*high - losses[i]) / span);
-                    points.emplace_back(x, y);
-                }
-                ImDrawList* draw = ImGui::GetWindowDrawList();
-                draw->AddPolyline(points.data(), static_cast<int>(points.size()), ui::ToU32(t.accent_text),
-                                  ImDrawFlags_None, 2.0f);
-                const std::string last = "epoch " + std::to_string(losses.size());
-                draw->AddText(ImVec2(at.x + 8.0f, at.y + plot), ui::ToU32(t.text_faint), "epoch 1");
-                draw->AddText(ImVec2(at.x + width - 8.0f - ImGui::CalcTextSize(last.c_str()).x, at.y + plot),
-                              ui::ToU32(t.text_faint), last.c_str());
-                ImGui::Dummy(ImVec2(width, height));
-                if (ImGui::IsItemHovered()) {
-                    // Every epoch's figure (the summary above shows the first and last).
-                    std::string figures;
-                    for (size_t i = 0; i < losses.size(); ++i) {
-                        char line[48];
-                        std::snprintf(line, sizeof(line), "\nepoch %zu: %.4g", i + 1, losses[i]);
-                        figures += line;
-                    }
-                    const char* what = run_outcome_.find("(GloVe") != std::string::npos
-                                           ? "Mean cost per word pair in each epoch"
-                                           : "Mean loss per example in each epoch";
-                    ImGui::SetTooltip("%s%s", what, figures.c_str());
-                }
+            if (Training() && on_dashboard && ui::LinkButton("Show the run in Training Dashboard")) {
+                feed->show_run(node_id);
             }
         }
     }

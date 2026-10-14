@@ -13,6 +13,7 @@
 #include <optional>
 #include <utility>
 
+#include "operator_figures.h"
 #include "pipeline_node_run_facts.h"
 
 namespace gui {
@@ -146,6 +147,9 @@ public:
     void SetNodeExecutionCallback(
         std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback);
 
+    /** Figures a step reports about its own run (Word Embeddings epochs), with its node. */
+    void SetOperatorFiguresCallback(std::function<void(const OperatorFigures&)> callback);
+
     /** Facts about each node's latest run (thread-safe; readable during a run). */
     std::map<int, PipelineNodeRunFacts> GetNodeRunFacts() const;
 
@@ -234,6 +238,7 @@ private:
     std::function<void(bool)> completion_callback_;
     std::function<void(int, PipelineNodeExecutionEvent, const std::string&)>
         node_execution_callback_;
+    std::function<void(const OperatorFigures&)> operator_figures_callback_;
 
     // Latest run facts per node (GetNodeRunFacts); start times of running nodes.
     mutable std::mutex node_run_facts_mutex_;

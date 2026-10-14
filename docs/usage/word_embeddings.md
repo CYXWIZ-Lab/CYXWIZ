@@ -38,15 +38,17 @@ project, replaced at each run, which is where an Embedding layer finds them.
    - **Train word2vec**: choose the text column (**Load inputs** runs the
      steps before it so the dialog can list the columns and rows), the model
      (Skip-gram or CBOW) and its settings, then **Train**. Training runs as a
-     task (Task View); the dialog shows the epoch and progress, **Cancel
-     training** stops it, and when it ends the loss per epoch is drawn.
+     task (Task View); the dialog shows the epoch, the progress and the time
+     left, **Cancel training** stops it, and **Show in Training Dashboard**
+     opens the run's live view (below), where the loss per epoch is drawn.
    - **Train GloVe**: the same text column, then vector size, window, minimum
      count, epochs and seed (Advanced: count cap, weighting power, learning
      rate, batch). Training runs in two stages, both in Task View: counting
      the word pairs ("Counting word pairs"), then the epochs ("Training GloVe,
-     epoch 4 of 25, cost 0.01603"). When it ends the cost per epoch is drawn;
-     the summary shows the first and last cost and the curve's tooltip lists
-     every epoch.
+     epoch 4 of 25, cost 0.01603"). The dialog shows the counted pairs and the
+     time left ("Counted 8,024,345 word pairs · about 3 min 11 s left"); the
+     cost per epoch is drawn on the Training Dashboard. When it ends the
+     summary shows the first and last cost.
 4. **Vocabulary**: the Text Tokenizer's vocabulary file (filled in from the
    graph's Text Tokenizer when there is one). The vectors are then lined up
    with it: the Source tab shows how many tokens were found as written, found
@@ -61,6 +63,42 @@ project, replaced at each run, which is where an Embedding layer finds them.
 
 Words are split as the Text Tokenizer's Word mode splits them: lowercased,
 runs of letters and digits.
+
+## On the Training Dashboard
+
+Each word2vec or GloVe training run shows on the Training Dashboard as its
+own run, whether it started from the dialog's **Train** or while a graph's
+training prepares its data. A **Run** switcher at the top of the dashboard
+lists the model run and the latest word-vector runs; a word-vector run never
+changes the model run's charts, cards or Run Comparison table. The dashboard
+shows the run that just started; once a model starts training it goes back to
+the model run, unless you picked a run yourself.
+
+A word-vector run shows:
+
+- **Status**: Preparing (GloVe counting), Training, Completed, Failed or
+  Cancelled, the node and method, the epoch ("Epoch 7 / 25 · 18 remaining")
+  and the progress. **Cancel** stops the run; **Actions**: Export curve CSV,
+  Export runs CSV (to the project's `exports` folder), Open node dialog.
+- **Steps**: Counting word pairs (GloVe: "8,024,345 pairs · 10.6 s"),
+  Training, Lining up with the vocabulary ("4,919 found · 79 missing"),
+  Saved (the file name).
+- **Cards**: the latest cost per pair (GloVe) or loss per example (word2vec)
+  with its change since epoch 1 and its best epoch; the time remaining (from
+  the epoch times) or the total time; the vocabulary (words seen min-count
+  times, values each); the word pairs (GloVe) or the examples of the last
+  epoch (word2vec).
+- **Chart**: the cost or loss of each epoch, drawn as each epoch ends, with
+  every planned epoch on the axis (hover a point for its value; the chart's
+  own tools give a log axis, export and a window of its own).
+- When finished: **Result** (the saved file, how the vocabulary lined up, the
+  special tokens, and the Embedding layers that load the file) and a **Quick
+  check** of the nearest words of the vocabulary's most frequent word of 7+
+  letters (type another word and press Enter; **More words in the node
+  dialog** opens the Nearest words tab's dialog).
+- **Word vector runs**: every run of the session (method, settings, words,
+  pairs or examples per epoch, first and last cost or loss, time, file);
+  click a row to show it.
 
 ## Supported files
 
@@ -196,8 +234,13 @@ The check graph is `word_embeddings_check.cyxgraph` in the test project
   (`reference/generate_glove_fixtures.py`).
 - `test_word_embeddings_operator`: the node (lined-up table, saved file, Rows,
   long rows averaged in several device blocks, word2vec and GloVe training
-  repeat, GloVe's two progress stages, refusals).
+  repeat, GloVe's two progress stages, the dashboard's figures: settings,
+  vocabulary, pairs, each epoch's loss or cost, the line-up, the end;
+  refusals).
 - `test_word_embeddings_presentation`: the dialog's wording.
+- `test_word_vector_runs`: the dashboard's word-vector runs, on the real
+  GloVe run (status, steps, cards, time left, result, table rows, CSV) and
+  word2vec, cancelled and failed runs.
 - `benchmark_word_vectors <word2vec|glove> <tokens.txt> [epochs] [batch] [out.vec]`
   and `scripts/word2vec_neighbour_overlap.py`: speed and agreement with gensim
   or the GloVe reference.

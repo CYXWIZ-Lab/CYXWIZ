@@ -117,4 +117,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         materialization_preflight_evidence = std::nullopt,
     std::filesystem::path project_root = {});
 
+// Cancels the graph training preparation in progress (its data steps, a
+// Word Embeddings node's training among them); false when none runs.
+bool CancelGraphTrainingPreparation();
+
 } // namespace gui

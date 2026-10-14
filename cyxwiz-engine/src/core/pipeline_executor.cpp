@@ -3306,6 +3306,10 @@ void PipelineExecutor::StopExecution() {
     }
 }
 
+void PipelineExecutor::SetOperatorFiguresCallback(std::function<void(const OperatorFigures&)> callback) {
+    operator_figures_callback_ = std::move(callback);
+}
+
 void PipelineExecutor::SetProgressCallback(std::function<void(float, const std::string&)> callback) {
     progress_callback_ = callback;
 }
@@ -5910,7 +5914,13 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     op->SetExecutionContext(std::move(operator_context));
     // A long step (word2vec training, a vectorizer) reports its own progress:
     // Task View shows it as the run's status, the run's share unchanged.
-    op->SetProgressCallback([this, name = node.name](const PipelineOperatorProgress& event) {
+    op->SetProgressCallback([this, id = node.id, name = node.name](const PipelineOperatorProgress& event) {
+        if (operator_figures_callback_ && (!event.figures.empty() || !event.notes.empty())) {
+            OperatorFigures figures = event.Figures();
+            figures.node_id = id;
+            figures.node_name = name;
+            operator_figures_callback_(figures);
+        }
         if (event.message.empty()) return;
         UpdateProgress(progress_.load(), name + ": " + event.message + " (" +
                                              std::to_string(static_cast<int>(event.progress * 100.0f + 0.5f)) + "%)");

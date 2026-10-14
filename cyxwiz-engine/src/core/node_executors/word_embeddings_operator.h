@@ -39,10 +39,6 @@ public:
 
     // The words of `text` as the Text Tokenizer's Word mode gives them.
     static std::vector<std::string> SplitWords(const std::string& text);
-    // The figure of each epoch read back from a training outcome: word2vec's
-    // mean loss per example ("... loss per epoch 2.31, 2.05)") or GloVe's mean
-    // cost per pair ("... cost per epoch 0.034, 0.018)"); empty for a pretrained one.
-    static std::vector<double> EpochLosses(const std::string& outcome);
     // Where a node saves its vectors when no path is set, relative to the
     // project's artifacts: word_embeddings/<id>_<name>.vec.
     static std::string DefaultVectorsFile(int node_id, const std::string& node_name);

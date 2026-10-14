@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../materialization_memory_types.h"
+#include "../operator_figures.h"
 #include "../process_memory_snapshot.h"
 
 #include <arrow/result.h>
@@ -55,6 +56,22 @@ struct PipelineOperatorProgress {
     std::string process_memory_source;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
+    // Named figures and facts of the step's own run (OperatorFigures); most
+    // steps leave them empty.
+    std::vector<std::pair<std::string, double>> figures;
+    std::vector<std::pair<std::string, std::string>> notes;
+
+    OperatorFigures Figures() const {
+        OperatorFigures out;
+        out.node_id = node_id;
+        out.node_name = node_name;
+        out.stage = stage;
+        out.message = message;
+        out.progress = progress;
+        out.figures = figures;
+        out.notes = notes;
+        return out;
+    }
 };
 
 using PipelineOperatorProgressCallback =

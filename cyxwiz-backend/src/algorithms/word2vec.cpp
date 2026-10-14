@@ -169,6 +169,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
         return fail("Fewer than two words appear at least min_count times");
     model.vectors.words = vocabulary.words;
     model.counts = vocabulary.counts;
+    if (options.on_vocabulary) options.on_vocabulary(vocabulary.words.size());
     const std::vector<int>& tokens = vocabulary.tokens;
     const std::vector<int>& sentence_of = vocabulary.sentence_of;
     const dim_t v = static_cast<dim_t>(model.vectors.words.size()), d = options.vector_size;
@@ -285,6 +286,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
             }
             model.examples += examples;
             model.epoch_loss.push_back(examples > 0 ? epoch_loss.scalar<float>() / static_cast<double>(examples) : 0.0);
+            if (options.on_epoch_loss) options.on_epoch_loss(epoch + 1, model.epoch_loss.back(), examples);
         }
         if (model.examples == 0) return fail("The corpus gave no training examples (sentences too short?)");
         model.vectors.values = RowsToHost(w_in, "WordEmbeddings::TrainWord2Vec");

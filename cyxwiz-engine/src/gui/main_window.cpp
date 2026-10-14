@@ -163,6 +163,7 @@
 #include "../network/p2p_client.h"
 #include "../network/datastream_client.h"
 #include "../auth/auth_client.h"
+#include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
@@ -198,6 +199,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cyxwiz/cyxwiz.h>
+#include <cyxwiz/word_embeddings.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cfloat>
@@ -859,6 +861,111 @@ MainWindow::MainWindow()
 
     // Connect Viewport to TrainingPlotPanel for real-time metrics display
     viewport_->SetTrainingPanel(training_plot_panel_.get());
+
+    // Word-vector runs on the Training Dashboard (TOFIX152): a Word
+    // Embeddings node's training from the pipeline (its dialog's Train), and
+    // what the dashboard asks back (its dialog, cancel, nearest words).
+    {
+        struct LoadedVectors {
+            std::string path;
+            std::filesystem::file_time_type stamp{};
+            std::shared_ptr<cyxwiz::WordVectors> vectors;
+        };
+        auto loaded = std::make_shared<LoadedVectors>();
+        // The saved file, read once per change.
+        const auto vectors_of = [loaded](const std::string& path) -> std::shared_ptr<cyxwiz::WordVectors> {
+            std::error_code error;
+            const auto stamp = std::filesystem::last_write_time(path, error);
+            if (error) return nullptr;
+            if (loaded->path != path || loaded->stamp != stamp || !loaded->vectors) {
+                loaded->path = path;
+                loaded->stamp = stamp;
+                loaded->vectors = std::make_shared<cyxwiz::WordVectors>(cyxwiz::WordEmbeddings::Load(path));
+            }
+            return loaded->vectors->success ? loaded->vectors : nullptr;
+        };
+        const auto resolve = [](const std::string& path) {
+            std::filesystem::path p(path);
+            if (p.is_relative()) p = std::filesystem::path(cyxwiz::ProjectManager::Instance().GetProjectRoot()) / p;
+            std::error_code error;
+            const auto canonical = std::filesystem::weakly_canonical(p, error);
+            return error ? p.lexically_normal() : canonical;
+        };
+        cyxwiz::TrainingPlotPanel::WordVectorHooks hooks;
+        hooks.open_node_dialog = [this](int node_id) {
+            if (!node_editor_ || !properties_) return;
+            if (MLNode* node = node_editor_->GetNodeForConfiguration(node_id)) properties_->ConfigureNode(node);
+        };
+        hooks.cancel = [this](int) {
+            if (node_editor_ && cyxwiz::IsPipelineExecutionTaskActive(node_editor_->GetDataPipelineTaskId())) {
+                cyxwiz::AsyncTaskManager::Instance().Cancel(node_editor_->GetDataPipelineTaskId());
+            } else {
+                gui::CancelGraphTrainingPreparation();
+            }
+        };
+        hooks.nearest = [vectors_of](const std::string& saved, const std::string& word, std::string& note) {
+            note.clear();
+            const auto vectors = vectors_of(saved);
+            if (!vectors) {
+                note = "Cannot read " + saved;
+                return std::vector<std::pair<std::string, double>>{};
+            }
+            std::string error;
+            auto rows = cyxwiz::WordEmbeddings::Nearest(*vectors, word, 10, &error);
+            if (!error.empty()) note = error;
+            else if (rows.empty()) note = "No vector for \"" + word + "\".";
+            return rows;
+        };
+        hooks.words = [vectors_of](const std::string& saved) {
+            const auto vectors = vectors_of(saved);
+            return vectors ? vectors->words : std::vector<std::string>{};
+        };
+        hooks.export_folder = []() { return cyxwiz::ProjectManager::Instance().GetExportsPath(); };
+        hooks.used_by = [this, resolve](int, const std::string& saved) {
+            if (!node_editor_ || saved.empty()) return std::string();
+            const auto file = resolve(saved);
+            std::string used_by;
+            for (const auto& node : node_editor_->GetNodes()) {
+                if (node.type != NodeType::Embedding) continue;
+                const auto weights = node.parameters.find("weights_file");
+                if (weights == node.parameters.end() || weights->second.empty() || resolve(weights->second) != file) {
+                    continue;
+                }
+                const auto param = [&](const char* key) {
+                    const auto it = node.parameters.find(key);
+                    return it == node.parameters.end() ? std::string("?") : it->second;
+                };
+                used_by += (used_by.empty() ? "" : ", ") + node.name + " (" + param("num_embeddings") + " \xC3\x97 " +
+                           param("embedding_dim") + ")";
+            }
+            return used_by.empty() ? used_by : used_by + " \xC2\xB7 loads the file when the graph trains";
+        };
+        training_plot_panel_->SetWordVectorHooks(std::move(hooks));
+
+        NodeEditor::WordVectorFeed feed;
+        const std::weak_ptr<cyxwiz::TrainingPlotPanel> panel = training_plot_panel_;
+        feed.figures = [panel](const cyxwiz::OperatorFigures& figures) {
+            if (auto p = panel.lock()) p->RecordWordVectorFigures(figures);
+        };
+        feed.progress = [panel](int node_id, float share, const std::string& message) {
+            if (auto p = panel.lock()) p->RecordWordVectorProgress(node_id, share, message);
+        };
+        feed.ended = [panel](int node_id, bool cancelled, const std::string& error) {
+            if (auto p = panel.lock()) p->EndWordVectorRuns(node_id, cancelled, error);
+        };
+        feed.show_run = [panel](int node_id) {
+            if (auto p = panel.lock()) p->ShowWordVectorRun(node_id);
+        };
+        feed.has_run = [panel](int node_id) {
+            const auto p = panel.lock();
+            return p && p->HasWordVectorRun(node_id);
+        };
+        feed.run_line = [panel](int node_id) {
+            const auto p = panel.lock();
+            return p ? p->WordVectorRunLine(node_id) : std::string();
+        };
+        node_editor_->SetWordVectorFeed(std::move(feed));
+    }
 
     script_editor_->SetScriptOutputSink(console_.get());
 

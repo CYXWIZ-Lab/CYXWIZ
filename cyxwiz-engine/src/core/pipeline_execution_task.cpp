@@ -3,6 +3,7 @@
 #include "async_task_manager.h"
 #include "pipeline_executor.h"
 
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
@@ -20,6 +21,17 @@ void PipelineExecutionTracker::Record(
 PipelineExecutionSnapshot PipelineExecutionTracker::GetSnapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return snapshot_;
+}
+
+void PipelineExecutionTracker::RecordFigures(const OperatorFigures& figures) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    figures_.push_back(figures);
+}
+
+std::vector<OperatorFigures> PipelineExecutionTracker::GetFigures(size_t from) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (from >= figures_.size()) return {};
+    return std::vector<OperatorFigures>(figures_.begin() + static_cast<std::ptrdiff_t>(from), figures_.end());
 }
 
 PipelineExecutionSubmission SubmitPipelineExecutionTask(
@@ -40,6 +52,10 @@ PipelineExecutionSubmission SubmitPipelineExecutionTask(
             if (auto current = weak_tracker.lock()) {
                 current->Record(node_id, event, status);
             }
+        });
+    executor->SetOperatorFiguresCallback(
+        [weak_tracker = std::weak_ptr<PipelineExecutionTracker>(tracker)](const OperatorFigures& figures) {
+            if (auto current = weak_tracker.lock()) current->RecordFigures(figures);
         });
 
     auto task = std::make_shared<LambdaTask>(
