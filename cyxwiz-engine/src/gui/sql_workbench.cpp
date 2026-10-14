@@ -993,9 +993,13 @@ void SqlWorkbenchDialog::RenderProfile() {
                 ImGui::TextUnformatted(("min " + Number(column.min) + "   median " + Number(column.median) +
                                         "   mean " + Number(column.mean) + "   max " + Number(column.max))
                                            .c_str());
+            } else if (repeated == 0 && column.facts.non_null > 0) {
+                Dim("every value is different");
             } else {
+                // The five most common values.
                 std::string top;
-                for (const auto& [value, times] : column.top) {
+                for (size_t i = 0; i < std::min<size_t>(column.top.size(), 5); ++i) {
+                    const auto& [value, times] = column.top[i];
                     std::string shown = value.size() > 28 ? value.substr(0, 28) + "..." : value;
                     for (char& ch : shown) {
                         if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
