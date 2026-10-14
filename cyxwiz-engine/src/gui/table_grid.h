@@ -87,8 +87,8 @@ public:
     void SetTable(std::shared_ptr<DataTable> t);
     bool HasData() const { return table && table->GetRowCount() > 0; }
 
-    // The grid and, past one page, its pager; fills the space left.
-    void Render(const char* id);
+    // The grid and, past one page, its pager, in `size` (0: the space left).
+    void Render(const char* id, const ImVec2& size = ImVec2(0.0f, 0.0f));
 
     // The rows in display order: sorted, and filtered when hiding non-matches.
     const std::vector<size_t>& DisplayIndices() const;

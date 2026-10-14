@@ -83,6 +83,10 @@ void TableGrid::SetTable(std::shared_ptr<DataTable> t) {
     sort_column = -1;
     sort_ascending = true;
     sorted_indices.clear();
+    if (table) {
+        sorted_indices.resize(table->GetRowCount());
+        std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
+    }
     selected_column = -1;
     selected_row = -1;
     selected_col = -1;
@@ -101,7 +105,7 @@ const std::vector<size_t>& TableGrid::DisplayIndices() const {
     return Hiding() ? filtered_indices : sorted_indices;
 }
 
-void TableGrid::Render(const char* id) {
+void TableGrid::Render(const char* id, const ImVec2& size) {
     if (!HasData()) return;
 
     size_t row_count = table->GetRowCount();
@@ -149,7 +153,13 @@ void TableGrid::Render(const char* id) {
         column_count++;
     }
 
-    if (ImGui::BeginTable(id, column_count, flags)) {
+    if (column_count > IMGUI_TABLE_MAX_COLUMNS) {
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "%zu columns: too many to show here (the grid shows up to %d).",
+                           col_count, IMGUI_TABLE_MAX_COLUMNS - 1);
+        return;
+    }
+
+    if (ImGui::BeginTable(id, column_count, flags, size)) {
         // Apply column freeze for horizontal scrolling
         // frozen_columns + 1 if line numbers are shown (line number column + frozen data columns)
         // 1 row frozen for header

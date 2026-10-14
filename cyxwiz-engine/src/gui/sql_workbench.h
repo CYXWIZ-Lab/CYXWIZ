@@ -16,6 +16,7 @@
 #include "node_config_dialog.h"
 #include "node_editor.h"
 #include "sql_editor_pane.h"
+#include "table_grid.h"
 
 #include <arrow/api.h>
 
@@ -143,7 +144,7 @@ private:
     RunKind running_kind_ = RunKind::Step;  // of run_, while it runs
     double running_since_ = 0.0;            // ImGui time run_ started
     std::shared_ptr<arrow::Table> result_;
-    cyxwiz::ArrowPreview result_preview_;
+    cyxwiz::TableGrid result_grid_;  // the first kResultRows rows
     cyxwiz::DatasetProfile result_profile_;
     std::string result_label_;  // "result", "part kept", "rows kept removed"
     bool result_is_step_ = false;  // the whole draft's result (checks apply)

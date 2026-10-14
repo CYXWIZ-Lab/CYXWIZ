@@ -34,7 +34,6 @@ namespace sqlstep = cyxwiz::sqlstep;
 using namespace sqlwb;
 
 constexpr int64_t kResultRows = 500;    // rows shown in the grid
-constexpr size_t kResultCellChars = 200;
 constexpr size_t kHistoryLimit = 50;
 
 struct Snippet {
@@ -423,7 +422,9 @@ void SqlWorkbenchDialog::PollRun() {
                 result_label_ = run->label;
                 result_is_step_ = run->kind == RunKind::Step;
                 result_seconds_ = run->seconds;
-                result_preview_ = cyxwiz::PreviewArrowRows(*result_, kResultRows, kResultCellChars);
+                result_grid_.SetTable(cyxwiz::DataTableFromArrow(*result_, result_label_, kResultRows));
+                result_grid_.options.data_bars = false;
+                result_grid_.options.rows_per_page = static_cast<int>(kResultRows);  // one page
                 result_profile_ = std::move(run->profile);
                 // Registered under its own name, so the step's saved output is untouched.
                 result_dataset_ = "sqlwb_" + std::to_string(node_id_);
@@ -903,17 +904,18 @@ void SqlWorkbenchDialog::RenderResults() {
     const float export_w = ui::ButtonWidth("Export " ICON_FA_CHEVRON_DOWN, ui::ButtonSize::Small);
     AlignRight(open_w + copy_w + export_w + ImGui::GetStyle().ItemSpacing.x * 2.0f);
     if (ui::SecondaryButton("Copy shown rows")) {
+        // In the grid's order (sorted, filtered), tab-separated.
+        const auto& headers = result_grid_.table->GetHeaders();
         std::string text;
-        for (size_t c = 0; c < result_preview_.headers.size(); ++c) {
-            text += (c ? "\t" : "") + result_preview_.headers[c];
-        }
+        for (size_t c = 0; c < headers.size(); ++c) text += (c ? "\t" : "") + headers[c];
         text += "\n";
-        for (const auto& row : result_preview_.rows) {
-            for (size_t c = 0; c < row.size(); ++c) text += (c ? "\t" : "") + row[c];
+        const auto& rows = result_grid_.DisplayIndices();
+        for (size_t r : rows) {
+            for (size_t c = 0; c < headers.size(); ++c) text += (c ? "\t" : "") + result_grid_.CellText(r, c);
             text += "\n";
         }
         ImGui::SetClipboardText(text.c_str());
-        AddMessage("Copied " + std::to_string(result_preview_.rows.size()) + " rows (tab-separated).", false);
+        AddMessage("Copied " + std::to_string(rows.size()) + " rows (tab-separated).", false);
     }
     ImGui::SameLine();
     if (ui::SecondaryButton("Export " ICON_FA_CHEVRON_DOWN)) ImGui::OpenPopup("##wb_export");
@@ -926,35 +928,8 @@ void SqlWorkbenchDialog::RenderResults() {
     if (open_table_ && ui::LinkButton("Open in Table Viewer")) {
         open_table_(result_dataset_, step_name_ + " " + result_label_);
     }
-    const int shown = std::min(static_cast<int>(result_preview_.headers.size()), 63);
-    if (shown > 0 &&
-        ImGui::BeginTable("##wb_results", shown + 1,
-                          ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
-                              ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit,
-                          ImGui::GetContentRegionAvail())) {
-        ImGui::TableSetupScrollFreeze(1, 1);
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed);
-        for (int c = 0; c < shown; ++c) {
-            const auto& header = result_preview_.headers[static_cast<size_t>(c)];
-            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_WidthFixed, header == "text" ? 480.0f : 0.0f);
-        }
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(result_preview_.rows.size()));
-        while (clipper.Step()) {
-            for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                Dim(std::to_string(r + 1));
-                const auto& row = result_preview_.rows[static_cast<size_t>(r)];
-                for (int c = 0; c < shown; ++c) {
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(row[static_cast<size_t>(c)].c_str());
-                }
-            }
-        }
-        ImGui::EndTable();
-    }
+    // The Table Viewer's grid: sort, select, copy; Open in Table Viewer for more.
+    result_grid_.Render("##wb_results");
 }
 
 void SqlWorkbenchDialog::RenderProfile() {
