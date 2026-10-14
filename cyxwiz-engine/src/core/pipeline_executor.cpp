@@ -5881,6 +5881,13 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    // A long step (word2vec training, a vectorizer) reports its own progress:
+    // Task View shows it as the run's status, the run's share unchanged.
+    op->SetProgressCallback([this, name = node.name](const PipelineOperatorProgress& event) {
+        if (event.message.empty()) return;
+        UpdateProgress(progress_.load(), name + ": " + event.message + " (" +
+                                             std::to_string(static_cast<int>(event.progress * 100.0f + 0.5f)) + "%)");
+    });
 
     std::string configure_error;
     if (!op->Configure(operator_parameters, configure_error)) {
