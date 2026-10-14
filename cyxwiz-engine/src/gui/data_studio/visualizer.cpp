@@ -13,7 +13,7 @@ Visualizer::~Visualizer() = default;
 
 void Visualizer::SetActiveDataset(const std::string& dataset_name) {
     current_dataset_ = dataset_name;
-    spdlog::info("[Data Studio] Visualize: {}", dataset_name);
+    spdlog::debug("[Data Studio] Visualize: {}", dataset_name);
 }
 
 void Visualizer::Render() {
