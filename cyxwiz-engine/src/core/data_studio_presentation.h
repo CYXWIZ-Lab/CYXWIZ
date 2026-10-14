@@ -26,6 +26,7 @@ struct GraphNode {
     gui::NodeType type{};
     std::string name;
     std::string file_path;     // a Data Input's source or an export's target
+    std::string dataset_name;  // a Data Input's registry name once loaded ("documents_train")
     bool recipe = false;       // a Preparation Recipe (a Subgraph)
     int recipe_steps = 0;
     std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)

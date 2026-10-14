@@ -183,6 +183,24 @@ int main() {
                   kv.split_sets[0].parts[2].split == "test",
               "catalog names make a split set (train first; a set needs train)");
         Check(JobOfView(kv, Job::Ready).state == "3 splits", "kjv80 ready state");
+
+        // Three Data Inputs all named "Data Input" (added from the Asset Browser): each finds its own
+        // dataset by dataset_name, not the shared name.
+        k.datasets = {{"documents_train", "Data Input #106", 1228, 20, true},
+                      {"documents_validation", "Data Input #107", 68, 20, true},
+                      {"documents_test", "Data Input #108", 66, 20, true}};
+        for (int id : {106, 107, 108}) k.nodes.push_back(Node(id, NodeType::DataInput, "Data Input"));
+        k.nodes[0].dataset_name = "documents_train";
+        k.nodes[1].dataset_name = "documents_validation";
+        k.nodes[2].dataset_name = "documents_test";
+        const View same = Build(k);
+        Check(same.rail[0].items.size() == 3 && same.rail[0].items[0].meta == "1,228" && same.rail[0].items[1].meta == "68" &&
+                  same.rail[0].items[2].meta == "66" && same.rail.size() == 3,
+              "same-named Data Inputs show their own rows, none in Other datasets");
+        k.nodes[0].dataset_name.clear();
+        k.datasets[0].label = "Data Input";
+        k.datasets[1].label = "Data Input";
+        Check(Build(k).rail[0].items[0].meta == "not loaded", "a shared label matches no node");
         std::string stem;
         Check(SplitOfName("documents_train", &stem) == "train" && stem == "documents" && SplitOfName("x-dev") == "validation" &&
                   SplitOfName("interval").empty() && SplitOfName("train").empty(),

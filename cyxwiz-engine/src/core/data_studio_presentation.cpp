@@ -132,13 +132,20 @@ const Dataset* DatasetNamed(const Input& in, const std::string& name) {
     return nullptr;
 }
 
-// A Data Input's dataset: the one its last run registered, else the loaded
-// dataset the catalog labels with the node's name.
+// A Data Input's dataset: the one its last run registered, else its
+// dataset_name, else the loaded dataset the catalog labels with the node's name.
 const Dataset* DatasetOfInput(const Input& in, const GraphNode& n) {
     if (const Dataset* d = DatasetNamed(in, n.output_dataset)) return d;
+    if (const Dataset* d = DatasetNamed(in, n.dataset_name)) return d;
+    if (const Dataset* d = DatasetNamed(in, "ds_datainput_" + std::to_string(n.id))) return d;
+    // Only a label no other dataset has (two Data Inputs may share a name).
+    const Dataset* found = nullptr;
     for (const auto& d : in.datasets)
-        if (!d.label.empty() && d.label == n.name) return &d;
-    return nullptr;
+        if (!d.label.empty() && d.label == n.name) {
+            if (found) return nullptr;
+            found = &d;
+        }
+    return found;
 }
 
 void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {

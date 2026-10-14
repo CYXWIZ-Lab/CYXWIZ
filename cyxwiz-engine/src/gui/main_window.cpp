@@ -3027,6 +3027,10 @@ void MainWindow::Render() {
     if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
         labels_at = ImGui::GetTime();
         std::map<std::string, std::string> labels, targets, sources;
+        // Data Inputs that share a name ("Data Input" x 3) are told apart by id.
+        std::map<std::string, int> input_names;
+        for (const auto& n : node_editor_->GetNodes())
+            if (n.type == gui::NodeType::DataInput) ++input_names[n.name];
         for (const auto& n : node_editor_->GetNodes()) {
             if (n.type != gui::NodeType::DataInput) {
                 // PipelineExecutor names a node's output ds_operator_<Type>_<id>.
@@ -3039,8 +3043,9 @@ void MainWindow::Render() {
             if (it != n.parameters.end() && !it->second.empty()) names.push_back(it->second);
             auto label = n.parameters.find("label_column");
             auto file = n.parameters.find("file_path");
+            const std::string shown = input_names[n.name] > 1 ? n.name + " #" + std::to_string(n.id) : n.name;
             for (const auto& dataset : names) {
-                if (!n.name.empty()) labels.emplace(dataset, n.name);
+                if (!n.name.empty()) labels.emplace(dataset, shown);
                 if (label != n.parameters.end() && !label->second.empty()) targets.emplace(dataset, label->second);
                 if (file != n.parameters.end() && !file->second.empty()) sources.emplace(dataset, file->second);
             }
