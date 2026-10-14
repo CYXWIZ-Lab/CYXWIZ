@@ -1,8 +1,8 @@
 #pragma once
 
 // Word Embeddings node (TOFIX152): word vectors from a pretrained file
-// (GloVe / fastText / word2vec .txt .vec .bin) or trained with word2vec on the
-// input's text column, on the selected device (cyxwiz/word_embeddings.h).
+// (GloVe / fastText / word2vec .txt .vec .bin) or trained with word2vec or GloVe
+// on the input's text column, on the selected device (cyxwiz/word_embeddings.h).
 // - Pin 0, Vectors: a table word, v_0 .. v_{d-1}; in the token-id order of
 //   `vocab_file` when one is given (lined up, with a coverage report), else in
 //   the file's / the trained vocabulary's order. Saved as word2vec text to
@@ -39,21 +39,23 @@ public:
 
     // The words of `text` as the Text Tokenizer's Word mode gives them.
     static std::vector<std::string> SplitWords(const std::string& text);
-    // The mean loss per example of each epoch, read back from a training
-    // outcome ("... loss per epoch 2.31, 2.05)"); empty for a pretrained one.
+    // The figure of each epoch read back from a training outcome: word2vec's
+    // mean loss per example ("... loss per epoch 2.31, 2.05)") or GloVe's mean
+    // cost per pair ("... cost per epoch 0.034, 0.018)"); empty for a pretrained one.
     static std::vector<double> EpochLosses(const std::string& outcome);
     // Where a node saves its vectors when no path is set, relative to the
     // project's artifacts: word_embeddings/<id>_<name>.vec.
     static std::string DefaultVectorsFile(int node_id, const std::string& node_name);
 
 private:
-    bool train_ = false;
+    std::string source_ = "pretrained";  // pretrained, word2vec or glove
     std::string vectors_file_;
     size_t max_words_ = 0;
     std::string vocab_file_;
     WordAlignmentOptions alignment_;
     std::string text_col_;
     Word2VecOptions word2vec_;
+    GloVeOptions glove_;
     std::string vectors_path_;
     bool row_vectors_ = false;
 

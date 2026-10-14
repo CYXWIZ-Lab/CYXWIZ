@@ -263,13 +263,19 @@ int main() {
         const auto* text = FindProperty(report, "text_col");
         Check(text != nullptr && !HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
               "pretrained vectors without row vectors do not need a text column");
-        vectors.parameters["source"] = "train";
+        vectors.parameters["source"] = "word2vec";
         report = gui::properties_truth::ResolveNodeTruth(vectors);
         Check(FindProperty(report, "vectors_file") == nullptr,
               "training does not show the vector file");
         text = FindProperty(report, "text_col");
         Check(text != nullptr && HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
               "training without a text column should be visible as missing");
+        vectors.parameters["source"] = "glove";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "GloVe training needs the text column too");
         const auto* outputs = FindProperty(report, "word_embeddings_outputs");
         Check(outputs != nullptr && outputs->message.find("PipelineOperatorFactory") != std::string::npos,
               "WordEmbeddings truth should describe operator-factory routing");

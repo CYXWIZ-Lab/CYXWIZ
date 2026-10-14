@@ -18,7 +18,7 @@
 
 namespace gui {
 
-// Word Embeddings (TOFIX152, mockup approved 2026-10-14): tabs Source,
+// Word Embeddings (TOFIX152, mockups approved 2026-10-14; GloVe the same day): tabs Source,
 // Vocabulary, Nearest words and Outputs. A pretrained file is read here on a
 // task worker (its format, size and how the vocabulary lines up); training
 // runs the step through the graph (Task View), and the dialog shows its
@@ -52,7 +52,8 @@ private:
 
     std::string Get(const std::string& key) const;
     void Set(const std::string& key, const std::string& value);
-    bool Training() const { return Get("source") == "train"; }
+    bool Training() const { return Get("source") != "pretrained"; }  // word2vec or GloVe
+    bool GloVe() const { return Get("source") == "glove"; }
     std::string Resolve(const std::string& path) const;
 
     void RefreshInputs();
@@ -67,6 +68,8 @@ private:
     void RenderSource();
     void RenderPretrained();
     void RenderTraining();
+    void RenderWord2VecSettings();
+    void RenderGloVeSettings();
     void RenderCoverage(bool full_list);
     void RenderVocabulary();
     void RenderNearest();

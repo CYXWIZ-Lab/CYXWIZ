@@ -91,20 +91,17 @@ def main():
             diff = (W[i] * C[j]).sum(1) + bw[i] + bc[j] - logx[b]
             fdiff = fx[b] * diff
             total += 0.5 * float((fdiff * diff).sum())
-            gw = fdiff[:, None] * C[j]
-            gc = fdiff[:, None] * W[i]
-            # AdaGrad, summed per row over the batch.
-            for P, G, idx, grad in ((W, gW, i, gw), (C, gC, j, gc)):
+            # glove.c scales by the rate first (fdiff *= eta): the step is
+            # rate*g / sqrt(history) and the history grows by (rate*g)^2.
+            step = a.rate * fdiff
+            gw = step[:, None] * C[j]
+            gc = step[:, None] * W[i]
+            # AdaGrad, summed per row over the batch (rows read before the step).
+            for P, G, idx, grad in ((W, gW, i, gw), (C, gC, j, gc), (bw, gbw, i, step), (bc, gbc, j, step)):
                 upd = torch.zeros_like(P).index_add_(0, idx, grad)
                 sq = torch.zeros_like(P).index_add_(0, idx, grad * grad)
                 touched = torch.unique(idx)
-                P[touched] -= a.rate * upd[touched] / torch.sqrt(G[touched])
-                G[touched] += sq[touched]
-            for P, G, idx in ((bw, gbw, i), (bc, gbc, j)):
-                upd = torch.zeros_like(P).index_add_(0, idx, fdiff)
-                sq = torch.zeros_like(P).index_add_(0, idx, fdiff * fdiff)
-                touched = torch.unique(idx)
-                P[touched] -= a.rate * upd[touched] / torch.sqrt(G[touched])
+                P[touched] -= upd[touched] / torch.sqrt(G[touched])
                 G[touched] += sq[touched]
         print(f"epoch {epoch + 1}: cost {total / n:.5f}")
     t2 = time.time()

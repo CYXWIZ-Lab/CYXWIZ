@@ -933,7 +933,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
         {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2", "3", "4", "5", "6"}},
         {"TextTokenizer", "output_mode", "wide", {"wide", "causal_windows", "decode", "roundtrip"}},
-        {"WordEmbeddings", "source", "pretrained", {"pretrained", "train"}},
+        {"WordEmbeddings", "source", "pretrained", {"pretrained", "word2vec", "glove"}},
         {"WordEmbeddings", "missing", "zeros", {"zeros", "random"}},
         {"WordEmbeddings", "unknown", "mean", {"mean", "missing"}},
         {"WordEmbeddings", "architecture", "skipgram", {"skipgram", "cbow"}},

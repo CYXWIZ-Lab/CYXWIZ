@@ -138,4 +138,21 @@ std::string StepMessageFromStatus(const std::string& status) {
     return message;
 }
 
+std::string ShortEpochFigures(const std::string& outcome, size_t keep) {
+    for (const char* marker : {"loss per epoch ", "cost per epoch "}) {
+        const auto at = outcome.find(marker);
+        if (at == std::string::npos) continue;
+        const auto begin = at + std::char_traits<char>::length(marker);
+        const auto end = outcome.find(')', begin);
+        if (end == std::string::npos) return outcome;
+        const std::string list = outcome.substr(begin, end - begin);
+        const auto count = static_cast<size_t>(std::count(list.begin(), list.end(), ',')) + 1;
+        if (count <= keep) return outcome;
+        const std::string first = list.substr(0, list.find(','));
+        const std::string last = list.substr(list.rfind(", ") + 2);
+        return outcome.substr(0, begin) + first + " to " + last + outcome.substr(end);
+    }
+    return outcome;
+}
+
 }  // namespace cyxwiz

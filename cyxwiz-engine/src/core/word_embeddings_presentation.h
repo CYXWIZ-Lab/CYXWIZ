@@ -53,4 +53,9 @@ float StepShareFromStatus(const std::string& status);
 // The status without the step's name: "Training word2vec, epoch 3".
 std::string StepMessageFromStatus(const std::string& status);
 
+// A training outcome with a long per-epoch list ("cost per epoch 0.034, 0.018,
+// ..., 0.0061)") cut to its first and last figure ("cost per epoch 0.034 to
+// 0.0061)") when it has more than `keep`; any other text unchanged.
+std::string ShortEpochFigures(const std::string& outcome, size_t keep = 5);
+
 }  // namespace cyxwiz

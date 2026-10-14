@@ -3931,7 +3931,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":363,"type":"WordEmbeddings","name":"BadWordModel","parameters":{)"
-        R"("source":"train","text_col":"phrase","architecture":"glove"}})"
+        R"("source":"word2vec","text_col":"phrase","architecture":"glove"}})"
         R"(],"links":[{"start_node":362,"end_node":363}]})";
 
     cyxwiz::PipelineExecutor bad_word_embeddings_architecture_executor;

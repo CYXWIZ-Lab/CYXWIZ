@@ -3,7 +3,7 @@
 The **Word Embeddings** node gives every word a vector of numbers, so words
 used alike sit close together ("therapy" near "counseling", "cbt", "emdr").
 It reads vectors someone already trained (GloVe, fastText, word2vec files) or
-trains word2vec on a text column of your data, on the selected device.
+trains word2vec or GloVe on a text column of your data, on the selected device.
 
 ```
 Data Input (texts) -> Word Embeddings -> Vectors -> (an Embedding layer loads the saved file)
@@ -40,6 +40,13 @@ project, replaced at each run, which is where an Embedding layer finds them.
      (Skip-gram or CBOW) and its settings, then **Train**. Training runs as a
      task (Task View); the dialog shows the epoch and progress, **Cancel
      training** stops it, and when it ends the loss per epoch is drawn.
+   - **Train GloVe**: the same text column, then vector size, window, minimum
+     count, epochs and seed (Advanced: count cap, weighting power, learning
+     rate, batch). Training runs in two stages, both in Task View: counting
+     the word pairs ("Counting word pairs"), then the epochs ("Training GloVe,
+     epoch 4 of 25, cost 0.01603"). When it ends the cost per epoch is drawn;
+     the summary shows the first and last cost and the curve's tooltip lists
+     every epoch.
 4. **Vocabulary**: the Text Tokenizer's vocabulary file (filled in from the
    graph's Text Tokenizer when there is one). The vectors are then lined up
    with it: the Source tab shows how many tokens were found as written, found
@@ -66,7 +73,7 @@ runs of letters and digits.
 Files are read as gensim's `KeyedVectors.load_word2vec_format` reads them; a
 repeated word keeps its first vector.
 
-## Training settings
+## word2vec settings
 
 gensim's names and defaults (`Word2Vec`): vector size 100, window 5,
 minimum count 5, negative samples 5, epochs 5, down-sampling 1e-3, learning
@@ -84,6 +91,35 @@ epochs take about 10 minutes here. The vectors are good (see the example),
 but a 1-epoch run shares 37% of each word's 10 nearest neighbours with
 gensim, while two gensim runs with different seeds share 60%. Faster, closer
 training is open work (TOFIX152).
+
+## GloVe settings
+
+The Stanford GloVe defaults (`glove.c` / `cooccur.c`): vector size 100,
+window 10, minimum count 5, epochs 25, count cap (x_max) 100, weighting power
+0.75, learning rate 0.05 (AdaGrad), plus **Batch** (word pairs per device
+step, 8192) and **Seed**. Vector size, minimum count and seed are shared
+with word2vec; the window, epochs and the rest are GloVe's own (keys
+`glove_window`, `glove_epochs`, `x_max`, `weighting_power`,
+`glove_learning_rate`, `glove_batch`).
+
+How it learns: every pair of words within the window of each other in one
+row is counted, a pair `d` words apart adding `1/d`. Then each word gets two
+vectors and two biases, fitted so that their dot product plus the biases
+matches the log of the pair's count, pairs weighted by
+`min(1, count / x_max)^0.75`. The saved vector of a word is the sum of its
+two vectors, as the reference writes them.
+
+**Speed and quality (measured 2026-10-14)** on the sentiment set (16,334
+words, 7,968,113 word pairs) on a GTX 1050 Ti (CUDA): counting 10.6 s, then
+about 11 s per epoch; 25 epochs in 319 s (269 s in the Engine). The reference
+(`scripts/glove_reference.py`, the same algorithm on the CPU) takes 42 s to
+count and 832 s to train. The cost per pair ends at 0.00613 (reference
+0.00614), and the two models share 87% of each word's 10 nearest neighbours
+(top 1,000 words). Nearest words of "therapy": cbt 0.782, sessions 0.777,
+medication 0.772, counselling 0.762.
+
+After 1 or 2 epochs every word still points the same way (cosine near 1.0
+with all words, in the reference too); use the full 25 epochs.
 
 ## With an Embedding layer
 
@@ -111,7 +147,7 @@ project folder.
 ```
 Data Input (statement, status) -> Text Tokenizer (vocabulary file) -> Data Split -> Data Loader
      |                                                                               |
-     +-> Word Embeddings (train word2vec, same vocabulary file)                      v
+     +-> Word Embeddings (train word2vec or GloVe, same vocabulary file)             v
             saves artifacts/word_embeddings/sentiment_word_vectors.vec ------> Embedding (5,000 x 100, loads the file)
                                                                                -> LSTM -> Dense -> ... -> Output
 ```
@@ -155,9 +191,13 @@ The check graph is `word_embeddings_check.cyxgraph` in the test project
 ## Checking it
 
 - `test_computation_truth_word_embeddings`: reading, lining up, nearest words,
-  row means and word2vec steps against gensim 4.4.0 / PyTorch fixtures.
+  row means and word2vec steps against gensim 4.4.0 / PyTorch fixtures; GloVe
+  counts, AdaGrad steps and group quality against numpy / PyTorch
+  (`reference/generate_glove_fixtures.py`).
 - `test_word_embeddings_operator`: the node (lined-up table, saved file, Rows,
-  long rows averaged in several device blocks, training repeat, refusals).
+  long rows averaged in several device blocks, word2vec and GloVe training
+  repeat, GloVe's two progress stages, refusals).
 - `test_word_embeddings_presentation`: the dialog's wording.
-- `benchmark_word2vec <tokens.txt> [epochs] [batch] [out.vec]` and
-  `scripts/word2vec_neighbour_overlap.py`: speed and agreement with gensim.
+- `benchmark_word_vectors <word2vec|glove> <tokens.txt> [epochs] [batch] [out.vec]`
+  and `scripts/word2vec_neighbour_overlap.py`: speed and agreement with gensim
+  or the GloVe reference.

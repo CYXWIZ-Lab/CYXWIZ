@@ -95,6 +95,64 @@ struct CYXWIZ_API Word2VecModel {
     std::string error_message;
 };
 
+// GloVe training settings (Pennington et al. 2014), the Stanford reference's
+// names and defaults (glove.c / cooccur.c).
+struct CYXWIZ_API GloVeOptions {
+    int vector_size = 100;
+    int window = 10;               // symmetric; a pair `d` words apart counts 1/d
+    int min_count = 5;
+    double x_max = 100.0;          // counts above it all weigh 1
+    double alpha = 0.75;           // weighting power below x_max
+    double learning_rate = 0.05;   // AdaGrad
+    int epochs = 25;
+    int batch_size = 8192;         // non-zero pairs per device step
+    unsigned seed = 1;
+    size_t max_vocab = 0;          // keep the most frequent words only (0: all)
+    // Called while counting (epoch 0, `done` the share of the text counted) and
+    // after each device step (epoch 1.., `done` the share of training done);
+    // returning false stops the run (the model is then refused).
+    std::function<bool(double done, int epoch)> on_progress;
+    // Called after each epoch with its mean cost per pair.
+    std::function<void(int epoch, double cost)> on_epoch_cost;
+};
+
+// Co-occurrence counts: one entry per distinct (row, column) pair, ordered by
+// row then column.
+struct CYXWIZ_API GloVeCounts {
+    std::vector<int> rows;
+    std::vector<int> cols;
+    std::vector<float> values;
+
+    bool success = false;
+    std::string error_message;
+};
+
+// The trainable state, row-major [vocab_size, dim] (biases [vocab_size]) with
+// AdaGrad's sums of squared steps (glove.c starts them at 1).
+struct CYXWIZ_API GloVeState {
+    std::vector<float> word, context, word_bias, context_bias;
+    std::vector<float> word_sq, context_sq, word_bias_sq, context_bias_sq;
+};
+
+// One device step: the pairs (rows[k], cols[k]) with counts[k].
+struct CYXWIZ_API GloVeBatch {
+    std::vector<int> rows;
+    std::vector<int> cols;
+    std::vector<float> counts;
+};
+
+// A trained GloVe model: the vocabulary (most frequent first), its counts, the
+// word vectors (word + context vectors, the reference's default output).
+struct CYXWIZ_API GloVeModel {
+    WordVectors vectors;
+    std::vector<long long> counts;
+    std::vector<double> epoch_cost;  // mean cost per pair in each epoch
+    long long pairs = 0;             // non-zero co-occurrences
+
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API WordEmbeddings {
 public:
     // Text format: one word per line followed by its values, separated by
@@ -141,6 +199,24 @@ public:
     // device from `seed`, so a run repeats exactly on one device.
     static Word2VecModel TrainWord2Vec(const std::vector<std::vector<std::string>>& sentences,
                                        const Word2VecOptions& options = {});
+
+    // GloVe co-occurrences of `tokens` (word ids) within `window`, on the
+    // device: a pair `d` positions apart in the same sentence adds 1/d to both
+    // (i, j) and (j, i).
+    static GloVeCounts CountCooccurrences(const std::vector<int>& tokens, const std::vector<int>& sentence_of,
+                                          int vocab_size, int window, std::string* error = nullptr);
+    // Runs `batches` in order on `state` (updated in place): the weighted least
+    // squares cost and an AdaGrad step per row, the gradients of a row summed
+    // over the batch, every row read before the step. `costs` gets each
+    // batch's summed cost.
+    static bool GloVeSteps(GloVeState& state, int vocab_size, int dim, const std::vector<GloVeBatch>& batches,
+                           double x_max, double alpha, double learning_rate, std::vector<double>* costs,
+                           std::string* error = nullptr);
+    // Trains GloVe on tokenised sentences on the device: vocabulary from
+    // min_count, counts, then epochs over the shuffled pairs; a run repeats
+    // exactly for one seed on one device.
+    static GloVeModel TrainGloVe(const std::vector<std::vector<std::string>>& sentences,
+                                 const GloVeOptions& options = {});
 };
 
 }  // namespace cyxwiz

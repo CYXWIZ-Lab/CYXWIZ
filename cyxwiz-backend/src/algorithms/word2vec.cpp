@@ -19,13 +19,14 @@
 
 #include "arrayfire_host_materialization.h"
 #include "arrayfire_indexed.h"
+#include "word_training_vocabulary.h"
+#include "word_vector_device.h"
 
 #include <arrayfire.h>
 
 #include <algorithm>
 #include <cmath>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -98,20 +99,6 @@ af::array Step(af::array& w_in, af::array& w_out, const af::array& inputs, const
     return loss;
 }
 
-// Row-major host [rows, cols] <-> device [rows, cols].
-af::array RowsToDevice(const std::vector<float>& values, dim_t rows, dim_t cols) {
-    return af::array(cols, rows, values.data()).T();
-}
-
-std::vector<float> RowsToHost(const af::array& matrix, const char* operation) {
-    std::vector<float> values(static_cast<size_t>(matrix.elements()));
-    af::array transposed = matrix.T();
-    transposed.eval();
-    MaterializeArrayFireToHost(transposed, values.data(), ArrayFireHostSyncCategory::OutputMaterialization, operation,
-                               "row_major_words_by_dim");
-    return values;
-}
-
 af::array IntsToDevice(const std::vector<int>& values, dim_t rows, dim_t cols) {
     // Host row-major [rows, cols] -> device [rows, cols].
     return af::array(cols, rows, values.data()).T();
@@ -177,44 +164,13 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
         return fail("vector_size, window, min_count, negative, epochs and batch_size must be at least 1, alpha "
                     "positive, min_alpha and sample not negative");
 
-    // Vocabulary: counts from the strings (host), most frequent first; ties keep
-    // the order words were first seen (gensim's stable sort).
-    std::unordered_map<std::string, size_t> first_seen;
-    std::vector<std::string> seen_words;
-    std::vector<long long> seen_counts;
-    for (const auto& sentence : sentences) {
-        for (const auto& word : sentence) {
-            const auto [it, inserted] = first_seen.emplace(word, seen_words.size());
-            if (inserted) {
-                seen_words.push_back(word);
-                seen_counts.push_back(0);
-            }
-            ++seen_counts[it->second];
-        }
-    }
-    std::vector<size_t> order;
-    for (size_t i = 0; i < seen_words.size(); ++i)
-        if (seen_counts[i] >= options.min_count) order.push_back(i);
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return seen_counts[a] > seen_counts[b]; });
-    if (options.max_vocab > 0 && order.size() > options.max_vocab) order.resize(options.max_vocab);
-    if (order.size() < 2) return fail("Fewer than two words appear at least min_count times");
-    std::unordered_map<std::string, int> id_of;
-    for (size_t r = 0; r < order.size(); ++r) {
-        id_of.emplace(seen_words[order[r]], static_cast<int>(r));
-        model.vectors.words.push_back(seen_words[order[r]]);
-        model.counts.push_back(seen_counts[order[r]]);
-    }
-    // The corpus as ids, words outside the vocabulary dropped (gensim drops them
-    // before the windows), with each word's sentence.
-    std::vector<int> tokens, sentence_of;
-    for (size_t s = 0; s < sentences.size(); ++s) {
-        for (const auto& word : sentences[s]) {
-            if (const auto it = id_of.find(word); it != id_of.end()) {
-                tokens.push_back(it->second);
-                sentence_of.push_back(static_cast<int>(s));
-            }
-        }
-    }
+    TrainingVocabulary vocabulary;
+    if (!BuildTrainingVocabulary(sentences, options.min_count, options.max_vocab, vocabulary))
+        return fail("Fewer than two words appear at least min_count times");
+    model.vectors.words = vocabulary.words;
+    model.counts = vocabulary.counts;
+    const std::vector<int>& tokens = vocabulary.tokens;
+    const std::vector<int>& sentence_of = vocabulary.sentence_of;
     const dim_t v = static_cast<dim_t>(model.vectors.words.size()), d = options.vector_size;
     const dim_t n = static_cast<dim_t>(tokens.size());
     const int window = options.window, k = options.negative;

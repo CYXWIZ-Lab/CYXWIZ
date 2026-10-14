@@ -494,10 +494,10 @@ bool WordEmbeddingsDialog::Choice(const char* id, const char* key, const char* c
 }
 
 void WordEmbeddingsDialog::RenderSource() {
-    const char* labels[] = {"Pretrained file", "Train word2vec"};
-    const char* values[] = {"pretrained", "train"};
+    const char* labels[] = {"Pretrained file", "Train word2vec", "Train GloVe"};
+    const char* values[] = {"pretrained", "word2vec", "glove"};
     Label("Source");
-    Choice("##source", "source", labels, values, 2);
+    Choice("##source", "source", labels, values, 3);
     ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_sm));
     if (Training()) {
         RenderTraining();
@@ -657,7 +657,17 @@ void WordEmbeddingsDialog::RenderTraining() {
     else if (input_name_.empty()) words += std::string(kDot) + "connect a table with the text";
     else words += std::string(kDot) + "load the inputs to list the columns";
     Dim(words);
+    if (GloVe()) {
+        RenderGloVeSettings();
+    } else {
+        RenderWord2VecSettings();
+    }
+    ImGui::Dummy(ImVec2(0, t.space_sm));
+    RenderRunCard();
+}
 
+void WordEmbeddingsDialog::RenderWord2VecSettings() {
+    const auto& t = ui::CurrentTokens();
     const char* model_labels[] = {"Skip-gram", "CBOW"};
     const char* model_values[] = {"skipgram", "cbow"};
     Label("Model");
@@ -700,8 +710,51 @@ void WordEmbeddingsDialog::RenderTraining() {
         Faint("gensim's names and defaults. Training runs on the selected device; the same seed repeats a run.");
         ImGui::TreePop();
     }
-    ImGui::Dummy(ImVec2(0, t.space_sm));
-    RenderRunCard();
+}
+
+void WordEmbeddingsDialog::RenderGloVeSettings() {
+    const auto& t = ui::CurrentTokens();
+    Label("How it learns");
+    Dim("Counts how often each pair of words appears within the window (closer pairs count more), then fits "
+        "vectors whose dot products match those counts. word2vec instead learns pair by pair.");
+    ImGui::Dummy(ImVec2(0, t.space_xs));
+    if (ImGui::BeginTable("##glove", 2, ImGuiTableFlags_SizingStretchSame)) {
+        const struct {
+            const char* label;
+            const char* key;
+        } fields[] = {{"Vector size", "vector_size"}, {"Window", "glove_window"}, {"Minimum count", "min_count"},
+                      {"Epochs", "glove_epochs"}, {"Seed", "train_seed"}};
+        for (const auto& field : fields) {
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+            ImGui::TextUnformatted(field.label);
+            ImGui::PopStyleColor();
+            ImGui::SameLine(150.0f);
+            IntField((std::string("##") + field.key).c_str(), field.key, kSmallField);
+        }
+        ImGui::EndTable();
+    }
+    const std::string advanced = "Advanced: count cap x_max " + Get("x_max") + kDot + "weighting power " +
+                                 Get("weighting_power") + kDot + "learning rate " + Get("glove_learning_rate") +
+                                 " (AdaGrad)" + kDot + "batch " + Get("glove_batch") + "###glove_advanced";
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    const bool open = ImGui::TreeNodeEx(advanced.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+    ImGui::PopStyleColor();
+    if (open) {
+        Label("Count cap");
+        FloatField("##x_max", "x_max", kSmallField);
+        Label("Weighting power");
+        FloatField("##weighting_power", "weighting_power", kSmallField);
+        Label("Learning rate");
+        FloatField("##glove_learning_rate", "glove_learning_rate", kSmallField);
+        Label("Batch");
+        IntField("##glove_batch", "glove_batch", kSmallField);
+        Faint("The Stanford GloVe defaults. Pairs seen more than x_max times all weigh the same; rarer pairs weigh "
+              "less (the power). Each word's vector is the sum of its two learned vectors, as the reference writes "
+              "them. Training runs on the selected device; the same seed repeats a run.");
+        ImGui::TreePop();
+    }
 }
 
 // Training progress or the result of the latest run.
@@ -715,6 +768,10 @@ void WordEmbeddingsDialog::RenderRunCard() {
             const std::string status = task ? task->GetInfo().status_message : std::string();
             const float share = cyxwiz::StepShareFromStatus(status);
             const std::string message = share >= 0.0f ? cyxwiz::StepMessageFromStatus(status) : "Running the steps before it";
+            // GloVe's two stages: counting, then the epochs.
+            if (message.rfind("Training GloVe", 0) == 0) {
+                Wrapped(t.success, std::string(ICON_FA_CIRCLE_CHECK "  ") + "Counted word pairs");
+            }
             Heading(std::string(ICON_FA_SPINNER "  ") + message);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, t.accent_text);
@@ -732,7 +789,7 @@ void WordEmbeddingsDialog::RenderRunCard() {
                 Wrapped(t.success, std::string(ICON_FA_CIRCLE_CHECK "  ") +
                                        (Training() ? "Trained in " : "Read in ") + seconds);
             }
-            Dim(run_outcome_);
+            Dim(cyxwiz::ShortEpochFigures(run_outcome_));
             const auto losses = cyxwiz::WordEmbeddingsOperator::EpochLosses(run_outcome_);
             if (losses.size() >= 2) {
                 // Loss per epoch.
@@ -756,7 +813,19 @@ void WordEmbeddingsDialog::RenderRunCard() {
                 draw->AddText(ImVec2(at.x + width - 8.0f - ImGui::CalcTextSize(last.c_str()).x, at.y + plot),
                               ui::ToU32(t.text_faint), last.c_str());
                 ImGui::Dummy(ImVec2(width, height));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mean loss per example in each epoch");
+                if (ImGui::IsItemHovered()) {
+                    // Every epoch's figure (the summary above shows the first and last).
+                    std::string figures;
+                    for (size_t i = 0; i < losses.size(); ++i) {
+                        char line[48];
+                        std::snprintf(line, sizeof(line), "\nepoch %zu: %.4g", i + 1, losses[i]);
+                        figures += line;
+                    }
+                    const char* what = run_outcome_.find("(GloVe") != std::string::npos
+                                           ? "Mean cost per word pair in each epoch"
+                                           : "Mean loss per example in each epoch";
+                    ImGui::SetTooltip("%s%s", what, figures.c_str());
+                }
             }
         }
     }
@@ -780,7 +849,7 @@ void WordEmbeddingsDialog::RenderVocabulary() {
     ImGui::Unindent(kLabelWidth);
     ImGui::Dummy(ImVec2(0, t.space_sm));
     if (Training()) {
-        if (!run_outcome_.empty() && !vocab.empty()) Dim("Latest run: " + run_outcome_);
+        if (!run_outcome_.empty() && !vocab.empty()) Dim("Latest run: " + cyxwiz::ShortEpochFigures(run_outcome_));
         else if (!vocab.empty()) Faint("Train to see how the vocabulary lines up.");
     } else {
         RenderCoverage(true);
@@ -805,7 +874,7 @@ void WordEmbeddingsDialog::RenderNearest() {
     }
     if (!vectors) {
         ImGui::Dummy(ImVec2(0, t.space_lg));
-        Dim(Training() ? "Train word2vec (Source tab) to look up words here."
+        Dim(Training() ? "Train the vectors (Source tab) to look up words here."
                        : "Choose a vector file (Source tab) to look up words here.");
         return;
     }

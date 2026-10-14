@@ -2,7 +2,9 @@
 // - files and vocabulary alignment against gensim 4: fixtures/word_embeddings_gensim.json
 //   and fixtures/word_embeddings/ (reference/generate_word_embeddings_fixtures.py);
 // - word2vec steps against PyTorch and training quality against gensim:
-//   fixtures/word2vec_reference.json (reference/generate_word2vec_fixtures.py). Runs on the active ArrayFire
+//   fixtures/word2vec_reference.json (reference/generate_word2vec_fixtures.py);
+// - GloVe counts and steps against numpy / PyTorch and training quality against the reference GloVe:
+//   fixtures/glove_reference.json (reference/generate_glove_fixtures.py). Runs on the active ArrayFire
 // backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|oneapi|cpu).
 #include "test_device_selection.h"
 
@@ -182,6 +184,108 @@ void RunQuality(const json& c) {
     Check(again.success && again.vectors.values == model.vectors.values, name + ": a run repeats for one seed");
 }
 
+// The same co-occurrence counts as numpy (cooccur.c's rule).
+void RunGloVeCounts(const json& c) {
+    std::string error;
+    const auto counts = WordEmbeddings::CountCooccurrences(
+        c.at("tokens").get<std::vector<int>>(), c.at("sentence_of").get<std::vector<int>>(),
+        c.at("vocab_size").get<int>(), c.at("window").get<int>(), &error);
+    Check(counts.success, "glove counts: " + error);
+    Check(counts.rows == c.at("rows").get<std::vector<int>>() && counts.cols == c.at("cols").get<std::vector<int>>(),
+          "glove counts: the pairs differ from numpy (" + std::to_string(counts.rows.size()) + " pairs)");
+    CheckValues(counts.values, c.at("values"), 1e-6, "glove counts");
+}
+
+// The same AdaGrad steps as PyTorch (float32) on the same state and batches.
+void RunGloVeSteps(const json& c) {
+    const auto& s = c.at("state");
+    cyxwiz::GloVeState state;
+    state.word = s.at("word").get<std::vector<float>>();
+    state.context = s.at("context").get<std::vector<float>>();
+    state.word_bias = s.at("word_bias").get<std::vector<float>>();
+    state.context_bias = s.at("context_bias").get<std::vector<float>>();
+    state.word_sq = s.at("word_sq").get<std::vector<float>>();
+    state.context_sq = s.at("context_sq").get<std::vector<float>>();
+    state.word_bias_sq = s.at("word_bias_sq").get<std::vector<float>>();
+    state.context_bias_sq = s.at("context_bias_sq").get<std::vector<float>>();
+    std::vector<cyxwiz::GloVeBatch> batches;
+    for (const auto& b : c.at("batches")) {
+        cyxwiz::GloVeBatch batch;
+        batch.rows = b.at("rows").get<std::vector<int>>();
+        batch.cols = b.at("cols").get<std::vector<int>>();
+        batch.counts = b.at("counts").get<std::vector<float>>();
+        batches.push_back(std::move(batch));
+    }
+    const std::string name = "glove steps " + c.at("label").get<std::string>();
+    std::vector<double> costs;
+    std::string error;
+    Check(WordEmbeddings::GloVeSteps(state, c.at("vocab_size").get<int>(), c.at("dim").get<int>(), batches,
+                                     c.at("x_max").get<double>(), c.at("alpha").get<double>(),
+                                     c.at("learning_rate").get<double>(), &costs, &error),
+          name + ": " + error);
+    const auto expected_costs = c.at("costs").get<std::vector<double>>();
+    Check(costs.size() == expected_costs.size(), name + ": cost count");
+    for (size_t i = 0; i < costs.size(); ++i)
+        Check(std::abs(costs[i] - expected_costs[i]) <= 1e-4 * (1.0 + std::abs(expected_costs[i])),
+              name + " cost " + std::to_string(i) + ": " + std::to_string(costs[i]) + ", PyTorch " +
+                  std::to_string(expected_costs[i]));
+    const auto& e = c.at("expected");
+    CheckValues(state.word, e.at("word"), 1e-5, name + " word vectors");
+    CheckValues(state.context, e.at("context"), 1e-5, name + " context vectors");
+    CheckValues(state.word_bias, e.at("word_bias"), 1e-5, name + " word biases");
+    CheckValues(state.context_bias, e.at("context_bias"), 1e-5, name + " context biases");
+    CheckValues(state.word_sq, e.at("word_sq"), 1e-5, name + " word AdaGrad sums");
+    CheckValues(state.context_sq, e.at("context_sq"), 1e-5, name + " context AdaGrad sums");
+    CheckValues(state.word_bias_sq, e.at("word_bias_sq"), 1e-5, name + " word bias AdaGrad sums");
+    CheckValues(state.context_bias_sq, e.at("context_bias_sq"), 1e-5, name + " context bias AdaGrad sums");
+}
+
+// Trained on the device with the reference's settings: the groups are as
+// separable as the reference makes them (within 0.1), the cost falls, and a run
+// repeats for a seed.
+void RunGloVeQuality(const json& c) {
+    const auto& s = c.at("settings");
+    cyxwiz::GloVeOptions options;
+    options.vector_size = s.at("vector_size").get<int>();
+    options.window = s.at("window").get<int>();
+    options.min_count = s.at("min_count").get<int>();
+    options.x_max = s.at("x_max").get<double>();
+    options.alpha = s.at("alpha").get<double>();
+    options.learning_rate = s.at("learning_rate").get<double>();
+    options.epochs = s.at("epochs").get<int>();
+    options.batch_size = s.at("batch_size").get<int>();
+    const auto sentences = c.at("sentences").get<std::vector<std::vector<std::string>>>();
+    const auto groups = c.at("groups").get<std::vector<std::vector<std::string>>>();
+    int counting_calls = 0;
+    int last_epoch = 0;
+    options.on_progress = [&](double, int epoch) {
+        if (epoch == 0) ++counting_calls;
+        last_epoch = epoch;
+        return true;
+    };
+    const auto model = WordEmbeddings::TrainGloVe(sentences, options);
+    Check(model.success, "glove quality: " + model.error_message);
+    Check(counting_calls > 0 && last_epoch == options.epochs, "glove quality: progress reports both stages");
+    std::string costs;
+    for (const double cost : model.epoch_cost) costs += " " + std::to_string(cost);
+    Check(model.epoch_cost.size() == static_cast<size_t>(options.epochs) &&
+              model.epoch_cost.back() < model.epoch_cost.front(),
+          "glove quality: the cost falls; per epoch:" + costs);
+    const double accuracy = GroupAccuracy(model.vectors, groups);
+    const double reference = c.at("reference_accuracy").get<double>();
+    std::cout << "glove: nearest neighbour in its own group " << accuracy << " (reference " << reference << "), "
+              << model.pairs << " pairs, cost per pair " << model.epoch_cost.front() << " -> "
+              << model.epoch_cost.back() << std::endl;
+    Check(accuracy >= reference - 0.1,
+          "glove quality: group accuracy " + std::to_string(accuracy) + ", reference " + std::to_string(reference));
+    options.on_progress = nullptr;
+    const auto again = WordEmbeddings::TrainGloVe(sentences, options);
+    Check(again.success && again.vectors.values == model.vectors.values,
+          "glove quality: a run repeats for one seed");
+    options.on_progress = [](double, int epoch) { return epoch < 2; };
+    Check(!WordEmbeddings::TrainGloVe(sentences, options).success, "glove: a stop refuses the model");
+}
+
 // Nearest words by cosine, and row means of token vectors, against numpy.
 void RunNearest(const json& c, const fs::path& root) {
     const auto vectors = WordEmbeddings::Load((root / "word_embeddings" / c.at("file").get<std::string>()).string());
@@ -303,7 +407,29 @@ int main(int, char** argv) {
         else RunQuality(c);
         ++passed;
     }
+    std::ifstream glove_in(root / "glove_reference.json");
+    Check(static_cast<bool>(glove_in), "cannot open the GloVe fixture");
+    const json glove = json::parse(glove_in);
+    for (const auto& c : glove.at("cases")) {
+        if (c.at("op") == "counts") RunGloVeCounts(c);
+        else if (c.at("op") == "steps") RunGloVeSteps(c);
+        else RunGloVeQuality(c);
+        ++passed;
+    }
     std::string error;
+    Check(!WordEmbeddings::CountCooccurrences({0, 7}, {0, 0}, 3, 2, &error).success,
+          "a GloVe token outside the vocabulary is refused");
+    cyxwiz::GloVeState two_words;
+    two_words.word = two_words.context = two_words.word_sq = two_words.context_sq = std::vector<float>(4, 1.0f);
+    two_words.word_bias = two_words.context_bias = std::vector<float>(2, 1.0f);
+    two_words.word_bias_sq = two_words.context_bias_sq = std::vector<float>(2, 1.0f);
+    cyxwiz::GloVeBatch zero;
+    zero.rows = {0};
+    zero.cols = {1};
+    zero.counts = {0.0f};
+    Check(!WordEmbeddings::GloVeSteps(two_words, 2, 2, {zero}, 100.0, 0.75, 0.05, nullptr, &error),
+          "a zero GloVe count is refused");
+    Check(!WordEmbeddings::TrainGloVe({{"one"}}).success, "GloVe: fewer than two words above min_count is refused");
     std::vector<float> a(4, 0.0f), b(4, 0.0f);
     cyxwiz::Word2VecBatch outside;
     outside.inputs = {5};

@@ -1,6 +1,7 @@
 #include "word_embeddings_operator.h"
 
 #include "text_column_utils.h"
+#include "../word_embeddings_presentation.h"
 #include "tree_classification_utils.h"
 
 #include <cyxwiz/text_processing.h>
@@ -24,6 +25,7 @@ namespace {
 // device): 64M floats, 256 MB.
 constexpr size_t kRowMeansElements = size_t{1} << 26;
 constexpr const char* kLossPerEpoch = "loss per epoch ";
+constexpr const char* kCostPerEpoch = "cost per epoch ";
 
 bool ParseBoolParam(const std::map<std::string, std::string>& params, const std::string& key, bool& out,
                     const std::string& op_name, std::string& error) {
@@ -78,9 +80,11 @@ std::string WordEmbeddingsOperator::DefaultVectorsFile(int node_id, const std::s
 
 std::vector<double> WordEmbeddingsOperator::EpochLosses(const std::string& outcome) {
     std::vector<double> losses;
-    const auto at = outcome.find(kLossPerEpoch);
+    const char* marker = kLossPerEpoch;
+    auto at = outcome.find(marker);
+    if (at == std::string::npos) at = outcome.find(marker = kCostPerEpoch);
     if (at == std::string::npos) return losses;
-    const char* p = outcome.c_str() + at + std::char_traits<char>::length(kLossPerEpoch);
+    const char* p = outcome.c_str() + at + std::char_traits<char>::length(marker);
     for (;;) {
         char* end = nullptr;
         const double value = std::strtod(p, &end);
@@ -94,15 +98,14 @@ std::vector<double> WordEmbeddingsOperator::EpochLosses(const std::string& outco
 }
 
 bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
-    train_ = false;
+    source_ = "pretrained";
     max_words_ = 0;
     alignment_ = WordAlignmentOptions{};
     word2vec_ = Word2VecOptions{};
+    glove_ = GloVeOptions{};
     row_vectors_ = false;
     const std::string op = GetName();
-    std::string source = "pretrained";
-    if (!ParseChoice(params, "source", {"pretrained", "train"}, source, op, error)) return false;
-    train_ = source == "train";
+    if (!ParseChoice(params, "source", {"pretrained", "word2vec", "glove"}, source_, op, error)) return false;
     vectors_file_ = Param(params, "vectors_file");
     vocab_file_ = Param(params, "vocab_file");
     text_col_ = Param(params, "text_col");
@@ -146,22 +149,44 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
         return false;
     }
     word2vec_.seed = static_cast<unsigned>(train_seed);
+    // GloVe: the shared vector size, minimum count and seed; its own window,
+    // epochs, weighting, learning rate and batch (the Stanford defaults).
+    glove_.vector_size = word2vec_.vector_size;
+    glove_.min_count = word2vec_.min_count;
+    glove_.seed = word2vec_.seed;
+    if (!ParseIntParam(params, "glove_window", glove_.window, op, error) ||
+        !ParseIntParam(params, "glove_epochs", glove_.epochs, op, error) ||
+        !ParseIntParam(params, "glove_batch", glove_.batch_size, op, error) ||
+        !ParseDoubleParam(params, "x_max", glove_.x_max, op, error) ||
+        !ParseDoubleParam(params, "weighting_power", glove_.alpha, op, error) ||
+        !ParseDoubleParam(params, "glove_learning_rate", glove_.learning_rate, op, error))
+        return false;
     if (!ParseBoolParam(params, "row_vectors", row_vectors_, op, error)) return false;
 
-    if (train_) {
+    if (source_ != "pretrained") {
         if (text_col_.empty()) {
             error = op + ": training needs the text column ('text_col')";
             return false;
         }
-        if (word2vec_.vector_size < 1 || word2vec_.window < 1 || word2vec_.min_count < 1 || word2vec_.negative < 1 ||
-            word2vec_.epochs < 1 || word2vec_.batch_size < 1 || !(word2vec_.alpha > 0.0) || word2vec_.min_alpha < 0.0 ||
-            word2vec_.sample < 0.0) {
-            error = op + ": vector_size, window, min_count, negative, epochs and batch_size must be at least 1, "
-                         "alpha positive, min_alpha and sample not negative";
+        if (word2vec_.vector_size < 1 || word2vec_.min_count < 1) {
+            error = op + ": vector_size and min_count must be at least 1";
+            return false;
+        }
+        if (source_ == "word2vec" &&
+            (word2vec_.window < 1 || word2vec_.negative < 1 || word2vec_.epochs < 1 || word2vec_.batch_size < 1 ||
+             !(word2vec_.alpha > 0.0) || word2vec_.min_alpha < 0.0 || word2vec_.sample < 0.0)) {
+            error = op + ": window, negative, epochs and batch_size must be at least 1, alpha positive, min_alpha "
+                         "and sample not negative";
+            return false;
+        }
+        if (source_ == "glove" && (glove_.window < 1 || glove_.epochs < 1 || glove_.batch_size < 1 ||
+                                   !(glove_.x_max > 0.0) || glove_.alpha < 0.0 || !(glove_.learning_rate > 0.0))) {
+            error = op + ": glove_window, glove_epochs and glove_batch must be at least 1, x_max and "
+                         "glove_learning_rate positive, weighting_power not negative";
             return false;
         }
     } else if (vectors_file_.empty()) {
-        error = op + ": choose a vector file ('vectors_file': .txt, .vec or .bin) or train word2vec";
+        error = op + ": choose a vector file ('vectors_file': .txt, .vec or .bin) or train word2vec or GloVe";
         return false;
     }
     if (row_vectors_ && text_col_.empty()) {
@@ -174,7 +199,7 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
 bool WordEmbeddingsOperator::CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies,
                                                       std::string& error) const {
     (void)error;
-    if (!train_) dependencies.push_back({"word_vectors", vectors_file_});
+    if (source_ == "pretrained") dependencies.push_back({"word_vectors", vectors_file_});
     if (!vocab_file_.empty()) dependencies.push_back({"vocabulary", vocab_file_});
     return true;
 }
@@ -213,7 +238,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
 
     WordVectors vectors;
     std::string source_summary;
-    if (train_) {
+    const auto figures = [](const std::vector<double>& values) {
+        std::string text;
+        for (const double value : values) {
+            char number[32];
+            std::snprintf(number, sizeof(number), "%.4g", value);
+            text += (text.empty() ? "" : ", ") + std::string(number);
+        }
+        return text;
+    };
+    if (source_ == "word2vec") {
         report("Training", "Training word2vec", 0.05);
         Word2VecOptions options = word2vec_;
         options.on_progress = [&](double done, int epoch) {
@@ -226,15 +260,42 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
             return arrow::Status::Invalid(op + ": " + model.error_message);
         }
         vectors = model.vectors;
-        std::string losses;
-        for (const double loss : model.epoch_loss) {
-            char value[32];
-            std::snprintf(value, sizeof(value), "%.4g", loss);
-            losses += (losses.empty() ? "" : ", ") + std::string(value);
-        }
         source_summary = "trained " + std::to_string(vectors.words.size()) + " words x " +
                          std::to_string(vectors.dim) + " (" + (word2vec_.cbow ? "CBOW" : "skip-gram") + ", " +
-                         std::to_string(word2vec_.epochs) + " epochs, " + kLossPerEpoch + losses + ")";
+                         std::to_string(word2vec_.epochs) + " epochs, " + kLossPerEpoch +
+                         figures(model.epoch_loss) + ")";
+    } else if (source_ == "glove") {
+        // Two stages: counting the word pairs (to 15%), then the epochs.
+        report("Counting", "Counting word pairs", 0.05);
+        GloVeOptions options = glove_;
+        std::string last_cost;
+        options.on_epoch_cost = [&](int, double cost) {
+            char number[32];
+            std::snprintf(number, sizeof(number), "%.4g", cost);
+            last_cost = number;
+        };
+        options.on_progress = [&](double done, int epoch) {
+            if (epoch == 0) {
+                report("Counting", "Counting word pairs", 0.05 + 0.10 * done);
+            } else {
+                report("Training", "Training GloVe, epoch " + std::to_string(epoch) + " of " +
+                                       std::to_string(glove_.epochs) +
+                                       (last_cost.empty() ? std::string() : ", cost " + last_cost),
+                       0.15 + 0.75 * done);
+            }
+            return !IsCancellationRequested();
+        };
+        const auto model = WordEmbeddings::TrainGloVe(sentences, options);
+        if (!model.success) {
+            if (IsCancellationRequested()) return arrow::Status::Cancelled(op + ": training cancelled");
+            return arrow::Status::Invalid(op + ": " + model.error_message);
+        }
+        vectors = model.vectors;
+        source_summary = "trained " + std::to_string(vectors.words.size()) + " words x " +
+                         std::to_string(vectors.dim) + " (GloVe, " +
+                         GroupedCount(static_cast<size_t>(model.pairs)) + " word pairs, " +
+                         std::to_string(glove_.epochs) + " epochs, " + kCostPerEpoch + figures(model.epoch_cost) +
+                         ")";
     } else {
         report("Reading", "Reading " + vectors_file_, 0.05);
         vectors = WordEmbeddings::Load(vectors_file_, max_words_);

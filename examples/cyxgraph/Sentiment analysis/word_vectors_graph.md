@@ -39,6 +39,13 @@ labels.
    counselling, counseling, medication, therapist.
 4. **Line up with the vocabulary file** (section 4 below).
 
+**GloVe instead:** choose **Train GloVe** on the Source tab. GloVe first
+counts how often each pair of words appears within 10 words of each other
+(about 8 million distinct pairs here, counted in 11 s), then fits the
+vectors to those counts over 25 epochs: about 4.5 minutes on a GTX 1050 Ti.
+"therapy" then ends next to cbt, sessions, medication and counselling. The
+saved file, the line-up and the Embedding are the same.
+
 **Output:** a table `word, v_0 ... v_99` with one row per vocabulary token, in
 token-id order, saved as `artifacts/word_embeddings/sentiment_word_vectors.vec`.
 

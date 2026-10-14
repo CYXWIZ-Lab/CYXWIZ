@@ -179,7 +179,7 @@
       "id": 2,
       "name": "Word vectors (word2vec)",
       "parameters": {
-        "source": "train",
+        "source": "word2vec",
         "text_col": "statement",
         "vocab_file": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt",
         "architecture": "skipgram",

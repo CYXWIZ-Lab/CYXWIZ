@@ -70,6 +70,17 @@ int main() {
     Check(cyxwiz::StepMessageFromStatus("Vectors: Training word2vec, epoch 3 (62%)") == "Training word2vec, epoch 3",
           "message from the status");
     Check(cyxwiz::StepMessageFromStatus("Loading") == "Loading", "a plain status");
+
+    const std::string glove = "trained 6 words x 8 (GloVe, 16 word pairs, 6 epochs, cost per epoch 15.65, 8.246, "
+                              "4.682, 2.744, 1.9, 1.2); vocabulary 9 tokens";
+    Check(cyxwiz::ShortEpochFigures(glove) ==
+              "trained 6 words x 8 (GloVe, 16 word pairs, 6 epochs, cost per epoch 15.65 to 1.2); vocabulary 9 tokens",
+          "a long cost list keeps its first and last figure: " + cyxwiz::ShortEpochFigures(glove));
+    const std::string word2vec = "trained 6 words x 8 (CBOW, 3 epochs, loss per epoch 2.3, 2.1, 2)";
+    Check(cyxwiz::ShortEpochFigures(word2vec) == word2vec, "a short loss list stays whole");
+    Check(cyxwiz::ShortEpochFigures(word2vec, 2) == "trained 6 words x 8 (CBOW, 3 epochs, loss per epoch 2.3 to 2)",
+          "the limit is the caller's");
+    Check(cyxwiz::ShortEpochFigures("read 3 words x 2") == "read 3 words x 2", "a pretrained outcome stays");
     std::cout << "word embeddings presentation tests passed\n";
     return 0;
 }

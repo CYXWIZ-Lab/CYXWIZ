@@ -8,6 +8,7 @@
 
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -151,7 +152,7 @@ void CheckTraining() {
         texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
     }
     const std::map<std::string, std::string> params = {
-        {"source", "train"}, {"text_col", "text"}, {"vector_size", "8"}, {"window", "2"},
+        {"source", "word2vec"}, {"text_col", "text"}, {"vector_size", "8"}, {"window", "2"},
         {"min_count", "2"}, {"epochs", "3"}, {"train_seed", "4"}, {"architecture", "cbow"}};
     cyxwiz::WordEmbeddingsOperator first, second;
     std::string error;
@@ -168,13 +169,52 @@ void CheckTraining() {
     Check(cyxwiz::WordEmbeddingsOperator::EpochLosses("read 3 words x 2").empty(), "no losses for pretrained vectors");
 }
 
+void CheckGloVeTraining() {
+    std::vector<std::string> texts;
+    for (int i = 0; i < 300; ++i) {
+        texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
+    }
+    const std::map<std::string, std::string> params = {
+        {"source", "glove"}, {"text_col", "text"}, {"vector_size", "8"}, {"glove_window", "3"},
+        {"min_count", "2"}, {"glove_epochs", "4"}, {"train_seed", "4"}, {"x_max", "10"}, {"glove_batch", "16"},
+        // word2vec's settings play no part.
+        {"window", "1"}, {"epochs", "1"}};
+    cyxwiz::WordEmbeddingsOperator first, second;
+    std::vector<std::string> stages;
+    first.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+        if (stages.empty() || stages.back() != event.stage) stages.push_back(event.stage);
+    });
+    std::string error;
+    Check(first.Configure(params, error) && second.Configure(params, error), "configures GloVe: " + error);
+    auto a = first.Apply(TextTable(texts));
+    auto b = second.Apply(TextTable(texts));
+    Check(a.ok() && b.ok(), "trains GloVe: " + (a.ok() ? b.status().ToString() : a.status().ToString()));
+    Check((*a)->num_rows() == 6 && (*a)->num_columns() == 9, "GloVe: 6 words x 8 values");
+    for (int64_t r = 0; r < 6; ++r)
+        Check(Value(*a, "v_3", r) == Value(*b, "v_3", r), "a GloVe run repeats for one seed");
+    const auto counting = std::find(stages.begin(), stages.end(), "Counting");
+    Check(counting != stages.end() && std::find(counting, stages.end(), "Training") != stages.end(),
+          "GloVe reports counting, then training");
+    const std::string outcome = first.OutcomeSummary();
+    Check(outcome.find("GloVe") != std::string::npos && outcome.find("word pairs") != std::string::npos,
+          "outcome names GloVe and its pairs: " + outcome);
+    const auto costs = cyxwiz::WordEmbeddingsOperator::EpochLosses(outcome);
+    Check(costs.size() == 4 && costs.back() < costs.front(), "the outcome carries the cost of each epoch: " + outcome);
+    cyxwiz::WordEmbeddingsOperator bad;
+    Check(!bad.Configure({{"source", "glove"}, {"text_col", "text"}, {"x_max", "0"}}, error) &&
+              error.find("x_max") != std::string::npos,
+          "a zero count cap is refused");
+}
+
 void CheckRefusals() {
     cyxwiz::WordEmbeddingsOperator op;
     std::string error;
     Check(!op.Configure({}, error) && error.find("vector file") != std::string::npos, "pretrained needs a file");
-    Check(!op.Configure({{"source", "train"}}, error) && error.find("text column") != std::string::npos,
+    Check(!op.Configure({{"source", "word2vec"}}, error) && error.find("text column") != std::string::npos,
           "training needs the text column");
-    Check(!op.Configure({{"source", "glove"}}, error), "an unknown source is refused");
+    Check(!op.Configure({{"source", "glove"}}, error) && error.find("text column") != std::string::npos,
+          "GloVe needs the text column");
+    Check(!op.Configure({{"source", "train"}}, error), "an unknown source is refused");
     Check(!op.Configure({{"vectors_file", "x.vec"}, {"row_vectors", "true"}}, error), "row vectors need the text");
     Check(op.Configure({{"vectors_file", "absent.vec"}}, error), "configures");
     Check(!op.Apply(TextTable({"x"})).ok(), "a missing file is refused at run time");
@@ -191,6 +231,7 @@ int main() {
     CheckPretrainedWithoutVocabulary(dir);
     CheckRowVectorBlocks(dir);
     CheckTraining();
+    CheckGloVeTraining();
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "word embeddings operator tests passed\n";

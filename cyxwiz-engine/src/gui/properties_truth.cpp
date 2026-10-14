@@ -2466,14 +2466,15 @@ void AddTreeModelPredictorTruth(NodeTruthReport& report, const MLNode& node) {
 // text column is required by the chosen source.
 void AddWordEmbeddingsTruth(NodeTruthReport& report, const MLNode& node) {
     const auto* source_param = FindParameter(node, "source");
-    const bool train = source_param && *source_param == "train";
+    const std::string source = source_param ? *source_param : "pretrained";
+    const bool train = source == "word2vec" || source == "glove";
     auto row_vectors = ResolveBoolProperty(node, "Row vectors", "row_vectors", false,
         TruthOwner::Runtime, false, true,
         "Adds each row's mean word vector as emb_ columns on the Rows pin.");
     const bool rows = row_vectors.effective_value == "true";
     report.properties.push_back(ResolveStringProperty(node, "Source", "source", "pretrained",
         TruthOwner::Runtime, false, true, false,
-        "pretrained reads a vector file; train runs word2vec on the text column on the device."));
+        "pretrained reads a vector file; word2vec and glove train on the text column on the device."));
     if (!train) {
         report.properties.push_back(ResolveStringProperty(node, "Vector file", "vectors_file", "",
             TruthOwner::Runtime, false, true, true,
@@ -2481,7 +2482,8 @@ void AddWordEmbeddingsTruth(NodeTruthReport& report, const MLNode& node) {
     }
     report.properties.push_back(ResolveStringProperty(node, "Text column", "text_col", "",
         TruthOwner::Runtime, false, true, train || rows,
-        train ? "word2vec trains on this column." : "Row vectors average the words of this column."));
+        train ? (source == "glove" ? "GloVe trains on this column." : "word2vec trains on this column.")
+              : "Row vectors average the words of this column."));
     report.properties.push_back(ResolveStringProperty(node, "Vocabulary file", "vocab_file",
         "the vectors' own words", TruthOwner::Runtime, false, true, false,
         "The Text Tokenizer's vocabulary: the vectors come out in its token-id order."));
