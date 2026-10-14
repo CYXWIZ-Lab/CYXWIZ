@@ -26,7 +26,7 @@ instead of committing a second copy.
 
 ## Sentiment vocab path
 
-The sentiment graph points its `TextVocabulary` node at the dataset-side 10k
+The sentiment graphs point their Text Tokenizer's `vocab_file` at the dataset-side
 vocab file:
 
 `D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt`

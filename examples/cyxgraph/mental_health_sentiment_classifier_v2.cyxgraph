@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_classifier_v2",
   "name": "Mental Health Sentiment Classifier (v2 - regularized)",
-  "description": "Regularized variant of the 7-class mental health sentiment classifier. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer, TextVocabulary and TextPadding fold their params into the tokenizer, and Data plus Labels pins remain explicit through split, loader, loss, and optimizer. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with columns statement and status.",
+  "description": "Regularized variant of the 7-class mental health sentiment classifier. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer fold their params into the tokenizer, and Data plus Labels pins remain explicit through split, loader, loss, and optimizer. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with columns statement and status.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -123,36 +123,10 @@
           "tokenizer_type": "1",
           "max_length": "$max_length",
           "lowercase": "true",
-          "min_freq": "$min_word_freq",
           "max_vocab_size": "$vocab_size",
           "text_col": "statement",
           "label_col": "status",
-          "min_word_freq": "$min_word_freq"
-        }
-      },
-      {
-        "id": "text_vocab",
-        "type": "TextVocabulary",
-        "name": "Vocabulary 10k",
-        "pos": [
-          500,
-          300
-        ],
-        "params": {
-          "min_freq": "$min_word_freq",
-          "max_vocab_size": "$vocab_size"
-        }
-      },
-      {
-        "id": "text_padding",
-        "type": "TextPadding",
-        "name": "Padding (post, 0)",
-        "pos": [
-          750,
-          300
-        ],
-        "params": {
-          "max_length": "$max_length",
+          "min_word_freq": "$min_word_freq",
           "pad_value": "0"
         }
       },
@@ -299,18 +273,6 @@
       },
       {
         "from": "text_tokenizer",
-        "to": "text_vocab",
-        "from_pin": 0,
-        "to_pin": 0
-      },
-      {
-        "from": "text_vocab",
-        "to": "text_padding",
-        "from_pin": 0,
-        "to_pin": 0
-      },
-      {
-        "from": "text_padding",
         "to": "data_split",
         "from_pin": 0,
         "to_pin": 0

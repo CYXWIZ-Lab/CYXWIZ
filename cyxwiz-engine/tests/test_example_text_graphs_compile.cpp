@@ -128,7 +128,14 @@ int main() {
         root / "Sentiment analysis" / "sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
         root / "Sentiment analysis" / "sentiment_analysis_tfidf_mlp_classifier_unigram_bigram_candidate.cyxgraph",
         root / "mental_health_sentiment_classifier.cyxgraph",
+        root / "mental_health_sentiment_classifier_v2.cyxgraph",
+        root / "call_center_sentiment.cyxgraph",
+        root / "code_lang_feedback" / "codefeedback_lang_classifier_char.cyxgraph",
         root / "text" / "test_01_sentiment_basic.cyxgraph",
+        root / "text" / "test_02_sentiment_lstm.cyxgraph",
+        root / "text" / "test_03_sentiment_lstm_mini.cyxgraph",
+        root / "text" / "test_04_sentiment_gru_mini.cyxgraph",
+        root / "text" / "test_05_sentiment_transformer_mini.cyxgraph",
     };
     for (const auto& path : graphs) {
         std::vector<gui::MLNode> nodes;
