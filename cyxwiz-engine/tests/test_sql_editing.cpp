@@ -100,8 +100,26 @@ void TestDiff() {
 }
 }  // namespace
 
+void TestStepQuery() {
+    using cyxwiz::sqledit::StepQueryFromScratch;
+    Check(StepQueryFromScratch("SELECT author, count(*) FROM tier1_paragraphs GROUP BY author", "tier1_paragraphs") ==
+              "WITH \"tier1_paragraphs\" AS (SELECT * FROM input)\nSELECT author, count(*) FROM tier1_paragraphs GROUP BY author",
+          "a plain query gets a first WITH part");
+    Check(StepQueryFromScratch("-- authors\nWITH a AS (SELECT 1) SELECT * FROM a, \"Tier 1\"", "Tier 1") ==
+              "-- authors\nWITH \"Tier 1\" AS (SELECT * FROM input),\na AS (SELECT 1) SELECT * FROM a, \"Tier 1\"",
+          "an existing WITH is joined, comments stay first, the name is quoted");
+    Check(StepQueryFromScratch("with recursive r(n) AS (SELECT 1) SELECT * FROM r", "ds_sql_1") ==
+              "WITH RECURSIVE \"ds_sql_1\" AS (SELECT * FROM input),\nr(n) AS (SELECT 1) SELECT * FROM r",
+          "WITH RECURSIVE stays recursive");
+    Check(StepQueryFromScratch("/* x */ SELECT 1", "a\"b") == "/* x */ WITH \"a\"\"b\" AS (SELECT * FROM input)\nSELECT 1",
+          "a quote in the name is doubled");
+    Check(StepQueryFromScratch("SELECT * FROM withdrawals", "withdrawals").rfind("WITH \"withdrawals\" AS", 0) == 0,
+          "a table named withdrawals is not a WITH");
+}
+
 int main() {
     TestCompletions();
+    TestStepQuery();
     TestFormat();
     TestDiff();
     if (failures) {

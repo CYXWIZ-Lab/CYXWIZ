@@ -47,4 +47,10 @@ struct DiffLine {
 // Line diff (longest common subsequence) from `before` to `after`.
 std::vector<DiffLine> DiffLines(std::string_view before, std::string_view after);
 
+// A Data Studio query that reads `table` as an SQL step's query, which reads
+// its input as `input` (TOFIX148 "Turn into SQL step"): the query stays as
+// written and a first WITH part names `input` as `table`, joining a WITH the
+// query already has. Comments before the query stay first.
+std::string StepQueryFromScratch(std::string_view sql, const std::string& table);
+
 }  // namespace cyxwiz::sqledit
