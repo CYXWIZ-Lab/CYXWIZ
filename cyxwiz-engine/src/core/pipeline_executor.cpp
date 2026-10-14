@@ -3749,6 +3749,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             required_input_count =
                 static_cast<int>(SqlStepInputAliases(node.parameters).size());
         }
+        if (node.type == "ClassicModelPredictor") {
+            // Data, plus the Model input when it is connected (optional:
+            // without it the saved model file is used).
+            const bool model_linked = std::any_of(
+                node.input_links.begin(), node.input_links.end(),
+                [](const auto& link) { return link.target_pin_index == 1; });
+            required_input_count = model_linked ? 2 : 1;
+        }
 
         if (is_data_convert && node.inputs.empty() &&
             !HasNonEmptyParameter(node.parameters, "input_path")) {
@@ -5813,6 +5821,29 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
             return false;
         }
         operator_parameters["model_path"] = model_path;
+    } else if (type == gui::NodeType::ClassicModelPredictor) {
+        // The Model input (this run's fitted model) wins; without it the saved
+        // model file, project-relative like Data Input files.
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
+        if (input_dataset_name.empty()) {
+            return false;
+        }
+        const bool model_linked = std::any_of(
+            node.input_links.begin(), node.input_links.end(),
+            [](const auto& link) { return link.target_pin_index == 1; });
+        if (model_linked) {
+            const std::string model_path =
+                GetInputModelArtifactForPin(node, ctx, 1);
+            if (model_path.empty()) {
+                return false;
+            }
+            operator_parameters["model_path"] = model_path;
+        } else {
+            auto saved = operator_parameters.find("model_path");
+            if (saved != operator_parameters.end() && !TrimString(saved->second).empty()) {
+                saved->second = ResolveProjectDataPath(TrimString(saved->second), project_root_);
+            }
+        }
     } else {
         input_dataset_name = GetInputDatasetName(node, ctx);
     }

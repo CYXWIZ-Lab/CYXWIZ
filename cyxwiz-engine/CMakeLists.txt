@@ -261,6 +261,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/random_forest_trainer.cpp        # Tool-to-Node Band 1
     src/core/node_executors/random_forest_operator.cpp       # Tool-to-Node Band 1
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -2383,6 +2385,8 @@ add_executable(test_classic_ml_operators
     tests/test_classic_ml_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -2540,6 +2544,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -2798,6 +2804,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -2896,6 +2904,8 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -2991,6 +3001,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -3599,6 +3611,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp
@@ -6611,6 +6625,8 @@ add_executable(test_engine_node_parity
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
     src/core/node_executors/classic_model_common.cpp
+    src/core/node_executors/classic_model_artifact.cpp
+    src/core/node_executors/classic_model_predictor_operator.cpp
     src/core/node_executors/naive_bayes_operator.cpp
     src/core/node_executors/knn_operator.cpp
     src/core/node_executors/logistic_regression_operator.cpp

@@ -53,4 +53,11 @@ void SortClassOrder(std::vector<int>& labels, std::vector<std::string>& classes,
 bool SaveClassicModelArtifact(const std::string& path, const std::string& model_type,
                               const ClassicTrainingData& data, const nlohmann::json& parameters, std::string* error);
 
+// The input plus a float64 prediction column (regressors); refuses a column
+// name already in the input.
+arrow::Result<std::shared_ptr<arrow::Table>> AppendNumericPredictions(const std::shared_ptr<arrow::Table>& input,
+                                                                     const std::string& prediction_col,
+                                                                     const std::vector<double>& values,
+                                                                     const std::string& op_name);
+
 }  // namespace cyxwiz

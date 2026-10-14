@@ -748,6 +748,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::RegressionModelPredictor,
         "classic_ml",
         "Table-path inference node for fitted linear and polynomial regression artifacts.");
+    apply_workflow_lane_guidance(
+        NodeType::ClassicModelPredictor,
+        "classic_ml",
+        "Table-path inference node for fitted classic ML models (Model input or saved file).");
 
     const std::string simulation_reason =
         "GraphExecutor owns bounded scalar control evaluation for the live "
@@ -2119,6 +2123,19 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, true, "Fitted regression artifact from a regression node"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus a Float32 prediction column"}},
         {{"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ClassicModelPredictor, NodeCategory::Analytics, "Classic Model Predictor", ICON_FA_FILE_IMPORT,
+        {"classic", "model", "predict", "predictor", "inference", "artifact", "classic ml", "naive bayes", "knn",
+         "logistic", "svm", "saved"}, 0, false, "Fitted classic ML model inference",
+        "Applies a fitted Naive Bayes, KNN, Logistic Regression, SVM Classifier or SVM Regressor model to a table and "
+        "appends a prediction column. The model comes from the Model input, or from a saved model file when the Model "
+        "input is not connected. Feature columns are matched by the names the model was fitted on.", "",
+        {{"Data", PinType::Dataset, true, "Input table with the model's feature columns"},
+         {"Model", PinType::Parameters, false, "Fitted model from a classic ML node; when connected it is used instead of the saved model file"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"model_path", "file", "", "Saved classic model (.cyxclassic.json) to use when the Model input is not connected", {}, "*.cyxclassic.json;*.json", "Saved model", "Artifact"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
     // Model Evaluation

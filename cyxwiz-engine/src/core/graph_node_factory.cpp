@@ -1485,7 +1485,8 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::RegressionModelPredictor: {
+        case NodeType::RegressionModelPredictor:
+        case NodeType::ClassicModelPredictor: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

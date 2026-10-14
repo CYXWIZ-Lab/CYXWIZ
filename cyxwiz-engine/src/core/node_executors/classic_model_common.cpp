@@ -72,4 +72,18 @@ bool SaveClassicModelArtifact(const std::string& path, const std::string& model_
                                         error);
 }
 
+arrow::Result<std::shared_ptr<arrow::Table>> AppendNumericPredictions(const std::shared_ptr<arrow::Table>& input,
+                                                                     const std::string& prediction_col,
+                                                                     const std::vector<double>& values,
+                                                                     const std::string& op_name) {
+    if (input->schema()->GetFieldIndex(prediction_col) >= 0)
+        return arrow::Status::Invalid(op_name + ": prediction column '" + prediction_col + "' already exists");
+    arrow::DoubleBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.AppendValues(values));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return input->AddColumn(input->num_columns(), arrow::field(prediction_col, arrow::float64()),
+                            std::make_shared<arrow::ChunkedArray>(array));
+}
+
 }  // namespace cyxwiz

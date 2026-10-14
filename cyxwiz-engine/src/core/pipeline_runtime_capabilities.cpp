@@ -336,6 +336,7 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"LinearRegressionNode", gui::NodeType::LinearRegressionNode},
         {"PolynomialRegressionNode", gui::NodeType::PolynomialRegressionNode},
         {"RegressionModelPredictor", gui::NodeType::RegressionModelPredictor},
+        {"ClassicModelPredictor", gui::NodeType::ClassicModelPredictor},
         {"DecisionTreeClassifier", gui::NodeType::DecisionTreeClassifier},
         {"RandomForestClassifier", gui::NodeType::RandomForestClassifier},
         {"GradientBoostingClassifier", gui::NodeType::GradientBoostingClassifier},

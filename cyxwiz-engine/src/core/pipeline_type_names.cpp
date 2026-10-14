@@ -40,6 +40,7 @@ std::string PipelineTypeName(gui::NodeType type) {
         case NodeType::GradientBoostingClassifier: return "GradientBoostingClassifier";
         case NodeType::TreeModelPredictor: return "TreeModelPredictor";
         case NodeType::RegressionModelPredictor: return "RegressionModelPredictor";
+        case NodeType::ClassicModelPredictor: return "ClassicModelPredictor";
         // KNIME-style table manipulation nodes
         case NodeType::ExcelFile: return "ExcelInput";
         case NodeType::ExportExcel: return "ExportExcel";

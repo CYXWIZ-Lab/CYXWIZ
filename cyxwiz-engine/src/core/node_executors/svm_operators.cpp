@@ -161,16 +161,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> SVMRegressorOperator::Apply(const s
     }
     spdlog::info("SVMRegressor: fit {} rows x {} features, {} support vectors, {} kernel", x.size(), features.size(),
                  model.support_vectors.size(), settings_.kernel);
-
-    if (input->schema()->GetFieldIndex(columns_.prediction_col) >= 0)
-        return arrow::Status::Invalid(GetName() + ": prediction column '" + columns_.prediction_col +
-                                      "' already exists");
-    arrow::DoubleBuilder builder;
-    ARROW_RETURN_NOT_OK(builder.AppendValues(predicted));
-    std::shared_ptr<arrow::Array> array;
-    ARROW_RETURN_NOT_OK(builder.Finish(&array));
-    return input->AddColumn(input->num_columns(), arrow::field(columns_.prediction_col, arrow::float64()),
-                            std::make_shared<arrow::ChunkedArray>(array));
+    return AppendNumericPredictions(input, columns_.prediction_col, predicted, GetName());
 }
 
 }  // namespace cyxwiz

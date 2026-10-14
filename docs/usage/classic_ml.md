@@ -29,7 +29,8 @@ Classes are numbered in sorted order (numbers by value, text alphabetically),
 as scikit-learn's `classes_`, so ties and probability columns agree with it.
 
 The Plot node cannot draw these models (they have no trees); plot the
-Predictions output instead.
+Predictions output instead. To predict on other rows with a fitted model, see
+[Predicting with a fitted model](#predicting-with-a-fitted-model).
 
 ## Models
 
@@ -40,6 +41,28 @@ Predictions output instead.
 | SVM Classifier | Kernel support vector machine: the dual solved by SMO as libsvm (second-order working set selection), on the device without holding an n × n kernel matrix. More than two classes fit one model per pair of classes; each pair votes and the first class with the most votes wins. No probabilities. | `C` (1.0), `kernel` (rbf, linear, poly, sigmoid), `gamma` (scale, auto or a positive number), `degree` (3), `coef0` (0.0), `tol` (1e-3) | scikit-learn `SVC` |
 | SVM Regressor | Epsilon-insensitive support vector regression: errors inside the ±epsilon tube cost nothing, larger ones cost C per unit. The same device SMO solver as the classifier, on libsvm's two-variables-per-row problem. The target must be numeric; the prediction column is a number. | `C` (1.0), `epsilon` (0.1), and the classifier's kernel settings | scikit-learn `SVR` |
 | KNN Classifier | Distances from each row to every training row, the n_neighbors nearest vote. `distance` weighting counts each vote as 1/distance; a training row at distance 0 takes all the weight. A vote tie goes to the first class in sorted order. | `n_neighbors` (5), `weights` (uniform, distance), `metric` (euclidean, manhattan, cosine) | scikit-learn `KNeighborsClassifier(algorithm="brute")` |
+
+## Predicting with a fitted model
+
+The **Classic Model Predictor** node (Analytics) applies any of these models to
+another table, for example a test file or new rows that have no label yet.
+
+1. Connect the new table to its **Data** pin. It needs the columns the model was
+   fitted on, matched by name (their order does not matter; the label column is
+   not needed).
+2. Give it the model, one of two ways:
+   - connect a classic node's **Model** output to its **Model** pin, to use the
+     model fitted in this run; or
+   - leave the Model pin empty and set **Saved model** to a `.cyxclassic.json`
+     file (Browse), to use a model saved by an earlier run. A path relative to
+     the project resolves against the project folder.
+   When both are set, the Model pin wins.
+3. Run the graph. **Predictions** is the input table plus the prediction column,
+   exactly as the fitting node writes it: the same class labels (text or
+   numbers), or a number for the SVM Regressor.
+
+A missing feature column stops the run and names the column; so does a file
+that is not a saved classic model.
 
 ## Size
 

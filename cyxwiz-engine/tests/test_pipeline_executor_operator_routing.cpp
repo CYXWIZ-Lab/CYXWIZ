@@ -3987,6 +3987,71 @@ int main(int argc, char** argv) {
     Check(regression_artifact_count == 1,
           "regression fit should create one project-owned Model artifact");
 
+    // Classic Model Predictor (TOFIX145): the Model pin, then the saved file.
+    const fs::path classic_artifact_root =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_classic_artifacts";
+    fs::remove_all(classic_artifact_root);
+    const std::string classic_model_pin_json =
+        R"({"nodes":[)"
+        R"({"id":9211,"type":"DataInput","name":"Labelled","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9212,"type":"NaiveBayesClassifier","name":"Fit NB","parameters":{"target_col":"label"}},)"
+        R"({"id":9213,"type":"ClassicModelPredictor","name":"Score NB","parameters":{"prediction_col":"scored"}})"
+        R"(],"links":[)"
+        R"({"start_node":9211,"end_node":9212,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9211,"end_node":9213,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9212,"end_node":9213,"start_pin_index":1,"end_pin_index":1})"
+        R"(]})";
+    cyxwiz::PipelineExecutor classic_model_pin_executor;
+    classic_model_pin_executor.SetArtifactRoot(classic_artifact_root.string());
+    Check(classic_model_pin_executor.ExecutePipeline(classic_model_pin_json),
+          "a classic Model output should route into the Classic Model Predictor: " +
+              classic_model_pin_executor.GetLastError());
+    auto classic_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9213");
+    Check(classic_scored != nullptr, "Classic Model Predictor should register its scored table");
+    Check(ReadNumericValue(classic_scored->GetArrowTable(), "scored", 0) == 0.0 &&
+              ReadNumericValue(classic_scored->GetArrowTable(), "scored", 3) == 1.0,
+          "Classic Model Predictor should score with the fitted naive Bayes model");
+    fs::path classic_saved_model;
+    for (const auto& entry : fs::recursive_directory_iterator(classic_artifact_root)) {
+        if (entry.is_regular_file() && entry.path().string().find(".cyxclassic.json") != std::string::npos)
+            classic_saved_model = entry.path();
+    }
+    Check(!classic_saved_model.empty(), "the naive Bayes fit should save its model");
+
+    const std::string classic_saved_file_json =
+        R"({"nodes":[)"
+        R"({"id":9214,"type":"DataInput","name":"New rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9215,"type":"ClassicModelPredictor","name":"Score saved","parameters":{"model_path":")" +
+        JsonEscapePath(classic_saved_model.string()) + R"("}})"
+        R"(],"links":[{"start_node":9214,"end_node":9215,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_saved_file_executor;
+    Check(classic_saved_file_executor.ExecutePipeline(classic_saved_file_json),
+          "Classic Model Predictor should load a saved model file: " + classic_saved_file_executor.GetLastError());
+    auto classic_saved_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9215");
+    Check(classic_saved_scored != nullptr &&
+              ReadNumericValue(classic_saved_scored->GetArrowTable(), "prediction", 3) == 1.0,
+          "the saved model should score like the one from the Model pin");
+
+    const std::string classic_no_model_json =
+        R"({"nodes":[)"
+        R"({"id":9216,"type":"DataInput","name":"Rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9217,"type":"ClassicModelPredictor","name":"No model","parameters":{}})"
+        R"(],"links":[{"start_node":9216,"end_node":9217,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_no_model_executor;
+    Check(!classic_no_model_executor.ExecutePipeline(classic_no_model_json) &&
+              classic_no_model_executor.GetLastError().find("Model output") != std::string::npos,
+          "Classic Model Predictor without a model should say how to give it one: " +
+              classic_no_model_executor.GetLastError());
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9213");
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9215");
+    fs::remove_all(classic_artifact_root);
+
     const std::string bad_linear_regression_feature_type_json =
         R"({"nodes":[)"
         R"({"id":405,"type":"DataInput","name":"Input","parameters":{)"

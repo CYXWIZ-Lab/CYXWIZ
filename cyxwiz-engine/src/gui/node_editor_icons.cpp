@@ -383,6 +383,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::GradientBoostingClassifier:
                 return ICON_TI_CHART_CANDLE;
             case NodeType::TreeModelPredictor:
+            case NodeType::ClassicModelPredictor:
                 return ICON_TI_FILE_ANALYTICS;
             case NodeType::SVMClassifier:
             case NodeType::SVMRegressor:
@@ -2123,6 +2124,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::GradientBoostingClassifier:
             return ICON_FA_CHART_LINE;
         case NodeType::TreeModelPredictor:
+        case NodeType::ClassicModelPredictor:
             return ICON_FA_FILE_IMPORT;
         case NodeType::SVMClassifier:
         case NodeType::SVMRegressor:

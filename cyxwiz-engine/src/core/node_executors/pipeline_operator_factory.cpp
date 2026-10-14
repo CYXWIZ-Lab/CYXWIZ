@@ -13,6 +13,7 @@
 #include "knn_operator.h"
 #include "logistic_regression_operator.h"
 #include "svm_operators.h"
+#include "classic_model_predictor_operator.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
@@ -135,6 +136,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::GradientBoostingClassifier, []() {
         return std::make_unique<GradientBoostingClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::ClassicModelPredictor, []() {
+        return std::make_unique<ClassicModelPredictorOperator>();
     });
     RegisterCreator(gui::NodeType::TreeModelPredictor, []() {
         return std::make_unique<TreeModelPredictorOperator>();
