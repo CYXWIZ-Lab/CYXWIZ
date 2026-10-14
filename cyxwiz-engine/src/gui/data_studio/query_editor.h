@@ -6,6 +6,7 @@
 // opened in the Table Viewer or the Plot window, or saved as a dataset.
 
 #include "../../core/session_query_engine.h"
+#include "../table_grid.h"
 
 #include <imgui.h>
 
@@ -62,6 +63,7 @@ private:
     uint64_t task_id_ = 0;
     double started_at_ = 0;
     QueryResult last_result_;
+    TableGrid result_grid_;  // last_result_ in the Table Viewer's grid
     std::string result_sql_;
     std::vector<std::string> query_history_;
     char save_name_[256] = "query_result";

@@ -175,32 +175,8 @@ void QueryEditor::RenderResult() {
     }
     if (!save_note_.empty()) ImGui::TextColored(t.text_dim, "%s", save_note_.c_str());
 
-    const int cols = r.table->num_columns();
-    if (cols <= 0 || cols > 512) {
-        ImGui::TextColored(t.text_dim, cols > 512 ? "Too many columns to show here: open it in the Table Viewer." : "No columns.");
-        return;
-    }
-    // On the window background; no grid lines (rows tinted alternately).
-    if (ImGui::BeginTable("##query_results", cols,
-                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                              ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody)) {
-        ImGui::TableSetupScrollFreeze(0, 1);
-        for (const auto& f : r.table->schema()->fields()) ImGui::TableSetupColumn(f->name().c_str());
-        ImGui::TableHeadersRow();
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(std::min<long long>(rows, std::numeric_limits<int>::max())));
-        while (clipper.Step())
-            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-                ImGui::TableNextRow();
-                for (int c = 0; c < cols; ++c) {
-                    ImGui::TableSetColumnIndex(c);
-                    const std::string cell = ArrowCellText(*r.table->column(c), row);
-                    if (r.table->column(c)->null_count() > 0 && cell.empty()) ImGui::TextColored(t.text_faint, "null");
-                    else ImGui::TextUnformatted(cell.c_str());
-                }
-            }
-        ImGui::EndTable();
-    }
+    // The Table Viewer's grid on the window background: sort, select, copy.
+    result_grid_.Render("##query_results");
 }
 
 }  // namespace cyxwiz

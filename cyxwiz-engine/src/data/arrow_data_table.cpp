@@ -5,7 +5,6 @@
 #include <arrow/api.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <vector>
 
 namespace cyxwiz {
@@ -34,25 +33,6 @@ DataTable::CellValue CellOf(const arrow::Array& array, int64_t i) {
     return scalar.ok() ? (*scalar)->ToString() : std::string();
 }
 }  // namespace
-
-std::string ArrowCellText(const arrow::ChunkedArray& column, int64_t row) {
-    int64_t offset = 0;
-    for (const auto& chunk : column.chunks()) {
-        if (row < offset + chunk->length()) {
-            const DataTable::CellValue v = CellOf(*chunk, row - offset);
-            if (const auto* s = std::get_if<std::string>(&v)) return *s;
-            if (const auto* n = std::get_if<int64_t>(&v)) return std::to_string(*n);
-            if (const auto* d = std::get_if<double>(&v)) {
-                char buf[48];
-                std::snprintf(buf, sizeof(buf), "%.6g", *d);
-                return buf;
-            }
-            return "";
-        }
-        offset += chunk->length();
-    }
-    return "";
-}
 
 std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const std::string& name, int64_t max_rows) {
     auto out = std::make_shared<DataTable>();
@@ -129,40 +109,6 @@ std::shared_ptr<arrow::Table> ArrowFromDataTable(const DataTable& table) {
         arrays.push_back(std::move(array));
     }
     return arrow::Table::Make(arrow::schema(fields), arrays, static_cast<int64_t>(rows));
-}
-
-ArrowPreview PreviewArrowRows(const arrow::Table& table, int64_t max_rows, size_t max_chars) {
-    ArrowPreview preview;
-    for (const auto& field : table.schema()->fields()) {
-        preview.headers.push_back(field->name());
-        preview.types.push_back(field->type()->ToString());
-    }
-    const int64_t rows = std::max<int64_t>(0, std::min(max_rows, table.num_rows()));
-    const int columns = table.num_columns();
-    preview.rows.assign(static_cast<size_t>(rows), std::vector<std::string>(static_cast<size_t>(columns)));
-    for (int c = 0; c < columns; ++c) {
-        int64_t row = 0;
-        for (const auto& chunk : table.column(c)->chunks()) {
-            for (int64_t i = 0; i < chunk->length() && row < rows; ++i, ++row) {
-                const auto cell = CellOf(*chunk, i);
-                std::string text;
-                if (const auto* s = std::get_if<std::string>(&cell)) text = *s;
-                else if (const auto* d = std::get_if<double>(&cell)) text = arrow::DoubleScalar(*d).ToString();
-                else if (const auto* n = std::get_if<int64_t>(&cell)) text = std::to_string(*n);
-                for (char& ch : text) {
-                    if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
-                }
-                if (text.size() > max_chars) {
-                    size_t cut = max_chars;  // never split a UTF-8 character
-                    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
-                    text = text.substr(0, cut) + "...";
-                }
-                preview.rows[static_cast<size_t>(row)][static_cast<size_t>(c)] = std::move(text);
-            }
-            if (row >= rows) break;
-        }
-    }
-    return preview;
 }
 
 }  // namespace cyxwiz

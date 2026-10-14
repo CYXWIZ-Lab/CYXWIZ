@@ -79,6 +79,11 @@ bool QueryEditor::ExecuteQuery() {
             return;
         }
         last_result_ = r;
+        if (r.table) {
+            result_grid_.SetTable(DataTableFromArrow(*r.table, "Query result"));
+            result_grid_.options.data_bars = false;
+            result_grid_.options.rows_per_page = static_cast<int>(kDisplayRows);  // one page
+        }
         result_sql_ = sql;
         query_history_.push_back(sql);
         if (query_history_.size() > kMaxHistory) query_history_.erase(query_history_.begin());

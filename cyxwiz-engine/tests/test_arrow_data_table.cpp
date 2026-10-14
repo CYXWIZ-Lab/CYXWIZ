@@ -37,16 +37,17 @@ int main() {
     Check(s.field(2)->name() == "column 3" && s.field(2)->type()->id() == arrow::Type::STRING, "a blank header gets a name; text");
     Check(s.field(3)->name() == "id 2", "a repeated header gets a number");
     Check(a->column(0)->null_count() == 1 && a->column(4)->null_count() == 1, "empty cells are null");
-    Check(ArrowCellText(*a->column(1), 1) == "3" && ArrowCellText(*a->column(2), 2) == "12", "cell text");
-    Check(ArrowCellText(*a->column(4), 2).empty() && a->column(4)->null_count() == 1, "an empty text stays a value");
 
     // And back: numbers stay numbers, nulls stay empty.
     const auto back = DataTableFromArrow(*a, "back");
     Check(back->GetRowCount() == 3 && back->GetColumnCount() == 5, "back: same shape");
     Check(std::get<int64_t>(back->GetCell(0, 0)) == 1 && std::get<double>(back->GetCell(1, 1)) == 3.0, "back: numbers");
     Check(std::holds_alternative<std::monostate>(back->GetCell(2, 0)), "back: null");
+    Check(std::get<std::string>(back->GetCell(2, 2)) == "12", "back: a number written as text stays text");
+    Check(std::get<std::string>(back->GetCell(2, 4)).empty() && a->column(4)->null_count() == 1,
+          "back: an empty text stays a value, not a null");
     Check(DataTableFromArrow(*a, "first", 2)->GetRowCount() == 2, "back: the first rows only");
 
-    std::cout << "arrow data table: types, names, nulls, cell text, round trip. OK\n";
+    std::cout << "arrow data table: types, names, nulls, round trip. OK\n";
     return 0;
 }
