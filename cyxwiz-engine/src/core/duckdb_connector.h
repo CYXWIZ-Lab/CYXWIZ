@@ -38,25 +38,20 @@ namespace cyxwiz {
  *       LIMIT 10
  *   )");
  */
-// Connection policy. The default keeps the historical behaviour (full
-// access, used by exploration and the legacy transform nodes). The SQL step
-// opens a restricted connection: no file/network access, no extension
-// auto-install or auto-load, configuration locked.
-struct DuckDBConnectorPolicy {
-    bool allow_external_access = true;
-    // With external access off: folders DuckDB may still read (the session
-    // query service's own attachment folder and the Parquet cache). User SQL
-    // could read files there too, so only engine-owned folders belong here.
-    std::vector<std::string> allowed_directories;
-};
-
+// One policy for every connection (TOFIX148): the SQL step, the session
+// query service (Data Studio, profiles, dashboards) and the pipeline
+// executor's operators all run SQL built from what people type, so none may
+// read or write files, reach the network, install or load extensions, or
+// change the configuration. Tables come in through RegisterTable.
 class DuckDBConnector {
 public:
     /**
-     * Constructor - creates in-memory DuckDB instance
+     * An in-memory database under the policy above. `allowed_directories`:
+     * engine-owned folders DuckDB may still read (the session query
+     * service's attachment folder and Parquet cache). SQL could read files
+     * there too, so only engine-owned folders belong here.
      */
-    DuckDBConnector();
-    explicit DuckDBConnector(const DuckDBConnectorPolicy& policy);
+    explicit DuckDBConnector(std::vector<std::string> allowed_directories = {});
 
     // True when the database and connection opened.
     bool IsReady() const { return conn_ != nullptr; }

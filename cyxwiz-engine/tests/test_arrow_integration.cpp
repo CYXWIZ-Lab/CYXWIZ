@@ -317,6 +317,10 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(selected != nullptr, "SelectColumns convenience method");
     TEST_ASSERT(selected->num_columns() == 2, "2 columns selected");
 
+    // Every connection is restricted: SQL cannot read files (the CSV is on disk right here).
+    TEST_ASSERT(db.Query("SELECT * FROM read_csv('" + csv_path + "')") == nullptr, "no file access from SQL");
+    TEST_ASSERT(!db.Execute("SET enable_external_access = true"), "the configuration is locked");
+
     // DECIMAL results (DuckDB's type for 0.1) are numbers, not text.
     auto decimals = db.Query("SELECT 0.1 AS tenth, 1234567.5 AS big, CAST(NULL AS DECIMAL(4,1)) AS none");
     TEST_ASSERT(decimals != nullptr, "DECIMAL query");

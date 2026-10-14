@@ -3201,7 +3201,8 @@ PipelineExecutor::PipelineExecutor()
     , cancel_requested_(false)
     , deployment_ready_(false)
 {
-    // Create DuckDB connector for SQL transformations
+    // DuckDB for the operators that build SQL (FilterRows, SortRows, Join,
+    // GroupBy, ...): no file or network access, like the SQL step.
     duckdb_ = std::make_unique<DuckDBConnector>();
     spdlog::info("[Data Studio] PipelineExecutor initialized with DuckDB");
 }

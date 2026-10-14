@@ -56,9 +56,7 @@ std::string SqlInputAliasRejection(const std::string& alias) {
 }
 
 SqlTransform::SqlTransform() {
-    DuckDBConnectorPolicy policy;
-    policy.allow_external_access = false;
-    connector_ = std::make_unique<DuckDBConnector>(policy);
+    connector_ = std::make_unique<DuckDBConnector>();
 }
 
 SqlTransform::~SqlTransform() = default;

@@ -317,36 +317,19 @@ arrow::Status AppendDuckDBValueToArrowBuilder(
 // Constructor / Destructor
 // =============================================================================
 
-DuckDBConnector::DuckDBConnector() {
-    try {
-        // Create in-memory DuckDB instance
-        db_ = std::make_unique<duckdb::DuckDB>(nullptr);  // nullptr = in-memory
-        conn_ = std::make_unique<duckdb::Connection>(*db_);
-
-        spdlog::info("DuckDB connector initialized (in-memory mode)");
-
-    } catch (const duckdb::Exception& e) {
-        spdlog::error("Failed to initialize DuckDB: {}", ErrorText(e));
-        last_error_ = ErrorText(e);
-    }
-}
-
-DuckDBConnector::DuckDBConnector(const DuckDBConnectorPolicy& policy) {
+DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
     try {
         duckdb::DBConfig config;
-        if (!policy.allow_external_access) {
-            config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
-            config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
-            config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
-            for (const auto& dir : policy.allowed_directories) config.options.allowed_directories.insert(dir);
-            config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
-        }
+        config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
+        config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
+        config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
+        for (auto& dir : allowed_directories) config.options.allowed_directories.insert(std::move(dir));
+        config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
         db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config);
         conn_ = std::make_unique<duckdb::Connection>(*db_);
-        spdlog::debug("DuckDB connector initialized (in-memory, external access {})",
-                      policy.allow_external_access ? "allowed" : "disabled");
+        spdlog::debug("DuckDB connector initialized (in-memory, no file or network access)");
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize restricted DuckDB: {}", ErrorText(e));
+        spdlog::error("Failed to initialize DuckDB: {}", ErrorText(e));
         last_error_ = ErrorText(e);
         conn_.reset();
         db_.reset();
