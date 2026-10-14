@@ -106,6 +106,11 @@ void TestDecisionTreeArtifactInference(const std::filesystem::path& root) {
         {"model_path", path.string()},
         {"prediction_col", "tree_pred"},
     }, error), error);
+    std::vector<cyxwiz::PipelineOperatorCacheDependency> dependencies;
+    Check(op.CollectCacheDependencies(dependencies, error) &&
+              dependencies.size() == 1 &&
+              dependencies[0].path == path.string(),
+          "the saved model file is a cache dependency: " + error);
     std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
     op.SetProgressCallback(
         [&](const cyxwiz::PipelineOperatorProgress& event) {

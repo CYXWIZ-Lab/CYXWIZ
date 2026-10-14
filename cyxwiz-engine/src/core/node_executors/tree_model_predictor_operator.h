@@ -18,6 +18,11 @@ public:
 
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
+    // The saved model file: a refit written to the same path must not reuse a
+    // cached result.
+    bool CollectCacheDependencies(
+        std::vector<PipelineOperatorCacheDependency>& dependencies,
+        std::string& error) const override;
 
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
