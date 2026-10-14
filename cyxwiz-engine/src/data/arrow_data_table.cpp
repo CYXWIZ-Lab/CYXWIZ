@@ -23,6 +23,15 @@ DataTable::CellValue CellOf(const arrow::Array& array, int64_t i) {
         case arrow::Type::UINT64: return static_cast<int64_t>(static_cast<const arrow::UInt64Array&>(array).Value(i));
         case arrow::Type::FLOAT: return static_cast<double>(static_cast<const arrow::FloatArray&>(array).Value(i));
         case arrow::Type::DOUBLE: return static_cast<const arrow::DoubleArray&>(array).Value(i);
+        // DuckDB gives literals such as 0.1 and SUM of decimals as DECIMAL: numbers, not text.
+        case arrow::Type::DECIMAL128: {
+            const int32_t scale = static_cast<const arrow::Decimal128Type&>(*array.type()).scale();
+            return arrow::Decimal128(static_cast<const arrow::Decimal128Array&>(array).GetValue(i)).ToDouble(scale);
+        }
+        case arrow::Type::DECIMAL256: {
+            const int32_t scale = static_cast<const arrow::Decimal256Type&>(*array.type()).scale();
+            return arrow::Decimal256(static_cast<const arrow::Decimal256Array&>(array).GetValue(i)).ToDouble(scale);
+        }
         case arrow::Type::STRING: return std::string(static_cast<const arrow::StringArray&>(array).GetView(i));
         case arrow::Type::LARGE_STRING:
             return std::string(static_cast<const arrow::LargeStringArray&>(array).GetView(i));

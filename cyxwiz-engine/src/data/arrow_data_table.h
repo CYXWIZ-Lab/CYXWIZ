@@ -1,8 +1,8 @@
 #pragma once
 
 // An Arrow table (a pipeline step's output) as a DataTable the Table Viewer
-// opens (TOFIX146 "Open in Table Viewer"). Integers stay integers, floats
-// stay numbers, everything else is its text; nulls stay empty.
+// opens (TOFIX146 "Open in Table Viewer"). Integers stay integers, floats and
+// decimals are numbers (double), everything else is its text; nulls stay empty.
 
 #include <cstdint>
 #include <memory>

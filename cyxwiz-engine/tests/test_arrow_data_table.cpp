@@ -6,6 +6,7 @@
 
 #include <arrow/api.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -48,6 +49,18 @@ int main() {
           "back: an empty text stays a value, not a null");
     Check(DataTableFromArrow(*a, "first", 2)->GetRowCount() == 2, "back: the first rows only");
 
-    std::cout << "arrow data table: types, names, nulls, round trip. OK\n";
+    // DECIMAL (DuckDB's type for 0.1 or 1234567.5) opens as numbers.
+    {
+        arrow::Decimal128Builder b(arrow::decimal128(10, 2));
+        Check(b.Append(arrow::Decimal128(1234)).ok() && b.AppendNull().ok(), "decimal builder");
+        std::shared_ptr<arrow::Array> array;
+        Check(b.Finish(&array).ok(), "decimal array");
+        const auto d = arrow::Table::Make(arrow::schema({arrow::field("price", arrow::decimal128(10, 2))}), {array});
+        const auto dt = DataTableFromArrow(*d, "decimals");
+        Check(std::abs(std::get<double>(dt->GetCell(0, 0)) - 12.34) < 1e-12, "a decimal is a number: 12.34");
+        Check(std::holds_alternative<std::monostate>(dt->GetCell(1, 0)), "a null decimal is empty");
+    }
+
+    std::cout << "arrow data table: types, names, nulls, decimals, round trip. OK\n";
     return 0;
 }
