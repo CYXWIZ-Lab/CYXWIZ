@@ -413,9 +413,9 @@ void TableViewerPanel::RenderTable() {
         return;
     }
 
-    // Compute column stats if not done
-    if (active_tab->column_stats.empty()) {
-        ComputeColumnStats(active_tab);
+    // Column kinds, once per table
+    if (active_tab->column_kinds.empty()) {
+        ComputeColumnKinds(active_tab);
     }
 
     // Initialize sorted indices if empty
@@ -469,8 +469,8 @@ void TableViewerPanel::RenderTable() {
             std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
 
             // Add type indicator
-            if (i < active_tab->column_stats.size()) {
-                auto& stats = active_tab->column_stats[i];
+            if (i < active_tab->column_kinds.size()) {
+                auto& stats = active_tab->column_kinds[i];
                 if (stats.type == "Numeric") {
                     header = ICON_FA_HASHTAG " " + header;
                 } else {
@@ -501,8 +501,8 @@ void TableViewerPanel::RenderTable() {
 
             // Build header text with type indicator
             std::string header = i < headers.size() ? headers[i] : ("Col" + std::to_string(i));
-            if (i < active_tab->column_stats.size()) {
-                auto& stats = active_tab->column_stats[i];
+            if (i < active_tab->column_kinds.size()) {
+                auto& stats = active_tab->column_kinds[i];
                 if (stats.type == "Numeric") {
                     header = ICON_FA_HASHTAG " " + header;
                 } else {
@@ -559,7 +559,7 @@ void TableViewerPanel::RenderTable() {
         }
 
         // Auto-select first column if none selected
-        if (active_tab->selected_column < 0 && !active_tab->column_stats.empty()) {
+        if (active_tab->selected_column < 0 && !active_tab->column_kinds.empty()) {
             active_tab->selected_column = 0;
         }
 
@@ -588,8 +588,8 @@ void TableViewerPanel::RenderTable() {
                     std::string cell_text = active_tab->GetCellAsString(actual_row, c);
 
                     // Apply number formatting if configured for this column
-                    if (c < active_tab->column_formats.size() && c < active_tab->column_stats.size() &&
-                        active_tab->column_stats[c].type == "Numeric") {
+                    if (c < active_tab->column_formats.size() && c < active_tab->column_kinds.size() &&
+                        active_tab->column_kinds[c].type == "Numeric") {
                         auto& fmt = active_tab->column_formats[c];
                         // Only format if any formatting option is set
                         if (fmt.decimal_places >= 0 || fmt.thousands_separator ||
@@ -615,8 +615,8 @@ void TableViewerPanel::RenderTable() {
                                         active_tab->column_colormaps[c].type != ColorMapType::None);
 
                     // Data bar or colormap for numeric columns
-                    if ((show_data_bars_ || has_colormap) && c < active_tab->column_stats.size()) {
-                        auto& stats = active_tab->column_stats[c];
+                    if ((show_data_bars_ || has_colormap) && c < active_tab->column_kinds.size()) {
+                        auto& stats = active_tab->column_kinds[c];
                         if (stats.type == "Numeric" && stats.max_val > stats.min_val) {
                             auto cell = active_tab->GetCell(actual_row, c);
                             double val = 0;

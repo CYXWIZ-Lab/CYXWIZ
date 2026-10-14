@@ -64,21 +64,16 @@ struct SelectionRange {
     }
 };
 
+struct DatasetProfile;
+
 /**
- * Column statistics for Table Viewer data analysis
+ * A column's kind and range, for drawing the grid: sorting, the header icon,
+ * number formats, data bars and colour maps. The column statistics in the
+ * Stats sidebar are the column profile (core/dataset_profiler, TOFIX148).
  */
-struct TableColumnStats {
-    std::string type = "Unknown";  // "Numeric", "Text", "Date", "Mixed"
-    size_t count = 0;
-    size_t null_count = 0;
+struct TableColumnKind {
+    std::string type = "Unknown";  // "Numeric" (any number in it) or "Text"
     double min_val = 0, max_val = 0;
-    double sum = 0, avg = 0;
-    double std_dev = 0;                 // Standard deviation
-    double median = 0;                  // Median value
-    double q1 = 0, q3 = 0;              // Quartiles
-    std::vector<std::pair<std::string, int>> top_values;  // For text columns
-    std::vector<int> histogram_bins;    // For mini histogram (16 bins)
-    bool computed = false;
 };
 
 /**
@@ -137,8 +132,13 @@ private:
         std::string filter_text;
         char filter_buffer[256] = {0};
 
-        // Column statistics and sorting
-        std::vector<TableColumnStats> column_stats;
+        // Column kinds (grid drawing) and sorting
+        std::vector<TableColumnKind> column_kinds;
+        // The column profile for the Stats sidebar, computed in the
+        // background; stale after an edit.
+        std::shared_ptr<DatasetProfile> profile;
+        bool profile_stale = true;
+        uint64_t profile_task = 0;
         int selected_column = -1;
         int sort_column = -1;
         bool sort_ascending = true;
@@ -245,8 +245,9 @@ private:
     int open_dataset_rows_ = 10000;
     std::string open_dataset_error_;
 
-    // Column statistics and sorting
-    void ComputeColumnStats(TableTab* tab);
+    // Column kinds, the profile and sorting
+    void ComputeColumnKinds(TableTab* tab);
+    void StartProfile(TableTab* tab);
     void SortByColumn(TableTab* tab, int column);
 
     // ═══════════════════════════════════════════════════════════════
@@ -320,6 +321,7 @@ private:
     int rows_per_page_ = 100;
 
     // Stats sidebar
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // scopes the profile tasks
     bool show_stats_sidebar_ = true;
     float stats_sidebar_width_ = 180.0f;
 

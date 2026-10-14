@@ -1,4 +1,5 @@
 #include "table_viewer.h"
+#include "../../core/async_task_manager.h"
 #include "../../core/variables_presentation.h"
 #include <spdlog/spdlog.h>
 #include <memory>
@@ -32,7 +33,10 @@ void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
 }
 
-TableViewerPanel::~TableViewerPanel() { VariablesView::CancelReads(this); }
+TableViewerPanel::~TableViewerPanel() {
+    VariablesView::CancelReads(this);
+    AsyncTaskManager::Instance().CancelOwnedBy(alive_);
+}
 
 void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
                                     const scripting::VariablesService::Result& result) {
@@ -70,10 +74,10 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
     if (request.plot) {
         // Plot: the first numeric column (not a frame's index), as a line for
         // a one-dimensional array, else a histogram.
-        ComputeColumnStats(opened);
+        ComputeColumnKinds(opened);
         const int first = result.table_kind == "frame" ? 1 : 0;
-        for (int c = first; c < static_cast<int>(opened->column_stats.size()); ++c) {
-            if (opened->column_stats[c].type != "Numeric") continue;
+        for (int c = first; c < static_cast<int>(opened->column_kinds.size()); ++c) {
+            if (opened->column_kinds[c].type != "Numeric") continue;
             const bool line = result.table_kind == "array" && result.shape.size() == 1;
             OpenPlot(opened, line ? plot::Kind::Line : plot::Kind::Histogram, c);
             break;

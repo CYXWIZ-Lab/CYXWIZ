@@ -51,10 +51,9 @@ void TableViewerPanel::EndCellEdit(TableTab* tab, bool save) {
                 spdlog::info("Cell [{}, {}] changed: '{}' -> '{}'",
                     tab->editing_row + 1, tab->editing_col + 1, old_value, new_value);
 
-                // Recompute column stats for this column (value may affect min/max/avg)
-                if (tab->editing_col < static_cast<int>(tab->column_stats.size())) {
-                    tab->column_stats[tab->editing_col].computed = false;
-                }
+                // The column kinds and the profile follow the edit.
+                ComputeColumnKinds(tab);
+                tab->profile_stale = true;
             } else {
                 spdlog::warn("Failed to update cell [{}, {}]", tab->editing_row + 1, tab->editing_col + 1);
             }

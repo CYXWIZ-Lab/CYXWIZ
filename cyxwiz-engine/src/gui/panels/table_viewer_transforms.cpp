@@ -22,9 +22,9 @@ void TableViewerPanel::ApplyColorMap(TableTab* tab, int column, ColorMapType typ
     cmap.auto_range = true;
 
     // Get column min/max for normalization
-    if (column < static_cast<int>(tab->column_stats.size())) {
-        cmap.min_val = static_cast<float>(tab->column_stats[column].min_val);
-        cmap.max_val = static_cast<float>(tab->column_stats[column].max_val);
+    if (column < static_cast<int>(tab->column_kinds.size())) {
+        cmap.min_val = static_cast<float>(tab->column_kinds[column].min_val);
+        cmap.max_val = static_cast<float>(tab->column_kinds[column].max_val);
     }
 
     spdlog::info("Applied colormap {} to column {}", static_cast<int>(type), column);

@@ -80,8 +80,8 @@ void TableViewerPanel::RenderColumnContextMenu(TableTab* tab, int column) {
     }
 
     // Format Numbers submenu (only for numeric columns)
-    if (column < static_cast<int>(tab->column_stats.size()) &&
-        tab->column_stats[column].type == "Numeric") {
+    if (column < static_cast<int>(tab->column_kinds.size()) &&
+        tab->column_kinds[column].type == "Numeric") {
         if (ImGui::BeginMenu(ICON_FA_HASHTAG " Format Numbers")) {
             // Ensure column_formats is sized correctly
             if (tab->column_formats.size() <= static_cast<size_t>(column)) {
