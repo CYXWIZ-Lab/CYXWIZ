@@ -5646,6 +5646,43 @@ set_target_properties(test_computation_truth_classic_ml PROPERTIES
 )
 add_test(NAME classic_ml_sklearn_parity COMMAND test_computation_truth_classic_ml)
 
+# Word vector files and vocabulary alignment against gensim (TOFIX152).
+set(CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures")
+add_executable(test_computation_truth_word_embeddings
+    tests/computation_truth/test_computation_truth_word_embeddings.cpp
+)
+target_include_directories(test_computation_truth_word_embeddings PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_word_embeddings PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_word_embeddings PRIVATE
+    CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR="${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}"
+)
+add_custom_target(copy_test_computation_truth_word_embeddings_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings_gensim.json"
+        "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings_gensim.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings"
+        "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings"
+    SOURCES "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings_gensim.json"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_word_embeddings copy_test_computation_truth_word_embeddings_fixture)
+if(WIN32)
+    target_compile_definitions(test_computation_truth_word_embeddings PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_computation_truth_word_embeddings PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME word_embeddings_gensim_parity COMMAND test_computation_truth_word_embeddings)
+
 # ===== Test: PCA / t-SNE / UMAP against PyTorch / scipy references (TOFIX140 dimensionality reduction on the device) =====
 set(CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/dimensionality_reduction_pytorch.json"
