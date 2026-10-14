@@ -398,7 +398,9 @@ void TableViewerPanel::RenderTable() {
     tab->grid.options.line_numbers = show_line_numbers_;
     tab->grid.options.data_bars = show_data_bars_;
     tab->grid.options.rows_per_page = rows_per_page_;
-    tab->grid.Render("DataTable");
+    // Keyed by the table's name: its column widths are its own (one shared
+    // id gave every table the widths last saved for any of them).
+    tab->grid.Render(("##grid_" + tab->filename).c_str());
 }
 
 void TableViewerPanel::RenderStatusBar() {
