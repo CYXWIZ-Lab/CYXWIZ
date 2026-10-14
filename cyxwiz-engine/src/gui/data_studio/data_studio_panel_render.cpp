@@ -144,10 +144,12 @@ void DataStudioPanel::RenderRail(float height) {
             const bool chosen = !item.dataset.empty() && item.dataset == active_dataset_;
             const ImVec2 pos = ImGui::GetCursorScreenPos();
             const float w = ImGui::GetContentRegionAvail().x;
+            ui::PushListRowColours();
             if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, 0.0f))) {
                 if (!item.dataset.empty()) SetActiveDataset(item.dataset);
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item.node_id >= 0) ShowOnCanvas({item.node_id});
             }
+            ui::PopListRowColours();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 std::string tip = item.tip;
                 tip += std::string(tip.empty() ? "" : "\n") +

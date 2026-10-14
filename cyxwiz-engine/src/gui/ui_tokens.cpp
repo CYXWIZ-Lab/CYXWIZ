@@ -196,4 +196,14 @@ StatusStyle StatusStyleFor(Status status, const Tokens& t) {
     return {t.text_dim, "", ""};
 }
 
+void PushListRowColours(const Tokens& t) {
+    ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
+}
+
+void PopListRowColours() {
+    ImGui::PopStyleColor(3);
+}
+
 }  // namespace cyxwiz::ui

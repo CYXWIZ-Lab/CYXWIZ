@@ -313,7 +313,9 @@ void PrepareView::RenderSteps(float height) {
             const studio::GraphNode* r = loose ? nullptr : NodeById(id);
             const std::string label = loose ? "Steps outside a recipe" : r ? r->name : "recipe";
             ImGui::PushID(id);
+            ui::PushListRowColours();
             if (ImGui::Selectable(label.c_str(), recipe_ == id)) recipe_ = id;
+            ui::PopListRowColours();
             ImGui::PopID();
         }
         ImGui::Spacing();
@@ -324,10 +326,12 @@ void PrepareView::RenderSteps(float height) {
         const ImVec2 at = ImGui::GetCursorScreenPos();
         const float w = ImGui::GetContentRegionAvail().x;
         const float line = ImGui::GetTextLineHeight();
+        ui::PushListRowColours();
         if (ImGui::Selectable("##step", row.id == selected_, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, line * 2.0f + 4.0f))) {
             selected_ = row.id;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && show_on_canvas) show_on_canvas({row.id});
         }
+        ui::PopListRowColours();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             const std::string tip = row.kind + (row.tip.empty() ? "" : "\n" + row.tip) + "\nDouble-click: show it on the canvas.";
             ImGui::SetTooltip("%s", tip.c_str());

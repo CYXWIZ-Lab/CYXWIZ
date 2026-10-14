@@ -111,6 +111,14 @@ ImVec4 DivergingAt(const Tokens& tokens, float v);
 // higher-contrast of bright text and the window colour).
 ImVec4 ReadableOn(const Tokens& tokens, const ImVec4& background);
 
+// Around a list row's Selectable: the chosen row in the selection wash, a
+// hovered one in the hover wash, whatever the preset's Header colours are
+// (Unreal Engine's hovered Header is a 50 % orange, its selected one a grey
+// barely off the panel). Push around the Selectable only: menus opened from
+// the row keep the preset's visible menu hover.
+void PushListRowColours(const Tokens& tokens = CurrentTokens());
+void PopListRowColours();
+
 // Shared status vocabulary (words, colours and icons used by Engine and
 // Installer alike).
 enum class Status {

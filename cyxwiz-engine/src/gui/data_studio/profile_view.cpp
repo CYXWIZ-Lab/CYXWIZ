@@ -264,8 +264,10 @@ void ProfileView::RenderColumns(float /*width*/) {
             ImGui::TableNextRow();
             ImGui::PushID(i);
             ImGui::TableSetColumnIndex(0);
+            ui::PushListRowColours();
             if (ImGui::Selectable(c.facts.name.c_str(), selected_ == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
                 selected_ = i;
+            ui::PopListRowColours();
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(t.text_dim, "%s", cc ? cc->type.c_str() : c.sql_type.c_str());
             ImGui::TableSetColumnIndex(2);
