@@ -375,6 +375,9 @@ public:
     // steps before it (the SQL Workbench's "Load inputs").
     bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true);
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
+    // The Task View task of the latest data run (0: none), for a dialog that
+    // shows its progress or stops it.
+    uint64_t GetDataPipelineTaskId() const { return pipeline_task_id_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to
     // their steps): what feeds each input pin and the Row Count Checks that

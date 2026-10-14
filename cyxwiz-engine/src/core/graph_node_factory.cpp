@@ -1810,23 +1810,7 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         case NodeType::WordEmbeddings: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Text";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Embeddings";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["model"] = "word2vec";
-            node.parameters["dim"] = "100";
-            node.parameters["window"] = "5";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

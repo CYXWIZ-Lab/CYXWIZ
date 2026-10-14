@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -1969,35 +1970,107 @@ std::string ParseStringParam(const CompiledLayer& layer,
     return it->second;
 }
 
-Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
-                                    size_t expected_rows,
-                                    size_t expected_cols) {
+// An Embedding weights file: a matrix of numbers (spaces or commas) with one
+// row per token id, or word vectors as text, a word and its values per line
+// in file order (word2vec / fastText .vec after its "count dim" header, GloVe
+// .txt). With `values` null only the shape is counted.
+bool ReadEmbeddingWeightsText(const std::string& path, size_t& rows, size_t& cols,
+                              std::vector<float>* values, std::string& error) {
+    rows = 0;
+    cols = 0;
     std::ifstream in(path);
     if (!in.is_open()) {
-        throw std::runtime_error("could not open embedding weights file: " + path);
+        error = "could not open embedding weights file: " + path;
+        return false;
     }
-
-    std::vector<float> values;
-    size_t rows = 0;
-    size_t cols = 0;
+    const auto split = [](std::string line) {
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        std::vector<std::string> tokens;
+        std::string token;
+        while (iss >> token) tokens.push_back(token);
+        return tokens;
+    };
+    const auto number = [](const std::string& token, float& out) {
+        char* end = nullptr;
+        out = std::strtof(token.c_str(), &end);
+        return end != token.c_str() && *end == '\0';
+    };
+    const auto integer = [](const std::string& token) {
+        return !token.empty() && std::all_of(token.begin(), token.end(),
+                                             [](unsigned char c) { return std::isdigit(c) != 0; });
+    };
+    bool words = false;  // each line starts with its word
+    const auto add_row = [&](const std::vector<std::string>& tokens) {
+        const size_t first = words ? 1 : 0;
+        const size_t width = tokens.size() > first ? tokens.size() - first : 0;
+        if (cols == 0) {
+            cols = width;
+        } else if (width != cols) {
+            error = "embedding weights file has inconsistent row widths (row " + std::to_string(rows + 1) + ")";
+            return false;
+        }
+        if (values) {
+            for (size_t i = first; i < tokens.size(); ++i) {
+                float value = 0.0f;
+                if (!number(tokens[i], value)) {
+                    error = "embedding weights file has a value that is not a number in row " +
+                            std::to_string(rows + 1) + ": '" + tokens[i] + "'";
+                    return false;
+                }
+                values->push_back(value);
+            }
+        }
+        ++rows;
+        return true;
+    };
+    // The format is known from the first line, or from the second when the
+    // first holds two whole numbers (a "count dim" header, or a matrix row).
+    bool decided = false;
+    std::vector<std::string> two_numbers;
     std::string line;
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#') continue;
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::istringstream iss(line);
-        std::vector<float> row;
-        float value = 0.0f;
-        while (iss >> value) {
-            row.push_back(value);
+        const auto tokens = split(line);
+        if (tokens.empty()) continue;
+        if (!decided) {
+            float value = 0.0f;
+            if (two_numbers.empty() && tokens.size() == 2 && integer(tokens[0]) && integer(tokens[1])) {
+                two_numbers = tokens;
+                continue;
+            }
+            if (!two_numbers.empty()) {
+                const bool header = !number(tokens[0], value) &&
+                                    tokens.size() == std::stoull(two_numbers[1]) + 1;
+                if (header) {
+                    words = true;
+                } else if (!add_row(two_numbers)) {
+                    return false;
+                }
+            } else {
+                words = !number(tokens[0], value);
+            }
+            decided = true;
         }
-        if (row.empty()) continue;
-        if (cols == 0) {
-            cols = row.size();
-        } else if (row.size() != cols) {
-            throw std::runtime_error("embedding weights file has inconsistent row widths");
-        }
-        values.insert(values.end(), row.begin(), row.end());
-        ++rows;
+        if (!add_row(tokens)) return false;
+    }
+    if (!decided && !two_numbers.empty() && !add_row(two_numbers)) return false;
+    if (rows == 0 || cols == 0) {
+        error = "no embedding rows found in " + path;
+        return false;
+    }
+    return true;
+}
+
+Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                    size_t expected_rows,
+                                    size_t expected_cols) {
+    std::vector<float> values;
+    size_t rows = 0;
+    size_t cols = 0;
+    std::string error;
+    if (!ReadEmbeddingWeightsText(path, rows, cols, &values, error)) {
+        throw std::runtime_error(error);
     }
 
     if (rows != expected_rows || cols != expected_cols) {
@@ -2012,6 +2085,10 @@ Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
 }
 
 } // namespace
+
+bool InspectEmbeddingWeightsFile(const std::string& path, size_t& rows, size_t& cols, std::string& error) {
+    return ReadEmbeddingWeightsText(path, rows, cols, nullptr, error);
+}
 
 std::unique_ptr<Loss> BuildLossFromConfig(
     const TrainingConfiguration& config) {

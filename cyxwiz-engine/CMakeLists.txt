@@ -156,6 +156,7 @@ set(ENGINE_SOURCES
     src/core/image_dataset_batcher.cpp
     src/core/image_quality_analysis.cpp
     src/core/quality_analyzer_presentation.cpp
+    src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
@@ -245,6 +246,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp      # Fix B Band 1
     src/core/node_executors/text_feature_matrix.cpp          # Shared dense/CSR text output
     src/core/node_executors/tfidf_vectorizer_operator.cpp    # Tool-to-Node Band 1
@@ -399,6 +402,8 @@ set(ENGINE_SOURCES
     src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
     src/gui/quality_analyzer_dialog.cpp
+    src/gui/word_embeddings_dialog.cpp
+    src/gui/embedding_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
     src/gui/data_preview_table_renderer.cpp
@@ -1708,6 +1713,8 @@ add_executable(test_debug_executor
     src/core/debug_numerics.cpp
     src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
     src/core/text_dataset_batcher.cpp
@@ -1923,6 +1930,8 @@ set_target_properties(test_dataset_audit PROPERTIES
 add_executable(test_document_token_windows
     tests/test_document_token_windows.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp)
 target_link_libraries(test_document_token_windows PRIVATE cyxwiz-training-core)
 target_compile_features(test_document_token_windows PRIVATE cxx_std_20)
@@ -1935,6 +1944,8 @@ set_target_properties(test_document_token_windows PROPERTIES RUNTIME_OUTPUT_DIRE
 add_executable(test_text_tokenizer_operator
     tests/test_text_tokenizer_operator.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
 )
 
@@ -1965,6 +1976,8 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 find_package(Catch2 CONFIG REQUIRED)
 add_executable(test_bpe_piece_policy_operator tests/test_bpe_piece_policy_operator.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp)
 target_include_directories(test_bpe_piece_policy_operator PRIVATE src)
 target_link_libraries(test_bpe_piece_policy_operator PRIVATE Arrow::arrow_shared
@@ -2418,6 +2431,33 @@ set_target_properties(test_classic_ml_operators PROPERTIES
 
 add_test(NAME classic_ml_operators COMMAND test_classic_ml_operators)
 
+# Word Embeddings node operator (TOFIX152).
+add_executable(test_word_embeddings_operator
+    tests/test_word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+)
+target_include_directories(test_word_embeddings_operator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(test_word_embeddings_operator PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_word_embeddings_operator PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+set_target_properties(test_word_embeddings_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME word_embeddings_operator COMMAND test_word_embeddings_operator)
+
 # ===== Test: Gradient Boosting Operator =====
 add_executable(test_gradient_boosting_operator
     tests/test_gradient_boosting_operator.cpp
@@ -2565,6 +2605,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -2825,6 +2866,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -2925,6 +2967,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -3022,6 +3065,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -3504,6 +3548,8 @@ add_executable(test_text_arrow_materializer
     src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
 )
 target_link_libraries(test_text_arrow_materializer PRIVATE cyxwiz-training-core)
@@ -3538,6 +3584,8 @@ add_executable(test_text_arrow_training_launch
     src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
 )
 target_link_libraries(test_text_arrow_training_launch PRIVATE cyxwiz-training-core)
@@ -3632,6 +3680,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -3711,6 +3760,8 @@ add_executable(test_text_gui_training_launch
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -4779,6 +4830,8 @@ target_sources(test_testing_device_handoff PRIVATE src/core/test_manager.cpp src
 add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/test_executor.cpp
     src/core/one_vs_rest_curves.cpp
@@ -4917,6 +4970,8 @@ add_executable(test_text_arrow_adapter
     src/core/text_arrow_adapter.cpp
     src/core/formats/text_dataset.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
 )
 target_link_libraries(test_text_arrow_adapter PRIVATE cyxwiz-training-core)
@@ -4951,6 +5006,8 @@ add_executable(test_text_dataset_batcher_arrow
     src/core/text_arrow_adapter.cpp
     src/core/formats/text_dataset.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
 )
 target_link_libraries(test_text_dataset_batcher_arrow PRIVATE cyxwiz-training-core)
@@ -5071,6 +5128,8 @@ add_executable(test_debugger_contracts
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/preflight_validator.cpp
     src/core/text_preprocessing_tracer.cpp
@@ -6155,6 +6214,20 @@ set_target_properties(benchmark_conv2d_provider PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Benchmark: word2vec on a real corpus (TOFIX152), not a ctest =====
+add_executable(benchmark_word2vec
+    tests/benchmarks_word2vec.cpp
+)
+target_include_directories(benchmark_word2vec PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(benchmark_word2vec PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(benchmark_word2vec PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Smoke: a CNN trained on real images (TOFIX140 A1b), not a ctest =====
 add_executable(test_cnn_image_training_smoke
     tests/test_cnn_image_training_smoke.cpp
@@ -6266,6 +6339,17 @@ set_target_properties(test_quality_analyzer_presentation PROPERTIES
 )
 add_test(NAME quality_analyzer_presentation COMMAND test_quality_analyzer_presentation)
 
+# ===== Test: Word Embeddings dialog view model (TOFIX152) =====
+add_executable(test_word_embeddings_presentation
+    tests/test_word_embeddings_presentation.cpp
+    src/core/word_embeddings_presentation.cpp
+)
+target_include_directories(test_word_embeddings_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_word_embeddings_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME word_embeddings_presentation COMMAND test_word_embeddings_presentation)
+
 # ===== Test: Properties panel view model (TOFIX129 A7) =====
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
@@ -6330,6 +6414,8 @@ add_executable(test_pipeline_materializer_cache
     src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
@@ -6686,6 +6772,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/word_embeddings_operator.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp

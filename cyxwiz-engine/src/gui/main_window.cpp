@@ -3770,6 +3770,21 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                     .lexically_normal()
                     .string();
         }
+        // An Embedding's weights file (a Word Embeddings node's saved vectors
+        // by default, artifacts/word_embeddings/...) is project-relative too.
+        if (project.HasActiveProject()) {
+            for (auto& layer : config.layers) {
+                for (const char* key : {"weights_file", "embedding_weights_file"}) {
+                    auto it = layer.parameters.find(key);
+                    if (it != layer.parameters.end() && !it->second.empty() &&
+                        std::filesystem::path(it->second).is_relative()) {
+                        it->second = (std::filesystem::path(project.GetProjectRoot()) / it->second)
+                                         .lexically_normal()
+                                         .string();
+                    }
+                }
+            }
+        }
         // Like DataInput paths, a relative warm-start checkpoint is project-relative.
         if (!config.initialize_from_checkpoint.empty() && project.HasActiveProject() &&
             std::filesystem::path(config.initialize_from_checkpoint).is_relative()) {

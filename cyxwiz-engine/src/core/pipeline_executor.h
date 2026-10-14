@@ -168,6 +168,9 @@ public:
     // Node id -> DataRegistry dataset of the last successful run (the Plot
     // node's result lane reads the table of the node wired into it).
     const std::map<int, std::string>& NodeResults() const { return last_node_results_; }
+    // (node ID, output pin >= 1) -> Arrow table name of the last run, for
+    // operators with more than one table output.
+    const std::map<std::pair<int, int>, std::string>& NodePinResults() const { return last_node_pin_results_; }
     // Node ID -> fitted model file of the last run (nodes with a Model output).
     const std::map<int, std::string>& ModelArtifacts() const { return last_model_artifacts_; }
 
@@ -195,10 +198,13 @@ private:
     };
 
     std::map<int, std::string> last_node_results_;
+    std::map<std::pair<int, int>, std::string> last_node_pin_results_;
     std::map<int, std::string> last_model_artifacts_;
 
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
+        // (node ID, output pin >= 1) -> Arrow table name (extra operator outputs)
+        std::map<std::pair<int, int>, std::string> node_pin_results;
         std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
         std::map<int, std::string> node_outcomes;   // Node ID -> operator outcome summary
         std::string input_dataset;                // Initial dataset name
@@ -328,6 +334,10 @@ private:
                              PipelineNodeExecutionEvent event,
                              const std::string& status = "");
     void NotifyCompletion(bool success);
+    // The table a link from (node_id, source_pin) carries: the pin's own table
+    // for output pins >= 1 when the node published one, else the node's result.
+    static const std::string* ResultForOutput(const ExecutionContext& ctx, int node_id,
+                                              std::optional<int> source_pin);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
     std::vector<std::string> GetInputDatasetNames(const Node& node,
                                                   ExecutionContext& ctx,

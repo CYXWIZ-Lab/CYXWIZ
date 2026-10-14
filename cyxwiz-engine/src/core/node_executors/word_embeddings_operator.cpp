@@ -1,0 +1,373 @@
+#include "word_embeddings_operator.h"
+
+#include "text_column_utils.h"
+#include "tree_classification_utils.h"
+
+#include <cyxwiz/text_processing.h>
+#include <cyxwiz/tokenizer.h>
+
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <unordered_map>
+
+namespace cyxwiz {
+
+namespace {
+
+// Values in one RowMeans block ([rows, longest row, dim] gathered on the
+// device): 64M floats, 256 MB.
+constexpr size_t kRowMeansElements = size_t{1} << 26;
+constexpr const char* kLossPerEpoch = "loss per epoch ";
+
+bool ParseBoolParam(const std::map<std::string, std::string>& params, const std::string& key, bool& out,
+                    const std::string& op_name, std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end()) return true;
+    const std::string value = TrimAscii(it->second);
+    if (value.empty()) return true;
+    if (value == "true" || value == "1") out = true;
+    else if (value == "false" || value == "0") out = false;
+    else {
+        error = op_name + ": '" + key + "' must be true or false";
+        return false;
+    }
+    return true;
+}
+
+bool ParseChoice(const std::map<std::string, std::string>& params, const std::string& key,
+                 const std::vector<std::string>& choices, std::string& out, const std::string& op_name,
+                 std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end() || TrimAscii(it->second).empty()) return true;
+    const std::string value = TrimAscii(it->second);
+    if (std::find(choices.begin(), choices.end(), value) == choices.end()) {
+        std::string list;
+        for (const auto& c : choices) list += (list.empty() ? "" : ", ") + c;
+        error = op_name + ": '" + key + "' must be one of " + list;
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+std::string Param(const std::map<std::string, std::string>& params, const std::string& key) {
+    const auto it = params.find(key);
+    return it == params.end() ? std::string() : TrimAscii(it->second);
+}
+
+}  // namespace
+
+std::vector<std::string> WordEmbeddingsOperator::SplitWords(const std::string& text) {
+    // Tokenizer::Split, Word mode: lowercase, then runs of letters and digits.
+    return TextProcessing::Tokenize(TextProcessing::ToLowercase(text), "word", 2, false, true).tokens;
+}
+
+std::string WordEmbeddingsOperator::DefaultVectorsFile(int node_id, const std::string& node_name) {
+    std::string slug = node_name;
+    std::transform(slug.begin(), slug.end(), slug.begin(),
+                   [](unsigned char c) { return std::isalnum(c) ? static_cast<char>(std::tolower(c)) : '_'; });
+    while (!slug.empty() && slug.back() == '_') slug.pop_back();
+    return "word_embeddings/" + std::to_string(node_id) + "_" + (slug.empty() ? "vectors" : slug) + ".vec";
+}
+
+std::vector<double> WordEmbeddingsOperator::EpochLosses(const std::string& outcome) {
+    std::vector<double> losses;
+    const auto at = outcome.find(kLossPerEpoch);
+    if (at == std::string::npos) return losses;
+    const char* p = outcome.c_str() + at + std::char_traits<char>::length(kLossPerEpoch);
+    for (;;) {
+        char* end = nullptr;
+        const double value = std::strtod(p, &end);
+        if (end == p) break;
+        losses.push_back(value);
+        p = end;
+        if (*p != ',') break;
+        ++p;
+    }
+    return losses;
+}
+
+bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    train_ = false;
+    max_words_ = 0;
+    alignment_ = WordAlignmentOptions{};
+    word2vec_ = Word2VecOptions{};
+    row_vectors_ = false;
+    const std::string op = GetName();
+    std::string source = "pretrained";
+    if (!ParseChoice(params, "source", {"pretrained", "train"}, source, op, error)) return false;
+    train_ = source == "train";
+    vectors_file_ = Param(params, "vectors_file");
+    vocab_file_ = Param(params, "vocab_file");
+    text_col_ = Param(params, "text_col");
+    vectors_path_ = Param(params, "vectors_path");
+
+    int max_words = 0;
+    if (!ParseIntParam(params, "max_words", max_words, op, error)) return false;
+    if (max_words < 0) {
+        error = op + ": max_words must be >= 0";
+        return false;
+    }
+    max_words_ = static_cast<size_t>(max_words);
+    if (!ParseBoolParam(params, "lowercase_fallback", alignment_.lowercase_fallback, op, error)) return false;
+    if (!ParseChoice(params, "missing", {"zeros", "random"}, alignment_.missing, op, error)) return false;
+    if (!ParseChoice(params, "unknown", {"mean", "missing"}, alignment_.unknown, op, error)) return false;
+    int seed = 0;
+    if (!ParseIntParam(params, "seed", seed, op, error)) return false;
+    if (seed < 0) {
+        error = op + ": seed must be >= 0";
+        return false;
+    }
+    alignment_.seed = static_cast<unsigned>(seed);
+
+    std::string architecture = "skipgram";
+    if (!ParseChoice(params, "architecture", {"skipgram", "cbow"}, architecture, op, error)) return false;
+    word2vec_.cbow = architecture == "cbow";
+    if (!ParseIntParam(params, "vector_size", word2vec_.vector_size, op, error) ||
+        !ParseIntParam(params, "window", word2vec_.window, op, error) ||
+        !ParseIntParam(params, "min_count", word2vec_.min_count, op, error) ||
+        !ParseIntParam(params, "negative", word2vec_.negative, op, error) ||
+        !ParseIntParam(params, "epochs", word2vec_.epochs, op, error) ||
+        !ParseIntParam(params, "batch_size", word2vec_.batch_size, op, error) ||
+        !ParseDoubleParam(params, "sample", word2vec_.sample, op, error) ||
+        !ParseDoubleParam(params, "alpha", word2vec_.alpha, op, error) ||
+        !ParseDoubleParam(params, "min_alpha", word2vec_.min_alpha, op, error))
+        return false;
+    int train_seed = 1;
+    if (!ParseIntParam(params, "train_seed", train_seed, op, error)) return false;
+    if (train_seed < 0) {
+        error = op + ": train_seed must be >= 0";
+        return false;
+    }
+    word2vec_.seed = static_cast<unsigned>(train_seed);
+    if (!ParseBoolParam(params, "row_vectors", row_vectors_, op, error)) return false;
+
+    if (train_) {
+        if (text_col_.empty()) {
+            error = op + ": training needs the text column ('text_col')";
+            return false;
+        }
+        if (word2vec_.vector_size < 1 || word2vec_.window < 1 || word2vec_.min_count < 1 || word2vec_.negative < 1 ||
+            word2vec_.epochs < 1 || word2vec_.batch_size < 1 || !(word2vec_.alpha > 0.0) || word2vec_.min_alpha < 0.0 ||
+            word2vec_.sample < 0.0) {
+            error = op + ": vector_size, window, min_count, negative, epochs and batch_size must be at least 1, "
+                         "alpha positive, min_alpha and sample not negative";
+            return false;
+        }
+    } else if (vectors_file_.empty()) {
+        error = op + ": choose a vector file ('vectors_file': .txt, .vec or .bin) or train word2vec";
+        return false;
+    }
+    if (row_vectors_ && text_col_.empty()) {
+        error = op + ": row vectors need the text column ('text_col')";
+        return false;
+    }
+    return true;
+}
+
+bool WordEmbeddingsOperator::CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies,
+                                                      std::string& error) const {
+    (void)error;
+    if (!train_) dependencies.push_back({"word_vectors", vectors_file_});
+    if (!vocab_file_.empty()) dependencies.push_back({"vocabulary", vocab_file_});
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    const std::string op = GetName();
+    if (!input) return arrow::Status::Invalid(op + ": input table is null");
+    rows_.reset();
+    outcome_.clear();
+    const auto report = [&](const std::string& stage, const std::string& message, double progress) {
+        if (!progress_callback_) return;
+        PipelineOperatorProgress event;
+        event.stage = stage;
+        event.message = message;
+        event.status = "running";
+        event.progress = static_cast<float>(progress);
+        progress_callback_(event);
+    };
+
+    // The text, split into words, when training or averaging rows needs it.
+    std::vector<std::vector<std::string>> sentences;
+    if (!text_col_.empty()) {
+        const auto column = input->GetColumnByName(text_col_);
+        if (!column) return arrow::Status::KeyError(op + ": text column '" + text_col_ + "' not found");
+        std::vector<std::string> texts;
+        std::string bad_type;
+        bool cancelled = false;
+        if (!ReadColumnAsStrings(column, texts, bad_type, GetCancellationQuery(), &cancelled)) {
+            if (cancelled) return arrow::Status::Cancelled(op + ": cancelled while reading the text");
+            return arrow::Status::TypeError(op + ": text column '" + text_col_ + "' must be text (got '" + bad_type + "')");
+        }
+        sentences.reserve(texts.size());
+        for (const auto& text : texts) sentences.push_back(SplitWords(text));
+    }
+    ARROW_RETURN_NOT_OK(CheckCancellation(op));
+
+    WordVectors vectors;
+    std::string source_summary;
+    if (train_) {
+        report("Training", "Training word2vec", 0.05);
+        Word2VecOptions options = word2vec_;
+        options.on_progress = [&](double done, int epoch) {
+            report("Training", "Training word2vec, epoch " + std::to_string(epoch), 0.05 + 0.85 * done);
+            return !IsCancellationRequested();
+        };
+        const auto model = WordEmbeddings::TrainWord2Vec(sentences, options);
+        if (!model.success) {
+            if (IsCancellationRequested()) return arrow::Status::Cancelled(op + ": training cancelled");
+            return arrow::Status::Invalid(op + ": " + model.error_message);
+        }
+        vectors = model.vectors;
+        std::string losses;
+        for (const double loss : model.epoch_loss) {
+            char value[32];
+            std::snprintf(value, sizeof(value), "%.4g", loss);
+            losses += (losses.empty() ? "" : ", ") + std::string(value);
+        }
+        source_summary = "trained " + std::to_string(vectors.words.size()) + " words x " +
+                         std::to_string(vectors.dim) + " (" + (word2vec_.cbow ? "CBOW" : "skip-gram") + ", " +
+                         std::to_string(word2vec_.epochs) + " epochs, " + kLossPerEpoch + losses + ")";
+    } else {
+        report("Reading", "Reading " + vectors_file_, 0.05);
+        vectors = WordEmbeddings::Load(vectors_file_, max_words_);
+        if (!vectors.success) return arrow::Status::IOError(op + ": " + vectors.error_message);
+        source_summary = "read " + std::to_string(vectors.words.size()) + " words x " + std::to_string(vectors.dim);
+    }
+    ARROW_RETURN_NOT_OK(CheckCancellation(op));
+
+    // Line the vectors up with the vocabulary when one is given.
+    std::string coverage;
+    if (!vocab_file_.empty()) {
+        report("Aligning", "Lining up with " + vocab_file_, 0.92);
+        Vocabulary vocabulary;
+        if (!vocabulary.LoadFromFile(vocab_file_))
+            return arrow::Status::IOError(op + ": cannot read the vocabulary " + vocab_file_);
+        WordAlignmentOptions options = alignment_;
+        options.pad_id = vocabulary.PadIndex();
+        options.unknown_id = vocabulary.UnkIndex();
+        const auto aligned = WordEmbeddings::Align(vectors, vocabulary.GetWords(), options);
+        if (!aligned.success) return arrow::Status::Invalid(op + ": " + aligned.error_message);
+        vectors.words = vocabulary.GetWords();
+        vectors.values = aligned.values;
+        coverage = "; vocabulary " + std::to_string(vectors.words.size()) + " tokens: " + std::to_string(aligned.exact) +
+                   " found, " + std::to_string(aligned.lowercase) + " in lowercase, " +
+                   std::to_string(aligned.missing) + " missing";
+    }
+
+    if (!vectors_path_.empty()) {
+        // The default path is a new folder of this run's artifacts.
+        const auto folder = std::filesystem::path(vectors_path_).parent_path();
+        std::error_code folder_error;
+        if (!folder.empty()) std::filesystem::create_directories(folder, folder_error);
+        std::string error;
+        if (!WordEmbeddings::SaveText(vectors, vectors_path_, &error))
+            return arrow::Status::IOError(op + ": cannot save the vectors: " + error);
+    }
+
+    // Pin 0: word, v_0 .. v_{d-1}.
+    const int64_t n = static_cast<int64_t>(vectors.words.size());
+    const int dim = vectors.dim;
+    std::vector<std::shared_ptr<arrow::Field>> fields{arrow::field("word", arrow::utf8())};
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    arrow::StringBuilder word_builder;
+    ARROW_RETURN_NOT_OK(word_builder.AppendValues(vectors.words));
+    std::shared_ptr<arrow::Array> word_array;
+    ARROW_RETURN_NOT_OK(word_builder.Finish(&word_array));
+    columns.push_back(word_array);
+    for (int d = 0; d < dim; ++d) {
+        arrow::FloatBuilder builder;
+        ARROW_RETURN_NOT_OK(builder.Reserve(n));
+        for (int64_t r = 0; r < n; ++r) builder.UnsafeAppend(vectors.values[static_cast<size_t>(r) * dim + d]);
+        std::shared_ptr<arrow::Array> array;
+        ARROW_RETURN_NOT_OK(builder.Finish(&array));
+        fields.push_back(arrow::field("v_" + std::to_string(d), arrow::float32()));
+        columns.push_back(array);
+    }
+    auto table = arrow::Table::Make(arrow::schema(fields), columns, n);
+
+    // Pin 1: the mean vector of each row's words.
+    if (row_vectors_) {
+        report("Row vectors", "Averaging the words of each row", 0.95);
+        std::unordered_map<std::string, int> row_of;
+        row_of.reserve(vectors.words.size());
+        for (size_t r = 0; r < vectors.words.size(); ++r) row_of.emplace(vectors.words[r], static_cast<int>(r));
+        // Each row's words that have a vector, as rows of a table holding only
+        // the words the text uses (a big pretrained file is not sent whole).
+        std::unordered_map<int, int> used_row;
+        std::vector<float> used_values;
+        std::vector<std::vector<int>> row_ids(sentences.size());
+        for (size_t r = 0; r < sentences.size(); ++r) {
+            for (const auto& word : sentences[r]) {
+                const auto it = row_of.find(word);
+                if (it == row_of.end()) continue;
+                const auto [used, added] = used_row.emplace(it->second, static_cast<int>(used_row.size()));
+                if (added) {
+                    const auto from = vectors.values.begin() + static_cast<std::ptrdiff_t>(it->second) * dim;
+                    used_values.insert(used_values.end(), from, from + dim);
+                }
+                row_ids[r].push_back(used->second);
+            }
+        }
+        if (used_values.empty()) used_values.assign(static_cast<size_t>(dim), 0.0f);  // no word has a vector
+        // Rows of similar length share a block, so few are padded: one long
+        // post no longer widens the block of its short neighbours.
+        std::vector<size_t> order(sentences.size());
+        for (size_t r = 0; r < order.size(); ++r) order[r] = r;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t a, size_t b) { return row_ids[a].size() < row_ids[b].size(); });
+        std::vector<float> means(sentences.size() * static_cast<size_t>(dim));
+        for (size_t start = 0; start < order.size();) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(op));
+            // Rows while the padded [rows, longest row, dim] block fits the budget.
+            size_t end = start, width = 1;
+            while (end < order.size()) {
+                const size_t w = std::max(width, row_ids[order[end]].size());
+                if (end > start && (end - start + 1) * w * static_cast<size_t>(dim) > kRowMeansElements) break;
+                width = w;
+                ++end;
+            }
+            std::vector<int> ids((end - start) * width, -1);
+            for (size_t i = start; i < end; ++i) {
+                const auto& row = row_ids[order[i]];
+                std::copy(row.begin(), row.end(), ids.begin() + static_cast<std::ptrdiff_t>((i - start) * width));
+            }
+            std::string error;
+            const auto chunk = WordEmbeddings::RowMeans(used_values, dim, ids, static_cast<int>(width), &error);
+            if (chunk.empty()) return arrow::Status::Invalid(op + ": row vectors: " + error);
+            // Each mean goes back to its row's place.
+            for (size_t i = start; i < end; ++i)
+                std::copy_n(chunk.begin() + static_cast<std::ptrdiff_t>((i - start) * dim), dim,
+                            means.begin() + static_cast<std::ptrdiff_t>(order[i] * dim));
+            start = end;
+        }
+        std::shared_ptr<arrow::Table> rows = input;
+        for (int d = 0; d < dim; ++d) {
+            const std::string name = "emb_" + std::to_string(d);
+            if (rows->schema()->GetFieldIndex(name) >= 0)
+                return arrow::Status::Invalid(op + ": column '" + name + "' already exists");
+            arrow::FloatBuilder builder;
+            ARROW_RETURN_NOT_OK(builder.Reserve(input->num_rows()));
+            for (size_t r = 0; r < sentences.size(); ++r) builder.UnsafeAppend(means[r * static_cast<size_t>(dim) + d]);
+            std::shared_ptr<arrow::Array> array;
+            ARROW_RETURN_NOT_OK(builder.Finish(&array));
+            ARROW_ASSIGN_OR_RAISE(rows, rows->AddColumn(rows->num_columns(), arrow::field(name, arrow::float32()),
+                                                        std::make_shared<arrow::ChunkedArray>(array)));
+        }
+        rows_ = rows;
+    }
+
+    outcome_ = source_summary + coverage;
+    spdlog::info("WordEmbeddings: {}", outcome_);
+    report("Complete", outcome_, 1.0);
+    return table;
+}
+
+}  // namespace cyxwiz

@@ -212,6 +212,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_ARROW_UP_RIGHT;
 
             // Text Processing
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
                 return ICON_TI_TYPOGRAPHY;
             case NodeType::TextVocabulary:
@@ -507,6 +508,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeDistributed:
                 return ICON_RI_REFRESH;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_RI_TEXT;
@@ -876,6 +878,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeDistributed:
                 return ICON_LU_REPEAT;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_LU_TYPE;
@@ -1193,6 +1196,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeDistributed:
                 return ICON_IO_REFRESH;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_IO_TEXT;
@@ -1510,6 +1514,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeDistributed:
                 return ICON_PH_REPEAT;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_PH_TEXT_T;
@@ -1930,6 +1935,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_ARROW_UP;
 
         // Text Processing
+        case NodeType::WordEmbeddings:
         case NodeType::TextTokenizer:
             return ICON_FA_FONT;
         case NodeType::TextVocabulary:

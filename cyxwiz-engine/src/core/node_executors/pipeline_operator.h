@@ -152,6 +152,11 @@ public:
         (void)callback;
     }
 
+    // Tables for output pins 1, 2, ... from the last successful Apply (pin 0 is
+    // Apply's result). Empty for single-output operators; an empty table
+    // pointer leaves that pin without a result.
+    virtual std::vector<std::shared_ptr<arrow::Table>> ExtraOutputs() const { return {}; }
+
     // A short result statement from the last successful Apply, shown with the
     // node's run facts (for example a Row Count Check's "passed: 3712 rows ...").
     // Empty when the operator has nothing to add beyond its output table.

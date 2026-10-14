@@ -19,6 +19,7 @@
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
+#include "word_embeddings_operator.h"
 #include "tfidf_vectorizer_operator.h"
 #include "tree_model_predictor_operator.h"
 #include "time_series_analysis_operators.h"
@@ -69,6 +70,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Inert for legacy text graphs that go through RegisterTextDataset
     // (PipelineMaterializer skips non-Arrow datasets); active when
     // DataInput is wired to register text CSVs as Arrow tables.
+    RegisterCreator(gui::NodeType::WordEmbeddings, []() {
+        return std::make_unique<WordEmbeddingsOperator>();
+    });
     RegisterCreator(gui::NodeType::TextTokenizer, []() {
         return std::make_unique<TextTokenizerOperator>();
     });

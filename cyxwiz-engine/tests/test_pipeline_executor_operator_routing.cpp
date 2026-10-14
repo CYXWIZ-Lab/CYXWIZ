@@ -360,6 +360,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSLag",
         "TSWindow",
         "ValueCounts",
+        "WordEmbeddings",
     };
     return names;
 }
@@ -3408,7 +3409,6 @@ int main(int argc, char** argv) {
         {"ExportExcel", false},
         {"IFFTNode", false},
         {"WaveletTransform", false},
-        {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
@@ -3925,6 +3925,24 @@ int main(int argc, char** argv) {
           "TextTokenizer tokenizer_type validation should be central and specific: " +
               bad_text_tokenizer_type_executor.GetLastError());
 
+    const std::string bad_word_embeddings_architecture_json =
+        R"({"nodes":[)"
+        R"({"id":362,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":363,"type":"WordEmbeddings","name":"BadWordModel","parameters":{)"
+        R"("source":"train","text_col":"phrase","architecture":"glove"}})"
+        R"(],"links":[{"start_node":362,"end_node":363}]})";
+
+    cyxwiz::PipelineExecutor bad_word_embeddings_architecture_executor;
+    Check(!bad_word_embeddings_architecture_executor.ExecutePipeline(
+              bad_word_embeddings_architecture_json),
+          "WordEmbeddings unsupported architecture should fail validation");
+    Check(bad_word_embeddings_architecture_executor.GetLastError().find("architecture") != std::string::npos &&
+              bad_word_embeddings_architecture_executor.GetLastError().find("glove") != std::string::npos,
+          "WordEmbeddings architecture validation should be central and specific: " +
+              bad_word_embeddings_architecture_executor.GetLastError());
+
     const std::string bad_linear_regression_intercept_json =
         R"({"nodes":[)"
         R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"
@@ -4051,6 +4069,50 @@ int main(int argc, char** argv) {
     registry.UnloadDataset("ds_operator_ClassicModelPredictor_9213");
     registry.UnloadDataset("ds_operator_ClassicModelPredictor_9215");
     fs::remove_all(classic_artifact_root);
+
+    // Word Embeddings (TOFIX152): pin 0 is the vectors table, pin 1 the input
+    // rows with their mean vectors; each downstream link reads its own pin.
+    const fs::path word_vectors_dir = fs::temp_directory_path() / "cyxwiz_pipeline_executor_word_vectors";
+    fs::remove_all(word_vectors_dir);
+    fs::create_directories(word_vectors_dir);
+    const fs::path word_vectors_file = word_vectors_dir / "small.vec";
+    std::ofstream(word_vectors_file) << "3 2\nthe 1 2\nparis 3 5\nlondon -1 0.5\n";
+    const fs::path word_text_csv = word_vectors_dir / "texts.csv";
+    std::ofstream(word_text_csv) << "text\nthe paris\nlondon\nthe\nnothing here\n";
+    const fs::path word_vectors_saved = word_vectors_dir / "saved.vec";
+    const std::string word_embeddings_json =
+        R"({"nodes":[)"
+        R"({"id":9401,"type":"DataInput","name":"Texts","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(word_text_csv.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9402,"type":"WordEmbeddings","name":"Vectors","parameters":{"vectors_file":")" +
+        JsonEscapePath(word_vectors_file.string()) + R"(","text_col":"text","row_vectors":"true","vectors_path":")" +
+        JsonEscapePath(word_vectors_saved.string()) + R"("}},)"
+        R"({"id":9403,"type":"RowCountCheck","name":"Words","parameters":{"check_name":"words","expected_rows":"3"}},)"
+        R"({"id":9404,"type":"RowCountCheck","name":"Rows","parameters":{"check_name":"rows","expected_rows":"4"}})"
+        R"(],"links":[)"
+        R"({"start_node":9401,"end_node":9402,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9403,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9404,"start_pin_index":1,"end_pin_index":0})"
+        R"(]})";
+    cyxwiz::PipelineExecutor word_embeddings_executor;
+    Check(word_embeddings_executor.ExecutePipeline(word_embeddings_json),
+          "Word Embeddings should run with both output pins routed: " + word_embeddings_executor.GetLastError());
+    auto word_rows = registry.GetArrowDataset("ds_operator_RowCountCheck_9404");
+    Check(word_rows != nullptr && word_rows->GetArrowTable()->GetColumnByName("emb_1") != nullptr &&
+              word_rows->GetArrowTable()->num_rows() == 4,
+          "the node linked to the Rows pin should get the rows with their mean vectors");
+    auto word_table = registry.GetArrowDataset("ds_operator_RowCountCheck_9403");
+    Check(word_table != nullptr && word_table->GetArrowTable()->GetColumnByName("word") != nullptr,
+          "the node linked to the Vectors pin should get the vectors table");
+    Check(word_embeddings_executor.NodePinResults().count({9402, 1}) == 1,
+          "the Rows table is published for pin 1");
+    Check(fs::exists(word_vectors_saved), "Word Embeddings saves its vectors");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9403");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9404");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402_pin1");
+    fs::remove_all(word_vectors_dir);
 
     const std::string bad_linear_regression_feature_type_json =
         R"({"nodes":[)"
