@@ -308,14 +308,10 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(sorted != nullptr, "ORDER BY query");
     TEST_ASSERT(sorted->num_rows() == 3, "Top 3 salaries");
 
-    // Test 4: Convenience methods
-    auto filtered = db.FilterRows("employees", "department = 'Engineering'");
-    TEST_ASSERT(filtered != nullptr, "FilterRows convenience method");
-    TEST_ASSERT(filtered->num_rows() == 3, "Engineering department has 3 employees");
-
-    auto selected = db.SelectColumns("employees", {"name", "age"});
-    TEST_ASSERT(selected != nullptr, "SelectColumns convenience method");
-    TEST_ASSERT(selected->num_columns() == 2, "2 columns selected");
+    // Test 4: Filter and project
+    auto filtered = db.Query("SELECT name, age FROM employees WHERE department = 'Engineering'");
+    TEST_ASSERT(filtered != nullptr, "Filter and project");
+    TEST_ASSERT(filtered->num_rows() == 3 && filtered->num_columns() == 2, "Engineering: 3 employees, 2 columns");
 
     // Every connection is restricted: SQL cannot read files (the CSV is on disk right here).
     TEST_ASSERT(db.Query("SELECT * FROM read_csv('" + csv_path + "')") == nullptr, "no file access from SQL");

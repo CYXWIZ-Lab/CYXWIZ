@@ -5,7 +5,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <map>
 
 namespace cyxwiz {
 
@@ -134,171 +133,20 @@ public:
     bool Execute(const std::string& sql);
 
     /**
-     * Get list of registered tables
-     */
-    std::vector<std::string> GetTableNames() const;
-
-    /**
-     * Get table schema (column names and types)
-     */
-    struct ColumnInfo {
-        std::string name;
-        std::string type;
-        bool nullable;
-    };
-    std::vector<ColumnInfo> GetTableSchema(const std::string& table_name);
-
-    /**
-     * Get row count for a table
-     */
-    int64_t GetRowCount(const std::string& table_name);
-
-    /**
-     * Check if table exists
-     */
-    bool HasTable(const std::string& table_name) const;
-
-    /**
      * Get last error message
      */
     std::string GetLastError() const { return last_error_; }
 
-    /**
-     * Query profiling information
-     */
-    struct QueryProfile {
-        std::string query;
-        double execution_time_ms;
-        int64_t rows_scanned;
-        int64_t rows_returned;
-        std::string plan;
-    };
-
-    /**
-     * Get query execution plan (EXPLAIN)
-     */
-    std::string ExplainQuery(const std::string& sql);
-
-    /**
-     * Profile query execution
-     */
-    QueryProfile ProfileQuery(const std::string& sql);
-
-    /**
-     * Enable/disable query profiling
-     */
-    void SetProfilingEnabled(bool enabled);
-
-    /**
-     * Common Data Studio Operations (convenience methods)
-     */
-
-    /**
-     * Filter rows by condition
-     * @return Filtered Arrow table
-     */
-    std::shared_ptr<arrow::Table> FilterRows(
-        const std::string& table_name,
-        const std::string& condition
-    );
-
-    /**
-     * Select specific columns
-     */
-    std::shared_ptr<arrow::Table> SelectColumns(
-        const std::string& table_name,
-        const std::vector<std::string>& columns
-    );
-
-    /**
-     * Group by and aggregate
-     *
-     * @param table_name Source table
-     * @param group_by_cols Columns to group by
-     * @param aggregations Map of: output_column -> "AGG(input_column)"
-     *
-     * Example:
-     *   auto result = db.GroupBy("sales", {"region"},
-     *       {{"total_sales", "SUM(amount)"},
-     *        {"avg_price", "AVG(price)"}});
-     */
-    std::shared_ptr<arrow::Table> GroupBy(
-        const std::string& table_name,
-        const std::vector<std::string>& group_by_cols,
-        const std::map<std::string, std::string>& aggregations
-    );
-
-    /**
-     * Join two tables
-     */
-    enum class JoinType { Inner, Left, Right, Full };
-
-    std::shared_ptr<arrow::Table> Join(
-        const std::string& left_table,
-        const std::string& right_table,
-        const std::string& on_clause,
-        JoinType join_type = JoinType::Inner
-    );
-
-    /**
-     * Sort table
-     */
-    std::shared_ptr<arrow::Table> Sort(
-        const std::string& table_name,
-        const std::vector<std::string>& order_by_cols,
-        bool ascending = true
-    );
-
-    /**
-     * Distinct rows
-     */
-    std::shared_ptr<arrow::Table> Distinct(
-        const std::string& table_name,
-        const std::vector<std::string>& columns = {}
-    );
-
-    /**
-     * Sample rows (for data preview)
-     */
-    std::shared_ptr<arrow::Table> Sample(
-        const std::string& table_name,
-        int64_t n,
-        bool random = false
-    );
-
-    /**
-     * Compute column statistics
-     */
-    struct ColumnStats {
-        std::string column_name;
-        int64_t count;
-        int64_t null_count;
-        double min;
-        double max;
-        double mean;
-        double median;
-        double std_dev;
-        double percentile_25;
-        double percentile_75;
-    };
-
-    std::vector<ColumnStats> ComputeStats(const std::string& table_name);
-
 private:
     std::shared_ptr<duckdb::DuckDB> db_;  // shared with the connections NewConnection makes
     std::unique_ptr<duckdb::Connection> conn_;
-    std::map<std::string, std::shared_ptr<arrow::Table>> registered_tables_;
     std::string last_error_;
-    bool profiling_enabled_ = false;
 
     struct SharedTag {};
     DuckDBConnector(SharedTag, std::shared_ptr<duckdb::DuckDB> db);
 
     // Helper: Convert DuckDB result to Arrow table
     std::shared_ptr<arrow::Table> ResultToArrow(duckdb::unique_ptr<duckdb::QueryResult> result);
-
-    // Helper: Convert JoinType enum to SQL string
-    std::string JoinTypeToSQL(JoinType type) const;
 };
 
 } // namespace cyxwiz
