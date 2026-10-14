@@ -580,6 +580,7 @@ private:
         std::string dtype;      // "integer", "numeric", "string", "boolean"
         size_t count = 0;
         size_t unique_count = 0;
+        bool unique_known = false;  // false above kMaxDistinctValues
         size_t null_count = 0;
         float null_percentage = 0.0f;
         double min_val = 0.0;

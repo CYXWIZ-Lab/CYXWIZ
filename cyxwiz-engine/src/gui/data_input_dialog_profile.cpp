@@ -17,6 +17,11 @@
 
 namespace gui {
 
+namespace {
+// Columns longer than this show their distinct count as unknown.
+constexpr size_t kMaxDistinctValues = 200000;
+}  // namespace
+
 void DataInputDialog::RenderDataProfilingTab() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
@@ -108,7 +113,11 @@ void DataInputDialog::RenderDataProfilingTab() {
             ImGui::Text("%zu", stat.count);
 
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%zu", stat.unique_count);
+            if (stat.unique_known) {
+                ImGui::Text("%zu", stat.unique_count);
+            } else {
+                ImGui::TextDisabled("-");
+            }
 
             ImGui::TableSetColumnIndex(4);
             if (stat.null_percentage > 5.0f) {
@@ -255,20 +264,20 @@ void DataInputDialog::ComputeDataProfile() {
                     }
                 }
 
-                std::unordered_set<std::string> unique_vals;
-                if (stat.count <= 10000) {
+                // Distinct non-null values of any type, keyed by their text. Large
+                // columns are left unknown rather than shown as 0.
+                if (stat.count <= kMaxDistinctValues) {
+                    std::unordered_set<std::string> distinct;
                     for (int chunk_idx = 0; chunk_idx < column->num_chunks(); chunk_idx++) {
-                        auto chunk = column->chunk(chunk_idx);
-                        if (auto str_array = std::dynamic_pointer_cast<arrow::StringArray>(chunk)) {
-                            for (int64_t i = 0; i < str_array->length(); i++) {
-                                if (!str_array->IsNull(i)) {
-                                    unique_vals.insert(str_array->GetString(i));
-                                }
-                            }
+                        const auto chunk = column->chunk(chunk_idx);
+                        for (int64_t i = 0; i < chunk->length(); i++) {
+                            if (chunk->IsNull(i)) continue;
+                            if (const auto value = chunk->GetScalar(i); value.ok()) distinct.insert((*value)->ToString());
                         }
                     }
+                    stat.unique_count = distinct.size();
+                    stat.unique_known = true;
                 }
-                stat.unique_count = unique_vals.empty() ? 0 : unique_vals.size();
             }
         }
 
