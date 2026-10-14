@@ -264,8 +264,10 @@ void DataStudioPanel::RenderBringIn() {
     } else if (ImGui::BeginTable("##bring_in", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
         ImGui::TableSetupColumn("Data Input node", ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-        ImGui::TableSetupColumn("rows Ã columns", ImGuiTableColumnFlags_WidthStretch, 0.7f);
-        ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+        // Size and state are short: fixed from their longest text so nothing clips.
+        const char* size_header = "rows \xC3\x97" " columns";
+        ImGui::TableSetupColumn(size_header, ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize(size_header).x + 12.0f);
+        ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize(ICON_FA_CIRCLE " not loaded").x + 12.0f);
         const float actions_w = ui::ButtonWidth("Open dialog", ui::ButtonSize::Small) + ImGui::CalcTextSize("Explore").x + 24.0f;
         ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actions_w);
         ImGui::TableHeadersRow();
