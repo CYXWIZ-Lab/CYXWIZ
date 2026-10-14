@@ -25,10 +25,15 @@ namespace {
 using json = nlohmann::json;
 using Columns = std::vector<std::vector<double>>;
 using cyxwiz::DataTransform;
+using cyxwiz::test::DeviceTolerance;
 
-constexpr double kTolerance = 1e-8;        // float64 on the device
-constexpr double kLambdaTolerance = 1e-7;  // maximum-likelihood lambda
-constexpr double kAutoTolerance = 1e-6;    // values transformed with a searched lambda
+// float64 rounding, or float32 rounding on a device without float64 (worst
+// measured on the Intel Iris Xe, TOFIX145 item 7: 1.5e-5, the normaltest K^2).
+double Tolerance() { return DeviceTolerance(1e-8, 5e-5); }
+// The maximum-likelihood lambda, and values transformed with it: the float32
+// likelihood is flat to ~1e-7, which moves its optimum by ~5e-4.
+double LambdaTolerance() { return DeviceTolerance(1e-7, 2e-3); }
+double AutoTolerance() { return DeviceTolerance(1e-6, 2e-3); }
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -37,13 +42,13 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-void CheckValue(double actual, double expected, const std::string& what, double tolerance = kTolerance) {
+void CheckValue(double actual, double expected, const std::string& what, double tolerance = Tolerance()) {
     Check(std::abs(actual - expected) <= tolerance * (1.0 + std::abs(expected)),
           what + ": " + std::to_string(actual) + ", PyTorch " + std::to_string(expected));
 }
 
 void CheckColumns(const cyxwiz::TransformResult& result, const json& expected, const std::string& what,
-                  double tolerance = kTolerance) {
+                  double tolerance = Tolerance()) {
     Check(result.success, what + ": " + result.error_message);
     const auto columns = expected.get<Columns>();
     Check(result.transformed_data.size() == columns.size(), what + ": column count");
@@ -139,11 +144,11 @@ void RunCase(const json& c, const std::string& name) {
         const double lambda = c.at("lambda").get<double>();
         const auto search = boxcox ? DataTransform::FindOptimalLambda(x) : DataTransform::FindOptimalYeoJohnsonLambda(x);
         Check(search.success, name + " search: " + search.error_message);
-        CheckValue(search.optimal_lambda, lambda, name + " optimal lambda", kLambdaTolerance);
+        CheckValue(search.optimal_lambda, lambda, name + " optimal lambda", LambdaTolerance());
         CheckValue(search.best_log_likelihood, c.at("log_likelihood").get<double>(), name + " log-likelihood");
         const auto result = boxcox ? DataTransform::BoxCoxColumn(x, 0.0, true) : DataTransform::YeoJohnsonColumn(x, 0.0, true);
-        CheckColumns(result, c.at("outputs"), name, kAutoTolerance);
-        return CheckValue(result.params.at("lambda"), lambda, name + " lambda param", kLambdaTolerance);
+        CheckColumns(result, c.at("outputs"), name, AutoTolerance());
+        return CheckValue(result.params.at("lambda"), lambda, name + " lambda param", LambdaTolerance());
     }
     if (op == "boxcox_lambda_profile" || op == "yeojohnson_lambda_profile") {
         const auto search = op == "boxcox_lambda_profile" ? DataTransform::FindOptimalLambda(x, -5.0, 5.0, 100)

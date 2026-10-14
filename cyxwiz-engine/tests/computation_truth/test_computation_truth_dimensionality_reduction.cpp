@@ -25,9 +25,15 @@ namespace {
 using json = nlohmann::json;
 using Matrix = std::vector<std::vector<double>>;
 using cyxwiz::DimensionalityReduction;
+using cyxwiz::test::DeviceTolerance;
 
-constexpr double kTolerance = 1e-8;          // closed-form results, float64 on the device
-constexpr double kTrajectoryTolerance = 1e-6;  // iterative runs (kept short or slow: both are chaotic)
+// Closed-form results: float64 rounding, or float32 rounding on a device without
+// float64 (worst measured on the Intel Iris Xe, TOFIX145 item 7: 8e-6, PCA
+// transformed).
+double Tolerance() { return DeviceTolerance(1e-8, 5e-5); }
+// Iterative runs (kept short or slow: both are chaotic). float32 rounding grows
+// along the run: 1.5e-2 on the fast t-SNE embedding, 4.4e-4 on its KL.
+double TrajectoryTolerance() { return DeviceTolerance(1e-6, 5e-2); }
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -36,18 +42,18 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-void CheckValue(double actual, double expected, const std::string& what, double tolerance = kTolerance) {
+void CheckValue(double actual, double expected, const std::string& what, double tolerance = Tolerance()) {
     Check(std::abs(actual - expected) <= tolerance * (1.0 + std::abs(expected)),
           what + ": " + std::to_string(actual) + ", reference " + std::to_string(expected));
 }
 
-void CheckValues(const std::vector<double>& actual, const json& expected, const std::string& what, double tolerance = kTolerance) {
+void CheckValues(const std::vector<double>& actual, const json& expected, const std::string& what, double tolerance = Tolerance()) {
     const auto values = expected.get<std::vector<double>>();
     Check(actual.size() == values.size(), what + ": count " + std::to_string(actual.size()));
     for (size_t i = 0; i < values.size(); ++i) CheckValue(actual[i], values[i], what + "[" + std::to_string(i) + "]", tolerance);
 }
 
-void CheckMatrix(const Matrix& actual, const json& expected_json, const std::string& what, double tolerance = kTolerance) {
+void CheckMatrix(const Matrix& actual, const json& expected_json, const std::string& what, double tolerance = Tolerance()) {
     const Matrix expected = expected_json.get<Matrix>();
     Check(actual.size() == expected.size(), what + ": rows");
     for (size_t r = 0; r < expected.size(); ++r) {
@@ -102,9 +108,9 @@ void RunCase(const json& c, const std::string& name) {
             data, c.at("n_dims").get<int>(), c.at("perplexity").get<int>(), c.at("learning_rate").get<double>(),
             c.at("n_iterations").get<int>(), [&](int, double) { ++callbacks; });
         Check(result.success, name + ": " + result.error_message);
-        CheckMatrix(result.embeddings, c.at("embeddings"), name + " embedding", kTrajectoryTolerance);
-        CheckValues(result.kl_divergence_history, c.at("kl_history"), name + " KL history", kTrajectoryTolerance);
-        CheckValue(result.final_kl_divergence, c.at("final_kl").get<double>(), name + " final KL", kTrajectoryTolerance);
+        CheckMatrix(result.embeddings, c.at("embeddings"), name + " embedding", TrajectoryTolerance());
+        CheckValues(result.kl_divergence_history, c.at("kl_history"), name + " KL history", TrajectoryTolerance());
+        CheckValue(result.final_kl_divergence, c.at("final_kl").get<double>(), name + " final KL", TrajectoryTolerance());
         Check(result.n_iterations == c.at("iterations_run").get<int>(), name + ": iterations run");
         return Check(callbacks == static_cast<int>(result.kl_divergence_history.size()), name + ": one callback per check");
     }
@@ -121,7 +127,7 @@ void RunCase(const json& c, const std::string& name) {
         // it is scipy's fit to 1e-6).
         CheckValue(result.a, c.at("a").get<double>(), name + " a");
         CheckValue(result.b, c.at("b").get<double>(), name + " b");
-        CheckMatrix(result.embeddings, c.at("embeddings"), name + " embedding", kTrajectoryTolerance);
+        CheckMatrix(result.embeddings, c.at("embeddings"), name + " embedding", TrajectoryTolerance());
         return Check(result.n_epochs == c.at("n_epochs").get<int>(), name + ": epochs");
     }
     if (op == "umap_separates") {

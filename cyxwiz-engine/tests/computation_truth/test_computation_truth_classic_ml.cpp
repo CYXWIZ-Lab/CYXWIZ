@@ -22,8 +22,13 @@ namespace {
 using json = nlohmann::json;
 using Matrix = std::vector<std::vector<double>>;
 using cyxwiz::ClassicML;
+using cyxwiz::test::DeviceTolerance;
 
-constexpr double kTolerance = 1e-8;  // float64 on the device
+// Closed-form values: float64 rounding, or float32 rounding (worst measured on
+// the Intel Iris Xe, TOFIX145 item 7: 1.4e-7).
+double Tolerance() { return DeviceTolerance(1e-8, 5e-5); }
+// Values that went through a solver or a distance expansion.
+double SolvedTolerance() { return DeviceTolerance(1e-6, 1e-3); }
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -32,12 +37,12 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-void CheckValue(double actual, double expected, const std::string& what, double tolerance = kTolerance) {
+void CheckValue(double actual, double expected, const std::string& what, double tolerance = Tolerance()) {
     Check(std::abs(actual - expected) <= tolerance * (1.0 + std::abs(expected)),
           what + ": " + std::to_string(actual) + ", sklearn " + std::to_string(expected));
 }
 
-void CheckMatrix(const Matrix& actual, const json& expected, const std::string& what, double tolerance = kTolerance) {
+void CheckMatrix(const Matrix& actual, const json& expected, const std::string& what, double tolerance = Tolerance()) {
     const auto rows = expected.get<Matrix>();
     Check(actual.size() == rows.size(), what + ": rows " + std::to_string(actual.size()));
     for (size_t r = 0; r < rows.size(); ++r) {
@@ -77,11 +82,12 @@ void RunGaussianNB(const json& c, const std::string& name) {
     const auto train = ClassicML::PredictGaussianNB(model, x);
     Check(train.success, name + " predict: " + train.error_message);
     CheckLabels(train.labels, c.at("predict"), name + " predict");
-    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", 1e-7);
+    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", DeviceTolerance(1e-7, 5e-5));
     const auto held_out = ClassicML::PredictGaussianNB(model, x_test);
     Check(held_out.success, name + " predict test: " + held_out.error_message);
     CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
-    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", 1e-7);
+    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test",
+                DeviceTolerance(1e-7, 5e-5));
 }
 
 void RunKNN(const json& c, const std::string& name) {
@@ -96,7 +102,7 @@ void RunKNN(const json& c, const std::string& name) {
     // Distance weighting on the training rows: sklearn's euclidean expansion
     // (|a|^2 + |b|^2 - 2ab) leaves a row's distance to itself near 1e-8, not 0,
     // so its share is 1 - ~5e-8 where the exact zero distance gives 1.
-    const double train_tolerance = c.at("weights") == "distance" ? 1e-6 : kTolerance;
+    const double train_tolerance = c.at("weights") == "distance" ? SolvedTolerance() : Tolerance();
     CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", train_tolerance);
     const auto held_out = ClassicML::PredictKNN(model, c.at("x_test").get<Matrix>());
     Check(held_out.success, name + " predict test: " + held_out.error_message);
@@ -106,22 +112,23 @@ void RunKNN(const json& c, const std::string& name) {
 
 void RunLogistic(const json& c, const std::string& name) {
     const auto x = c.at("x").get<Matrix>();
-    // The reference is converged to 1e-12; so is the fit here.
+    // The reference is converged to 1e-12; so is the fit here (1e-6 in float32).
     const auto model = ClassicML::FitLogistic(x, c.at("y").get<std::vector<int>>(), c.at("n_classes").get<int>(),
-                                              c.at("C").get<double>(), 100000, 1e-12);
+                                              c.at("C").get<double>(), 100000,
+                                              DeviceTolerance(1e-12, 1e-6));
     Check(model.success, name + " fit: " + model.error_message);
-    CheckMatrix(model.coef, c.at("coef"), name + " coef", 1e-6);
+    CheckMatrix(model.coef, c.at("coef"), name + " coef", SolvedTolerance());
     const auto intercept = c.at("intercept").get<std::vector<double>>();
     Check(model.intercept.size() == intercept.size(), name + " intercept count");
-    for (size_t i = 0; i < intercept.size(); ++i) CheckValue(model.intercept[i], intercept[i], name + " intercept", 1e-6);
+    for (size_t i = 0; i < intercept.size(); ++i) CheckValue(model.intercept[i], intercept[i], name + " intercept", SolvedTolerance());
     const auto train = ClassicML::PredictLogistic(model, x);
     Check(train.success, name + " predict: " + train.error_message);
     CheckLabels(train.labels, c.at("predict"), name + " predict");
-    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", 1e-6);
+    CheckMatrix(train.probabilities, c.at("predict_proba"), name + " predict_proba", SolvedTolerance());
     const auto held_out = ClassicML::PredictLogistic(model, c.at("x_test").get<Matrix>());
     Check(held_out.success, name + " predict test: " + held_out.error_message);
     CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
-    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", 1e-6);
+    CheckMatrix(held_out.probabilities, c.at("predict_proba_test"), name + " predict_proba test", SolvedTolerance());
 }
 
 double SvmGamma(const json& c, const Matrix& x) {
@@ -142,7 +149,7 @@ void RunSVC(const json& c, const std::string& name) {
     const auto x = c.at("x").get<Matrix>();
     const auto model = ClassicML::FitSVC(x, c.at("y").get<std::vector<int>>(), c.at("n_classes").get<int>(),
                                          c.at("params").value("C", 1.0), SvmKernel(c), SvmGamma(c, x), SvmDegree(c),
-                                         SvmCoef0(c), 1e-9);
+                                         SvmCoef0(c), DeviceTolerance(1e-9, 1e-4));
     Check(model.success && model.converged, name + " fit: " + model.error_message);
     // Support vectors per class, as sklearn's n_support_.
     const auto n_support = c.at("n_support").get<std::vector<int>>();
@@ -167,7 +174,7 @@ void RunSVC(const json& c, const std::string& name) {
     Check(held_out.success, name + " predict test: " + held_out.error_message);
     CheckLabels(held_out.labels, c.at("predict_test"), name + " predict test");
     std::string error;
-    CheckMatrix(ClassicML::SVMDecision(model, x_test, &error), c.at("decision_test"), name + " decision " + error, 1e-6);
+    CheckMatrix(ClassicML::SVMDecision(model, x_test, &error), c.at("decision_test"), name + " decision " + error, SolvedTolerance());
 }
 
 void RunSVR(const json& c, const std::string& name) {
@@ -175,21 +182,21 @@ void RunSVR(const json& c, const std::string& name) {
     const auto& params = c.at("params");
     const auto model = ClassicML::FitSVR(x, c.at("t").get<std::vector<double>>(), params.value("C", 1.0),
                                          params.value("epsilon", 0.1), SvmKernel(c), SvmGamma(c, x), SvmDegree(c),
-                                         SvmCoef0(c), 1e-9);
+                                         SvmCoef0(c), DeviceTolerance(1e-9, 1e-4));
     Check(model.success && model.converged, name + " fit: " + model.error_message);
     Check(static_cast<int>(model.support_vectors.size()) == c.at("n_support").get<int>(),
           name + " support vectors: " + std::to_string(model.support_vectors.size()));
-    CheckValue(-model.rho.front(), c.at("intercept").get<double>(), name + " intercept", 1e-6);
+    CheckValue(-model.rho.front(), c.at("intercept").get<double>(), name + " intercept", SolvedTolerance());
     std::string error;
     const auto train = ClassicML::PredictSVR(model, x, &error);
     Check(!train.empty(), name + " predict: " + error);
     const auto expected = c.at("predict").get<std::vector<double>>();
-    for (size_t i = 0; i < expected.size(); ++i) CheckValue(train[i], expected[i], name + " predict", 1e-6);
+    for (size_t i = 0; i < expected.size(); ++i) CheckValue(train[i], expected[i], name + " predict", SolvedTolerance());
     const auto held_out = ClassicML::PredictSVR(model, c.at("x_test").get<Matrix>(), &error);
     const auto expected_test = c.at("predict_test").get<std::vector<double>>();
     Check(held_out.size() == expected_test.size(), name + " predict test: " + error);
     for (size_t i = 0; i < expected_test.size(); ++i)
-        CheckValue(held_out[i], expected_test[i], name + " predict test", 1e-6);
+        CheckValue(held_out[i], expected_test[i], name + " predict test", SolvedTolerance());
 }
 
 }  // namespace

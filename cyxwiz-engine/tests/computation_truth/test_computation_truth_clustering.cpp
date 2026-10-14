@@ -26,9 +26,13 @@ namespace {
 using json = nlohmann::json;
 using Matrix = std::vector<std::vector<double>>;
 using cyxwiz::Clustering;
+using cyxwiz::test::DeviceTolerance;
 
-constexpr double kTolerance = 1e-8;      // float64 on the device
-constexpr double kEmTolerance = 1e-5;    // EM stopped at a 1e-12 likelihood change
+// float64 rounding, or float32 rounding on a device without float64 (worst
+// measured on the Intel Iris Xe, TOFIX145 item 7: 4.9e-7).
+double Tolerance() { return DeviceTolerance(1e-8, 5e-5); }
+// EM stopped at a 1e-12 likelihood change.
+double EmTolerance() { return DeviceTolerance(1e-5, 1e-4); }
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -37,12 +41,12 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-void CheckValue(double actual, double expected, const std::string& what, double tolerance = kTolerance) {
+void CheckValue(double actual, double expected, const std::string& what, double tolerance = Tolerance()) {
     Check(std::abs(actual - expected) <= tolerance * (1.0 + std::abs(expected)),
           what + ": " + std::to_string(actual) + ", reference " + std::to_string(expected));
 }
 
-void CheckMatrix(const Matrix& actual, const Matrix& expected, const std::string& what, double tolerance = kTolerance) {
+void CheckMatrix(const Matrix& actual, const Matrix& expected, const std::string& what, double tolerance = Tolerance()) {
     Check(actual.size() == expected.size(), what + ": rows");
     for (size_t r = 0; r < expected.size(); ++r) {
         Check(actual[r].size() == expected[r].size(), what + ": cols");
@@ -96,7 +100,8 @@ void RunCase(const json& c, const std::string& name) {
                   static_cast<int>(result.inertia_history.size()) == result.n_iterations,
               name + ": converged with one inertia per iteration");
         for (size_t i = 1; i < result.inertia_history.size(); ++i) {
-            Check(result.inertia_history[i] <= result.inertia_history[i - 1] * (1.0 + 1e-12), name + ": inertia rose");
+            Check(result.inertia_history[i] <= result.inertia_history[i - 1] * (1.0 + DeviceTolerance(1e-12, 1e-6)),
+                  name + ": inertia rose");
         }
         return;
     }
@@ -149,13 +154,13 @@ void RunCase(const json& c, const std::string& name) {
         const auto covariances = c.at("covariances").get<std::vector<Matrix>>();
         for (const auto& [ours, theirs] : mapping) {
             const auto o = static_cast<size_t>(ours), t = static_cast<size_t>(theirs);
-            CheckMatrix({result.means[o]}, {means[t]}, name + " mean", kEmTolerance);
-            CheckValue(result.weights[o], weights[t], name + " weight", kEmTolerance);
-            CheckMatrix(result.covariances[o], covariances[t], name + " covariance", kEmTolerance);
+            CheckMatrix({result.means[o]}, {means[t]}, name + " mean", EmTolerance());
+            CheckValue(result.weights[o], weights[t], name + " weight", EmTolerance());
+            CheckMatrix(result.covariances[o], covariances[t], name + " covariance", EmTolerance());
         }
-        CheckValue(result.log_likelihood, c.at("log_likelihood").get<double>(), name + " log-likelihood", kEmTolerance);
-        CheckValue(result.bic, c.at("bic").get<double>(), name + " BIC", kEmTolerance);
-        CheckValue(result.aic, c.at("aic").get<double>(), name + " AIC", kEmTolerance);
+        CheckValue(result.log_likelihood, c.at("log_likelihood").get<double>(), name + " log-likelihood", EmTolerance());
+        CheckValue(result.bic, c.at("bic").get<double>(), name + " BIC", EmTolerance());
+        CheckValue(result.aic, c.at("aic").get<double>(), name + " AIC", EmTolerance());
         Check(result.converged, name + ": converged");
         return;
     }

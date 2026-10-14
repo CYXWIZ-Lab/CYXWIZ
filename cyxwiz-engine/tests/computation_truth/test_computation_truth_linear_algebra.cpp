@@ -24,8 +24,11 @@ namespace {
 
 using json = nlohmann::json;
 using Matrix = std::vector<std::vector<double>>;
+using cyxwiz::test::DeviceTolerance;
 
-constexpr double kTolerance = 1e-8;  // float64 on the device
+// float64 rounding, or float32 rounding on a device without float64 (worst
+// measured on the Intel Iris Xe, TOFIX145 item 7: 1.3e-6, symmetric eigenpairs).
+double Tolerance() { return DeviceTolerance(1e-8, 5e-5); }
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -35,7 +38,7 @@ void Check(bool condition, const std::string& message) {
 }
 
 void CheckValue(double actual, double expected, const std::string& what) {
-    Check(std::abs(actual - expected) <= kTolerance * (1.0 + std::abs(expected)),
+    Check(std::abs(actual - expected) <= Tolerance() * (1.0 + std::abs(expected)),
           what + ": " + std::to_string(actual) + ", PyTorch " + std::to_string(expected));
 }
 
@@ -177,7 +180,7 @@ void RunCase(const json& c, const std::string& name) {
             for (size_t i = 0; i < 2; ++i) {
                 const std::complex<double> av = A[i][0] * eigen.eigenvectors[0][j] + A[i][1] * eigen.eigenvectors[1][j];
                 const std::complex<double> lv = eigen.eigenvalues[j] * eigen.eigenvectors[i][j];
-                Check(std::abs(av - lv) <= kTolerance, name + ": A v = l v");
+                Check(std::abs(av - lv) <= Tolerance(), name + ": A v = l v");
             }
         }
         return;
