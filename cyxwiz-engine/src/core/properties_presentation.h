@@ -114,7 +114,15 @@ struct RawRow {
     bool cleanup_allowed = false;
     std::string cleanup_reason;
     std::vector<Chip> chips;
+    // A long or multi-line value (a query, a script) shows its first line;
+    // value_note says how much more there is, value_full keeps it for Copy.
+    std::string value_note;
+    std::string value_full;
 };
+
+// The raw table's value for `value`: unchanged when short and on one line,
+// else its first non-empty line cut to a width, with a note ("89 lines").
+RawRow MakeRawRow(std::string key, const std::string& value);
 
 struct View {
     Header header;

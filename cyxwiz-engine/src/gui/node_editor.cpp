@@ -457,12 +457,16 @@ void NodeEditor::Render() {
         // Use the same configuration path as the node context menu. Complex
         // nodes open their registered dialog; simple nodes focus Properties.
         // A collapsed subgraph expands (TOFIX147).
-        if (is_node_hovered && !is_pin_hovered &&
-            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            if (IsSubgraphNode(hovered_node_id)) {
-                RequestSubgraphAction(hovered_node_id, SubgraphRequest::Expand);
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            node_under_press_ = is_node_hovered && !is_pin_hovered ? hovered_node_id : -1;
+        }
+        if (node_under_press_ >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            const int clicked = node_under_press_;
+            node_under_press_ = -1;
+            if (IsSubgraphNode(clicked)) {
+                RequestSubgraphAction(clicked, SubgraphRequest::Expand);
             } else {
-                ConfigureNode(hovered_node_id);
+                ConfigureNode(clicked);
             }
         }
 

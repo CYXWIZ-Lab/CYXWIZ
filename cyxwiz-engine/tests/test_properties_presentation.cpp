@@ -225,6 +225,20 @@ int main() {
               "a stored parameter without a truth mapping is still listed raw");
     }
 
+    // ---- Long raw values (an SQL query) ----------------------------------------
+    {
+        const auto short_row = MakeRawRow("units", "128");
+        Check(short_row.value == "128" && short_row.value_note.empty() && short_row.value_full.empty(),
+              "a short value is shown as it is");
+        const std::string query = "\n-- base_corpus_v3, Tier 1\nWITH meta AS (VALUES 1)\nSELECT * FROM meta";
+        const auto long_row = MakeRawRow("query", query);
+        Check(long_row.value == "-- base_corpus_v3, Tier 1...", "a multi-line value shows its first line: " + long_row.value);
+        Check(long_row.value_note == "4 lines, " + std::to_string(query.size()) + " characters", "the note: " + long_row.value_note);
+        Check(long_row.value_full == query, "the full value is kept for Copy");
+        const auto wide_row = MakeRawRow("path", std::string(200, 'a'));
+        Check(wide_row.value.size() == 80 + 3 && wide_row.value_note == "200 characters", "a long single line is cut");
+    }
+
     // ---- Short labels ---------------------------------------------------------
     Check(ShortLabel("Generation Preview Max New Tokens", "Generation previews") == "Max New Tokens",
           "short label drops the group words");

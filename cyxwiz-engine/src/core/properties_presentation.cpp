@@ -176,6 +176,36 @@ std::string ShortLabel(const std::string& label, const std::string& group) {
     return out;
 }
 
+RawRow MakeRawRow(std::string key, const std::string& value) {
+    constexpr size_t kShownChars = 80;
+    RawRow row;
+    row.key = std::move(key);
+    const size_t lines = value.empty() ? 0 : 1 + static_cast<size_t>(std::count(value.begin(), value.end(), '\n'));
+    if (lines <= 1 && value.size() <= kShownChars) {
+        row.value = value;
+        return row;
+    }
+    std::string first;
+    size_t start = 0;
+    while (start < value.size()) {
+        const size_t end = value.find('\n', start);
+        std::string line = value.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") != std::string::npos) {
+            first = std::move(line);
+            break;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (first.size() > kShownChars) first = first.substr(0, kShownChars);
+    row.value = first + "...";
+    row.value_note = lines > 1 ? std::to_string(lines) + " lines, " + std::to_string(value.size()) + " characters"
+                               : std::to_string(value.size()) + " characters";
+    row.value_full = value;
+    return row;
+}
+
 View Build(const Inputs& in) {
     View v;
     if (!in.node) return v;
@@ -321,9 +351,7 @@ View Build(const Inputs& in) {
         }
     }
     for (const auto& raw : in.truth.raw_parameters) {
-        RawRow row;
-        row.key = raw.key;
-        row.value = raw.value;
+        RawRow row = MakeRawRow(raw.key, raw.value);
         row.maps_to = raw.maps_to;
         row.cleanup_allowed = raw.cleanup_allowed;
         row.cleanup_reason = raw.cleanup_reason;
@@ -332,7 +360,7 @@ View Build(const Inputs& in) {
     }
     for (const auto& [key, value] : node.parameters) {
         const bool listed = std::any_of(v.raw.begin(), v.raw.end(), [&key](const RawRow& r) { return r.key == key; });
-        if (!listed) v.raw.push_back(RawRow{key, value, {}, false, {}, {}});
+        if (!listed) v.raw.push_back(MakeRawRow(key, value));
     }
     v.has_executor = in.has_executor;
     return v;
