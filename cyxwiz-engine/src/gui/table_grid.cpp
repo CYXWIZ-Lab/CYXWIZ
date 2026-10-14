@@ -159,7 +159,12 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         return;
     }
 
-    if (ImGui::BeginTable(id, column_count, flags, size)) {
+    // Past one page the pager goes under the grid: keep its line free when
+    // the grid fills the space left (it was drawn out of view).
+    ImVec2 outer = size;
+    if (total_pages > 1 && outer.y == 0.0f) outer.y = -(ImGui::GetFrameHeightWithSpacing() + 4.0f);
+
+    if (ImGui::BeginTable(id, column_count, flags, outer)) {
         // The header row, the line numbers and the frozen data columns stay
         // in view while scrolling.
         const int freeze_cols = frozen_columns + (options.line_numbers ? 1 : 0);
