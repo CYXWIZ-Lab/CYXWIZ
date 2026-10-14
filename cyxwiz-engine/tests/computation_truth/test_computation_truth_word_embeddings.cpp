@@ -206,6 +206,12 @@ void RunRowMeans(const json& c, const fs::path& root) {
     CheckValues(means, c.at("values"), 1e-6, "row means");
     Check(WordEmbeddings::RowMeans(vectors.values, vectors.dim, {99}, 1, &error).empty(),
           "a token outside the table is refused");
+    // A block past 32-bit device offsets is refused before it reaches the device.
+    const int wide = 1 << 21;
+    Check(WordEmbeddings::RowMeans(std::vector<float>(wide, 0.0f), wide, std::vector<int>(1024, 0), 1024, &error)
+                  .empty() &&
+              error.find("too large") != std::string::npos,
+          "an oversized block is refused: " + error);
 }
 
 // Saved .vec text reads back as the same float32 values.

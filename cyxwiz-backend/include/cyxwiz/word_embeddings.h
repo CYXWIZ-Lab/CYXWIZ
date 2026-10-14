@@ -8,6 +8,7 @@
 #include "cyxwiz/api_export.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -61,6 +62,9 @@ struct CYXWIZ_API Word2VecOptions {
     int batch_size = 512;       // examples per device step
     unsigned seed = 1;
     size_t max_vocab = 0;       // keep the most frequent words only (0: all)
+    // Called after each device step with the share of training done (0..1) and
+    // the epoch; returning false stops the run (the model is then refused).
+    std::function<bool(double done, int epoch)> on_progress;
 };
 
 // One device step of word2vec with negative sampling: SGD on the sum of the
@@ -116,9 +120,9 @@ public:
 
     // The `k` words most similar to `word` by cosine similarity, most similar
     // first (the word itself left out), on the device. Empty when the word has
-    // no vector.
+    // no vector, or when the device fails (then `error` says why).
     static std::vector<std::pair<std::string, double>> Nearest(const WordVectors& vectors, const std::string& word,
-                                                                int k = 10);
+                                                                int k = 10, std::string* error = nullptr);
 
     // One vector per text row: the mean of its tokens' rows of `table`
     // (row-major [table_rows, dim]); `tokens` holds row-major token ids per text

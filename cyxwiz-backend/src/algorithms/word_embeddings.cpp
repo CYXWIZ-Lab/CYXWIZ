@@ -14,6 +14,7 @@
 #include <arrayfire.h>
 
 #include <algorithm>
+#include <limits>
 #include <charconv>
 #include <cstdint>
 #include <cmath>
@@ -199,7 +200,8 @@ bool WordEmbeddings::SaveText(const WordVectors& vectors, const std::string& pat
 }
 
 std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVectors& vectors,
-                                                                     const std::string& word, int k) {
+                                                                     const std::string& word, int k,
+                                                                     std::string* error) {
     std::vector<std::pair<std::string, double>> nearest;
     if (!vectors.success || vectors.dim <= 0 || k <= 0 ||
         vectors.values.size() != vectors.words.size() * static_cast<size_t>(vectors.dim))
@@ -230,8 +232,9 @@ std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVe
                                    "WordEmbeddings::Nearest", "top_k_rows");
         for (dim_t i = 0; i < take; ++i)
             nearest.emplace_back(vectors.words[rows[static_cast<size_t>(i)]], static_cast<double>(values[static_cast<size_t>(i)]));
-    } catch (const af::exception&) {
+    } catch (const af::exception& e) {
         nearest.clear();
+        if (error) *error = std::string("WordEmbeddings::Nearest failed on the ArrayFire device: ") + e.what();
     }
     return nearest;
 }
@@ -249,6 +252,10 @@ std::vector<float> WordEmbeddings::RowMeans(const std::vector<float>& table, int
     const int table_rows = static_cast<int>(table.size() / static_cast<size_t>(dim));
     for (const int id : tokens)
         if (id < -1 || id >= table_rows) return fail("A token id is outside the vector table");
+    // The gathered [rows, tokens_per_row, dim] block is indexed with 32-bit
+    // offsets on the device: a larger one reads out of bounds.
+    if (tokens.size() * static_cast<size_t>(dim) > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return fail("The block of rows x tokens x dim is too large for one device step; average fewer rows at a time");
     try {
         const dim_t rows = static_cast<dim_t>(tokens.size() / static_cast<size_t>(tokens_per_row));
         const dim_t width = tokens_per_row, d = dim;
