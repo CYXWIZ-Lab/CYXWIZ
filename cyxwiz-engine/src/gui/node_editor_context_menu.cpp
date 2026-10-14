@@ -92,6 +92,17 @@ void NodeEditor::ShowSingleNodeContextMenu() {
         ImGui::CloseCurrentPopup();
     }
 
+    if (node->type == NodeType::SQLQuery) {
+        if (ImGui::MenuItem(ICON_FA_PLUS " Add a guided step after")) {
+            RequestGuidedStepAfter(right_clicked_node_id_);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("A new step built from operations (no SQL) that reads this step's result; whatever "
+                              "read this step now reads the new one.");
+        }
+    }
+
     if (explain_node_callback_ &&
         ImGui::MenuItem(ICON_FA_BUG " Explain in Studio Debugger")) {
         explain_node_callback_(right_clicked_node_id_);

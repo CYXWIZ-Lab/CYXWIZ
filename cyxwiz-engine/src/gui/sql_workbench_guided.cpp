@@ -479,6 +479,19 @@ void SqlWorkbenchDialog::RenderGuidedCards(float height) {
             if (ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f),
                                   ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding)) {
                 if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) guided_picked_ = static_cast<int>(i);
+                // The grip drags the operation to another place in the list.
+                Coloured(ICON_FA_GRIP_VERTICAL, t.text_faint);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                    ImGui::SetTooltip("Drag to move this operation");
+                }
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    const int index = static_cast<int>(i);
+                    ImGui::SetDragDropPayload("GUIDED_OP", &index, sizeof(index));
+                    Coloured(std::to_string(i + 1) + ". " + (info ? info->name : op.type), t.text_bright);
+                    ImGui::EndDragDropSource();
+                }
+                ImGui::SameLine();
                 Coloured(std::to_string(i + 1), t.text_dim);
                 ImGui::SameLine();
                 Coloured(info ? info->name : op.type, op.on ? t.text_bright : t.text_dim);
@@ -532,12 +545,20 @@ void SqlWorkbenchDialog::RenderGuidedCards(float height) {
                 }
             }
             ImGui::EndChild();
+            // The whole card takes a dropped operation: it moves to this place.
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GUIDED_OP")) {
+                    move_from = *static_cast<const int*>(payload->Data);
+                    move_to = static_cast<int>(i);
+                }
+                ImGui::EndDragDropTarget();
+            }
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
             ImGui::PopID();
         }
-        if (move_from >= 0) {
-            std::swap(guided_.ops[static_cast<size_t>(move_from)], guided_.ops[static_cast<size_t>(move_to)]);
+        if (move_from >= 0 && move_from != move_to &&
+            guided::MoveOp(guided_, static_cast<size_t>(move_from), static_cast<size_t>(move_to))) {
             guided_picked_ = move_to;
             GuidedChanged(before);
         } else if (remove >= 0) {

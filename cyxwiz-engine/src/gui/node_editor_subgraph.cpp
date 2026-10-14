@@ -2,7 +2,9 @@
 #include "subgraph_presentation.h"
 #include "subgraph_document.h"
 #include "../core/graph_node_factory.h"
+#include "../core/guided_sql.h"
 #include "../core/preparation_recipe.h"
+#include "../core/sql_step_contract.h"
 #include "properties.h"
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -514,6 +516,79 @@ void NodeEditor::ApplySubgraphRequest() {
             }
             break;
     }
+}
+
+void NodeEditor::ApplyGuidedStepInsert() {
+    if (deferred_focus_.node_id >= 0) {
+        if (deferred_focus_.frames > 0) {
+            --deferred_focus_.frames;
+        } else {
+            FocusNode(deferred_focus_.node_id);
+            deferred_focus_ = {};
+        }
+    }
+    if (pending_guided_after_ < 0) return;
+    const int after_id = pending_guided_after_;
+    pending_guided_after_ = -1;
+    const MLNode* after = FindNodeById(after_id);
+    if (!after || after->type != NodeType::SQLQuery || after->outputs.empty()) return;
+    if (!CanReplaceGraph("add a guided step")) return;
+
+    SaveUndoState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
+    const int after_out = after->outputs.front().id;
+    // Below the step it follows: the place to its right usually holds the
+    // next node already.
+    ImVec2 position(after->initial_pos_x, after->initial_pos_y + 150.0f);
+    if (const auto cached = cached_node_positions_.find(after_id); cached != cached_node_positions_.end()) {
+        position = ImVec2(cached->second.x, cached->second.y + 150.0f);
+    }
+
+    // An empty guided step: its query passes the rows through until
+    // operations are added in the guided editor.
+    MLNode step = CreateNode(NodeType::SQLQuery, after->name + " (guided)");
+    const cyxwiz::guided::GuidedStep empty;
+    step.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(empty);
+    step.parameters["query"] = cyxwiz::guided::GenerateSql(empty, {}).sql;
+    step.parameters["input_alias"] = "input";
+    step.parameters[cyxwiz::kSqlContractParameter] = cyxwiz::kSqlContractVersion;
+    step.initial_pos_x = position.x;
+    step.initial_pos_y = position.y;
+    step.has_initial_position = true;
+    if (step.inputs.empty() || step.outputs.empty()) {
+        spdlog::error("A new SQL step has no pins; nothing added");
+        return;
+    }
+    const int step_in = step.inputs.front().id;
+    const int step_out = step.outputs.front().id;
+
+    // The new step takes over what read the old step's result.
+    for (auto& link : links_) {
+        if (link.from_node == after_id && link.from_pin == after_out) {
+            link.from_node = step.id;
+            link.from_pin = step_out;
+        }
+    }
+    links_.push_back({next_link_id_++, after_id, after_out, step.id, step_in, LinkType::TensorFlow});
+    // Inside a recipe it becomes a step of that recipe, and its output when
+    // the old step was.
+    for (auto& data : subgraphs_) {
+        const bool member = std::any_of(data.internal_nodes.begin(), data.internal_nodes.end(),
+                                        [&](const MLNode& internal) { return internal.id == after_id; });
+        if (!member) continue;
+        data.internal_nodes.push_back(step);
+        for (int& pin : data.output_pin_mappings) {
+            if (pin == after_out) pin = step_out;
+        }
+    }
+    const int step_id = step.id;
+    nodes_.push_back(std::move(step));
+    pending_positions_[step_id] = position;
+    pending_positions_frames_ = 3;
+    RebuildPinLookup();
+    ClearValidationState();
+    deferred_focus_ = {step_id, 2};
+    spdlog::info("Added guided step {} after SQL step {}", step_id, after_id);
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {

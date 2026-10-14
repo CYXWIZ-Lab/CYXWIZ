@@ -1324,7 +1324,10 @@ void TokenizerDialog::RenderPaddingTab() {
         if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
         if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
         if (ImGui::InputText("Response column (optional)", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
-        ImGui::TextWrapped("With a response column, each row is one window (text, then response + EOS) and only the response tokens are trained; it needs an existing vocabulary file.");
+        ImGui::TextWrapped("Response column (supervised fine-tuning): each row becomes one window, the text (the prompt) "
+                           "then the response (the answer) + EOS, and the loss counts only the answer's tokens, so the "
+                           "model learns to answer instead of repeating the prompt. Needs an existing vocabulary file. "
+                           "Empty = ordinary windows where every token is a target.");
         ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
     } else if (token_output_mode_ == 2) {
         if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;

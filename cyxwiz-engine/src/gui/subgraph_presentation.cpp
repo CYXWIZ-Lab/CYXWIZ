@@ -1,9 +1,11 @@
 #include "subgraph_presentation.h"
+#include "ui_buttons.h"
 #include <imnodes.h>
 #include <algorithm>
 #include <cfloat>
 
 namespace gui::detail {
+namespace ui = cyxwiz::ui;
 namespace {
 const MLNode* FindNode(const std::vector<MLNode>& nodes, int id) {
     const auto it = std::find_if(nodes.begin(), nodes.end(),
@@ -71,9 +73,9 @@ bool CrossesExpandedSubgraphBoundary(int from, int to, const std::vector<Subgrap
     return ExpandedOwner(from, subgraphs) != ExpandedOwner(to, subgraphs);
 }
 
-int DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
-    const std::vector<SubgraphData>& subgraphs, float zoom, const std::string& busy_reason) {
-    int collapse = -1;
+SubgraphFrameActions DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
+    const std::vector<SubgraphData>& subgraphs, float zoom, const std::string& busy_reason, int selected) {
+    SubgraphFrameActions actions;
     auto* draw = ImGui::GetWindowDrawList();
     const int original_channel = draw->_Splitter._Current;
     const ImVec2 original_cursor = ImGui::GetCursorScreenPos();
@@ -119,25 +121,37 @@ int DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes,
         maximum.x = std::max(maximum.x, minimum.x + ImGui::CalcTextSize(title.c_str()).x + button_width + 42.0f * zoom);
         const ImVec2 header_end(maximum.x, minimum.y + header);
         draw->AddRectFilled(minimum, maximum, NodeStyleColour(ImNodesCol_TitleBar, 30.0f / 255.0f), 7.0f * zoom);
-        draw->AddRectFilled(minimum, header_end, NodeStyleColour(ImNodesCol_TitleBar, 235.0f / 255.0f), 7.0f * zoom,
-                            ImDrawFlags_RoundCornersTop);
+        const bool picked = selected == data.subgraph_node_id;
+        draw->AddRectFilled(minimum, header_end,
+                            NodeStyleColour(picked ? ImNodesCol_TitleBarSelected : ImNodesCol_TitleBar, 235.0f / 255.0f),
+                            7.0f * zoom, ImDrawFlags_RoundCornersTop);
         draw->AddRect(minimum, maximum, NodeStyleColour(ImNodesCol_TitleBarSelected, 210.0f / 255.0f), 7.0f * zoom, 0, 1.5f * zoom);
         draw->AddText(ImVec2(minimum.x + 10.0f * zoom, minimum.y + 6.0f * zoom),
                       ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
         ImGui::PushID(data.subgraph_node_id);
-        ImGui::SetCursorScreenPos(ImVec2(maximum.x - button_width - 6.0f * zoom, minimum.y + 6.0f * zoom));
-        ImGui::BeginDisabled(!busy_reason.empty());
-        if (ImGui::Button("Collapse", ImVec2(button_width, ImGui::GetFrameHeight()))) collapse = data.subgraph_node_id;
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("%s", busy_reason.empty()
-                ? "Show this group as one node. Collapse first to change external connections."
-                : busy_reason.c_str());
+        // The header, left of the button, selects the subgraph: its Properties
+        // view (role, steps, Collapse, the role switch) while it is expanded.
+        const float header_w = maximum.x - minimum.x - button_width - 12.0f * zoom;
+        ImGui::SetCursorScreenPos(minimum);
+        if (header_w > 0.0f && ImGui::InvisibleButton("##frame_header", ImVec2(header_w, header))) {
+            actions.select = data.subgraph_node_id;
         }
+        if (ImGui::IsItemHovered()) {
+            actions.header_hovered = true;
+            ImGui::SetTooltip("Click to show this subgraph in Properties");
+        }
+        ImGui::SetCursorScreenPos(ImVec2(maximum.x - button_width - 6.0f * zoom, minimum.y + 6.0f * zoom));
+        const char* collapse_tip = busy_reason.empty()
+            ? "Show this group as one node. Collapse first to change external connections."
+            : busy_reason.c_str();
+        if (ui::SecondaryButton("Collapse", busy_reason.empty(), busy_reason.c_str(), ui::ButtonSize::Small, button_width)) {
+            actions.collapse = data.subgraph_node_id;
+        }
+        if (busy_reason.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", collapse_tip);
         ImGui::PopID();
     }
     ImGui::SetCursorScreenPos(original_cursor);
     draw->ChannelsSetCurrent(original_channel);
-    return collapse;
+    return actions;
 }
 }

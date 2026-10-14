@@ -1353,7 +1353,12 @@ void DataLoaderDialog::RenderContent() {
     if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_))) {
         has_changes_ = true;
     }
-    ImGui::TextDisabled("  Optional checkpoint folder (e.g. .../train-<id>/best): fine-tune from its weights; optimizer, schedule and epochs start fresh.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("  Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights are this "
+                        "model's starting point and every layer keeps training on this data (full fine-tuning; nothing is "
+                        "frozen). Optimizer, schedule, epochs and seed start fresh. Layer names, shapes and the tokenizer "
+                        "must match. Empty = random weights.");
+    ImGui::PopTextWrapPos();
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Performance");

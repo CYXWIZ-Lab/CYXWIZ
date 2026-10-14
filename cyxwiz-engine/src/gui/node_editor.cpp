@@ -231,6 +231,7 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 
 void NodeEditor::Render() {
     ApplySubgraphRequest();
+    ApplyGuidedStepInsert();
     if (!show_window_) return;
 
     SyncParameterDrivenPins();
@@ -343,8 +344,8 @@ void NodeEditor::Render() {
         RenderFrames();
 
         RenderNodes();
-        const int collapse_subgraph = detail::DrawExpandedSubgraphFrames(
-            nodes_, subgraphs_, zoom_, GetGraphReplacementBlockReason());
+        const auto frame_actions = detail::DrawExpandedSubgraphFrames(
+            nodes_, subgraphs_, zoom_, GetGraphReplacementBlockReason(), frame_selected_subgraph_id_);
 
         // Handle mouse wheel zoom (skip if mouse is over minimap)
         if (ImGui::IsWindowHovered() && !mouse_in_minimap_bounds) {
@@ -455,9 +456,14 @@ void NodeEditor::Render() {
 
         // Use the same configuration path as the node context menu. Complex
         // nodes open their registered dialog; simple nodes focus Properties.
+        // A collapsed subgraph expands (TOFIX147).
         if (is_node_hovered && !is_pin_hovered &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            ConfigureNode(hovered_node_id);
+            if (IsSubgraphNode(hovered_node_id)) {
+                RequestSubgraphAction(hovered_node_id, SubgraphRequest::Expand);
+            } else {
+                ConfigureNode(hovered_node_id);
+            }
         }
 
         // A link whose end has a compile error explains itself on hover
@@ -645,7 +651,24 @@ void NodeEditor::Render() {
         // Handle interactions AFTER EndNodeEditor() - this is when ImNodes processes them
         HandleInteractions();
         // Frame controls queue mutations until ImNodes has finished this frame.
-        if (collapse_subgraph >= 0) CollapseSubgraph(collapse_subgraph);
+        if (frame_actions.collapse >= 0) {
+            frame_selected_subgraph_id_ = -1;
+            CollapseSubgraph(frame_actions.collapse);
+        }
+        if (frame_actions.select >= 0) {
+            // The wrapper of an expanded subgraph is not an ImNodes node, so
+            // its selection lives here, beside ImNodes' selection.
+            ImNodes::ClearNodeSelection();
+            selected_node_ids_.clear();
+            selected_node_id_ = -1;
+            frame_selected_subgraph_id_ = frame_actions.select;
+        } else if (frame_selected_subgraph_id_ >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                   ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && !frame_actions.header_hovered) {
+            // A click anywhere else on the canvas ends it (a node click then
+            // selects that node below).
+            frame_selected_subgraph_id_ = -1;
+            if (properties_panel_) properties_panel_->ClearSelection();
+        }
 
         // Handle keyboard shortcuts (Ctrl+Z, Ctrl+C, etc.)
         HandleKeyboardShortcuts();
@@ -737,6 +760,19 @@ void NodeEditor::Render() {
                 spdlog::info("Node deselected");
                 selected_node_id_ = -1;
                 properties_panel_->ClearSelection();
+            }
+            if (num_selected > 0) frame_selected_subgraph_id_ = -1;
+            if (frame_selected_subgraph_id_ >= 0) {
+                // Re-resolved every frame, like a canvas selection; it ends when
+                // the subgraph collapses or is gone.
+                const SubgraphData* data = GetSubgraphData(frame_selected_subgraph_id_);
+                MLNode* wrapper = data && data->expanded ? FindNodeById(frame_selected_subgraph_id_) : nullptr;
+                if (wrapper) {
+                    properties_panel_->SetSelectedNode(wrapper);
+                } else {
+                    frame_selected_subgraph_id_ = -1;
+                    properties_panel_->ClearSelection();
+                }
             }
         }
     }

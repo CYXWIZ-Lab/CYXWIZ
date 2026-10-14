@@ -60,6 +60,10 @@ struct GuidedStep {
 // column for it (the first text column of its input).
 nlohmann::json DefaultParams(std::string_view type, const std::string& column);
 
+// Moves the operation at `from` so it ends up at index `to` (the others keep
+// their order). Returns false, changing nothing, when either index is out of range.
+bool MoveOp(GuidedStep& step, size_t from, size_t to);
+
 std::string ToJson(const GuidedStep& step);
 std::optional<GuidedStep> FromJson(std::string_view text, std::string* error = nullptr);
 

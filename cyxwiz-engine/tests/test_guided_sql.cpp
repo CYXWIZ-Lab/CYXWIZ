@@ -160,7 +160,41 @@ void TestEveryOperationGenerates() {
 }
 }  // namespace
 
+void TestEmptyStepPassesThrough() {
+    // "Add a guided step after" (TOFIX147) starts with no operations: the
+    // step must still run, passing its input through unchanged.
+    const guided::GuidedStep empty;
+    const auto generated = guided::GenerateSql(empty, {});
+    Check(generated.ok, "an empty guided step is valid");
+    Check(generated.sql.find("SELECT * FROM \"input\"") != std::string::npos &&
+              generated.sql.find("WITH") == std::string::npos,
+          "an empty guided step reads its input unchanged: " + generated.sql);
+    const auto again = guided::FromJson(guided::ToJson(empty));
+    Check(again && again->ops.empty(), "an empty guided step round-trips through guided_ops");
+}
+
+void TestMoveOp() {
+    guided::GuidedStep step;
+    for (const char* type : {"keep_rows", "sort_rows", "number_rows", "add_checks"}) {
+        guided::Operation op;
+        op.type = type;
+        step.ops.push_back(op);
+    }
+    const auto order = [&] {
+        std::string out;
+        for (const auto& op : step.ops) out += op.type.substr(0, 2);
+        return out;
+    };
+    Check(guided::MoveOp(step, 0, 2) && order() == "sonuke" + std::string("ad"), "move down: first lands third");
+    Check(guided::MoveOp(step, 3, 0) && order() == "adsonuke", "move up: last lands first");
+    Check(guided::MoveOp(step, 1, 1) && order() == "adsonuke", "move to itself changes nothing");
+    Check(!guided::MoveOp(step, 4, 0) && !guided::MoveOp(step, 0, 4) && order() == "adsonuke",
+          "out of range is refused and changes nothing");
+}
+
 int main() {
+    TestMoveOp();
+    TestEmptyStepPassesThrough();
     TestLibrary();
     TestJson();
     TestColumnsAndSql();

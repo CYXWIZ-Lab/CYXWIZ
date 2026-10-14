@@ -385,12 +385,21 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
                 NotifyEdited();
             }
             if (ui::SecondaryButton("Edit in guided editor")) ConfigureNode(&node);
+            ImGui::SameLine();
+            if (ui::SecondaryButton("Add a guided step after") && node_editor_) {
+                node_editor_->RequestGuidedStepAfter(node.id);
+            }
         } else if (BeginCard("##sql_guided_note")) {
             ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
             ImGui::TextUnformatted("This step was written in SQL");
             ImGui::PopStyleColor();
-            DimText("Guided mode shows what each part does in plain words (below). To build it from operations "
-                    "instead, open the SQL Workbench and choose Guided.");
+            DimText("Guided mode shows what each part does in plain words (below). To change the result without "
+                    "SQL, add a guided step after this one; to rebuild this step from operations, open the SQL "
+                    "Workbench and choose Guided.");
+            if (ui::SecondaryButton("Add a guided step after") && node_editor_) {
+                node_editor_->RequestGuidedStepAfter(node.id);
+            }
+            ImGui::SameLine();
             if (ui::SecondaryButton("Open SQL Workbench")) ConfigureNode(&node);
         }
         if (!guided_step) EndCard();
