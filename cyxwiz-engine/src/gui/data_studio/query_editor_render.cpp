@@ -176,7 +176,7 @@ void QueryEditor::RenderResult() {
     if (!save_note_.empty()) ImGui::TextColored(t.text_dim, "%s", save_note_.c_str());
 
     // The Table Viewer's grid on the window background: sort, select, copy.
-    result_grid_.Render("##query_results");
+    result_grid_.Render("##query_result_grid");
 }
 
 }  // namespace cyxwiz

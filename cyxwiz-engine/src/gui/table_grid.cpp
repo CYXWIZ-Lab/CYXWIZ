@@ -145,7 +145,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
     ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
-                           ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable |
+                           ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate |
                            ImGuiTableFlags_SizingFixedFit;
 
     int column_count = static_cast<int>(col_count);
@@ -160,14 +160,10 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
     }
 
     if (ImGui::BeginTable(id, column_count, flags, size)) {
-        // Apply column freeze for horizontal scrolling
-        // frozen_columns + 1 if line numbers are shown (line number column + frozen data columns)
-        // 1 row frozen for header
-        int freeze_cols = frozen_columns;
-        if (options.line_numbers && freeze_cols > 0) {
-            freeze_cols++;  // Account for line number column
-        }
-        ImGui::TableSetupScrollFreeze(freeze_cols, 1);  // Freeze columns + 1 header row
+        // The header row, the line numbers and the frozen data columns stay
+        // in view while scrolling.
+        const int freeze_cols = frozen_columns + (options.line_numbers ? 1 : 0);
+        ImGui::TableSetupScrollFreeze(freeze_cols, 1);
 
         // Setup columns with type indicators and sort arrows
         if (options.line_numbers) {
@@ -188,7 +184,7 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                 }
             }
 
-            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_DefaultSort, initial_widths_[i]);
+            ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_None, initial_widths_[i]);
         }
 
         // -----------------------------------------------------------
@@ -235,9 +231,16 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
             }
         }
 
-        // Handle ImGui's built-in sorting
+        // Handle ImGui's built-in sorting: a header click cycles ascending,
+        // descending, unsorted (the table's own order; also how it opens).
         if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
-            if (sort_specs->SpecsDirty && sort_specs->SpecsCount > 0) {
+            if (sort_specs->SpecsDirty && sort_specs->SpecsCount == 0) {
+                sort_column = -1;
+                sorted_indices.resize(row_count);
+                std::iota(sorted_indices.begin(), sorted_indices.end(), size_t(0));
+                if (Hiding()) ApplyFilter();
+                sort_specs->SpecsDirty = false;
+            } else if (sort_specs->SpecsDirty) {
                 const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
                 int sort_col = spec.ColumnIndex;
                 if (options.line_numbers) sort_col--;  // Adjust for line number column
@@ -441,7 +444,9 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
                             const ImVec4 colour = is_null ? tk.text_faint : has_filter_match ? tk.warning : tk.text;
                             ImGui::GetWindowDrawList()->AddText(text_pos, ui::ToU32(colour), shown);
                         }
-                        if (shortened && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                        // The whole value on hover when the cell shows only part of it.
+                        const bool clipped = shortened || ImGui::CalcTextSize(shown).x > ImGui::GetItemRectSize().x;
+                        if (clipped && !is_null && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
                             ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(640.0f, 420.0f));
                             ImGui::BeginTooltip();
                             ImGui::PushTextWrapPos(620.0f);

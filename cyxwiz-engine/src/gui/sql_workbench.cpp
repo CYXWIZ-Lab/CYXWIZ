@@ -929,7 +929,7 @@ void SqlWorkbenchDialog::RenderResults() {
         open_table_(result_dataset_, step_name_ + " " + result_label_);
     }
     // The Table Viewer's grid: sort, select, copy; Open in Table Viewer for more.
-    result_grid_.Render("##wb_results");
+    result_grid_.Render("##wb_result_grid");
 }
 
 void SqlWorkbenchDialog::RenderProfile() {

@@ -521,7 +521,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
             const float rows_h = ImGui::GetTextLineHeightWithSpacing() *
                                  static_cast<float>(view.preview.table->GetRowCount() + 1) +
                                  ImGui::GetStyle().ScrollbarSize + 4.0f;
-            view.preview.Render("##sql_preview", ImVec2(0.0f, rows_h));
+            view.preview.Render("##sql_preview_grid", ImVec2(0.0f, rows_h));
         } else if (ran) {
             DimText("The output is not in memory any more; run the step again to see it.");
         }
