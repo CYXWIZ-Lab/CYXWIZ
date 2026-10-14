@@ -754,6 +754,9 @@ void AssetBrowserPanel::RenderDirectoryView() {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.y > 10.0f) {  // Only if there's enough space
         ImGui::InvisibleButton("##RootDropTarget", ImVec2(-1, avail.y));
+        // The project menu (Render's BeginPopupContextWindow, same window and
+        // id) skips items, and this button is one: open it from here.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("AssetEmptyContextMenu");
 
         // Handle drop to project root
         if (ImGui::BeginDragDropTarget()) {
