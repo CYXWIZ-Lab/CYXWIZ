@@ -19,6 +19,11 @@ DataStudioPanel::DataStudioPanel() {
     query_editor_ = std::make_unique<QueryEditor>();
     profile_ = std::make_unique<ProfileView>();
     visualizer_ = std::make_unique<Visualizer>();
+    prepare_ = std::make_unique<PrepareView>();
+    prepare_->raise_canvas = [this] {
+        if (open_node_editor_callback_) open_node_editor_callback_();
+    };
+    prepare_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();
     readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };
     readiness_->on_show_node = [this](int id) { ShowOnCanvas({id}); };
@@ -128,6 +133,7 @@ void DataStudioPanel::RefreshView() {
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
+    if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
     if (readiness_) {
         readiness_->SetSplitSets(view_.split_sets, view_.balance);
         // The tab's caption says what the last check found ("5 · no leakage").

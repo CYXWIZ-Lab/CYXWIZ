@@ -415,6 +415,28 @@ bool NodeEditor::SetSubgraphPreparationRecipe(int node_id, bool recipe) {
     return true;
 }
 
+const MLNode* NodeEditor::FindStep(int node_id) const {
+    if (const MLNode* node = FindNodeById(node_id)) return node;
+    for (const auto& data : subgraphs_)
+        for (const auto& internal : data.internal_nodes)
+            if (internal.id == node_id) return &internal;
+    return nullptr;
+}
+
+bool NodeEditor::SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
+                                   const std::vector<std::string>& erase) {
+    MLNode* node = FindNodeById(node_id);
+    for (auto it = subgraphs_.begin(); !node && it != subgraphs_.end(); ++it)
+        for (auto& internal : it->internal_nodes)
+            if (internal.id == node_id) node = &internal;
+    if (!node) return false;
+    SaveUndoState();
+    for (const auto& [key, value] : values) node->parameters[key] = value;
+    for (const auto& key : erase) node->parameters.erase(key);
+    spdlog::debug("Set {} parameter(s) of node {} ({})", values.size() + erase.size(), node_id, node->name);
+    return true;
+}
+
 NodeEditor::SubgraphSummary NodeEditor::GetSubgraphSummary(int node_id) const {
     SubgraphSummary summary;
     const MLNode* wrapper = FindNodeById(node_id);

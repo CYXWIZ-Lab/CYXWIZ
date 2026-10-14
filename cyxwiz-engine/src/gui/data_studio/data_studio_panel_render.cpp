@@ -254,6 +254,10 @@ void DataStudioPanel::RenderJobBody() {
         RenderBringIn();
         return;
     }
+    if (job_ == studio::Job::Prepare) {
+        if (prepare_) prepare_->Render();
+        return;
+    }
     if (job_ == studio::Job::Ready) {
         if (readiness_) readiness_->Render();
         return;

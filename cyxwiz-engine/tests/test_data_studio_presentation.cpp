@@ -207,6 +207,22 @@ int main() {
               "split names");
     }
 
+    // Prepare's step list: the tier1 recipe after its run.
+    {
+        const auto rows = StepRows({in.nodes[2], in.nodes[3], Node(500, NodeType::FilterRows, "Keep admitted")});
+        Check(rows.size() == 3 && rows[0].sql && rows[0].kind == "SQL Query" && rows[0].meta == "failed" &&
+                  rows[0].tone == Tone::Error && rows[0].tip.find("Binder Error") != std::string::npos,
+              "a failed SQL step");
+        Check(rows[1].kind == "Row Count Check" && rows[1].meta == "failed" && !rows[1].sql, "a failed check");
+        Check(rows[2].kind == "step node" && rows[2].meta == "not run", "a step node not run");
+        const auto ran = StepRows({Ran(Node(162, NodeType::SQLQuery, "tier1_paragraphs"), 15349, 13, 3.1, "12:39:04", "ds_sql_162"),
+                                   Ran(Node(347, NodeType::RowCountCheck, "Check: paragraphs"), 15349, 13, 0.1, "12:39:05",
+                                       "ds_check_347", "passed: 15349 rows")});
+        Check(ran[0].meta == "15,349 rows \xC2\xB7 3.1 s" && ran[1].meta == "pass" && ran[1].tone == Tone::Ok &&
+                  ran[1].tip == "passed: 15349 rows",
+              "a run step and a passing check: " + ran[0].meta);
+    }
+
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");
     std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names). OK\n";
     return 0;

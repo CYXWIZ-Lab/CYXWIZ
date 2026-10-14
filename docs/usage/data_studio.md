@@ -27,8 +27,8 @@ Data Pipeline executor.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
   stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage*,
-  *1 output*). Bring in, Explore and ML readiness are built; the other jobs
-  list their nodes and are being built (TOFIX148).
+  *1 output*). Bring in, Explore, Prepare and ML readiness are built; the
+  other jobs list their nodes and are being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Row Count Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
@@ -202,6 +202,40 @@ settings as the Dashboard.
   greyed, with the reason), plus **New Dashboard node on Spotify**, which
   adds a Dashboard connected to the Data Input with the automatic layout
   and this plot. The dashboard opens with the plot selected.
+
+## Prepare
+
+The graph's Preparation Recipe, step by step. On the left, **RECIPE STEPS
+(NODES)**: each step node in run order with its kind and its last run
+(*SQL Query - 15,349 rows - 3.3 s*, *Row Count Check - pass*, *failed* in red
+with the error on hover, *not run*). Click a step to show it; double-click to
+show it on the canvas. A graph with several recipes lists them first; nodes
+that prepare data outside a recipe are listed as *Steps outside a recipe*.
+
+**An SQL step** opens in the SQL Workbench's editor (highlighting,
+completion with its inputs' columns once they are loaded, find, Format).
+The header names the step, *SQL Query node* and what it reads.
+
+- **Run step** (Ctrl+Enter in the editor) saves the query to the step, then
+  runs the Data Pipeline through it and its Row Count Checks. The rows it
+  made show below (*15,349 rows - 13 columns - at 21:16:55*, the first 1,000
+  in the grid) with the rows each part of the query keeps (*src 7 > parts
+  17,083 > kept 15,385 > result 15,349*). The checks' *pass* / *fail* show in
+  the step list.
+- **Save to step** writes the query into the node without running it, also
+  inside a collapsed recipe; Ctrl+Z on the canvas undoes it. *not saved*
+  shows while the editor differs from the step; **Reset** goes back to it.
+- **Open in Workbench** opens the step's SQL Workbench dialog (Plan,
+  Parts, Guided mode); a collapsed recipe opens on the canvas first.
+- **Add a step after** adds an **SQL step** or a **Guided step** after this
+  one in the recipe (on the canvas, which opens a collapsed recipe).
+
+A guided step's SQL is made from its operations; Prepare shows it read-only
+and its operations are edited in the Workbench's Guided mode.
+
+**Other steps** (a Row Count Check, a step node) show their last outcome,
+their settings as saved in the graph, **Run step**, **Open dialog** and
+**Show on canvas**; settings are changed in the node's dialog.
 
 ## ML readiness
 

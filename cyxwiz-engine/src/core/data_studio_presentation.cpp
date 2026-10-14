@@ -190,6 +190,33 @@ void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
 
 }  // namespace
 
+std::vector<StepRow> StepRows(const std::vector<GraphNode>& steps) {
+    std::vector<StepRow> rows;
+    for (const auto& n : steps) {
+        StepRow r;
+        r.id = n.id;
+        r.name = n.name;
+        const char* kind = TypeLabel(n.type);
+        r.kind = kind ? kind : "step node";
+        r.sql = n.type == NodeType::SQLQuery;
+        if (!n.error.empty()) {
+            r.meta = "failed";
+            r.tip = n.error;
+            r.tone = Tone::Error;
+        } else if (IsCheck(n) && n.ran) {
+            r.meta = CheckPassed(n) ? "pass" : "fail";
+            r.tip = n.outcome;
+            r.tone = CheckPassed(n) ? Tone::Ok : Tone::Error;
+        } else if (n.ran && n.rows >= 0) {
+            r.meta = Thousands(n.rows) + " rows \xC2\xB7 " + Seconds(n.seconds);
+        } else {
+            r.meta = "not run";
+        }
+        rows.push_back(std::move(r));
+    }
+    return rows;
+}
+
 std::string SplitOfName(const std::string& name, std::string* stem) {
     static const std::pair<const char*, const char*> kSuffixes[] = {
         {"train", "train"},           {"training", "train"}, {"validation", "validation"}, {"valid", "validation"},

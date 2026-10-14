@@ -124,6 +124,18 @@ struct View {
 
 View Build(const Input& input);
 
+// Prepare: a recipe's steps in run order as its step list shows them.
+struct StepRow {
+    int id = -1;
+    std::string name;          // "tier1_paragraphs"
+    std::string kind;          // "SQL Query", "Row Count Check", "step node"
+    std::string meta;          // "15,349 rows · 3.1 s", "pass", "failed", "not run"
+    std::string tip;           // the error or a check's outcome
+    Tone tone = Tone::Plain;
+    bool sql = false;          // edited in place (an SQL Query step)
+};
+std::vector<StepRow> StepRows(const std::vector<GraphNode>& steps);
+
 // The split a dataset name ends in ("documents_train" -> "train", stem
 // "documents"); "" when none.
 std::string SplitOfName(const std::string& name, std::string* stem = nullptr);

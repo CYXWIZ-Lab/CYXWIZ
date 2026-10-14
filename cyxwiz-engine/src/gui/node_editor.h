@@ -608,6 +608,14 @@ public:
     void RequestSqlStepAfter(int sql_step_id, std::string name, std::string query) {
         pending_step_after_ = {sql_step_id, false, std::move(name), std::move(query)};
     }
+    // A node by id, also a step inside a collapsed recipe (its stored copy;
+    // the canvas copy while expanded). Null when the graph has none.
+    const MLNode* FindStep(int node_id) const;
+    // Sets (and erases) parameters of a node or a collapsed recipe's step
+    // (Data Studio's Prepare saves an SQL step's query this way), with an undo
+    // point. False when the graph has no such node.
+    bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
+                           const std::vector<std::string>& erase = {});
 
 private:
     void ShowToolbar();

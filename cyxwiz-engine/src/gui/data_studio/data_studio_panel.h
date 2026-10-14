@@ -12,6 +12,7 @@
 #include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "prepare_view.h"
 #include "readiness_view.h"
 #include "visualizer.h"
 #include <imgui.h>
@@ -65,6 +66,7 @@ private:
 
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ReadinessView> readiness_;
     std::unique_ptr<Visualizer> visualizer_;
 
