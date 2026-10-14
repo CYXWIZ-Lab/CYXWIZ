@@ -136,6 +136,7 @@ set(ENGINE_SOURCES
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
     src/core/dataset_picker_presentation.cpp
+    src/core/data_studio_presentation.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -5309,6 +5310,18 @@ set_target_properties(test_dataset_picker_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME dataset_picker_presentation COMMAND test_dataset_picker_presentation)
+
+# ===== Test: Data Studio shell model (TOFIX148 step 3) =====
+add_executable(test_data_studio_presentation
+    tests/test_data_studio_presentation.cpp
+    src/core/data_studio_presentation.cpp
+)
+target_include_directories(test_data_studio_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_data_studio_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
 
 # ===== Test: hypothesis-test distributions against scipy (TOFIX140 analysis panels) =====
 add_executable(test_data_analyzer_distributions
