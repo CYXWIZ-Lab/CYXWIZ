@@ -228,6 +228,7 @@ std::shared_ptr<arrow::DataType> ArrowTypeForDuckDBType(const duckdb::LogicalTyp
         case duckdb::LogicalTypeId::FLOAT:
             return arrow::float32();
         case duckdb::LogicalTypeId::DOUBLE:
+        case duckdb::LogicalTypeId::DECIMAL:  // 0.1, 1234567.5, SUM of decimals: numbers
             return arrow::float64();
         default:
             return arrow::utf8();
@@ -254,6 +255,7 @@ MakeArrowBuilderForDuckDBType(const duckdb::LogicalType& type) {
         case duckdb::LogicalTypeId::FLOAT:
             return std::make_unique<arrow::FloatBuilder>();
         case duckdb::LogicalTypeId::DOUBLE:
+        case duckdb::LogicalTypeId::DECIMAL:
             return std::make_unique<arrow::DoubleBuilder>();
         default:
             return std::make_unique<arrow::StringBuilder>();
@@ -301,6 +303,7 @@ arrow::Status AppendDuckDBValueToArrowBuilder(
             return static_cast<arrow::FloatBuilder*>(builder)->Append(
                 value.GetValue<float>());
         case duckdb::LogicalTypeId::DOUBLE:
+        case duckdb::LogicalTypeId::DECIMAL:
             return static_cast<arrow::DoubleBuilder*>(builder)->Append(
                 value.GetValue<double>());
         default:

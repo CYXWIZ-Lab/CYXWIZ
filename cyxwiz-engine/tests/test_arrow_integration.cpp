@@ -317,6 +317,16 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(selected != nullptr, "SelectColumns convenience method");
     TEST_ASSERT(selected->num_columns() == 2, "2 columns selected");
 
+    // DECIMAL results (DuckDB's type for 0.1) are numbers, not text.
+    auto decimals = db.Query("SELECT 0.1 AS tenth, 1234567.5 AS big, CAST(NULL AS DECIMAL(4,1)) AS none");
+    TEST_ASSERT(decimals != nullptr, "DECIMAL query");
+    TEST_ASSERT(decimals->schema()->field(0)->type()->id() == arrow::Type::DOUBLE &&
+                    decimals->schema()->field(1)->type()->id() == arrow::Type::DOUBLE,
+                "DECIMAL columns are double");
+    auto tenth = decimals->column(0)->GetScalar(0);
+    TEST_ASSERT(tenth.ok() && std::static_pointer_cast<arrow::DoubleScalar>(*tenth)->value == 0.1, "0.1 stays 0.1");
+    TEST_ASSERT(decimals->column(2)->null_count() == 1, "a NULL decimal stays null");
+
     // Cleanup
     db.UnregisterTable("employees");
     std::remove(csv_path.c_str());
