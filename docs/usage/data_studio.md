@@ -1,24 +1,46 @@
 # Data Studio
 
-Data Studio is where you look at your data with SQL, a profile and quick
-charts, without changing the graph. Open it from the Data Studio tab (or the
-sidebar).
+Data Studio is the open graph's data work in one window: bringing data in,
+exploring it with SQL, a profile and plots, preparing it, checking it,
+getting it ready for training, publishing it and reading the results. Open
+it from the Data Studio tab (or the sidebar). Everything in it is a node of
+the graph: what you change shows on the canvas, and runs go through the
+Data Pipeline executor.
 
-## Picking a dataset
+## The window
 
-The **Dataset** list at the top shows every dataset the Engine holds:
+- **Header**: the graph it works on (and its recipe, when it has one),
+  **Show graph** (CyxWiz Studio) and **Publish...** (comes with the Publish
+  job; disabled until then).
+- **Rail** (left): the data.
+  - **Data Inputs**: the graph's Data Input nodes with their rows, or *not
+    loaded* (open the node's dialog and Apply, or run the graph).
+  - **Node results**: what the last run made: a step's rows, a Row Count
+    Check's *pass* or *fail*, *failed* with the error on hover.
+  - **Published**: the files the export nodes write, with the rows written
+    or *not written*.
+  - **Other datasets**: loaded tables no node of this graph made (a query
+    saved as a dataset, another graph's results).
 
-| Column | Meaning |
-|---|---|
-| name | What the graph calls it: the Data Input node's name ("Spotify"). Hover for the dataset's own name (`ds_datainput_1`); a query can use either. |
-| origin | *Data Input*, *node result* (a node's output after a run), or *older dataset*. |
-| kind | *table (in memory)*, *table (on disk, Parquet)* for large files, *sparse features*, *images*, *audio*, *text*. |
-| size | rows (or files / clips) and columns or classes. |
+  Click an entry to show it in Explore; double-click to show its node on
+  the canvas. Data enters the graph only through a Data Input.
+- **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
+  readiness**, **Publish**, **Results**, each with a line saying where it
+  stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no split*, *1
+  output*). Explore is built; the other jobs list their nodes and are being
+  built (TOFIX148).
+- **In the graph**: the nodes doing the open job, by kind (*Row Count Check
+  x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
+  ...*). Click one, or **Show on canvas**, to select and frame them in
+  CyxWiz Studio; a collapsed recipe stands for its steps.
+- **Status bar**: *Ready*, *Query running* or *Profiling*; the last run
+  (*tier1_paragraphs - 15,349 rows - 4/4 checks - 3.1 s - at 12:39:04*,
+  orange when a check failed, red when a step failed); *Runs through the
+  Data Pipeline executor*.
 
-A Data Input appears once it is loaded: open its dialog and Apply, or open a
-Plot node fed by it. The list updates when a dataset is loaded, re-loaded or
-removed. **Refresh** reads the picked dataset again; **Open Node Editor**
-goes to CyxWiz Studio.
+Explore has three views: **Query**, **Profile** and **Visualize**. A
+dashboard's "Open in Data Studio", "Edit roles", the Asset Browser's "Open
+in Data Studio" and Data > Dataset Statistics open the right one.
 
 ## Query
 
@@ -38,6 +60,10 @@ ORDER BY tracks DESC
 | single | 2219 | 46.4 |
 | compilation | 507 | 40.5 |
 
+- The editor is the SQL Workbench's: highlighting, completion (type, or
+  Ctrl+Space) with the picked dataset's columns, **Ctrl+F** find, and
+  **Format** (keywords upper case). Until you type, it follows the dataset
+  you pick.
 - **Run** (or **Ctrl+Enter** while the editor has focus) runs the query in
   the background: the Engine stays responsive, Task View shows it, and
   **Cancel** stops it. One query runs at a time.
@@ -51,6 +77,14 @@ ORDER BY tracks DESC
   columns: first rows, count, rows per value, average per value, a filter,
   columns and their types.
 - **Clear** empties the editor.
+- **Turn into SQL step** puts the last result's query into the graph: a new
+  SQL step after the SQL step whose result it reads, in that step's recipe
+  (a collapsed recipe opens). It takes over what read that step (its checks
+  and exports read the new step), shows on the canvas (Ctrl+Z there undoes
+  it) and fills on the next run. The query is kept as written; a first
+  `WITH` part names the step's `input` as the table you queried. It is
+  available when the query reads exactly one table and that table is an SQL
+  step's result; otherwise the button says why.
 
 The result line says **exact** (every row shown) or **first 100,000 rows**
 (more rows than are shown), then rows, columns, the tables read (with their
@@ -74,7 +108,8 @@ dates stay dates. Then:
   in other queries.
 
 Errors are shown under the buttons in plain words (for example "Only reading
-is allowed here" or DuckDB's message for a typo).
+is allowed here" or DuckDB's message for a typo); a long DuckDB message
+shows its first line, and **Details** the rest.
 
 ## Profile
 
