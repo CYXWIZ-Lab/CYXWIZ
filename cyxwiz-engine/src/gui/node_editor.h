@@ -447,6 +447,8 @@ public:
 
     // Show the node editor window
     void Show() { show_window_ = true; }
+    // Show and bring the CyxWiz Studio tab to the front (next frame).
+    void Raise() { show_window_ = true; raise_requested_ = true; }
 
     // ===== Data Studio Integration (Phase 5 Week 7) =====
 
@@ -830,6 +832,7 @@ private:
     bool HasMergeNodes() const;
 
     bool show_window_;
+    bool raise_requested_ = false;
 
     // Node graph state
     std::vector<MLNode> nodes_;

@@ -795,13 +795,12 @@ MainWindow::MainWindow()
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
     data_studio_panel_->SetNodeEditor(node_editor_.get());
 
-    // Cross-navigation: Data Studio's "Open Node Editor" button raises
-    // the CyxWiz Studio (NodeEditor) panel. Tracked in tofix.md as the
-    // "Open Node Editor from CyxWiz Studio" entry.
+    // Data Studio's Show graph, Open dialog and Add Data Input bring the
+    // CyxWiz Studio tab to the front (a node is added when Studio draws).
     data_studio_panel_->SetOpenNodeEditorCallback([this]() {
         if (node_editor_) {
-            node_editor_->Show();
-            spdlog::info("Opened Node Editor panel from Data Studio");
+            node_editor_->Raise();
+            spdlog::debug("Raised CyxWiz Studio from Data Studio");
         }
     });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).

@@ -267,8 +267,9 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (pending_focus_node_id_ >= 0 || !pending_show_nodes_.empty()) {
+    if (raise_requested_ || pending_focus_node_id_ >= 0 || !pending_show_nodes_.empty()) {
         ImGui::SetNextWindowFocus();
+        raise_requested_ = false;
     }
     ::gui::NextWindowMayLeave("CyxWiz Studio");
     const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);

@@ -262,8 +262,11 @@ void DataStudioPanel::RenderJobBody() {
 
 void DataStudioPanel::RenderBringIn() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (ui::PrimaryButton(ICON_FA_PLUS " Add Data Input...", node_editor_ != nullptr, "No graph is open", ui::ButtonSize::Small))
+    if (ui::PrimaryButton(ICON_FA_PLUS " Add Data Input...", node_editor_ != nullptr, "No graph is open", ui::ButtonSize::Small)) {
+        // The node is added when CyxWiz Studio draws, so bring it forward first.
+        if (open_node_editor_callback_) open_node_editor_callback_();
         node_editor_->AddDataInputAndConfigure();
+    }
     ImGui::SameLine(0.0f, 12.0f);
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Adds a Data Input node to this graph and opens its dialog: the file, its format, a preview, Apply.");
