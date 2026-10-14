@@ -144,6 +144,21 @@ int main() {
     }
 
     {
+        // A file parameter's patterns become the Browse dialog's filter.
+        cyxwiz::ParameterDefinition model_path(
+            "model_path", "file", "", "", {}, "*.cyxclassic.json; *.json");
+        const auto filters = gui::properties_rules::FileParameterFilters(model_path);
+        Check(filters.size() == 2 && filters[0].first == "Supported files" &&
+                  filters[0].second == "cyxclassic.json,json" &&
+                  filters[1].second == "*",
+              "file patterns should become one Supported files filter plus All Files");
+        cyxwiz::ParameterDefinition any_file("file_path", "file");
+        const auto any = gui::properties_rules::FileParameterFilters(any_file);
+        Check(any.size() == 1 && any[0].second == "*",
+              "a file parameter without patterns should offer All Files");
+    }
+
+    {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring).
         Check(covered.size() == 77,
