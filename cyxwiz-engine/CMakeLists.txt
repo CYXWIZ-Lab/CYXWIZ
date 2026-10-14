@@ -182,9 +182,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
-    src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
-    src/core/data_studio_capabilities.cpp
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
@@ -672,7 +670,6 @@ set(ENGINE_SOURCES
     src/gui/appearance_settings.cpp
     src/gui/console_palette.cpp
     # Data Studio (Phase 1 Week 1)
-    # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
@@ -683,8 +680,6 @@ set(ENGINE_SOURCES
     src/gui/data_studio/data_studio_panel.cpp
     src/gui/data_studio/data_studio_panel_render.cpp
     # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
-    src/gui/data_studio/node_registry.cpp
-    src/gui/data_studio/node_registry_builtin.cpp
 )
 
 if(CYXWIZ_HAS_PYTHON)
@@ -718,7 +713,6 @@ set(ENGINE_HEADERS
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
-    src/core/data_studio_execution_plan.h
     src/core/node_metadata.h       # Node Browser: node metadata structures
     src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
@@ -958,13 +952,11 @@ set(ENGINE_HEADERS
     src/gui/theme.h
     src/gui/dock_style.h
     # Data Studio (Phase 1 Week 1)
-    # src/gui/data_studio/pipeline_canvas.h  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.h
     src/gui/data_studio/profile_view.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
-    src/gui/data_studio/node_registry.h
     # Transform/Augmentation system
     src/transforms/transform.h
     src/transforms/geometric.h
@@ -2528,8 +2520,6 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pipeline_operator_factory.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
-    src/gui/data_studio/node_registry.cpp
-    src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
@@ -3051,49 +3041,6 @@ endif()
 set_target_properties(test_data_convert_pipeline_input PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-
-# ===== Test: Data Studio typed execution plan =====
-add_executable(test_data_studio_execution_plan
-    tests/test_data_studio_execution_plan.cpp
-    src/core/data_studio_execution_plan.cpp
-)
-target_link_libraries(test_data_studio_execution_plan PRIVATE cyxwiz-training-core)
-
-target_include_directories(test_data_studio_execution_plan PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_data_studio_execution_plan PRIVATE
-    spdlog::spdlog
-    fmt::fmt
-)
-
-if(WIN32)
-    target_compile_definitions(test_data_studio_execution_plan PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_data_studio_execution_plan PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
-# ===== Test: shared Data Studio effective capabilities =====
-add_executable(test_data_studio_capabilities
-    tests/test_data_studio_capabilities.cpp
-    src/core/data_studio_capabilities.cpp
-    src/core/data_studio_execution_plan.cpp
-)
-target_link_libraries(test_data_studio_capabilities PRIVATE cyxwiz-training-core)
-target_include_directories(test_data_studio_capabilities PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_data_studio_capabilities PRIVATE
-    imgui::imgui spdlog::spdlog nlohmann_json::nlohmann_json)
-if(WIN32)
-    target_compile_definitions(test_data_studio_capabilities PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
-endif()
-set_target_properties(test_data_studio_capabilities PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard

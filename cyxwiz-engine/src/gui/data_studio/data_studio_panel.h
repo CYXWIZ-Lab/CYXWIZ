@@ -100,7 +100,7 @@ public:
     }
 
 private:
-    // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
+    // Component instances
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
     std::unique_ptr<Visualizer> visualizer_;

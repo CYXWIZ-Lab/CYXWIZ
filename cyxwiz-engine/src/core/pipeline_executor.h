@@ -38,7 +38,7 @@ enum class PipelineNodeExecutionEvent : uint8_t {
  *
  * Phase 1, Week 1: Core Infrastructure
  *
- * This component takes a pipeline graph from PipelineCanvas and executes
+ * This component takes a pipeline graph from the Node Editor (Data Pipeline mode) and executes
  * the data transformations using DuckDB and Arrow. It handles:
  * - Topological sorting of pipeline nodes
  * - Data flow between nodes
@@ -46,7 +46,7 @@ enum class PipelineNodeExecutionEvent : uint8_t {
  * - Error handling and recovery
  *
  * Architecture:
- *   PipelineCanvas (Graph) -> PipelineExecutor (Engine) -> DuckDB/Arrow (Backend)
+ *   Node Editor (Graph) -> PipelineExecutor (Engine) -> DuckDB/Arrow (Backend)
  *
  * Execution Model:
  *   1. Validate pipeline (no cycles, all nodes connected)
@@ -64,7 +64,7 @@ public:
 
     /**
      * Execute a pipeline from JSON representation
-     * @param pipeline_json Serialized pipeline from PipelineCanvas
+     * @param pipeline_json Serialized pipeline from the Node Editor
      * @return true if execution succeeded
      */
     bool ExecutePipeline(const std::string& pipeline_json);
