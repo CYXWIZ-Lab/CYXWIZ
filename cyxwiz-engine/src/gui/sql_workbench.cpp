@@ -313,12 +313,13 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
     raw->thread = std::thread([raw, query, mode, profile, inputs = std::move(inputs)]() {
         const auto start = std::chrono::steady_clock::now();
         raw->result = raw->transform.Run(query, inputs, mode);
+        // The time shown is the query's; profiling the result comes after.
+        raw->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         if (profile && raw->result.ok && raw->result.table) raw->profile = cyxwiz::ProfileArrow(raw->result.table);
         if (raw->result.ok && (mode == cyxwiz::SqlRunMode::Explain || mode == cyxwiz::SqlRunMode::Profile)) {
             raw->plan = cyxwiz::sqlplan::ParsePlanJson(raw->result.plan);
             cyxwiz::sqlplan::ExplainPlan(raw->plan, query, sqlstep::OutlineSqlQuery(query));
         }
-        raw->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         raw->done = true;
     });
     run_ = std::move(run);
