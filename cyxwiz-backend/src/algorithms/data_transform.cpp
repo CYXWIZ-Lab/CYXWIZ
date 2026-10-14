@@ -103,6 +103,17 @@ double ZeroSafeScale(double scale) {
     return scale < 10.0 * std::numeric_limits<double>::epsilon() ? 1.0 : scale;
 }
 
+// scikit-learn's _is_constant_feature: a variance within the rounding error of its
+// own computation is a constant column (scale 1), with the compute precision's
+// epsilon. On a float32 device a constant column's variance is ~1e-14, not 0.
+bool IsConstantFeature(double variance, double mean, dim_t n) {
+    const double epsilon =
+        DeviceHasDouble() ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
+    const double count = static_cast<double>(n);
+    const double bound = count * epsilon * variance + std::pow(count * mean * epsilon, 2.0);
+    return variance <= bound;
+}
+
 double PopulationStd(const af::array& x) {
     const af::array centered = x - af::mean<double>(x);
     return std::sqrt(af::mean<double>(centered * centered));
@@ -445,8 +456,13 @@ TransformResult DataTransform::Normalize(const Columns& data, double range_min, 
 TransformResult DataTransform::Standardize(const Columns& data, const StandardizeOptions& options) {
     return TransformEachColumn(data, "standardize", "DataTransform::Standardize",
         [&](const af::array& x, const std::string& prefix, auto& params, std::string& refusal) -> af::array {
-            const double mean = options.with_mean ? af::mean<double>(x) : 0.0;
-            const double scale = options.with_std ? ZeroSafeScale(PopulationStd(x)) : 1.0;
+            const double column_mean = af::mean<double>(x);
+            const double mean = options.with_mean ? column_mean : 0.0;
+            double scale = 1.0;
+            if (options.with_std) {
+                const double std_dev = PopulationStd(x);
+                scale = IsConstantFeature(std_dev * std_dev, column_mean, x.elements()) ? 1.0 : ZeroSafeScale(std_dev);
+            }
             if (!std::isfinite(mean) || !std::isfinite(scale)) {
                 refusal = "Data has missing or non-finite values";
                 return {};
