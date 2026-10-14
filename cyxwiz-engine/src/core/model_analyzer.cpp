@@ -352,8 +352,8 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     break;
                 }
                 case gui::NodeType::Embedding: {
-                    int64_t vocab_size = GetIntParam(*node, "vocab_size", 10000);
-                    int64_t embed_dim = GetIntParam(*node, "embed_dim", 256);
+                    int64_t vocab_size = GetIntParam(*node, "num_embeddings", 10000);
+                    int64_t embed_dim = GetIntParam(*node, "embedding_dim", 256);
                     layer_analysis.parameters = vocab_size * embed_dim;
                     layer_analysis.flops = 0;  // Embedding is a lookup, no FLOPs
                     break;

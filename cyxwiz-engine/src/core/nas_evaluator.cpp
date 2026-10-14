@@ -157,8 +157,8 @@ int64_t NASEvaluator::EstimateLayerParams(
             break;
         }
         case gui::NodeType::Embedding: {
-            int vocab_size = GetParam("vocab_size", 10000);
-            int embed_dim = GetParam("embed_dim", 128);
+            int vocab_size = GetParam("num_embeddings", 10000);
+            int embed_dim = GetParam("embedding_dim", 256);
             param_count = static_cast<int64_t>(vocab_size) * embed_dim;
             break;
         }

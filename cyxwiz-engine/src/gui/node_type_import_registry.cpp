@@ -5,11 +5,12 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 208> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 209> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
         {"Conv3D", NodeType::Conv3D},
+        {"ConvTranspose2D", NodeType::ConvTranspose2D},
         {"DepthwiseConv2D", NodeType::DepthwiseConv2D},
         {"MaxPool2D", NodeType::MaxPool2D},
         {"AvgPool2D", NodeType::AvgPool2D},
