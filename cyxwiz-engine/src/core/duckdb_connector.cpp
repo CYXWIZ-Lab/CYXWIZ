@@ -443,7 +443,7 @@ bool DuckDBConnector::RegisterTable(
         }
         appender.Close();
 
-        spdlog::info("Registered Arrow table '{}' as DuckDB table: {} rows, {} columns",
+        spdlog::debug("Registered Arrow table '{}' as DuckDB table: {} rows, {} columns",
                      table_name, arrow_table->num_rows(), arrow_table->num_columns());
 
         return true;

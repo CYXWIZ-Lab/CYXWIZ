@@ -246,7 +246,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
     ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
-    spdlog::info("{} Arrow dataset '{}': {} rows, {} columns, {} bytes",
+    spdlog::debug("{} Arrow dataset '{}': {} rows, {} columns, {} bytes",
                  replaced ? "Replaced" : "Registered",
                  dataset_name,
                  dataset->GetNumRows(),

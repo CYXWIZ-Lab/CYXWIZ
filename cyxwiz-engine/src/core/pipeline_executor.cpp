@@ -3204,7 +3204,7 @@ PipelineExecutor::PipelineExecutor()
     // DuckDB for the operators that build SQL (FilterRows, SortRows, Join,
     // GroupBy, ...): no file or network access, like the SQL step.
     duckdb_ = std::make_unique<DuckDBConnector>();
-    spdlog::info("[Data Studio] PipelineExecutor initialized with DuckDB");
+    spdlog::debug("[Data Studio] PipelineExecutor initialized with DuckDB");
 }
 
 PipelineExecutor::~PipelineExecutor() = default;
@@ -3278,7 +3278,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         }
     }
 
-    spdlog::info("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
+    spdlog::debug("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
                  nodes_to_execute, nodes.size());
     UpdateProgress(0.25f, "Marked " + std::to_string(nodes_to_execute) + " nodes for execution");
 
@@ -4265,7 +4265,7 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             }
             const std::string file_path =
                 ResolveProjectDataPath(path_it->second, project_root_);
-            spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
+            spdlog::debug("[Pipeline] DataInput loading file: {}", file_path);
 
             std::vector<std::string> selected_columns;
             std::string projection_error;
@@ -5916,7 +5916,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                      node.type, model_path->second);
     }
 
-    spdlog::info("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
+    spdlog::debug("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
                  node.type, output_table->num_rows(), output_table->num_columns());
     return true;
 }
@@ -7096,7 +7096,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 }
             ));
 
-            spdlog::info("[Data Studio] Started executing node: {} (parallel batch)", node->name);
+            spdlog::debug("[Data Studio] Started executing node: {} (parallel batch)", node->name);
         }
 
         // Wait for batch to complete
