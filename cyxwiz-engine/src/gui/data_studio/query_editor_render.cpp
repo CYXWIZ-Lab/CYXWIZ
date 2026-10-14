@@ -1,6 +1,6 @@
 #include "query_editor.h"
 
-#include "../../core/arrow_data_table.h"
+#include "../../data/arrow_data_table.h"
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_catalog.h"

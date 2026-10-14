@@ -10,6 +10,7 @@
 #include <vector>
 
 namespace arrow {
+class ChunkedArray;
 class Table;
 }
 
@@ -20,6 +21,10 @@ class DataTable;
 // The first `max_rows` rows (all when max_rows < 0), named `name`.
 std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const std::string& name,
                                               int64_t max_rows = -1);
+
+// One cell as text ("" for null): integers without decimals, doubles to
+// 6 significant digits, booleans true / false, everything else Arrow's text.
+std::string ArrowCellText(const arrow::ChunkedArray& column, int64_t row);
 
 // The first `max_rows` rows as one-line display text, for a preview grid:
 // newlines and tabs become spaces, cells longer than `max_chars` end in

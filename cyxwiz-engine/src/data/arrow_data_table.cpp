@@ -5,6 +5,7 @@
 #include <arrow/api.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 
 namespace cyxwiz {
@@ -20,6 +21,7 @@ DataTable::CellValue CellOf(const arrow::Array& array, int64_t i) {
         case arrow::Type::UINT8: return static_cast<int64_t>(static_cast<const arrow::UInt8Array&>(array).Value(i));
         case arrow::Type::UINT16: return static_cast<int64_t>(static_cast<const arrow::UInt16Array&>(array).Value(i));
         case arrow::Type::UINT32: return static_cast<int64_t>(static_cast<const arrow::UInt32Array&>(array).Value(i));
+        case arrow::Type::UINT64: return static_cast<int64_t>(static_cast<const arrow::UInt64Array&>(array).Value(i));
         case arrow::Type::FLOAT: return static_cast<double>(static_cast<const arrow::FloatArray&>(array).Value(i));
         case arrow::Type::DOUBLE: return static_cast<const arrow::DoubleArray&>(array).Value(i);
         case arrow::Type::STRING: return std::string(static_cast<const arrow::StringArray&>(array).GetView(i));
@@ -32,6 +34,25 @@ DataTable::CellValue CellOf(const arrow::Array& array, int64_t i) {
     return scalar.ok() ? (*scalar)->ToString() : std::string();
 }
 }  // namespace
+
+std::string ArrowCellText(const arrow::ChunkedArray& column, int64_t row) {
+    int64_t offset = 0;
+    for (const auto& chunk : column.chunks()) {
+        if (row < offset + chunk->length()) {
+            const DataTable::CellValue v = CellOf(*chunk, row - offset);
+            if (const auto* s = std::get_if<std::string>(&v)) return *s;
+            if (const auto* n = std::get_if<int64_t>(&v)) return std::to_string(*n);
+            if (const auto* d = std::get_if<double>(&v)) {
+                char buf[48];
+                std::snprintf(buf, sizeof(buf), "%.6g", *d);
+                return buf;
+            }
+            return "";
+        }
+        offset += chunk->length();
+    }
+    return "";
+}
 
 std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const std::string& name, int64_t max_rows) {
     auto out = std::make_shared<DataTable>();

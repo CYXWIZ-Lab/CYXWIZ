@@ -165,7 +165,6 @@ set(ENGINE_SOURCES
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
     src/core/query_result_cache.cpp
-    src/core/arrow_data_table.cpp
     src/core/asset_preview.cpp
     src/core/dataset_table_slice.cpp
     src/core/dataset_contract.cpp
