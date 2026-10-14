@@ -206,7 +206,7 @@ void SqlWorkbenchDialog::LoadGuided(const MLNode& node) {
     }
     guided_saved_json_ = guided_active_ ? guided::ToJson(guided_) : std::string();
     mode_ = guided_active_ ? 0 : 1;
-    editor_.SetReadOnly(guided_active_);
+    pane_.Editor().SetReadOnly(guided_active_);
     guided_picked_ = guided_.ops.empty() ? -1 : 0;
 }
 
@@ -238,9 +238,9 @@ void SqlWorkbenchDialog::GuidedChanged(const std::string& before_json) {
     guided_generated_ = guided::GenerateSql(guided_, context);
     guided_columns_ = guided::TrackColumns(guided_, context);
     // The generated SQL is the draft the rest of the Workbench runs.
-    editor_.SetReadOnly(false);
-    editor_.SetText(guided_generated_.sql);
-    editor_.SetReadOnly(true);
+    pane_.Editor().SetReadOnly(false);
+    pane_.Editor().SetText(guided_generated_.sql);
+    pane_.Editor().SetReadOnly(true);
     guided_changed_at_ = ImGui::GetTime();
 }
 
@@ -248,8 +248,8 @@ int SqlWorkbenchDialog::GuidedPartIndex(int op) const {
     if (op < 0 || op >= static_cast<int>(guided_generated_.part_names.size())) return -1;
     const std::string& name = guided_generated_.part_names[static_cast<size_t>(op)];
     if (name.empty()) return -1;
-    for (size_t i = 0; i < outline_.parts.size(); ++i) {
-        if (outline_.parts[i].name == name) return static_cast<int>(i);
+    for (size_t i = 0; i < pane_.Outline().parts.size(); ++i) {
+        if (pane_.Outline().parts[i].name == name) return static_cast<int>(i);
     }
     return -1;
 }
@@ -260,7 +260,7 @@ void SqlWorkbenchDialog::StartGuidedPreview() {
         if (!input.table) return;
     }
     guided_changed_at_ = -1.0;
-    if (outline_.structured && outline_.parts.size() > 1) {
+    if (pane_.Outline().structured && pane_.Outline().parts.size() > 1) {
         preview_part_after_counts_ = true;
         StartRun(RunKind::Counts, 0, true);
     } else {
@@ -285,7 +285,7 @@ void SqlWorkbenchDialog::RenderGuided(float height) {
     }
     if (inputs_key != guided_inputs_key_) {
         guided_inputs_key_ = inputs_key;
-        const bool unchanged = draft_ == saved_query_;
+        const bool unchanged = pane_.Text() == saved_query_;
         GuidedChanged({});
         // Opening a saved step is not an edit when the SQL comes out the same.
         if (unchanged && guided_generated_.sql != saved_query_ && guided::ToJson(guided_) == guided_saved_json_) {
@@ -321,7 +321,7 @@ void SqlWorkbenchDialog::RenderGuidedToolbar() {
         Dim("Guided mode explains this SQL step; start a guided step below to build it from operations.");
         const float reset_w = ui::ButtonWidth("Reset to saved", ui::ButtonSize::Regular);
         AlignRight(reset_w);
-        if (ui::SecondaryButton("Reset to saved", draft_ != saved_query_, "Nothing changed", ui::ButtonSize::Regular)) Reset();
+        if (ui::SecondaryButton("Reset to saved", pane_.Text() != saved_query_, "Nothing changed", ui::ButtonSize::Regular)) Reset();
         return;
     }
     if (ui::PrimaryButton(ICON_FA_PLAY " Run step", !running && ready, running ? busy : "Fix the operations marked in red")) {
@@ -376,7 +376,7 @@ void SqlWorkbenchDialog::RenderGuidedToolbar() {
         ImGui::EndPopup();
     }
 
-    const bool edited = draft_ != saved_query_ || guided::ToJson(guided_) != guided_saved_json_;
+    const bool edited = pane_.Text() != saved_query_ || guided::ToJson(guided_) != guided_saved_json_;
     const float reset_w = ui::ButtonWidth("Reset to saved", ui::ButtonSize::Regular);
     const float save_w = ui::ButtonWidth("Save to step", ui::ButtonSize::Regular);
     AlignRight(reset_w + save_w + ImGui::GetStyle().ItemSpacing.x);
@@ -463,7 +463,7 @@ void SqlWorkbenchDialog::RenderGuidedCards(float height) {
             ImGui::Dummy(ImVec2(0.0f, t.space_md));
             DimWrapped("No operations yet. Add one from the library on the left, or start from a template.");
         }
-        const bool counted = !part_rows_.empty() && part_rows_draft_ == draft_;
+        const bool counted = !part_rows_.empty() && part_rows_draft_ == pane_.Text();
         int move_from = -1, move_to = -1, remove = -1;
         bool toggled = false;
         const std::string before = guided::ToJson(guided_);
@@ -499,13 +499,13 @@ void SqlWorkbenchDialog::RenderGuidedCards(float height) {
                 const int part = GuidedPartIndex(static_cast<int>(i));
                 std::string rows;
                 if (counted && part >= 0) {
-                    const auto found = part_rows_.find(outline_.parts[static_cast<size_t>(part)].name);
+                    const auto found = part_rows_.find(pane_.Outline().parts[static_cast<size_t>(part)].name);
                     if (found != part_rows_.end()) {
                         int64_t before_rows = -1;
                         for (int k = static_cast<int>(i) - 1; k >= 0 && before_rows < 0; --k) {
                             const int prior = GuidedPartIndex(k);
                             if (prior < 0) continue;
-                            const auto it = part_rows_.find(outline_.parts[static_cast<size_t>(prior)].name);
+                            const auto it = part_rows_.find(pane_.Outline().parts[static_cast<size_t>(prior)].name);
                             if (it != part_rows_.end()) before_rows = it->second;
                         }
                         if (before_rows < 0 && !inputs_.empty() && inputs_.front().table) {
@@ -978,7 +978,7 @@ void SqlWorkbenchDialog::RenderGuidedPreview(float height) {
             if (guided_view_ == 0) {
                 RenderResults();
             } else if (guided_view_ == 1) {
-                const bool counted = !part_rows_.empty() && part_rows_draft_ == draft_;
+                const bool counted = !part_rows_.empty() && part_rows_draft_ == pane_.Text();
                 if (!counted) {
                     Dim("The rows after each operation appear after the preview runs.");
                 } else if (ImGui::BeginTable("##guided_summary", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
@@ -993,7 +993,7 @@ void SqlWorkbenchDialog::RenderGuidedPreview(float height) {
                                            : -1;
                     for (size_t i = 0; i < guided_.ops.size(); ++i) {
                         const int part = GuidedPartIndex(static_cast<int>(i));
-                        const auto found = part >= 0 ? part_rows_.find(outline_.parts[static_cast<size_t>(part)].name) : part_rows_.end();
+                        const auto found = part >= 0 ? part_rows_.find(pane_.Outline().parts[static_cast<size_t>(part)].name) : part_rows_.end();
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
                         Dim(std::to_string(i + 1));
@@ -1052,8 +1052,8 @@ void SqlWorkbenchDialog::RenderSqlStepInGuidedMode(float height) {
             if (ui::LinkButton("Cancel")) confirm_start_guided_ = false;
         }
         ImGui::Dummy(ImVec2(0.0f, t.space_sm));
-        for (size_t i = 0; i < outline_.parts.size(); ++i) {
-            const auto& part = outline_.parts[i];
+        for (size_t i = 0; i < pane_.Outline().parts.size(); ++i) {
+            const auto& part = pane_.Outline().parts[i];
             Coloured(part.name, t.accent_text);
             ImGui::SameLine(200.0f);
             std::string description = part.description;

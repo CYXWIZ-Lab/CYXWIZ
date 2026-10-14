@@ -13,9 +13,9 @@
 #include "../core/sql_step_presentation.h"
 #include "../core/table_profile.h"
 #include "../data/arrow_data_table.h"
-#include "code_editor.h"
 #include "node_config_dialog.h"
 #include "node_editor.h"
+#include "sql_editor_pane.h"
 
 #include <arrow/api.h>
 
@@ -94,16 +94,7 @@ private:
     void RenderPartsTab();
     void RenderHistoryTab();
     void RenderSnippetsTab();
-    // Editor, find, completion, Format, Compare (gui/sql_workbench_editing.cpp).
-    void RenderEditor(float height);
-    void OpenFind();
-    void CloseFind();
-    void UpdateFind();
-    void FindStep(bool forward);
-    void RenderFindBar();
-    void UpdateCompletion(bool forced);
-    void AcceptCompletion();
-    void RenderCompletion();
+    // Format and Compare (gui/sql_workbench_editing.cpp); the editor is pane_.
     void FormatDraft();
     void RenderCompare();
 
@@ -140,11 +131,8 @@ private:
 
     int node_id_ = -1;
     std::string step_name_;
-    cyxwiz::CodeEditor editor_;
-    std::string saved_query_;           // the step's query when last loaded or saved
-    uint64_t outline_version_ = ~0ull;  // editor document version the outline was built from
-    cyxwiz::sqlstep::SqlOutline outline_;
-    std::string draft_;                 // editor text at outline_version_
+    SqlEditorPane pane_;       // the draft: editor, find, completion, outline
+    std::string saved_query_;  // the step's query when last loaded or saved
 
     NodeEditor::DataStepContext context_;
     std::vector<InputTable> inputs_;
@@ -188,28 +176,6 @@ private:
     bool editor_share_set_by_user_ = false;
     int marked_part_ = -1;
     OpenTableCallback open_table_;
-
-    // Find bar (Ctrl+F).
-    struct FindState {
-        bool open = false;
-        bool focus = false;
-        char query[256] = {};
-        bool case_sensitive = false;
-        bool whole_word = false;
-        bool regex = false;
-        uint64_t version = ~0ull;
-        std::string key;
-        std::string error;
-        std::vector<std::pair<cyxwiz::editor::Pos, cyxwiz::editor::Pos>> matches;
-        int current = -1;
-    } find_;
-    // Completion list at the cursor.
-    bool completion_open_ = false;
-    std::vector<cyxwiz::sqledit::Completion> completion_items_;
-    int completion_selected_ = 0;
-    cyxwiz::editor::Pos completion_start_;
-    uint64_t completion_version_ = ~0ull;
-    float editor_line_height_ = 18.0f;
 
     // Guided mode.
     int mode_ = 1;                 // 0 Guided, 1 SQL

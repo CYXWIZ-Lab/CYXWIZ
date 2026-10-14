@@ -127,14 +127,12 @@ struct SqlWorkbenchDialog::Run {
 };
 
 SqlWorkbenchDialog::SqlWorkbenchDialog(MLNode* node)
-    : NodeConfigDialog("SQL Workbench", node) {
+    : NodeConfigDialog("SQL Workbench", node), pane_("sql_workbench_" + std::to_string(node ? node->id : -1)) {
     node_id_ = node ? node->id : -1;
     step_name_ = node ? node->name : std::string();
     title_ = "SQL Workbench - " + step_name_ + "###sql_workbench_" + std::to_string(node_id_);
     saved_query_ = node ? Param(*node, "query") : std::string();
-    editor_.SetLanguage(cyxwiz::editor::Language::Sql);
-    editor_.SetTabSize(4);
-    editor_.SetText(saved_query_);
+    pane_.Editor().SetText(saved_query_);
     if (node) LoadGuided(*node);
 }
 
@@ -154,7 +152,7 @@ MLNode* SqlWorkbenchDialog::CurrentNode() {
 void SqlWorkbenchDialog::Apply() {
     MLNode* node = CurrentNode();
     if (!node) return;
-    saved_query_ = editor_.GetText();
+    saved_query_ = pane_.Editor().GetText();
     node->parameters["query"] = saved_query_;
     if (guided_active_) {
         // A guided step keeps its operations next to the query they wrote.
@@ -172,8 +170,8 @@ void SqlWorkbenchDialog::Apply() {
 void SqlWorkbenchDialog::Reset() {
     MLNode* node = CurrentNode();
     if (node) saved_query_ = Param(*node, "query");
-    editor_.SetReadOnly(false);
-    editor_.SetText(saved_query_);
+    pane_.Editor().SetReadOnly(false);
+    pane_.Editor().SetText(saved_query_);
     if (node) {
         LoadGuided(*node);
         guided_generated_ = cyxwiz::guided::GenerateSql(guided_, GuidedContext());
@@ -209,6 +207,12 @@ void SqlWorkbenchDialog::RefreshInputs() {
         }
         inputs_.push_back(std::move(table));
     }
+    std::vector<std::string> columns;
+    for (const auto& input : inputs_) {
+        if (!input.table) continue;
+        for (const auto& field : input.table->schema()->fields()) columns.push_back(field->name());
+    }
+    pane_.SetCompletionColumns(std::move(columns));
 }
 
 void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sample) {
@@ -252,7 +256,7 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
         bottom_tab_ = kMessages;
         return;
     }
-    const std::string draft = editor_.GetText();
+    const std::string draft = pane_.Editor().GetText();
     const auto outline = sqlstep::OutlineSqlQuery(draft);
     const auto part_name = [&](size_t i) { return i < outline.parts.size() ? outline.parts[i].name : std::string(); };
     std::string query = draft;
@@ -262,7 +266,7 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
         case RunKind::Step:
             break;
         case RunKind::Selection:
-            query = editor_.Doc().SelectedText();
+            query = pane_.Editor().Doc().SelectedText();
             label = "selection";
             if (query.find_first_not_of(" \t\r\n") == std::string::npos) {
                 AddMessage("Select the SQL to run first (one SELECT statement).", true);
@@ -330,14 +334,14 @@ void SqlWorkbenchDialog::StopRun() {
 void SqlWorkbenchDialog::MarkError(const std::string& error) {
     const int line = sqlstep::ErrorLine(error);
     syntax_error_ = true;
-    if (line <= 0 || line > editor_.Doc().LineCount()) {
+    if (line <= 0 || line > pane_.Editor().Doc().LineCount()) {
         syntax_state_ = "Error (no line given)";
-        editor_.SetSquiggles({});
+        pane_.Editor().SetSquiggles({});
         return;
     }
     syntax_state_ = "Error on line " + std::to_string(line);
     const int row = line - 1;
-    editor_.SetSquiggles({{{row, 0}, {row, static_cast<int>(editor_.Doc().Line(row).size())}, true}});
+    pane_.Editor().SetSquiggles({{{row, 0}, {row, static_cast<int>(pane_.Editor().Doc().Line(row).size())}, true}});
 }
 
 void SqlWorkbenchDialog::PollRun() {
@@ -363,7 +367,7 @@ void SqlWorkbenchDialog::PollRun() {
         if (lines_match) {
             syntax_error_ = false;
             syntax_state_ = "Syntax OK";
-            editor_.SetSquiggles({});
+            pane_.Editor().SetSquiggles({});
         }
         switch (run->kind) {
             case RunKind::Counts: {
@@ -439,7 +443,7 @@ void SqlWorkbenchDialog::PollRun() {
         preview_part_after_counts_ = false;
         if (result.ok) {
             int part = GuidedPartIndex(guided_picked_);
-            if (part < 0) part = static_cast<int>(outline_.parts.size()) - 1;
+            if (part < 0) part = static_cast<int>(pane_.Outline().parts.size()) - 1;
             StartRun(RunKind::ToPart, static_cast<size_t>(std::max(0, part)), true);
         }
     }
@@ -483,18 +487,18 @@ void SqlWorkbenchDialog::ExportResult(bool parquet) {
 }
 
 void SqlWorkbenchDialog::MarkPart(size_t index) {
-    if (index >= outline_.parts.size()) return;
-    const auto& part = outline_.parts[index];
-    const int count = std::max(1, editor_.Doc().LineCount());
+    if (index >= pane_.Outline().parts.size()) return;
+    const auto& part = pane_.Outline().parts[index];
+    const int count = std::max(1, pane_.Editor().Doc().LineCount());
     const int first = std::clamp(part.first_line - 1, 0, count - 1);
     const int last = std::clamp(part.last_line - 1, first, count - 1);
-    const cyxwiz::editor::Pos end{last, static_cast<int>(editor_.Doc().Line(last).size())};
-    editor_.SetMarks({{{first, 0}, end, false}});
+    const cyxwiz::editor::Pos end{last, static_cast<int>(pane_.Editor().Doc().Line(last).size())};
+    pane_.Editor().SetMarks({{{first, 0}, end, false}});
     cyxwiz::editor::Selection selection;
     selection.anchor = {first, 0};
     selection.head = end;
-    editor_.Doc().SetSelections({selection});
-    editor_.ScrollToCursor();
+    pane_.Editor().Doc().SetSelections({selection});
+    pane_.Editor().ScrollToCursor();
     marked_part_ = static_cast<int>(index);
 }
 
@@ -515,19 +519,15 @@ void SqlWorkbenchDialog::RenderContent() {
     }
     pipeline_was_running_ = pipeline_running;
 
-    if (editor_.Doc().Version() != outline_version_) {
-        outline_version_ = editor_.Doc().Version();
-        draft_ = editor_.GetText();
-        outline_ = sqlstep::OutlineSqlQuery(draft_);
-    }
+    pane_.Refresh();
     // The step's query changed elsewhere (Properties, undo) while the draft
     // still matches what was saved: follow it.
     const std::string step_query = Param(*node, "query");
-    if (step_query != saved_query_ && draft_ == saved_query_) {
+    if (step_query != saved_query_ && pane_.Text() == saved_query_) {
         saved_query_ = step_query;
-        editor_.SetReadOnly(false);
-        editor_.SetText(saved_query_);
-        outline_version_ = ~0ull;
+        pane_.Editor().SetReadOnly(false);
+        pane_.Editor().SetText(saved_query_);
+        pane_.Refresh();
         LoadGuided(*node);
         guided_inputs_key_.clear();
     }
@@ -564,7 +564,7 @@ void SqlWorkbenchDialog::RenderContent() {
             if (ui::LinkButton("Edit as SQL")) {
                 confirm_edit_as_sql_ = false;
                 guided_active_ = false;
-                editor_.SetReadOnly(false);
+                pane_.Editor().SetReadOnly(false);
                 AddMessage("The query is yours to edit; Save to step keeps it as an SQL step (Reset to saved undoes this).", false);
             }
             ImGui::SameLine();
@@ -580,7 +580,7 @@ void SqlWorkbenchDialog::RenderContent() {
     const float spacing_y = ImGui::GetStyle().ItemSpacing.y;
     const float usable = content_h - splitter_h - spacing_y * 2.0f;
     const float editor_h = std::floor(usable * editor_share_);
-    RenderEditor(editor_h);
+    pane_.Render(editor_h);
     {
         const ImVec2 at = ImGui::GetCursorScreenPos();
         const float width = ImGui::GetContentRegionAvail().x;
@@ -621,7 +621,7 @@ void SqlWorkbenchDialog::RenderHeader(MLNode& node) {
     }
     ImGui::SameLine();
     Coloured(node.name, t.text_bright);
-    if (draft_ != saved_query_) {
+    if (pane_.Text() != saved_query_) {
         ImGui::SameLine();
         Coloured(ICON_FA_CIRCLE " Edited, not saved to the step", t.warning);
     }
@@ -631,7 +631,7 @@ void SqlWorkbenchDialog::RenderToolbar() {
     const bool pipeline = node_editor_ && node_editor_->IsDataPipelineRunning();
     const bool running = run_ != nullptr || pipeline;
     const char* busy = run_ ? "A query is running" : pipeline ? "A pipeline run is in progress" : nullptr;
-    const bool parts = outline_.structured && outline_.parts.size() > 1;
+    const bool parts = pane_.Outline().structured && pane_.Outline().parts.size() > 1;
     if (ui::PrimaryButton(ICON_FA_PLAY " Run step", !running, busy)) StartRun(RunKind::Step);
     if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("Run the whole query on the step's inputs (Ctrl+Enter)");
     ImGui::SameLine();
@@ -643,8 +643,8 @@ void SqlWorkbenchDialog::RenderToolbar() {
         ImGui::OpenPopup("##run_to_part");
     }
     if (ImGui::BeginPopup("##run_to_part")) {
-        for (size_t i = 0; i < outline_.parts.size(); ++i) {
-            const auto& part = outline_.parts[i];
+        for (size_t i = 0; i < pane_.Outline().parts.size(); ++i) {
+            const auto& part = pane_.Outline().parts[i];
             const std::string label = part.name + "  (lines " + std::to_string(part.first_line) + "-" +
                                       std::to_string(part.last_line) + ")";
             if (ImGui::MenuItem(label.c_str())) {
@@ -670,7 +670,7 @@ void SqlWorkbenchDialog::RenderToolbar() {
     if (ui::GhostButton("Format", true, nullptr, false, ui::ButtonSize::Regular)) FormatDraft();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keywords in upper case, trailing spaces removed (Ctrl+Z undoes it)");
     ImGui::SameLine();
-    if (ui::GhostButton("Compare with saved", draft_ != saved_query_, "The draft is the saved query", compare_open_,
+    if (ui::GhostButton("Compare with saved", pane_.Text() != saved_query_, "The draft is the saved query", compare_open_,
                         ui::ButtonSize::Regular)) {
         compare_open_ = !compare_open_;
     }
@@ -681,7 +681,7 @@ void SqlWorkbenchDialog::RenderToolbar() {
     }
     if (ImGui::IsItemHovered() && !running) ImGui::SetTooltip("DuckDB's plan for the query, without running it");
 
-    const bool edited = draft_ != saved_query_;
+    const bool edited = pane_.Text() != saved_query_;
     const float reset_w = ui::ButtonWidth("Reset to saved", ui::ButtonSize::Regular);
     const float save_w = ui::ButtonWidth("Save to step", ui::ButtonSize::Regular);
     AlignRight(reset_w + save_w + ImGui::GetStyle().ItemSpacing.x);
@@ -738,8 +738,8 @@ void SqlWorkbenchDialog::RenderInputsTab() {
             }
             for (const auto& field : input.table->schema()->fields()) {
                 if (ImGui::Selectable(field->name().c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
-                    editor_.Doc().Type(field->name());
-                    editor_.RequestFocus();
+                    pane_.Editor().Doc().Type(field->name());
+                    pane_.Editor().RequestFocus();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to insert at the cursor");
                 const std::string type = field->type()->ToString();
@@ -763,8 +763,8 @@ void SqlWorkbenchDialog::RenderInputsTab() {
 
 void SqlWorkbenchDialog::RenderPartsTab() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const bool counted = !part_rows_.empty() && part_rows_draft_ == draft_;
-    if (ui::LinkButton("Count rows per part", !run_ && outline_.structured && outline_.parts.size() > 1)) {
+    const bool counted = !part_rows_.empty() && part_rows_draft_ == pane_.Text();
+    if (ui::LinkButton("Count rows per part", !run_ && pane_.Outline().structured && pane_.Outline().parts.size() > 1)) {
         StartRun(RunKind::Counts);
     }
     if (!part_rows_.empty()) {
@@ -773,8 +773,8 @@ void SqlWorkbenchDialog::RenderPartsTab() {
     }
     DimWrapped("Rows after each part. Click a part to run the query up to it.");
     int64_t previous = -1;
-    for (size_t i = 0; i < outline_.parts.size(); ++i) {
-        const auto& part = outline_.parts[i];
+    for (size_t i = 0; i < pane_.Outline().parts.size(); ++i) {
+        const auto& part = pane_.Outline().parts[i];
         ImGui::PushID(static_cast<int>(i));
         const auto found = part_rows_.find(part.name);
         const bool known = found != part_rows_.end();
@@ -812,7 +812,7 @@ void SqlWorkbenchDialog::RenderHistoryTab() {
         const ImVec2 start = ImGui::GetCursorPos();
         if (ImGui::Selectable("##history", false, ImGuiSelectableFlags_AllowOverlap,
                               ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 2.0f))) {
-            auto& doc = editor_.Doc();
+            auto& doc = pane_.Editor().Doc();
             const int last = std::max(0, doc.LineCount() - 1);
             doc.Replace({0, 0}, {last, static_cast<int>(doc.Line(last).size())}, entry.draft);
             AddMessage("Brought back the query of the " + entry.time + " " + entry.label + " run.", false);
@@ -840,8 +840,8 @@ void SqlWorkbenchDialog::RenderSnippetsTab() {
         const ImVec2 start = ImGui::GetCursorPos();
         if (ImGui::Selectable("##snippet", false, ImGuiSelectableFlags_AllowOverlap,
                               ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 2.0f))) {
-            editor_.Doc().Paste(snippet.text);
-            editor_.RequestFocus();
+            pane_.Editor().Doc().Paste(snippet.text);
+            pane_.Editor().RequestFocus();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", snippet.text);
         const ImVec2 after = ImGui::GetCursorPos();
@@ -1011,10 +1011,10 @@ void SqlWorkbenchDialog::RenderProfile() {
 
 void SqlWorkbenchDialog::RenderRemoved() {
     const ui::Tokens& t = ui::CurrentTokens();
-    const bool counted = !part_rows_.empty() && part_rows_draft_ == draft_;
+    const bool counted = !part_rows_.empty() && part_rows_draft_ == pane_.Text();
     if (!counted) {
         DimWrapped("Count the rows after each part first; then each part that removed rows is listed here.");
-        if (ui::SecondaryButton("Count rows per part", !run_ && outline_.structured && outline_.parts.size() > 1,
+        if (ui::SecondaryButton("Count rows per part", !run_ && pane_.Outline().structured && pane_.Outline().parts.size() > 1,
                                 "The query has no parts to count")) {
             StartRun(RunKind::Counts);
         }
@@ -1023,20 +1023,20 @@ void SqlWorkbenchDialog::RenderRemoved() {
     DimWrapped("Rows a part removed, compared with the part before it. \"Show\" lists them in Results (both parts "
                "need the same columns).");
     bool any = false;
-    for (size_t i = 1; i < outline_.parts.size(); ++i) {
-        const auto before = part_rows_.find(outline_.parts[i - 1].name);
-        const auto after = part_rows_.find(outline_.parts[i].name);
+    for (size_t i = 1; i < pane_.Outline().parts.size(); ++i) {
+        const auto before = part_rows_.find(pane_.Outline().parts[i - 1].name);
+        const auto after = part_rows_.find(pane_.Outline().parts[i].name);
         if (before == part_rows_.end() || after == part_rows_.end() || after->second >= before->second) continue;
         any = true;
         ImGui::PushID(static_cast<int>(i));
         const int64_t removed = before->second - after->second;
-        Coloured(outline_.parts[i].name, t.accent_text);
+        Coloured(pane_.Outline().parts[i].name, t.accent_text);
         ImGui::SameLine();
         ImGui::TextUnformatted(
             ("removed " + sqlstep::FormatCount(removed) + " of " + sqlstep::FormatCount(before->second)).c_str());
-        if (!outline_.parts[i].description.empty()) {
+        if (!pane_.Outline().parts[i].description.empty()) {
             ImGui::SameLine();
-            Dim(outline_.parts[i].description);
+            Dim(pane_.Outline().parts[i].description);
         }
         ImGui::SameLine();
         const std::string show = "Show the " + sqlstep::FormatCount(removed);
@@ -1104,13 +1104,13 @@ void SqlWorkbenchDialog::RenderStatusBar() {
     const ui::Tokens& t = ui::CurrentTokens();
     Dim("DuckDB, read-only, no file access    Results must be flat columns    Ctrl+Enter run    Ctrl+Shift+Enter "
         "run selection");
-    const auto head = editor_.Doc().Primary().head;
+    const auto head = pane_.Editor().Doc().Primary().head;
     std::string right = "Ln " + std::to_string(head.line + 1) + ", Col " + std::to_string(head.col + 1) + "    " +
-                        std::to_string(outline_.line_count) + " lines";
-    if (!outline_.structured) right += "    not split into parts";
+                        std::to_string(pane_.Outline().line_count) + " lines";
+    if (!pane_.Outline().structured) right += "    not split into parts";
     if (!syntax_state_.empty()) right += "    " + syntax_state_;
     AlignRight(ImGui::CalcTextSize(right.c_str()).x);
-    Coloured(right, syntax_error_ ? t.caution : (outline_.structured ? t.text_dim : t.warning));
+    Coloured(right, syntax_error_ ? t.caution : (pane_.Outline().structured ? t.text_dim : t.warning));
 }
 
 }  // namespace gui

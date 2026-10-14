@@ -354,6 +354,7 @@ set(ENGINE_SOURCES
     src/gui/sql_workbench.cpp
     src/gui/sql_workbench_plan.cpp
     src/gui/sql_workbench_editing.cpp
+    src/gui/sql_editor_pane.cpp
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp

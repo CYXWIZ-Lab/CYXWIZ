@@ -58,8 +58,8 @@ void Card(const char* id, const std::string& value, const std::string& label, co
 }  // namespace
 
 int SqlWorkbenchDialog::PartIndex(const std::string& name) const {
-    for (size_t i = 0; i < outline_.parts.size(); ++i) {
-        if (outline_.parts[i].name == name) return static_cast<int>(i);
+    for (size_t i = 0; i < pane_.Outline().parts.size(); ++i) {
+        if (pane_.Outline().parts[i].name == name) return static_cast<int>(i);
     }
     return -1;
 }
@@ -91,7 +91,7 @@ void SqlWorkbenchDialog::RenderPlan() {
     } else {
         std::string note = plan_.timed ? "Timed run at " + plan_when_ + "  EXPLAIN ANALYZE, same inputs as Run step"
                                        : "Estimate at " + plan_when_ + ": DuckDB planned the query without running it";
-        if (plan_draft_ != draft_) note += "  (an older draft)";
+        if (plan_draft_ != pane_.Text()) note += "  (an older draft)";
         Dim(note);
     }
     static const char* const kViews[] = {"Tree", "Diagram", "Text"};
@@ -419,7 +419,7 @@ void SqlWorkbenchDialog::RenderPlanDetails() {
     if (!op.parts.empty()) {
         const int part = PartIndex(op.parts.front());
         if (part >= 0) {
-            const auto& p = outline_.parts[static_cast<size_t>(part)];
+            const auto& p = pane_.Outline().parts[static_cast<size_t>(part)];
             const std::string link = "Show in query (lines " + std::to_string(p.first_line) + "-" +
                                      std::to_string(p.last_line) + ")";
             AlignRight(ImGui::CalcTextSize(link.c_str()).x);
