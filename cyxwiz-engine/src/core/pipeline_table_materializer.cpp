@@ -237,6 +237,43 @@ bool HasReachableCycle(
     return false;
 }
 
+// Training reads one table: the branch from the Data Input that reaches the
+// Data Split / Data Loader. A side branch (a Word Embeddings node saving its
+// vectors, a Plot) is not part of it and is neither applied nor counted as a
+// fork. A graph with neither node keeps every branch, as before.
+bool ReachesTrainingInput(
+    int node_id,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    std::unordered_set<int>& visiting) {
+    if (!visiting.insert(node_id).second) return false;
+    const gui::MLNode* node = FindNodeById(node_id, nodes);
+    if (node && (node->type == gui::NodeType::DataSplit ||
+                 node->type == gui::NodeType::DataLoader)) {
+        return true;
+    }
+    for (const auto& link : links) {
+        if (link.from_node == node_id &&
+            ReachesTrainingInput(link.to_node, nodes, links, visiting)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsSideBranch(
+    int child_id,
+    const gui::MLNode& data_input,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links) {
+    std::unordered_set<int> graph_visiting;
+    if (!ReachesTrainingInput(data_input.id, nodes, links, graph_visiting)) {
+        return false;
+    }
+    std::unordered_set<int> child_visiting;
+    return !ReachesTrainingInput(child_id, nodes, links, child_visiting);
+}
+
 bool ValidateLinearMaterializerOperatorPath(
     const gui::MLNode& data_input,
     const std::vector<gui::MLNode>& nodes,
@@ -277,7 +314,8 @@ bool ValidateLinearMaterializerOperatorPath(
 
         std::vector<int> operator_relevant_children;
         for (const auto& link : links) {
-            if (link.from_node != node_id) {
+            if (link.from_node != node_id ||
+                IsSideBranch(link.to_node, data_input, nodes, links)) {
                 continue;
             }
 
@@ -473,6 +511,7 @@ MaterializationCacheability PipelineMaterializer::EvaluateCacheability(
 
         for (const auto& link : links) {
             if (link.from_node == node_id &&
+                !IsSideBranch(link.to_node, *data_input, nodes, links) &&
                 visited.insert(link.to_node).second) {
                 queue.push(link.to_node);
             }
@@ -793,6 +832,7 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
 
         for (const auto& link : links) {
             if (link.from_node == node_id &&
+                !IsSideBranch(link.to_node, *data_input, nodes, links) &&
                 visited.insert(link.to_node).second) {
                 queue.push(link.to_node);
             }
