@@ -661,8 +661,9 @@ std::vector<ScannedCall> ScanArrayFireCalls(const std::string& function) {
 
 TEST_CASE("Argsorts go through SortWithIndex, not ArrayFire's sort-with-index",
           "[arrayfire][source_scan]") {
-    // af::sort(sorted, indices, values, dim, ascending) never returns on the
-    // oneAPI backend (Iris Xe, 2026-10-14); SortWithIndex uses sort-by-key.
+    // af::sort(sorted, indices, values, dim, ascending) once did not return on
+    // the oneAPI backend (Iris Xe, 2026-10-14; see arrayfire_indexed.h);
+    // SortWithIndex uses sort-by-key.
     // Flags every five-argument af::sort call outside arrayfire_indexed.h.
     std::string list;
     for (const auto& call : ScanArrayFireCalls("af::sort")) {

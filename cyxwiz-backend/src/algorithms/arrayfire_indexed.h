@@ -1,17 +1,19 @@
 #pragma once
 
-// ArrayFire calls that also return indices, routed around two oneAPI backend
-// bugs (Intel Iris Xe, ArrayFire 3.10, found 2026-10-14). Use these instead of
-// the af:: calls.
+// ArrayFire calls that also return indices, routed around problems seen on the
+// oneAPI backend (Intel Iris Xe, ArrayFire 3.10, 2026-10-14). Use these instead
+// of the af:: calls.
 //
-// - Sort-with-index (af::sort(out, indices, in, ...)) never returns, while
-//   sort-by-key works on every backend: SortWithIndex sorts by key with a
-//   0..n-1 payload along the sorted dimension. Same results: both are stable.
 // - Indexed min / max along a dimension other than 0 (af::max(value, index,
 //   in, dim)) reduce only part of each row: on a [3, 5] matrix it returned
 //   column 1 where column 4 holds the maximum. Along dim 0 they are right, so
 //   MaxWithIndex / MinWithIndex swap `dim` with dim 0, reduce there and swap
-//   back.
+//   back. Standalone reproducer: scripts/arrayfire_probes/oneapi_indexed_ops.
+// - Sort-with-index (af::sort(out, indices, in, ...)) did not return within
+//   15 minutes in the ROC / PR and one-vs-rest tests on one run, and
+//   sort-by-key did. It could not be reproduced later that day (the reproducer,
+//   and those tests with the raw call). SortWithIndex keeps sort-by-key with a
+//   0..n-1 payload: the same results (both are stable sorts).
 
 #include <arrayfire.h>
 
