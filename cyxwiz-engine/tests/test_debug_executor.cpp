@@ -1646,6 +1646,12 @@ void TestEmbeddingWeightsWordVectorFiles() {
     // word2vec text with its header; "1990" is a word, not a value.
     std::ofstream(dir / "w2v.vec") << "3 2\n[PAD] 0 0\nthe 1 2\n1990 3 4\n";
     ExpectTrue(shape(dir / "w2v.vec", rows, cols) && rows == 3 && cols == 2, ".vec: header skipped, words dropped");
+    // Punctuation tokens of a real vocabulary: "," and "#" are words, not
+    // separators or comments (the sentiment vocabulary has both).
+    std::ofstream(dir / "punct.vec") << "4 2\n[PAD] 0 0\n, 1 2\n# 3 4\nthe 5 6\n";
+    ExpectTrue(shape(dir / "punct.vec", rows, cols) && rows == 4 && cols == 2, ".vec: ',' and '#' are words");
+    std::ofstream(dir / "commas.txt") << "# a matrix\n1,2,3\n4, 5, 6\n";
+    ExpectTrue(shape(dir / "commas.txt", rows, cols) && rows == 2 && cols == 3, "a comma matrix with a comment");
     std::ofstream(dir / "glove.txt") << "the 1 2\nparis 3 5\n";
     ExpectTrue(shape(dir / "glove.txt", rows, cols) && rows == 2 && cols == 2, "GloVe: a word first on each line");
     // Two whole numbers first, then numbers: a matrix row, not a header.

@@ -1983,8 +1983,10 @@ bool ReadEmbeddingWeightsText(const std::string& path, size_t& rows, size_t& col
         error = "could not open embedding weights file: " + path;
         return false;
     }
-    const auto split = [](std::string line) {
-        std::replace(line.begin(), line.end(), ',', ' ');
+    // Fields split by white space; a matrix may also use commas. A word file's
+    // word is its line's first field as written ("," and "#" are words too).
+    const auto split = [](std::string line, bool commas) {
+        if (commas) std::replace(line.begin(), line.end(), ',', ' ');
         std::istringstream iss(line);
         std::vector<std::string> tokens;
         std::string token;
@@ -2030,28 +2032,34 @@ bool ReadEmbeddingWeightsText(const std::string& path, size_t& rows, size_t& col
     std::vector<std::string> two_numbers;
     std::string line;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        const auto tokens = split(line);
-        if (tokens.empty()) continue;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // "#" starts a comment in a matrix (the starter builder's header line).
+        if (line.empty() || (!words && line[0] == '#')) continue;
         if (!decided) {
+            const auto fields = split(line, false);
+            if (fields.empty()) continue;
             float value = 0.0f;
-            if (two_numbers.empty() && tokens.size() == 2 && integer(tokens[0]) && integer(tokens[1])) {
-                two_numbers = tokens;
+            const bool rest_numbers = std::all_of(fields.begin() + 1, fields.end(),
+                                                  [&](const std::string& f) { return number(f, value); });
+            if (two_numbers.empty() && fields.size() == 2 && integer(fields[0]) && integer(fields[1])) {
+                two_numbers = fields;
                 continue;
             }
             if (!two_numbers.empty()) {
-                const bool header = !number(tokens[0], value) &&
-                                    tokens.size() == std::stoull(two_numbers[1]) + 1;
+                const bool header = !number(fields[0], value) && rest_numbers &&
+                                    fields.size() == std::stoull(two_numbers[1]) + 1;
                 if (header) {
                     words = true;
                 } else if (!add_row(two_numbers)) {
                     return false;
                 }
             } else {
-                words = !number(tokens[0], value);
+                words = !number(fields[0], value) && fields.size() > 1 && rest_numbers;
             }
             decided = true;
         }
+        const auto tokens = split(line, !words);
+        if (tokens.empty()) continue;
         if (!add_row(tokens)) return false;
     }
     if (!decided && !two_numbers.empty() && !add_row(two_numbers)) return false;
