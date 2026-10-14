@@ -327,6 +327,27 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(tenth.ok() && std::static_pointer_cast<arrow::DoubleScalar>(*tenth)->value == 0.1, "0.1 stays 0.1");
     TEST_ASSERT(decimals->column(2)->null_count() == 1, "a NULL decimal stays null");
 
+    // The result type table: the per-value path (TINYINT, UINTEGER, DATE) and
+    // the native export give the same Arrow types; the SQL step's exactness
+    // check reads the same table.
+    auto typed = db.Query("SELECT CAST(1 AS TINYINT) AS t, CAST(2 AS UINTEGER) AS u, DATE '2024-01-02' AS d");
+    TEST_ASSERT(typed != nullptr, "typed query");
+    TEST_ASSERT(typed->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
+                    typed->schema()->field(1)->type()->id() == arrow::Type::UINT32 &&
+                    typed->schema()->field(2)->type()->id() == arrow::Type::STRING,
+                "TINYINT int32, UINTEGER uint32, DATE text");
+    auto day = typed->column(2)->GetScalar(0);
+    TEST_ASSERT(day.ok() && (*day)->ToString() == "2024-01-02", "a date as its text");
+    auto native = db.Query("SELECT CAST(1 AS INTEGER) AS i, 'x' AS s");
+    TEST_ASSERT(native != nullptr && native->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
+                    native->schema()->field(1)->type()->id() == arrow::Type::STRING,
+                "native export: INTEGER int32, VARCHAR text");
+    TEST_ASSERT(db.UnsupportedResultColumns("SELECT 1 AS a, 'x' AS b").empty(), "exact columns pass the check");
+    const std::string why = db.UnsupportedResultColumns("SELECT DATE '2024-01-02' AS d, 0.5 AS w, 1 AS a");
+    TEST_ASSERT(why.find("'d'") != std::string::npos && why.find("'w'") != std::string::npos &&
+                    why.find("'a'") == std::string::npos,
+                "DATE and DECIMAL are named as not exact");
+
     // Cleanup
     db.UnregisterTable("employees");
     std::remove(csv_path.c_str());

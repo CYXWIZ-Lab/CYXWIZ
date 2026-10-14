@@ -42,21 +42,39 @@ std::string ExistingObjectKind(duckdb::Connection& conn, const std::string& name
     return chunk && chunk->size() > 0 ? chunk->GetValue(0, 0).ToString() : std::string();
 }
 
-// Result types Arrow export gives exactly as ArrowTypeForDuckDBType does.
-bool ConvertsNatively(const duckdb::LogicalType& type) {
+// The one table of result types (TOFIX148): how a result column of each
+// DuckDB type comes back as Arrow. `native`: DuckDB's Arrow export gives
+// this exact Arrow type, so whole chunks go through the C interface;
+// otherwise values are appended one by one. `exact`: every value comes
+// back unchanged (the SQL step refuses result columns that would not).
+struct ResultType {
+    std::shared_ptr<arrow::DataType> arrow;
+    bool native;
+    bool exact;
+};
+
+ResultType ResultTypeFor(const duckdb::LogicalType& type) {
     switch (type.id()) {
-        case duckdb::LogicalTypeId::BOOLEAN:
-        case duckdb::LogicalTypeId::INTEGER:
-        case duckdb::LogicalTypeId::BIGINT:
-        case duckdb::LogicalTypeId::UBIGINT:
-        case duckdb::LogicalTypeId::FLOAT:
-        case duckdb::LogicalTypeId::DOUBLE:
-        case duckdb::LogicalTypeId::VARCHAR:
-            return true;
-        default:
-            return false;
+        case duckdb::LogicalTypeId::BOOLEAN: return {arrow::boolean(), true, true};
+        case duckdb::LogicalTypeId::TINYINT:
+        case duckdb::LogicalTypeId::SMALLINT: return {arrow::int32(), false, true};
+        case duckdb::LogicalTypeId::INTEGER: return {arrow::int32(), true, true};
+        case duckdb::LogicalTypeId::BIGINT: return {arrow::int64(), true, true};
+        case duckdb::LogicalTypeId::UTINYINT:
+        case duckdb::LogicalTypeId::USMALLINT:
+        case duckdb::LogicalTypeId::UINTEGER: return {arrow::uint32(), false, true};
+        case duckdb::LogicalTypeId::UBIGINT: return {arrow::uint64(), true, true};
+        case duckdb::LogicalTypeId::FLOAT: return {arrow::float32(), true, true};
+        case duckdb::LogicalTypeId::DOUBLE: return {arrow::float64(), true, true};
+        case duckdb::LogicalTypeId::VARCHAR: return {arrow::utf8(), true, true};
+        // 0.1, 1234567.5, SUM of decimals: numbers, as double (not exact past 15 digits).
+        case duckdb::LogicalTypeId::DECIMAL: return {arrow::float64(), false, false};
+        // Dates, timestamps, HUGEINT, BLOB, nested types: their text.
+        default: return {arrow::utf8(), false, false};
     }
 }
+
+bool ConvertsNatively(const duckdb::LogicalType& type) { return ResultTypeFor(type).native; }
 
 std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
     switch (type->id()) {
@@ -209,105 +227,18 @@ duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& s
     }
 }
 
-std::shared_ptr<arrow::DataType> ArrowTypeForDuckDBType(const duckdb::LogicalType& type) {
-    switch (type.id()) {
-        case duckdb::LogicalTypeId::BOOLEAN:
-            return arrow::boolean();
-        case duckdb::LogicalTypeId::TINYINT:
-        case duckdb::LogicalTypeId::SMALLINT:
-        case duckdb::LogicalTypeId::INTEGER:
-            return arrow::int32();
-        case duckdb::LogicalTypeId::BIGINT:
-            return arrow::int64();
-        case duckdb::LogicalTypeId::UTINYINT:
-        case duckdb::LogicalTypeId::USMALLINT:
-        case duckdb::LogicalTypeId::UINTEGER:
-            return arrow::uint32();
-        case duckdb::LogicalTypeId::UBIGINT:
-            return arrow::uint64();
-        case duckdb::LogicalTypeId::FLOAT:
-            return arrow::float32();
-        case duckdb::LogicalTypeId::DOUBLE:
-        case duckdb::LogicalTypeId::DECIMAL:  // 0.1, 1234567.5, SUM of decimals: numbers
-            return arrow::float64();
-        default:
-            return arrow::utf8();
-    }
-}
-
-std::unique_ptr<arrow::ArrayBuilder>
-MakeArrowBuilderForDuckDBType(const duckdb::LogicalType& type) {
-    switch (type.id()) {
-        case duckdb::LogicalTypeId::BOOLEAN:
-            return std::make_unique<arrow::BooleanBuilder>();
-        case duckdb::LogicalTypeId::TINYINT:
-        case duckdb::LogicalTypeId::SMALLINT:
-        case duckdb::LogicalTypeId::INTEGER:
-            return std::make_unique<arrow::Int32Builder>();
-        case duckdb::LogicalTypeId::BIGINT:
-            return std::make_unique<arrow::Int64Builder>();
-        case duckdb::LogicalTypeId::UTINYINT:
-        case duckdb::LogicalTypeId::USMALLINT:
-        case duckdb::LogicalTypeId::UINTEGER:
-            return std::make_unique<arrow::UInt32Builder>();
-        case duckdb::LogicalTypeId::UBIGINT:
-            return std::make_unique<arrow::UInt64Builder>();
-        case duckdb::LogicalTypeId::FLOAT:
-            return std::make_unique<arrow::FloatBuilder>();
-        case duckdb::LogicalTypeId::DOUBLE:
-        case duckdb::LogicalTypeId::DECIMAL:
-            return std::make_unique<arrow::DoubleBuilder>();
-        default:
-            return std::make_unique<arrow::StringBuilder>();
-    }
-}
-
-arrow::Status AppendDuckDBValueToArrowBuilder(
-    const duckdb::Value& value,
-    const duckdb::LogicalType& type,
-    arrow::ArrayBuilder* builder) {
-
-    if (value.IsNull()) {
-        return builder->AppendNull();
-    }
-
-    switch (type.id()) {
-        case duckdb::LogicalTypeId::BOOLEAN:
-            return static_cast<arrow::BooleanBuilder*>(builder)->Append(
-                value.GetValue<bool>());
-        case duckdb::LogicalTypeId::TINYINT:
-            return static_cast<arrow::Int32Builder*>(builder)->Append(
-                value.GetValue<int8_t>());
-        case duckdb::LogicalTypeId::SMALLINT:
-            return static_cast<arrow::Int32Builder*>(builder)->Append(
-                value.GetValue<int16_t>());
-        case duckdb::LogicalTypeId::INTEGER:
-            return static_cast<arrow::Int32Builder*>(builder)->Append(
-                value.GetValue<int32_t>());
-        case duckdb::LogicalTypeId::BIGINT:
-            return static_cast<arrow::Int64Builder*>(builder)->Append(
-                value.GetValue<int64_t>());
-        case duckdb::LogicalTypeId::UTINYINT:
-            return static_cast<arrow::UInt32Builder*>(builder)->Append(
-                value.GetValue<uint8_t>());
-        case duckdb::LogicalTypeId::USMALLINT:
-            return static_cast<arrow::UInt32Builder*>(builder)->Append(
-                value.GetValue<uint16_t>());
-        case duckdb::LogicalTypeId::UINTEGER:
-            return static_cast<arrow::UInt32Builder*>(builder)->Append(
-                value.GetValue<uint32_t>());
-        case duckdb::LogicalTypeId::UBIGINT:
-            return static_cast<arrow::UInt64Builder*>(builder)->Append(
-                value.GetValue<uint64_t>());
-        case duckdb::LogicalTypeId::FLOAT:
-            return static_cast<arrow::FloatBuilder*>(builder)->Append(
-                value.GetValue<float>());
-        case duckdb::LogicalTypeId::DOUBLE:
-        case duckdb::LogicalTypeId::DECIMAL:
-            return static_cast<arrow::DoubleBuilder*>(builder)->Append(
-                value.GetValue<double>());
-        default:
-            return static_cast<arrow::StringBuilder*>(builder)->Append(value.ToString());
+// One value into the builder ResultTypeFor chose for its column.
+arrow::Status AppendDuckDBValueToArrowBuilder(const duckdb::Value& value, arrow::ArrayBuilder* builder) {
+    if (value.IsNull()) return builder->AppendNull();
+    switch (builder->type()->id()) {
+        case arrow::Type::BOOL: return static_cast<arrow::BooleanBuilder*>(builder)->Append(value.GetValue<bool>());
+        case arrow::Type::INT32: return static_cast<arrow::Int32Builder*>(builder)->Append(value.GetValue<int32_t>());
+        case arrow::Type::INT64: return static_cast<arrow::Int64Builder*>(builder)->Append(value.GetValue<int64_t>());
+        case arrow::Type::UINT32: return static_cast<arrow::UInt32Builder*>(builder)->Append(value.GetValue<uint32_t>());
+        case arrow::Type::UINT64: return static_cast<arrow::UInt64Builder*>(builder)->Append(value.GetValue<uint64_t>());
+        case arrow::Type::FLOAT: return static_cast<arrow::FloatBuilder*>(builder)->Append(value.GetValue<float>());
+        case arrow::Type::DOUBLE: return static_cast<arrow::DoubleBuilder*>(builder)->Append(value.GetValue<double>());
+        default: return static_cast<arrow::StringBuilder*>(builder)->Append(value.ToString());
     }
 }
 
@@ -362,24 +293,9 @@ std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
         const auto& types = prepared->GetTypes();
         std::string unsupported;
         for (size_t i = 0; i < types.size(); ++i) {
-            switch (types[i].id()) {
-            case duckdb::LogicalTypeId::BOOLEAN:
-            case duckdb::LogicalTypeId::TINYINT:
-            case duckdb::LogicalTypeId::SMALLINT:
-            case duckdb::LogicalTypeId::INTEGER:
-            case duckdb::LogicalTypeId::BIGINT:
-            case duckdb::LogicalTypeId::UTINYINT:
-            case duckdb::LogicalTypeId::USMALLINT:
-            case duckdb::LogicalTypeId::UINTEGER:
-            case duckdb::LogicalTypeId::UBIGINT:
-            case duckdb::LogicalTypeId::FLOAT:
-            case duckdb::LogicalTypeId::DOUBLE:
-            case duckdb::LogicalTypeId::VARCHAR:
-                break;
-            default:
-                unsupported += (unsupported.empty() ? "" : ", ") + std::string("'") +
-                               names[i] + "' (" + types[i].ToString() + ")";
-            }
+            if (ResultTypeFor(types[i]).exact) continue;
+            unsupported += (unsupported.empty() ? "" : ", ") + std::string("'") + names[i] + "' (" +
+                           types[i].ToString() + ")";
         }
         if (!unsupported.empty()) {
             return "result column(s) " + unsupported +
@@ -664,8 +580,15 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         // Initialize builders for each column
         std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
         for (size_t i = 0; i < types.size(); ++i) {
-            fields.push_back(arrow::field(names[i], ArrowTypeForDuckDBType(types[i])));
-            builders.push_back(MakeArrowBuilderForDuckDBType(types[i]));
+            const auto arrow_type = ResultTypeFor(types[i]).arrow;
+            fields.push_back(arrow::field(names[i], arrow_type));
+            std::unique_ptr<arrow::ArrayBuilder> builder;
+            const arrow::Status made = arrow::MakeBuilder(arrow::default_memory_pool(), arrow_type, &builder);
+            if (!made.ok()) {
+                spdlog::error("Arrow builder for '{}': {}", names[i], made.ToString());
+                return nullptr;
+            }
+            builders.push_back(std::move(builder));
         }
 
         // Iterate through result chunks
@@ -676,8 +599,7 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
             for (idx_t row = 0; row < chunk->size(); ++row) {
                 for (size_t col = 0; col < chunk->ColumnCount(); ++col) {
                     auto value = chunk->GetValue(col, row);
-                    auto status = AppendDuckDBValueToArrowBuilder(
-                        value, types[col], builders[col].get());
+                    auto status = AppendDuckDBValueToArrowBuilder(value, builders[col].get());
                     if (!status.ok()) {
                         spdlog::error("Failed to append DuckDB result value: {}",
                                       status.ToString());
