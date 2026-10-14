@@ -120,7 +120,7 @@ struct SqlWorkbenchDialog::Run {
     cyxwiz::SqlTransform transform;
     std::atomic<bool> done{false};
     cyxwiz::SqlTransformResult result;
-    std::vector<cyxwiz::ArrowColumnProfile> profile;  // of the result, computed on the worker
+    cyxwiz::DatasetProfile profile;                   // of the result, computed on the worker
     cyxwiz::sqlplan::Plan plan;                       // Explain / Profile, read on the worker
     double seconds = 0.0;
     std::thread thread;
@@ -313,7 +313,7 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
     raw->thread = std::thread([raw, query, mode, profile, inputs = std::move(inputs)]() {
         const auto start = std::chrono::steady_clock::now();
         raw->result = raw->transform.Run(query, inputs, mode);
-        if (profile && raw->result.ok && raw->result.table) raw->profile = cyxwiz::ProfileArrowTable(*raw->result.table);
+        if (profile && raw->result.ok && raw->result.table) raw->profile = cyxwiz::ProfileArrow(raw->result.table);
         if (raw->result.ok && (mode == cyxwiz::SqlRunMode::Explain || mode == cyxwiz::SqlRunMode::Profile)) {
             raw->plan = cyxwiz::sqlplan::ParsePlanJson(raw->result.plan);
             cyxwiz::sqlplan::ExplainPlan(raw->plan, query, sqlstep::OutlineSqlQuery(query));
@@ -958,8 +958,9 @@ void SqlWorkbenchDialog::RenderResults() {
 
 void SqlWorkbenchDialog::RenderProfile() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (result_profile_.empty()) {
-        Dim("Run the step or a part to profile its columns.");
+    if (result_profile_.columns.empty()) {
+        Dim(result_profile_.ok() ? "Run the step or a part to profile its columns."
+                                 : "The result could not be profiled: " + result_profile_.error);
         return;
     }
     Dim("Columns of " + result_label_ + ", over all " + sqlstep::FormatCount(result_ ? result_->num_rows() : 0) +
@@ -974,16 +975,19 @@ void SqlWorkbenchDialog::RenderProfile() {
         ImGui::TableSetupColumn("values", ImGuiTableColumnFlags_WidthStretch, 1.8f);
         ImGui::TableSetupColumn("repeat an earlier row", ImGuiTableColumnFlags_WidthStretch, 0.6f);
         ImGui::TableHeadersRow();
-        for (const auto& column : result_profile_) {
+        for (const auto& column : result_profile_.columns) {
+            const auto count = [](size_t n) { return sqlstep::FormatCount(static_cast<int64_t>(n)); };
+            const size_t nulls = column.facts.rows - std::min(column.facts.rows, column.facts.non_null);
+            // Rows whose value appeared in an earlier row.
+            const size_t repeated = column.facts.non_null - std::min(column.facts.non_null, column.facts.distinct);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            Coloured(column.name, t.text);
-            Dim(column.type);
+            Coloured(column.facts.name, t.text);
+            Dim(column.sql_type);
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(sqlstep::FormatCount(column.distinct).c_str());
+            ImGui::TextUnformatted(count(column.facts.distinct).c_str());
             ImGui::TableNextColumn();
-            Coloured(sqlstep::FormatCount(column.nulls) + " / " + sqlstep::FormatCount(column.empty),
-                     column.nulls + column.empty > 0 ? t.warning : t.text_dim);
+            Coloured(count(nulls) + " / " + count(column.empty_text), nulls + column.empty_text > 0 ? t.warning : t.text_dim);
             ImGui::TableNextColumn();
             if (column.numeric) {
                 ImGui::TextUnformatted(("min " + Number(column.min) + "   median " + Number(column.median) +
@@ -991,19 +995,19 @@ void SqlWorkbenchDialog::RenderProfile() {
                                            .c_str());
             } else {
                 std::string top;
-                for (const auto& [value, count] : column.top) {
+                for (const auto& [value, times] : column.top) {
                     std::string shown = value.size() > 28 ? value.substr(0, 28) + "..." : value;
                     for (char& ch : shown) {
                         if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
                     }
-                    top += (top.empty() ? "" : "   ") + shown + " (" + sqlstep::FormatCount(count) + ")";
+                    top += (top.empty() ? "" : "   ") + shown + " (" + count(times) + ")";
                 }
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextUnformatted(top.c_str());
                 ImGui::PopTextWrapPos();
             }
             ImGui::TableNextColumn();
-            Coloured(sqlstep::FormatCount(column.repeated), column.repeated > 0 ? t.text : t.text_dim);
+            Coloured(count(repeated), repeated > 0 ? t.text : t.text_dim);
         }
         ImGui::EndTable();
     }

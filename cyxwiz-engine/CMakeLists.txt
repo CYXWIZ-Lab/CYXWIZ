@@ -123,7 +123,6 @@ set(ENGINE_SOURCES
     src/core/runtime_log_presentation.cpp
     src/core/console_commands_presentation.cpp
     src/core/sql_step_presentation.cpp
-    src/core/table_profile.cpp
     src/core/sql_plan.cpp
     src/core/sql_editing.cpp
     src/core/guided_sql.cpp
@@ -2766,7 +2765,9 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/pipeline_executor.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
-    src/core/table_profile.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
     src/core/sql_plan.cpp
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp

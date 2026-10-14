@@ -13,7 +13,7 @@
 #include "core/guided_sql.h"
 #include "core/sql_plan.h"
 #include "core/sql_transform.h"
-#include "core/table_profile.h"
+#include "core/dataset_profiler.h"
 #include "core/plot/node_result_plan.h"
 #include "core/graph_document.h"
 #include <arrow/io/file.h>
@@ -1015,9 +1015,12 @@ void CheckSqlPartQueries() {
     const auto copy = transform.Run("COPY input TO 'x.csv'", {{"input", input}}, cyxwiz::SqlRunMode::Explain);
     Check(!copy.ok, "explain refuses a statement that is not a SELECT");
     // Column profile of the whole result.
-    const auto profiles = cyxwiz::ProfileArrowTable(*whole.table);
-    Check(profiles.size() == 2 && profiles[0].numeric && profiles[0].min == 2 && profiles[0].max == 3 &&
-              profiles[0].median == 2.5 && profiles[1].distinct == 2 && profiles[1].repeated == 0,
+    const auto profile = cyxwiz::ProfileArrow(whole.table);
+    Check(profile.ok() && profile.columns.size() == 2, "profile: " + profile.error);
+    const auto& id = profile.columns[0];
+    const auto& word = profile.columns[1];
+    Check(id.numeric && id.min == 2 && id.max == 3 && id.median == 2.5 && word.facts.distinct == 2 &&
+              word.facts.non_null == word.facts.distinct,
           "profile: id 2..3 median 2.5, word 2 distinct");
     std::cout << "SQL part queries passed\n";
 }

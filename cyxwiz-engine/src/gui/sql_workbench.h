@@ -11,7 +11,7 @@
 #include "../core/sql_editing.h"
 #include "../core/sql_plan.h"
 #include "../core/sql_step_presentation.h"
-#include "../core/table_profile.h"
+#include "../core/dataset_profiler.h"
 #include "../data/arrow_data_table.h"
 #include "node_config_dialog.h"
 #include "node_editor.h"
@@ -144,7 +144,7 @@ private:
     double running_since_ = 0.0;            // ImGui time run_ started
     std::shared_ptr<arrow::Table> result_;
     cyxwiz::ArrowPreview result_preview_;
-    std::vector<cyxwiz::ArrowColumnProfile> result_profile_;
+    cyxwiz::DatasetProfile result_profile_;
     std::string result_label_;  // "result", "part kept", "rows kept removed"
     bool result_is_step_ = false;  // the whole draft's result (checks apply)
     double result_seconds_ = 0.0;

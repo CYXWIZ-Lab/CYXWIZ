@@ -1,9 +1,11 @@
 #include "dataset_profiler.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace cyxwiz {
 
@@ -159,6 +161,7 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
                 sql += ", CAST(" + q + col + ", 0.75) AS DOUBLE) AS " + k + "q3";
             } else if (c.facts.type == ColumnFacts::Type::Text) {
                 sql += ", CAST(avg(length(" + col + ")) AS DOUBLE) AS " + k + "len";
+                sql += ", count_if(" + col + " = '') AS " + k + "empty";
                 sql += ", min(" + col + ") AS " + k + "lo, max(" + col + ") AS " + k + "hi";
             } else if (c.facts.type == ColumnFacts::Type::Temporal) {
                 sql += ", CAST(min(" + col + ") AS VARCHAR) AS " + k + "lo, CAST(max(" + col + ") AS VARCHAR) AS " + k + "hi";
@@ -191,6 +194,7 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
                 c.q3 = AsDouble(Cell(r.table, k + "q3"));
             } else {
                 c.facts.avg_length = AsDouble(Cell(r.table, k + "len"));
+                c.empty_text = AsCount(Cell(r.table, k + "empty"));
                 if (!std::isfinite(c.facts.avg_length)) c.facts.avg_length = 0;
                 c.min_text = AsText(Cell(r.table, k + "lo"));
                 c.max_text = AsText(Cell(r.table, k + "hi"));
@@ -315,6 +319,28 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
     }
     p.elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     progress(1.0f, "Profiled");
+    return p;
+}
+
+DatasetProfile ProfileArrow(const std::shared_ptr<arrow::Table>& table, const ProfileOptions& options) {
+    namespace fs = std::filesystem;
+    static std::atomic<uint64_t> next{0};
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cyxwiz_profile_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                          "_" + std::to_string(++next));
+    DatasetProfile p;
+    {
+        SessionQueryEngine engine(dir.string());
+        std::string error;
+        if (!engine.AttachArrow("result", 1, table, &error)) {
+            p.table = "result";
+            p.error = error;
+        } else {
+            p = ProfileTable("result", [&engine](const QueryRequest& r) { return engine.Run(r); }, options);
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(dir, ec);
     return p;
 }
 
