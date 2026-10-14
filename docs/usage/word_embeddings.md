@@ -125,6 +125,8 @@ vector of token id *i*:
 - the **Embedding** loads the saved file (Weights > From a Word Embeddings
   node), which also sets its size to 5,000 x 100.
 
+The graph carries notes on the canvas, and `examples/cyxgraph/Sentiment analysis/word_vectors_graph.md` explains it node by node (how the vocabulary file is made, the line-up step, word vectors versus the Embedding).
+
 Steps: open the graph, double-click **Word vectors (word2vec)** and **Train**
 (2 epochs, about 4 minutes on a GTX 1050 Ti), then **Train** the graph. Freeze
 is off, so the vectors are fine-tuned with the rest of the model; turn it on
