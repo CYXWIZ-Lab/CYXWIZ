@@ -137,8 +137,10 @@ void CheckRowVectorBlocks(const fs::path& dir) {
     for (const int d : {0, 3, 999}) {
         const float unit = static_cast<float>(d % 7 + 1);
         const std::string column = "emb_" + std::to_string(d);
-        Check(Value(rows, column, 0) == unit && Value(rows, column, 1) == 3.0f * unit &&
-                  Value(rows, column, 2) == -unit && Value(rows, column, 3) == 2.0f * unit,
+        // A mean may be computed as sum x (1 / count): within float rounding.
+        const auto close_to = [](float got, float want) { return std::abs(got - want) <= 1e-6f * std::abs(want); };
+        Check(close_to(Value(rows, column, 0), unit) && close_to(Value(rows, column, 1), 3.0f * unit) &&
+                  close_to(Value(rows, column, 2), -unit) && close_to(Value(rows, column, 3), 2.0f * unit),
               "each row's mean, whatever block it was in (" + column + ")");
     }
 }
