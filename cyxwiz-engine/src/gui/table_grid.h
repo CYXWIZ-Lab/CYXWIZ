@@ -109,7 +109,8 @@ public:
     void EndCellEdit(bool save);
     bool IsEditing() const { return editing_row >= 0 && editing_col >= 0; }
 
-    // A cell as text: numbers in their shortest exact form, "" when empty.
+    // A cell as text, "" when empty: a number in its shortest exact form
+    // (106.4), or to 10 significant digits when that is long (2/3).
     std::string CellText(size_t row, size_t col) const;
 
     void CopyCellToClipboard(int row, int col) const;

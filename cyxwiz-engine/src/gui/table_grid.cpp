@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -50,7 +51,9 @@ std::string TableGrid::CellText(size_t row, size_t col) const {
     if (const auto* d = std::get_if<double>(&v)) {
         char buf[32];
         const auto r = std::to_chars(buf, buf + sizeof(buf), *d);
-        return std::string(buf, r.ptr);
+        if (r.ptr - buf <= 12) return std::string(buf, r.ptr);
+        std::snprintf(buf, sizeof(buf), "%.10g", *d);
+        return buf;
     }
     return "";
 }
@@ -159,10 +162,11 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
         return;
     }
 
-    // Past one page the pager goes under the grid: keep its line free when
-    // the grid fills the space left (it was drawn out of view).
+    // Past one page the pager (or the no-match note) goes under the grid:
+    // keep its line free when the grid fills the space left.
     ImVec2 outer = size;
-    if (total_pages > 1 && outer.y == 0.0f) outer.y = -(ImGui::GetFrameHeightWithSpacing() + 4.0f);
+    const bool note_line = total_pages > 1 || (Hiding() && display_count == 0);
+    if (note_line && outer.y == 0.0f) outer.y = -(ImGui::GetFrameHeightWithSpacing() + 4.0f);
 
     if (ImGui::BeginTable(id, column_count, flags, outer)) {
         // The header row, the line numbers and the frozen data columns stay
@@ -506,6 +510,8 @@ void TableGrid::Render(const char* id, const ImVec2& size) {
 
         ImGui::EndTable();
     }
+    if (Hiding() && display_count == 0)
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "No row contains \"%s\".", filter_text.c_str());
 
     // Pagination controls
     if (total_pages > 1) {
