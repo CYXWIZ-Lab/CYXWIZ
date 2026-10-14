@@ -33,6 +33,8 @@ namespace cyxwiz {
 
 namespace {
 
+constexpr dim_t kSyncSteps = 64;
+
 // W[key] -= alpha * (sum of the rows with that key).
 void ScatterSubtract(af::array& w, const af::array& keys, const af::array& rows, double alpha) {
     if (keys.elements() == 0) return;
@@ -79,20 +81,18 @@ af::array Step(af::array& w_in, af::array& w_out, const af::array& inputs, const
     const af::array g_rep = af::tile(g, 1, static_cast<unsigned>(d));
     af::array grad_out = g_rep * h_rep;
     const af::array grad_h = af::moddims(af::sum(af::moddims(g_rep * u, b, k + 1, d), 1), b, d);
-    // Each context word gets its share of the mean's gradient.
+    // Each context word gets its share of the mean's gradient; an empty slot
+    // gets none.
     af::array grad_in = af::moddims(
         af::tile(af::moddims(grad_h / af::tile(count, 1, static_cast<unsigned>(d)), b, 1, d), 1, static_cast<unsigned>(c), 1),
-        b * c, d);
+        b * c, d) * af::tile(af::flat(weight), 1, static_cast<unsigned>(d));
     grad_out.eval();
     grad_in.eval();
 
-    // af::lookup, not x(index array): on the oneAPI backend indexing a slice
-    // (the batch is a slice of the epoch's examples) by an index array ignores
-    // the slice's offset (Iris Xe, ArrayFire 3.10, 2026-10-14).
-    const af::array out_rows = af::where(flat_targets >= 0);
-    ScatterSubtract(w_out, af::lookup(flat_targets, out_rows), af::lookup(grad_out, out_rows, 0), alpha);
-    const af::array in_rows = af::where(af::flat(valid));
-    ScatterSubtract(w_in, af::lookup(af::flat(inputs), in_rows), af::lookup(grad_in, in_rows, 0), alpha);
+    // Empty slots (-1) update row 0 by a zero gradient instead of being
+    // filtered out: af::where would make the host wait for its count.
+    ScatterSubtract(w_out, af::select(flat_targets >= 0, flat_targets, 0.0).as(s32), grad_out, alpha);
+    ScatterSubtract(w_in, af::flat(af::select(valid, inputs, 0.0)).as(s32), grad_in, alpha);
     w_in.eval();
     w_out.eval();
     return loss;
@@ -299,7 +299,11 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
             ex_inputs.eval();
             ex_outputs.eval();
             const dim_t examples = ex_outputs.elements();
-            double epoch_loss = 0.0;
+            // The loss stays on the device; reading it each step would stall
+            // the queue. The host waits every kSyncSteps steps, so a stop is
+            // seen soon and the queue stays short.
+            af::array epoch_loss = af::constant(0.0f, 1, f32);
+            dim_t steps = 0;
             for (dim_t start = 0; start < examples; start += options.batch_size) {
                 const dim_t end = std::min(examples, start + static_cast<dim_t>(options.batch_size));
                 const af::seq rows(static_cast<double>(start), static_cast<double>(end - 1));
@@ -314,11 +318,17 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
                 negatives = af::select(negatives == af::tile(batch_out, 1, static_cast<unsigned>(k)), -1.0, negatives);
                 const double progress = std::min(1.0, done / total_estimate);
                 const double alpha = options.alpha - (options.alpha - options.min_alpha) * progress;
-                epoch_loss += af::sum<double>(Step(w_in, w_out, batch_in, batch_out, negatives, alpha));
+                epoch_loss += af::sum(Step(w_in, w_out, batch_in, batch_out, negatives, alpha));
+                epoch_loss.eval();
+                if (++steps % kSyncSteps == 0) af::sync();
                 done += static_cast<double>(end - start);
+                if (options.on_progress &&
+                    !options.on_progress(std::min(1.0, (static_cast<double>(epoch) + static_cast<double>(end) /
+                                                        static_cast<double>(examples)) / options.epochs), epoch + 1))
+                    return fail("Training was stopped");
             }
             model.examples += examples;
-            model.epoch_loss.push_back(examples > 0 ? epoch_loss / static_cast<double>(examples) : 0.0);
+            model.epoch_loss.push_back(examples > 0 ? epoch_loss.scalar<float>() / static_cast<double>(examples) : 0.0);
         }
         if (model.examples == 0) return fail("The corpus gave no training examples (sentences too short?)");
         model.vectors.values = RowsToHost(w_in, "WordEmbeddings::TrainWord2Vec");
