@@ -46,6 +46,50 @@ struct CYXWIZ_API WordAlignment {
     std::string error_message;
 };
 
+// word2vec training settings, gensim's names and defaults (Word2Vec).
+struct CYXWIZ_API Word2VecOptions {
+    bool cbow = false;          // false: skip-gram (sg=1); true: CBOW with the mean of the context
+    int vector_size = 100;
+    int window = 5;             // largest distance; each position draws its own 1..window (gensim)
+    int min_count = 5;          // words seen fewer times are dropped before training
+    int negative = 5;           // noise words per example, drawn from unigram^0.75
+    double sample = 1e-3;       // frequent-word down-sampling threshold (0: off)
+    int epochs = 5;
+    double alpha = 0.025;       // learning rate, falling linearly to min_alpha
+    double min_alpha = 1e-4;
+    int batch_size = 512;       // examples per device step
+    unsigned seed = 1;
+    size_t max_vocab = 0;       // keep the most frequent words only (0: all)
+};
+
+// One device step of word2vec with negative sampling: SGD on the sum of the
+// examples' losses, all rows updated from the same old values.
+// - skip-gram: `inputs` [B] centre words, `outputs` [B] context words;
+// - CBOW: `inputs` [B * context_width] context words (row-major, -1 = none),
+//   whose mean predicts `outputs` [B] centre words.
+// `negatives` [B * negative] row-major.
+struct CYXWIZ_API Word2VecBatch {
+    std::vector<int> inputs;
+    int context_width = 1;
+    std::vector<int> outputs;
+    std::vector<int> negatives;
+    int negative = 0;
+    double alpha = 0.025;
+};
+
+// A trained model: the vocabulary (most frequent first), its counts, and the
+// input vectors (the word vectors) and output vectors.
+struct CYXWIZ_API Word2VecModel {
+    WordVectors vectors;
+    std::vector<long long> counts;
+    std::vector<float> output_vectors;
+    std::vector<double> epoch_loss;  // mean loss per example in each epoch
+    long long examples = 0;          // training examples seen in all epochs
+
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API WordEmbeddings {
 public:
     // Text format: one word per line followed by its values, separated by
@@ -63,6 +107,18 @@ public:
     // The vectors in the order of `vocabulary` (token id = position).
     static WordAlignment Align(const WordVectors& vectors, const std::vector<std::string>& vocabulary,
                                const WordAlignmentOptions& options = {});
+
+    // Runs `batches` in order on row-major [vocab_size, dim] input / output
+    // vectors (updated in place); `losses` gets each batch's summed loss.
+    static bool Word2VecSteps(std::vector<float>& input_vectors, std::vector<float>& output_vectors, int vocab_size,
+                              int dim, const std::vector<Word2VecBatch>& batches, std::vector<double>* losses,
+                              std::string* error = nullptr);
+
+    // Trains word2vec on tokenised sentences on the device: vocabulary from
+    // min_count, down-sampling, dynamic windows and negatives drawn on the
+    // device from `seed`, so a run repeats exactly on one device.
+    static Word2VecModel TrainWord2Vec(const std::vector<std::vector<std::string>>& sentences,
+                                       const Word2VecOptions& options = {});
 };
 
 }  // namespace cyxwiz

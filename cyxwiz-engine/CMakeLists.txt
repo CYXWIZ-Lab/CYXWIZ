@@ -5668,6 +5668,9 @@ add_custom_target(copy_test_computation_truth_word_embeddings_fixture
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings_gensim.json"
         "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings_gensim.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word2vec_reference.json"
+        "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word2vec_reference.json"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings"
         "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings"
