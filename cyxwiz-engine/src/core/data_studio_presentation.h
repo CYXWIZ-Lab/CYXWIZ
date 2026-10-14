@@ -80,9 +80,22 @@ struct JobView {
     std::vector<int> node_ids; // every node of the job (Show on canvas)
 };
 
+// Bring in: one row per Data Input node (approved mockup v8).
+struct SourceRow {
+    int node_id = -1;
+    std::string name;
+    std::string file;          // the node's file_path as written ("datasets/.../tier1_books.zip")
+    std::string size;          // rows x columns ("7 x 6" with a times sign); "" until loaded
+    std::string state;         // "loaded", "not loaded", "failed"
+    std::string detail;        // the error when it failed
+    std::string dataset;       // its registry name when loaded
+    Tone tone = Tone::Plain;
+};
+
 struct View {
     std::string graph_label;   // "berean_v3_tier1_paragraphs · recipe tier1_paragraphs"
     std::vector<RailSection> rail;
+    std::vector<SourceRow> sources;  // Bring in
     std::array<JobView, kJobCount> jobs;
     std::string last_run;      // "tier1_paragraphs · 15,349 rows · 4/4 checks · 3.1 s"; "" before any run
     Tone last_run_tone = Tone::Plain;

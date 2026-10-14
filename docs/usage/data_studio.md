@@ -27,8 +27,8 @@ Data Pipeline executor.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
   stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no split*, *1
-  output*). Explore is built; the other jobs list their nodes and are being
-  built (TOFIX148).
+  output*). Bring in and Explore are built; the other jobs list their nodes
+  and are being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Row Count Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
@@ -37,6 +37,18 @@ Data Pipeline executor.
   (*tier1_paragraphs - 15,349 rows - 4/4 checks - 3.1 s - at 12:39:04*,
   orange when a check failed, red when a step failed); *Runs through the
   Data Pipeline executor*.
+
+## Bring in
+
+**Add Data Input...** adds a Data Input node to the graph and opens its
+dialog, where you pick the file, its format and the preview, then Apply.
+The table lists the graph's Data Input nodes: the node, its file as written
+in the graph, rows x columns once loaded, and its state (*loaded*, *not
+loaded*, or *failed* with the error on hover). **Open dialog** opens the
+node's dialog on the canvas; **Explore** opens a loaded one in Explore >
+Profile.
+
+## Explore
 
 Explore has three views: **Query**, **Profile** and **Visualize**. A
 dashboard's "Open in Data Studio", "Edit roles", the Asset Browser's "Open

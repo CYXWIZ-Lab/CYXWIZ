@@ -94,6 +94,7 @@ private:
     void RenderNodeStrip(const studio::JobView& job);
     void RenderJobBody();
     void RenderExplore();
+    void RenderBringIn();
     void RenderStatusBar();
 };
 

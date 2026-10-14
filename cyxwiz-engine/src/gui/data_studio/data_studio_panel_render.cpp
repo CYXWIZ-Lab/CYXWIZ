@@ -4,6 +4,8 @@
 
 #include "data_studio_panel.h"
 
+#include "../node_editor.h"
+#include "../editor_fonts.h"
 #include "../icons.h"
 #include "../separate_windows.h"
 #include "../ui_buttons.h"
@@ -236,11 +238,75 @@ void DataStudioPanel::RenderJobBody() {
         RenderExplore();
         return;
     }
+    if (job_ == studio::Job::BringIn) {
+        RenderBringIn();
+        return;
+    }
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s is the next part of Data Studio being built (TOFIX148 step 3). Its nodes are listed above; "
                                    "Show on canvas opens them in CyxWiz Studio.",
                        studio::JobName(job_));
+    ImGui::PopTextWrapPos();
+}
+
+void DataStudioPanel::RenderBringIn() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (ui::PrimaryButton(ICON_FA_PLUS " Add Data Input...", node_editor_ != nullptr, "No graph is open", ui::ButtonSize::Small))
+        node_editor_->AddDataInputAndConfigure();
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Adds a Data Input node to this graph and opens its dialog: the file, its format, a preview, Apply.");
+    ImGui::Spacing();
+
+    if (view_.sources.empty()) {
+        ImGui::TextColored(t.text_dim, "No Data Input in this graph yet.");
+    } else if (ImGui::BeginTable("##bring_in", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
+        ImGui::TableSetupColumn("Data Input node", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        ImGui::TableSetupColumn("rows Ã columns", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+        ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+        const float actions_w = ui::ButtonWidth("Open dialog", ui::ButtonSize::Small) + ImGui::CalcTextSize("Explore").x + 24.0f;
+        ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actions_w);
+        ImGui::TableHeadersRow();
+        ImFont* mono = gui::GetCodeFont();
+        for (const auto& row : view_.sources) {
+            ImGui::PushID(row.node_id);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_bright, "%s", row.name.c_str());
+            ImGui::TableNextColumn();
+            if (mono) ImGui::PushFont(mono);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
+            ImGui::PopTextWrapPos();
+            if (mono) ImGui::PopFont();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ToneColour(row.tone), ICON_FA_CIRCLE " %s", row.state.c_str());
+            if (!row.detail.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", row.detail.c_str());
+            ImGui::TableNextColumn();
+            if (ui::LinkButton("Open dialog", node_editor_ != nullptr)) {
+                if (open_node_editor_callback_) open_node_editor_callback_();
+                node_editor_->OpenNodeConfiguration(row.node_id);
+            }
+            if (!row.dataset.empty()) {
+                ImGui::SameLine();
+                if (ui::LinkButton("Explore")) {
+                    SetActiveDataset(row.dataset);
+                    job_ = studio::Job::Explore;
+                    explore_tab_ = ExploreTab::Profile;
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "Each row is a Data Input node; its dialog is where the file, format and loading are set. "
+                                     "Its profile is Explore > Profile. Data enters the graph only through a Data Input.");
     ImGui::PopTextWrapPos();
 }
 

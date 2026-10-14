@@ -67,6 +67,9 @@ int main() {
         Check(v.rail[2].items[0].label == "tier1_paragraphs.parquet" && v.rail[2].items[0].meta == "not written",
               "an export not written yet");
         Check(v.last_run.empty(), "no last run yet");
+        Check(v.sources.size() == 1 && v.sources[0].state == "not loaded" && v.sources[0].size.empty() &&
+                  v.sources[0].file == "datasets/staging/base_expansion_v3/archives/tier1_books.zip",
+              "Bring in: a Data Input not loaded");
     }
 
     // After the run (the Engine's numbers, 2026-10-14).
@@ -88,6 +91,9 @@ int main() {
     const View v = Build(in);
 
     Check(JobOfView(v, Job::BringIn).state == "1 Data Input", "Bring in: " + JobOfView(v, Job::BringIn).state);
+    Check(v.sources.size() == 1 && v.sources[0].state == "loaded" && v.sources[0].size == "7 \xC3\x97 6" &&
+              v.sources[0].dataset == "ds_datainput_157" && v.sources[0].tone == Tone::Ok,
+          "Bring in: loaded, 7 x 6");
     Check(JobOfView(v, Job::Prepare).state == "1 recipe", "Prepare: " + JobOfView(v, Job::Prepare).state);
     Check(JobOfView(v, Job::Validate).state == "4 of 4 pass", "Validate: " + JobOfView(v, Job::Validate).state);
     Check(JobOfView(v, Job::Ready).state == "no split", "ML readiness: " + JobOfView(v, Job::Ready).state);
@@ -130,6 +136,12 @@ int main() {
     Check(broken.last_run == "tier1_paragraphs failed: Binder Error: column \"txt\" not found" &&
               broken.last_run_tone == Tone::Error,
           "a failed step: " + broken.last_run);
+
+    in.nodes[0].error = "cannot open tier1_books.zip";
+    const View input_failed = Build(in);
+    Check(input_failed.sources[0].state == "failed" && input_failed.sources[0].detail == "cannot open tier1_books.zip" &&
+              input_failed.sources[0].tone == Tone::Error,
+          "Bring in: a Data Input that failed");
 
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");
     std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph). OK\n";

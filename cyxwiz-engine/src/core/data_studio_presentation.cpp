@@ -235,6 +235,29 @@ View Build(const Input& in) {
     if (recipes == 1) v.graph_label += " \xC2\xB7 recipe " + recipe_name;
     else if (recipes > 1) v.graph_label += " \xC2\xB7 " + Plural(recipes, "recipe", "recipes");
 
+    // Bring in: the Data Input nodes.
+    for (const auto& n : in.nodes) {
+        if (!IsDataInput(n)) continue;
+        SourceRow row;
+        row.node_id = n.id;
+        row.name = n.name;
+        row.file = n.file_path;
+        if (!n.error.empty()) {
+            row.state = "failed";
+            row.detail = n.error;
+            row.tone = Tone::Error;
+        } else if (const Dataset* d = DatasetOfInput(in, n)) {
+            row.state = "loaded";
+            row.size = Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            row.dataset = d->name;
+            row.tone = Tone::Ok;
+        } else {
+            row.state = "not loaded";
+            row.tone = Tone::Warn;
+        }
+        v.sources.push_back(std::move(row));
+    }
+
     // The rail: Data Inputs, node results, published files, other datasets.
     std::set<std::string> shown;
     RailSection sources{"Data Inputs", {}};
