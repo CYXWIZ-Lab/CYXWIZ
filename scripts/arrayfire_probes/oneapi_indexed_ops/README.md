@@ -1,7 +1,8 @@
 # oneAPI: indexed min / max along dim 1 return wrong results
 
-A standalone reproducer for an ArrayFire oneAPI backend bug, written to be filed upstream
-(https://github.com/arrayfire/arrayfire/issues). It depends on ArrayFire only.
+A standalone reproducer for an ArrayFire oneAPI backend bug, filed upstream on 2026-10-14 as
+https://github.com/arrayfire/arrayfire/issues/3732. It depends on ArrayFire only. When a release fixes
+it, run the probe with `oneapi` before removing the workaround.
 
 ## Summary
 
