@@ -15,6 +15,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
+#include "arrayfire_indexed.h"
 #include "classic_ml_detail.h"
 
 #include <algorithm>
@@ -499,7 +500,7 @@ ClassicPrediction ClassicML::PredictSVC(const SVMModel& model, const ClassicMatr
             votes(af::span, model.pair_second[p]) += 1.0 - first_wins;
         }
         af::array peak, labels;
-        af::max(peak, labels, votes, 1);
+        MaxWithIndex(peak, labels, votes, 1);
         result.labels = LabelsFromDevice(labels, kOperation);
         result.success = true;
     } catch (const Refusal& refusal) {

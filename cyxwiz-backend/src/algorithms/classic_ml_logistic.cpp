@@ -14,6 +14,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
+#include "arrayfire_indexed.h"
 #include "classic_ml_detail.h"
 
 #include <algorithm>
@@ -253,7 +254,7 @@ ClassicPrediction ClassicML::PredictLogistic(const LogisticModel& model, const C
         if (model.coef.size() == 1) {
             labels = (z > 0.0).as(u32);  // sklearn: decision > 0 is class 1
         } else {
-            af::max(peak, labels, z, 1);
+            MaxWithIndex(peak, labels, z, 1);
         }
         result.labels = LabelsFromDevice(labels, kOperation);
         result.probabilities = MatrixFromDevice(proba, kOperation);

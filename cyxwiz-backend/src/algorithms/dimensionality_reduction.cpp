@@ -9,7 +9,7 @@
 
 #include "cyxwiz/dimensionality_reduction.h"
 #include "analysis_device.h"
-#include "arrayfire_sort.h"
+#include "arrayfire_indexed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -68,7 +68,7 @@ Projection Project(af::array x, int k, bool center, bool scale) {
     af::svd(u, s, vt, covariance);
     af::array components = vt(af::seq(0, k - 1), af::span);
     af::array peak, column;
-    af::max(peak, column, af::abs(components), 1);
+    MaxWithIndex(peak, column, af::abs(components), 1);
     const af::array flat_index = af::range(af::dim4(k), 0, u32) + column * static_cast<unsigned>(k);
     const af::array sign = af::select(af::lookup(af::flat(components), flat_index) < 0.0, -1.0,
                                       Constant(1.0, peak));

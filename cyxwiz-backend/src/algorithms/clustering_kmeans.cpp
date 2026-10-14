@@ -7,7 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "analysis_device.h"
-#include "arrayfire_sort.h"
+#include "arrayfire_indexed.h"
 
 #include <cmath>
 #include <limits>
@@ -39,7 +39,7 @@ struct KMeansRun {
 // Labels [n, 1] (u32) of the nearest center and the total squared distance.
 std::pair<af::array, double> Assign(const af::array& data, const af::array& centers) {
     af::array nearest, labels;
-    af::min(nearest, labels, SquaredDistances(data, centers), 1);
+    MinWithIndex(nearest, labels, SquaredDistances(data, centers), 1);
     return {labels, af::sum<double>(nearest)};
 }
 

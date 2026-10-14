@@ -9,6 +9,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "analysis_device.h"
+#include "arrayfire_indexed.h"
 
 #include <cmath>
 #include <limits>
@@ -122,7 +123,7 @@ EmRun RunEm(const af::array& x, int k, const std::string& type, int max_iter, do
     const dim_t n = x.dims(0);
     // Start: hard assignment to k-means++ seeds, then an M-step.
     af::array nearest, labels;
-    af::min(nearest, labels, SquaredDistances(x, KMeansPlusPlus(x, k, engine)), 1);
+    MinWithIndex(nearest, labels, SquaredDistances(x, KMeansPlusPlus(x, k, engine)), 1);
     const af::array ids = af::tile(af::range(af::dim4(1, k), 1, u32), static_cast<unsigned>(n), 1);
     EmRun run;
     run.mixture = MStep(x, (af::tile(labels, 1, static_cast<unsigned>(k)) == ids).as(x.type()), type);
@@ -188,7 +189,7 @@ GMMResult Clustering::GMM(
         }
         constexpr const char* kOperation = "Clustering::GMM";
         af::array peak, labels;
-        af::max(peak, labels, best.resp, 1);
+        MaxWithIndex(peak, labels, best.resp, 1);
         result.labels = LabelsFromDevice(labels, kOperation);
         result.responsibilities = MatrixFromDevice(best.resp, kOperation);
         result.means = MatrixFromDevice(best.mixture.means, kOperation);

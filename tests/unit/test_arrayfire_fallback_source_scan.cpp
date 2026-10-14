@@ -553,7 +553,7 @@ TEST_CASE("ROC / PR curves run on the device without a fallback",
     std::vector<RawFallbackHit> hits;
     bool sorts_on_device = false;
     for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
-        // The device sort: SortWithIndex (ArrayFire sort-by-key, arrayfire_sort.h).
+        // The device sort: SortWithIndex (ArrayFire sort-by-key, arrayfire_indexed.h).
         if (lines[line_index].find("SortWithIndex(") != std::string::npos) sorts_on_device = true;
         for (const auto& needle : forbidden_needles) {
             if (lines[line_index].find(needle) != std::string::npos) {
@@ -616,38 +616,74 @@ TEST_CASE("Host-vector model evaluation has one native execution owner",
     }
 }
 
-TEST_CASE("Argsorts go through SortWithIndex, not ArrayFire's sort-with-index",
-          "[arrayfire][source_scan]") {
-    // af::sort(sorted, indices, values, dim, ascending) never returns on the
-    // oneAPI backend (Iris Xe, 2026-10-14); SortWithIndex uses sort-by-key.
-    // Flags every five-argument af::sort call outside arrayfire_sort.h.
+// Every call of `function` (e.g. "af::sort") in the backend and engine sources,
+// outside arrayfire_indexed.h: "path:line" and the call's top-level arguments.
+struct ScannedCall {
+    std::string where;
+    std::vector<std::string> arguments;
+};
+
+std::vector<ScannedCall> ScanArrayFireCalls(const std::string& function) {
     const fs::path repo_root = FindRepoRoot();
-    std::vector<std::string> hits;
+    const std::string needle = function + "(";
+    std::vector<ScannedCall> calls;
     for (const char* root : {"cyxwiz-backend/src", "cyxwiz-engine/src"}) {
         for (const auto& entry : fs::recursive_directory_iterator(repo_root / root)) {
             if (!entry.is_regular_file() || !IsSourceFile(entry.path())) continue;
             const std::string relative = fs::relative(entry.path(), repo_root).generic_string();
-            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_sort.h") continue;
+            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_indexed.h") continue;
             std::ifstream in(entry.path(), std::ios::binary);
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            for (size_t at = text.find("af::sort("); at != std::string::npos; at = text.find("af::sort(", at + 1)) {
+            for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
+                ScannedCall call;
+                const auto line = std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(at), '\n') + 1;
+                call.where = relative + ":" + std::to_string(line);
                 int depth = 0;
-                int commas = 0;
-                for (size_t i = at + 8; i < text.size(); ++i) {
+                std::string argument;
+                for (size_t i = at + needle.size() - 1; i < text.size(); ++i) {
                     const char c = text[i];
-                    if (c == '(') ++depth;
-                    else if (c == ')' && --depth == 0) break;
-                    else if (c == ',' && depth == 1) ++commas;
+                    if (c == '(' && ++depth == 1) continue;
+                    if (c == ')' && --depth == 0) break;
+                    if (c == ',' && depth == 1) {
+                        call.arguments.push_back(argument);
+                        argument.clear();
+                        continue;
+                    }
+                    if (c != ' ' && c != '\n' && c != '\r') argument += c;
                 }
-                if (commas == 4) {
-                    const auto line = std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(at), '\n') + 1;
-                    hits.push_back(relative + ":" + std::to_string(line));
-                }
+                call.arguments.push_back(argument);
+                calls.push_back(call);
             }
         }
     }
+    return calls;
+}
+
+TEST_CASE("Argsorts go through SortWithIndex, not ArrayFire's sort-with-index",
+          "[arrayfire][source_scan]") {
+    // af::sort(sorted, indices, values, dim, ascending) never returns on the
+    // oneAPI backend (Iris Xe, 2026-10-14); SortWithIndex uses sort-by-key.
+    // Flags every five-argument af::sort call outside arrayfire_indexed.h.
     std::string list;
-    for (const auto& hit : hits) list += "\n  " + hit;
+    for (const auto& call : ScanArrayFireCalls("af::sort")) {
+        if (call.arguments.size() == 5) list += "\n  " + call.where;
+    }
     INFO("af::sort with indices (use SortWithIndex):" + list);
-    REQUIRE(hits.empty());
+    REQUIRE(list.empty());
+}
+
+TEST_CASE("Indexed min / max along a non-zero dimension go through MinWithIndex / MaxWithIndex",
+          "[arrayfire][source_scan]") {
+    // af::max(value, index, in, dim) and af::min with dim != 0 reduce only part
+    // of each row on the oneAPI backend (Iris Xe, 2026-10-14); the helpers
+    // reduce along dim 0. Flags every four-argument af::max / af::min call whose
+    // dimension is not the literal 0, outside arrayfire_indexed.h.
+    std::string list;
+    for (const char* function : {"af::max", "af::min"}) {
+        for (const auto& call : ScanArrayFireCalls(function)) {
+            if (call.arguments.size() == 4 && call.arguments[3] != "0") list += "\n  " + call.where;
+        }
+    }
+    INFO("indexed af::max / af::min along dim != 0 (use MaxWithIndex / MinWithIndex):" + list);
+    REQUIRE(list.empty());
 }

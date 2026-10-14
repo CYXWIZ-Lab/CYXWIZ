@@ -2,7 +2,7 @@
 #include <vector>
 #include "layer_arrayfire_utils.h"
 #include "../arrayfire_backend_utils.h"
-#include "../arrayfire_sort.h"
+#include "../arrayfire_indexed.h"
 
 #include <cmath>
 #include <cstring>

@@ -10,6 +10,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
+#include "arrayfire_indexed.h"
 #include "classic_ml_detail.h"
 
 #include <cmath>
@@ -117,7 +118,7 @@ ClassicPrediction ClassicML::PredictGaussianNB(const GaussianNBModel& model, con
         const af::array jll = JointLogLikelihood(x, theta, var, log_prior_row);
         const dim_t k = jll.dims(1);
         af::array peak, labels;
-        af::max(peak, labels, jll, 1);
+        MaxWithIndex(peak, labels, jll, 1);
         const af::array log_norm =
             peak + af::log(af::sum(af::exp(jll - af::tile(peak, 1, static_cast<unsigned>(k))), 1));
         const af::array proba = af::exp(jll - af::tile(log_norm, 1, static_cast<unsigned>(k)));

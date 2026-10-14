@@ -10,7 +10,7 @@
 
 #include "cyxwiz/classic_ml.h"
 #include "analysis_device.h"
-#include "arrayfire_sort.h"
+#include "arrayfire_indexed.h"
 #include "classic_ml_detail.h"
 
 #include <algorithm>
@@ -107,7 +107,7 @@ ClassicPrediction ClassicML::PredictKNN(const KNNModel& model, const ClassicMatr
             votes(rows, af::span) = block_votes;
         }
         af::array peak, labels;
-        af::max(peak, labels, votes, 1);
+        MaxWithIndex(peak, labels, votes, 1);
         const af::array proba = votes / af::tile(af::sum(votes, 1), 1, static_cast<unsigned>(n_classes));
         result.labels = LabelsFromDevice(labels, kOperation);
         result.probabilities = MatrixFromDevice(proba, kOperation);

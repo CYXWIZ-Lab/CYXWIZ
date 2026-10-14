@@ -8,7 +8,7 @@
 #include "cyxwiz/model_evaluation.h"
 #include "classification_metric_contract.h"
 #include "../arrayfire_host_values.h"
-#include "../arrayfire_sort.h"
+#include "../arrayfire_indexed.h"
 
 #include <arrayfire.h>
 
