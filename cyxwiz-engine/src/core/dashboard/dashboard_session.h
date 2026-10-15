@@ -43,6 +43,7 @@ struct StripResult {
     double target_now = NAN, target_all = NAN;        // a number target: its mean
     std::string target_text_now, target_text_all;      // a category target: its most frequent value
     std::string fingerprint;
+    std::string error;                                 // why the query failed (it is not retried until the data or filters change)
 };
 
 class DashboardSession {

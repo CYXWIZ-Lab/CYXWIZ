@@ -7,6 +7,7 @@
 #include "../plot/plot_prepare.h"
 #include "../session_query_service.h"
 
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <functional>
 
@@ -313,7 +314,10 @@ void DashboardSession::StartStrip(const DashboardSpec& spec, const DatasetContra
             auto token = std::make_shared<QueryToken>();
             t.SetCancellationCallback([token] { SessionQueryService::Instance().Interrupt(*token); });
             QueryResult q = SessionQueryService::Instance().RunNow(request, token.get());
-            if (!q.ok) return;
+            if (!q.ok) {
+                result->error = q.error.empty() ? std::string("the summary query failed") : q.error;
+                return;
+            }
             result->rows_now = Number(q.table, "rows_now");
             result->rows_all = Number(q.table, "rows_all");
             result->missing_now = Number(q.table, "missing_now");
@@ -332,7 +336,10 @@ void DashboardSession::StartStrip(const DashboardSpec& spec, const DatasetContra
             auto run = running_.find("#strip");
             if (run == running_.end() || run->second.fingerprint != result->fingerprint) return;
             running_.erase(run);
-            if (result->ready) strip_ = *result;
+            // A failed summary keeps its fingerprint too, so it is not started
+            // again every frame (it was: a task about every 100 ms).
+            if (result->ready || !result->error.empty()) strip_ = *result;
+            if (!result->error.empty()) spdlog::warn("Dashboard summary of '{}' failed: {}", dataset_, result->error);
         },
         alive_);
     running_["#strip"] = Running{task, fp};
