@@ -3049,6 +3049,21 @@ void MainWindow::Render() {
                 if (file != n.parameters.end() && !file->second.empty()) sources.emplace(dataset, file->second);
             }
         }
+        // Every node a run reached, by the result name the run recorded (legacy
+        // nodes name theirs ds_sql_<id>, ds_filter_<id>, ...; recipe steps are
+        // not on the canvas): its node's name, " #id" when two share it.
+        {
+            std::map<std::string, int> step_names;
+            std::vector<std::pair<std::string, const gui::MLNode*>> made;
+            for (const auto& [id, facts] : node_editor_->GetNodeRunFacts()) {
+                const gui::MLNode* step = node_editor_->FindStep(id);
+                if (!step || step->type == gui::NodeType::DataInput || facts.output_dataset.empty() || step->name.empty()) continue;
+                made.push_back({facts.output_dataset, step});
+                ++step_names[step->name];
+            }
+            for (const auto& [dataset, step] : made)
+                labels[dataset] = step_names[step->name] > 1 ? step->name + " #" + std::to_string(step->id) : step->name;
+        }
         cyxwiz::DatasetCatalog::Instance().SetTargets(std::move(targets));
         cyxwiz::DatasetCatalog::Instance().SetSources(std::move(sources));
         static size_t labels_seen = 0;
