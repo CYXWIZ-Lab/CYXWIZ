@@ -55,14 +55,6 @@ void PostPlotPanelUpdate(
         });
 }
 
-bool HasActiveGraphTrainingPreparation() {
-    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
-    return std::any_of(
-        tasks.begin(), tasks.end(), [](const cyxwiz::TaskInfo& task) {
-            return task.name == kGraphTrainingPreparationTaskName;
-        });
-}
-
 void ReportMaterializationProgress(
     cyxwiz::LambdaTask& task,
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
@@ -1097,6 +1089,14 @@ cyxwiz::MaterializationCachePruneResult ClearGraphMaterializationCache(
                  result.removed_entries == 1 ? "y" : "ies",
                  result.freed_bytes);
     return result;
+}
+
+bool HasActiveGraphTrainingPreparation() {
+    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
+    return std::any_of(
+        tasks.begin(), tasks.end(), [](const cyxwiz::TaskInfo& task) {
+            return task.name == kGraphTrainingPreparationTaskName;
+        });
 }
 
 bool CancelGraphTrainingPreparation() {

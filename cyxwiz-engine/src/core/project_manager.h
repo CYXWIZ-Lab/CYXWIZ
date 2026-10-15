@@ -116,6 +116,16 @@ public:
     void SetOnProjectOpened(ProjectCallback callback) { on_opened_ = std::move(callback); }
     void SetOnProjectClosed(ProjectCallback callback) { on_closed_ = std::move(callback); }
     void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
+    // Asked before the open project closes (Close, Open or Create another):
+    // returns false to keep it, after telling the user why (`operation` is
+    // what was asked, for example "open another project"). Closing it under
+    // a training run cancelled the run and dropped its data.
+    using CloseGuard = std::function<bool(const std::string& operation)>;
+    void SetCloseGuard(CloseGuard guard) { close_guard_ = std::move(guard); }
+    // True when no project is open or the guard lets it close.
+    bool MayCloseProject(const std::string& operation) const {
+        return !HasActiveProject() || !close_guard_ || close_guard_(operation);
+    }
     void NotifyProjectVenvReady(const std::string& project_root);
 
     // Creating a project's Python environment takes a few seconds; the UI
@@ -189,6 +199,7 @@ private:
     ProjectCallback on_opened_;
     ProjectCallback on_closed_;
     ProjectCallback on_venv_ready_;
+    CloseGuard close_guard_;
 
     mutable std::mutex python_env_mutex_;
     PythonEnvSetupStatus python_env_status_;

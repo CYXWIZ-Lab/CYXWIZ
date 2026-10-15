@@ -34,6 +34,7 @@
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
 #include "../core/node_metadata_registry.h"
+#include "graph_training_launcher.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imnodes.h>
@@ -212,7 +213,8 @@ void NodeEditor::CancelOwnedBackgroundWork() {
 
 std::string NodeEditor::GetGraphReplacementBlockReason() const {
     return std::string(GraphReplacementBlockReason({
-        is_training_.load() || cyxwiz::TrainingManager::Instance().IsTrainingActive(),
+        is_training_.load() || cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+            HasActiveGraphTrainingPreparation(),
         cyxwiz::TestManager::Instance().IsTestingActive(),
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         is_simulating_.load(), pipeline_execution_active_,

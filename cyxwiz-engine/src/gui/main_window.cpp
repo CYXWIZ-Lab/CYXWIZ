@@ -2284,6 +2284,17 @@ MainWindow::MainWindow()
         this->OnProjectVenvReady(project_root);
     });
 
+    // The project stays open while its graph trains, tests or runs: closing it
+    // cancelled the run's tasks and dropped its datasets without a word.
+    lifecycle_project_manager.SetCloseGuard([this](const std::string& operation) {
+        const std::string reason = node_editor_ ? node_editor_->GetGraphReplacementBlockReason() : std::string();
+        if (reason.empty()) return true;
+        ShowOperationError("Cannot " + operation,
+                           "The project stays open while " + reason +
+                               ". Stop it, or wait for it to finish, then try again.");
+        return false;
+    });
+
     // Start Page can open a project before MainWindow exists. Synchronize the
     // newly registered observers because the subsequent same-project open is
     // intentionally idempotent and does not emit another callback.
@@ -2689,6 +2700,7 @@ void MainWindow::OpenScriptFile(const std::string& file_path) {
 
 MainWindow::~MainWindow() {
     spdlog::info("MainWindow destructor: starting cleanup");
+    cyxwiz::ProjectManager::Instance().SetCloseGuard(nullptr);
     test_callback_lifetime_.reset();
     if (test_preparation_task_) test_preparation_task_->RequestCancel();
     auto& test_manager = cyxwiz::TestManager::Instance();
