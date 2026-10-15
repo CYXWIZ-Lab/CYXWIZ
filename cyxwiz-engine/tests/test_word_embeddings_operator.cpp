@@ -1,10 +1,11 @@
 // Word Embeddings node operator (TOFIX152): pretrained vectors lined up with a
 // vocabulary, the saved .vec file, the Rows output (each row's mean vector),
-// word2vec, GloVe and fastText training on the text column, a fastText .bin, and
-// the refusals.
+// word2vec, GloVe and fastText training on the text column, the saved vectors
+// reused while nothing changed, a fastText .bin, and the refusals.
 
 #include "../src/core/node_executors/word_embeddings_operator.h"
 #include "../src/core/fasttext_model_store.h"
+#include "../src/core/word_vectors_training_record.h"
 #include "../src/core/word_embeddings_presentation.h"
 
 #include <cyxwiz/word_embeddings.h>
@@ -199,6 +200,77 @@ void CheckTraining() {
     Check(figures.back().stage == "Done", "the last figure ends the run");
 }
 
+// A second run with the same text, settings and vocabulary reads the saved
+// vectors; a change to any of them, or to the saved file, trains again.
+void CheckTrainingReuse(const fs::path& dir) {
+    std::vector<std::string> texts;
+    for (int i = 0; i < 300; ++i) texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
+    const fs::path vocab = dir / "reuse_vocab.txt";
+    std::ofstream(vocab) << "[PAD]\n[UNK]\ncat\ndog\nred\nblue\n";
+    const fs::path saved = dir / "reuse.vec";
+    std::map<std::string, std::string> params = {
+        {"source", "word2vec"}, {"text_col", "text"}, {"vector_size", "4"},
+        {"window", "2"},        {"min_count", "2"},   {"epochs", "2"},
+        {"vocab_file", vocab.string()},               {"vectors_path", saved.string()}};
+    // Runs the step; true when it trained (published figures).
+    const auto run = [&](const std::vector<std::string>& rows, std::shared_ptr<arrow::Table>* table = nullptr,
+                         std::string* outcome = nullptr) {
+        cyxwiz::WordEmbeddingsOperator op;
+        size_t figures = 0;
+        op.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+            if (!event.figures.empty()) ++figures;
+        });
+        std::string error;
+        Check(op.Configure(params, error), "configures: " + error);
+        auto result = op.Apply(TextTable(rows));
+        Check(result.ok(), "runs: " + result.status().ToString());
+        if (table) *table = *result;
+        if (outcome) *outcome = op.OutcomeSummary();
+        Check((figures > 0) != cyxwiz::ReusedVectorsOutcome(op.OutcomeSummary()),
+              "a trained run publishes figures, a reused one none: " + op.OutcomeSummary());
+        return figures > 0;
+    };
+    Check(!cyxwiz::ReadWordVectorsTrainingRecord(saved.string()), "no record before training");
+    std::shared_ptr<arrow::Table> trained, reused;
+    std::string first, second;
+    Check(run(texts, &trained, &first), "the first run trains");
+    const auto record = cyxwiz::ReadWordVectorsTrainingRecord(saved.string());
+    Check(record && record->text_sha256.size() == 64 && record->vocab_sha256.size() == 64 &&
+              record->settings.find("epochs=2\n") != std::string::npos &&
+              record->trained_at.size() == 16,
+          "the record beside the saved file");
+    Check(!run(texts, &reused, &second), "the same text, settings and vocabulary reuse the saved vectors");
+    Check(second.find("unchanged since " + record->trained_at) != std::string::npos &&
+              second.find(record->summary) != std::string::npos &&
+              second.find("vocabulary 6 tokens") != std::string::npos,
+          "the outcome names the reuse, the training and the line-up: " + second);
+    Check(reused->num_rows() == trained->num_rows() && reused->num_columns() == trained->num_columns(),
+          "the same table");
+    for (int64_t r = 0; r < trained->num_rows(); ++r) {
+        Check(Word(reused, r) == Word(trained, r), "the same words");
+        for (int d = 0; d < 4; ++d) {
+            const std::string column = "v_" + std::to_string(d);
+            Check(Value(reused, column, r) == Value(trained, column, r), "the saved values are exact");
+        }
+    }
+    params["row_vectors"] = "true";
+    Check(!run(texts), "the Rows output does not change the vectors");
+    params["negative"] = "5";
+    params["glove_window"] = "7";
+    Check(!run(texts), "a default written out and GloVe's settings do not change word2vec vectors");
+    params["epochs"] = "3";
+    Check(run(texts), "another setting trains again");
+    Check(!run(texts), "and is reused on the next run");
+    auto changed = texts;
+    changed.push_back("cat dog red");
+    Check(run(changed), "changed text trains again");
+    std::ofstream(vocab, std::ios::app) << "mouse\n";
+    Check(run(changed), "a changed vocabulary file trains again");
+    std::ofstream(saved, std::ios::app) << "\n";
+    Check(!cyxwiz::ReadWordVectorsTrainingRecord(saved.string()), "a replaced vectors file has no record");
+    Check(run(changed), "and trains again");
+}
+
 // A trained run lined up with a vocabulary and saved: the line-up's figures.
 void CheckTrainingLineUpFigures(const fs::path& dir) {
     std::vector<std::string> texts;
@@ -387,12 +459,14 @@ int main(int, char** argv) {
     fs::path model = fs::path(argv[0]).parent_path() / "small_fasttext.bin";
     if (!fs::exists(model)) model = CYXWIZ_FASTTEXT_FIXTURE;
     const fs::path dir = fs::temp_directory_path() / "cyxwiz_word_embeddings_operator";
+    fs::remove_all(dir);  // a failed earlier run's files (a saved record would be reused)
     fs::create_directories(dir);
     CheckPretrainedAligned(dir);
     CheckPretrainedWithoutVocabulary(dir);
     CheckRowVectorBlocks(dir);
     CheckTraining();
     CheckTrainingLineUpFigures(dir);
+    CheckTrainingReuse(dir);
     CheckGloVeTraining();
     CheckFastTextTraining(dir);
     CheckFastTextBin(dir, model);

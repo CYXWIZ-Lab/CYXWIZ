@@ -3,6 +3,7 @@
 #include "node_config_dialog.h"
 
 #include "../core/word_embeddings_presentation.h"
+#include "../core/word_vectors_training_record.h"
 
 #include <cyxwiz/word_embeddings.h>
 
@@ -22,7 +23,8 @@ namespace gui {
 // Vocabulary, Nearest words and Outputs. A pretrained file is read here on a
 // task worker (its format, size and how the vocabulary lines up); training
 // runs the step through the graph (Task View), and the dialog shows its
-// progress and the result.
+// progress and the result. Without a run in this session it shows the saved
+// training (the record beside the vectors file) and looks words up in it.
 class WordEmbeddingsDialog : public NodeConfigDialog {
 public:
     explicit WordEmbeddingsDialog(MLNode* node);
@@ -50,6 +52,11 @@ private:
         std::vector<std::string> missing_words;
         bool fasttext = false;  // a fastText model (.bin)
     };
+    // The saved vectors of a training, read on a task worker.
+    struct SavedJob {
+        std::atomic<bool> finished{false};
+        std::shared_ptr<const cyxwiz::WordVectors> vectors;  // null when unreadable
+    };
 
     std::string Get(const std::string& key) const;
     void Set(const std::string& key, const std::string& value);
@@ -72,6 +79,9 @@ private:
     void StartTraining();
     void PollRun();
     void LoadRunVectors();
+    void PollSaved();
+    // The training settings of the dialog's values (as the step compares them).
+    std::string TrainingSettings() const;
 
     void RenderSource();
     void RenderPretrained();
@@ -83,6 +93,7 @@ private:
     void RenderNearest();
     void RenderOutputs();
     void RenderRunCard();
+    void RenderSavedCard();
 
     // Rows: a label column, then the field.
     void Label(const char* text);
@@ -119,6 +130,13 @@ private:
     std::string run_dataset_;
     std::string run_finished_at_;  // the run whose result is shown (time and error)
     std::shared_ptr<const cyxwiz::WordVectors> run_vectors_;
+
+    // The saved training of the vectors file, checked every 2 s.
+    std::string saved_path_;
+    double saved_polled_at_ = -1.0e9;
+    std::optional<cyxwiz::WordVectorsTrainingRecord> saved_;
+    std::shared_ptr<SavedJob> saved_job_;
+    std::shared_ptr<const cyxwiz::WordVectors> saved_vectors_;
 
     char query_[128] = "";
     std::string query_word_;

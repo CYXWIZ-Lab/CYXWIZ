@@ -71,4 +71,10 @@ std::string StepMessageFromStatus(const std::string& status);
 // 0.0061)") when it has more than `keep`; any other text unchanged.
 std::string ShortEpochFigures(const std::string& outcome, size_t keep = 5);
 
+// How a run's outcome starts when it read the saved vectors instead of
+// training (the text, settings and vocabulary had not changed).
+inline constexpr const char* kReusedVectorsOutcome = "reused the saved vectors";
+
+inline bool ReusedVectorsOutcome(const std::string& outcome) { return outcome.rfind(kReusedVectorsOutcome, 0) == 0; }
+
 }  // namespace cyxwiz

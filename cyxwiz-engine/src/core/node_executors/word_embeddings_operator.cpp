@@ -2,6 +2,8 @@
 
 #include "text_column_utils.h"
 #include "../fasttext_model_store.h"
+#include "../sha256_digest.h"
+#include "../word_vectors_training_record.h"
 #include "../word_embeddings_presentation.h"
 #include "tree_classification_utils.h"
 
@@ -15,7 +17,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -65,6 +70,19 @@ std::string Param(const std::map<std::string, std::string>& params, const std::s
     return it == params.end() ? std::string() : TrimAscii(it->second);
 }
 
+std::string LocalTimeNow() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char text[32];
+    std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local);
+    return text;
+}
+
 }  // namespace
 
 std::vector<std::string> WordEmbeddingsOperator::SplitWords(const std::string& text) {
@@ -78,6 +96,56 @@ std::string WordEmbeddingsOperator::DefaultVectorsFile(int node_id, const std::s
                    [](unsigned char c) { return std::isalnum(c) ? static_cast<char>(std::tolower(c)) : '_'; });
     while (!slug.empty() && slug.back() == '_') slug.pop_back();
     return "word_embeddings/" + std::to_string(node_id) + "_" + (slug.empty() ? "vectors" : slug) + ".vec";
+}
+
+std::string WordEmbeddingsOperator::TrainingSettings() const {
+    if (source_ == "pretrained") return {};
+    std::string settings;
+    const auto add = [&](const char* key, const auto& value) {
+        std::ostringstream text;
+        text.precision(17);
+        text << value;
+        settings += std::string(key) + '=' + text.str() + '\n';
+    };
+    add("version", kWordVectorsTrainingVersion);
+    add("source", source_);
+    add("text_col", text_col_);
+    if (source_ == "glove") {
+        add("vector_size", glove_.vector_size);
+        add("min_count", glove_.min_count);
+        add("seed", glove_.seed);
+        add("window", glove_.window);
+        add("epochs", glove_.epochs);
+        add("batch_size", glove_.batch_size);
+        add("x_max", glove_.x_max);
+        add("weighting_power", glove_.alpha);
+        add("learning_rate", glove_.learning_rate);
+    } else {
+        add("cbow", word2vec_.cbow);
+        add("vector_size", word2vec_.vector_size);
+        add("window", word2vec_.window);
+        add("min_count", word2vec_.min_count);
+        add("negative", word2vec_.negative);
+        add("sample", word2vec_.sample);
+        add("epochs", word2vec_.epochs);
+        add("alpha", word2vec_.alpha);
+        add("min_alpha", word2vec_.min_alpha);
+        add("batch_size", word2vec_.batch_size);
+        add("seed", word2vec_.seed);
+        if (source_ == "fasttext") {
+            add("min_n", fasttext_.min_n);
+            add("max_n", fasttext_.max_n);
+            add("bucket", fasttext_.bucket);
+            add("unseen_from_pieces", unseen_from_pieces_);
+        }
+    }
+    if (!vocab_file_.empty()) {
+        add("lowercase_fallback", alignment_.lowercase_fallback);
+        add("missing", alignment_.missing);
+        add("unknown", alignment_.unknown);
+        add("missing_seed", alignment_.seed);
+    }
+    return settings;
 }
 
 bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
@@ -254,20 +322,27 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                 {{"method", method}, {"saved", vectors_path_}, {"vocabulary_file", vocab_file_}});
     };
 
-    // The text, split into words, when training or averaging rows needs it.
-    std::vector<std::vector<std::string>> sentences;
+    // The text, and its fingerprint when the trained vectors are saved.
+    std::vector<std::string> texts;
+    std::string text_sha256;
     if (!text_col_.empty()) {
         const auto column = input->GetColumnByName(text_col_);
         if (!column) return arrow::Status::KeyError(op + ": text column '" + text_col_ + "' not found");
-        std::vector<std::string> texts;
         std::string bad_type;
         bool cancelled = false;
         if (!ReadColumnAsStrings(column, texts, bad_type, GetCancellationQuery(), &cancelled)) {
             if (cancelled) return arrow::Status::Cancelled(op + ": cancelled while reading the text");
             return arrow::Status::TypeError(op + ": text column '" + text_col_ + "' must be text (got '" + bad_type + "')");
         }
-        sentences.reserve(texts.size());
-        for (const auto& text : texts) sentences.push_back(SplitWords(text));
+        if (trained && !vectors_path_.empty()) {
+            Sha256Hasher hasher;
+            std::string error;
+            for (const auto& text : texts) {
+                if (!hasher.Update(text, error) || !hasher.Update(std::string_view("\0", 1), error)) break;
+            }
+            if (error.empty()) hasher.Finish(text_sha256, error);
+            if (!error.empty()) return arrow::Status::IOError(op + ": cannot fingerprint the text: " + error);
+        }
     }
     ARROW_RETURN_NOT_OK(CheckCancellation(op));
 
@@ -290,7 +365,38 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         }
         return text;
     };
-    if (source_ == "word2vec") {
+    // Vectors trained before from the same text, settings and vocabulary: the
+    // saved file is read instead of training again.
+    WordVectorsTrainingRecord record;
+    std::optional<WordVectorsTrainingRecord> reused;
+    if (trained && !vectors_path_.empty()) {
+        record.settings = TrainingSettings();
+        record.text_sha256 = text_sha256;
+        std::string error;
+        if (!vocab_file_.empty() && !Sha256File(vocab_file_, record.vocab_sha256, error))
+            return arrow::Status::IOError(op + ": cannot read the vocabulary " + vocab_file_ + ": " + error);
+        const auto saved = ReadWordVectorsTrainingRecord(vectors_path_);
+        if (saved && saved->settings == record.settings && saved->text_sha256 == record.text_sha256 &&
+            saved->vocab_sha256 == record.vocab_sha256) {
+            report("Reading", "Reading the saved vectors", 0.05);
+            vectors = WordEmbeddings::Load(vectors_path_);
+            if (vectors.success) reused = saved;
+            else
+                spdlog::warn("WordEmbeddings: training again, the saved vectors are unreadable: {}",
+                             vectors.error_message);
+        }
+    }
+    // The text split into words, when training or averaging rows needs it.
+    std::vector<std::vector<std::string>> sentences;
+    if ((trained && !reused) || row_vectors_) {
+        sentences.reserve(texts.size());
+        for (const auto& text : texts) sentences.push_back(SplitWords(text));
+    }
+    texts = {};
+    if (reused) {
+        source_summary = std::string(kReusedVectorsOutcome) + " (text and settings unchanged since " +
+                         reused->trained_at + "); " + reused->summary;
+    } else if (source_ == "word2vec") {
         publish_start("Training", "Training word2vec", word2vec_.cbow ? "word2vec CBOW" : "word2vec skip-gram",
                       word2vec_.vector_size, word2vec_.window, word2vec_.epochs, word2vec_.min_count);
         Word2VecOptions options = word2vec_;
@@ -421,8 +527,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
     ARROW_RETURN_NOT_OK(CheckCancellation(op));
 
     // Line the vectors up with the vocabulary when one is given.
-    std::string coverage;
-    if (!vocab_file_.empty()) {
+    std::string coverage = reused ? reused->coverage : std::string();
+    if (!vocab_file_.empty() && !reused) {
         report("Aligning", "Lining up with " + vocab_file_, 0.92);
         WordAlignmentOptions options = alignment_;
         options.pad_id = vocabulary.PadIndex();
@@ -458,7 +564,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                    std::to_string(aligned.missing) + " missing";
     }
 
-    if (!vectors_path_.empty()) {
+    if (!vectors_path_.empty() && !reused) {
         // The default path is a new folder of this run's artifacts.
         const auto folder = std::filesystem::path(vectors_path_).parent_path();
         std::error_code folder_error;
@@ -466,10 +572,18 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         std::string error;
         if (!WordEmbeddings::SaveText(vectors, vectors_path_, &error))
             return arrow::Status::IOError(op + ": cannot save the vectors: " + error);
+        if (trained) {
+            record.trained_at = LocalTimeNow();
+            record.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            record.summary = source_summary;
+            record.coverage = coverage;
+            if (!WriteWordVectorsTrainingRecord(vectors_path_, record, &error))
+                spdlog::warn("WordEmbeddings: the next run trains again: {}", error);
+        }
     }
     // The dialog builds unseen words from the model kept for the session.
     if (fasttext_model) KeepFastTextModel(vectors_path_, fasttext_model);
-    publish("Done", vectors_path_.empty() ? "Trained the vectors" : "Saved the vectors", 0.94, {});
+    if (!reused) publish("Done", vectors_path_.empty() ? "Trained the vectors" : "Saved the vectors", 0.94, {});
 
     // Pin 0: word, v_0 .. v_{d-1}.
     const int64_t n = static_cast<int64_t>(vectors.words.size());

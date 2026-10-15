@@ -425,9 +425,52 @@ void WordEmbeddingsDialog::LoadRunVectors() {
     run_vectors_ = VectorsFromTable(dataset ? dataset->GetArrowTable() : nullptr);
 }
 
+// The saved training of the vectors file: its record, read again every 2 s
+// (another run may write it), and its vectors for Nearest words.
+void WordEmbeddingsDialog::PollSaved() {
+    if (saved_job_ && saved_job_->finished.load()) {
+        saved_vectors_ = saved_job_->vectors;
+        saved_job_.reset();
+    }
+    const double now = ImGui::GetTime();
+    const std::string path = Training() ? VectorsPath() : std::string();
+    if (path == saved_path_ && now - saved_polled_at_ < 2.0) return;
+    saved_polled_at_ = now;
+    auto record = path.empty() ? std::nullopt : cyxwiz::ReadWordVectorsTrainingRecord(path);
+    const bool same = path == saved_path_ && record.has_value() == saved_.has_value() &&
+                      (!record || (record->vectors_bytes == saved_->vectors_bytes &&
+                                   record->vectors_time == saved_->vectors_time));
+    saved_path_ = path;
+    saved_ = std::move(record);
+    if (same) return;
+    saved_vectors_.reset();
+    saved_job_.reset();
+    if (!saved_) return;
+    const auto job = std::make_shared<SavedJob>();
+    saved_job_ = job;
+    cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Word Embeddings: read " + FileName(path), [job, path](cyxwiz::LambdaTask&) {
+            try {
+                auto vectors = std::make_shared<cyxwiz::WordVectors>(cyxwiz::WordEmbeddings::Load(path));
+                if (vectors->success) job->vectors = std::move(vectors);
+            } catch (...) {
+                job->finished = true;
+                throw;
+            }
+            job->finished = true;
+        });
+}
+
+std::string WordEmbeddingsDialog::TrainingSettings() const {
+    cyxwiz::WordEmbeddingsOperator op;
+    std::string error;
+    return op.Configure(params_, error) ? op.TrainingSettings() : std::string();
+}
+
 void WordEmbeddingsDialog::RenderContent() {
     PollRead();
     PollRun();
+    PollSaved();
     if (!inputs_resolved_ && (!node_editor_ || !node_editor_->IsDataPipelineRunning())) {
         RefreshInputs();
         FindTokenizerVocabulary();
@@ -855,7 +898,10 @@ void WordEmbeddingsDialog::RenderGloVeSettings() {
 void WordEmbeddingsDialog::RenderRunCard() {
     const auto& t = ui::CurrentTokens();
     const bool running = run_started_ && TaskLive(run_task_);
-    if (!running && run_outcome_.empty() && run_error_.empty()) return;
+    if (!running && run_outcome_.empty() && run_error_.empty()) {
+        if (saved_) RenderSavedCard();
+        return;
+    }
     const NodeEditor::WordVectorFeed* feed = node_editor_ ? &node_editor_->GetWordVectorFeed() : nullptr;
     const int node_id = node_ ? node_->id : -1;
     const bool on_dashboard = feed && feed->show_run && feed->has_run && feed->has_run(node_id);
@@ -881,15 +927,46 @@ void WordEmbeddingsDialog::RenderRunCard() {
         } else {
             char seconds[32];
             std::snprintf(seconds, sizeof(seconds), "%.1f s", run_seconds_);
+            // Nothing changed since the saved training: the step read its file.
+            const bool reused = cyxwiz::ReusedVectorsOutcome(run_outcome_);
             {
                 ui::FontScope bold(ui::Font::Medium);
-                Wrapped(t.success, std::string(ICON_FA_CIRCLE_CHECK "  ") +
-                                       (Training() ? "Trained in " : "Read in ") + seconds);
+                const char* done = reused ? "Reused the saved vectors in " : Training() ? "Trained in " : "Read in ";
+                Wrapped(t.success, std::string(ICON_FA_CIRCLE_CHECK "  ") + done + seconds);
             }
-            Dim(cyxwiz::ShortEpochFigures(run_outcome_));
-            if (Training() && on_dashboard && ui::LinkButton("Show the run in Training Dashboard")) {
+            if (reused) {
+                Dim(cyxwiz::ShortEpochFigures(run_outcome_.substr(std::strlen(cyxwiz::kReusedVectorsOutcome) + 1)));
+                Faint("Change a setting, the text or the vocabulary to train again.");
+            } else {
+                Dim(cyxwiz::ShortEpochFigures(run_outcome_));
+            }
+            if (Training() && !reused && on_dashboard && ui::LinkButton("Show the run in Training Dashboard")) {
                 feed->show_run(node_id);
             }
+        }
+    }
+    EndCard();
+}
+
+// The training saved with the vectors file, when no run of this session shows.
+void WordEmbeddingsDialog::RenderSavedCard() {
+    const auto& t = ui::CurrentTokens();
+    if (BeginCard("##saved")) {
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "%.1f s", saved_->seconds);
+        {
+            ui::FontScope bold(ui::Font::Medium);
+            Wrapped(t.success,
+                    std::string(ICON_FA_CIRCLE_CHECK "  Trained ") + saved_->trained_at + " in " + seconds);
+        }
+        Dim(cyxwiz::ShortEpochFigures(saved_->summary + saved_->coverage));
+        const std::string settings = TrainingSettings();
+        if (!settings.empty() && settings != saved_->settings) {
+            Wrapped(t.caution, "The settings changed since this training: Train to update " + FileName(saved_path_) +
+                                   ".");
+        } else {
+            Faint("Saved in " + FileName(saved_path_) +
+                  ". Train reuses it while the text, settings and vocabulary stay the same.");
         }
     }
     EndCard();
@@ -914,6 +991,9 @@ void WordEmbeddingsDialog::RenderVocabulary() {
     if (FastText() || (!Training() && read_fasttext_)) RenderUnseenWordsChoice();
     if (Training()) {
         if (!run_outcome_.empty() && !vocab.empty()) Dim("Latest run: " + cyxwiz::ShortEpochFigures(run_outcome_));
+        else if (saved_ && !saved_->coverage.empty() && !vocab.empty())
+            Dim("Saved training (" + saved_->trained_at + "): " +
+                cyxwiz::ShortEpochFigures(saved_->summary + saved_->coverage));
         else if (!vocab.empty()) Faint("Train to see how the vocabulary lines up.");
     } else {
         RenderCoverage(true);
@@ -965,7 +1045,8 @@ bool WordEmbeddingsDialog::UnseenWordVector(const std::string& word, std::vector
 
 void WordEmbeddingsDialog::RenderNearest() {
     const auto& t = ui::CurrentTokens();
-    const auto vectors = Training() ? run_vectors_ : (read_vectors_ ? read_vectors_ : run_vectors_);
+    const auto vectors = Training() ? (run_vectors_ ? run_vectors_ : saved_vectors_)
+                                    : (read_vectors_ ? read_vectors_ : run_vectors_);
     if (Training()) {
         RenderRunCard();
     } else if (!read_summary_.empty()) {

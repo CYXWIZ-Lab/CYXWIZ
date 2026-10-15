@@ -13,6 +13,9 @@
 //   mean vector of each row's words.
 // Text is split as the Text Tokenizer's Word mode splits it (lowercase, runs of
 // letters and digits).
+// A trained run writes a record beside the saved file
+// (word_vectors_training_record.h); a later run with the same text, settings
+// and vocabulary reads the saved vectors instead of training again.
 
 #include "pipeline_operator.h"
 
@@ -44,6 +47,10 @@ public:
     // Where a node saves its vectors when no path is set, relative to the
     // project's artifacts: word_embeddings/<id>_<name>.vec.
     static std::string DefaultVectorsFile(int node_id, const std::string& node_name);
+    // The configured settings that decide trained vectors, one "key=value"
+    // per line (the method's own, the text column and the line-up); empty
+    // for pretrained vectors. The vocabulary counts by its content, apart.
+    std::string TrainingSettings() const;
 
 private:
     std::string source_ = "pretrained";  // pretrained, word2vec, glove or fasttext

@@ -23,7 +23,8 @@ training and for row vectors; a pretrained file alone needs no input rows).
 
 The vectors are always saved as word2vec text (`.vec`). With **Save vectors**
 empty they go to `artifacts/word_embeddings/<node id>_<node name>.vec` in the
-project, replaced at each run, which is where an Embedding layer finds them.
+project, replaced each time it trains, which is where an Embedding layer
+finds them.
 
 ## Using it
 
@@ -80,6 +81,41 @@ project, replaced at each run, which is where an Embedding layer finds them.
 
 Words are split as the Text Tokenizer's Word mode splits them: lowercased,
 runs of letters and digits.
+
+## Trained once, reused after
+
+A training run writes a small record beside the saved vectors,
+`<vectors>.vec.training.json`. It holds:
+
+- a fingerprint of the text;
+- the settings that shape the vectors;
+- the vocabulary file's content;
+- when the vectors were trained, the summary and the line-up.
+
+The next run of the step compares these with its own: **Train** in the
+dialog, a pipeline run, or a run of a later step. When nothing changed it
+reads the saved file instead of training again. On the sentiment set that
+takes under a second instead of minutes. The dialog then says "Reused the
+saved vectors in 0.4 s", and no new run appears on the Training Dashboard.
+
+Training runs again when:
+
+- the text changes (another file, changed rows, another text column);
+- a setting of the method changes (vector size, window, epochs, seed, ...),
+  or the Missing words rules when a vocabulary is used;
+- the vocabulary file is chosen, removed or edited;
+- the saved `.vec` is replaced or edited.
+
+**Row vectors**, the save path, and settings of the other methods (GloVe's
+window for a word2vec run) do not count. To train again with nothing changed,
+change the seed. A new Engine version whose trainers give different vectors
+retrains once.
+
+After the project is reopened, the dialog shows the saved training ("Trained
+2026-10-15 19:40 in 92.3 s", its summary and line-up), and **Nearest words**
+looks words up in the saved vectors. When the settings in the dialog differ
+from that training's, it says "The settings changed since this training".
+fastText's lookups of untrained words need the model of a run in this session.
 
 ## On the Training Dashboard
 
