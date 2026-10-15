@@ -30,6 +30,9 @@ std::unordered_set<ImGuiID> g_leaving;               // asked to move out; takes
 std::unordered_map<ImGuiID, ImGuiID> g_home;         // last dock node inside the main window, per window
 struct Pending { ImGuiID window; bool out; };
 std::vector<Pending> g_pending;                      // commands, run at the start of the next frame
+struct FrontRequest { std::string name; int frames = 0; };
+FrontRequest g_front;                                // the latest BringToFront (empty name: none)
+constexpr int kFrontFrames = 30;                     // a window that does not come forward by then is let go
 
 bool MayLeave(const ImGuiWindow* w) { return w->WindowClass.ClassId == kMayLeaveClass; }
 
@@ -50,10 +53,37 @@ void Undock(ImGuiContext& g, ImGuiWindow* w) {
     if (w->DockNode || w->DockId) ImGui::DockContextProcessUndockWindow(&g, w, true);
 }
 
+// The window has the focus and, docked, its tab shows.
+bool InFront(const ImGuiContext& g, const ImGuiWindow* w) {
+    if (!g.NavWindow || g.NavWindow->RootWindow != w) return false;
+    return !w->DockIsActive || w->DockTabIsVisible;
+}
+
+// Start of the frame: the latest BringToFront. FocusWindow also selects a
+// docked window's tab (the dock node follows the focused window). It is
+// asked again until the window is in front: a window opened this frame
+// exists only after its first Begin, and in the first frames a dock node
+// selects the tab saved in imgui.ini.
+void RunFront(ImGuiContext& g) {
+    if (g_front.name.empty()) return;
+    ImGuiWindow* w = ImGui::FindWindowByName(g_front.name.c_str());
+    if (w && InFront(g, w)) {
+        g_front = {};
+        return;
+    }
+    if (++g_front.frames > kFrontFrames) {
+        spdlog::debug("Window '{}' did not come to the front", g_front.name);
+        g_front = {};
+        return;
+    }
+    if (w) ImGui::FocusWindow(w);
+}
+
 // Start of the frame: the commands asked for during the last one, while no
 // window is between Begin and End.
 void RunPending(ImGuiContext* ctx, ImGuiContextHook*) {
     ImGuiContext& g = *ctx;
+    RunFront(g);
     for (const Pending& p : g_pending) {
         ImGuiWindow* w = ImGui::FindWindowByID(p.window);
         if (!w) continue;
@@ -149,6 +179,10 @@ std::string SeparateWindowTitle(const char* name) {
     // The window's name first, as documents name their windows; the main
     // window is the one that starts with the Engine's name.
     return title + " - CyxWiz Engine";
+}
+
+void BringToFront(const std::string& name) {
+    g_front = {name, 0};
 }
 
 void InstallSeparateWindows() {

@@ -23,7 +23,6 @@ ScriptEditorPanel::ScriptEditorPanel()
     , active_tab_index_(-1)
     , show_editor_menu_(false)
     , request_focus_(false)
-    , request_window_focus_(false)
     , close_tab_index_(-1)
     , show_output_notification_(false)
     , output_notification_time_(0.0f)
@@ -113,18 +112,6 @@ void ScriptEditorPanel::Render() {
         }
     }
 
-    // Bring to front before Begin: Begin returns false while the window is a
-    // hidden dock tab, so a request made inside the body would never run. In
-    // the first frames a dock node selects the tab saved in imgui.ini, so the
-    // request repeats until its tab shows (at most 30 frames).
-    if (request_window_focus_) {
-        ImGui::SetNextWindowFocus();
-        if (++window_focus_frames_ > 30) {
-            request_window_focus_ = false;
-            window_focus_frames_ = 0;
-        }
-    }
-
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     ::gui::NextWindowMayLeave(GetName());
     const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
@@ -132,13 +119,6 @@ void ScriptEditorPanel::Render() {
     if (expanded) {
         // Track focus state (including child windows like the code view)
         is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
-        // Done once the tab shows. Not on the first frame: the window docks
-        // after it, and its dock node then selects the tab saved in imgui.ini.
-        if (request_window_focus_ && !ImGui::IsWindowAppearing() &&
-            (!ImGui::IsWindowDocked() || ImGui::GetCurrentWindow()->DockTabIsVisible)) {
-            request_window_focus_ = false;
-            window_focus_frames_ = 0;
-        }
 
         // Always show menu bar
         RenderMenuBar();

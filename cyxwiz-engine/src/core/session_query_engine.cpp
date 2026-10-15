@@ -89,12 +89,9 @@ bool SessionQueryEngine::Ready() const {
 }
 
 bool SessionQueryEngine::Open(std::string* error) {
-    DuckDBConnectorPolicy policy;
-    policy.allow_external_access = false;
-    policy.allowed_directories = allowed_;
     free_.clear();
     extra_.clear();
-    db_ = std::make_unique<DuckDBConnector>(policy);
+    db_ = std::make_unique<DuckDBConnector>(allowed_);
     if (!db_->IsReady()) {
         if (error) *error = "the query engine could not start: " + db_->GetLastError();
         return false;

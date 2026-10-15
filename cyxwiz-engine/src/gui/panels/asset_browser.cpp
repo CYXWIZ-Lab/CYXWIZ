@@ -141,7 +141,6 @@ AssetBrowserPanel::AssetBrowserPanel()
     , context_menu_item_(nullptr)
     , show_rename_dialog_(false)
     , show_delete_confirm_(false)
-    , show_new_script_dialog_(false)
     , show_new_folder_dialog_(false)
 {
     std::memset(search_buffer_, 0, sizeof(search_buffer_));
@@ -194,8 +193,11 @@ void AssetBrowserPanel::Render() {
 
     ImGui::Separator();
 
-    // Keyboard shortcuts (when window is focused)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+    // Keyboard shortcuts: when this window has focus, not a dialog it opened
+    // (ImGui counts its popups as its children) and not while a text field
+    // takes the keys (Ctrl+A or Delete there edit the text, not the files).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_NoPopupHierarchy) &&
+        !ImGui::GetIO().WantTextInput) {
         // Get first selected item for single-item operations
         AssetItem* first_selected = selected_items_.empty() ? nullptr : *selected_items_.begin();
 
@@ -236,7 +238,7 @@ void AssetBrowserPanel::Render() {
             } else {
                 context_menu_item_ = directory_root_.get();
             }
-            show_new_script_dialog_ = true;
+            new_file_request_ = NewFileDialog::Mode::Script;
         }
         // Ctrl+A - Select all
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A) && directory_root_) {
@@ -297,7 +299,10 @@ void AssetBrowserPanel::Render() {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -338,7 +343,7 @@ void AssetBrowserPanel::Render() {
     RenderStatusBar();
 
     // Dialogs (these are modal popups, render at parent level)
-    RenderNewScriptDialog();
+    RenderNewFileDialog();
     RenderNewFolderDialog();
     RenderRenameDialog();
     RenderDeleteConfirmDialog();
@@ -366,8 +371,9 @@ namespace {
 // Fingerprint of what the tree shows: every visible entry's path, size and
 // modification time, with the scanner's filters (hidden entries and .cyxwiz
 // project files skipped). Any add, delete, rename or write changes it.
-// The prepared-data cache (cache/materialized) and *.tmp files are left out:
-// training writes them while it prepares, and they are not browsed.
+// The project's cache/ folder and *.tmp files are left out: the Engine writes
+// them itself (cache/materialized while training prepares, cache/query_results
+// on each query, cache/ingestion), so they are not a change made to the project.
 std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
     std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
     const auto mix = [&hash](const void* data, size_t size) {
@@ -384,8 +390,8 @@ std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
         const fs::path& path = it->path();
         const std::string name = path.filename().string();
         std::error_code entry_ec;
-        const bool engine_cache =
-            name == "materialized" && path.parent_path().filename() == "cache";
+        std::error_code same_ec;
+        const bool engine_cache = name == "cache" && fs::equivalent(path.parent_path(), root, same_ec);
         if ((!show_hidden && !name.empty() && name[0] == '.') || path.extension() == ".cyxwiz" ||
             path.extension() == ".tmp" || engine_cache) {
             if (it->is_directory(entry_ec)) it.disable_recursion_pending();
@@ -751,6 +757,9 @@ void AssetBrowserPanel::RenderDirectoryView() {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.y > 10.0f) {  // Only if there's enough space
         ImGui::InvisibleButton("##RootDropTarget", ImVec2(-1, avail.y));
+        // The project menu (Render's BeginPopupContextWindow, same window and
+        // id) skips items, and this button is one: open it from here.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("AssetEmptyContextMenu");
 
         // Handle drop to project root
         if (ImGui::BeginDragDropTarget()) {
@@ -918,7 +927,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -1084,25 +1096,26 @@ void AssetBrowserPanel::RenderStatusBar() {
     }
 }
 
-void AssetBrowserPanel::RenderNewScriptDialog() {
+void AssetBrowserPanel::RenderNewFileDialog() {
     // Same dialog as File > New Script (TOFIX129 A2-4), opened in the folder
-    // that was right-clicked, else the project's scripts folder.
-    if (show_new_script_dialog_) {
-        show_new_script_dialog_ = false;
+    // that was right-clicked, else the project's scripts folder (a script) or
+    // the project folder (a file).
+    if (new_file_request_) {
         std::string folder;
         if (context_menu_item_ && context_menu_item_->is_directory) folder = context_menu_item_->absolute_path;
         else if (context_menu_item_) folder = fs::path(context_menu_item_->absolute_path).parent_path().string();
-        new_script_dialog_.Open(folder);
+        new_file_dialog_.Open(*new_file_request_, folder);
+        new_file_request_.reset();
     }
-    if (new_script_dialog_.Render() != NewScriptDialog::Result::Created) return;
+    if (new_file_dialog_.Render() != NewFileDialog::Result::Created) return;
     Refresh();
     if (on_double_click_) {
         AssetItem new_item;
-        const fs::path created(new_script_dialog_.CreatedPath());
+        const fs::path created(new_file_dialog_.CreatedPath());
         new_item.name = created.filename().string();
         new_item.absolute_path = created.string();
         new_item.relative_path = ProjectManager::Instance().MakeRelativePath(created.string());
-        new_item.type = AssetType::Script;
+        new_item.type = DetermineAssetType(created.string());
         new_item.is_directory = false;
         on_double_click_(new_item);
     }

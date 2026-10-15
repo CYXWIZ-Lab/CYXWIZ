@@ -1,4 +1,7 @@
 #include "table_viewer.h"
+#include "../../core/async_task_manager.h"
+#include "../../core/dataset_profiler.h"
+#include "../../data/arrow_data_table.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 #include "../icons.h"
@@ -7,156 +10,39 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <numeric>
 
 namespace cyxwiz {
 
-void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
-    if (!tab || !tab->HasData()) return;
-
-    size_t cols = tab->GetColumnCount();
-    size_t rows = tab->GetRowCount();
-
-    tab->column_stats.resize(cols);
-
-    const bool sample_mode = false;
-    size_t sample_size = rows;
-    size_t step = 1;
-
-    for (size_t c = 0; c < cols; c++) {
-        auto& stats = tab->column_stats[c];
-        stats.count = rows;
-        stats.null_count = 0;
-
-        bool has_numeric = false;
-        double min_v = std::numeric_limits<double>::max();
-        double max_v = std::numeric_limits<double>::lowest();
-        double sum_v = 0;
-        std::vector<double> numeric_values;  // For std dev, median, histogram
-        std::map<std::string, int> value_counts;
-
-        numeric_values.reserve(sample_mode ? sample_size : rows);
-
-        for (size_t i = 0; i < sample_size; i++) {
-            size_t r = sample_mode ? i * step : i;
-            if (r >= rows) break;
-
-            auto cell = tab->GetCell(r, c);
-            if (std::holds_alternative<std::monostate>(cell)) {
-                stats.null_count++;
-            } else if (std::holds_alternative<double>(cell)) {
-                double v = std::get<double>(cell);
-                if (!std::isnan(v) && !std::isinf(v)) {
-                    min_v = std::min(min_v, v);
-                    max_v = std::max(max_v, v);
-                    sum_v += v;
-                    numeric_values.push_back(v);
-                    has_numeric = true;
-                } else {
-                    stats.null_count++;
-                }
-            } else if (std::holds_alternative<int64_t>(cell)) {
-                double v = static_cast<double>(std::get<int64_t>(cell));
-                min_v = std::min(min_v, v);
-                max_v = std::max(max_v, v);
-                sum_v += v;
-                numeric_values.push_back(v);
-                has_numeric = true;
-            } else {
-                std::string s = tab->GetCellAsString(r, c);
-                value_counts[s]++;
+void TableViewerPanel::StartProfile(TableTab* tab) {
+    if (!tab || !tab->grid.table || tab->profile_task) return;
+    tab->profile_stale = false;
+    // Converted here: the worker must not read the table while a cell is edited.
+    auto table = ArrowFromDataTable(*tab->grid.table);
+    auto result = std::make_shared<DatasetProfile>();
+    const int uid = tab->uid;
+    std::weak_ptr<int> alive = alive_;
+    tab->profile_task = AsyncTaskManager::Instance().RunAsync(
+        "Profile " + tab->filename,
+        [table, result](LambdaTask& task) {
+            ProfileOptions options;
+            options.should_stop = [&task] { return task.ShouldStop(); };
+            if (table) *result = ProfileArrow(table, options);
+            else result->error = "The table could not be read for profiling.";
+        },
+        nullptr,
+        [this, alive, uid, result](bool, const std::string&) {
+            if (alive.expired()) return;
+            for (auto& t : tabs_) {
+                if (t->uid != uid) continue;
+                t->profile_task = 0;
+                t->profile = result;
             }
-        }
-
-        size_t numeric_count = numeric_values.size();
-        if (has_numeric && numeric_count > 0) {
-            stats.type = "Numeric";
-            stats.min_val = min_v;
-            stats.max_val = max_v;
-            stats.sum = sum_v;
-            stats.avg = sum_v / numeric_count;
-
-            // Compute standard deviation
-            double sq_sum = 0;
-            for (double v : numeric_values) {
-                sq_sum += (v - stats.avg) * (v - stats.avg);
-            }
-            stats.std_dev = std::sqrt(sq_sum / numeric_count);
-
-            // Compute median and quartiles (sort a copy)
-            std::vector<double> sorted_vals = numeric_values;
-            std::sort(sorted_vals.begin(), sorted_vals.end());
-            size_t n = sorted_vals.size();
-            stats.median = sorted_vals[n / 2];
-            stats.q1 = sorted_vals[n / 4];
-            stats.q3 = sorted_vals[3 * n / 4];
-
-            // Compute histogram bins (16 bins)
-            constexpr int NUM_BINS = 16;
-            stats.histogram_bins.resize(NUM_BINS, 0);
-            double range = max_v - min_v;
-            if (range > 0) {
-                for (double v : numeric_values) {
-                    int bin = static_cast<int>((v - min_v) / range * (NUM_BINS - 1));
-                    bin = std::clamp(bin, 0, NUM_BINS - 1);
-                    stats.histogram_bins[bin]++;
-                }
-            } else {
-                // All values are the same
-                stats.histogram_bins[NUM_BINS / 2] = static_cast<int>(numeric_count);
-            }
-        } else {
-            stats.type = "Text";
-            // Get top 5 values
-            std::vector<std::pair<std::string, int>> sorted_values(
-                value_counts.begin(), value_counts.end());
-            std::sort(sorted_values.begin(), sorted_values.end(),
-                [](auto& a, auto& b) { return a.second > b.second; });
-            size_t top_n = std::min(size_t(5), sorted_values.size());
-            stats.top_values.assign(sorted_values.begin(), sorted_values.begin() + top_n);
-        }
-        stats.computed = true;
-    }
-
-    spdlog::info("Computed column stats for {} columns", cols);
-}
-
-void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
-    if (!tab || !tab->HasData() || column < 0) return;
-
-    size_t rows = tab->GetRowCount();
-
-    tab->sorted_indices.resize(rows);
-    std::iota(tab->sorted_indices.begin(), tab->sorted_indices.end(), size_t(0));
-
-    bool is_numeric = (column < static_cast<int>(tab->column_stats.size()) &&
-                       tab->column_stats[column].type == "Numeric");
-    bool ascending = tab->sort_ascending;
-
-    std::sort(tab->sorted_indices.begin(), tab->sorted_indices.end(),
-        [&](size_t a, size_t b) {
-            if (is_numeric) {
-                auto get_val = [&](size_t r) -> double {
-                    auto cell = tab->GetCell(r, column);
-                    if (std::holds_alternative<double>(cell))
-                        return std::get<double>(cell);
-                    if (std::holds_alternative<int64_t>(cell))
-                        return static_cast<double>(std::get<int64_t>(cell));
-                    return ascending ? std::numeric_limits<double>::max()
-                                    : std::numeric_limits<double>::lowest();
-                };
-                double va = get_val(a), vb = get_val(b);
-                return ascending ? va < vb : va > vb;
-            } else {
-                std::string sa = tab->GetCellAsString(a, column);
-                std::string sb = tab->GetCellAsString(b, column);
-                return ascending ? sa < sb : sa > sb;
-            }
-        });
-
-    spdlog::info("Sorted by column {} ({})", column, ascending ? "ascending" : "descending");
+        },
+        alive_);
 }
 
 void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
@@ -169,100 +55,85 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
 
     // Cell selection info at top
     ImGui::TextDisabled("Selection");
-    if (tab->selected_row >= 0 && tab->selected_col >= 0) {
-        ImGui::Text(ICON_FA_CROSSHAIRS " Row %d, Col %d", tab->selected_row + 1, tab->selected_col + 1);
+    if (tab->grid.selected_row >= 0 && tab->grid.selected_col >= 0) {
+        ImGui::Text(ICON_FA_CROSSHAIRS " Row %d, Col %d", tab->grid.selected_row + 1, tab->grid.selected_col + 1);
     } else {
         ImGui::TextDisabled("No cell selected");
     }
     ImGui::Spacing();
     ImGui::Spacing();
 
-    if (tab->selected_column < 0 || tab->selected_column >= static_cast<int>(tab->column_stats.size())) {
+    const int column = tab->grid.selected_column;
+    if (column < 0 || column >= static_cast<int>(tab->grid.column_kinds.size())) {
         ImGui::TextDisabled("Click a cell to view");
         ImGui::TextDisabled("column statistics");
         ImGui::EndChild();
         ImGui::PopStyleColor();
         return;
     }
+    if (tab->profile_stale) StartProfile(tab);
 
-    auto& stats = tab->column_stats[tab->selected_column];
-    auto& headers = tab->table->GetHeaders();
-
-    // Column name with icon
-    ImGui::Text(ICON_FA_CHART_COLUMN " %s", headers[tab->selected_column].c_str());
+    const auto& kind = tab->grid.column_kinds[column];
+    const bool numeric = kind.type == "Numeric";
+    ImGui::Text(ICON_FA_CHART_COLUMN " %s", tab->GetHeaders()[column].c_str());
+    ImGui::Spacing();
+    ImGui::TextColored(numeric ? tk.info : tk.caution, "%s %s", numeric ? ICON_FA_HASHTAG : ICON_FA_FONT, kind.type.c_str());
     ImGui::Spacing();
 
-    // Type badge
-    ImVec4 type_color = (stats.type == "Numeric") ? tk.info : tk.caution;
-    ImGui::TextColored(type_color, "%s %s",
-        stats.type == "Numeric" ? ICON_FA_HASHTAG : ICON_FA_FONT,
-        stats.type.c_str());
-
-    ImGui::Spacing();
-
-    // Count info
-    ImGui::TextDisabled("Count");
-    ImGui::SameLine(90);
-    ImGui::Text("%zu", stats.count);
-
-    ImGui::TextDisabled("Nulls");
-    ImGui::SameLine(90);
-    ImGui::Text("%zu", stats.null_count);
-
-    ImGui::Spacing();
-
-    if (stats.type == "Numeric") {
-        ImGui::TextDisabled("Min");
+    const ProfiledColumn* pc = tab->profile && tab->profile->ok() && column < static_cast<int>(tab->profile->columns.size())
+                                   ? &tab->profile->columns[static_cast<size_t>(column)]
+                                   : nullptr;
+    const auto row = [](const char* label, const std::string& value) {
+        ImGui::TextDisabled("%s", label);
         ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.min_val);
-
-        ImGui::TextDisabled("Max");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.max_val);
-
-        ImGui::TextDisabled("Mean");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.avg);
-
-        ImGui::TextDisabled("Std Dev");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.std_dev);
-
-        ImGui::TextDisabled("Median");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.median);
-
-        ImGui::Spacing();
-
-        // Percentiles
-        ImGui::TextDisabled("Percentiles:");
-        ImGui::TextDisabled("  25%%");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.q1);
-        ImGui::TextDisabled("  50%%");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.median);
-        ImGui::TextDisabled("  75%%");
-        ImGui::SameLine(90);
-        ImGui::Text("%.4g", stats.q3);
-
-        ImGui::Spacing();
-
-        // Mini histogram
-        ImGui::TextDisabled("Distribution:");
-        RenderMiniHistogram(tab, tab->selected_column);
-
-        ImGui::Spacing();
-
-        // Plot: the Plot window on this column's histogram.
-        if (ui::SecondaryButton(ICON_FA_CHART_BAR " Plot")) {
-            OpenPlot(tab, plot::Kind::Histogram, tab->selected_column);
+        ImGui::TextUnformatted(value.c_str());
+    };
+    const auto number = [](double v) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6g", v);
+        return std::string(buf);
+    };
+    if (!pc) {
+        if (tab->profile_task) ImGui::TextColored(tk.info, ICON_FA_SPINNER " Profiling");
+        else if (tab->profile && !tab->profile->ok()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(tk.error, "%s", tab->profile->error.c_str());
+            ImGui::PopTextWrapPos();
         }
     } else {
-        ImGui::TextDisabled("Top Values:");
-        for (auto& [val, cnt] : stats.top_values) {
-            std::string display = val.length() > 15 ? val.substr(0, 15) + "..." : val;
-            ImGui::BulletText("%s (%d)", display.c_str(), cnt);
+        row("Rows", std::to_string(pc->facts.rows));
+        row("Missing", std::to_string(pc->missing));
+        row("Distinct", std::to_string(pc->facts.distinct));
+        if (pc->empty_text > 0) row("Empty text", std::to_string(pc->empty_text));
+        ImGui::Spacing();
+        if (pc->numeric) {
+            row("Min", number(pc->min));
+            row("Max", number(pc->max));
+            row("Mean", number(pc->mean));
+            row("Std Dev", number(pc->std));
+            ImGui::Spacing();
+            ImGui::TextDisabled("Percentiles:");
+            row("  25%", number(pc->q1));
+            row("  50%", number(pc->median));
+            row("  75%", number(pc->q3));
+            ImGui::Spacing();
+            ImGui::TextDisabled("Distribution:");
+            RenderMiniHistogram(tab, column);
+        } else {
+            ImGui::TextDisabled("Top Values:");
+            for (size_t i = 0; i < std::min<size_t>(pc->top.size(), 5); ++i) {
+                const auto& [val, cnt] = pc->top[i];
+                std::string display = val.length() > 15 ? val.substr(0, 15) + "..." : val;
+                ImGui::BulletText("%s (%zu)", display.c_str(), cnt);
+            }
+        }
+        if (tab->profile_task) ImGui::TextColored(tk.info, ICON_FA_SPINNER " Profiling again");
+    }
+    if (numeric) {
+        ImGui::Spacing();
+        // Plot: the Plot window on this column's histogram.
+        if (ui::SecondaryButton(ICON_FA_CHART_BAR " Plot")) {
+            OpenPlot(tab, plot::Kind::Histogram, column);
         }
     }
 
@@ -272,10 +143,9 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
 
 
 void TableViewerPanel::RenderMiniHistogram(TableTab* tab, int column) {
-    if (!tab || column < 0 || column >= static_cast<int>(tab->column_stats.size())) return;
-
-    auto& stats = tab->column_stats[column];
-    if (stats.type != "Numeric" || stats.histogram_bins.empty()) return;
+    if (!tab || !tab->profile || column < 0 || column >= static_cast<int>(tab->profile->columns.size())) return;
+    const ProfiledColumn& pc = tab->profile->columns[static_cast<size_t>(column)];
+    if (!pc.numeric || pc.hist_counts.empty()) return;
 
     // Small ImPlot histogram
     ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(2, 2));
@@ -288,7 +158,9 @@ void TableViewerPanel::RenderMiniHistogram(TableTab* tab, int column) {
             ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
             ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_AutoFit);
 
-        std::vector<double> bins_d(stats.histogram_bins.begin(), stats.histogram_bins.end());
+        std::vector<double> bins_d;
+        bins_d.reserve(pc.hist_counts.size());
+        for (size_t n : pc.hist_counts) bins_d.push_back(static_cast<double>(n));
         ImPlot::SetNextFillStyle(ui::WithAlpha(ui::CurrentTokens().series[0], 0.7f));
         ImPlot::PlotBars("##bins", bins_d.data(), static_cast<int>(bins_d.size()), 0.8);
 
@@ -298,33 +170,10 @@ void TableViewerPanel::RenderMiniHistogram(TableTab* tab, int column) {
     ImPlot::PopStyleVar();
 
     // Min/max labels
-    ImGui::TextDisabled("%.2g", stats.min_val);
+    ImGui::TextDisabled("%.2g", pc.min);
     ImGui::SameLine(stats_sidebar_width_ - 60);
-    ImGui::TextDisabled("%.2g", stats.max_val);
+    ImGui::TextDisabled("%.2g", pc.max);
 }
-
-std::vector<double> TableViewerPanel::GetColumnAsDoubles(TableTab* tab, int column) const {
-    std::vector<double> result;
-    if (!tab || !tab->table || column < 0) return result;
-
-    size_t row_count = tab->table->GetRowCount();
-    result.reserve(row_count);
-
-    for (size_t r = 0; r < row_count; r++) {
-        auto cell = tab->table->GetCell(r, column);
-        if (std::holds_alternative<double>(cell)) {
-            double val = std::get<double>(cell);
-            if (!std::isnan(val) && !std::isinf(val)) {
-                result.push_back(val);
-            }
-        } else if (std::holds_alternative<int64_t>(cell)) {
-            result.push_back(static_cast<double>(std::get<int64_t>(cell)));
-        }
-    }
-
-    return result;
-}
-
 
 }  // namespace cyxwiz
 

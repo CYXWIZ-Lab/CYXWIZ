@@ -555,7 +555,7 @@ std::string Summarise(const Operation& op) {
         const auto groups = StrList(p, "partition_by");
         return "Number rows in " + Str(p, "name", "?") + (groups.empty() ? "" : " within each " + Join(groups, ", ")) + ".";
     }
-    if (t == "add_checks") return std::to_string(List(p, "checks").size()) + " check(s); the step stops when one fails.";
+    if (t == "add_checks") return std::to_string(List(p, "checks").size()) + " check(s); they become Check nodes when the step is saved.";
     return t;
 }
 
@@ -567,6 +567,11 @@ Generated GenerateSql(const GuidedStep& step, const Context& context) {
     const std::string main = context.inputs.empty() ? std::string("input") : context.inputs.front();
     std::string previous = Ident(main);
     std::vector<std::string> ctes;
+    // The last operation that is on: "Add checks" must be it (its checks
+    // become Check nodes after the step, which see the step's result).
+    size_t last_on = step.ops.size();
+    for (size_t i = 0; i < step.ops.size(); ++i)
+        if (step.ops[i].on) last_on = i;
     for (size_t i = 0; i < step.ops.size(); ++i) {
         const Operation& op = step.ops[i];
         if (!op.on) continue;
@@ -575,6 +580,11 @@ Generated GenerateSql(const GuidedStep& step, const Context& context) {
         const Columns& in = columns[i];
         std::string error;
         std::string body;
+        if (t == "add_checks" && i != last_on) {
+            out.errors[i] = "move Add checks to the end: its checks become check nodes after the step";
+            out.ok = false;
+            continue;
+        }
         const std::string column = Str(p, "column");
         const auto need_column = [&]() {
             if (column.empty()) error = "choose a column";
@@ -927,6 +937,52 @@ GuidedStep MakeTemplate(std::string_view id, const std::string& text_column) {
         add("add_checks", {{"checks", json::array({{{"kind", "allowed_values"}, {"column", "split"}, {"values", "train, validation, test"}}})}});
     }
     return step;
+}
+
+SplitChecks SplitOffChecks(const GuidedStep& step) {
+    SplitChecks out;
+    out.step = step;
+    size_t last_on = step.ops.size();
+    for (size_t i = 0; i < step.ops.size(); ++i)
+        if (step.ops[i].on) last_on = i;
+    if (last_on == step.ops.size() || step.ops[last_on].type != "add_checks") return out;
+    for (const auto& c : List(step.ops[last_on].params, "checks")) {
+        const std::string kind = Str(c, "kind", "row_count");
+        const std::string column = Str(c, "column");
+        CheckNode node;
+        std::string label;
+        auto& p = node.parameters;
+        p["check"] = kind;
+        if (kind == "row_count") {
+            p["expected_rows"] = Str(c, "exact");
+            p["min_rows"] = Str(c, "min");
+            p["max_rows"] = Str(c, "max");
+            if (p["expected_rows"].empty() && p["min_rows"].empty() && p["max_rows"].empty()) continue;
+            label = "rows";
+        } else if (kind == "unique") {
+            auto keys = StrList(c, "columns");
+            if (keys.empty() && !column.empty()) keys.push_back(column);
+            if (keys.empty()) continue;
+            p["columns"] = Join(keys, ", ");
+            label = p["columns"] + " unique";
+        } else if (column.empty()) {
+            continue;
+        } else if (kind == "allowed_values") {
+            p["column"] = column;
+            p["allowed"] = Str(c, "values");
+            label = column + " values";
+        } else if (kind == "not_empty") {
+            p["column"] = column;
+            label = column + " not empty";
+        } else {
+            continue;
+        }
+        p["check_name"] = label;
+        node.name = "Check: " + label;
+        out.checks.push_back(std::move(node));
+    }
+    out.step.ops.erase(out.step.ops.begin() + static_cast<std::ptrdiff_t>(last_on));
+    return out;
 }
 
 }  // namespace cyxwiz::guided

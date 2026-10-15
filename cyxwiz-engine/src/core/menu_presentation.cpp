@@ -573,8 +573,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Action(f, "data.statistics", "Dataset Statistics", "Opens Data Studio's Profile: row counts, columns and value summaries."));
         i.push_back(Sep());
         i.push_back(Sub("data.explore", "Explore", "Look at a table before using it.",
-                        {Tool(f, "data.profiler", "Data Profiler"),
-                         Tool(f, "data.missing_values", "Missing Value Analysis"),
+                        {Tool(f, "data.missing_values", "Missing Value Analysis"),
                          Tool(f, "data.outliers", "Outlier Detection"),
                          Tool(f, "data.correlation", "Correlation Matrix")}));
         i.push_back(Sub("data.transform", "Transform", "Rescale or reshape columns.",

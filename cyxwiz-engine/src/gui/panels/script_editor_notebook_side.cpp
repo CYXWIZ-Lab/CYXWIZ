@@ -4,6 +4,7 @@
 // code cells beside them.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include "../../core/markdown_blocks.h"
 #include "../../data/data_table.h"
@@ -64,7 +65,7 @@ void ScriptEditorPanel::InsertTextAtCursor(const std::string& text) {
     if (!code) return;
     code->Doc().Paste(text);
     code->RequestFocus();
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 }
 
 void ScriptEditorPanel::RenderNotebookOutline(EditorTab& tab, float width, float height) {

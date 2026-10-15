@@ -9,6 +9,8 @@
 #include "dashboard/dashboard_links.h"
 #include "dashboard/dashboard_window.h"
 #include "../core/dashboard/dashboard_model.h"
+#include "../core/preparation_recipe.h"
+#include "subgraph_document.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 
@@ -110,6 +112,55 @@ void NodeEditor::DrawPlotNodeStatus(const MLNode& node) {
                 nullptr, width - pad * 2);
 }
 
+const NodeEditor::PlotLaneGraph& NodeEditor::PlotGraph(bool fresh) {
+    const double now = ImGui::GetTime();
+    PlotLaneGraph& g = plot_lane_graph_;
+    if (!fresh && g.built_at >= 0.0 && now - g.built_at < 0.5) return g;
+    g.built_at = now;
+    g.nodes = nodes_;
+    g.links = links_;
+    if (subgraphs_.empty()) return g;
+    // Lowered as the Data Pipeline lowers them (BuildDataPipelineJson): the
+    // recipe's steps take its place and its links move to their pins.
+    nlohmann::json lowered;
+    try {
+        nlohmann::json document;
+        gui::detail::WriteEditorGraphContent(document, nodes_, links_, subgraphs_, {});
+        lowered = cyxwiz::LowerPreparationRecipes(document);
+    } catch (const std::exception& e) {
+        spdlog::debug("Plot lane: the graph is read as drawn ({})", e.what());
+        return g;  // the plot says the recipe cannot be read
+    }
+    std::vector<MLNode> nodes;
+    for (const auto& n : lowered.at("nodes")) {
+        const int id = n.at("id").get<int>();
+        if (const MLNode* found = FindStep(id)) nodes.push_back(*found);
+    }
+    const auto pin_of = [&](int node_id, int index, bool input) {
+        for (const auto& n : nodes)
+            if (n.id == node_id) {
+                const auto& pins = input ? n.inputs : n.outputs;
+                return index >= 0 && index < static_cast<int>(pins.size()) ? pins[static_cast<size_t>(index)].id : -1;
+            }
+        return -1;
+    };
+    std::vector<NodeLink> links;
+    int next_id = 1;
+    for (const auto& l : lowered.at("links")) {
+        NodeLink link;
+        link.id = next_id++;
+        link.from_node = l.at("from_node").get<int>();
+        link.to_node = l.at("to_node").get<int>();
+        link.from_pin = pin_of(link.from_node, l.value("from_pin_index", 0), false);
+        link.to_pin = pin_of(link.to_node, l.value("to_pin_index", 0), true);
+        if (link.from_pin < 0 || link.to_pin < 0) continue;
+        links.push_back(link);
+    }
+    g.nodes = std::move(nodes);
+    g.links = std::move(links);
+    return g;
+}
+
 void NodeEditor::OpenPlotNode(int node_id) {
     MLNode* node = FindNodeById(node_id);
     if (!node) return;
@@ -128,11 +179,14 @@ void NodeEditor::OpenPlotNode(int node_id) {
         };
         plot_window_data_versions_[node_id] = ~0ull;
     }
-    window->visible = true;
+    window->Focus();
     // Opening is the user asking for the data: read or run once if there is
     // none yet (later edits above only mark it out of date).
     const Lane::Status& st = plot_lane_->StatusOf(node_id);
-    if (!st.table && st.state != State::Running) plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
+    if (!st.table && st.state != State::Running) {
+        const auto& g = PlotGraph();
+        plot_lane_->Refresh(node_id, g.nodes, g.links, task_owner_token_);
+    }
 }
 
 void NodeEditor::PlotNodeInput(int plot_id, int source_id) {
@@ -141,7 +195,10 @@ void NodeEditor::PlotNodeInput(int plot_id, int source_id) {
     if (!plot || !source || plot->inputs.empty() || source->outputs.empty()) return;
     std::erase_if(links_, [plot_id](const NodeLink& l) { return l.to_node == plot_id; });
     CreateLink(source->outputs.front().id, plot->inputs.front().id, source_id, plot_id);
-    if (plot_lane_) plot_lane_->Refresh(plot_id, nodes_, links_, task_owner_token_);
+    if (plot_lane_) {
+        const auto& g = PlotGraph();
+        plot_lane_->Refresh(plot_id, g.nodes, g.links, task_owner_token_);
+    }
 }
 
 void NodeEditor::DrawPlotNodeHeader(int node_id) {
@@ -172,7 +229,8 @@ void NodeEditor::DrawPlotNodeHeader(int node_id) {
     if (running) {
         if (cyxwiz::ui::SecondaryButton("Cancel##plot_cancel")) plot_lane_->Cancel(node_id);
     } else if (cyxwiz::ui::SecondaryButton("Refresh##plot_refresh", can_refresh, "Nothing can be read here")) {
-        plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
+        const auto& g = PlotGraph();
+        plot_lane_->Refresh(node_id, g.nodes, g.links, task_owner_token_);
     }
     if (ImGui::IsItemHovered() && !running && can_refresh && st.needs_run)
         ImGui::SetTooltip("Runs the %d node(s) above the plot (progress in Task View).", st.run_node_count);
@@ -236,9 +294,12 @@ void NodeEditor::OpenDashboardNode(int node_id) {
         };
         dashboard_data_versions_[node_id] = ~0ull;
     }
-    window->visible = true;
+    window->Focus();
     const Lane::Status& st = plot_lane_->StatusOf(node_id);
-    if (!st.table && st.state != State::Running) plot_lane_->Refresh(node_id, nodes_, links_, task_owner_token_);
+    if (!st.table && st.state != State::Running) {
+        const auto& g = PlotGraph();
+        plot_lane_->Refresh(node_id, g.nodes, g.links, task_owner_token_);
+    }
 }
 
 int NodeEditor::DataInputOf(const std::string& dataset) const {
@@ -392,7 +453,10 @@ void NodeEditor::RenderPlotNodes() {
     if (!any_plot && plot_windows_.empty() && dashboard_windows_.empty()) return;
     if (!plot_lane_) plot_lane_ = std::make_shared<cyxwiz::plot::PlotNodeLane>();
     if (!pending_dashboard_widgets_.empty()) ApplyPendingDashboardWidgets();
-    plot_lane_->Poll(nodes_, links_, task_owner_token_);
+    {
+        const auto& g = PlotGraph(false);
+        plot_lane_->Poll(g.nodes, g.links, task_owner_token_);
+    }
 
     for (auto it = plot_windows_.begin(); it != plot_windows_.end();) {
         const int id = it->first;

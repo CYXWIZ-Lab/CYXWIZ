@@ -385,17 +385,21 @@ public:
     // Execute data pipeline using DuckDB (Phase 2)
     bool ExecuteDataPipeline();
     // Run only what `node_id` needs: its upstream steps and itself, plus the
-    // Row Count Checks chained right after it when `with_checks` (TOFIX146
+    // Check nodes chained right after it when `with_checks` (TOFIX146
     // "Run step" / "Preview output"). `include_step` false runs only the
     // steps before it (the SQL Workbench's "Load inputs").
-    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true);
+    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true) {
+        return ExecuteDataPipelineThrough(std::vector<int>{node_id}, with_checks, include_step);
+    }
+    // Several steps in one run (Data Studio Validate's "Run checks").
+    bool ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step = true);
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
     // The Task View task of the latest data run (0: none), for a dialog that
     // shows its progress or stops it.
     uint64_t GetDataPipelineTaskId() const { return pipeline_task_id_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to
-    // their steps): what feeds each input pin and the Row Count Checks that
+    // their steps): what feeds each input pin and the Check nodes that
     // follow it. `error` says why the graph could not be read.
     struct DataStepNeighbour {
         int id = -1;
@@ -412,6 +416,16 @@ public:
         std::string error;
     };
     DataStepContext GetDataStepContext(int node_id) const;
+    // The executable graph's links (recipes lowered to their steps): which
+    // node feeds which input pin of which node (Data Studio's Validate reads
+    // what each check checks). Empty, with `error` saying why, when the
+    // graph cannot be run.
+    struct DataLink {
+        int from = -1;
+        int to = -1;
+        int pin = 0;
+    };
+    std::vector<DataLink> GetDataPipelineLinks(std::string* error = nullptr) const;
     // Each node's latest run facts (rows, columns, time, outcome), kept
     // across runs in this session.
     const std::map<int, cyxwiz::PipelineNodeRunFacts>& GetNodeRunFacts() const { return node_run_facts_; }
@@ -465,6 +479,8 @@ public:
 
     // Show the node editor window
     void Show() { show_window_ = true; }
+    // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
+    void Raise();
 
     // ===== Data Studio Integration (Phase 5 Week 7) =====
 
@@ -587,8 +603,12 @@ public:
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
 
-    // Select a node in the canvas and frame it into view.
-    void FocusNode(int node_id);
+    // Select a node in the canvas and frame it into view; `raise` brings
+    // CyxWiz Studio forward (false: framed when it next shows).
+    void FocusNode(int node_id, bool raise = true);
+    // Select these nodes and frame them all into view (Data Studio's Show on
+    // canvas); applied in the canvas's next frame, like FocusNode.
+    void ShowNodes(std::vector<int> node_ids);
 
     // A Subgraph as its Properties view shows it (TOFIX146 D5): its role and
     // its steps in run order (the live canvas copies while it is expanded).
@@ -609,13 +629,54 @@ public:
     SubgraphSummary GetSubgraphSummary(int node_id) const;
     // Applied at the start of the next canvas frame, so a Properties button
     // never changes the node list while Properties is drawing one of its nodes.
-    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep };
+    // OpenStep is ShowStep, then the step's dialog opens in the frame the step
+    // is focused, so the dialog ends up in front of the canvas.
+    enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep, OpenStep };
     void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
-    // Adds an empty guided SQL step after an SQL step (TOFIX147 item 3): it
-    // takes over the step's outgoing links (and its place as a recipe's
-    // output), joins the step's recipe, and is selected. Applied, like
-    // RequestSubgraphAction, at the start of the next canvas frame.
-    void RequestGuidedStepAfter(int sql_step_id) { pending_guided_after_ = sql_step_id; }
+    // Adds a node of `type` after a step (TOFIX147 item 3; Data Studio
+    // Prepare's "Add a step", TOFIX148): it takes over the step's outgoing
+    // links (and its place as a recipe's output), joins the step's recipe,
+    // goes to the step's right (the nodes after it move right to make room)
+    // and is selected (CyxWiz Studio is not brought forward). Applied, like
+    // RequestSubgraphAction, at the start of the next canvas frame, in the
+    // order requested. `name` and `parameters`
+    // (optional) replace the node's defaults (a guided step's checks become
+    // Check nodes this way).
+    void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
+        pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
+    }
+    // A node of `type` reading the step's result beside what already reads
+    // it, below the step (Data Studio's Data Validator: its output is an
+    // issues table, not the rows, so it must not take over the step's links).
+    // It never joins a recipe (each recipe step must lead to the recipe's
+    // output): after a step inside one it reads the recipe's result
+    // (BranchSource). Data Studio's Keep as Plot node adds Plots this way.
+    void RequestBranchAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters = {},
+                            std::string name = {}) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
+        request.branch = true;
+        pending_steps_after_.push_back(std::move(request));
+    }
+    // The same with an empty guided SQL step.
+    void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
+    // The same with an SQL step running `query` (Data Studio's "Turn into SQL
+    // step"), named `name`.
+    void RequestSqlStepAfter(int step_id, std::string name, std::string query) {
+        pending_steps_after_.push_back({step_id, NodeType::SQLQuery, false, std::move(name), std::move(query), {}});
+    }
+    // What a branch from `step_id` reads: the step, or, for a step inside a
+    // recipe or group, its result: the subgraph node while collapsed, its
+    // last step while expanded.
+    int BranchSource(int step_id) const;
+    // A node by id, also a step inside a collapsed recipe (its stored copy;
+    // the canvas copy while expanded). Null when the graph has none.
+    const MLNode* FindStep(int node_id) const;
+    // Sets (and erases) parameters of a node or a collapsed recipe's step
+    // (Data Studio's Prepare saves an SQL step's query this way), and renames
+    // it when `name` is not empty, with an undo point. False when the graph
+    // has no such node.
+    bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
+                           const std::vector<std::string>& erase = {}, const std::string& name = {});
 
 private:
     void ShowToolbar();
@@ -918,6 +979,7 @@ private:
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
     int pending_focus_node_id_ = -1;
+    std::vector<int> pending_show_nodes_;  // ShowNodes, applied in the next canvas frame
     // An expanded subgraph selected by its frame header (TOFIX147): shown in
     // Properties while no canvas node is selected.
     int frame_selected_subgraph_id_ = -1;
@@ -930,11 +992,29 @@ private:
         SubgraphRequest request = SubgraphRequest::Expand;
         int step_id = -1;
         int frames_to_wait = 0;  // newly expanded steps are drawn before they can be selected
+        bool raise = true;       // ShowStep brings CyxWiz Studio forward
     };
     PendingSubgraphRequest pending_subgraph_request_;
+    // Nodes an Expand moved right to make room for the frame, by subgraph;
+    // Collapse moves them back when they are still where Expand put them.
+    struct RoomMove {
+        int id = -1;
+        ImVec2 from, to;
+    };
+    std::map<int, std::vector<RoomMove>> room_made_;
     void ApplySubgraphRequest();
-    int pending_guided_after_ = -1;
-    void ApplyGuidedStepInsert();
+    struct PendingStepAfter {
+        int after = -1;  // the step it follows
+        NodeType type = NodeType::SQLQuery;
+        bool guided = false;  // SQL: an empty guided step, else `query`
+        std::string name;     // "" : the default name
+        std::string query;    // SQL: its query
+        std::map<std::string, std::string> parameters;  // over the node's defaults
+        bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
+    };
+    std::vector<PendingStepAfter> pending_steps_after_;
+    void ApplyStepAfterInsert();
+    void InsertStepAfter(const PendingStepAfter& request);
     // A node to select once ImNodes has drawn it (a new node is dropped from
     // the selection before its first frame).
     struct DeferredFocus {
@@ -1126,6 +1206,17 @@ private:
     void DrawPlotNodeStatus(const MLNode& node);
     void DrawPlotNodeHeader(int node_id);
     void PlotNodeInput(int plot_id, int source_id);
+    // The graph the Plot and Dashboard nodes read (TOFIX148): Preparation
+    // Recipes lowered to their steps, as the Data Pipeline runs them, so a
+    // plot can read a recipe's result. `fresh` rebuilds it now (a user
+    // action); otherwise at most twice a second (the lane's polling).
+    struct PlotLaneGraph {
+        std::vector<MLNode> nodes;
+        std::vector<NodeLink> links;
+        double built_at = -1.0;
+    };
+    PlotLaneGraph plot_lane_graph_;
+    const PlotLaneGraph& PlotGraph(bool fresh = true);
     // Dashboard nodes (TOFIX134 P3): the same lane, one Dashboard window each.
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;

@@ -662,12 +662,18 @@ MLNode CreateGraphNode(NodeType type,
             out.description = "The same table, passed through when the check holds.";
             node.outputs.push_back(out);
             node.parameters["check_name"] = "";
+            node.parameters["check"] = "row_count";
             node.parameters["expected_rows"] = "";
             node.parameters["min_rows"] = "";
             node.parameters["max_rows"] = "";
             node.parameters["count_true_column"] = "";
             node.parameters["count_column"] = "";
             node.parameters["count_value"] = "";
+            node.parameters["column"] = "";
+            node.parameters["columns"] = "";
+            node.parameters["allowed"] = "";
+            node.parameters["min_value"] = "";
+            node.parameters["max_value"] = "";
             node.parameters["on_failure"] = "stop";
             break;
         }

@@ -7,15 +7,16 @@
 // DuckDB, the step's own contract), without touching the graph until "Save
 // to step".
 
-#include "../core/guided_sql.h"
 #include "../core/sql_editing.h"
 #include "../core/sql_plan.h"
 #include "../core/sql_step_presentation.h"
-#include "../core/table_profile.h"
+#include "../core/dataset_profiler.h"
 #include "../data/arrow_data_table.h"
-#include "code_editor.h"
 #include "node_config_dialog.h"
+#include "guided_editor.h"
 #include "node_editor.h"
+#include "sql_editor_pane.h"
+#include "table_grid.h"
 
 #include <arrow/api.h>
 
@@ -94,33 +95,21 @@ private:
     void RenderPartsTab();
     void RenderHistoryTab();
     void RenderSnippetsTab();
-    // Editor, find, completion, Format, Compare (gui/sql_workbench_editing.cpp).
-    void RenderEditor(float height);
-    void OpenFind();
-    void CloseFind();
-    void UpdateFind();
-    void FindStep(bool forward);
-    void RenderFindBar();
-    void UpdateCompletion(bool forced);
-    void AcceptCompletion();
-    void RenderCompletion();
+    // Format and Compare (gui/sql_workbench_editing.cpp); the editor is pane_.
     void FormatDraft();
     void RenderCompare();
 
-    // Guided mode (TOFIX146 step 5, board 3), gui/sql_workbench_guided.cpp.
+    // Guided mode (TOFIX146 step 5, board 3), gui/sql_workbench_guided.cpp;
+    // the operations are edited in guided_ (gui/guided_editor).
     void LoadGuided(const MLNode& node);
-    cyxwiz::guided::Context GuidedContext() const;
-    void GuidedChanged(const std::string& before_json);  // regenerate, undo point, preview
+    void OnGuidedChanged();  // the new SQL into the draft, preview soon
     void RenderGuided(float height);
     void RenderGuidedToolbar();
-    void RenderGuidedLibrary(float height);
-    void RenderGuidedCards(float height);
-    void RenderGuidedEditor(float height);
-    bool RenderOperationFields(cyxwiz::guided::Operation& op, const cyxwiz::guided::Columns& in);
     void RenderGuidedPreview(float height);
     void RenderSqlStepInGuidedMode(float height);
     void StartGuidedPreview();
     int GuidedPartIndex(int op) const;
+    int64_t GuidedInputRows() const;  // rows the first operation receives in the preview
     void RenderBottomPanel(float height);
     void RenderResults();
     void RenderProfile();
@@ -140,11 +129,8 @@ private:
 
     int node_id_ = -1;
     std::string step_name_;
-    cyxwiz::CodeEditor editor_;
-    std::string saved_query_;           // the step's query when last loaded or saved
-    uint64_t outline_version_ = ~0ull;  // editor document version the outline was built from
-    cyxwiz::sqlstep::SqlOutline outline_;
-    std::string draft_;                 // editor text at outline_version_
+    SqlEditorPane pane_;       // the draft: editor, find, completion, outline
+    std::string saved_query_;  // the step's query when last loaded or saved
 
     NodeEditor::DataStepContext context_;
     std::vector<InputTable> inputs_;
@@ -155,8 +141,8 @@ private:
     RunKind running_kind_ = RunKind::Step;  // of run_, while it runs
     double running_since_ = 0.0;            // ImGui time run_ started
     std::shared_ptr<arrow::Table> result_;
-    cyxwiz::ArrowPreview result_preview_;
-    std::vector<cyxwiz::ArrowColumnProfile> result_profile_;
+    cyxwiz::TableGrid result_grid_;  // the first kResultRows rows
+    cyxwiz::DatasetProfile result_profile_;
     std::string result_label_;  // "result", "part kept", "rows kept removed"
     bool result_is_step_ = false;  // the whole draft's result (checks apply)
     double result_seconds_ = 0.0;
@@ -189,46 +175,15 @@ private:
     int marked_part_ = -1;
     OpenTableCallback open_table_;
 
-    // Find bar (Ctrl+F).
-    struct FindState {
-        bool open = false;
-        bool focus = false;
-        char query[256] = {};
-        bool case_sensitive = false;
-        bool whole_word = false;
-        bool regex = false;
-        uint64_t version = ~0ull;
-        std::string key;
-        std::string error;
-        std::vector<std::pair<cyxwiz::editor::Pos, cyxwiz::editor::Pos>> matches;
-        int current = -1;
-    } find_;
-    // Completion list at the cursor.
-    bool completion_open_ = false;
-    std::vector<cyxwiz::sqledit::Completion> completion_items_;
-    int completion_selected_ = 0;
-    cyxwiz::editor::Pos completion_start_;
-    uint64_t completion_version_ = ~0ull;
-    float editor_line_height_ = 18.0f;
-
     // Guided mode.
     int mode_ = 1;                 // 0 Guided, 1 SQL
-    bool guided_active_ = false;   // the step is (or becomes, on save) a guided step
-    cyxwiz::guided::GuidedStep guided_;
-    cyxwiz::guided::Generated guided_generated_;
-    std::vector<cyxwiz::guided::Columns> guided_columns_;
-    std::string guided_saved_json_;  // guided_ops as last loaded or saved
-    std::vector<std::string> guided_undo_;
-    std::vector<std::string> guided_redo_;
-    int guided_picked_ = -1;
+    GuidedEditor guided_;          // Active(): the step is (or becomes, on save) a guided step
     int guided_view_ = 0;          // 0 After this operation, 1 Summary, 2 SQL
     int sample_mode_ = 1;          // 0 all rows, 1 first 1,000, 2 random 1,000
-    char guided_search_[64] = {};
     double guided_changed_at_ = -1.0;  // ImGui time of the last change not yet previewed
     bool preview_part_after_counts_ = false;
     bool confirm_edit_as_sql_ = false;
     bool confirm_start_guided_ = false;
-    std::string guided_inputs_key_;  // inputs the SQL was last written for
     // Compare with saved.
     bool compare_open_ = false;
     uint64_t compare_version_ = ~0ull;

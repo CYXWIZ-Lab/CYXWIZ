@@ -391,6 +391,8 @@ bool CyxWizApp::Initialize() {
     // Engine-wide appearance (theme, code text size, sidebar) from the
     // Engine settings; the interface text size is used by LoadFonts.
     gui::ApplyStartupAppearance();
+    spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
+                                                                              : spdlog::level::info);
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
@@ -677,7 +679,7 @@ void CyxWizApp::Update(float delta_time) {
     // Each change is logged once (one subscriber for the app's lifetime).
     static const int catalog_log = cyxwiz::DatasetCatalog::Instance().Subscribe({}, [](const cyxwiz::DatasetChange& c) {
         const char* what = c.kind == cyxwiz::DatasetChange::Kind::Added ? "added" : c.kind == cyxwiz::DatasetChange::Kind::Replaced ? "replaced" : "removed";
-        spdlog::info("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
+        spdlog::debug("Dataset catalog: {} '{}' ({}, {} rows, generation {})", what, c.name, cyxwiz::StorageText(c.entry.storage), c.entry.rows, c.generation);
     });
     (void)catalog_log;
     cyxwiz::DatasetCatalog::Instance().Pump();

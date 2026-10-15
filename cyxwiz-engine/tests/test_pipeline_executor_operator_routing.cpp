@@ -2,6 +2,8 @@
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
+#include "core/dataset_lineage.h"
+#include "core/sha256_digest.h"
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
@@ -13,7 +15,7 @@
 #include "core/guided_sql.h"
 #include "core/sql_plan.h"
 #include "core/sql_transform.h"
-#include "core/table_profile.h"
+#include "core/dataset_profiler.h"
 #include "core/plot/node_result_plan.h"
 #include "core/graph_document.h"
 #include <arrow/io/file.h>
@@ -870,6 +872,43 @@ void CheckFocusedExportOutputPaths() {
     Check(fs::exists(parquet_dir_file),
           "ExportParquet should create a Parquet file inside the selected directory");
 
+    // Lineage (TOFIX148 Publish): an export writes <file>.lineage.json naming
+    // the graph, its steps in run order, the input's digest, the checks and the result.
+    {
+        const fs::path lineage_out = parquet_dir / "with_lineage.parquet";
+        const std::string lineage_json =
+            R"({"graph":"D:/demo/graph.cyxgraph","nodes":[)"
+            R"({"id":90009,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":90010,"type":"RowCountCheck","name":"Check: two rows","recipe":"r1","parameters":{)"
+            R"("check":"row_count","expected_rows":"2"}},)"
+            R"({"id":90011,"type":"ExportParquet","name":"Export","parameters":{)"
+            R"("path":")" + JsonEscapePath(lineage_out.string()) + R"("}})"
+            R"(],"links":[{"start_node":90009,"end_node":90010},{"start_node":90010,"end_node":90011}]})";
+        cyxwiz::PipelineExecutor lineage_executor;
+        Check(lineage_executor.ExecutePipeline(lineage_json), "export with a check should run: " + lineage_executor.GetLastError());
+        cyxwiz::DatasetLineage lineage;
+        std::string lineage_error;
+        Check(cyxwiz::ReadLineage(lineage_out.string(), lineage, lineage_error), "lineage beside the export: " + lineage_error);
+        Check(lineage.graph == "D:/demo/graph.cyxgraph", "lineage names the graph");
+        Check(lineage.steps.size() == 2 && lineage.steps[0].type == "DataInput" && lineage.steps[1].type == "RowCountCheck",
+              "lineage lists the steps above the export in run order");
+        Check(lineage.recipe == "r1" && lineage.recipe_revision.size() == 12, "lineage names the recipe and its revision");
+        Check(lineage.checks.size() == 1 && lineage.checks[0].passed, "lineage records the passed check");
+        std::string csv_digest;
+        Check(cyxwiz::Sha256File(csv_path, csv_digest, lineage_error) && lineage.inputs.size() == 1 &&
+                  lineage.inputs[0].sha256 == csv_digest,
+              "lineage records the input file's SHA-256");
+        std::string out_digest;
+        Check(cyxwiz::Sha256File(lineage_out, out_digest, lineage_error) && lineage.output.sha256 == out_digest,
+              "lineage records the written file's SHA-256");
+        Check(lineage.rows == 2 && lineage.columns == 2 && lineage.schema.size() == 2, "lineage records the result's shape");
+        const auto& facts = lineage_executor.GetNodeRunFacts();
+        Check(facts.count(90011) && facts.at(90011).written_path == lineage_out.string(), "run facts record the written path");
+        registry.UnloadDataset("ds_datainput_90009");
+    }
+
     registry.UnloadDataset("ds_datainput_90001");
     registry.UnloadDataset("ds_datainput_90003");
     registry.UnloadDataset("ds_datainput_90005");
@@ -1016,9 +1055,12 @@ void CheckSqlPartQueries() {
     const auto copy = transform.Run("COPY input TO 'x.csv'", {{"input", input}}, cyxwiz::SqlRunMode::Explain);
     Check(!copy.ok, "explain refuses a statement that is not a SELECT");
     // Column profile of the whole result.
-    const auto profiles = cyxwiz::ProfileArrowTable(*whole.table);
-    Check(profiles.size() == 2 && profiles[0].numeric && profiles[0].min == 2 && profiles[0].max == 3 &&
-              profiles[0].median == 2.5 && profiles[1].distinct == 2 && profiles[1].repeated == 0,
+    const auto profile = cyxwiz::ProfileArrow(whole.table);
+    Check(profile.ok() && profile.columns.size() == 2, "profile: " + profile.error);
+    const auto& id = profile.columns[0];
+    const auto& word = profile.columns[1];
+    Check(id.numeric && id.min == 2 && id.max == 3 && id.median == 2.5 && word.facts.distinct == 2 &&
+              word.facts.non_null == word.facts.distinct,
           "profile: id 2..3 median 2.5, word 2 distinct");
     std::cout << "SQL part queries passed\n";
 }
@@ -1686,7 +1728,7 @@ void CheckSqlStep() {
     std::cout << "SQL step (contract 1) passed\n";
 }
 
-// TOFIX101 package E: the Row Count Check step passes data through when the
+// TOFIX101 package E: the Check step passes data through when the
 // count holds and stops the run when it does not.
 void CheckRowCountCheckStep() {
     namespace fs = std::filesystem;
@@ -1728,6 +1770,21 @@ void CheckRowCountCheckStep() {
     Check(!run(check(2, {{"check_name", "all verses"}, {"expected_rows", "6"}}), error) &&
               error.find("'all verses' failed: expected exactly 6 rows, found 5") != std::string::npos,
           "a wrong count stops the run with the numbers (got: " + error + ")");
+    Check(!registry.GetArrowDataset("ds_operator_RowCountCheck_2"),
+          "a failed check leaves no result from its earlier, passing run");
+    {
+        // Two checks in a row: when the first fails, the second (never
+        // reached) keeps no result from the earlier run either.
+        const auto chain = [&](const std::string& first_expected) {
+            const json graph = {{"nodes", json::array({input, check(2, {{"expected_rows", first_expected}}), check(3, {{"expected_rows", "5"}})})},
+                                {"links", json::array({{{"start_node", 1}, {"end_node", 2}}, {{"start_node", 2}, {"end_node", 3}}})}};
+            cyxwiz::PipelineExecutor executor;
+            return executor.ExecutePipeline(graph.dump());
+        };
+        Check(chain("5") && registry.GetArrowDataset("ds_operator_RowCountCheck_3"), "both checks pass and the second has a result");
+        Check(!chain("6") && !registry.GetArrowDataset("ds_operator_RowCountCheck_3"),
+              "a check after a failed one keeps no result from the earlier run");
+    }
     Check(!run(check(2, {{"expected_rows", "3"}, {"count_true_column", "empty_text"}}), error) &&
               error.find("rows where empty_text is true, found 2") != std::string::npos,
           "a wrong conditional count names the column (got: " + error + ")");
@@ -1764,10 +1821,39 @@ void CheckRowCountCheckStep() {
               error.find("not both") != std::string::npos,
           "the two count modes are exclusive (got: " + error + ")");
 
+    // TOFIX148 D4: the other kinds of the one check model.
+    Check(run(check(2, {{"check", "allowed_values"}, {"column", "empty_text"}, {"allowed", "true, false"}}), error),
+          "allowed values pass: " + error);
+    Check(!run(check(2, {{"check", "allowed_values"}, {"check_name", "flags"}, {"column", "empty_text"}, {"allowed", "false"}}), error) &&
+              error.find("'flags' failed: empty_text has 2 value(s) outside false (first: 'true')") != std::string::npos,
+          "a value outside the list stops the run with the count and the first value (got: " + error + ")");
+    Check(run(check(2, {{"check", "unique"}, {"columns", "id"}}), error), "unique ids pass: " + error);
+    Check(run(check(2, {{"check", "unique"}, {"columns", "empty_text, id"}}), error), "unique column pairs pass: " + error);
+    Check(!run(check(2, {{"check", "unique"}, {"columns", "empty_text"}}), error) &&
+              error.find("empty_text repeats in 3 row(s) (first: 'false')") != std::string::npos,
+          "a repeated value stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "not_empty"}, {"column", "id"}}), error), "a filled column passes: " + error);
+    Check(!run(check(2, {{"check", "not_empty"}, {"column", "text"}}), error) &&
+              error.find("text is empty in 2 row(s)") != std::string::npos,
+          "empty text stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "range"}, {"column", "id"}, {"min_value", "1"}, {"max_value", "5"}}), error),
+          "values in range pass: " + error);
+    Check(!run(check(2, {{"check", "range"}, {"column", "id"}, {"max_value", "4.5"}}), error) &&
+              error.find("id is not at most 4.5 in 1 row(s) (first: 5)") != std::string::npos,
+          "a value out of range stops the run (got: " + error + ")");
+    Check(!run(check(2, {{"check", "range"}, {"column", "text"}, {"min_value", "0"}}), error) &&
+              error.find("needs a numeric column") != std::string::npos,
+          "a range check on text is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"check", "allowed_values"}, {"column", "text"}}), error) &&
+              error.find("list the allowed values") != std::string::npos,
+          "allowed values need a list (got: " + error + ")");
+    Check(!run(check(2, {{"check", "between"}, {"column", "id"}}), error) && error.find("is not one of") != std::string::npos,
+          "an unknown kind is a configuration error (got: " + error + ")");
+
     registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
     fs::remove(csv);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
-    std::cout << "Row Count Check step passed\n";
+    std::cout << "Check step passed\n";
 }
 
 // TOFIX101 package C2: a SQL step reads several named inputs (one pin each),

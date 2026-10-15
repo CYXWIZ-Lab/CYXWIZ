@@ -43,6 +43,7 @@ constexpr size_t kCategoryValues = 12;  // a number column with this many values
 const char* RoleLabel(ColumnRole role) {
     switch (role) {
         case ColumnRole::Id: return "ID";
+        case ColumnRole::Group: return "Group";
         case ColumnRole::Target: return "Target";
         case ColumnRole::Numeric: return "Numeric";
         case ColumnRole::Category: return "Category";
@@ -58,6 +59,7 @@ const char* RoleLabel(ColumnRole role) {
 const char* RoleId(ColumnRole role) {
     switch (role) {
         case ColumnRole::Id: return "id";
+        case ColumnRole::Group: return "group";
         case ColumnRole::Target: return "target";
         case ColumnRole::Numeric: return "numeric";
         case ColumnRole::Category: return "category";
@@ -71,7 +73,7 @@ const char* RoleId(ColumnRole role) {
 }
 
 std::optional<ColumnRole> RoleFromId(const std::string& id) {
-    for (ColumnRole r : {ColumnRole::Id, ColumnRole::Target, ColumnRole::Numeric, ColumnRole::Category, ColumnRole::DateTime,
+    for (ColumnRole r : {ColumnRole::Id, ColumnRole::Group, ColumnRole::Target, ColumnRole::Numeric, ColumnRole::Category, ColumnRole::DateTime,
                          ColumnRole::Text, ColumnRole::FilePath, ColumnRole::Weight, ColumnRole::Ignore})
         if (id == RoleId(r)) return r;
     return std::nullopt;
@@ -87,7 +89,7 @@ const char* RoleSourceLabel(RoleSource source) {
 }
 
 bool IsFeatureRole(ColumnRole role) {
-    return role != ColumnRole::Id && role != ColumnRole::Target && role != ColumnRole::Weight && role != ColumnRole::Ignore;
+    return role != ColumnRole::Id && role != ColumnRole::Group && role != ColumnRole::Target && role != ColumnRole::Weight && role != ColumnRole::Ignore;
 }
 
 const ColumnContract* DatasetContract::Find(const std::string& name) const {

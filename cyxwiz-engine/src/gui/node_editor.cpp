@@ -79,7 +79,7 @@ void NodeEditor::SetAllNodesPinState(NodePinState state) {
     }
 }
 
-void NodeEditor::FocusNode(int node_id) {
+void NodeEditor::FocusNode(int node_id, bool raise) {
     if (node_id < 0) {
         return;
     }
@@ -90,6 +90,21 @@ void NodeEditor::FocusNode(int node_id) {
         node_id = data->internal_nodes.front().id;
     }
     pending_focus_node_id_ = node_id;
+    if (raise) Raise();
+}
+
+void NodeEditor::ShowNodes(std::vector<int> node_ids) {
+    if (node_ids.size() == 1) {
+        FocusNode(node_ids.front());
+        return;
+    }
+    pending_show_nodes_ = std::move(node_ids);
+    Raise();
+}
+
+void NodeEditor::Raise() {
+    show_window_ = true;
+    ::gui::BringToFront("CyxWiz Studio");
 }
 
 void NodeEditor::ClearValidationState() {
@@ -234,7 +249,7 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 
 void NodeEditor::Render() {
     ApplySubgraphRequest();
-    ApplyGuidedStepInsert();
+    ApplyStepAfterInsert();
     if (!show_window_) return;
 
     SyncParameterDrivenPins();
@@ -262,9 +277,6 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
-    if (pending_focus_node_id_ >= 0) {
-        ImGui::SetNextWindowFocus();
-    }
     ::gui::NextWindowMayLeave("CyxWiz Studio");
     const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
     ::gui::TabMenu("CyxWiz Studio", &show_window_);
@@ -301,7 +313,16 @@ void NodeEditor::Render() {
         canvas_size_ = ImGui::GetContentRegionAvail();
         ImNodes::BeginNodeEditor();
 
-        if (pending_focus_node_id_ >= 0) {
+        // Moving the view while the left button is down (the second press of
+        // a double-click that opens the node's dialog) would drag the node
+        // under the pointer by the distance the view moves: wait for the release.
+        const bool press_in_progress = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        // A node ImNodes has not drawn yet (added while the canvas was behind
+        // another tab) cannot be selected: SelectNode would store an invalid
+        // index and the selection would read a garbage id every frame. It
+        // waits until the node has been drawn once.
+        const bool focus_drawn = pending_focus_node_id_ >= 0 && cached_node_positions_.count(pending_focus_node_id_);
+        if (pending_focus_node_id_ >= 0 && !press_in_progress && (focus_drawn || !FindNodeById(pending_focus_node_id_))) {
             auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                    [this](const MLNode& node) {
                                        return node.id == pending_focus_node_id_;
@@ -324,6 +345,17 @@ void NodeEditor::Render() {
                 spdlog::warn("NodeEditor: deferred focus node {} not found", pending_focus_node_id_);
             }
             pending_focus_node_id_ = -1;
+        }
+        if (!pending_show_nodes_.empty() && !press_in_progress) {
+            ImNodes::ClearNodeSelection();
+            std::vector<int> present;
+            for (int id : pending_show_nodes_) {
+                if (!FindNodeById(id) || !cached_node_positions_.count(id)) continue;
+                ImNodes::SelectNode(id);
+                present.push_back(id);
+            }
+            FrameNodes(present);
+            pending_show_nodes_.clear();
         }
 
         // Handle deferred ImNodes clear (must be inside BeginNodeEditor scope)
@@ -728,14 +760,14 @@ void NodeEditor::Render() {
                     }
                 } else if (new_selected_id != selected_node_id_) {
                     // Only log if selection changed
-                    spdlog::info("Node selection changed to ID: {}", new_selected_id);
+                    spdlog::debug("Node selection changed to ID: {}", new_selected_id);
 
                     // Find the selected node and pass it to the properties panel
                     MLNode* selected = nullptr;
                     for (auto& node : nodes_) {
                         if (node.id == new_selected_id) {
                             selected = &node;
-                            spdlog::info("Found selected node: id={}, type={}, name={}",
+                            spdlog::debug("Found selected node: id={}, type={}, name={}",
                                          node.id, static_cast<int>(node.type), node.name);
                             break;
                         }
@@ -743,12 +775,15 @@ void NodeEditor::Render() {
 
                     if (selected) {
                         selected_node_id_ = new_selected_id;
-                        spdlog::info("About to call SetSelectedNode with node id={}", selected->id);
+                        spdlog::debug("About to call SetSelectedNode with node id={}", selected->id);
                         properties_panel_->SetSelectedNode(selected);
-                        spdlog::info("SetSelectedNode completed successfully");
+                        spdlog::debug("SetSelectedNode completed successfully");
                     } else {
-                        // Node ID not found in our nodes - could be stale data
-                        spdlog::debug("Selection ID {} not found in nodes vector, ignoring", new_selected_id);
+                        // Not one of our nodes (an index ImNodes kept for a node it
+                        // never drew): drop the selection so it is not read again
+                        // every frame.
+                        spdlog::debug("Selection ID {} not found in nodes vector; selection cleared", new_selected_id);
+                        ImNodes::ClearNodeSelection();
                     }
                 } else {
                     // Selection unchanged, update silently
@@ -764,7 +799,7 @@ void NodeEditor::Render() {
                     }
                 }
             } else if (num_selected == 0 && selected_node_id_ != -1) {
-                spdlog::info("Node deselected");
+                spdlog::debug("Node deselected");
                 selected_node_id_ = -1;
                 properties_panel_->ClearSelection();
             }
@@ -2823,7 +2858,7 @@ void NodeEditor::HandleInteractions() {
     // Debug: Log selection count (only when it changes)
     static int last_selected_count = 0;
     if (num_selected_nodes != last_selected_count) {
-        spdlog::info("Selected nodes: {}", num_selected_nodes);
+        spdlog::debug("Selected nodes: {}", num_selected_nodes);
         last_selected_count = num_selected_nodes;
     }
 
@@ -4421,7 +4456,7 @@ bool NodeEditor::ExecuteDataPipeline() {
     return SubmitDataPipelineJson(std::move(pipeline_json));
 }
 
-bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step) {
+bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",
                      pipeline_task_id_);
@@ -4448,12 +4483,15 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
     for (const auto& node : pipeline_json.at("nodes")) {
         types[node.at("id").get<int>()] = node.at("type").get<std::string>();
     }
-    if (!types.count(node_id)) {
-        ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
-        return false;
+    if (node_ids.empty()) return false;
+    for (int node_id : node_ids) {
+        if (!types.count(node_id)) {
+            ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
+            return false;
+        }
     }
     std::set<int> keep;
-    std::vector<int> pending{node_id};
+    std::vector<int> pending = node_ids;
     while (!pending.empty()) {
         const int id = pending.back();
         pending.pop_back();
@@ -4461,19 +4499,20 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
         for (int from : upstream[id]) pending.push_back(from);
     }
     if (!include_step) {
-        keep.erase(node_id);
+        for (int node_id : node_ids) keep.erase(node_id);
         if (keep.empty()) {
             ShowPipelineNotice("Nothing runs before this step.");
             return false;
         }
     }
     if (with_checks && include_step) {
-        int at = node_id;
-        for (;;) {
-            const auto& next = downstream[at];
-            if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
-            at = next.front();
-            keep.insert(at);
+        for (int at : node_ids) {
+            for (;;) {
+                const auto& next = downstream[at];
+                if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
+                at = next.front();
+                keep.insert(at);
+            }
         }
     }
     nlohmann::json nodes = nlohmann::json::array();
@@ -4488,8 +4527,10 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
     }
     pipeline_json["nodes"] = std::move(nodes);
     pipeline_json["links"] = std::move(links);
-    spdlog::info("Running step {} ({} of the graph's steps{})", node_id, keep.size(),
-                 with_checks ? ", with its checks" : "");
+    spdlog::info("Running {} ({} of the graph's steps{})",
+                 node_ids.size() == 1 ? "step " + std::to_string(node_ids.front())
+                                      : std::to_string(node_ids.size()) + " steps",
+                 keep.size(), with_checks ? ", with their checks" : "");
     return SubmitDataPipelineJson(std::move(pipeline_json), &keep);
 }
 
@@ -4498,6 +4539,7 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
                                        std::string& error) const {
     // Convert node graph to JSON for PipelineExecutor
     pipeline_json = nlohmann::json::object();
+    pipeline_json["graph"] = current_file_path_;  // named in the lineage exports write
     pipeline_json["nodes"] = nlohmann::json::array();
     if (recipe_steps) recipe_steps->clear();
 
@@ -4513,10 +4555,11 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
             error = e.what();
             return false;
         }
-        if (recipe_steps) {
-            for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
-                (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
-            }
+        // Each step's recipe by name (the lineage an export writes names it).
+        std::map<int, std::string> recipe_of_step;
+        for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
+            if (recipe_steps) (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
+            if (const MLNode* recipe = FindNodeById(recipe_id.get<int>())) recipe_of_step[std::stoi(step_id)] = recipe->name;
         }
         for (const auto& node : lowered.at("nodes")) {
             nlohmann::json node_json;
@@ -4524,6 +4567,7 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
             node_json["type"] = GetNodeTypeName(static_cast<NodeType>(node.at("type").get<int>()));
             node_json["name"] = node.at("name");
             node_json["parameters"] = node.at("parameters");
+            if (const auto it = recipe_of_step.find(node.at("id").get<int>()); it != recipe_of_step.end()) node_json["recipe"] = it->second;
             pipeline_json["nodes"].push_back(std::move(node_json));
         }
         pipeline_json["links"] = nlohmann::json::array();
@@ -4589,6 +4633,20 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
     return true;
 }
 
+std::vector<NodeEditor::DataLink> NodeEditor::GetDataPipelineLinks(std::string* error) const {
+    std::vector<DataLink> links;
+    nlohmann::json pipeline_json;
+    std::string why;
+    if (error) error->clear();
+    if (!BuildDataPipelineJson(pipeline_json, nullptr, why)) {
+        if (error) *error = why;
+        return links;
+    }
+    for (const auto& link : pipeline_json.at("links"))
+        links.push_back({link.at("start_node").get<int>(), link.at("end_node").get<int>(), link.value("end_pin_index", 0)});
+    return links;
+}
+
 NodeEditor::DataStepContext NodeEditor::GetDataStepContext(int node_id) const {
     DataStepContext context;
     nlohmann::json pipeline_json;
@@ -4640,8 +4698,23 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
     // Snapshot the graph on the UI thread, then execute through the shared
     // task system. The worker owns its PipelineExecutor, so it never reads
     // mutable editor state and remains safe if the editor closes mid-run.
+    //
+    // Each node this run executes drops its result from an earlier run (of
+    // any kind: its name was recorded with the node's facts), so a node the
+    // run fails at, or never reaches, leaves nothing stale that looks
+    // current (Data Studio's "Other datasets"); it reads "not run" until the
+    // run gets to it.
+    for (const auto& node : pipeline_json.at("nodes")) {
+        const auto facts = node_run_facts_.find(node.at("id").get<int>());
+        if (facts == node_run_facts_.end()) continue;
+        if (!facts->second.output_dataset.empty())
+            cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(facts->second.output_dataset);
+        node_run_facts_.erase(facts);
+    }
     std::string pipeline_str = pipeline_json.dump(2);
-    spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
+    // One line: Debug is recorded in every build, and the indented form was
+    // about 140 lines per run.
+    spdlog::debug("Pipeline JSON: {}", pipeline_json.dump());
     auto executor = std::make_shared<cyxwiz::PipelineExecutor>();
     executor->SetArtifactRoot(
         cyxwiz::ProjectManager::Instance().GetArtifactsPath());
@@ -4671,7 +4744,7 @@ bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json, const std:
             SetNodeExecutionState(node.id, NodeExecutionState::Pending);
         }
     }
-    spdlog::info("Data transformation pipeline queued as task ID: {}",
+    spdlog::debug("Data transformation pipeline queued as task ID: {}",
                  pipeline_task_id_);
     return pipeline_task_id_ != 0;
 }
@@ -4700,16 +4773,23 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
     pipeline_execution_active_ =
         task_info.state == cyxwiz::TaskState::Pending ||
         task_info.state == cyxwiz::TaskState::Running;
+    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     // Run facts for Properties (TOFIX146): copied while the run is live and
     // once more when it ends; earlier runs' facts stay for nodes not rerun.
+    // A node this run meant to run but never reached (a step before it
+    // failed) is still pending at the end: its earlier facts go, so it
+    // reads "not run" instead of an old "pass".
     if (pipeline_executor_ && !pipeline_facts_final_) {
         for (auto& [id, facts] : pipeline_executor_->GetNodeRunFacts()) node_run_facts_[id] = std::move(facts);
         pipeline_facts_final_ = !pipeline_execution_active_;
+        if (pipeline_facts_final_) {
+            for (const auto& [node_id, event] : snapshot.node_states)
+                if (event == cyxwiz::PipelineNodeExecutionEvent::Pending) node_run_facts_.erase(node_id);
+        }
     }
 
     FeedWordVectorRuns(task_info);
 
-    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     for (const auto& [node_id, event] : snapshot.node_states) {
         switch (event) {
             case cyxwiz::PipelineNodeExecutionEvent::Pending:

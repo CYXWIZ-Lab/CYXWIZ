@@ -54,6 +54,11 @@ float ToggleChipWidth(const char* label, const char* count);
 bool FilterChip(const char* id, const char* label, const char* count, bool chosen);
 float FilterChipWidth(const char* label, const char* count);
 
+// A tab of a row of jobs (Data Studio): the name, a dim caption under it, an
+// accent line under the chosen one; no fill. Returns true when clicked.
+bool JobTab(const char* id, const char* label, const char* caption, bool chosen);
+float JobTabWidth(const char* label, const char* caption);
+
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
 // Height a button will take, for reserving room below a growing widget.

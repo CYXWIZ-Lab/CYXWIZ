@@ -332,7 +332,7 @@ void ToolbarPanel::BuildActionHandlers() {
         if (core::WindowManager::LaunchWindow(path)) spdlog::info("Launched new window with project: {}", path);
         else spdlog::error("Failed to launch new window with project: {}", path);
     };
-    h["script.new"] = [this](const std::string&) { new_script_dialog_.Open(); };
+    h["script.new"] = [this](const std::string&) { new_script_dialog_.Open(NewFileDialog::Mode::Script); };
     h["script.open"] = [this](const std::string&) { OpenScriptFromDialog(); };
     h["file.save"] = [this](const std::string&) {
         if (save_project_callback_) save_project_callback_();
@@ -462,7 +462,6 @@ void ToolbarPanel::BuildActionHandlers() {
     call("data.import", import_dataset_callback_);
     call("data.create_custom", create_custom_dataset_callback_);
     call("data.statistics", dataset_statistics_callback_);
-    call("data.profiler", open_data_profiler_callback_);
     call("data.missing_values", open_missing_value_callback_);
     call("data.outliers", open_outlier_detection_callback_);
     call("data.correlation", open_correlation_matrix_callback_);

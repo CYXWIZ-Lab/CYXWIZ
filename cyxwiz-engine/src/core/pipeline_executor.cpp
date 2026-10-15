@@ -1,4 +1,6 @@
 #include "pipeline_executor.h"
+#include "dataset_lineage.h"
+#include "sha256_digest.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
 #include "project_data_path.h"
@@ -42,6 +44,7 @@
 #include <thread>
 #include <chrono>
 #include <ctime>
+#include <functional>
 #include <set>
 #include <mutex>
 #include <optional>
@@ -49,6 +52,11 @@
 namespace cyxwiz {
 
 namespace {
+
+// The registry name of an operator node's result.
+std::string OperatorOutputName(const std::string& type, int id) {
+    return "ds_operator_" + type + "_" + std::to_string(id);
+}
 
 bool TryParseFiniteDouble(const std::string& value, double& out);
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
@@ -3202,9 +3210,10 @@ PipelineExecutor::PipelineExecutor()
     , cancel_requested_(false)
     , deployment_ready_(false)
 {
-    // Create DuckDB connector for SQL transformations
+    // DuckDB for the operators that build SQL (FilterRows, SortRows, Join,
+    // GroupBy, ...): no file or network access, like the SQL step.
     duckdb_ = std::make_unique<DuckDBConnector>();
-    spdlog::info("[Data Studio] PipelineExecutor initialized with DuckDB");
+    spdlog::debug("[Data Studio] PipelineExecutor initialized with DuckDB");
 }
 
 PipelineExecutor::~PipelineExecutor() = default;
@@ -3278,7 +3287,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         }
     }
 
-    spdlog::info("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
+    spdlog::debug("[Data Studio] Lazy evaluation: {} of {} nodes need execution",
                  nodes_to_execute, nodes.size());
     UpdateProgress(0.25f, "Marked " + std::to_string(nodes_to_execute) + " nodes for execution");
 
@@ -3328,7 +3337,8 @@ void PipelineExecutor::RecordNodeRunFacts(const Node& node,
                                           PipelineNodeExecutionEvent event,
                                           const std::string& output_dataset,
                                           const std::string& outcome,
-                                          const std::string& error) {
+                                          const std::string& error,
+                                          const std::string& written_path) {
     const double now = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
     std::lock_guard<std::mutex> lock(node_run_facts_mutex_);
@@ -3344,6 +3354,7 @@ void PipelineExecutor::RecordNodeRunFacts(const Node& node,
     facts.output_dataset = output_dataset;
     facts.outcome = outcome;
     facts.error = error;
+    facts.written_path = written_path;
     if (const auto started = node_started_seconds_.find(node.id);
         started != node_started_seconds_.end()) {
         facts.seconds = now - started->second;
@@ -3455,6 +3466,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         };
         std::map<int, std::vector<PendingInputLink>> pending_inputs;
 
+        graph_path_ = j.value("graph", std::string());
         for (const auto& node_json : j["nodes"]) {
             Node node;
             node.id = node_json["id"];
@@ -3462,6 +3474,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             node.runtime_type = ResolvePipelineRuntimeNodeType(node.type);
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            node.recipe = node_json.value("recipe", std::string());
             if (node.runtime_type.has_value()) {
                 CanonicalizePipelineParameterAliases(
                     *node.runtime_type, node.parameters);
@@ -4287,7 +4300,7 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             }
             const std::string file_path =
                 ResolveProjectDataPath(path_it->second, project_root_);
-            spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
+            spdlog::debug("[Pipeline] DataInput loading file: {}", file_path);
 
             std::vector<std::string> selected_columns;
             std::string projection_error;
@@ -4505,6 +4518,8 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         // Pass through the dataset for any downstream nodes
         ctx.node_results[node.id] = input_dataset_name;
         ctx.output_dataset = output_path;
+        ctx.node_written[node.id] = output_path;
+        WriteExportLineage(node, ctx, input_dataset_name, output_path, format);
 
         spdlog::info("[Pipeline] DataOutput successfully exported to {}", output_path);
         return true;
@@ -5834,6 +5849,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
     ExecutionContext& ctx,
     gui::NodeType type) {
+    const std::string output_dataset_name = OperatorOutputName(node.type, node.id);
     std::map<std::string, std::string> operator_parameters = node.parameters;
     // File parameters saved project-relative resolve against the project root,
     // like Data Input and export paths (otherwise the process directory is used).
@@ -5953,8 +5969,6 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     }
 
     auto output_table = result.ValueOrDie();
-    const std::string output_dataset_name =
-        "ds_operator_" + node.type + "_" + std::to_string(node.id);
     auto output_dataset = registry.RegisterArrowTable(output_table, output_dataset_name);
     if (!output_dataset) {
         ReportError(node.type + ": failed to register operator output dataset");
@@ -6001,7 +6015,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                      node.type, model_path->second);
     }
 
-    spdlog::info("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
+    spdlog::debug("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
                  node.type, output_table->num_rows(), output_table->num_columns());
     return true;
 }
@@ -7088,6 +7102,11 @@ std::vector<int> PipelineExecutor::FindReadyNodes(
 }
 
 bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
+    run_nodes_ = &nodes;
+    struct ClearRunNodes {
+        const std::vector<Node>*& nodes;
+        ~ClearRunNodes() { nodes = nullptr; }
+    } clear_run_nodes{run_nodes_};
     std::set<int> completed;
     std::set<int> executing;
     ExecutionContext ctx;
@@ -7102,6 +7121,10 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     for (const auto& node : nodes) {
         if (node.needs_execution) {
             total_nodes_to_execute++;
+            // An operator node's result from an earlier run goes first: when
+            // this run fails at it, or before it, nothing stale is left that
+            // looks current (a check that no longer holds).
+            DataRegistry::Instance().UnregisterTabularDataset(OperatorOutputName(node.type, node.id));
             NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
@@ -7173,6 +7196,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     result.ctx.node_results = ctx.node_results;
                     result.ctx.node_pin_results = ctx.node_pin_results;
                     result.ctx.model_artifacts = ctx.model_artifacts;
+                    result.ctx.node_outcomes = ctx.node_outcomes;  // the checks above it (lineage)
                     std::lock_guard<std::mutex> lock(execution_mutex);
                     NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
                                         "Executing " + node->name);
@@ -7182,7 +7206,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 }
             ));
 
-            spdlog::info("[Data Studio] Started executing node: {} (parallel batch)", node->name);
+            spdlog::debug("[Data Studio] Started executing node: {} (parallel batch)", node->name);
         }
 
         // Wait for batch to complete
@@ -7226,9 +7250,11 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 {
                     const auto dataset = result.ctx.node_results.find(node_id);
                     const auto outcome = result.ctx.node_outcomes.find(node_id);
+                    const auto written = result.ctx.node_written.find(node_id);
                     RecordNodeRunFacts(*node, PipelineNodeExecutionEvent::Completed,
                                        dataset == result.ctx.node_results.end() ? "" : dataset->second,
-                                       outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "");
+                                       outcome == result.ctx.node_outcomes.end() ? "" : outcome->second, "",
+                                       written == result.ctx.node_written.end() ? "" : written->second);
                 }
 
                 // Cache the output dataset name
@@ -7292,6 +7318,106 @@ const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
 // KNIME-Style Table Manipulation Nodes
 // ============================================================================
 
+namespace {
+
+// An input file's SHA-256, kept per path, size and time so a run does not
+// hash an unchanged file again.
+std::string CachedFileDigest(const std::filesystem::path& path, uint64_t& bytes) {
+    static std::mutex mutex;
+    static std::map<std::string, std::string> cache;
+    std::error_code ec;
+    bytes = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
+    const std::string key = path.string() + "|" + std::to_string(bytes) + "|" + std::to_string(time);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    }
+    std::string digest, error;
+    if (!Sha256File(path, digest, error)) return {};
+    std::lock_guard<std::mutex> lock(mutex);
+    cache[key] = digest;
+    return digest;
+}
+
+}  // namespace
+
+void PipelineExecutor::WriteExportLineage(const Node& node, const ExecutionContext& ctx, const std::string& input_dataset,
+                                          const std::string& output_path, const std::string& format) {
+    if (!run_nodes_) return;
+    // The steps above the export, in run order (inputs before the steps that read them).
+    std::vector<int> order;
+    std::set<int> seen;
+    std::function<void(int)> visit = [&](int id) {
+        if (!seen.insert(id).second) return;
+        const Node* n = FindNodeById(*run_nodes_, id);
+        if (!n) return;
+        for (int input : n->inputs) visit(input);
+        order.push_back(id);
+    };
+    for (int input : node.inputs) visit(input);
+
+    DatasetLineage lineage;
+    {
+        const std::time_t wall = std::time(nullptr);
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &wall);
+#else
+        localtime_r(&wall, &local);
+#endif
+        std::ostringstream clock;
+        clock << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+        lineage.written_at = clock.str();
+    }
+    lineage.engine = "CyxWiz Engine";
+    lineage.graph = graph_path_;
+    lineage.format = format;
+    for (int id : order) {
+        const Node* n = FindNodeById(*run_nodes_, id);
+        LineageStep step;
+        step.id = n->id;
+        step.type = n->type;
+        step.name = n->name;
+        step.recipe = n->recipe;
+        step.parameters = n->parameters;
+        step.inputs = n->inputs;
+        if (const auto o = ctx.node_outcomes.find(id); o != ctx.node_outcomes.end()) step.outcome = o->second;
+        if (n->type == "DataInput") {
+            const auto file = n->parameters.find("file_path");
+            if (file != n->parameters.end() && !file->second.empty()) {
+                LineageFile input;
+                input.path = ResolveProjectDataPath(file->second, project_root_);
+                input.sha256 = CachedFileDigest(input.path, input.bytes);
+                lineage.inputs.push_back(std::move(input));
+            }
+        }
+        if (!n->recipe.empty()) lineage.recipe = n->recipe;  // the nearest recipe above the export wins
+        lineage.steps.push_back(std::move(step));
+    }
+    lineage.recipe_revision = RecipeRevision(lineage.steps, lineage.recipe);
+    lineage.checks = LineageChecks(lineage.steps);
+    if (const auto dataset = DataRegistry::Instance().GetArrowDataset(input_dataset)) {
+        lineage.rows = dataset->GetNumRows();
+        lineage.columns = dataset->GetNumColumns();
+        if (const auto table = dataset->GetArrowTable())
+            for (const auto& field : table->schema()->fields()) lineage.schema.emplace_back(field->name(), field->type()->ToString());
+    }
+    lineage.output.path = output_path;
+    std::string error;
+    std::error_code ec;
+    lineage.output.bytes = std::filesystem::file_size(output_path, ec);
+    if (!Sha256File(output_path, lineage.output.sha256, error))
+        spdlog::warn("Lineage of '{}': the output could not be hashed ({})", output_path, error);
+    if (!WriteLineage(lineage, error)) {
+        spdlog::warn("Lineage of '{}' not written: {}", output_path, error);
+        return;
+    }
+    spdlog::info("Lineage written: {} ({} steps, {} checks)", LineagePathFor(output_path), lineage.steps.size(),
+                 lineage.checks.size());
+}
+
 bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
@@ -7315,6 +7441,8 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, input_dataset_name, output_path, "csv");
     return true;
 }
 
@@ -7378,6 +7506,8 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, input_dataset_name, output_path, "json");
     return true;
 }
 
@@ -7404,6 +7534,8 @@ bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& 
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
+    ctx.node_written[node.id] = output_path;
+    WriteExportLineage(node, ctx, input_dataset_name, output_path, "parquet");
     return true;
 }
 

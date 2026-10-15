@@ -46,6 +46,11 @@ public:
     std::function<void(const std::string& dataset)> on_edit_roles;   // open Data Studio's Profile on the dataset
     // Open Data Studio's Query tab on the dataset with this SQL (Open in Data Studio, Open in Query tab).
     std::function<void(const std::string& dataset, const std::string& sql)> on_open_query;
+    // Visualize: "Keep as Plot node" adds a Plot node with this plot to the
+    // graph, reading the node that made the data; `keep_blocker` says why it
+    // cannot ("" when it can). on_keep returns what it did, for the note.
+    std::function<std::string(const std::string& dataset)> keep_blocker;
+    std::function<std::string(const std::string& dataset, const std::string& title, const std::string& spec_json)> on_keep;
 
     void SetSpecJson(const std::string& json);
     // The layout as last saved to the node (to notice a change made elsewhere: undo, reload).
@@ -58,6 +63,8 @@ public:
     void RenderEmbedded();
     // Selects a widget (its settings open) and brings the window forward.
     void Select(const std::string& widget_id);
+    // Shown and brought to the front on the next frame.
+    void Focus();
 
 private:
     void EnsureProfile();
@@ -97,7 +104,6 @@ private:
 
     std::string id_;
     Mode mode_ = Mode::Dashboard;
-    bool focus_ = false;
     bool scroll_to_selected_ = false;
     double roles_at_ = 0;
     std::string title_;

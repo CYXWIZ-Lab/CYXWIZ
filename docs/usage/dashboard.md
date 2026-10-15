@@ -18,7 +18,8 @@ widgets*, *Out of date*.
 The line at the top says where the data comes from ("Data at Spotify ·
 8,582 rows × 15 columns · read 15:53"), with **Refresh** (or **Cancel**
 while reading). Only the nodes above the dashboard run, in the background
-(Task View); a loaded Data Input is read directly. When a node above
+(Task View); a loaded Data Input is read directly, and a Preparation Recipe
+runs as its steps (the dashboard reads the recipe's result). When a node above
 changes, the dashboard says it is out of date until you refresh; a node that
 runs only inside training says so instead of showing old charts.
 

@@ -53,7 +53,6 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/annotation_editor_panel.h"
-#include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
@@ -76,7 +75,6 @@
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/data_profiler_panel.h"
 #include "panels/correlation_matrix_panel.h"
 #include "panels/missing_value_panel.h"
 #include "panels/outlier_detection_panel.h"
@@ -627,7 +625,6 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
-    visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
@@ -666,7 +663,6 @@ MainWindow::MainWindow()
     lr_finder_panel_->SetNodeEditor(node_editor_.get());
 
     // Data Science panels (Phase 3)
-    data_profiler_panel_ = std::make_unique<cyxwiz::DataProfilerPanel>();
     correlation_matrix_panel_ = std::make_unique<cyxwiz::CorrelationMatrixPanel>();
     missing_value_panel_ = std::make_unique<cyxwiz::MissingValuePanel>();
     outlier_detection_panel_ = std::make_unique<cyxwiz::OutlierDetectionPanel>();
@@ -676,11 +672,6 @@ MainWindow::MainWindow()
     hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
     distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
-
-    // Connect TableViewer to VisualizationPanel
-    if (table_viewer_ && visualization_panel_) {
-        table_viewer_->SetVisualizationPanel(visualization_panel_.get());
-    }
 
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
@@ -795,14 +786,14 @@ MainWindow::MainWindow()
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();
+    data_studio_panel_->SetNodeEditor(node_editor_.get());
 
-    // Cross-navigation: Data Studio's "Open Node Editor" button raises
-    // the CyxWiz Studio (NodeEditor) panel. Tracked in tofix.md as the
-    // "Open Node Editor from CyxWiz Studio" entry.
+    // Data Studio's Show graph, Open dialog and Add Data Input bring the
+    // CyxWiz Studio tab to the front (a node is added when Studio draws).
     data_studio_panel_->SetOpenNodeEditorCallback([this]() {
         if (node_editor_) {
-            node_editor_->Show();
-            spdlog::info("Opened Node Editor panel from Data Studio");
+            node_editor_->Raise();
+            spdlog::debug("Raised CyxWiz Studio from Data Studio");
         }
     });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
@@ -826,6 +817,7 @@ MainWindow::MainWindow()
         if (table_viewer_ && table) {
             table_viewer_->SetTable(table);
             table_viewer_->Show();
+            ::gui::BringToFront(table_viewer_->GetName());  // in front, as from the other routes
         }
     });
 
@@ -995,7 +987,7 @@ MainWindow::MainWindow()
         if (arrow_table->num_rows() > kMaxRows) name += ", first 200,000 rows";
         table_viewer_->SetTable(cyxwiz::DataTableFromArrow(*arrow_table, name, kMaxRows));
         table_viewer_->SetVisible(true);
-        ImGui::SetWindowFocus(table_viewer_->GetName());
+        ::gui::BringToFront(table_viewer_->GetName());
     });
 
     live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
@@ -1837,13 +1829,6 @@ MainWindow::MainWindow()
     });
 
     // Set up Data Science callbacks (Tools menu - Phase 3)
-    toolbar_->SetOpenDataProfilerCallback([this]() {
-        if (data_profiler_panel_) {
-            data_profiler_panel_->Toggle();
-            spdlog::info("Toggled Data Profiler panel");
-        }
-    });
-
     toolbar_->SetOpenCorrelationMatrixCallback([this]() {
         if (correlation_matrix_panel_) {
             correlation_matrix_panel_->Toggle();
@@ -2452,7 +2437,7 @@ MainWindow::MainWindow()
                                     const scripting::VariablesService::Result& result) {
             if (!table_viewer_) return;
             table_viewer_->OpenVariable(request, result);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         };
         view.on_insert_name = [this](const std::string& name) {
             if (script_editor_) script_editor_->InsertTextAtCursor(name);
@@ -2464,13 +2449,13 @@ MainWindow::MainWindow()
                                                        const scripting::VariablesService::Result& result) {
             if (!table_viewer_) return;
             table_viewer_->OpenVariable(request, result);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         });
         script_editor_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
             if (!table_viewer_) return;
             table_viewer_->SetTable(std::move(table));
             table_viewer_->SetVisible(true);
-            ImGui::SetWindowFocus(table_viewer_->GetName());
+            ::gui::BringToFront(table_viewer_->GetName());
         });
     }
     toolbar_->SetGoToLineCallback([this](int line) {
@@ -2633,7 +2618,6 @@ MainWindow::MainWindow()
     asset_browser_->SetOnOpenInDataStudio([this](const std::string& dataset) {
         if (!data_studio_panel_) return;
         data_studio_panel_->ShowQuery(dataset, "SELECT * FROM \"" + dataset + "\" LIMIT 100");
-        ImGui::SetWindowFocus("Data Studio");
     });
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)
@@ -2860,8 +2844,6 @@ MainWindow::~MainWindow() {
     missing_value_panel_.reset();
     spdlog::info("~MainWindow: correlation_matrix_panel_");
     correlation_matrix_panel_.reset();
-    spdlog::info("~MainWindow: data_profiler_panel_");
-    data_profiler_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
     spdlog::info("~MainWindow: architecture_diagram_");
@@ -3146,6 +3128,10 @@ void MainWindow::Render() {
     if (node_editor_ && ImGui::GetTime() - labels_at > 0.5) {
         labels_at = ImGui::GetTime();
         std::map<std::string, std::string> labels, targets, sources;
+        // Data Inputs that share a name ("Data Input" x 3) are told apart by id.
+        std::map<std::string, int> input_names;
+        for (const auto& n : node_editor_->GetNodes())
+            if (n.type == gui::NodeType::DataInput) ++input_names[n.name];
         for (const auto& n : node_editor_->GetNodes()) {
             if (n.type != gui::NodeType::DataInput) {
                 // PipelineExecutor names a node's output ds_operator_<Type>_<id>.
@@ -3158,11 +3144,27 @@ void MainWindow::Render() {
             if (it != n.parameters.end() && !it->second.empty()) names.push_back(it->second);
             auto label = n.parameters.find("label_column");
             auto file = n.parameters.find("file_path");
+            const std::string shown = input_names[n.name] > 1 ? n.name + " #" + std::to_string(n.id) : n.name;
             for (const auto& dataset : names) {
-                if (!n.name.empty()) labels.emplace(dataset, n.name);
+                if (!n.name.empty()) labels.emplace(dataset, shown);
                 if (label != n.parameters.end() && !label->second.empty()) targets.emplace(dataset, label->second);
                 if (file != n.parameters.end() && !file->second.empty()) sources.emplace(dataset, file->second);
             }
+        }
+        // Every node a run reached, by the result name the run recorded (legacy
+        // nodes name theirs ds_sql_<id>, ds_filter_<id>, ...; recipe steps are
+        // not on the canvas): its node's name, " #id" when two share it.
+        {
+            std::map<std::string, int> step_names;
+            std::vector<std::pair<std::string, const gui::MLNode*>> made;
+            for (const auto& [id, facts] : node_editor_->GetNodeRunFacts()) {
+                const gui::MLNode* step = node_editor_->FindStep(id);
+                if (!step || step->type == gui::NodeType::DataInput || facts.output_dataset.empty() || step->name.empty()) continue;
+                made.push_back({facts.output_dataset, step});
+                ++step_names[step->name];
+            }
+            for (const auto& [dataset, step] : made)
+                labels[dataset] = step_names[step->name] > 1 ? step->name + " #" + std::to_string(step->id) : step->name;
         }
         cyxwiz::DatasetCatalog::Instance().SetTargets(std::move(targets));
         cyxwiz::DatasetCatalog::Instance().SetSources(std::move(sources));
@@ -3206,7 +3208,6 @@ void MainWindow::Render() {
     TimedRender("script editor", script_editor_);
     TimedRender("table viewer", table_viewer_);
     TimedRender("annotation editor", annotation_editor_panel_);
-    TimedRender("visualization", visualization_panel_);
     TimedRender("connection dialog", connection_dialog_);
     TimedRender("job status", job_status_panel_);
     TimedRender("p2p training", p2p_training_panel_);
@@ -3233,7 +3234,6 @@ void MainWindow::Render() {
     TimedRender("lr finder", lr_finder_panel_);
 
     // Render Data Science panels (Phase 3)
-    TimedRender("data profiler", data_profiler_panel_);
     TimedRender("correlation matrix", correlation_matrix_panel_);
     TimedRender("missing value", missing_value_panel_);
     TimedRender("outlier detection", outlier_detection_panel_);
@@ -3623,7 +3623,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
     add("Table Viewer", ICON_FA_TABLE, table_viewer_, "Data");
     add("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_, "Data");
-    add("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_, "Data");
     add("Query Console", ICON_FA_MAGNIFYING_GLASS_CHART, query_console_, "Data");
     add("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_, "Data");
     add("Plot Output", ICON_FA_CHART_AREA, plot_output_panel_, "Data");
@@ -3696,7 +3695,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
     // Data Science panels (Phase 3)
-    if (data_profiler_panel_) data_profiler_panel_->SetVisible(false);
     if (correlation_matrix_panel_) correlation_matrix_panel_->SetVisible(false);
     if (missing_value_panel_) missing_value_panel_->SetVisible(false);
     if (outlier_detection_panel_) outlier_detection_panel_->SetVisible(false);

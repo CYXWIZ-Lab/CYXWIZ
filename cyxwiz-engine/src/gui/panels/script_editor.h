@@ -401,8 +401,6 @@ private:
     // UI state
     bool show_editor_menu_;
     bool request_focus_;
-    bool request_window_focus_;
-    int window_focus_frames_ = 0;
     int close_tab_index_;  // Tab to close (-1 = none)
 
     // Execution output

@@ -83,4 +83,22 @@ CreateCheck CheckNewScript(const ScriptInputs& inputs);
 // Starting text of a new script.
 std::string ScriptTemplate(const std::string& file_name, bool python);
 
+// New text file (Asset Browser > New > File): the same name rules. A name
+// with its own extension keeps it ("config.toml"); otherwise the kind's
+// extension is added.
+enum class TextFileKind { Text, Markdown, Json, Yaml, Csv };
+constexpr int kTextFileKindCount = 5;
+const char* TextFileKindLabel(TextFileKind kind);      // "Markdown"
+const char* TextFileKindExtension(TextFileKind kind);  // ".md"
+struct TextFileInputs {
+    std::string name;
+    std::string folder;
+    TextFileKind kind = TextFileKind::Text;
+    bool target_exists = false;  // the caller checks the file system
+};
+std::string TextFileName(const TextFileInputs& inputs);
+CreateCheck CheckNewTextFile(const TextFileInputs& inputs);
+// Starting text: a title for Markdown, an empty object for JSON, else nothing.
+std::string TextFileTemplate(const std::string& file_name);
+
 }  // namespace cyxwiz::startpage

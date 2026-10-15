@@ -1,6 +1,6 @@
 #include "dataset_source.h"
 
-#include "../core/arrow_data_table.h"
+#include "../data/arrow_data_table.h"
 #include "../core/dataset_catalog.h"
 #include "../core/session_query_engine.h"
 #include "../core/session_query_service.h"

@@ -25,7 +25,10 @@ void NodeEditor::ConfigureNode(int node_id) {
     selected_node_id_ = node_id;
     selected_node_ids_.clear();
     selected_node_ids_.push_back(node_id);
+    // The canvas comes forward and shows the node; the dialog opened below
+    // asks for the front after it, so it ends up in front of the canvas.
     pending_focus_node_id_ = node_id;
+    Raise();
 
     // A Plot node opens its Plot window (TOFIX134 P2).
     if (node->type == NodeType::Plot) {

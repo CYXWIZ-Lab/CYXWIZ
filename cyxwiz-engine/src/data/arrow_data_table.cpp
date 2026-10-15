@@ -20,8 +20,18 @@ DataTable::CellValue CellOf(const arrow::Array& array, int64_t i) {
         case arrow::Type::UINT8: return static_cast<int64_t>(static_cast<const arrow::UInt8Array&>(array).Value(i));
         case arrow::Type::UINT16: return static_cast<int64_t>(static_cast<const arrow::UInt16Array&>(array).Value(i));
         case arrow::Type::UINT32: return static_cast<int64_t>(static_cast<const arrow::UInt32Array&>(array).Value(i));
+        case arrow::Type::UINT64: return static_cast<int64_t>(static_cast<const arrow::UInt64Array&>(array).Value(i));
         case arrow::Type::FLOAT: return static_cast<double>(static_cast<const arrow::FloatArray&>(array).Value(i));
         case arrow::Type::DOUBLE: return static_cast<const arrow::DoubleArray&>(array).Value(i);
+        // DuckDB gives literals such as 0.1 and SUM of decimals as DECIMAL: numbers, not text.
+        case arrow::Type::DECIMAL128: {
+            const int32_t scale = static_cast<const arrow::Decimal128Type&>(*array.type()).scale();
+            return arrow::Decimal128(static_cast<const arrow::Decimal128Array&>(array).GetValue(i)).ToDouble(scale);
+        }
+        case arrow::Type::DECIMAL256: {
+            const int32_t scale = static_cast<const arrow::Decimal256Type&>(*array.type()).scale();
+            return arrow::Decimal256(static_cast<const arrow::Decimal256Array&>(array).GetValue(i)).ToDouble(scale);
+        }
         case arrow::Type::STRING: return std::string(static_cast<const arrow::StringArray&>(array).GetView(i));
         case arrow::Type::LARGE_STRING:
             return std::string(static_cast<const arrow::LargeStringArray&>(array).GetView(i));
@@ -56,38 +66,58 @@ std::shared_ptr<DataTable> DataTableFromArrow(const arrow::Table& table, const s
     return out;
 }
 
-ArrowPreview PreviewArrowRows(const arrow::Table& table, int64_t max_rows, size_t max_chars) {
-    ArrowPreview preview;
-    for (const auto& field : table.schema()->fields()) {
-        preview.headers.push_back(field->name());
-        preview.types.push_back(field->type()->ToString());
-    }
-    const int64_t rows = std::max<int64_t>(0, std::min(max_rows, table.num_rows()));
-    const int columns = table.num_columns();
-    preview.rows.assign(static_cast<size_t>(rows), std::vector<std::string>(static_cast<size_t>(columns)));
-    for (int c = 0; c < columns; ++c) {
-        int64_t row = 0;
-        for (const auto& chunk : table.column(c)->chunks()) {
-            for (int64_t i = 0; i < chunk->length() && row < rows; ++i, ++row) {
-                const auto cell = CellOf(*chunk, i);
-                std::string text;
-                if (const auto* s = std::get_if<std::string>(&cell)) text = *s;
-                else if (const auto* d = std::get_if<double>(&cell)) text = arrow::DoubleScalar(*d).ToString();
-                else if (const auto* n = std::get_if<int64_t>(&cell)) text = std::to_string(*n);
-                for (char& ch : text) {
-                    if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
-                }
-                if (text.size() > max_chars) {
-                    size_t cut = max_chars;  // never split a UTF-8 character
-                    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
-                    text = text.substr(0, cut) + "...";
-                }
-                preview.rows[static_cast<size_t>(row)][static_cast<size_t>(c)] = std::move(text);
-            }
-            if (row >= rows) break;
+std::shared_ptr<arrow::Table> ArrowFromDataTable(const DataTable& table) {
+    const size_t rows = table.GetRowCount();
+    const size_t columns = table.GetColumnCount();
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::string> used;
+    for (size_t c = 0; c < columns; ++c) {
+        std::string name = c < table.GetHeaders().size() ? table.GetHeaders()[c] : std::string();
+        if (name.empty()) name = "column " + std::to_string(c + 1);
+        const std::string base = name;
+        for (int n = 2; std::find(used.begin(), used.end(), name) != used.end(); ++n) name = base + " " + std::to_string(n);
+        used.push_back(name);
+        bool all_int = true, all_number = true;
+        for (size_t r = 0; r < rows && all_number; ++r) {
+            const auto cell = table.GetCell(r, c);
+            if (std::holds_alternative<std::monostate>(cell)) continue;
+            if (std::holds_alternative<double>(cell)) all_int = false;
+            else if (!std::holds_alternative<int64_t>(cell)) all_int = all_number = false;
         }
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status st;
+        if (all_int) {
+            arrow::Int64Builder b;
+            for (size_t r = 0; r < rows; ++r) {
+                const auto cell = table.GetCell(r, c);
+                st = std::holds_alternative<int64_t>(cell) ? b.Append(std::get<int64_t>(cell)) : b.AppendNull();
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::int64()));
+        } else if (all_number) {
+            arrow::DoubleBuilder b;
+            for (size_t r = 0; r < rows; ++r) {
+                const auto cell = table.GetCell(r, c);
+                if (const auto* d = std::get_if<double>(&cell)) st = b.Append(*d);
+                else if (const auto* n = std::get_if<int64_t>(&cell)) st = b.Append(static_cast<double>(*n));
+                else st = b.AppendNull();
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::float64()));
+        } else {
+            arrow::StringBuilder b;
+            for (size_t r = 0; r < rows; ++r) {
+                if (std::holds_alternative<std::monostate>(table.GetCell(r, c))) st = b.AppendNull();
+                else st = b.Append(table.GetCellAsString(r, c));
+            }
+            st = b.Finish(&array);
+            fields.push_back(arrow::field(name, arrow::utf8()));
+        }
+        if (!st.ok() || !array) return nullptr;
+        arrays.push_back(std::move(array));
     }
-    return preview;
+    return arrow::Table::Make(arrow::schema(fields), arrays, static_cast<int64_t>(rows));
 }
 
 }  // namespace cyxwiz

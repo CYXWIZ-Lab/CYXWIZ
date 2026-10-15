@@ -37,8 +37,9 @@ bool IsWordChar(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
-// One pass over the text. Strings, quoted names and comments never produce
-// tokens; brackets are counted only outside them.
+// One pass over the text. Brackets are counted only outside strings, quoted
+// names and comments; a string is one 'text' token, a quoted name one word
+// written as in the SQL ("ds_sql_101"), so it can name a part or a table.
 Scan ScanSql(std::string_view sql) {
     Scan scan;
     int line = 1;
@@ -89,7 +90,8 @@ Scan ScanSql(std::string_view sql) {
                 ++k;
             }
             if (!closed) scan.balanced = false;
-            scan.tokens.push_back({TokenKind::Other, c == '"' ? "\"name\"" : "'text'", line, i});
+            if (c == '"' && closed) scan.tokens.push_back({TokenKind::Word, std::string(sql.substr(i, k + 1 - i)), line, i});
+            else scan.tokens.push_back({TokenKind::Other, c == '"' ? "\"name\"" : "'text'", line, i});
             i = closed ? k + 1 : sql.size();
         } else if (std::isspace(static_cast<unsigned char>(c))) {
             ++i;
@@ -300,7 +302,12 @@ std::string PartCountsQuery(std::string_view sql, const SqlOutline& outline) {
         const std::string source = i + 1 == outline.parts.size()
                                        ? "(\n" + FinalStatement(sql, part) + "\n)"
                                        : part.name;
-        query += "SELECT " + std::to_string(i) + " AS ord, '" + part.name + "' AS part, CAST(count(*) AS BIGINT) AS row_count FROM " + source;
+        std::string label;
+        for (char ch : part.name) {
+            if (ch == '\'') label += '\'';
+            label += ch;
+        }
+        query += "SELECT " + std::to_string(i) + " AS ord, '" + label + "' AS part, CAST(count(*) AS BIGINT) AS row_count FROM " + source;
     }
     return "SELECT part, row_count FROM (\n" + query + "\n) ORDER BY ord";
 }

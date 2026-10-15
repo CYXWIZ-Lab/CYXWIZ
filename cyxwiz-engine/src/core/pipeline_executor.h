@@ -39,7 +39,7 @@ enum class PipelineNodeExecutionEvent : uint8_t {
  *
  * Phase 1, Week 1: Core Infrastructure
  *
- * This component takes a pipeline graph from PipelineCanvas and executes
+ * This component takes a pipeline graph from the Node Editor (Data Pipeline mode) and executes
  * the data transformations using DuckDB and Arrow. It handles:
  * - Topological sorting of pipeline nodes
  * - Data flow between nodes
@@ -47,7 +47,7 @@ enum class PipelineNodeExecutionEvent : uint8_t {
  * - Error handling and recovery
  *
  * Architecture:
- *   PipelineCanvas (Graph) -> PipelineExecutor (Engine) -> DuckDB/Arrow (Backend)
+ *   Node Editor (Graph) -> PipelineExecutor (Engine) -> DuckDB/Arrow (Backend)
  *
  * Execution Model:
  *   1. Validate pipeline (no cycles, all nodes connected)
@@ -65,7 +65,7 @@ public:
 
     /**
      * Execute a pipeline from JSON representation
-     * @param pipeline_json Serialized pipeline from PipelineCanvas
+     * @param pipeline_json Serialized pipeline from the Node Editor
      * @return true if execution succeeded
      */
     bool ExecutePipeline(const std::string& pipeline_json);
@@ -194,6 +194,7 @@ private:
         std::vector<int> inputs;   // Input node IDs
         std::vector<int> outputs;  // Output node IDs
         std::vector<InputLink> input_links; // Typed artifact/table routing
+        std::string recipe;        // the Preparation Recipe the step came from ("" outside one)
 
         // Phase 8: Lazy evaluation support
         bool needs_execution = true;        // Dirty flag for change tracking
@@ -211,6 +212,7 @@ private:
         std::map<std::pair<int, int>, std::string> node_pin_results;
         std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
         std::map<int, std::string> node_outcomes;   // Node ID -> operator outcome summary
+        std::map<int, std::string> node_written;    // Node ID -> file an export node wrote
         std::string input_dataset;                // Initial dataset name
         std::string output_dataset;               // Final result dataset name
         std::string deployment_dataset;           // Dataset ready for Node Editor deployment
@@ -226,6 +228,12 @@ private:
     std::string current_status_;          // Phase 8: Current execution status message
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
+    std::string graph_path_;              // the graph file the run came from (lineage)
+    const std::vector<Node>* run_nodes_ = nullptr;  // the run's nodes while ExecuteParallel runs (lineage)
+    // Writes <output>.lineage.json for an export node that wrote `output_path`
+    // (TOFIX148 Publish); a failure is logged, the export stands.
+    void WriteExportLineage(const Node& node, const ExecutionContext& ctx, const std::string& input_dataset,
+                            const std::string& output_path, const std::string& format);
     std::string export_root_;             // Project exports directory
     std::string ingestion_cache_root_;    // Project cache/ingestion directory
 
@@ -246,7 +254,8 @@ private:
     std::map<int, double> node_started_seconds_;
     void RecordNodeRunFacts(const Node& node, PipelineNodeExecutionEvent event,
                             const std::string& output_dataset, const std::string& outcome,
-                            const std::string& error);
+                            const std::string& error,
+                            const std::string& written_path = {});
 
     // DuckDB connector for SQL transformations
     std::unique_ptr<DuckDBConnector> duckdb_;

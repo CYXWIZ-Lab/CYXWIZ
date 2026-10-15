@@ -373,8 +373,8 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **Export**: save image as PNG or SVG, copy image, save data as CSV, copy
   data, Plot with Python (copies a matplotlib script; paste it in the
   Script Editor and run it to get the figure in Plot Output).
-- The window icon opens the plot in its own window; **Open in Visualizer**
-  sends the column to the Visualizer.
+- The window icon opens the plot in its own window. To keep plots of a
+  dataset or turn one into a Plot node, use Data Studio > Explore > Visualize.
 
 Plot colours come from the theme (Preferences > Theme): the series
 colours, the plot area (a shade of the window colour) and the text.
@@ -399,7 +399,9 @@ Data Input (mnist_784.csv) --> Plot
   time, and **Refresh** (**Cancel** while it runs).
 - A loaded Data Input is read as it is. A node after it (a filter, a
   transform) is run on its own with only the nodes above it; progress and
-  Cancel are in Task View. The first plot is picked for you: the counts of
+  Cancel are in Task View. A Preparation Recipe runs as its steps, as the
+  Data Pipeline runs it: the plot reads the recipe's result (the header names
+  its last step, *Data at Check: nothing admitted*). The first plot is picked for you: the counts of
   a label column (class, label, target or y), otherwise of a text column,
   otherwise a histogram of the first number column. The plot type, the
   columns and the labels you choose are saved in the node.

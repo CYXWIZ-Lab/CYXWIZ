@@ -6,7 +6,7 @@
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
-#include "../dialogs/new_script_dialog.h"
+#include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
 #include <algorithm>
 #include <cstdint>
@@ -203,7 +203,6 @@ public:
     void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
 
     // Data Science callbacks (Phase 3)
-    void SetOpenDataProfilerCallback(std::function<void()> cb) { open_data_profiler_callback_ = cb; }
     void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
     void SetOpenMissingValuePanelCallback(std::function<void()> cb) { open_missing_value_callback_ = cb; }
     void SetOpenOutlierDetectionCallback(std::function<void()> cb) { open_outlier_detection_callback_ = cb; }
@@ -455,7 +454,7 @@ private:
 
     // Project creation state
     CreateProjectDialog create_project_dialog_;  // File > New Project
-    NewScriptDialog new_script_dialog_;          // File / Script > New Script
+    NewFileDialog new_script_dialog_;            // File / Script > New Script
     AboutDialog about_dialog_;                   // Help > About CyxWiz
 
     // Save As dialog state
@@ -670,7 +669,6 @@ private:
     std::function<void()> open_lr_finder_callback_;
 
     // Data Science callbacks (Phase 3)
-    std::function<void()> open_data_profiler_callback_;
     std::function<void()> open_correlation_matrix_callback_;
     std::function<void()> open_missing_value_callback_;
     std::function<void()> open_outlier_detection_callback_;

@@ -4,8 +4,6 @@
 #include "../src/gui/activation_codegen_contract.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/simulation_runtime_capabilities.h"
-#include "../src/gui/data_studio/pipeline_canvas.h"
-#include "../src/gui/data_studio/node_registry.h"
 #include "../src/gui/node_import_guardrails.h"
 #include "../src/gui/properties_contract.h"
 #include "../src/gui/properties_truth.h"
@@ -4186,114 +4184,6 @@ int main() {
         Check(support.materializer_arrow_table_supported,
               "factory type should advertise Arrow materializer support: " +
                   TypeId(type));
-    }
-
-    for (const auto& data_studio_node :
-         cyxwiz::NodeRegistry::Instance().GetAllNodeTypes()) {
-        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
-            data_studio_node.type_id);
-        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
-              "Data Studio node registry advertises unknown runtime type: " +
-                  data_studio_node.type_id);
-        Check(support.pipeline_executor_supported,
-              "Data Studio node registry advertises unsupported runtime type: " +
-                  data_studio_node.type_id);
-        Check(data_studio_node.type_id != "ArrowDataset" &&
-                  data_studio_node.type_id != "Aggregate" &&
-                  data_studio_node.type_id != "DetectOutliers",
-              "Data Studio node registry should not advertise stale unsupported type: " +
-                  data_studio_node.type_id);
-        for (const auto& parameter : data_studio_node.parameters) {
-            const auto catalog_values = ParseCatalogEnumValues(parameter.second);
-            if (catalog_values.empty()) {
-                continue;
-            }
-
-            const auto runtime_axis = std::find_if(
-                support.allowed_parameter_values.begin(),
-                support.allowed_parameter_values.end(),
-                [&parameter](
-                    const cyxwiz::PipelineAllowedParameterValuesRuntimeCapability&
-                        axis) {
-                    return std::string(axis.parameter_name) == parameter.first;
-                });
-            if (runtime_axis == support.allowed_parameter_values.end()) {
-                continue;
-            }
-
-            for (const auto& catalog_value : catalog_values) {
-                const bool runtime_accepts_value = std::find_if(
-                    runtime_axis->allowed_values.begin(),
-                    runtime_axis->allowed_values.end(),
-                    [&catalog_value](const char* runtime_value) {
-                        return runtime_value != nullptr &&
-                               catalog_value == runtime_value;
-                    }) != runtime_axis->allowed_values.end();
-                Check(runtime_accepts_value,
-                      "Data Studio node registry advertises unsupported enum value: " +
-                          data_studio_node.type_id + "." + parameter.first +
-                          "=" + catalog_value);
-            }
-        }
-    }
-
-    const std::set<std::string> intentional_quick_add_compatibility_nodes;
-    const std::set<std::string> disallowed_quick_add_legacy_aliases = {
-        "ArrowDataset",
-        "FileInput",
-        "SaveDataset",
-        "RemoveDuplicates",
-        "TextClean",
-        "TextTokenize",
-        "TextVectorize",
-        "TSWindow",
-        "TSFeatures",
-        "TSLag",
-        "TSDiff",
-        "PCA",
-        "PolynomialFeatures",
-        "Binning",
-    };
-    std::vector<std::string> data_studio_quick_add_type_ids;
-    for (const auto& item : cyxwiz::PipelineCanvas::GetQuickAddNodes()) {
-        Check(item.label != nullptr && std::string(item.label).size() > 0,
-              "Data Studio quick-add item should have a label");
-        Check(item.type_id != nullptr && std::string(item.type_id).size() > 0,
-              "Data Studio quick-add item should have a type id");
-        const std::string type_id = item.type_id;
-        data_studio_quick_add_type_ids.push_back(type_id);
-        Check(disallowed_quick_add_legacy_aliases.count(type_id) == 0,
-              "Data Studio quick-add should not promote legacy alias: " +
-                  type_id);
-        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type_id);
-        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
-              "Data Studio quick-add node has unknown runtime support: " +
-                  type_id);
-        Check(support.pipeline_executor_supported,
-              "Data Studio quick-add node is not PipelineExecutor-supported: " +
-                  type_id);
-        Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::Real,
-              "Data Studio quick-add node should have real fail mode: " +
-                  type_id);
-        if (intentional_quick_add_compatibility_nodes.count(type_id) == 0) {
-            Check(support.node_type.has_value(),
-                  "Data Studio quick-add canonical node should resolve typed metadata: " +
-                      type_id);
-            const auto* meta = metadata.GetMetadata(*support.node_type);
-            Check(meta != nullptr,
-                  "Data Studio quick-add canonical node metadata missing: " +
-                      type_id);
-            Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
-                  "Data Studio quick-add canonical node should be implemented metadata: " +
-                      type_id);
-        }
-    }
-    for (const auto& legacy_alias : disallowed_quick_add_legacy_aliases) {
-        Check(std::find(data_studio_quick_add_type_ids.begin(),
-                        data_studio_quick_add_type_ids.end(),
-                        legacy_alias) == data_studio_quick_add_type_ids.end(),
-              "Data Studio quick-add contract contains disallowed alias: " +
-                  legacy_alias);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {

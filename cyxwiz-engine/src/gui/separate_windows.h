@@ -50,6 +50,14 @@ bool WindowMayLeave(const char* name);
 // given to Begin); empty when none. For View > Window.
 std::string FocusedWindowName();
 
+// Brings a window to the front at the start of the next frame: it gets the
+// focus and, when docked, its tab shows; also a window of its own and a
+// window first drawn this frame. The latest request wins, so the window the
+// user asked for last is the one in front, whichever window draws later.
+// Every "show this window" route uses it instead of ImGui::SetWindowFocus
+// or SetNextWindowFocus. `name` is the string given to Begin.
+void BringToFront(const std::string& name);
+
 // The two commands, from a tab's menu and from View > Window.
 void MoveWindowOut(const char* name);
 void MoveWindowBack(const char* name);

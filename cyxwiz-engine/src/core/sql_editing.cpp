@@ -233,4 +233,51 @@ std::vector<DiffLine> DiffLines(std::string_view before, std::string_view after)
     return out;
 }
 
+std::string StepQueryFromScratch(std::string_view sql, const std::string& table) {
+    std::string quoted = "\"";
+    for (char ch : table) {
+        if (ch == '"') quoted += '"';
+        quoted += ch;
+    }
+    quoted += "\"";
+    const std::string part = quoted + " AS (SELECT * FROM input)";
+    // The first token after spaces and comments.
+    size_t at = 0;
+    while (at < sql.size()) {
+        if (std::isspace(static_cast<unsigned char>(sql[at]))) {
+            ++at;
+        } else if (sql.compare(at, 2, "--") == 0) {
+            const size_t end = sql.find('\n', at);
+            at = end == std::string_view::npos ? sql.size() : end + 1;
+        } else if (sql.compare(at, 2, "/*") == 0) {
+            const size_t end = sql.find("*/", at + 2);
+            at = end == std::string_view::npos ? sql.size() : end + 2;
+        } else {
+            break;
+        }
+    }
+    const auto keyword = [&](size_t pos, std::string_view word) {
+        if (pos + word.size() > sql.size()) return false;
+        for (size_t i = 0; i < word.size(); ++i)
+            if (std::toupper(static_cast<unsigned char>(sql[pos + i])) != word[i]) return false;
+        const size_t next = pos + word.size();
+        return next == sql.size() || !(std::isalnum(static_cast<unsigned char>(sql[next])) || sql[next] == '_');
+    };
+    const auto skip_space = [&](size_t pos) {
+        while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) ++pos;
+        return pos;
+    };
+    std::string out(sql.substr(0, at));
+    if (keyword(at, "WITH")) {
+        size_t rest = skip_space(at + 4);
+        std::string head = "WITH ";
+        if (keyword(rest, "RECURSIVE")) {
+            head = "WITH RECURSIVE ";
+            rest = skip_space(rest + 9);
+        }
+        return out + head + part + ",\n" + std::string(sql.substr(rest));
+    }
+    return out + "WITH " + part + "\n" + std::string(sql.substr(at));
+}
+
 }  // namespace cyxwiz::sqledit

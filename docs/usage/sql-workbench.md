@@ -2,9 +2,24 @@
 
 An **SQL step** (node type *SQL Query*) transforms one or more input tables
 with one read-only `SELECT`. It runs in DuckDB with no file or network
-access, and its result must be flat columns (numbers, text, true/false).
+access, and its result must be flat columns that come back exactly (see
+**Result types** below).
 Steps are usually kept inside a **Preparation Recipe** (below), with **Row
 Count Checks** after them.
+
+## Result types
+
+| DuckDB type of a result column | Comes back as | Accepted by an SQL step |
+|---|---|---|
+| BOOLEAN, integers, FLOAT, DOUBLE, VARCHAR | the same | yes |
+| DATE, TIMESTAMP | a date, a timestamp (microseconds) | yes |
+| DECIMAL up to 15 digits (`0.5`, `round(x, 2)` of a decimal) | a number (double), exactly | yes |
+| DECIMAL past 15 digits, HUGEINT, TIMESTAMP WITH TIME ZONE, BLOB, lists, structs | text | no: CAST them in the query (for example to VARCHAR, BIGINT or DOUBLE) |
+
+Inputs keep their types too: a date, a timestamp or a decimal column going
+into a step is a DATE, a TIMESTAMP or a number there, so `d + 1`, `year(t)`
+and arithmetic work on them. Data Studio's Query tab shows the text column
+types instead of refusing them.
 
 ## In Properties
 
@@ -66,14 +81,17 @@ the step's real input tables. Nothing is written until **Save to step**.
 
 ### Results
 
-- **Results**: the rows. **Copy shown rows**, and **Export** to CSV or
-  Parquet.
+- **Results**: the first 500 rows in the table grid (sort by a header,
+  select and copy cells, hover a long value; see
+  [Table Viewer and the table grid](table_viewer.md)). **Copy shown rows**
+  copies them in the grid's order; **Export** writes the whole result to CSV
+  or Parquet.
 - **Column profile**: per column, its type, missing, empty and distinct
   values, how many rows repeat an earlier value, and its most common values;
   numbers also get minimum, median, mean and maximum.
 - **Rows removed**: the rows each part dropped compared with the part before
   it, so you can see what a filter took out.
-- **Checks**: the step's Row Count Checks, run on the draft's result before
+- **Checks**: the step's Check nodes, run on the draft's result before
   you save it.
 - **Messages**: what happened, newest last.
 
@@ -99,7 +117,8 @@ plan.
 
 A guided step is an SQL step built from operations instead of typed SQL. In
 the Workbench, choose **Guided**, then **Start a guided step instead** (or
-**Start from a template**).
+**Start from a template**). Data Studio > Prepare edits guided steps in place
+with the same editor ([Data Studio](data_studio.md#prepare)).
 
 - **Operations**, in five groups:
   - Rows: Keep rows where, Remove duplicate rows, Sort rows, Keep first /
@@ -128,6 +147,11 @@ the Workbench, choose **Guided**, then **Start a guided step instead** (or
   because the operations are not kept.
 - An operation with a problem (a missing column, a bad pattern) is marked in
   red with the reason, and the step cannot run until it is fixed.
+- **Add checks** goes last. While you edit, its checks run with the preview
+  and a failing one stops it with its message. When the step is saved, each
+  check becomes a **Check** node right after the step (row count,
+  allowed values, unique, not empty) and the operation leaves the step; Ctrl+Z
+  on the canvas undoes it. Placed before other operations, it is marked in red.
 
 The step stores its operations (`guided_ops`) and the SQL they generate
 (`query`). Graphs and runs use the SQL, so a guided step runs exactly like any

@@ -68,7 +68,7 @@ int ErrorLine(std::string_view error);
 // "15349" -> "15,349"
 std::string FormatCount(int64_t value);
 
-// A Row Count Check's rule in plain words, from its parameters:
+// A Check's rule in plain words, from its parameters:
 // "exactly 3,712 rows where source_id = pg41633",
 // "between 10 and 20 rows", "at least 5 rows where training_admitted is true".
 // Counts that are not whole numbers are quoted as written.

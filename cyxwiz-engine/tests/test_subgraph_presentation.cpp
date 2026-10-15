@@ -70,6 +70,19 @@ int main() {
         auto cross=DisplaySubgraphLink({20,5,52,6,61},f.nodes,f.groups);
         Check(cross && cross->from_pin==32 && cross->to_pin==71,"two expanded groups project both endpoints");
         Check(CrossesExpandedSubgraphBoundary(3,7,f.groups),"cross-group edits blocked");
+        // Expanding makes room (TOFIX148): the tier1 recipe expanding over the
+        // Export beside it and a Data Validator below it.
+        { const ImVec4 frame=EstimateExpandedFrame({ImVec2(640,430),ImVec2(800,430),ImVec2(1280,430)});
+          Check(frame.x<640 && frame.z>1280+64 && frame.y<430-30 && frame.w>430+64,"frame covers the steps and their labels");
+          std::vector<PlacedNode> outside{{157,ImVec2(320,190),ImVec2(64,80)},   // the Data Input, up-left: stays
+                                          {198,ImVec2(900,330),ImVec2(64,80)},   // the Export, inside the frame
+                                          {300,ImVec2(1700,420),ImVec2(64,80)},  // right, in the band: keeps its place after the Export
+                                          {301,ImVec2(1700,900),ImVec2(64,80)}}; // far below: stays
+          auto moved=MakeRoomForFrame(frame,outside);
+          Check(!moved.count(157) && !moved.count(301),"nodes outside the frame and its band stay");
+          Check(moved.count(198) && moved[198].x>=frame.z+60 && moved[198].y==330,"a covered node moves right of the frame");
+          Check(moved.count(300) && moved[300].x-moved[198].x==800,"nodes right of it keep their spacing");
+          Check(MakeRoomForFrame(frame,{{157,ImVec2(320,190),ImVec2(64,80)}}).empty(),"nothing covered, nothing moves"); }
         f=Fixture{};
         ImGui::CreateContext(); ImNodes::CreateContext();
         auto& io=ImGui::GetIO(); io.IniFilename=nullptr;

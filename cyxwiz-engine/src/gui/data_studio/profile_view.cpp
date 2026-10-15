@@ -50,6 +50,7 @@ ImVec4 RoleColour(ColumnRole role) {
         case ColumnRole::Category: return t.series[0];
         case ColumnRole::DateTime: return t.series[2];
         case ColumnRole::Id: return t.text_faint;
+        case ColumnRole::Group: return t.text_faint;
         case ColumnRole::Ignore: return t.text_faint;
         default: return t.text_dim;
     }
@@ -68,8 +69,9 @@ bool RoleChip(const char* label, const ImVec4& colour) {
     return clicked;
 }
 
-constexpr ColumnRole kRoles[] = {ColumnRole::Id,   ColumnRole::Target,   ColumnRole::Numeric, ColumnRole::Category, ColumnRole::DateTime,
-                                 ColumnRole::Text, ColumnRole::FilePath, ColumnRole::Weight,  ColumnRole::Ignore};
+constexpr ColumnRole kRoles[] = {ColumnRole::Id,       ColumnRole::Group, ColumnRole::Target,   ColumnRole::Numeric,
+                                 ColumnRole::Category, ColumnRole::DateTime, ColumnRole::Text, ColumnRole::FilePath,
+                                 ColumnRole::Weight,   ColumnRole::Ignore};
 
 }  // namespace
 
@@ -262,19 +264,24 @@ void ProfileView::RenderColumns(float /*width*/) {
             ImGui::TableNextRow();
             ImGui::PushID(i);
             ImGui::TableSetColumnIndex(0);
+            ui::PushListRowColours();
             if (ImGui::Selectable(c.facts.name.c_str(), selected_ == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
                 selected_ = i;
+            ui::PopListRowColours();
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(t.text_dim, "%s", cc ? cc->type.c_str() : c.sql_type.c_str());
             ImGui::TableSetColumnIndex(2);
             if (cc) {
                 // The role as a chip; click to change (contract roles cannot be changed here).
                 const ImVec4 col = RoleColour(cc->role);
-                const std::string chip = std::string(RoleLabel(cc->role)) + (cc->source == RoleSource::Contract ? "" : " " ICON_FA_CARET_DOWN);
-                if (RoleChip(chip.c_str(), col) && cc->source != RoleSource::Contract) ImGui::OpenPopup("##role");
+                const bool settable = roles_editable_ && cc->source != RoleSource::Contract;
+                const std::string chip = std::string(RoleLabel(cc->role)) + (settable ? " " ICON_FA_CARET_DOWN : "");
+                if (RoleChip(chip.c_str(), col) && settable) ImGui::OpenPopup("##role");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(cc->source == RoleSource::Contract ? "%s (the graph sets it: change the Data Input label to change it)"
-                                                                         : "%s. Click to set the role.", cc->reason.c_str());
+                                      : settable                         ? "%s. Click to set the role."
+                                                                         : "%s. Roles are set in Data Studio > Profile.",
+                                      cc->reason.c_str());
                 if (ImGui::BeginPopup("##role")) {
                     for (ColumnRole r : kRoles) {
                         if (r == ColumnRole::Target && !target_column_.empty()) continue;  // the graph has a target
@@ -406,7 +413,7 @@ void ProfileView::RenderDetail() {
             ImGui::EndTable();
         }
         // Texts that mean missing (saved with the project; the profile counts them as missing).
-        if (!c.numeric) {
+        if (!c.numeric && roles_editable_) {
             if (missing_for_ != c.facts.name) {
                 missing_for_ = c.facts.name;
                 std::string joined;

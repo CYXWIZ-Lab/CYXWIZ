@@ -49,3 +49,15 @@ like closing its tab; View > Panels (or the sidebar) opens it again, inside.
 Where a window is (inside, or outside at which position and size) is kept
 with the layout in `imgui.ini`, next to the dock layout. A window that was
 outside opens outside again next time, at the same place.
+
+## Which window comes to the front
+
+Whatever you open last comes to the front, wherever it is: a docked tab
+behind another tab, a floating window, or a window of its own. Opening a
+node's dialog (a double-click on the canvas, Data Studio's Open in
+Workbench / Open dialog), a Plot or Dashboard node's window, a table in
+the Table Viewer, Data Studio from the Asset Browser or a dashboard, a
+file in the Script Editor, or Show graph / Show on canvas each brings its
+window forward, also when that window was already open behind another one.
+When one action opens two windows (a double-click shows the node on the
+canvas and opens its dialog), the one opened last, the dialog, is in front.

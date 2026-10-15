@@ -56,6 +56,7 @@ ImVec4 RoleColour(ColumnRole role) {
         case ColumnRole::Category: return t.series[0];
         case ColumnRole::DateTime: return t.series[2];
         case ColumnRole::Id:
+        case ColumnRole::Group:
         case ColumnRole::Ignore: return t.text_faint;
         default: return t.text_dim;
     }
@@ -86,8 +87,13 @@ DashboardWindow::DashboardWindow(std::string id, Mode mode) : id_(std::move(id))
 
 void DashboardWindow::Select(const std::string& widget_id) {
     selected_ = widget_id;
-    focus_ = true;
     scroll_to_selected_ = true;
+    if (mode_ == Mode::Dashboard) Focus();  // Visualize draws inside Data Studio
+}
+
+void DashboardWindow::Focus() {
+    visible = true;
+    ::gui::BringToFront("###" + id_);  // the window's id part, whatever its title
 }
 
 void DashboardWindow::RemoveWidget(const std::string& id) {
@@ -328,10 +334,6 @@ void DashboardWindow::Render() {
     if (!visible) return;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::SetNextWindowSize(ImVec2(1360, 860), ImGuiCond_FirstUseEver);
-    if (focus_) {
-        ImGui::SetNextWindowFocus();
-        focus_ = false;
-    }
     const std::string title = "Dashboard" + (title_.empty() ? std::string() : " \xC2\xB7 " + title_) + "###" + id_;
     ::gui::NextWindowMayLeave(title.c_str());
     const bool expanded = ImGui::Begin(title.c_str(), &visible);
@@ -1046,6 +1048,13 @@ void DashboardWindow::RenderEmbedded() {
 void DashboardWindow::DrawVisualizeToolbar() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (ui::SecondaryButton(ICON_FA_PLUS " New plot", profile_ != nullptr, "Looking at the data first")) ImGui::OpenPopup("##new_plot");
+    // The list of plot types is long: it stays inside the main window and
+    // scrolls, instead of becoming a window of its own past the bottom edge.
+    {
+        const ImGuiViewport* main = ImGui::GetMainViewport();
+        const float below = main->WorkPos.y + main->WorkSize.y - ImGui::GetItemRectMax().y - 12.0f;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, std::max(200.0f, below)));
+    }
     if (ImGui::BeginPopup("##new_plot")) {
         std::string group;
         for (const auto& k : WidgetKinds()) {
@@ -1074,6 +1083,19 @@ void DashboardWindow::DrawVisualizeToolbar() {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
+    {
+        // The plot as a node in the graph (approved board: Keep as Plot node).
+        const std::string blocker = !on_keep ? std::string("No graph is open")
+                                    : !selected ? std::string("Make a plot first")
+                                    : keep_blocker ? keep_blocker(dataset_) : std::string();
+        if (ui::SecondaryButton(ICON_FA_CHART_SIMPLE " Keep as Plot node", blocker.empty(), blocker.c_str())) {
+            note_ = on_keep(dataset_, WidgetTitle(*selected), plot::SpecToJson(selected->plot));
+            note_until_ = ImGui::GetTime() + 6.0;
+        }
+        if (ImGui::IsItemHovered() && blocker.empty())
+            ImGui::SetTooltip("Adds a Plot node with this plot to the graph, reading the node that made this data; it is kept with the graph.");
+    }
+    ImGui::SameLine();
     if (ui::SecondaryButton("Remove", selected != nullptr, "No plot selected")) RemoveWidget(selected_);
     ImGui::SameLine();
     if (ui::SecondaryButton("Clear all", !spec_.widgets.empty(), "No plots")) {
@@ -1081,15 +1103,24 @@ void DashboardWindow::DrawVisualizeToolbar() {
         views_.clear();
         selected_.clear();
     }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
     const size_t n = spec_.widgets.size();
-    if (!note_.empty() && ImGui::GetTime() < note_until_) ImGui::TextColored(t.text_dim, "%s", note_.c_str());
-    else ImGui::TextColored(t.text_dim, "%zu %s \xC2\xB7 this session", n, n == 1 ? "plot" : "plots");
+    const bool noting = !note_.empty() && ImGui::GetTime() < note_until_;
+    const std::string line = noting ? note_ : std::to_string(n) + (n == 1 ? " plot" : " plots") + " \xC2\xB7 this session";
+    // Beside the buttons when it fits, else wrapped on its own line (a long note must not clip).
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(line.c_str()).x) ImGui::NewLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", line.c_str());
+    ImGui::PopTextWrapPos();
     if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_)) {
         const std::string data = "Data at " + entry->Shown() + " \xC2\xB7 " + Thousands(static_cast<double>(entry->rows)) + " rows";
         const float w = ImGui::CalcTextSize(data.c_str()).x;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8.0f, ImGui::GetContentRegionMax().x - w));
+        // Right-aligned where the line leaves room, else on the next line.
+        ImGui::SameLine();
+        const float right = ImGui::GetContentRegionMax().x - w;
+        if (ImGui::GetCursorPosX() + 8.0f <= right) ImGui::SetCursorPosX(right);
+        else ImGui::NewLine();
         ImGui::TextColored(t.text_faint, "%s", data.c_str());
     }
 }

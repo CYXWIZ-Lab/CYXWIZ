@@ -5,6 +5,7 @@
 #include "../ui_buttons.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
+#include "../../core/engine_config.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
 #include "../../core/route_qualification_service.h"
@@ -117,6 +118,24 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
 
                     ImGui::Checkbox("Confirm before exit with unsaved changes", &general_confirm_on_exit_);
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Logs");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // Engine-wide, applied and saved at once.
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        bool record_debug = engine_config.RecordDebugLogs();
+                        if (ImGui::Checkbox("Record Debug messages", &record_debug)) {
+                            engine_config.SetRecordDebugLogs(record_debug);
+                            engine_config.Save();
+                            spdlog::set_level(record_debug ? spdlog::level::debug : spdlog::level::info);
+                        }
+                        ImGui::TextDisabled("Shown in the Console under Debug and written to engine_log.txt. "
+                                            "Off: Info, warnings and errors only.");
+                    }
 
                     ImGui::Spacing();
                     ImGui::Spacing();

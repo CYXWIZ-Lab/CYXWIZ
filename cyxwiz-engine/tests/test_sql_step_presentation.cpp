@@ -134,6 +134,18 @@ void TestTrickyText() {
     const SqlOutline unbalanced = OutlineSqlQuery("WITH a AS (SELECT (1 FROM input) SELECT 1");
     Check(!unbalanced.structured && Names(unbalanced) == "query", "unbalanced brackets: whole query");
 
+    // A quoted part name (Data Studio's Turn into SQL step writes one) keeps
+    // the query in parts; queries through a part name it as written.
+    const std::string quoted_sql = "WITH \"Tier 1\" AS (SELECT * FROM input)\nSELECT author FROM \"Tier 1\"";
+    const SqlOutline quoted = OutlineSqlQuery(quoted_sql);
+    Check(quoted.structured && Names(quoted) == "\"Tier 1\",result", "quoted part name: " + Names(quoted));
+    if (quoted.parts.size() == 2) {
+        Check(quoted.parts[1].reads.size() == 1 && quoted.parts[1].reads[0] == "\"Tier 1\"", "result reads the quoted part");
+        Check(cyxwiz::sqlstep::QueryThroughPart(quoted_sql, quoted, 0) ==
+                  "WITH \"Tier 1\" AS (SELECT * FROM input)\nSELECT * FROM \"Tier 1\"",
+              "run to a quoted part");
+    }
+
     const SqlOutline empty = OutlineSqlQuery("-- only a comment\n");
     Check(empty.parts.empty() && empty.header.size() == 1, "comment-only text has a header and no parts");
 }

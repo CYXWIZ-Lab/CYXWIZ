@@ -1,97 +1,62 @@
 #pragma once
 
+// Data Studio (TOFIX148, approved mockup v8): the open graph's data work in
+// one place, as seven jobs: Bring in, Explore (Query, Profile, Visualize),
+// Prepare, Validate, ML readiness, Publish, Results. A rail lists the data
+// (the graph's Data Inputs, node results, published files, other datasets),
+// each job shows the graph nodes that do it ("In the graph", Show on
+// canvas), and the status bar the last run. Everything here is a node in the
+// graph: changes show on the canvas, and runs go through the Data Pipeline
+// executor. The model is core/data_studio_presentation.
+
+#include "../../core/data_studio_presentation.h"
 #include "query_editor.h"
 #include "profile_view.h"
+#include "prepare_view.h"
+#include "readiness_view.h"
+#include "validate_view.h"
+#include "publish_view.h"
+#include "results_view.h"
 #include "visualizer.h"
 #include <imgui.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
+
+namespace gui {
+class NodeEditor;
+}
 
 namespace cyxwiz {
 
-/**
- * DataStudioPanel - Data analysis and query interface
- *
- * Unified Canvas Phase 5: Simplified Data Studio
- *
- * This panel provides SQL querying, statistical analysis, and visualization
- * tools for datasets. The visual pipeline building capability has been moved
- * to the Node Editor (Unified Canvas) for a single, unified experience.
- *
- * Architecture:
- *   DataStudioPanel (Container)
- *     ├─ QueryEditor (SQL query interface)
- *     ├─ ProfileView (profile and column roles)
- *     └─ Visualizer (Interactive plots)
- *
- * Tab Structure:
- *   - Query: SQL query editor with DuckDB backend
- *   - Analyze: Statistical analysis and profiling
- *   - Visualize: Interactive data visualization
- *
- * Integration Points:
- *   - DataRegistry: Load datasets for analysis
- *   - DuckDBConnector: Execute SQL queries
- *   - ArrowDataset: Zero-copy data access
- *
- * Note: Visual pipeline building is now in Node Editor's "Data Pipeline" mode
- */
 class DataStudioPanel {
 public:
     DataStudioPanel();
     ~DataStudioPanel() = default;
 
-    /**
-     * Render the Data Studio panel
-     * Called every frame from MainWindow
-     */
     void Render();
 
-    /**
-     * Set the active dataset for all components
-     * @param dataset_name Name of dataset in DataRegistry
-     */
+    // The dataset Explore shows (a registry name).
     void SetActiveDataset(const std::string& dataset_name);
-
-    /**
-     * Get the currently active dataset
-     */
     const std::string& GetActiveDataset() const { return active_dataset_; }
 
-    /**
-     * Check if the panel is visible
-     */
     bool IsVisible() const { return visible_; }
-
-    /**
-     * Show/hide the panel
-     */
     void SetVisible(bool visible) { visible_ = visible; }
-
-    /**
-     * Get pointer to visibility flag (for sidebar integration)
-     */
     bool* GetVisiblePtr() { return &visible_; }
 
-    /**
-     * Wire the toolbar "Open Node Editor" button. MainWindow supplies
-     * a closure that makes the NodeEditor panel visible and focused.
-     * Without this, the button renders disabled.
-     */
-    void SetOpenNodeEditorCallback(std::function<void()> cb) {
-        open_node_editor_callback_ = std::move(cb);
-    }
+    // The graph the jobs read (MainWindow's Node Editor).
+    void SetNodeEditor(::gui::NodeEditor* editor) { node_editor_ = editor; }
 
-    // Opens Data Studio on a dataset's Profile tab (a dashboard's "Edit roles").
-    void ShowProfile(const std::string& dataset_name) {
-        SetActiveDataset(dataset_name);
-        visible_ = true;
-        show_profile_ = true;
-    }
+    // Show graph / Show on canvas raise CyxWiz Studio through this.
+    void SetOpenNodeEditorCallback(std::function<void()> cb) { open_node_editor_callback_ = std::move(cb); }
 
-    // Opens Data Studio's Query tab on a dataset with this SQL in the editor
-    // (a dashboard's "Open in Data Studio" / "Open in Query tab"); it runs.
+    // Opens Explore > Profile on a dataset (a dashboard's "Edit roles").
+    void ShowProfile(const std::string& dataset_name);
+
+    // Opens Explore > Query on a dataset with this SQL in the editor (a
+    // dashboard's "Open in Data Studio", the Asset Browser); it runs.
     void ShowQuery(const std::string& dataset_name, const std::string& sql);
 
     // Query results open in the Table Viewer through this (MainWindow).
@@ -100,34 +65,48 @@ public:
     }
 
 private:
-    // Component instances (Unified Canvas Phase 5: Removed pipeline_canvas_)
+    enum class ExploreTab { Query = 0, Profile = 1, Visualize = 2 };
+
     std::unique_ptr<QueryEditor> query_editor_;
     std::unique_ptr<ProfileView> profile_;
+    std::unique_ptr<PrepareView> prepare_;
+    std::unique_ptr<ValidateView> validate_;
+    std::unique_ptr<PublishView> publish_;
+    std::unique_ptr<ResultsView> results_;
+    std::unique_ptr<ReadinessView> readiness_;
     std::unique_ptr<Visualizer> visualizer_;
 
-    // State
-    std::string active_dataset_;
-    bool show_profile_ = false;  // select the Profile tab (and focus) next frame
-    bool show_query_ = false;    // select the Query tab (and focus) next frame
-    int selected_tab_;
-    bool visible_;
-
-    // Cross-navigation: opens the Engine's NodeEditor panel. Set by
-    // MainWindow; null until wired so the button can disable itself.
+    ::gui::NodeEditor* node_editor_ = nullptr;
     std::function<void()> open_node_editor_callback_;
 
-    // Tab indices (Unified Canvas Phase 5: Removed Pipeline tab)
-    enum class Tab {
-        Query = 0,
-        Analyze = 1,
-        Visualize = 2
-    };
+    std::string active_dataset_;
+    bool visible_ = true;
+    studio::Job job_ = studio::Job::Explore;
+    ExploreTab explore_tab_ = ExploreTab::Query;
 
-    // Rendering helpers
-    void RenderToolbar();
-    void RenderDatasetSelector();
-    void RenderTabBar();
+    // The shell's view, rebuilt from the graph twice a second.
+    studio::View view_;
+    double view_time_ = -1.0;
+    std::map<int, int> canvas_node_;  // a step of a collapsed recipe -> the recipe (Show on canvas)
+    std::vector<studio::GraphNode> graph_nodes_;  // the graph as last read (Turn into SQL step)
+    float rail_width_ = 250.0f;
+
+    void RefreshView();
+    // The node whose last run made `table` (a name a query used), or null.
+    const studio::GraphNode* NodeMaking(const std::string& table) const;
+    // The node whose table `dataset` is: a node's last result or a Data Input's dataset (null: none).
+    const studio::GraphNode* NodeOfDataset(const std::string& dataset) const;
+    std::string StepBlocker(const std::vector<std::string>& inputs) const;
+    std::string TurnIntoStep(const std::string& sql, const std::vector<std::string>& inputs);
+    void ShowOnCanvas(const std::vector<int>& node_ids);
+    void RenderHeader();
+    void RenderRail(float height);
+    void RenderJobTabs();
+    void RenderNodeStrip(const studio::JobView& job);
+    void RenderJobBody();
+    void RenderExplore();
+    void RenderBringIn();
     void RenderStatusBar();
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz

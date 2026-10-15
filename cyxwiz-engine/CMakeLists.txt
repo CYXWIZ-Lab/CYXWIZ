@@ -123,7 +123,6 @@ set(ENGINE_SOURCES
     src/core/runtime_log_presentation.cpp
     src/core/console_commands_presentation.cpp
     src/core/sql_step_presentation.cpp
-    src/core/table_profile.cpp
     src/core/sql_plan.cpp
     src/core/sql_editing.cpp
     src/core/guided_sql.cpp
@@ -137,6 +136,11 @@ set(ENGINE_SOURCES
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
     src/core/dataset_picker_presentation.cpp
+    src/core/data_studio_presentation.cpp
+    src/core/data_studio_checks.cpp
+    src/core/data_studio_publish.cpp
+    src/core/data_studio_results.cpp
+    src/core/ml_readiness.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -167,7 +171,6 @@ set(ENGINE_SOURCES
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
     src/core/query_result_cache.cpp
-    src/core/arrow_data_table.cpp
     src/core/asset_preview.cpp
     src/core/dataset_table_slice.cpp
     src/core/dataset_contract.cpp
@@ -181,11 +184,10 @@ set(ENGINE_SOURCES
     src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
-    src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
-    src/core/data_studio_capabilities.cpp
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
@@ -363,6 +365,8 @@ set(ENGINE_SOURCES
     src/gui/sql_workbench.cpp
     src/gui/sql_workbench_plan.cpp
     src/gui/sql_workbench_editing.cpp
+    src/gui/sql_editor_pane.cpp
+    src/gui/guided_editor.cpp
     src/gui/sql_workbench_guided.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -462,7 +466,7 @@ set(ENGINE_SOURCES
     src/gui/code_editor.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
-    src/gui/dialogs/new_script_dialog.cpp
+    src/gui/dialogs/new_file_dialog.cpp
     src/gui/dialogs/about_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
@@ -515,17 +519,14 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_files.cpp
     src/gui/panels/script_editor_file_workflow.cpp
     src/gui/panels/script_editor_large_file.cpp
+    src/gui/table_grid.cpp
+    src/gui/table_grid_menus.cpp
     src/gui/panels/table_viewer.cpp
-    src/gui/panels/table_viewer_clipboard.cpp
     src/gui/panels/table_viewer_dialogs.cpp
     src/gui/panels/table_viewer_editing.cpp
-    src/gui/panels/table_viewer_visualization.cpp
     src/gui/panels/table_viewer_stats.cpp
     src/gui/panels/table_viewer_tabs.cpp
-    src/gui/panels/table_viewer_transforms.cpp
     src/gui/panels/table_viewer_plot.cpp
-    src/gui/panels/table_viewer_context_menus.cpp
-    src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
     src/gui/panels/connection_dialog_reservation.cpp
@@ -563,7 +564,6 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/data_profiler_panel.cpp
     src/gui/panels/correlation_matrix_panel.cpp
     src/gui/panels/missing_value_panel.cpp
     src/gui/panels/outlier_detection_panel.cpp
@@ -641,6 +641,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
     src/data/arrow_data_table.cpp
+    src/data/table_text_export.cpp
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
@@ -684,10 +685,14 @@ set(ENGINE_SOURCES
     src/gui/appearance_settings.cpp
     src/gui/console_palette.cpp
     # Data Studio (Phase 1 Week 1)
-    # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/profile_view.cpp
+    src/gui/data_studio/prepare_view.cpp
+    src/gui/data_studio/validate_view.cpp
+    src/gui/data_studio/publish_view.cpp
+    src/gui/data_studio/results_view.cpp
+    src/gui/data_studio/readiness_view.cpp
     src/gui/dashboard/dashboard_window.cpp
     src/gui/dashboard/dashboard_sparse.cpp
     src/gui/dashboard/dashboard_links.cpp
@@ -695,8 +700,6 @@ set(ENGINE_SOURCES
     src/gui/data_studio/data_studio_panel.cpp
     src/gui/data_studio/data_studio_panel_render.cpp
     # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
-    src/gui/data_studio/node_registry.cpp
-    src/gui/data_studio/node_registry_builtin.cpp
 )
 
 if(CYXWIZ_HAS_PYTHON)
@@ -730,7 +733,6 @@ set(ENGINE_HEADERS
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
-    src/core/data_studio_execution_plan.h
     src/core/node_metadata.h       # Node Browser: node metadata structures
     src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
@@ -838,6 +840,7 @@ set(ENGINE_HEADERS
     src/gui/panels/plot_output_panel.h
     src/gui/panels/python_repl_session.h
     src/gui/panels/script_editor.h
+    src/gui/table_grid.h
     src/gui/panels/table_viewer.h
     src/gui/panels/connection_dialog.h
     src/gui/dialogs/python_setup_dialog.h
@@ -867,7 +870,6 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/data_profiler_panel.h
     src/gui/panels/correlation_matrix_panel.h
     src/gui/panels/missing_value_panel.h
     src/gui/panels/outlier_detection_panel.h
@@ -970,13 +972,11 @@ set(ENGINE_HEADERS
     src/gui/theme.h
     src/gui/dock_style.h
     # Data Studio (Phase 1 Week 1)
-    # src/gui/data_studio/pipeline_canvas.h  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.h
     src/gui/data_studio/profile_view.h
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
-    src/gui/data_studio/node_registry.h
     # Transform/Augmentation system
     src/transforms/transform.h
     src/transforms/geometric.h
@@ -1476,6 +1476,36 @@ if(WIN32)
 endif()
 set_target_properties(test_dataset_profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME dataset_profiler_contract COMMAND test_dataset_profiler)
+
+# ===== Test: Arrow <-> DataTable (TOFIX148) =====
+add_executable(test_arrow_data_table
+    tests/test_arrow_data_table.cpp
+    src/data/arrow_data_table.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_arrow_data_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_arrow_data_table PRIVATE Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_arrow_data_table PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_arrow_data_table PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME arrow_data_table_contract COMMAND test_arrow_data_table)
+
+# ===== Test: Table Viewer export text (TOFIX148) =====
+add_executable(test_table_text_export
+    tests/test_table_text_export.cpp
+    src/data/table_text_export.cpp
+    src/data/data_table.cpp
+    src/core/csv_records.cpp
+)
+target_include_directories(test_table_text_export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_table_text_export PRIVATE spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_table_text_export PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_table_text_export PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME table_text_export_contract COMMAND test_table_text_export)
 
 # ===== Test: Dashboard runtime (TOFIX134 P3.7) =====
 add_executable(test_dashboard_runtime
@@ -2603,8 +2633,6 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pipeline_operator_factory.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
-    src/gui/data_studio/node_registry.cpp
-    src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/tree_model_artifact.cpp
@@ -2854,9 +2882,12 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
-    src/core/table_profile.cpp
+    src/core/dataset_profiler.cpp
+    src/core/dataset_contract.cpp
+    src/core/session_query_engine.cpp
     src/core/sql_plan.cpp
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
@@ -2964,6 +2995,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
@@ -3065,6 +3097,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
@@ -3150,49 +3183,6 @@ endif()
 set_target_properties(test_data_convert_pipeline_input PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-
-# ===== Test: Data Studio typed execution plan =====
-add_executable(test_data_studio_execution_plan
-    tests/test_data_studio_execution_plan.cpp
-    src/core/data_studio_execution_plan.cpp
-)
-target_link_libraries(test_data_studio_execution_plan PRIVATE cyxwiz-training-core)
-
-target_include_directories(test_data_studio_execution_plan PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_data_studio_execution_plan PRIVATE
-    spdlog::spdlog
-    fmt::fmt
-)
-
-if(WIN32)
-    target_compile_definitions(test_data_studio_execution_plan PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_data_studio_execution_plan PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
-# ===== Test: shared Data Studio effective capabilities =====
-add_executable(test_data_studio_capabilities
-    tests/test_data_studio_capabilities.cpp
-    src/core/data_studio_capabilities.cpp
-    src/core/data_studio_execution_plan.cpp
-)
-target_link_libraries(test_data_studio_capabilities PRIVATE cyxwiz-training-core)
-target_include_directories(test_data_studio_capabilities PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_data_studio_capabilities PRIVATE
-    imgui::imgui spdlog::spdlog nlohmann_json::nlohmann_json)
-if(WIN32)
-    target_compile_definitions(test_data_studio_capabilities PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
-endif()
-set_target_properties(test_data_studio_capabilities PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard
@@ -5508,6 +5498,86 @@ set_target_properties(test_dataset_picker_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME dataset_picker_presentation COMMAND test_dataset_picker_presentation)
+
+# ===== Test: Data Studio shell model (TOFIX148 step 3) =====
+add_executable(test_data_studio_presentation
+    tests/test_data_studio_presentation.cpp
+    src/core/data_studio_presentation.cpp
+)
+target_include_directories(test_data_studio_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_data_studio_presentation PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
+
+# ===== Test: dataset lineage (TOFIX148 Publish) =====
+add_executable(test_dataset_lineage
+    tests/test_dataset_lineage.cpp
+    src/core/dataset_lineage.cpp
+)
+target_include_directories(test_dataset_lineage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_dataset_lineage PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json)
+set_target_properties(test_dataset_lineage PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME dataset_lineage COMMAND test_dataset_lineage)
+
+# ===== Test: Data Studio Publish (TOFIX148) =====
+add_executable(test_data_studio_publish
+    tests/test_data_studio_publish.cpp
+    src/core/data_studio_publish.cpp
+    src/core/data_studio_presentation.cpp
+)
+target_include_directories(test_data_studio_publish PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_data_studio_publish PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_publish COMMAND test_data_studio_publish)
+
+# ===== Test: Data Studio Results (TOFIX148 job 7) =====
+add_executable(test_data_studio_results
+    tests/test_data_studio_results.cpp
+    src/core/data_studio_results.cpp
+)
+target_include_directories(test_data_studio_results PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_studio_results PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
+set_target_properties(test_data_studio_results PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_results COMMAND test_data_studio_results)
+
+# ===== Test: Data Studio Validate (TOFIX148 D4) =====
+add_executable(test_data_studio_checks
+    tests/test_data_studio_checks.cpp
+    src/core/data_studio_checks.cpp
+    src/core/data_studio_presentation.cpp
+)
+target_include_directories(test_data_studio_checks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_data_studio_checks PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_checks COMMAND test_data_studio_checks)
+
+# ===== Test: Data Studio ML readiness (TOFIX148 step 3) =====
+add_executable(test_ml_readiness
+    tests/test_ml_readiness.cpp
+    src/core/ml_readiness.cpp
+    src/core/data_studio_presentation.cpp
+    src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp
+)
+target_include_directories(test_ml_readiness PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_ml_readiness PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_ml_readiness PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_ml_readiness PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ml_readiness COMMAND test_ml_readiness)
 
 # ===== Test: hypothesis-test distributions against scipy (TOFIX140 analysis panels) =====
 add_executable(test_data_analyzer_distributions

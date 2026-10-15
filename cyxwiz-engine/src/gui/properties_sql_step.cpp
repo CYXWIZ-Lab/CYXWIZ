@@ -33,7 +33,6 @@ namespace ui = cyxwiz::ui;
 namespace sqlstep = cyxwiz::sqlstep;
 
 constexpr int kPreviewRows = 5;
-constexpr size_t kPreviewCellChars = 160;
 
 std::string Param(const MLNode& node, const char* key) {
     const auto it = node.parameters.find(key);
@@ -66,7 +65,7 @@ const cyxwiz::PipelineNodeRunFacts* FactsFor(const NodeEditor* editor, int node_
     return it == facts.end() ? nullptr : &it->second;
 }
 
-// The count a Row Count Check found, from its outcome "passed: <n> ...".
+// The count a Check found, from its outcome "passed: <n> ...".
 std::string CheckCount(const std::string& outcome) {
     const std::string prefix = "passed: ";
     if (outcome.rfind(prefix, 0) != 0) return "";
@@ -514,28 +513,15 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
             const std::string key = facts->output_dataset + "@" + facts->finished_at;
             if (key != view.preview_key) {
                 view.preview_key = key;
-                view.preview = cyxwiz::PreviewArrowRows(*table, kPreviewRows, kPreviewCellChars);
+                view.preview.SetTable(cyxwiz::DataTableFromArrow(*table, node.name, kPreviewRows));
+                view.preview.options.line_numbers = false;
+                view.preview.options.data_bars = false;
             }
-            const int columns = static_cast<int>(view.preview.headers.size());
-            if (columns > 0 && ImGui::BeginTable("##sql_preview", columns,
-                                                 ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
-                                                     ImGuiTableFlags_SizingFixedFit,
-                                                 ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() *
-                                                                  static_cast<float>(view.preview.rows.size() + 2)))) {
-                for (const auto& header : view.preview.headers) {
-                    ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_None,
-                                            header == "text" ? 420.0f : 0.0f);
-                }
-                ImGui::TableHeadersRow();
-                for (const auto& row : view.preview.rows) {
-                    ImGui::TableNextRow();
-                    for (const auto& cell : row) {
-                        ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(cell.c_str());
-                    }
-                }
-                ImGui::EndTable();
-            }
+            // The Table Viewer's grid, as tall as its rows.
+            const float rows_h = ImGui::GetTextLineHeightWithSpacing() *
+                                 static_cast<float>(view.preview.table->GetRowCount() + 1) +
+                                 ImGui::GetStyle().ScrollbarSize + 4.0f;
+            view.preview.Render("##sql_preview_grid", ImVec2(0.0f, rows_h));
         } else if (ran) {
             DimText("The output is not in memory any more; run the step again to see it.");
         }
@@ -544,7 +530,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
     // ---- Checks after this step.
     SectionTitle("Checks after this step");
     if (view.context.checks.empty()) {
-        DimText("None. Add a Row Count Check after this step to stop the run when a count is wrong.");
+        DimText("None. Add a Check after this step to stop the run when a count is wrong.");
     }
     for (const auto& check : view.context.checks) {
         ImGui::PushID(check.id);

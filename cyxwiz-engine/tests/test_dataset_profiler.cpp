@@ -108,8 +108,23 @@ int main() {
         Check(ProfileTable("Spotify", run, stopped).error == "Cancelled.", "cancellation");
         Check(!ProfileTable("Nope", run).ok(), "an unknown table is an error");
     }
+    {
+        // A table in memory (a query's result) is profiled the same way, on a
+        // private engine; "" texts are counted apart from missing values.
+        DatasetProfile p = ProfileArrow(Tracks());
+        Check(p.ok() && p.rows == 11 && p.columns.size() == 6, "in memory: 11 rows, 6 columns: " + p.error);
+        Check(p.Find("popularity")->outliers == 1 && p.Find("track_id")->facts.distinct == 10, "in memory: same numbers");
+        arrow::StringBuilder notes;
+        for (const char* v : {"a", "", "", "b"}) (void)notes.Append(v);
+        (void)notes.AppendNull();
+        std::shared_ptr<arrow::Array> n;
+        (void)notes.Finish(&n);
+        const auto t = arrow::Table::Make(arrow::schema({arrow::field("note", arrow::utf8())}), {n});
+        const ProfiledColumn* note = ProfileArrow(t).Find("note");
+        Check(note && note->empty_text == 2 && note->missing == 1 && note->facts.distinct == 3, "two empty texts, one null");
+    }
     fs::remove_all(root, ec);
     std::cout << "dataset profiler: counts, missing texts, distinct, quartiles, outliers, histogram, top values, dates, booleans, "
-                 "duplicates, correlations, contract from the profile, cancellation. OK\n";
+                 "duplicates, correlations, contract from the profile, cancellation, tables in memory, empty texts. OK\n";
     return 0;
 }

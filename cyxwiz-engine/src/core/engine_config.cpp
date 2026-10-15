@@ -409,6 +409,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         if (config.contains("observability") &&
             config["observability"].is_object()) {
             const auto& observability = config["observability"];
+            record_debug_logs_ = observability.value("record_debug_logs", true);
             const int version = observability.value("saved_filters_version", 1);
             if (version == 1 && observability.contains("saved_filters") &&
                 observability["saved_filters"].is_array()) {
@@ -510,6 +511,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                 {"name", filter.name}, {"expression", filter.expression}});
         }
         config["observability"] = {
+            {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
         };
@@ -791,6 +793,19 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(appearance_ == appearance)) {
         appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::RecordDebugLogs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return record_debug_logs_;
+}
+
+void EngineConfig::SetRecordDebugLogs(bool record) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (record_debug_logs_ != record) {
+        record_debug_logs_ = record;
         modified_ = true;
     }
 }

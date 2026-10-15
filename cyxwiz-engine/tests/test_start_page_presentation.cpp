@@ -118,6 +118,28 @@ int main() {
         Check(ScriptTemplate("p.cyx", false).find("# p.cyx") == 0, "cyx template");
     }
 
+    // New text file checks (Asset Browser > New > File).
+    {
+        Check(TextFileName({"notes", "D:/p", TextFileKind::Markdown, false}) == "notes.md", "md extension added");
+        Check(TextFileName({"notes", "D:/p", TextFileKind::Text, false}) == "notes.txt", "txt extension added");
+        Check(TextFileName({"config.toml", "D:/p", TextFileKind::Text, false}) == "config.toml", "own extension kept");
+        Check(TextFileName({".env", "D:/p", TextFileKind::Text, false}) == ".env.txt", "a leading dot is not an extension");
+        Check(TextFileName({"data.", "D:/p", TextFileKind::Csv, false}) == "data..csv", "a trailing dot is not an extension");
+        CreateCheck c = CheckNewTextFile({" ", "D:/p", TextFileKind::Json, false});
+        Check(!c.can_create && c.reason == "Enter a file name.", "file name required");
+        c = CheckNewTextFile({"a|b", "D:/p", TextFileKind::Text, false});
+        Check(!c.can_create && !c.warning.empty(), "bar rejected");
+        c = CheckNewTextFile({"readme", "D:/p", TextFileKind::Markdown, true});
+        Check(c.can_create && c.warning.find("replaces") != std::string::npos, "existing file warns but allows");
+        c = CheckNewTextFile({"settings", "D:/p", TextFileKind::Yaml, false});
+        Check(c.can_create && c.target.find("settings.yaml") != std::string::npos, "valid yaml file");
+        Check(TextFileTemplate("Release Notes.md") == "# Release Notes\n\n", "markdown title");
+        Check(TextFileTemplate("a.json") == "{\n}\n" && TextFileTemplate("a.txt").empty(), "json object, empty text");
+        Check(std::string(TextFileKindLabel(TextFileKind::Json)) == "JSON" &&
+                  std::string(TextFileKindExtension(TextFileKind::Yaml)) == ".yaml",
+              "kind label and extension");
+    }
+
     std::cout << "start page presentation: grouping, search, time labels, templates, create checks. OK\n";
     return 0;
 }
