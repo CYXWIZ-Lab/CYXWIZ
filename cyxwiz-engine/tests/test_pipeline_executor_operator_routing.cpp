@@ -2,6 +2,8 @@
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
+#include "core/dataset_lineage.h"
+#include "core/sha256_digest.h"
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
@@ -868,6 +870,43 @@ void CheckFocusedExportOutputPaths() {
               export_parquet_executor.GetLastError());
     Check(fs::exists(parquet_dir_file),
           "ExportParquet should create a Parquet file inside the selected directory");
+
+    // Lineage (TOFIX148 Publish): an export writes <file>.lineage.json naming
+    // the graph, its steps in run order, the input's digest, the checks and the result.
+    {
+        const fs::path lineage_out = parquet_dir / "with_lineage.parquet";
+        const std::string lineage_json =
+            R"({"graph":"D:/demo/graph.cyxgraph","nodes":[)"
+            R"({"id":90009,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":90010,"type":"RowCountCheck","name":"Check: two rows","recipe":"r1","parameters":{)"
+            R"("check":"row_count","expected_rows":"2"}},)"
+            R"({"id":90011,"type":"ExportParquet","name":"Export","parameters":{)"
+            R"("path":")" + JsonEscapePath(lineage_out.string()) + R"("}})"
+            R"(],"links":[{"start_node":90009,"end_node":90010},{"start_node":90010,"end_node":90011}]})";
+        cyxwiz::PipelineExecutor lineage_executor;
+        Check(lineage_executor.ExecutePipeline(lineage_json), "export with a check should run: " + lineage_executor.GetLastError());
+        cyxwiz::DatasetLineage lineage;
+        std::string lineage_error;
+        Check(cyxwiz::ReadLineage(lineage_out.string(), lineage, lineage_error), "lineage beside the export: " + lineage_error);
+        Check(lineage.graph == "D:/demo/graph.cyxgraph", "lineage names the graph");
+        Check(lineage.steps.size() == 2 && lineage.steps[0].type == "DataInput" && lineage.steps[1].type == "RowCountCheck",
+              "lineage lists the steps above the export in run order");
+        Check(lineage.recipe == "r1" && lineage.recipe_revision.size() == 12, "lineage names the recipe and its revision");
+        Check(lineage.checks.size() == 1 && lineage.checks[0].passed, "lineage records the passed check");
+        std::string csv_digest;
+        Check(cyxwiz::Sha256File(csv_path, csv_digest, lineage_error) && lineage.inputs.size() == 1 &&
+                  lineage.inputs[0].sha256 == csv_digest,
+              "lineage records the input file's SHA-256");
+        std::string out_digest;
+        Check(cyxwiz::Sha256File(lineage_out, out_digest, lineage_error) && lineage.output.sha256 == out_digest,
+              "lineage records the written file's SHA-256");
+        Check(lineage.rows == 2 && lineage.columns == 2 && lineage.schema.size() == 2, "lineage records the result's shape");
+        const auto& facts = lineage_executor.GetNodeRunFacts();
+        Check(facts.count(90011) && facts.at(90011).written_path == lineage_out.string(), "run facts record the written path");
+        registry.UnloadDataset("ds_datainput_90009");
+    }
 
     registry.UnloadDataset("ds_datainput_90001");
     registry.UnloadDataset("ds_datainput_90003");

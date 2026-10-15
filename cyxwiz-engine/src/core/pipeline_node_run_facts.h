@@ -15,6 +15,7 @@ struct PipelineNodeRunFacts {
     std::string outcome;          // operator summary, e.g. a Check's "passed: ..."
     std::string error;            // set when the node failed in its latest run
     std::string finished_at;      // local time "HH:MM:SS"
+    std::string written_path;     // the file an export node wrote ("" for other nodes)
 };
 
 }  // namespace cyxwiz

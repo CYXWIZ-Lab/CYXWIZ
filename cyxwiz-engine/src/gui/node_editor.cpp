@@ -4536,6 +4536,7 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
                                        std::string& error) const {
     // Convert node graph to JSON for PipelineExecutor
     pipeline_json = nlohmann::json::object();
+    pipeline_json["graph"] = current_file_path_;  // named in the lineage exports write
     pipeline_json["nodes"] = nlohmann::json::array();
     if (recipe_steps) recipe_steps->clear();
 
@@ -4551,10 +4552,11 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
             error = e.what();
             return false;
         }
-        if (recipe_steps) {
-            for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
-                (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
-            }
+        // Each step's recipe by name (the lineage an export writes names it).
+        std::map<int, std::string> recipe_of_step;
+        for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
+            if (recipe_steps) (*recipe_steps)[recipe_id.get<int>()].push_back(std::stoi(step_id));
+            if (const MLNode* recipe = FindNodeById(recipe_id.get<int>())) recipe_of_step[std::stoi(step_id)] = recipe->name;
         }
         for (const auto& node : lowered.at("nodes")) {
             nlohmann::json node_json;
@@ -4562,6 +4564,7 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
             node_json["type"] = GetNodeTypeName(static_cast<NodeType>(node.at("type").get<int>()));
             node_json["name"] = node.at("name");
             node_json["parameters"] = node.at("parameters");
+            if (const auto it = recipe_of_step.find(node.at("id").get<int>()); it != recipe_of_step.end()) node_json["recipe"] = it->second;
             pipeline_json["nodes"].push_back(std::move(node_json));
         }
         pipeline_json["links"] = nlohmann::json::array();

@@ -181,6 +181,7 @@ set(ENGINE_SOURCES
     src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
@@ -2800,6 +2801,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
     src/core/dataset_profiler.cpp
@@ -2906,6 +2908,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
@@ -3001,6 +3004,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
@@ -5328,6 +5332,19 @@ set_target_properties(test_data_studio_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME data_studio_presentation COMMAND test_data_studio_presentation)
+
+# ===== Test: dataset lineage (TOFIX148 Publish) =====
+add_executable(test_dataset_lineage
+    tests/test_dataset_lineage.cpp
+    src/core/dataset_lineage.cpp
+)
+target_include_directories(test_dataset_lineage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_dataset_lineage PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json)
+set_target_properties(test_dataset_lineage PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME dataset_lineage COMMAND test_dataset_lineage)
 
 # ===== Test: Data Studio Validate (TOFIX148 D4) =====
 add_executable(test_data_studio_checks
