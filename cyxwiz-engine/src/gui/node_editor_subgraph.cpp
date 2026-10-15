@@ -425,7 +425,7 @@ const MLNode* NodeEditor::FindStep(int node_id) const {
 }
 
 bool NodeEditor::SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
-                                   const std::vector<std::string>& erase) {
+                                   const std::vector<std::string>& erase, const std::string& name) {
     MLNode* node = FindNodeById(node_id);
     for (auto it = subgraphs_.begin(); !node && it != subgraphs_.end(); ++it)
         for (auto& internal : it->internal_nodes)
@@ -434,6 +434,7 @@ bool NodeEditor::SetStepParameters(int node_id, const std::map<std::string, std:
     SaveUndoState();
     for (const auto& [key, value] : values) node->parameters[key] = value;
     for (const auto& key : erase) node->parameters.erase(key);
+    if (!name.empty()) node->name = name;
     spdlog::debug("Set {} parameter(s) of node {} ({})", values.size() + erase.size(), node_id, node->name);
     return true;
 }
@@ -586,6 +587,31 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         return cached != cached_node_positions_.end() ? cached->second : ImVec2(node.initial_pos_x, node.initial_pos_y);
     };
     const ImVec2 at = place(after_id, *after);
+    if (request.branch) {
+        // A branch: below the step, a little to the right; nothing moves.
+        const float height = cached_node_positions_.count(after_id) ? ImNodes::GetNodeDimensions(after_id).y / zoom_ : 80.0f;
+        MLNode step = CreateNode(request.type, !request.name.empty() ? request.name : kind);
+        for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
+        step.initial_pos_x = at.x + 60.0f;
+        step.initial_pos_y = at.y + height + 80.0f;
+        step.has_initial_position = true;
+        if (step.inputs.empty()) {
+            spdlog::error("A new {} node has no input pin; nothing added", kind);
+            return;
+        }
+        // It stays outside any recipe: a recipe's every step must lead to its output.
+        links_.push_back({next_link_id_++, after_id, after_out, step.id, step.inputs.front().id, LinkType::TensorFlow});
+        const int step_id = step.id;
+        const ImVec2 position(step.initial_pos_x, step.initial_pos_y);
+        nodes_.push_back(std::move(step));
+        pending_positions_[step_id] = position;
+        pending_positions_frames_ = 3;
+        RebuildPinLookup();
+        ClearValidationState();
+        deferred_focus_ = {step_id, 2};
+        spdlog::info("Added {} node {} reading node {}", kind, step_id, after_id);
+        return;
+    }
     float shift = 0.0f;
     for (const auto& link : links_) {
         const MLNode* next = link.from_node == after_id ? FindNodeById(link.to_node) : nullptr;

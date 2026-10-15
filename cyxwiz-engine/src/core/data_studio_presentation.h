@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@ struct GraphNode {
     int recipe_steps = 0;
     std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)
     std::string balance;       // a Data Loader's balance mode
+    std::map<std::string, std::string> parameters;  // checks and validators: their settings (Validate)
     // Its latest run in this session.
     bool ran = false;
     int64_t rows = -1, columns = -1;

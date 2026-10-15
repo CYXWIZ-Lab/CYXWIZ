@@ -4445,7 +4445,7 @@ bool NodeEditor::ExecuteDataPipeline() {
     return SubmitDataPipelineJson(std::move(pipeline_json));
 }
 
-bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step) {
+bool NodeEditor::ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step) {
     if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
         spdlog::warn("Data transformation pipeline is already running (task ID: {})",
                      pipeline_task_id_);
@@ -4472,12 +4472,15 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
     for (const auto& node : pipeline_json.at("nodes")) {
         types[node.at("id").get<int>()] = node.at("type").get<std::string>();
     }
-    if (!types.count(node_id)) {
-        ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
-        return false;
+    if (node_ids.empty()) return false;
+    for (int node_id : node_ids) {
+        if (!types.count(node_id)) {
+            ShowPipelineNotice("The step was not run.\n\nIt is not part of the data pipeline.");
+            return false;
+        }
     }
     std::set<int> keep;
-    std::vector<int> pending{node_id};
+    std::vector<int> pending = node_ids;
     while (!pending.empty()) {
         const int id = pending.back();
         pending.pop_back();
@@ -4485,19 +4488,20 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
         for (int from : upstream[id]) pending.push_back(from);
     }
     if (!include_step) {
-        keep.erase(node_id);
+        for (int node_id : node_ids) keep.erase(node_id);
         if (keep.empty()) {
             ShowPipelineNotice("Nothing runs before this step.");
             return false;
         }
     }
     if (with_checks && include_step) {
-        int at = node_id;
-        for (;;) {
-            const auto& next = downstream[at];
-            if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
-            at = next.front();
-            keep.insert(at);
+        for (int at : node_ids) {
+            for (;;) {
+                const auto& next = downstream[at];
+                if (next.size() != 1 || types[next.front()] != "RowCountCheck") break;
+                at = next.front();
+                keep.insert(at);
+            }
         }
     }
     nlohmann::json nodes = nlohmann::json::array();
@@ -4512,8 +4516,10 @@ bool NodeEditor::ExecuteDataPipelineThrough(int node_id, bool with_checks, bool 
     }
     pipeline_json["nodes"] = std::move(nodes);
     pipeline_json["links"] = std::move(links);
-    spdlog::info("Running step {} ({} of the graph's steps{})", node_id, keep.size(),
-                 with_checks ? ", with its checks" : "");
+    spdlog::info("Running {} ({} of the graph's steps{})",
+                 node_ids.size() == 1 ? "step " + std::to_string(node_ids.front())
+                                      : std::to_string(node_ids.size()) + " steps",
+                 keep.size(), with_checks ? ", with their checks" : "");
     return SubmitDataPipelineJson(std::move(pipeline_json), &keep);
 }
 
@@ -4611,6 +4617,20 @@ bool NodeEditor::BuildDataPipelineJson(nlohmann::json& pipeline_json,
         });
     }
     return true;
+}
+
+std::vector<NodeEditor::DataLink> NodeEditor::GetDataPipelineLinks(std::string* error) const {
+    std::vector<DataLink> links;
+    nlohmann::json pipeline_json;
+    std::string why;
+    if (error) error->clear();
+    if (!BuildDataPipelineJson(pipeline_json, nullptr, why)) {
+        if (error) *error = why;
+        return links;
+    }
+    for (const auto& link : pipeline_json.at("links"))
+        links.push_back({link.at("start_node").get<int>(), link.at("end_node").get<int>(), link.value("end_pin_index", 0)});
+    return links;
 }
 
 NodeEditor::DataStepContext NodeEditor::GetDataStepContext(int node_id) const {

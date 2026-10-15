@@ -373,7 +373,11 @@ public:
     // Row Count Checks chained right after it when `with_checks` (TOFIX146
     // "Run step" / "Preview output"). `include_step` false runs only the
     // steps before it (the SQL Workbench's "Load inputs").
-    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true);
+    bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true) {
+        return ExecuteDataPipelineThrough(std::vector<int>{node_id}, with_checks, include_step);
+    }
+    // Several steps in one run (Data Studio Validate's "Run checks").
+    bool ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step = true);
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to
@@ -394,6 +398,16 @@ public:
         std::string error;
     };
     DataStepContext GetDataStepContext(int node_id) const;
+    // The executable graph's links (recipes lowered to their steps): which
+    // node feeds which input pin of which node (Data Studio's Validate reads
+    // what each check checks). Empty, with `error` saying why, when the
+    // graph cannot be run.
+    struct DataLink {
+        int from = -1;
+        int to = -1;
+        int pin = 0;
+    };
+    std::vector<DataLink> GetDataPipelineLinks(std::string* error = nullptr) const;
     // Each node's latest run facts (rows, columns, time, outcome), kept
     // across runs in this session.
     const std::map<int, cyxwiz::PipelineNodeRunFacts>& GetNodeRunFacts() const { return node_run_facts_; }
@@ -612,6 +626,16 @@ public:
     void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
         pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
     }
+    // A node of `type` reading the step's result beside what already reads
+    // it, below the step (Data Studio's Data Validator: its output is an
+    // issues table, not the rows, so it must not take over the step's links).
+    // It never joins a recipe (each recipe step must lead to the recipe's
+    // output), so after a recipe step pass the recipe or its output step.
+    void RequestBranchAfter(int step_id, NodeType type) {
+        PendingStepAfter request{step_id, type, false, {}, {}, {}};
+        request.branch = true;
+        pending_steps_after_.push_back(std::move(request));
+    }
     // The same with an empty guided SQL step.
     void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
     // The same with an SQL step running `query` (Data Studio's "Turn into SQL
@@ -623,10 +647,11 @@ public:
     // the canvas copy while expanded). Null when the graph has none.
     const MLNode* FindStep(int node_id) const;
     // Sets (and erases) parameters of a node or a collapsed recipe's step
-    // (Data Studio's Prepare saves an SQL step's query this way), with an undo
-    // point. False when the graph has no such node.
+    // (Data Studio's Prepare saves an SQL step's query this way), and renames
+    // it when `name` is not empty, with an undo point. False when the graph
+    // has no such node.
     bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
-                           const std::vector<std::string>& erase = {});
+                           const std::vector<std::string>& erase = {}, const std::string& name = {});
 
 private:
     void ShowToolbar();
@@ -942,17 +967,18 @@ private:
         SubgraphRequest request = SubgraphRequest::Expand;
         int step_id = -1;
         int frames_to_wait = 0;  // newly expanded steps are drawn before they can be selected
+        bool raise = true;       // ShowStep brings CyxWiz Studio forward
     };
     PendingSubgraphRequest pending_subgraph_request_;
     void ApplySubgraphRequest();
     struct PendingStepAfter {
-        bool raise = true;       // ShowStep brings CyxWiz Studio forward
         int after = -1;  // the step it follows
         NodeType type = NodeType::SQLQuery;
         bool guided = false;  // SQL: an empty guided step, else `query`
         std::string name;     // "" : the default name
         std::string query;    // SQL: its query
         std::map<std::string, std::string> parameters;  // over the node's defaults
+        bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
     };
     std::vector<PendingStepAfter> pending_steps_after_;
     void ApplyStepAfterInsert();

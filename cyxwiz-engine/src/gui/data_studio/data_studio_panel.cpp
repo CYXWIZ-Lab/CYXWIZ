@@ -25,6 +25,9 @@ DataStudioPanel::DataStudioPanel() {
         if (open_node_editor_callback_) open_node_editor_callback_();
     };
     prepare_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
+    validate_ = std::make_unique<ValidateView>();
+    validate_->raise_canvas = prepare_->raise_canvas;
+    validate_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();
     readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };
     readiness_->on_show_node = [this](int id) { ShowOnCanvas({id}); };
@@ -77,6 +80,8 @@ void DataStudioPanel::RefreshView() {
             n.type = type;
             n.name = name;
             if (parameters) {
+                // Validate shows a check's (or validator's) rule from its settings.
+                if (type == ::gui::NodeType::RowCountCheck || type == ::gui::NodeType::DataValidator) n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
                 const auto registry = parameters->find("dataset_name");
@@ -119,7 +124,8 @@ void DataStudioPanel::RefreshView() {
             in.nodes[at].recipe_steps = static_cast<int>(summary.steps.size());
             for (const auto& step : summary.steps) {
                 if (!summary.expanded) canvas_node_[step.id] = node.id;
-                add(step.id, step.type, step.name, nullptr);
+                const ::gui::MLNode* stored = node_editor_->FindStep(step.id);
+                add(step.id, step.type, step.name, stored ? &stored->parameters : nullptr);
             }
         }
     }
@@ -132,9 +138,31 @@ void DataStudioPanel::RefreshView() {
         d.tabular = IsTabularDataset(entry);
         in.datasets.push_back(std::move(d));
     }
+    // What feeds each check, in the graph as it runs (recipes lowered): read
+    // only while Validate shows, since it builds the pipeline document.
+    std::string pipeline_error;
+    if (node_editor_ && job_ == studio::Job::Validate) {
+        const auto links = node_editor_->GetDataPipelineLinks(&pipeline_error);
+        for (auto& n : in.nodes) {
+            if (n.type != ::gui::NodeType::RowCountCheck && n.type != ::gui::NodeType::DataValidator) continue;
+            n.input_from.clear();
+            int pin = -1;
+            for (const auto& link : links)
+                if (link.to == n.id && (pin < 0 || link.pin < pin)) {
+                    pin = link.pin;
+                    n.input_from = {link.from};
+                }
+        }
+    }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
+    if (validate_) {
+        std::vector<int> recipes;
+        for (const auto& n : graph_nodes_)
+            if (n.recipe) recipes.push_back(n.id);
+        validate_->SetGraph(node_editor_, graph_nodes_, recipes, active_dataset_, pipeline_error);
+    }
     if (readiness_) {
         readiness_->SetSplitSets(view_.split_sets, view_.balance);
         // The tab's caption says what the last check found ("5 · no leakage").

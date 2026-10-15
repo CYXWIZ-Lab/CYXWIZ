@@ -27,14 +27,14 @@ Data Pipeline executor.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
   stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage*,
-  *1 output*). Bring in, Explore, Prepare and ML readiness are built; the
-  other jobs list their nodes and are being built (TOFIX148).
+  *1 output*). Bring in, Explore, Prepare, Validate and ML readiness are
+  built; the other jobs list their nodes and are being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Row Count Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
   CyxWiz Studio; a collapsed recipe stands for its steps.
-- **Status bar**: *Ready*, *Query running*, *Profiling* or *Comparing
-  splits*; the last run
+- **Status bar**: *Ready*, *Query running*, *Profiling*, *Comparing
+  splits* or *Data Pipeline running*; the last run
   (*tier1_paragraphs - 15,349 rows - 4/4 checks - 3.1 s - at 12:39:04*,
   orange when a check failed, red when a step failed); *Runs through the
   Data Pipeline executor*.
@@ -254,7 +254,8 @@ step) adds after the selected step: an **SQL step**, a **Guided step**, a
 **Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, or any other
 preparation node from **More nodes**. The node goes on the canvas to the
 step's right, the nodes after it move right to make room (a collapsed recipe
-opens first), and it is selected; Ctrl+Z on the canvas undoes it.
+opens first), and it is selected there; Data Studio stays in front, and the
+step joins the list. Ctrl+Z on the canvas undoes it.
 
 **Checks.** A Row Count Check node checks one of: a row count (exactly, at
 least, at most; all rows or the rows where a column is true or has a value),
@@ -262,7 +263,45 @@ least, at most; all rows or the rows where a column is true or has a value),
 numeric column in a **range**. A failing check stops the run with the count and
 the first offending value; nothing after it runs, and its result from an
 earlier run is dropped. A guided step's **Add checks** become these nodes when
-the step is saved.
+the step is saved. **Validate** lists them all and adds new ones.
+
+## Validate
+
+The graph's checks in one table: **check (node)**, what it **reads** (the step
+whose rows it checks, past any checks in front of it), its **rule** in words
+(*exactly 15,349 rows*, *exactly 3,712 rows where source_id = pg41633*,
+*exactly 0 rows where training_admitted is true*, *role is one of book,
+chapter*, *paragraph_id is unique*, *text is never empty*, *word_count from 1
+to 900*) and its **last run**: *pass - 15,349 rows* (a row count shows what it
+counted), *pass*, *fail* with the message under the rule, *could not run* (for
+example a column that is not there), or *not run* (not run yet in this
+session, or after a check that failed). The line above says *4 of 4 checks
+pass*. Double-click a check's name, or **Show**, to show its node on the
+canvas.
+
+- **Run checks** runs the Data Pipeline through every check and the steps
+  before them (an export after the checks is not written).
+- **Add a check**: **Row count**, **Allowed values**, **Unique**, **Not
+  empty** or **Range** opens the form below the table. **After** picks the
+  step it checks (the dataset chosen in the rail, else the step the other
+  checks read); **Name** is shown when it fails (by default the rule). The
+  rule's fields pick from the step's columns once it has run (type them
+  before). *Rule:* shows the rule as it will read, and **Add check** stays off,
+  with the reason on hover, until the form is complete. The check is added as
+  a Row Count Check node right after the step (a collapsed recipe opens on
+  the canvas; Data Studio stays in front); Ctrl+Z on the canvas undoes it.
+- **Edit** in a check's row opens the same form on that node: change the kind
+  or the rule; **Save check** writes the node (Ctrl+Z on the canvas undoes it).
+- **Data Validator...** adds a Data Validator node reading the step, beside
+  what already reads it; for a step inside a recipe it reads the recipe's
+  result, since every recipe step must lead to the recipe's output. It reports
+  required, not-null and unique columns as an issues table rather than
+  stopping the run; its row shows its rules and *no issues* / *3 issues*, and
+  **Open dialog** sets them.
+- When the graph cannot run, a red line under the summary says why and **Run
+  checks** is off.
+- In a narrow Data Studio, what a check reads goes under its rule and **Edit**
+  / **Show** under its last run.
 
 ## ML readiness
 
