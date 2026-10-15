@@ -314,7 +314,12 @@ void NodeEditor::Render() {
         // a double-click that opens the node's dialog) would drag the node
         // under the pointer by the distance the view moves: wait for the release.
         const bool press_in_progress = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        if (pending_focus_node_id_ >= 0 && !press_in_progress) {
+        // A node ImNodes has not drawn yet (added while the canvas was behind
+        // another tab) cannot be selected: SelectNode would store an invalid
+        // index and the selection would read a garbage id every frame. It
+        // waits until the node has been drawn once.
+        const bool focus_drawn = pending_focus_node_id_ >= 0 && cached_node_positions_.count(pending_focus_node_id_);
+        if (pending_focus_node_id_ >= 0 && !press_in_progress && (focus_drawn || !FindNodeById(pending_focus_node_id_))) {
             auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                    [this](const MLNode& node) {
                                        return node.id == pending_focus_node_id_;
@@ -752,14 +757,14 @@ void NodeEditor::Render() {
                     }
                 } else if (new_selected_id != selected_node_id_) {
                     // Only log if selection changed
-                    spdlog::info("Node selection changed to ID: {}", new_selected_id);
+                    spdlog::debug("Node selection changed to ID: {}", new_selected_id);
 
                     // Find the selected node and pass it to the properties panel
                     MLNode* selected = nullptr;
                     for (auto& node : nodes_) {
                         if (node.id == new_selected_id) {
                             selected = &node;
-                            spdlog::info("Found selected node: id={}, type={}, name={}",
+                            spdlog::debug("Found selected node: id={}, type={}, name={}",
                                          node.id, static_cast<int>(node.type), node.name);
                             break;
                         }
@@ -767,12 +772,15 @@ void NodeEditor::Render() {
 
                     if (selected) {
                         selected_node_id_ = new_selected_id;
-                        spdlog::info("About to call SetSelectedNode with node id={}", selected->id);
+                        spdlog::debug("About to call SetSelectedNode with node id={}", selected->id);
                         properties_panel_->SetSelectedNode(selected);
-                        spdlog::info("SetSelectedNode completed successfully");
+                        spdlog::debug("SetSelectedNode completed successfully");
                     } else {
-                        // Node ID not found in our nodes - could be stale data
-                        spdlog::debug("Selection ID {} not found in nodes vector, ignoring", new_selected_id);
+                        // Not one of our nodes (an index ImNodes kept for a node it
+                        // never drew): drop the selection so it is not read again
+                        // every frame.
+                        spdlog::debug("Selection ID {} not found in nodes vector; selection cleared", new_selected_id);
+                        ImNodes::ClearNodeSelection();
                     }
                 } else {
                     // Selection unchanged, update silently
@@ -788,7 +796,7 @@ void NodeEditor::Render() {
                     }
                 }
             } else if (num_selected == 0 && selected_node_id_ != -1) {
-                spdlog::info("Node deselected");
+                spdlog::debug("Node deselected");
                 selected_node_id_ = -1;
                 properties_panel_->ClearSelection();
             }
