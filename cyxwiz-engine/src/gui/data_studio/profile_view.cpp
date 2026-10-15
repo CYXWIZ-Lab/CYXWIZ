@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <ctime>
 #include <sstream>
 
@@ -217,19 +218,33 @@ void ProfileView::RenderOverview() {
     const size_t cells = profile_->rows * profile_->columns.size();
     const size_t missing = profile_->MissingCells();
     const double missing_pct = cells ? 100.0 * static_cast<double>(missing) / static_cast<double>(cells) : 0.0;
+    // One row while it fits; in a narrow panel a part that does not fit
+    // starts the next line.
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const auto next = [right_edge](const std::string& text) {
+        ImGui::SameLine();
+        if (ImGui::GetCursorScreenPos().x + ImGui::CalcTextSize(text.c_str()).x > right_edge) ImGui::NewLine();
+    };
     ImGui::TextColored(t.text_dim, "%s", roles.c_str());
     ImGui::SameLine();
     ImGui::TextColored(t.text_faint, "|");
-    ImGui::SameLine();
-    ImGui::TextColored(missing ? t.warning : t.text_dim, "missing cells %s", Percent(missing, cells).c_str());
-    ImGui::SameLine();
-    if (profile_->duplicates_known) ImGui::TextColored(profile_->duplicate_rows ? t.warning : t.text_dim, "\xC2\xB7 duplicate rows %s", Thousands(profile_->duplicate_rows).c_str());
-    else ImGui::TextColored(t.text_dim, "\xC2\xB7 duplicate rows not counted (too many columns)");
-    ImGui::SameLine();
+    const std::string missing_text = "missing cells " + Percent(missing, cells);
+    next(missing_text);
+    ImGui::TextColored(missing ? t.warning : t.text_dim, "%s", missing_text.c_str());
+    const std::string duplicates_text = profile_->duplicates_known
+        ? "\xC2\xB7 duplicate rows " + Thousands(profile_->duplicate_rows)
+        : std::string("\xC2\xB7 duplicate rows not counted (too many columns)");
+    next(duplicates_text);
+    ImGui::TextColored(profile_->duplicates_known && profile_->duplicate_rows ? t.warning : t.text_dim, "%s",
+                       duplicates_text.c_str());
     const double quality = std::max(0.0, 100.0 - 2.0 * missing_pct);
-    ImGui::TextColored(quality > 80 ? t.success : quality > 60 ? t.warning : t.error, "\xC2\xB7 data quality %.0f%%", quality);
+    char quality_text[48];
+    std::snprintf(quality_text, sizeof(quality_text), "\xC2\xB7 data quality %.0f%%", quality);
+    next(quality_text);
+    ImGui::TextColored(quality > 80 ? t.success : quality > 60 ? t.warning : t.error, "%s", quality_text);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("100 minus twice the share of missing cells (as Analyze computed it).");
     // Warnings: a role here that contradicts the graph; saved roles for columns that are gone.
+    ImGui::PushTextWrapPos(0.0f);
     for (const auto& c : contract_.columns)
         if (c.user_conflict)
             ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " %s: set to %s here, but the graph says %s. Training keeps the Data Input label; change it there.",
@@ -240,6 +255,7 @@ void ProfileView::RenderOverview() {
         ImGui::TextColored(t.text_dim, "Saved roles for columns not in this table (kept for when they return): %s", names.c_str());
     }
     if (!save_error_.empty()) ImGui::TextColored(t.error, "%s", save_error_.c_str());
+    ImGui::PopTextWrapPos();
 }
 
 void ProfileView::RenderColumns(float /*width*/) {

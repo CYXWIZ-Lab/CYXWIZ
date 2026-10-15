@@ -70,10 +70,17 @@ void QueryEditor::RenderEditor() {
     ImGui::PopTextWrapPos();
 
     const bool running = IsRunning();
+    // The row wraps in a narrow panel: an item that does not fit starts a line.
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const auto next = [right_edge](float width) {
+        ImGui::SameLine();
+        if (ImGui::GetCursorScreenPos().x + width > right_edge) ImGui::NewLine();
+    };
+    const auto button_w = [](const char* label) { return ui::ButtonWidth(label, ui::ButtonSize::Small); };
     if (ui::PrimaryButton(ICON_FA_PLAY " Run", !running, running ? "A query is running" : nullptr, ui::ButtonSize::Small)) ExecuteQuery();
-    ImGui::SameLine();
+    next(button_w("Cancel"));
     if (ui::SecondaryButton("Cancel", running, "Nothing is running")) CancelQuery();
-    ImGui::SameLine();
+    next(button_w("Turn into SQL step"));
     // Turn into SQL step: the last result's query as a step of the graph.
     {
         std::string why = last_result_.table ? std::string() : "Run the query first";
@@ -84,14 +91,14 @@ void QueryEditor::RenderEditor() {
         if (why.empty() && ImGui::IsItemHovered())
             ImGui::SetTooltip("Adds an SQL step running this query after the step whose result it reads (in its recipe)");
     }
-    ImGui::SameLine();
+    next(button_w("Examples"));
     if (ui::SecondaryButton("Examples")) ImGui::OpenPopup("##query_examples");
     RenderExamples();
-    ImGui::SameLine();
+    next(button_w("Format"));
     if (ui::SecondaryButton("Format")) pane_.Format();
-    ImGui::SameLine();
+    next(button_w("Clear"));
     if (ui::GhostButton("Clear")) SetQuery("");
-    ImGui::SameLine();
+    next(ImGui::CalcTextSize(running ? ICON_FA_SPINNER " Running... 00.0 s (Task View shows it)" : "Ctrl+Enter").x);
     if (running) {
         ImGui::TextColored(t.info, ICON_FA_SPINNER " Running... %.1f s (Task View shows it)", ImGui::GetTime() - started_at_);
     } else {

@@ -497,8 +497,11 @@ void ValidateView::RenderForm() {
             TextField("##max", form_.max_value, "no limit", 110.0f);
             break;
     }
-    if (columns_.empty())
+    if (columns_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_faint, "Run the step it follows to pick from its columns; until then type the names.");
+        ImGui::PopTextWrapPos();
+    }
 
     // The rule as it will read, or what is missing.
     std::map<std::string, std::string> parameters;
@@ -564,9 +567,14 @@ void ValidateView::RenderValidatorForm() {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_bright, "%s", editing_ >= 0 ? "Edit Data Validator" : "New Data Validator");
+    // Beside the title when it fits, else under it, wrapped.
+    const char* summary = "reports the rows that break a rule as an issues table; the run goes on";
     ImGui::SameLine(0.0f, 12.0f);
+    if (ImGui::CalcTextSize(summary).x > ImGui::GetContentRegionAvail().x) ImGui::NewLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(t.text_dim, "reports the rows that break a rule as an issues table; the run goes on");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", summary);
+    ImGui::PopTextWrapPos();
     if (editing_ >= 0) {
         std::string reads;
         for (const auto& r : rows_)
@@ -613,8 +621,11 @@ void ValidateView::RenderValidatorForm() {
     rule("Required columns", "##required", vform_.required, "text, source_id");
     rule("No missing value", "##not_null", vform_.not_null, "text");
     rule("No repeated value", "##unique", vform_.unique, "paragraph_id");
-    if (columns_.empty())
+    if (columns_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_faint, "Run the step it reads to pick from its columns; until then type the names.");
+        ImGui::PopTextWrapPos();
+    }
 
     std::map<std::string, std::string> parameters;
     std::string error;

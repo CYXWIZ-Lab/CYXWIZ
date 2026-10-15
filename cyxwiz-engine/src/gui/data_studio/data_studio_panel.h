@@ -90,6 +90,8 @@ private:
     std::map<int, int> canvas_node_;  // a step of a collapsed recipe -> the recipe (Show on canvas)
     std::vector<studio::GraphNode> graph_nodes_;  // the graph as last read (Turn into SQL step)
     float rail_width_ = 250.0f;
+    // Narrower than the rail plus this, the rail stacks above the job.
+    static constexpr float kMinJobWidth = 420.0f;
 
     void RefreshView();
     // The node whose last run made `table` (a name a query used), or null.
@@ -100,7 +102,9 @@ private:
     std::string TurnIntoStep(const std::string& sql, const std::vector<std::string>& inputs);
     void ShowOnCanvas(const std::vector<int>& node_ids);
     void RenderHeader();
-    void RenderRail(float height);
+    // Beside the job (height = the body's), or stacked above it in a narrow
+    // panel (height 0: as tall as its lists, at most max_height).
+    void RenderRail(float height, float max_height = 0.0f);
     void RenderJobTabs();
     void RenderNodeStrip(const studio::JobView& job);
     void RenderJobBody();

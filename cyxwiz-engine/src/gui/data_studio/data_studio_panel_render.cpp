@@ -14,6 +14,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <string>
 
 namespace cyxwiz {
@@ -64,9 +65,17 @@ void DataStudioPanel::Render() {
         RenderHeader();
         const float status_h = ImGui::GetFrameHeightWithSpacing() + 2.0f;
         const float body_h = std::max(120.0f, ImGui::GetContentRegionAvail().y - status_h);
-        RenderRail(body_h);
-        ImGui::SameLine(0.0f, 0.0f);
-        ImGui::BeginChild("##studio_main", ImVec2(0.0f, body_h), ImGuiChildFlags_AlwaysUseWindowPadding);
+        // Side by side, a narrow panel left the job ~120 px (tables one
+        // letter per line); there the rail goes above the job instead.
+        float main_h = body_h;
+        if (ImGui::GetContentRegionAvail().x < rail_width_ + kMinJobWidth) {
+            RenderRail(0.0f, body_h * 0.35f);
+            main_h = std::max(120.0f, body_h - ImGui::GetItemRectSize().y - ImGui::GetStyle().ItemSpacing.y);
+        } else {
+            RenderRail(body_h);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+        ImGui::BeginChild("##studio_main", ImVec2(0.0f, main_h), ImGuiChildFlags_AlwaysUseWindowPadding);
         RenderJobTabs();
         RenderNodeStrip(view_.jobs[static_cast<size_t>(job_)]);
         ImGui::Spacing();
@@ -132,12 +141,15 @@ void DataStudioPanel::RenderHeader() {
     ImGui::Spacing();
 }
 
-void DataStudioPanel::RenderRail(float height) {
+void DataStudioPanel::RenderRail(float height, float max_height) {
     const ui::Tokens& t = ui::CurrentTokens();
     // A tinted area, no outline (owner rule: no lines around areas).
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.text, 0.03f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 10.0f));
-    ImGui::BeginChild("##studio_rail", ImVec2(rail_width_, height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    const bool stacked = height <= 0.0f;
+    if (stacked) ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, max_height));
+    ImGui::BeginChild("##studio_rail", ImVec2(stacked ? 0.0f : rail_width_, stacked ? 0.0f : height),
+                      ImGuiChildFlags_AlwaysUseWindowPadding | (stacked ? ImGuiChildFlags_AutoResizeY : 0));
     ImGui::PopStyleVar();
     for (const auto& section : view_.rail) {
         ImGui::TextColored(t.text_dim, "%s", section.title.c_str());
@@ -209,12 +221,23 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     ImGui::BeginGroup();
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_faint, "In the graph:");
+    const char* const empty_note = "no node does this yet";
     const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f;
-    const float right_edge = start.x + width - link_w - 16.0f;
+    // The link sits at the top right while the first line still fits beside
+    // it; in a narrow panel it goes under the chips instead of over them.
+    float first_w = ImGui::CalcTextSize(empty_note).x;
+    if (!job.chips.empty()) {
+        const auto& chip = job.chips.front();
+        first_w = ImGui::CalcTextSize((chip.name + (chip.note.empty() ? "" : "  " + chip.note)).c_str()).x + 18.0f;
+    }
+    const bool link_beside = 10.0f + ImGui::CalcTextSize("In the graph:").x + 4.0f + first_w + 16.0f + link_w <= width;
+    const float right_edge = start.x + width - (link_beside ? link_w + 16.0f : 10.0f);
     if (job.chips.empty()) {
-        ImGui::SameLine();
+        SameLineOrWrap(ImGui::CalcTextSize(empty_note).x, right_edge);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.text_dim, "no node does this yet");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (right_edge - ImGui::GetCursorScreenPos().x));
+        ImGui::TextColored(t.text_dim, "%s", empty_note);
+        ImGui::PopTextWrapPos();
     }
     for (size_t i = 0; i < job.chips.size(); ++i) {
         const auto& chip = job.chips[i];
@@ -239,10 +262,13 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
         ImGui::PopID();
     }
     ImGui::EndGroup();
-    const float strip_h = ImGui::GetItemRectMax().y - start.y + 6.0f;
-    ImGui::SetCursorScreenPos(ImVec2(start.x + width - link_w - 6.0f, start.y + 6.0f));
+    float bottom = ImGui::GetItemRectMax().y;
+    ImGui::SetCursorScreenPos(link_beside ? ImVec2(start.x + width - link_w - 6.0f, start.y + 6.0f)
+                                          : ImVec2(start.x + 10.0f, bottom + 4.0f));
     ImGui::AlignTextToFramePadding();
     if (ui::LinkButton("Show on canvas", !job.node_ids.empty())) ShowOnCanvas(job.node_ids);
+    if (!link_beside) bottom = ImGui::GetItemRectMax().y;
+    const float strip_h = bottom - start.y + 6.0f;
     dl->ChannelsSetCurrent(0);
     dl->AddRectFilled(start, ImVec2(start.x + width, start.y + strip_h), ui::ToU32(ui::Mix(t.bg_window, t.text, 0.035f)), 8.0f);
     dl->ChannelsMerge();
@@ -269,13 +295,52 @@ void DataStudioPanel::RenderBringIn() {
         if (open_node_editor_callback_) open_node_editor_callback_();
         node_editor_->AddDataInputAndConfigure();
     }
+    // Beside the button when it fits, else under it, wrapped.
+    const char* hint =
+        "Adds a Data Input node to this graph and opens its dialog: the file, its format, a preview, Apply.";
     ImGui::SameLine(0.0f, 12.0f);
+    if (ImGui::CalcTextSize(hint).x > ImGui::GetContentRegionAvail().x) ImGui::NewLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(t.text_dim, "Adds a Data Input node to this graph and opens its dialog: the file, its format, a preview, Apply.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", hint);
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
+    // Too narrow for the five columns (name and file squeezed to a letter
+    // each): one block per Data Input with the same facts and actions.
+    constexpr float kTableMinWidth = 620.0f;
     if (view_.sources.empty()) {
         ImGui::TextColored(t.text_dim, "No Data Input in this graph yet.");
+    } else if (ImGui::GetContentRegionAvail().x < kTableMinWidth) {
+        ImFont* mono = gui::GetCodeFont();
+        for (const auto& row : view_.sources) {
+            ImGui::PushID(row.node_id);
+            ImGui::TextColored(t.text_bright, "%s", row.name.c_str());
+            if (mono) ImGui::PushFont(mono);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
+            ImGui::PopTextWrapPos();
+            if (mono) ImGui::PopFont();
+            ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
+            ImGui::SameLine(0.0f, 12.0f);
+            ImGui::TextColored(ToneColour(row.tone), ICON_FA_CIRCLE " %s", row.state.c_str());
+            if (!row.detail.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", row.detail.c_str());
+            if (ui::LinkButton("Open dialog", node_editor_ != nullptr)) {
+                if (open_node_editor_callback_) open_node_editor_callback_();
+                node_editor_->OpenNodeConfiguration(row.node_id);
+            }
+            if (!row.dataset.empty()) {
+                ImGui::SameLine(0.0f, 12.0f);
+                if (ui::LinkButton("Explore")) {
+                    SetActiveDataset(row.dataset);
+                    job_ = studio::Job::Explore;
+                    explore_tab_ = ExploreTab::Profile;
+                }
+            }
+            ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::PopID();
+        }
     } else if (ImGui::BeginTable("##bring_in", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
         ImGui::TableSetupColumn("Data Input node", ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn("file", ImGuiTableColumnFlags_WidthStretch, 2.4f);

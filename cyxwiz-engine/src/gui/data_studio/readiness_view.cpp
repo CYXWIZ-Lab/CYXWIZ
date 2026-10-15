@@ -244,7 +244,9 @@ void ReadinessView::Render() {
     if (ui::SecondaryButton(ICON_FA_ROTATE " Check again", !IsRunning() && !set.parts.empty(), "Checking now", ui::ButtonSize::Small))
         measured_.clear();
 
+    ImGui::PushTextWrapPos(0.0f);
     if (!set.note.empty()) ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " %s", set.note.c_str());
+    ImGui::PopTextWrapPos();
     if (IsRunning()) ImGui::TextColored(t.info, ICON_FA_SPINNER " Comparing the splits (Task View shows the steps)");
     if (!error_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
@@ -252,7 +254,11 @@ void ReadinessView::Render() {
         ImGui::PopTextWrapPos();
     }
     if (set.parts.empty()) {
-        ImGui::TextColored(t.text_dim, "None of this Data Split's inputs is loaded: open each Data Input's dialog and Apply, or run the graph.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim,
+                           "None of this Data Split's inputs is loaded: open each Data Input's dialog and Apply, "
+                           "or run the graph.");
+        ImGui::PopTextWrapPos();
         return;
     }
     if (!result_) return;

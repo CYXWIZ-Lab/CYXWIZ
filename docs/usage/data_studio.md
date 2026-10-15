@@ -12,7 +12,9 @@ Data Pipeline executor.
 - **Header**: the graph it works on (and its recipe, when it has one),
   **Show graph** (CyxWiz Studio) and **Publish...** (comes with the Publish
   job; disabled until then).
-- **Rail** (left): the data.
+- **Rail** (left): the data. In a narrow Data Studio (under about 670
+  pixels) it sits above the jobs instead, so the job keeps the window's
+  width.
   - **Data Inputs**: the graph's Data Input nodes with their rows, or *not
     loaded* (open the node's dialog and Apply, or run the graph).
   - **Node results**: what the last run made: a step's rows, a Row Count
@@ -31,7 +33,8 @@ Data Pipeline executor.
 - **In the graph**: the nodes doing the open job, by kind (*Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
-  CyxWiz Studio; a collapsed recipe stands for its steps.
+  CyxWiz Studio; a collapsed recipe stands for its steps. When the line is
+  too narrow, **Show on canvas** goes under the nodes.
 - **Status bar**: *Ready*, *Query running*, *Profiling*, *Comparing
   splits* or *Data Pipeline running*; the last run
   (*tier1_paragraphs - 15,349 rows - 4/4 checks - 3.1 s - at 12:39:04*,
@@ -46,7 +49,8 @@ The table lists the graph's Data Input nodes: the node, its file as written
 in the graph, rows x columns once loaded, and its state (*loaded*, *not
 loaded*, or *failed* with the error on hover). **Open dialog** opens the
 node's dialog on the canvas; **Explore** opens a loaded one in Explore >
-Profile.
+Profile. Where the five columns do not fit, each Data Input is listed as a
+block with the same facts and links.
 
 ## Explore
 
