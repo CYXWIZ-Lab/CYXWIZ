@@ -1181,6 +1181,17 @@ private:
     void DrawPlotNodeStatus(const MLNode& node);
     void DrawPlotNodeHeader(int node_id);
     void PlotNodeInput(int plot_id, int source_id);
+    // The graph the Plot and Dashboard nodes read (TOFIX148): Preparation
+    // Recipes lowered to their steps, as the Data Pipeline runs them, so a
+    // plot can read a recipe's result. `fresh` rebuilds it now (a user
+    // action); otherwise at most twice a second (the lane's polling).
+    struct PlotLaneGraph {
+        std::vector<MLNode> nodes;
+        std::vector<NodeLink> links;
+        double built_at = -1.0;
+    };
+    PlotLaneGraph plot_lane_graph_;
+    const PlotLaneGraph& PlotGraph(bool fresh = true);
     // Dashboard nodes (TOFIX134 P3): the same lane, one Dashboard window each.
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;
