@@ -208,7 +208,7 @@ void ValidateView::RenderTable() {
                                                     ImGuiTableFlags_NoSavedSettings))
         return;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float links_w = ImGui::CalcTextSize("Open dialog").x + ImGui::CalcTextSize("Show").x + spacing + 8.0f;
+    const float links_w = ImGui::CalcTextSize("Editing").x + ImGui::CalcTextSize("Show").x + spacing + 8.0f;
     float result_w = ImGui::CalcTextSize("last run").x;
     for (const auto& r : rows_) result_w = std::max(result_w, ImGui::CalcTextSize((ICON_FA_CIRCLE " " + r.result).c_str()).x);
     ImGui::TableSetupColumn("check (node)", ImGuiTableColumnFlags_WidthStretch, 1.3f);
@@ -242,16 +242,7 @@ void ValidateView::RenderTable() {
         ImGui::TextColored(ToneColour(r.tone), ICON_FA_CIRCLE " %s", r.result.c_str());
         if (!r.detail.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.detail.c_str());
         if (!narrow) ImGui::TableNextColumn();
-        if (r.validator) {
-            if (ui::LinkButton("Open dialog", editor_ != nullptr) && editor_) {
-                if (raise_canvas) raise_canvas();
-                if (editor_->GetNodeForConfiguration(r.id)) editor_->OpenNodeConfiguration(r.id);
-                else if (const int recipe = RecipeOf(r.id); recipe >= 0)
-                    editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::OpenStep, r.id);
-            }
-        } else if (ui::LinkButton(editing_ == r.id && form_open_ ? "Editing" : "Edit", !(editing_ == r.id && form_open_))) {
-            edit = &r;
-        }
+        if (ui::LinkButton(editing_ == r.id && form_open_ ? "Editing" : "Edit", !(editing_ == r.id && form_open_))) edit = &r;
         ImGui::SameLine();
         if (ui::LinkButton("Show") && show_on_canvas) show_on_canvas({r.id});
         ImGui::PopID();
@@ -273,18 +264,31 @@ void ValidateView::RenderAddRow() {
         if (ui::SecondaryButton(label, can, reason, ui::ButtonSize::Small)) OpenForm(kind);
     }
     Next(ui::ButtonWidth("Data Validator...", ui::ButtonSize::Small));
-    if (ui::SecondaryButton("Data Validator...", can, reason, ui::ButtonSize::Small)) AddValidator();
+    if (ui::SecondaryButton("Data Validator...", can, reason, ui::ButtonSize::Small)) OpenValidatorForm();
     if (can && ImGui::IsItemHovered())
-        ImGui::SetTooltip("Adds a Data Validator node (required, not-null and unique columns; it reports issues instead of stopping) "
-                          "and opens its dialog");
+        ImGui::SetTooltip("A Data Validator node: required, not-empty and unique columns; it reports the issues as a table "
+                          "instead of stopping the run");
 }
 
 void ValidateView::OpenForm(CheckKind kind) {
     form_open_ = true;
+    validator_form_ = false;
     editing_ = -1;
     target_ = default_target_;
     form_ = {};
     form_.kind = kind;
+    form_error_.clear();
+    message_.clear();
+    columns_key_.clear();
+    LoadColumns();
+}
+
+void ValidateView::OpenValidatorForm() {
+    form_open_ = true;
+    validator_form_ = true;
+    editing_ = -1;
+    target_ = default_target_;
+    vform_ = {};
     form_error_.clear();
     message_.clear();
     columns_key_.clear();
@@ -296,6 +300,15 @@ void ValidateView::EditCheck(const studio::CheckRow& row) {
     if (!node) return;
     form_open_ = true;
     editing_ = row.id;
+    validator_form_ = row.validator;
+    if (row.validator) {
+        vform_ = studio::ValidatorFormFrom(node->parameters);
+        form_error_.clear();
+        message_.clear();
+        columns_key_.clear();
+        LoadColumns();
+        return;
+    }
     form_ = studio::CheckFormFrom(node->parameters);
     if (form_.name.empty()) form_.name = node->name;
     // A name the rule gave follows the rule when it changes.
@@ -319,12 +332,43 @@ void ValidateView::ColumnField(const char* id, std::string& value, float width) 
     }
 }
 
+void ValidateView::ColumnSetField(const char* id, std::string& list, const char* hint) {
+    if (columns_.empty()) {
+        ImGui::SameLine();
+        TextField(id, list, hint, 320.0f);
+        return;
+    }
+    // The columns as checkboxes (as the guided editor's column sets).
+    ImGui::PushID(id);
+    auto chosen = SplitList(list);
+    for (size_t i = 0; i < columns_.size(); ++i) {
+        const std::string& c = columns_[i];
+        bool on = std::find(chosen.begin(), chosen.end(), c) != chosen.end();
+        Next(ImGui::CalcTextSize(c.c_str()).x + ImGui::GetFrameHeight() + 16.0f);
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Checkbox(c.c_str(), &on)) {
+            if (on) chosen.push_back(c);
+            else chosen.erase(std::remove(chosen.begin(), chosen.end(), c), chosen.end());
+            list.clear();
+            for (const auto& s : chosen) list += (list.empty() ? "" : ", ") + s;
+        }
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+}
+
 void ValidateView::RenderForm() {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.text, 0.035f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
     ImGui::BeginChild("##check_form", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    if (validator_form_) {
+        RenderValidatorForm();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        return;
+    }
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_bright, "%s", editing_ >= 0 ? "Edit check" : "New check");
@@ -418,31 +462,11 @@ void ValidateView::RenderForm() {
             ImGui::SameLine();
             TextField("##allowed", form_.allowed, "book, chapter, verse", 320.0f);
             break;
-        case CheckKind::Unique: {
+        case CheckKind::Unique:
+            // Together the columns must not repeat.
             Dim("No two rows share");
-            if (columns_.empty()) {
-                ImGui::SameLine();
-                TextField("##columns", form_.columns, "id, or book, chapter", 320.0f);
-                break;
-            }
-            // The columns as checkboxes (as the guided editor's column sets);
-            // together they must not repeat.
-            auto chosen = SplitList(form_.columns);
-            for (size_t i = 0; i < columns_.size(); ++i) {
-                const std::string& c = columns_[i];
-                bool on = std::find(chosen.begin(), chosen.end(), c) != chosen.end();
-                Next(ImGui::CalcTextSize(c.c_str()).x + ImGui::GetFrameHeight() + 16.0f);
-                ImGui::PushID(static_cast<int>(i));
-                if (ImGui::Checkbox(c.c_str(), &on)) {
-                    if (on) chosen.push_back(c);
-                    else chosen.erase(std::remove(chosen.begin(), chosen.end(), c), chosen.end());
-                    form_.columns.clear();
-                    for (const auto& s : chosen) form_.columns += (form_.columns.empty() ? "" : ", ") + s;
-                }
-                ImGui::PopID();
-            }
+            ColumnSetField("##columns", form_.columns, "id, or book, chapter");
             break;
-        }
         case CheckKind::NotEmpty:
             Dim("Column");
             ImGui::SameLine();
@@ -526,24 +550,123 @@ void ValidateView::SubmitForm() {
     editing_ = -1;
 }
 
-void ValidateView::AddValidator() {
-    if (!editor_ || default_target_ < 0) return;
-    int from = default_target_;
-    std::string after;
-    for (const auto& t : targets_)
-        if (t.id == from) after = "\"" + t.name + "\"";
+int ValidateView::ValidatorSource(int target, std::string* what) const {
+    int from = target;
+    if (what)
+        for (const auto& t : targets_)
+            if (t.id == target) *what = "\"" + t.name + "\"";
     // A recipe's steps all lead to its output, so a validator of a step
     // inside one reads the recipe's result: the recipe node, or its output
     // step while it is expanded on the canvas.
-    if (const int recipe = RecipeOf(from); recipe >= 0) {
+    if (const int recipe = RecipeOf(target); recipe >= 0 && editor_) {
         const auto summary = editor_->GetSubgraphSummary(recipe);
         from = summary.expanded && !summary.steps.empty() ? summary.steps.back().id : recipe;
-        for (const auto& n : nodes_)
-            if (n.id == recipe) after = "the recipe \"" + n.name + "\" (its result)";
+        if (what)
+            for (const auto& n : nodes_)
+                if (n.id == recipe) *what = "the recipe \"" + n.name + "\" (its result)";
     }
-    editor_->RequestBranchAfter(from, ::gui::NodeType::DataValidator);
-    message_ = "Added a Data Validator reading " + after + "; its rules are set in its dialog (Open dialog in its row).";
+    return from;
+}
+
+void ValidateView::RenderValidatorForm() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_bright, "%s", editing_ >= 0 ? "Edit Data Validator" : "New Data Validator");
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "reports the rows that break a rule as an issues table; the run goes on");
+    if (editing_ >= 0) {
+        std::string reads;
+        for (const auto& r : rows_)
+            if (r.id == editing_) reads = r.reads;
+        Dim("Reads");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(reads.empty() ? "nothing linked" : reads.c_str());
+    } else {
+        Dim("Reads");
+        ImGui::SameLine();
+        std::string current;
+        for (const auto& target : targets_)
+            if (target.id == target_) current = target.name;
+        ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
+        if (ImGui::BeginCombo("##reads", current.empty() ? "choose a step" : current.c_str())) {
+            for (const auto& target : targets_) {
+                ImGui::PushID(target.id);
+                if (ImGui::Selectable(target.name.c_str(), target.id == target_)) {
+                    target_ = target.id;
+                    LoadColumns();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        std::string what;
+        ValidatorSource(target_, &what);
+        if (what.rfind("the recipe", 0) == 0) {
+            Next(ImGui::CalcTextSize(what.c_str()).x + 60.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(t.text_faint, "it reads %s", what.c_str());
+        }
+    }
+    // Each rule's columns wrap under the rule, not under its label.
+    const float label_w = ImGui::CalcTextSize("No repeated value").x + 16.0f;
+    const auto rule = [&](const char* label, const char* id, std::string& list, const char* hint) {
+        Dim(label);
+        ImGui::SameLine(label_w);
+        ImGui::Indent(label_w);
+        ImGui::Dummy(ImVec2(0.0f, ImGui::GetFrameHeight()));
+        ColumnSetField(id, list, hint);
+        ImGui::Unindent(label_w);
+    };
+    rule("Required columns", "##required", vform_.required, "text, source_id");
+    rule("No missing value", "##not_null", vform_.not_null, "text");
+    rule("No repeated value", "##unique", vform_.unique, "paragraph_id");
+    if (columns_.empty())
+        ImGui::TextColored(t.text_faint, "Run the step it reads to pick from its columns; until then type the names.");
+
+    std::map<std::string, std::string> parameters;
+    std::string error;
+    const bool complete = studio::ValidatorParameters(vform_, parameters, error);
+    ImGui::PushTextWrapPos(0.0f);
+    if (!form_error_.empty()) ImGui::TextColored(t.error, "%s", form_error_.c_str());
+    else if (complete) ImGui::TextColored(t.text_dim, "Rules: %s", studio::ValidatorRule(parameters).c_str());
+    ImGui::PopTextWrapPos();
+    const char* submit = editing_ >= 0 ? "Save validator" : "Add validator";
+    if (ui::PrimaryButton(submit, complete && (editing_ >= 0 || target_ >= 0), complete ? "Choose the step it reads" : error.c_str(),
+                          ui::ButtonSize::Small))
+        SubmitValidator();
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Small)) {
+        form_open_ = false;
+        editing_ = -1;
+    }
+}
+
+void ValidateView::SubmitValidator() {
+    if (!editor_) return;
+    std::map<std::string, std::string> parameters;
+    std::string error;
+    if (!studio::ValidatorParameters(vform_, parameters, error)) {
+        form_error_ = error;
+        return;
+    }
+    if (editing_ >= 0) {
+        if (!editor_->SetStepParameters(editing_, parameters)) {
+            message_ = "The validator is no longer in the graph.";
+            message_error_ = true;
+            return;
+        }
+        message_ = "Saved the Data Validator's rules (Ctrl+Z on the canvas undoes it). Run checks to see its issues.";
+    } else {
+        std::string what;
+        const int from = ValidatorSource(target_, &what);
+        editor_->RequestBranchAfter(from, ::gui::NodeType::DataValidator, parameters);
+        message_ = "Added a Data Validator reading " + what + " (Ctrl+Z on the canvas undoes it). Run checks to see its issues.";
+    }
     message_error_ = false;
+    form_open_ = false;
+    editing_ = -1;
 }
 
 void ValidateView::RunChecks() {

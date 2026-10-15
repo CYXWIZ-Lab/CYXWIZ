@@ -52,6 +52,15 @@ std::string CheckDefaultName(const std::map<std::string, std::string>& parameter
 // A Data Validator's rules: "required: a, b · not null: c · unique: d".
 std::string ValidatorRule(const std::map<std::string, std::string>& parameters);
 
+// A Data Validator's form: comma lists of the columns that must be there,
+// must have no missing value, and must not repeat.
+struct ValidatorForm {
+    std::string required, not_null, unique;
+};
+// Its node parameters; false, with `error`, when no rule is set.
+bool ValidatorParameters(const ValidatorForm& form, std::map<std::string, std::string>& parameters, std::string& error);
+ValidatorForm ValidatorFormFrom(const std::map<std::string, std::string>& parameters);
+
 struct CheckRow {
     int id = -1;
     bool validator = false;    // a Data Validator (edited in its dialog)

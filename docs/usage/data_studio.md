@@ -292,12 +292,15 @@ canvas.
   the canvas; Data Studio stays in front); Ctrl+Z on the canvas undoes it.
 - **Edit** in a check's row opens the same form on that node: change the kind
   or the rule; **Save check** writes the node (Ctrl+Z on the canvas undoes it).
-- **Data Validator...** adds a Data Validator node reading the step, beside
-  what already reads it; for a step inside a recipe it reads the recipe's
-  result, since every recipe step must lead to the recipe's output. It reports
-  required, not-null and unique columns as an issues table rather than
-  stopping the run; its row shows its rules and *no issues* / *3 issues*, and
-  **Open dialog** sets them.
+- **Data Validator...** opens the validator's form: **Reads** picks the step,
+  and **Required columns**, **No missing value** and **No repeated value** pick
+  columns (checkboxes once the step has run). **Add validator** adds a Data
+  Validator node reading the step, beside what already reads it; for a step
+  inside a recipe it reads the recipe's result, since every recipe step must
+  lead to the recipe's output. It reports the rows that break a rule as an
+  issues table rather than stopping the run; its row shows its rules and *no
+  issues* / *15,345 issues* (the table is its node result in the rail), and
+  **Edit** opens the same form on it.
 - When the graph cannot run, a red line under the summary says why and **Run
   checks** is off.
 - In a narrow Data Studio, what a check reads goes under its rule and **Edit**

@@ -289,6 +289,21 @@ std::string ValidatorRule(const std::map<std::string, std::string>& p) {
     return rule.empty() ? "no rules set (open its dialog)" : rule;
 }
 
+bool ValidatorParameters(const ValidatorForm& form, std::map<std::string, std::string>& p, std::string& error) {
+    p = {{"required_columns", ListText(form.required)}, {"not_null_columns", ListText(form.not_null)},
+         {"unique_columns", ListText(form.unique)}};
+    error.clear();
+    if (p["required_columns"].empty() && p["not_null_columns"].empty() && p["unique_columns"].empty()) {
+        error = "Pick at least one column for a rule.";
+        return false;
+    }
+    return true;
+}
+
+ValidatorForm ValidatorFormFrom(const std::map<std::string, std::string>& p) {
+    return {ListText(Get(p, "required_columns")), ListText(Get(p, "not_null_columns")), ListText(Get(p, "unique_columns"))};
+}
+
 std::vector<CheckRow> CheckRows(const std::vector<GraphNode>& nodes) {
     const auto by_id = [&](int id) -> const GraphNode* {
         for (const auto& n : nodes)

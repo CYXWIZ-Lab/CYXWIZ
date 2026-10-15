@@ -631,8 +631,8 @@ public:
     // issues table, not the rows, so it must not take over the step's links).
     // It never joins a recipe (each recipe step must lead to the recipe's
     // output), so after a recipe step pass the recipe or its output step.
-    void RequestBranchAfter(int step_id, NodeType type) {
-        PendingStepAfter request{step_id, type, false, {}, {}, {}};
+    void RequestBranchAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
+        PendingStepAfter request{step_id, type, false, {}, {}, std::move(parameters)};
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }

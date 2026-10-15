@@ -26,7 +26,6 @@ DataStudioPanel::DataStudioPanel() {
     };
     prepare_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     validate_ = std::make_unique<ValidateView>();
-    validate_->raise_canvas = prepare_->raise_canvas;
     validate_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();
     readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };

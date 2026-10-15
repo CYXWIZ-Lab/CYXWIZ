@@ -135,6 +135,22 @@ int main() {
         Check(rows[4].tone == Tone::Warn, "issues warn");
     }
 
+    // A Data Validator's form.
+    {
+        ValidatorForm v;
+        std::map<std::string, std::string> p;
+        std::string error;
+        Check(!ValidatorParameters(v, p, error) && error.find("at least one") != std::string::npos, "a validator needs a rule");
+        v.required = "text , source_id";
+        v.unique = "paragraph_id";
+        Check(ValidatorParameters(v, p, error), "validator form complete");
+        Same(p["required_columns"], "text, source_id", "required tidied");
+        Same(p["not_null_columns"], "", "unused rule cleared");
+        Same(ValidatorRule(p), "required: text, source_id \xC2\xB7 unique: paragraph_id", "validator rule from the form");
+        const ValidatorForm back = ValidatorFormFrom(p);
+        Check(back.required == "text, source_id" && back.unique == "paragraph_id" && back.not_null.empty(), "validator round trip");
+    }
+
     // The form -> the node's parameters -> the form again.
     {
         CheckForm f;

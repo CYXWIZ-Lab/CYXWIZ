@@ -29,7 +29,6 @@ public:
     void Render();
     bool IsRunning() const;
 
-    std::function<void()> raise_canvas;  // a node's dialog opens over CyxWiz Studio
     std::function<void(const std::vector<int>&)> show_on_canvas;
 
 private:
@@ -42,10 +41,16 @@ private:
     void RenderAddRow();
     void RenderForm();
     void ColumnField(const char* id, std::string& value, float width);
+    // Several columns: checkboxes when the columns are known, else typed (a comma list).
+    void ColumnSetField(const char* id, std::string& list, const char* hint);
+    void RenderValidatorForm();
     void OpenForm(studio::CheckKind kind);
+    void OpenValidatorForm();
     void EditCheck(const studio::CheckRow& row);
     void SubmitForm();
-    void AddValidator();
+    void SubmitValidator();
+    // The node a new validator reads: the target, or its recipe's result.
+    int ValidatorSource(int target, std::string* what) const;
     void RunChecks();
     void LoadColumns();
     int RecipeOf(int step_id) const;  // the recipe holding a step (-1: none)
@@ -62,6 +67,8 @@ private:
     int editing_ = -1;                 // the check node being edited (-1: a new check)
     int target_ = -1;                  // the step a new check follows
     studio::CheckForm form_;
+    bool validator_form_ = false;      // the form edits a Data Validator
+    studio::ValidatorForm vform_;
     std::string form_error_;
     std::vector<std::string> columns_; // the target's columns, from its last run
     std::string columns_key_;
