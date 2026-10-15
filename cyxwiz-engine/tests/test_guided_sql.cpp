@@ -192,8 +192,54 @@ void TestMoveOp() {
           "out of range is refused and changes nothing");
 }
 
+// TOFIX148 D4: "Add checks" goes last and becomes Check nodes when saved.
+void TestChecksBecomeNodes() {
+    const auto context = SermonContext();
+    guided::GuidedStep step;
+    step.ops.push_back({"keep_rows", true, {{"match", "all"}, {"conditions", json::array({{{"column", "text"}, {"op", "is not empty"}, {"value", ""}}})}}});
+    step.ops.push_back({"add_checks", true,
+                        {{"checks", json::array({{{"kind", "allowed_values"}, {"column", "split"}, {"values", "train, validation, test"}},
+                                                 {{"kind", "unique"}, {"column", "sermon_id"}},
+                                                 {{"kind", "row_count"}, {"min", "1"}, {"max", ""}, {"exact", ""}},
+                                                 {{"kind", "row_count"}, {"min", ""}, {"max", ""}, {"exact", ""}},
+                                                 {{"kind", "not_empty"}, {"column", "title"}}})}}});
+    Check(guided::GenerateSql(step, context).ok, "checks as the last operation generate (the preview runs them)");
+    const auto split = guided::SplitOffChecks(step);
+    Check(split.step.ops.size() == 1 && split.step.ops[0].type == "keep_rows", "the checks leave the step");
+    Check(split.checks.size() == 4, "one node per check, an empty row count skipped: " + std::to_string(split.checks.size()));
+    if (split.checks.size() == 4) {
+        const auto& values = split.checks[0];
+        Check(values.name == "Check: split values" && values.parameters.at("check") == "allowed_values" &&
+                  values.parameters.at("column") == "split" && values.parameters.at("allowed") == "train, validation, test",
+              "allowed values: " + values.name);
+        Check(split.checks[1].name == "Check: sermon_id unique" && split.checks[1].parameters.at("columns") == "sermon_id", "unique");
+        Check(split.checks[2].parameters.at("check") == "row_count" && split.checks[2].parameters.at("min_rows") == "1" &&
+                  split.checks[2].parameters.at("expected_rows").empty(),
+              "row count");
+        Check(split.checks[3].name == "Check: title not empty" && split.checks[3].parameters.at("check_name") == "title not empty",
+              "not empty, named for its column");
+    }
+
+    // Not last: marked, and nothing is split off.
+    std::swap(step.ops[0], step.ops[1]);
+    const auto misplaced = guided::GenerateSql(step, context);
+    Check(!misplaced.ok && misplaced.errors[0].find("move Add checks to the end") != std::string::npos, "checks in the middle are marked");
+    Check(guided::SplitOffChecks(step).checks.empty() && guided::SplitOffChecks(step).step.ops.size() == 2,
+          "checks in the middle are not split off");
+    // Last but switched off: they stay in the step, as operations that are off do.
+    std::swap(step.ops[0], step.ops[1]);
+    step.ops[1].on = false;
+    Check(guided::SplitOffChecks(step).checks.empty() && guided::SplitOffChecks(step).step.ops.size() == 2, "checks that are off stay");
+    // A later operation that is off does not count.
+    step.ops[1].on = true;
+    step.ops.push_back({"sort_rows", false, guided::DefaultParams("sort_rows", "title")});
+    Check(guided::GenerateSql(step, context).ok && guided::SplitOffChecks(step).checks.size() == 4,
+          "an operation that is off after the checks does not count");
+}
+
 int main() {
     TestMoveOp();
+    TestChecksBecomeNodes();
     TestEmptyStepPassesThrough();
     TestLibrary();
     TestJson();
