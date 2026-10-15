@@ -30,7 +30,11 @@ plt.show()
 
 The Engine sets matplotlib's backend for you (`module://cyxwiz_mpl_backend`,
 drawn with Agg); `matplotlib.use(...)` with another backend opens that
-backend's own windows instead.
+backend's own windows instead. In a notebook cell, `%matplotlib inline` (or
+any `%matplotlib` line, as notebooks made in Jupyter have) sets the Engine's
+backend again from that line on, so a notebook that first called
+`matplotlib.use('Agg')` still shows its figures. Other `%` magics are not
+supported and stop the cell with a syntax error.
 
 Plot Output toolbar: previous / next, zoom (or mouse wheel, drag to pan),
 Fit, 100%, copy to the clipboard, save as PNG, close, clear all, and **All /
@@ -458,7 +462,10 @@ in its own window; **Auto scale**, **Follow current epoch**, the epoch
 window, **Log loss axis** and **Smooth** are in the chart window's toolbar
 and the dashboard's controls.
 
-Only canvas training reports to this window.
+Canvas training reports to this window, and so does word-vector training
+(word2vec, GloVe) of a Word Embeddings node: it gets its own run behind the
+**Run** switcher and leaves the model run's view alone (see
+[word_embeddings.md](word_embeddings.md#on-the-training-dashboard)).
 
 ## RL Training Dashboard
 

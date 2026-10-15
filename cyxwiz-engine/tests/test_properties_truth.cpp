@@ -144,9 +144,25 @@ int main() {
     }
 
     {
+        // A file parameter's patterns become the Browse dialog's filter.
+        cyxwiz::ParameterDefinition model_path(
+            "model_path", "file", "", "", {}, "*.cyxclassic.json; *.json");
+        const auto filters = gui::properties_rules::FileParameterFilters(model_path);
+        Check(filters.size() == 2 && filters[0].first == "Supported files" &&
+                  filters[0].second == "cyxclassic.json,json" &&
+                  filters[1].second == "*",
+              "file patterns should become one Supported files filter plus All Files");
+        cyxwiz::ParameterDefinition any_file("file_path", "file");
+        const auto any = gui::properties_rules::FileParameterFilters(any_file);
+        Check(any.size() == 1 && any[0].second == "*",
+              "a file parameter without patterns should offer All Files");
+    }
+
+    {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
-        // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring).
-        Check(covered.size() == 77,
+        // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
+        // WordEmbeddings (TOFIX152).
+        Check(covered.size() == 78,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -236,6 +252,39 @@ int main() {
               "TransformerDecoder should expose its executable transformer contract");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::PositionalEncoding),
               "PositionalEncoding should expose its executable transformer contract");
+    }
+
+    {
+        auto vectors = MakeNode(3, gui::NodeType::WordEmbeddings, "Word Embeddings");
+        auto report = gui::properties_truth::ResolveNodeTruth(vectors);
+        const auto* file = FindProperty(report, "vectors_file");
+        Check(file != nullptr && HasStatus(*file, gui::properties_truth::TruthStatus::Missing),
+              "WordEmbeddings pretrained without a vector file should be visible as missing");
+        const auto* text = FindProperty(report, "text_col");
+        Check(text != nullptr && !HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "pretrained vectors without row vectors do not need a text column");
+        vectors.parameters["source"] = "word2vec";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        Check(FindProperty(report, "vectors_file") == nullptr,
+              "training does not show the vector file");
+        text = FindProperty(report, "text_col");
+        Check(text != nullptr && HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "training without a text column should be visible as missing");
+        vectors.parameters["source"] = "glove";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "GloVe training needs the text column too");
+        vectors.parameters["source"] = "fasttext";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "fastText training needs the text column too");
+        const auto* outputs = FindProperty(report, "word_embeddings_outputs");
+        Check(outputs != nullptr && outputs->message.find("PipelineOperatorFactory") != std::string::npos,
+              "WordEmbeddings truth should describe operator-factory routing");
     }
 
     {

@@ -1630,6 +1630,57 @@ void TestBuildSequentialTextEmbeddingWeights() {
                "frozen pretrained embedding should not expose trainable layer0.weight");
 }
 
+// TOFIX152: the layer also reads word vectors as text (a Word Embeddings
+// node's .vec, GloVe .txt), a row per line in file order, word dropped.
+void TestEmbeddingWeightsWordVectorFiles() {
+    spdlog::info("--- TestEmbeddingWeightsWordVectorFiles ---");
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_test_embedding_word_vectors";
+    std::filesystem::create_directories(dir);
+    const auto shape = [](const std::filesystem::path& path, size_t& rows, size_t& cols) {
+        std::string error;
+        const bool ok = cyxwiz::InspectEmbeddingWeightsFile(path.string(), rows, cols, error);
+        if (!ok) std::cerr << "  " << error << "\n";
+        return ok;
+    };
+    size_t rows = 0, cols = 0;
+    // word2vec text with its header; "1990" is a word, not a value.
+    std::ofstream(dir / "w2v.vec") << "3 2\n[PAD] 0 0\nthe 1 2\n1990 3 4\n";
+    ExpectTrue(shape(dir / "w2v.vec", rows, cols) && rows == 3 && cols == 2, ".vec: header skipped, words dropped");
+    // Punctuation tokens of a real vocabulary: "," and "#" are words, not
+    // separators or comments (the sentiment vocabulary has both).
+    std::ofstream(dir / "punct.vec") << "4 2\n[PAD] 0 0\n, 1 2\n# 3 4\nthe 5 6\n";
+    ExpectTrue(shape(dir / "punct.vec", rows, cols) && rows == 4 && cols == 2, ".vec: ',' and '#' are words");
+    std::ofstream(dir / "commas.txt") << "# a matrix\n1,2,3\n4, 5, 6\n";
+    ExpectTrue(shape(dir / "commas.txt", rows, cols) && rows == 2 && cols == 3, "a comma matrix with a comment");
+    std::ofstream(dir / "glove.txt") << "the 1 2\nparis 3 5\n";
+    ExpectTrue(shape(dir / "glove.txt", rows, cols) && rows == 2 && cols == 2, "GloVe: a word first on each line");
+    // Two whole numbers first, then numbers: a matrix row, not a header.
+    std::ofstream(dir / "matrix.txt") << "1 0\n0 1\n";
+    ExpectTrue(shape(dir / "matrix.txt", rows, cols) && rows == 2 && cols == 2, "a 2-column matrix keeps its first row");
+    std::ofstream(dir / "single.txt") << "4 5\n";
+    ExpectTrue(shape(dir / "single.txt", rows, cols) && rows == 1 && cols == 2, "a one-row matrix");
+    std::ofstream(dir / "ragged.vec") << "2 2\nthe 1 2\nparis 3\n";
+    ExpectTrue(!shape(dir / "ragged.vec", rows, cols), "a short row is refused");
+
+    // A 500 x 8 .vec builds the layer.
+    const auto vec = dir / "vectors.vec";
+    {
+        std::ofstream out(vec);
+        out << "500 8\n";
+        for (int r = 0; r < 500; ++r) {
+            out << "w" << r;
+            for (int c = 0; c < 8; ++c) out << ' ' << ((r == 0) ? 0.0f : static_cast<float>((r + c) % 7) / 10.0f);
+            out << '\n';
+        }
+    }
+    ExpectTrue(BuildSequentialFromConfig(MakeTextConfigWithEmbeddingWeights(vec)).ok(),
+               "an Embedding layer loads a .vec of its shape");
+    auto wrong = MakeTextConfigWithEmbeddingWeights(vec);
+    wrong.layers[0].parameters["embedding_dim"] = "9";
+    ExpectTrue(!BuildSequentialFromConfig(wrong).ok(), "a .vec of another width is refused");
+    std::filesystem::remove_all(dir);
+}
+
 void TestSequenceProjectionConfigurationFailClosed() {
     spdlog::info("--- TestSequenceProjectionConfigurationFailClosed ---");
 
@@ -2730,6 +2781,7 @@ int main(int argc, char** argv) {
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();
         TestBuildSequentialTextEmbeddingWeights();
+        TestEmbeddingWeightsWordVectorFiles();
         TestSequenceProjectionConfigurationFailClosed();
         TestCrossEntropyIgnoreIndexFromLossParams();
         TestWeightedLossConfigParams();

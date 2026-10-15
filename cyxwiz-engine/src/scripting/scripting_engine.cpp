@@ -182,7 +182,8 @@ ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() {
     if (info.initialized) {
         info.interpreter_path = python_engine_->ActiveInterpreterPath();
         info.source = python_engine_->ActiveSource();
-        python_engine_->HasInterpreterMismatch(&info.mismatch);
+        if (python_engine_->HasInterpreterMismatch(&info.mismatch))
+            info.wanted_path = python_engine_->PreviewInterpreterPath();
         if (cached_python_version_.empty() && !python_busy_ &&
             !command_running_ && !script_running_) {
             try {
@@ -1590,7 +1591,9 @@ std::string ScriptingEngine::CallLanguageTool(const std::string& function, const
 }
 
 bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
-    if (script_running_) return false;
+    // Freeing the notebook's objects runs their finalizers here: not while a
+    // script, a Console command or other Python work runs (the caller retries).
+    if (script_running_ || command_running_ || python_busy_) return false;
     if (!IsInitialized()) return true;  // nothing ran yet
     try {
         py::gil_scoped_acquire acquire;
@@ -1770,16 +1773,32 @@ def _cyxwiz_frames(tb, skip):
     import traceback
     return [(f.filename, f.lineno or 0, f.name, f.line or '', '') for f in traceback.extract_tb(tb)[skip:]]
 
+def _cyxwiz_matplotlib_magic():
+    capture = sys.modules.get('cyxwiz_capture')
+    if capture is not None:
+        capture.inline()
+
+# Jupyter's %matplotlib line (inline, agg, ...): figures go to the cell from
+# that line on, as Jupyter's inline backend does. Other magics stay errors.
+def _cyxwiz_line_magics(src):
+    lines = src.split('\n')
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith('%matplotlib'):
+            lines[i] = line[:len(line) - len(stripped)] + '__cyxwiz_matplotlib__()'
+    return '\n'.join(lines)
+
 def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
     import ast, builtins, linecache, traceback
     ns = _cyxwiz_notebook_ns.get(key)
     if ns is None:
         ns = {'__name__': '__main__', '__builtins__': builtins, 'Out': {}}
         _cyxwiz_notebook_ns[key] = ns
+    ns['__cyxwiz_matplotlib__'] = _cyxwiz_matplotlib_magic
     linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)
     out = {'ok': False, 'repr': None, 'html': None, 'ename': '', 'evalue': '', 'frames': [], 'traceback': ''}
     try:
-        tree = ast.parse(src, filename, 'exec')
+        tree = ast.parse(_cyxwiz_line_magics(src), filename, 'exec')
         last = None
         if tree.body and isinstance(tree.body[-1], ast.Expr):
             last = tree.body.pop()

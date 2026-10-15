@@ -21,6 +21,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
 
 namespace scripting { class ScriptingEngine; }
@@ -32,6 +33,7 @@ class RLTrainingExecutor;
 class TrainingDashboardPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
+struct TaskInfo;
 }
 
 namespace cyxwiz {
@@ -290,6 +292,19 @@ public:
     void QueueDashboardWidget(int node_id, const std::string& dataset, const cyxwiz::dashboard::WidgetSpec& widget);
     // A dashboard's "Open in Data Studio" / "Open in Query tab": dataset and SQL.
     void SetOpenDataStudioQueryCallback(std::function<void(const std::string&, const std::string&)> cb) { open_data_studio_query_ = std::move(cb); }
+    // Word-vector runs on the Training Dashboard (TOFIX152): the running
+    // pipeline's step figures, its live status and its end go to the
+    // dashboard; a Word Embeddings dialog shows its node's run there.
+    struct WordVectorFeed {
+        std::function<void(const cyxwiz::OperatorFigures&)> figures;
+        std::function<void(int node_id, float step_share, const std::string& message)> progress;
+        std::function<void(int node_id, bool cancelled, const std::string& error)> ended;
+        std::function<void(int node_id)> show_run;
+        std::function<bool(int node_id)> has_run;
+        std::function<std::string(int node_id)> run_line;
+    };
+    void SetWordVectorFeed(WordVectorFeed feed) { word_vector_feed_ = std::move(feed); }
+    const WordVectorFeed& GetWordVectorFeed() const { return word_vector_feed_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
@@ -379,6 +394,9 @@ public:
     // Several steps in one run (Data Studio Validate's "Run checks").
     bool ExecuteDataPipelineThrough(const std::vector<int>& node_ids, bool with_checks, bool include_step = true);
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
+    // The Task View task of the latest data run (0: none), for a dialog that
+    // shows its progress or stops it.
+    uint64_t GetDataPipelineTaskId() const { return pipeline_task_id_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to
     // their steps): what feeds each input pin and the Check nodes that
@@ -1224,6 +1242,13 @@ private:
     // into node_run_facts_ while it runs and once when it ends.
     std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
     bool pipeline_facts_final_ = true;
+    // The run's step figures read so far, and the step that sent them.
+    WordVectorFeed word_vector_feed_;
+    size_t figures_read_ = 0;
+    int figures_node_ = -1;
+    std::string figures_node_name_;
+    bool figures_ended_ = false;
+    void FeedWordVectorRuns(const cyxwiz::TaskInfo& task_info);
     std::map<int, cyxwiz::PipelineNodeRunFacts> node_run_facts_;
     // Lifetime token for background work this editor owns; destroying the
     // editor cancels that work and discards its pending UI delivery.

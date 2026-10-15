@@ -156,6 +156,33 @@ Graph BuildGraph(const json& c) {
         l.id = 901; l.from_node = from; l.from_pin = from * 100 + 11; l.to_node = 9; l.to_pin = 901;
         g.links.push_back(l);
     };
+    if (name == "fanout_residual_concat") {
+        // No Split: the data pin feeds three branches directly.
+        g.nodes = {data, loss, sgd};
+        g.links = {Link(9, 0, 10, 0), labels};
+        const auto dense = [&](int id, const char* layer) {
+            g.nodes.push_back(Node(id, gui::NodeType::Dense, layer, 1, 1, {{"units", units(layer)}}));
+        };
+        dense(3, "Dense A1");
+        g.nodes.push_back(Node(4, gui::NodeType::ReLU, "ReLU A", 1, 1));
+        dense(5, "Dense A2");
+        dense(6, "Projection");
+        g.nodes.push_back(Node(7, gui::NodeType::Add, "Residual Add", 2, 1));
+        g.nodes.push_back(Node(8, gui::NodeType::ReLU, "ReLU", 1, 1));
+        dense(11, "Wide");
+        g.nodes.push_back(Node(12, gui::NodeType::Tanh, "Tanh", 1, 1));
+        g.nodes.push_back(Node(13, gui::NodeType::Concatenate, "Concat", 2, 1, {{"dim", "1"}}));
+        dense(14, "Dense C");
+        for (const auto& [from, out, to, in] : std::vector<std::tuple<int, int, int, int>>{
+                 {1, 0, 3, 0}, {3, 0, 4, 0}, {4, 0, 5, 0}, {1, 0, 6, 0}, {5, 0, 7, 0}, {6, 0, 7, 1}, {7, 0, 8, 0},
+                 {1, 0, 11, 0}, {11, 0, 12, 0}, {8, 0, 13, 0}, {12, 0, 13, 1}, {13, 0, 14, 0}}) {
+            gui::NodeLink link = Link(from, out, to, in);
+            if (from == 1) link.from_pin = 111;  // the data node's Data pin
+            g.links.push_back(link);
+        }
+        to_loss(14);
+        return g;
+    }
     if (name == "split_bmm") {
         // A = Output 1, B = Output 2: Batch MatMul -> Flatten -> Dense C.
         g.nodes.push_back(Node(5, gui::NodeType::TensorBatchMatMul, "Batch MatMul", 2, 1));
@@ -218,7 +245,8 @@ void RunCase(const json& c) {
     const auto config = compiler.Compile(graph.nodes, graph.links, true);
     if (!config.is_valid) PrintIssues(config);
     Check(config.is_valid, name + ": the branched graph compiles");
-    Check(config.graph_op_node_ids.size() >= 1, name + ": Split runs as a graph op");
+    if (name != "fanout_residual_concat")
+        Check(config.graph_op_node_ids.size() >= 1, name + ": Split runs as a graph op");
 
     // Every Dense sees its own branch: Split's outputs have different widths.
     for (const auto& [layer_name, layer] : c.at("layers").items()) {
@@ -266,6 +294,75 @@ void RunCase(const json& c) {
         CheckClose(bias->second, layer.at("grad_bias"), tolerance, name + " " + layer_name + " bias gradient");
     }
     std::cout << "  " << name << ": forward, input and layer gradients match PyTorch\n";
+
+    // The same branches behind Data Split and Data Loader, as a graph built in
+    // the Engine has them: the loader hands the batch to all three branches
+    // (it stopped with "missing cached input tensor", 2026-10-15).
+    if (name == "fanout_residual_concat") {
+        auto through = graph;
+        // Data Input -> Data Split -> Data Loader, as the Engine builds them:
+        // the Data Input's one pin is a Dataset (no Tensor "Data" pin).
+        for (auto& node : through.nodes) {
+            if (node.id == 1) node.outputs = {Pin(113, gui::PinType::Dataset, "Dataset", false)};
+        }
+        gui::MLNode data_split;
+        data_split.id = 20;
+        data_split.type = gui::NodeType::DataSplit;
+        data_split.name = "Split";
+        data_split.inputs = {Pin(2001, gui::PinType::Dataset, "Training Dataset", true)};
+        data_split.outputs = {Pin(2011, gui::PinType::Dataset, "Partitions", false)};
+        gui::MLNode loader;
+        loader.id = 21;
+        loader.type = gui::NodeType::DataLoader;
+        loader.name = "Loader";
+        loader.inputs = {Pin(2101, gui::PinType::Dataset, "Partitions", true)};
+        loader.outputs = {Pin(2111, gui::PinType::Tensor, "Data", false),
+                          Pin(2112, gui::PinType::Labels, "Labels", false)};
+        for (auto& link : through.links) {
+            if (link.from_node == 1 && link.from_pin == 111) {
+                link.from_node = loader.id;
+                link.from_pin = 2111;
+            } else if (link.from_node == 1 && link.from_pin == 112) {
+                link.from_node = loader.id;
+                link.from_pin = 2112;
+            }
+        }
+        const auto add_link = [&](int id, int from_node, int from_pin, int to_node, int to_pin) {
+            gui::NodeLink link;
+            link.id = id;
+            link.from_node = from_node;
+            link.from_pin = from_pin;
+            link.to_node = to_node;
+            link.to_pin = to_pin;
+            through.links.push_back(link);
+        };
+        add_link(2000, 1, 113, data_split.id, 2001);
+        add_link(2001, data_split.id, 2011, loader.id, 2101);
+        through.nodes.push_back(data_split);
+        through.nodes.push_back(loader);
+        cyxwiz::GraphCompiler through_compiler;
+        const auto through_config = through_compiler.Compile(through.nodes, through.links, true);
+        if (!through_config.is_valid) PrintIssues(through_config);
+        Check(through_config.is_valid, name + ": the graph with Data Split and Data Loader compiles");
+        auto through_built = cyxwiz::BuildExecutableFromConfig(through_config);
+        Check(through_built.ok(), name + ": with a loader, the branches build: " + through_built.error_message);
+        through_built.model->SetParameters(parameters);
+        through_built.model->SetTraining(true);
+        CheckClose(through_built.model->Forward(ReadTensor(c.at("input"))), c.at("output"), tolerance,
+                   name + " forward through the loader");
+        CheckClose(through_built.model->Backward(ReadTensor(c.at("grad_output"))), c.at("grad_input"), tolerance,
+                   name + " input gradient through the loader");
+        const auto through_gradients = through_built.model->GetGradients();
+        for (const auto& [layer_name, layer] : c.at("layers").items()) {
+            size_t index = 0;
+            LayerNamed(through_config, layer_name, &index);
+            const auto weight = through_gradients.find("layer" + std::to_string(index) + ".weight");
+            Check(weight != through_gradients.end(), name + ": gradient of " + layer_name + " through the loader");
+            CheckClose(weight->second, layer.at("grad_weight"), tolerance,
+                       name + " " + layer_name + " weight gradient through the loader");
+        }
+        std::cout << "  " << name << ": the same through a Data Loader\n";
+    }
 
     // A merge takes its inputs in pin order, as the compiler's shapes do, not
     // in the order its links were made: reversing the links into Concatenate

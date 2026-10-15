@@ -307,17 +307,20 @@ void ToolbarPanel::BuildActionHandlers() {
     // File
     h["file.new_project"] = [this](const std::string&) { create_project_dialog_.Open(0); };
     h["file.open_project"] = [](const std::string&) {
+        if (!ProjectManager::Instance().MayCloseProject("open another project")) return;
         auto result = FileDialogs::OpenProject();
         if (!result) return;
         if (ProjectManager::Instance().OpenProject(*result)) spdlog::info("Project opened: {}", *result);
         else spdlog::error("Failed to open project: {}", *result);
     };
     h["file.open_recent"] = [](const std::string& path) {
+        if (!ProjectManager::Instance().MayCloseProject("open another project")) return;
         if (ProjectManager::Instance().OpenProject(path)) spdlog::info("Opened recent project: {}", path);
         else spdlog::error("Failed to open recent project: {}", path);
     };
     h["file.clear_recent"] = [](const std::string&) { ProjectManager::Instance().ClearRecentProjects(); };
     h["file.close_project"] = [this](const std::string&) {
+        if (!ProjectManager::Instance().MayCloseProject("close the project")) return;
         if (save_project_settings_callback_) save_project_settings_callback_();
         ProjectManager::Instance().CloseProject();
     };

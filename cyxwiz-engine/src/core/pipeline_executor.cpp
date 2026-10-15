@@ -16,6 +16,7 @@
 #include "data_input_formats.h"
 #include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
+#include "node_executors/word_embeddings_operator.h"
 #include "preprocessing_state.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_vocabulary.h"
@@ -3314,6 +3315,10 @@ void PipelineExecutor::StopExecution() {
     }
 }
 
+void PipelineExecutor::SetOperatorFiguresCallback(std::function<void(const OperatorFigures&)> callback) {
+    operator_figures_callback_ = std::move(callback);
+}
+
 void PipelineExecutor::SetProgressCallback(std::function<void(float, const std::string&)> callback) {
     progress_callback_ = callback;
 }
@@ -3641,6 +3646,16 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             }
             continue;
         }
+        // Word Embeddings (TOFIX152): the vectors are always saved, by
+        // default at one place per node in the artifacts, where an Embedding
+        // layer can load them run after run.
+        if (node.type == "WordEmbeddings") {
+            if (TrimString(ParameterOrDefault(node.parameters, "vectors_path", "")).empty()) {
+                const auto path = artifact_root / WordEmbeddingsOperator::DefaultVectorsFile(node.id, node.name);
+                node.parameters["vectors_path"] = path.string();
+            }
+            continue;
+        }
         // Classic ML classifiers (TOFIX145): the Model output is the saved
         // fitted model, so one is always written.
         if (node.type == "NaiveBayesClassifier" ||
@@ -3761,6 +3776,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             // A SQL step takes one input per name in its alias list (C2).
             required_input_count =
                 static_cast<int>(SqlStepInputAliases(node.parameters).size());
+        }
+        if (node.type == "ClassicModelPredictor") {
+            // Data, plus the Model input when it is connected (optional:
+            // without it the saved model file is used).
+            const bool model_linked = std::any_of(
+                node.input_links.begin(), node.input_links.end(),
+                [](const auto& link) { return link.target_pin_index == 1; });
+            required_input_count = model_linked ? 2 : 1;
         }
 
         if (is_data_convert && node.inputs.empty() &&
@@ -5718,6 +5741,17 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
 // Phase 6 Week 8-9: Advanced Nodes Implementation
 // ============================================================================
 
+const std::string* PipelineExecutor::ResultForOutput(const ExecutionContext& ctx, int node_id,
+                                                     std::optional<int> source_pin) {
+    if (source_pin.has_value() && *source_pin > 0) {
+        const auto pin_result = ctx.node_pin_results.find({node_id, *source_pin});
+        if (pin_result != ctx.node_pin_results.end() && !pin_result->second.empty()) return &pin_result->second;
+    }
+    const auto result = ctx.node_results.find(node_id);
+    if (result == ctx.node_results.end() || result->second.empty()) return nullptr;
+    return &result->second;
+}
+
 std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
     const auto input_dataset_names = GetInputDatasetNames(node, ctx, 1);
     if (input_dataset_names.empty()) {
@@ -5738,14 +5772,19 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
 
     std::vector<std::string> dataset_names;
     dataset_names.reserve(expected_count);
-    for (int input_node_id : node.inputs) {
-        auto result_it = ctx.node_results.find(input_node_id);
-        if (result_it == ctx.node_results.end() || result_it->second.empty()) {
+    for (size_t i = 0; i < node.inputs.size(); ++i) {
+        const int input_node_id = node.inputs[i];
+        // input_links runs parallel to inputs; a link from output pin >= 1
+        // reads that pin's table.
+        const std::optional<int> source_pin =
+            i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
+        const std::string* name = ResultForOutput(ctx, input_node_id, source_pin);
+        if (name == nullptr) {
             ReportError(node.type + ": input dataset from node " +
                         std::to_string(input_node_id) + " not found");
             return {};
         }
-        dataset_names.push_back(result_it->second);
+        dataset_names.push_back(*name);
     }
     return dataset_names;
 }
@@ -5758,15 +5797,15 @@ std::string PipelineExecutor::GetInputDatasetForPin(
         if (link.target_pin_index != target_pin_index) {
             continue;
         }
-        const auto result = ctx.node_results.find(link.node_id);
-        if (result == ctx.node_results.end() || result->second.empty()) {
+        const std::string* result = ResultForOutput(ctx, link.node_id, link.source_pin_index);
+        if (result == nullptr) {
             ReportError(node.type + ": Data input on pin " +
                         std::to_string(target_pin_index) +
                         " is not available from node " +
                         std::to_string(link.node_id));
             return {};
         }
-        return result->second;
+        return *result;
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -5814,7 +5853,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     std::map<std::string, std::string> operator_parameters = node.parameters;
     // File parameters saved project-relative resolve against the project root,
     // like Data Input and export paths (otherwise the process directory is used).
-    for (const char* file_parameter : {"vocab_file"}) {
+    for (const char* file_parameter : {"vocab_file", "vectors_file", "vectors_path"}) {
         auto file_it = operator_parameters.find(file_parameter);
         if (file_it != operator_parameters.end() && !file_it->second.empty()) {
             file_it->second = ResolveProjectDataPath(file_it->second, project_root_);
@@ -5829,6 +5868,29 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
             return false;
         }
         operator_parameters["model_path"] = model_path;
+    } else if (type == gui::NodeType::ClassicModelPredictor) {
+        // The Model input (this run's fitted model) wins; without it the saved
+        // model file, project-relative like Data Input files.
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
+        if (input_dataset_name.empty()) {
+            return false;
+        }
+        const bool model_linked = std::any_of(
+            node.input_links.begin(), node.input_links.end(),
+            [](const auto& link) { return link.target_pin_index == 1; });
+        if (model_linked) {
+            const std::string model_path =
+                GetInputModelArtifactForPin(node, ctx, 1);
+            if (model_path.empty()) {
+                return false;
+            }
+            operator_parameters["model_path"] = model_path;
+        } else {
+            auto saved = operator_parameters.find("model_path");
+            if (saved != operator_parameters.end() && !TrimString(saved->second).empty()) {
+                saved->second = ResolveProjectDataPath(TrimString(saved->second), project_root_);
+            }
+        }
     } else {
         input_dataset_name = GetInputDatasetName(node, ctx);
     }
@@ -5866,6 +5928,19 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    // A long step (word2vec training, a vectorizer) reports its own progress:
+    // Task View shows it as the run's status, the run's share unchanged.
+    op->SetProgressCallback([this, id = node.id, name = node.name](const PipelineOperatorProgress& event) {
+        if (operator_figures_callback_ && (!event.figures.empty() || !event.notes.empty())) {
+            OperatorFigures figures = event.Figures();
+            figures.node_id = id;
+            figures.node_name = name;
+            operator_figures_callback_(figures);
+        }
+        if (event.message.empty()) return;
+        UpdateProgress(progress_.load(), name + ": " + event.message + " (" +
+                                             std::to_string(static_cast<int>(event.progress * 100.0f + 0.5f)) + "%)");
+    });
 
     std::string configure_error;
     if (!op->Configure(operator_parameters, configure_error)) {
@@ -5902,6 +5977,17 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     ctx.node_results[node.id] = output_dataset_name;
     ctx.output_dataset = output_dataset_name;
+    const auto extra_outputs = op->ExtraOutputs();
+    for (size_t i = 0; i < extra_outputs.size(); ++i) {
+        if (!extra_outputs[i]) continue;
+        const int pin = static_cast<int>(i) + 1;
+        const std::string pin_dataset_name = output_dataset_name + "_pin" + std::to_string(pin);
+        if (!registry.RegisterArrowTable(extra_outputs[i], pin_dataset_name)) {
+            ReportError(node.type + ": failed to register output pin " + std::to_string(pin));
+            return false;
+        }
+        ctx.node_pin_results[{node.id, pin}] = pin_dataset_name;
+    }
     if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
         ctx.node_outcomes[node.id] = std::move(outcome);
     }
@@ -7108,6 +7194,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 [this, node, &ctx, &execution_mutex]() mutable {
                     NodeExecutionResult result;
                     result.ctx.node_results = ctx.node_results;
+                    result.ctx.node_pin_results = ctx.node_pin_results;
                     result.ctx.model_artifacts = ctx.model_artifacts;
                     result.ctx.node_outcomes = ctx.node_outcomes;  // the checks above it (lineage)
                     std::lock_guard<std::mutex> lock(execution_mutex);
@@ -7133,6 +7220,9 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             if (result.success && node) {
                 for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
                     ctx.node_results[result_node_id] = dataset_name;
+                }
+                for (const auto& [result_pin, dataset_name] : result.ctx.node_pin_results) {
+                    ctx.node_pin_results[result_pin] = dataset_name;
                 }
                 for (const auto& [result_node_id, artifact_path] :
                      result.ctx.model_artifacts) {
@@ -7197,6 +7287,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     }
 
     last_node_results_ = ctx.node_results;
+    last_node_pin_results_ = ctx.node_pin_results;
     last_model_artifacts_ = ctx.model_artifacts;
 
     // Transfer deployment status from context to executor state

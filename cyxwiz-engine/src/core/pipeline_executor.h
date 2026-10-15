@@ -13,6 +13,7 @@
 #include <optional>
 #include <utility>
 
+#include "operator_figures.h"
 #include "pipeline_node_run_facts.h"
 
 namespace gui {
@@ -146,6 +147,9 @@ public:
     void SetNodeExecutionCallback(
         std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback);
 
+    /** Figures a step reports about its own run (Word Embeddings epochs), with its node. */
+    void SetOperatorFiguresCallback(std::function<void(const OperatorFigures&)> callback);
+
     /** Facts about each node's latest run (thread-safe; readable during a run). */
     std::map<int, PipelineNodeRunFacts> GetNodeRunFacts() const;
 
@@ -168,6 +172,9 @@ public:
     // Node id -> DataRegistry dataset of the last successful run (the Plot
     // node's result lane reads the table of the node wired into it).
     const std::map<int, std::string>& NodeResults() const { return last_node_results_; }
+    // (node ID, output pin >= 1) -> Arrow table name of the last run, for
+    // operators with more than one table output.
+    const std::map<std::pair<int, int>, std::string>& NodePinResults() const { return last_node_pin_results_; }
     // Node ID -> fitted model file of the last run (nodes with a Model output).
     const std::map<int, std::string>& ModelArtifacts() const { return last_model_artifacts_; }
 
@@ -196,10 +203,13 @@ private:
     };
 
     std::map<int, std::string> last_node_results_;
+    std::map<std::pair<int, int>, std::string> last_node_pin_results_;
     std::map<int, std::string> last_model_artifacts_;
 
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
+        // (node ID, output pin >= 1) -> Arrow table name (extra operator outputs)
+        std::map<std::pair<int, int>, std::string> node_pin_results;
         std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
         std::map<int, std::string> node_outcomes;   // Node ID -> operator outcome summary
         std::map<int, std::string> node_written;    // Node ID -> file an export node wrote
@@ -236,6 +246,7 @@ private:
     std::function<void(bool)> completion_callback_;
     std::function<void(int, PipelineNodeExecutionEvent, const std::string&)>
         node_execution_callback_;
+    std::function<void(const OperatorFigures&)> operator_figures_callback_;
 
     // Latest run facts per node (GetNodeRunFacts); start times of running nodes.
     mutable std::mutex node_run_facts_mutex_;
@@ -337,6 +348,10 @@ private:
                              PipelineNodeExecutionEvent event,
                              const std::string& status = "");
     void NotifyCompletion(bool success);
+    // The table a link from (node_id, source_pin) carries: the pin's own table
+    // for output pins >= 1 when the node published one, else the node's result.
+    static const std::string* ResultForOutput(const ExecutionContext& ctx, int node_id,
+                                              std::optional<int> source_pin);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
     std::vector<std::string> GetInputDatasetNames(const Node& node,
                                                   ExecutionContext& ctx,

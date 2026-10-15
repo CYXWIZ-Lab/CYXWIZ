@@ -97,6 +97,9 @@ KernelChip KernelChipFor(const KernelFacts& f) {
     } else if (!f.started) {
         state = "Starts on first run";
         chip.tone = Tone::Muted;
+    } else if (!f.wanted_interpreter.empty()) {
+        state = "Restart the Engine";
+        chip.tone = Tone::Warning;
     }
     chip.text = "Python";
     if (!f.python_version.empty()) chip.text += " " + f.python_version;
@@ -106,6 +109,12 @@ KernelChip KernelChipFor(const KernelFacts& f) {
     else if (f.busy) chip.tooltip = "A cell is running. Interrupt stops it at the next Python line.";
     else if (f.other_busy) chip.tooltip = "Another script is running in the Engine's Python; cells wait for it.";
     else if (!f.started) chip.tooltip = "Python starts when the first cell runs.";
+    else if (!f.wanted_interpreter.empty())
+        chip.tooltip = "The project's Python is now " + f.wanted_interpreter + ". Python runs inside the Engine and "
+                       "started with " + (f.running_interpreter.empty() ? std::string("another interpreter")
+                                                                         : f.running_interpreter) +
+                       ", so cells use that until the Engine restarts. Restart here only clears this notebook's "
+                       "variables.";
     else chip.tooltip = "This notebook's variables stay until Restart.";
     return chip;
 }

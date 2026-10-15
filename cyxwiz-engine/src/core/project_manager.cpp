@@ -513,6 +513,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
     try {
         // Close any existing project
         if (HasActiveProject()) {
+            if (!MayCloseProject("create another project")) return false;
             CloseProject();
         }
 
@@ -594,6 +595,7 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
                     project_file_path_);
                 return true;
             }
+            if (!MayCloseProject("open another project")) return false;
             CloseProject();
         }
 

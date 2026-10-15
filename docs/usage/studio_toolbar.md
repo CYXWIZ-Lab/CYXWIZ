@@ -37,6 +37,12 @@ highlighted while shown); the node, link and selection counts.
   its progress and **Cancel** while it runs. **Export**.
 - **Compile** (F7), **Local Debug** (F6) and **Train**. While training,
   Train becomes the epoch and **Stop**.
+- While a graph trains (from the moment its data is being prepared), tests,
+  or runs a pipeline or simulation, the graph and the project stay as they
+  are: loading or clearing a graph shows *Graph replacement locked*, and
+  File > New Project, Open Project, Open Recent and Close Project show
+  *Cannot ... the project* with the reason. Stop the run, or wait for it,
+  then try again.
 - Graphs with simulation or RL nodes add **Run Sim** / **Stop Sim** (with the
   simulated time and speed), **Train RL** / **Stop RL** and **Export ONNX**.
 

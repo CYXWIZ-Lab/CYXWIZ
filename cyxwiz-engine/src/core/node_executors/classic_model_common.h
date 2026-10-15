@@ -26,10 +26,14 @@ struct ClassicColumns {
     std::string target_col;
     std::string prediction_col = "prediction";
     std::string model_path;
+    bool probability_columns = false;  // one probability column per class
 };
 
 bool ParseClassicColumns(const std::map<std::string, std::string>& params, const std::string& op_name,
                          ClassicColumns& out, std::string& error);
+// `probability_columns`: true / false (default false).
+bool ParseProbabilityColumns(const std::map<std::string, std::string>& params, const std::string& op_name, bool& out,
+                             std::string& error);
 
 // The training rows of a classic model node.
 struct ClassicTrainingData {
@@ -52,5 +56,23 @@ void SortClassOrder(std::vector<int>& labels, std::vector<std::string>& classes,
 // {feature_names, class_labels, numeric_labels, parameters}} written to `path`.
 bool SaveClassicModelArtifact(const std::string& path, const std::string& model_type,
                               const ClassicTrainingData& data, const nlohmann::json& parameters, std::string* error);
+
+// The input plus the predicted label column (the class text or number) and,
+// with `probability_columns`, one float64 column per class in class order:
+// <prediction_col>_p_<class>. Refuses probability columns the model lacks.
+arrow::Result<std::shared_ptr<arrow::Table>> AppendClassicPredictions(const std::shared_ptr<arrow::Table>& input,
+                                                                     const std::string& prediction_col,
+                                                                     bool probability_columns,
+                                                                     const std::vector<std::string>& classes,
+                                                                     bool numeric_labels,
+                                                                     const ClassicPrediction& prediction,
+                                                                     const std::string& op_name);
+
+// The input plus a float64 prediction column (regressors); refuses a column
+// name already in the input.
+arrow::Result<std::shared_ptr<arrow::Table>> AppendNumericPredictions(const std::shared_ptr<arrow::Table>& input,
+                                                                     const std::string& prediction_col,
+                                                                     const std::vector<double>& values,
+                                                                     const std::string& op_name);
 
 }  // namespace cyxwiz

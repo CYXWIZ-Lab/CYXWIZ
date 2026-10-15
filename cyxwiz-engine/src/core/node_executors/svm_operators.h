@@ -3,6 +3,8 @@
 // SVM nodes (TOFIX145 Group C): support vector machines fitted on the device
 // (ClassicML::FitSVC / FitSVR, scikit-learn's SVC / SVR on libsvm's SMO). The
 // regressor appends a numeric prediction column; its target must be numeric.
+// The classifier's probability columns are scikit-learn's SVC(probability=True)
+// (ClassicML::FitSVCProbability).
 
 #include "classic_model_common.h"
 
@@ -49,6 +51,9 @@ public:
 private:
     ClassicColumns columns_;
     SVMKernelSettings settings_;
+    // Probability columns: Platt's 5-fold calibration, with scikit-learn's
+    // random_state for the folds.
+    int random_state_ = 0;
 };
 
 }  // namespace cyxwiz

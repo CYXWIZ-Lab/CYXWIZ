@@ -728,14 +728,20 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         char buf[512];
         std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = '\0';
-        const float browse = cyxwiz::ui::ButtonWidth("Browse", cyxwiz::ui::ButtonSize::Small);
+        // A folder icon instead of a "Browse" label leaves the path its width
+        // in a narrow panel; hovering the path shows all of it.
+        const char* browse_label = ICON_FA_FOLDER_OPEN "##browse";
+        const float browse = cyxwiz::ui::ButtonWidth(browse_label, cyxwiz::ui::ButtonSize::Small);
         ImGui::SetNextItemWidth(std::max(40.0f, editor_width - browse - t.space_sm));
         if (ImGui::InputText("##value", buf, sizeof(buf))) {
             value = buf;
             changed = true;
         }
+        if (!value.empty()) cyxwiz::ui::Tooltip(value.c_str());
         ImGui::SameLine(0.0f, t.space_sm);
-        if (cyxwiz::ui::SecondaryButton("Browse")) {
+        const bool browse_clicked = cyxwiz::ui::SecondaryButton(browse_label);
+        cyxwiz::ui::Tooltip(folder ? "Choose a folder" : "Choose a file");
+        if (browse_clicked) {
             std::optional<std::string> picked;
             if (folder) {
                 picked = cyxwiz::FileDialogs::SelectFolder("Select Folder", value.empty() ? nullptr : value.c_str());
@@ -748,7 +754,7 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
                     param.name == "state_path" ? "Load Fitted State" : "Select File",
                     param.name == "state_path"
                         ? cyxwiz::FileDialogs::FilterList{{"CyxWiz Fitted State", "cyxstate.json"}, {"JSON", "json"}}
-                        : cyxwiz::FileDialogs::FilterList{{"All Files", "*"}},
+                        : properties_rules::FileParameterFilters(param),
                     value.empty() ? nullptr : value.c_str());
             }
             if (picked) {

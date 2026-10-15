@@ -120,15 +120,14 @@ The metadata file records:
 - Defines how text is split into tokens.
 - The default demo now uses character tokenization because code syntax is punctuation-heavy and whitespace tokenization was too sparse.
 - It also sets the max sequence length used by the pipeline.
-
-`TextVocabulary`
-- Loads the fixed vocabulary from `codefeedback_vocab.txt`.
-- This keeps token IDs stable between training and inference.
-- Without this, the model and the inference script would not agree on token indices.
-
-`TextPadding`
-- Pads or truncates every sample to the same sequence length.
-- CyxWiz needs a fixed-width tensor for batching.
+- It loads the fixed vocabulary from `codefeedback_vocab.txt` (`vocab_file`).
+  This keeps token IDs stable between training and inference; without it the
+  model and the inference script would not agree on token indices.
+- It pads or truncates every sample to the same sequence length
+  (`max_length`, `pad_value`): CyxWiz needs a fixed-width tensor for batching.
+- Its output is a table, linked straight to `DataSplit`. (The separate
+  `TextVocabulary` and `TextPadding` nodes are retired; their settings live on
+  the Tokenizer.)
 
 `DataSplit`
 - Splits the data into train, validation, and test partitions.
@@ -185,7 +184,7 @@ Open the generated graph:
 Then:
 1. Open `Data Input`.
 2. Confirm the CSV path is correct.
-3. Confirm the vocab file path is correct in `TextVocabulary`.
+3. Confirm the vocab file path is correct in the `TextTokenizer` (`vocab_file`).
 4. Apply the data node.
 5. Compile the graph.
 6. Train the model.

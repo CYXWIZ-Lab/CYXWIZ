@@ -1,4 +1,5 @@
 #include "properties_parameter_rules.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -154,6 +155,26 @@ bool ShouldUseSaveFileDialog(
     const auto mode = node.parameters.find("operation_mode");
     return mode == node.parameters.end() ||
            mode->second != "transform_only";
+}
+
+std::vector<std::pair<std::string, std::string>> FileParameterFilters(
+    const cyxwiz::ParameterDefinition& param) {
+    std::string extensions;
+    size_t start = 0;
+    while (start <= param.validation.size()) {
+        const size_t end = std::min(param.validation.find(';', start), param.validation.size());
+        std::string pattern = param.validation.substr(start, end - start);
+        while (!pattern.empty() && pattern.front() == ' ') pattern.erase(pattern.begin());
+        while (!pattern.empty() && pattern.back() == ' ') pattern.pop_back();
+        if (pattern.rfind("*.", 0) == 0 && pattern.size() > 2) {
+            extensions += (extensions.empty() ? "" : ",") + pattern.substr(2);
+        }
+        start = end + 1;
+    }
+    std::vector<std::pair<std::string, std::string>> filters;
+    if (!extensions.empty()) filters.emplace_back("Supported files", extensions);
+    filters.emplace_back("All Files", "*");
+    return filters;
 }
 
 bool ValidateParameter(

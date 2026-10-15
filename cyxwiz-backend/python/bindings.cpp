@@ -3125,15 +3125,21 @@ Example queries:
     // These functions allow Python RL training scripts (SB3) to stream metrics
     // back to the C++ TrainingDashboardPanel and check pause/stop state.
 
-    static std::function<void(const std::string&, float)> s_rl_metric_callback;
+    // The callback holds a Python object, so it is never destroyed by a static
+    // destructor: at process exit the module's statics go after the embedding
+    // Engine's thread state, and releasing a Python object then crashed the
+    // Engine on close (access violation in python312.dll). Read and written
+    // under the GIL; a call works on its own copy.
+    using RLMetricCallback = std::function<void(const std::string&, float)>;
+    static auto* s_rl_metric_callback = new RLMetricCallback();
     static std::atomic<bool> s_rl_stop_requested{false};
     static std::atomic<bool> s_rl_paused{false};
 
     m.def("rl_set_metric_callback", [](py::object callback) {
         if (callback.is_none()) {
-            s_rl_metric_callback = nullptr;
+            *s_rl_metric_callback = nullptr;
         } else {
-            s_rl_metric_callback = [callback](const std::string& name, float value) {
+            *s_rl_metric_callback = [callback](const std::string& name, float value) {
                 py::gil_scoped_acquire acquire;
                 callback(name, value);
             };
@@ -3142,9 +3148,10 @@ Example queries:
        "Set a callback function(name: str, value: float) for RL metric updates");
 
     m.def("rl_update_metric", [](const std::string& name, float value) {
-        if (s_rl_metric_callback) {
+        const RLMetricCallback callback = *s_rl_metric_callback;
+        if (callback) {
             py::gil_scoped_release release;
-            s_rl_metric_callback(name, value);
+            callback(name, value);
         }
     }, py::arg("name"), py::arg("value"),
        "Update an RL metric on the dashboard (thread-safe)");

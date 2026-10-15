@@ -594,6 +594,9 @@ enum class NodeType {
     // ===== Appended Dashboard node (TOFIX134 P3) =====
     Dashboard,          // Dashboard of the data at this point (one input, no output)
 
+    // ===== Appended Classic Model Predictor (TOFIX145) =====
+    ClassicModelPredictor, // Apply a fitted classic ML model (Model input or saved file)
+
     // Special sentinel value
     Unknown
 };

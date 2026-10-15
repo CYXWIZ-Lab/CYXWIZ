@@ -362,6 +362,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSLag",
         "TSWindow",
         "ValueCounts",
+        "WordEmbeddings",
     };
     return names;
 }
@@ -3494,7 +3495,6 @@ int main(int argc, char** argv) {
         {"ExportExcel", false},
         {"IFFTNode", false},
         {"WaveletTransform", false},
-        {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
@@ -4011,6 +4011,38 @@ int main(int argc, char** argv) {
           "TextTokenizer tokenizer_type validation should be central and specific: " +
               bad_text_tokenizer_type_executor.GetLastError());
 
+    const std::string bad_word_embeddings_architecture_json =
+        R"({"nodes":[)"
+        R"({"id":362,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":363,"type":"WordEmbeddings","name":"BadWordModel","parameters":{)"
+        R"("source":"word2vec","text_col":"phrase","architecture":"glove"}})"
+        R"(],"links":[{"start_node":362,"end_node":363}]})";
+
+    cyxwiz::PipelineExecutor bad_word_embeddings_architecture_executor;
+    Check(!bad_word_embeddings_architecture_executor.ExecutePipeline(
+              bad_word_embeddings_architecture_json),
+          "WordEmbeddings unsupported architecture should fail validation");
+    Check(bad_word_embeddings_architecture_executor.GetLastError().find("architecture") != std::string::npos &&
+              bad_word_embeddings_architecture_executor.GetLastError().find("glove") != std::string::npos,
+          "WordEmbeddings architecture validation should be central and specific: " +
+              bad_word_embeddings_architecture_executor.GetLastError());
+
+    const std::string bad_word_embeddings_unseen_json =
+        R"({"nodes":[)"
+        R"({"id":364,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":365,"type":"WordEmbeddings","name":"BadUnseenWords","parameters":{)"
+        R"("source":"fasttext","text_col":"phrase","unseen_words":"guess"}})"
+        R"(],"links":[{"start_node":364,"end_node":365}]})";
+    cyxwiz::PipelineExecutor bad_word_embeddings_unseen_executor;
+    Check(!bad_word_embeddings_unseen_executor.ExecutePipeline(bad_word_embeddings_unseen_json) &&
+              bad_word_embeddings_unseen_executor.GetLastError().find("unseen_words") != std::string::npos,
+          "WordEmbeddings unseen_words validation should be central and specific: " +
+              bad_word_embeddings_unseen_executor.GetLastError());
+
     const std::string bad_linear_regression_intercept_json =
         R"({"nodes":[)"
         R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"
@@ -4072,6 +4104,115 @@ int main(int argc, char** argv) {
     }
     Check(regression_artifact_count == 1,
           "regression fit should create one project-owned Model artifact");
+
+    // Classic Model Predictor (TOFIX145): the Model pin, then the saved file.
+    const fs::path classic_artifact_root =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_classic_artifacts";
+    fs::remove_all(classic_artifact_root);
+    const std::string classic_model_pin_json =
+        R"({"nodes":[)"
+        R"({"id":9211,"type":"DataInput","name":"Labelled","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9212,"type":"NaiveBayesClassifier","name":"Fit NB","parameters":{"target_col":"label"}},)"
+        R"({"id":9213,"type":"ClassicModelPredictor","name":"Score NB","parameters":{"prediction_col":"scored"}})"
+        R"(],"links":[)"
+        R"({"start_node":9211,"end_node":9212,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9211,"end_node":9213,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9212,"end_node":9213,"start_pin_index":1,"end_pin_index":1})"
+        R"(]})";
+    cyxwiz::PipelineExecutor classic_model_pin_executor;
+    classic_model_pin_executor.SetArtifactRoot(classic_artifact_root.string());
+    Check(classic_model_pin_executor.ExecutePipeline(classic_model_pin_json),
+          "a classic Model output should route into the Classic Model Predictor: " +
+              classic_model_pin_executor.GetLastError());
+    auto classic_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9213");
+    Check(classic_scored != nullptr, "Classic Model Predictor should register its scored table");
+    Check(ReadNumericValue(classic_scored->GetArrowTable(), "scored", 0) == 0.0 &&
+              ReadNumericValue(classic_scored->GetArrowTable(), "scored", 3) == 1.0,
+          "Classic Model Predictor should score with the fitted naive Bayes model");
+    fs::path classic_saved_model;
+    for (const auto& entry : fs::recursive_directory_iterator(classic_artifact_root)) {
+        if (entry.is_regular_file() && entry.path().string().find(".cyxclassic.json") != std::string::npos)
+            classic_saved_model = entry.path();
+    }
+    Check(!classic_saved_model.empty(), "the naive Bayes fit should save its model");
+
+    const std::string classic_saved_file_json =
+        R"({"nodes":[)"
+        R"({"id":9214,"type":"DataInput","name":"New rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9215,"type":"ClassicModelPredictor","name":"Score saved","parameters":{"model_path":")" +
+        JsonEscapePath(classic_saved_model.string()) + R"("}})"
+        R"(],"links":[{"start_node":9214,"end_node":9215,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_saved_file_executor;
+    Check(classic_saved_file_executor.ExecutePipeline(classic_saved_file_json),
+          "Classic Model Predictor should load a saved model file: " + classic_saved_file_executor.GetLastError());
+    auto classic_saved_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9215");
+    Check(classic_saved_scored != nullptr &&
+              ReadNumericValue(classic_saved_scored->GetArrowTable(), "prediction", 3) == 1.0,
+          "the saved model should score like the one from the Model pin");
+
+    const std::string classic_no_model_json =
+        R"({"nodes":[)"
+        R"({"id":9216,"type":"DataInput","name":"Rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9217,"type":"ClassicModelPredictor","name":"No model","parameters":{}})"
+        R"(],"links":[{"start_node":9216,"end_node":9217,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_no_model_executor;
+    Check(!classic_no_model_executor.ExecutePipeline(classic_no_model_json) &&
+              classic_no_model_executor.GetLastError().find("Model output") != std::string::npos,
+          "Classic Model Predictor without a model should say how to give it one: " +
+              classic_no_model_executor.GetLastError());
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9213");
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9215");
+    fs::remove_all(classic_artifact_root);
+
+    // Word Embeddings (TOFIX152): pin 0 is the vectors table, pin 1 the input
+    // rows with their mean vectors; each downstream link reads its own pin.
+    const fs::path word_vectors_dir = fs::temp_directory_path() / "cyxwiz_pipeline_executor_word_vectors";
+    fs::remove_all(word_vectors_dir);
+    fs::create_directories(word_vectors_dir);
+    const fs::path word_vectors_file = word_vectors_dir / "small.vec";
+    std::ofstream(word_vectors_file) << "3 2\nthe 1 2\nparis 3 5\nlondon -1 0.5\n";
+    const fs::path word_text_csv = word_vectors_dir / "texts.csv";
+    std::ofstream(word_text_csv) << "text\nthe paris\nlondon\nthe\nnothing here\n";
+    const fs::path word_vectors_saved = word_vectors_dir / "saved.vec";
+    const std::string word_embeddings_json =
+        R"({"nodes":[)"
+        R"({"id":9401,"type":"DataInput","name":"Texts","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(word_text_csv.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9402,"type":"WordEmbeddings","name":"Vectors","parameters":{"vectors_file":")" +
+        JsonEscapePath(word_vectors_file.string()) + R"(","text_col":"text","row_vectors":"true","vectors_path":")" +
+        JsonEscapePath(word_vectors_saved.string()) + R"("}},)"
+        R"({"id":9403,"type":"RowCountCheck","name":"Words","parameters":{"check_name":"words","expected_rows":"3"}},)"
+        R"({"id":9404,"type":"RowCountCheck","name":"Rows","parameters":{"check_name":"rows","expected_rows":"4"}})"
+        R"(],"links":[)"
+        R"({"start_node":9401,"end_node":9402,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9403,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9404,"start_pin_index":1,"end_pin_index":0})"
+        R"(]})";
+    cyxwiz::PipelineExecutor word_embeddings_executor;
+    Check(word_embeddings_executor.ExecutePipeline(word_embeddings_json),
+          "Word Embeddings should run with both output pins routed: " + word_embeddings_executor.GetLastError());
+    auto word_rows = registry.GetArrowDataset("ds_operator_RowCountCheck_9404");
+    Check(word_rows != nullptr && word_rows->GetArrowTable()->GetColumnByName("emb_1") != nullptr &&
+              word_rows->GetArrowTable()->num_rows() == 4,
+          "the node linked to the Rows pin should get the rows with their mean vectors");
+    auto word_table = registry.GetArrowDataset("ds_operator_RowCountCheck_9403");
+    Check(word_table != nullptr && word_table->GetArrowTable()->GetColumnByName("word") != nullptr,
+          "the node linked to the Vectors pin should get the vectors table");
+    Check(word_embeddings_executor.NodePinResults().count({9402, 1}) == 1,
+          "the Rows table is published for pin 1");
+    Check(fs::exists(word_vectors_saved), "Word Embeddings saves its vectors");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9403");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9404");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402_pin1");
+    fs::remove_all(word_vectors_dir);
 
     const std::string bad_linear_regression_feature_type_json =
         R"({"nodes":[)"

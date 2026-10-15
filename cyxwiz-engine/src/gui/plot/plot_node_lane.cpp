@@ -277,12 +277,22 @@ void PlotNodeLane::Finish(Entry& e) {
                 s.error = error;
             }
         } else {
-            const auto& results = e.executor->NodeResults();
-            auto it = results.find(e.plan.feeder_id);
-            auto dataset = it != results.end() ? DataRegistry::Instance().GetArrowDataset(it->second) : nullptr;
+            // A link from a second output (Word Embeddings' Rows) reads that
+            // pin's table, not the node's main result.
+            std::string result_name;
+            if (e.plan.feeder_pin > 0) {
+                const auto& pins = e.executor->NodePinResults();
+                const auto pin = pins.find({e.plan.feeder_id, e.plan.feeder_pin});
+                if (pin != pins.end()) result_name = pin->second;
+            } else {
+                const auto& results = e.executor->NodeResults();
+                const auto it = results.find(e.plan.feeder_id);
+                if (it != results.end()) result_name = it->second;
+            }
+            auto dataset = result_name.empty() ? nullptr : DataRegistry::Instance().GetArrowDataset(result_name);
             if (dataset && dataset->GetArrowTable()) {
                 s.table = dataset->GetArrowTable();
-                s.dataset_name = it->second;
+                s.dataset_name = result_name;
                 s.read_at = ClockNow();
                 ++s.data_version;
                 s.state = Status::State::Ready;

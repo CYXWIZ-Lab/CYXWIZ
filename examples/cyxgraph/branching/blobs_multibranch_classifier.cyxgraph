@@ -1,0 +1,83 @@
+{
+  "id": "blobs_multibranch_classifier",
+  "name": "Multi-branch classifier (residual + wide)",
+  "description": "A graph that branches and merges: every batch goes three ways at once. A deep branch (Dense, ReLU, Dense) is added to a one-layer projection of the same input (a residual connection, Add), and a wide Tanh branch is concatenated beside it before the classifier head. Data: examples/datasets/metric_blobs.csv (480 rows, 8 features, 4 classes). Open it, then Compile (F7) and Train (F5).",
+  "category": "Classification",
+  "tags": ["branching", "residual", "concatenate", "add", "multi-branch", "classification", "tabular"],
+  "parameters": [
+    {
+      "name": "hidden_units",
+      "type": "int",
+      "default_value": "32",
+      "description": "Width of the deep branch and of its projection (they are added, so they match)"
+    },
+    {
+      "name": "wide_units",
+      "type": "int",
+      "default_value": "16",
+      "description": "Width of the wide Tanh branch"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.005",
+      "description": "Adam learning rate"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "30",
+      "description": "Number of training epochs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "in", "type": "DataInput", "name": "Metric blobs", "pos": [0, 240],
+       "params": {"file_path": "examples/datasets/metric_blobs.csv", "file_category": "tabular", "file_type": "csv",
+                  "has_header": "true", "label_column": "class"}},
+      {"id": "split", "type": "DataSplit", "name": "Split 70 / 15 / 15", "pos": [240, 240],
+       "params": {"train_ratio": "0.7", "val_ratio": "0.15", "test_ratio": "0.15", "seed": "42", "stratified": "true"}},
+      {"id": "loader", "type": "DataLoader", "name": "Loader", "pos": [480, 240],
+       "params": {"batch_size": "32", "epochs": "$epochs", "shuffle": "true", "drop_last": "false", "num_workers": "0"}},
+
+      {"id": "deep1", "type": "Dense", "name": "Deep: Dense", "pos": [760, 0], "params": {"units": "$hidden_units"}},
+      {"id": "deep_relu", "type": "ReLU", "name": "Deep: ReLU", "pos": [980, 0], "params": {}},
+      {"id": "deep2", "type": "Dense", "name": "Deep: Dense 2", "pos": [1200, 0], "params": {"units": "$hidden_units"}},
+      {"id": "proj", "type": "Dense", "name": "Projection (skip)", "pos": [980, 170], "params": {"units": "$hidden_units"}},
+      {"id": "residual", "type": "Add", "name": "Residual Add", "pos": [1440, 90], "params": {}},
+      {"id": "res_relu", "type": "ReLU", "name": "ReLU", "pos": [1660, 90], "params": {}},
+
+      {"id": "wide1", "type": "Dense", "name": "Wide: Dense", "pos": [760, 420], "params": {"units": "$wide_units"}},
+      {"id": "wide_tanh", "type": "Tanh", "name": "Wide: Tanh", "pos": [980, 420], "params": {}},
+
+      {"id": "merge", "type": "Concatenate", "name": "Concatenate", "pos": [1880, 240], "params": {"dim": "1"}},
+      {"id": "drop", "type": "Dropout", "name": "Dropout", "pos": [2100, 240], "params": {"rate": "0.1"}},
+      {"id": "head", "type": "Dense", "name": "Classes (4)", "pos": [2320, 240], "params": {"units": "4"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Cross Entropy", "pos": [2540, 240], "params": {}},
+      {"id": "adam", "type": "Adam", "name": "Adam", "pos": [2760, 240],
+       "params": {"learning_rate": "$learning_rate"}},
+      {"id": "out", "type": "Output", "name": "Output", "pos": [2980, 240], "params": {"num_classes": "4"}}
+    ],
+    "links": [
+      {"from": "in", "to": "split"},
+      {"from": "split", "to": "loader"},
+      {"from": "loader", "to": "deep1"},
+      {"from": "loader", "to": "proj"},
+      {"from": "loader", "to": "wide1"},
+      {"from": "deep1", "to": "deep_relu"},
+      {"from": "deep_relu", "to": "deep2"},
+      {"from": "deep2", "to": "residual", "from_pin": 0, "to_pin": 0},
+      {"from": "proj", "to": "residual", "from_pin": 0, "to_pin": 1},
+      {"from": "residual", "to": "res_relu"},
+      {"from": "wide1", "to": "wide_tanh"},
+      {"from": "res_relu", "to": "merge", "from_pin": 0, "to_pin": 0},
+      {"from": "wide_tanh", "to": "merge", "from_pin": 0, "to_pin": 1},
+      {"from": "merge", "to": "drop"},
+      {"from": "drop", "to": "head"},
+      {"from": "head", "to": "loss"},
+      {"from": "loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "adam"},
+      {"from": "adam", "to": "out"}
+    ]
+  }
+}

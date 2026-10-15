@@ -748,6 +748,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::RegressionModelPredictor,
         "classic_ml",
         "Table-path inference node for fitted linear and polynomial regression artifacts.");
+    apply_workflow_lane_guidance(
+        NodeType::ClassicModelPredictor,
+        "classic_ml",
+        "Table-path inference node for fitted classic ML models (Model input or saved file).");
 
     const std::string simulation_reason =
         "GraphExecutor owns bounded scalar control evaluation for the live "
@@ -2014,6 +2018,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"random_state", "int", "0", "Seed of the 5-fold split that calibrates the probabilities (scikit-learn random_state); used with Probability columns", {}, "0-2147483647", "Random state", "Model"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"C", "float", "1.0", "Penalty for margin violations; smaller is a softer, more regularised margin", {}, "", "Regularisation (C)", "Model"},
          {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
@@ -2033,6 +2039,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"n_neighbors", "int", "5", "Training rows that vote for each prediction", {}, "", "Neighbours", "Model"},
          {"weights", "enum", "uniform", "Every neighbour votes equally, or closer neighbours count more (1/distance)", {"uniform", "distance"}, "", "Weights", "Model"},
@@ -2049,6 +2056,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"var_smoothing", "float", "1e-9", "Share of the largest feature variance added to every variance (scikit-learn var_smoothing)", {}, "", "Variance smoothing", "Model"}},
         NodeImplementationStatus::Implemented, 0});
@@ -2063,6 +2071,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
          {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"C", "float", "1.0", "Inverse of the L2 regularisation strength; smaller is stronger", {}, "", "Regularisation (C)", "Model"},
          {"max_iter", "int", "100", "Most L-BFGS iterations; the log warns when the fit stops before tol", {}, "", "Maximum iterations", "Model"},
@@ -2119,6 +2128,20 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, true, "Fitted regression artifact from a regression node"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus a Float32 prediction column"}},
         {{"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ClassicModelPredictor, NodeCategory::Analytics, "Classic Model Predictor", ICON_FA_FILE_IMPORT,
+        {"classic", "model", "predict", "predictor", "inference", "artifact", "classic ml", "naive bayes", "knn",
+         "logistic", "svm", "saved"}, 0, false, "Fitted classic ML model inference",
+        "Applies a fitted Naive Bayes, KNN, Logistic Regression, SVM Classifier or SVM Regressor model to a table and "
+        "appends a prediction column. The model comes from the Model input, or from a saved model file when the Model "
+        "input is not connected. Feature columns are matched by the names the model was fitted on.", "",
+        {{"Data", PinType::Dataset, true, "Input table with the model's feature columns"},
+         {"Model", PinType::Parameters, false, "Fitted model from a classic ML node; when connected it is used instead of the saved model file"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"model_path", "file", "", "Saved classic model (.cyxclassic.json) to use when the Model input is not connected", {}, "*.cyxclassic.json;*.json", "Saved model", "Artifact"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
     // Model Evaluation
@@ -3795,7 +3818,7 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         {"tokenize", "text", "nlp", "vocabulary", "padding"}, 0, false,
         "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Tokens", PinType::Tensor, true, "Token indices"}},
+        {{"Tokens", PinType::Dataset, true, "Token table: the token id columns and the label, for Data Split"}},
         {{"tokenizer_type", "enum", "1", "Mode (3: Byte BPE; 4: WordPiece; 5/6: optional SentencePiece; Byte BPE lowercase=false)", {"0", "1", "2", "3", "4", "5", "6"}, ""},
          {"text_col", "string", "", "Text column", {}, "Required for encoding and round-trip modes; ignored by decode mode."},
          {"output_mode", "enum", "wide", "Token output", {"wide", "causal_windows", "decode", "roundtrip"}, ""},
@@ -4795,13 +4818,50 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
          {"kernel", "string", "0.25,0.5,0.25", "Required comma-separated finite kernel taps", {}, "", "", "", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
-        {"embeddings", "word2vec", "glove", "vectors", "nlp"}, 0, false,
-        "Word Embeddings", "", "",
-        {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Embeddings", PinType::Dataset, false, "Embeddings"}},
-        {{"method", "dropdown", "word2vec", "Method", {"word2vec", "glove", "fasttext"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode(WithPropertiesEditor({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
+        {"embeddings", "word2vec", "glove", "fasttext", "vectors", "pretrained", "nlp"}, 0, false,
+        "Word vectors from a pretrained file or trained with word2vec, GloVe or fastText",
+        "Reads GloVe / fastText / word2vec vectors (.txt, .vec, .bin) and fastText models (.bin), or trains word2vec "
+        "(skip-gram or CBOW), GloVe or fastText (word2vec with character n-grams) on a text column on the selected "
+        "device, lines them up with a vocabulary (the Text Tokenizer's vocabulary file; with fastText, tokens without "
+        "a vector are built from their n-grams) and saves them for an Embedding layer to load. Optionally adds each "
+        "row's mean word vector as columns.", "",
+        {{"Text", PinType::Dataset, true, "Table with the text column (for training and row vectors)"}},
+        {{"Vectors", PinType::Dataset, false, "word, v_0 .. v_{d-1}: one row per vocabulary token, in token-id order (also saved; an Embedding layer loads the file)"},
+         {"Rows", PinType::Dataset, false, "The input plus emb_0 .. emb_{d-1}, each row's mean word vector (with Row vectors on)"}},
+        {{"source", "enum", "pretrained", "Pretrained vector file, or train word2vec, GloVe or fastText on the text column", {"pretrained", "word2vec", "glove", "fasttext"}, "", "Source", "Source"},
+         {"vectors_file", "file", "", "Pretrained vectors: GloVe .txt, fastText / word2vec .vec, word2vec .bin, fastText model .bin", {}, "*.txt;*.vec;*.bin", "Vector file", "Source"},
+         {"max_words", "int", "0", "Read at most this many words of the file (0: all)", {}, "", "Read at most", "Source"},
+         {"text_col", "string", "", "Text column to train on and to average for row vectors", {}, "", "Text column", "Source"},
+         {"vocab_file", "file", "", "Vocabulary to line the vectors up with (the Text Tokenizer's vocabulary file); empty keeps the vectors' own words", {}, "*.txt", "Vocabulary file", "Vocabulary"},
+         {"lowercase_fallback", "bool", "true", "Look a token up in lowercase when it is not found as written", {}, "", "Match lowercase", "Vocabulary"},
+         {"missing", "enum", "zeros", "Rows of tokens without a vector: zeros, or random at the vectors' spread", {"zeros", "random"}, "", "Missing words", "Vocabulary"},
+         {"unknown", "enum", "mean", "The unknown token's row: the mean vector, or as a missing word", {"mean", "missing"}, "", "Unknown token", "Vocabulary"},
+         {"seed", "int", "0", "Seed of the random rows of missing words", {}, "", "Random seed", "Vocabulary"},
+         {"unseen_words", "enum", "pieces", "fastText: tokens without a vector (with a letter or digit) built from their character n-grams, or treated as missing words", {"pieces", "missing"}, "", "Words not trained", "Vocabulary"},
+         {"architecture", "enum", "skipgram", "word2vec and fastText model: skip-gram predicts the context from a word, CBOW a word from its context", {"skipgram", "cbow"}, "", "Model", "word2vec"},
+         {"vector_size", "int", "100", "Values per word vector (word2vec, GloVe and fastText)", {}, "", "Vector size", "Training"},
+         {"window", "int", "5", "Largest distance between a word and its context", {}, "", "Window", "word2vec"},
+         {"min_count", "int", "5", "Words seen fewer times are left out (word2vec, GloVe and fastText)", {}, "", "Minimum count", "Training"},
+         {"negative", "int", "5", "Noise words per example (negative sampling)", {}, "", "Negative samples", "word2vec"},
+         {"epochs", "int", "5", "Passes over the text", {}, "", "Epochs", "word2vec"},
+         {"sample", "float", "1e-3", "Down-sampling threshold for frequent words (0: off)", {}, "", "Down-sampling", "word2vec", false, true},
+         {"alpha", "float", "0.025", "Starting learning rate", {}, "", "Learning rate", "word2vec", false, true},
+         {"min_alpha", "float", "0.0001", "Learning rate at the end", {}, "", "Final learning rate", "word2vec", false, true},
+         {"batch_size", "int", "2048", "Examples per device step (word2vec and fastText)", {}, "", "Batch", "word2vec", false, true},
+         {"train_seed", "int", "1", "Seed of the initial vectors and the sampling (word2vec, GloVe and fastText); the same seed repeats a run", {}, "", "Seed", "Training"},
+         {"glove_window", "int", "10", "GloVe: largest distance between two counted words (a pair d apart counts 1/d)", {}, "", "Window", "GloVe"},
+         {"glove_epochs", "int", "25", "GloVe: passes over the word pairs", {}, "", "Epochs", "GloVe"},
+         {"x_max", "float", "100", "GloVe: pairs seen more often all weigh the same", {}, "", "Count cap", "GloVe", false, true},
+         {"weighting_power", "float", "0.75", "GloVe: weight of rarer pairs, (count / x_max) to this power", {}, "", "Weighting power", "GloVe", false, true},
+         {"glove_learning_rate", "float", "0.05", "GloVe: AdaGrad learning rate", {}, "", "Learning rate", "GloVe", false, true},
+         {"glove_batch", "int", "8192", "GloVe: word pairs per device step", {}, "", "Batch", "GloVe", false, true},
+         {"min_n", "int", "3", "fastText: shortest character n-gram of \"<word>\"", {}, "", "Pieces from", "fastText"},
+         {"max_n", "int", "6", "fastText: longest character n-gram", {}, "", "Pieces to", "fastText"},
+         {"bucket", "int", "2000000", "fastText: rows the n-grams are hashed into (4 x vector size bytes each on the device)", {}, "", "Buckets", "fastText", false, true},
+         {"vectors_path", "file", "", "Where the vectors are saved (word2vec .vec text); empty saves them in the project's artifacts", {}, "*.vec", "Save vectors", "Outputs"},
+         {"row_vectors", "bool", "false", "Also output each row's mean word vector as columns emb_0 .. emb_{d-1} (Rows pin)", {}, "", "Row vectors", "Outputs"}},
+        NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 
     RegisterNode({NodeType::NamedEntityRecognizer, NodeCategory::TextProcessing, "NER", ICON_FA_TAG,
         {"ner", "named", "entity", "recognition", "nlp"}, 0, false,

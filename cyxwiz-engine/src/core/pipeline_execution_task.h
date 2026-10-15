@@ -1,10 +1,14 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
+
+#include "operator_figures.h"
 
 namespace cyxwiz {
 
@@ -22,10 +26,15 @@ public:
                 PipelineNodeExecutionEvent event,
                 const std::string& status);
     PipelineExecutionSnapshot GetSnapshot() const;
+    // Figures steps reported about their own runs, in order; `from` skips
+    // the ones already read.
+    void RecordFigures(const OperatorFigures& figures);
+    std::vector<OperatorFigures> GetFigures(size_t from) const;
 
 private:
     mutable std::mutex mutex_;
     PipelineExecutionSnapshot snapshot_;
+    std::vector<OperatorFigures> figures_;
 };
 
 struct PipelineExecutionSubmission {

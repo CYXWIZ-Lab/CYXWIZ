@@ -55,14 +55,6 @@ void PostPlotPanelUpdate(
         });
 }
 
-bool HasActiveGraphTrainingPreparation() {
-    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
-    return std::any_of(
-        tasks.begin(), tasks.end(), [](const cyxwiz::TaskInfo& task) {
-            return task.name == kGraphTrainingPreparationTaskName;
-        });
-}
-
 void ReportMaterializationProgress(
     cyxwiz::LambdaTask& task,
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
@@ -97,6 +89,13 @@ void ReportMaterializationProgress(
         plot_panel,
         [event, message, task_progress](cyxwiz::TrainingPlotPanel& panel) {
             panel.SetPreparationState(true, message, task_progress);
+            // A Word Embeddings node training while the model prepares: its
+            // own run on the dashboard.
+            if (!event.figures.empty() || !event.notes.empty()) {
+                panel.RecordWordVectorFigures(event.Figures());
+            } else if (event.node_id >= 0) {
+                panel.RecordWordVectorProgress(event.node_id, event.progress, event.message);
+            }
             panel.RecordMaterializationProgress(
                 event.stage,
                 message,
@@ -1090,6 +1089,21 @@ cyxwiz::MaterializationCachePruneResult ClearGraphMaterializationCache(
                  result.removed_entries == 1 ? "y" : "ies",
                  result.freed_bytes);
     return result;
+}
+
+bool HasActiveGraphTrainingPreparation() {
+    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
+    return std::any_of(
+        tasks.begin(), tasks.end(), [](const cyxwiz::TaskInfo& task) {
+            return task.name == kGraphTrainingPreparationTaskName;
+        });
+}
+
+bool CancelGraphTrainingPreparation() {
+    for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetActiveTasks()) {
+        if (task.name == kGraphTrainingPreparationTaskName) return cyxwiz::AsyncTaskManager::Instance().Cancel(task.id);
+    }
+    return false;
 }
 
 } // namespace gui

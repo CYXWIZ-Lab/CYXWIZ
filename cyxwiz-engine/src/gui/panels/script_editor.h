@@ -613,6 +613,8 @@ private:
     // Status bar: the Python the editor runs with (refreshed every 2 s)
     std::string python_status_;
     std::string python_tooltip_;
+    std::string python_wanted_path_;   // the project's interpreter when it differs from the running one
+    std::string python_running_path_;
     double python_status_time_ = -10.0;
 
     static constexpr std::uint64_t kEditableFileLimitBytes = 4ULL * 1024ULL * 1024ULL;

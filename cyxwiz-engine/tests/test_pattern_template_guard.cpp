@@ -1,9 +1,12 @@
+#include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/patterns/pattern_library.h"
 #include "../src/gui/node_import_guardrails.h"
+#include "../src/gui/node_type_import_registry.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cctype>
 #include <filesystem>
@@ -167,6 +170,42 @@ void CheckNoLocalAbsolutePaths(const nlohmann::json& value, const std::string& c
             CheckNoLocalAbsolutePaths(it.value(), context + "." + it.key());
         }
     }
+}
+
+// Every parameter a shipped pattern sets on a node is one that node defines:
+// an unknown key (the Embedding's "vocab_size" for num_embeddings) is silently
+// ignored, and the node falls back to its default.
+void CheckShippedPatternParameterNames() {
+    const auto dir = FindRepoRoot() / "cyxwiz-engine" / "resources" / "patterns";
+    Check(std::filesystem::is_directory(dir), "shipped pattern folder not found: " + dir.string());
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    std::string unknown;
+    size_t checked = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() != ".cyxgraph") continue;
+        const auto pattern = nlohmann::json::parse(ReadFile(entry.path()));
+        if (!pattern.contains("template") || !pattern["template"].contains("nodes")) continue;
+        for (const auto& node : pattern["template"]["nodes"]) {
+            if (!node.contains("params") || !node["params"].is_object()) continue;
+            const auto type = gui::ResolveNodeTypeImportName(node.value("type", ""));
+            if (!type) {
+                unknown += "\n  " + entry.path().filename().string() + ": unknown node type " + node.value("type", "");
+                continue;
+            }
+            const auto* metadata = registry.GetMetadata(*type);
+            if (metadata == nullptr) continue;
+            for (const auto& [key, value] : node["params"].items()) {
+                (void)value;
+                ++checked;
+                const bool defined = std::any_of(metadata->parameters.begin(), metadata->parameters.end(),
+                                                 [&](const auto& p) { return p.name == key; });
+                if (!defined)
+                    unknown += "\n  " + entry.path().filename().string() + ": " + node.value("type", "") + "." + key;
+            }
+        }
+    }
+    Check(checked > 0, "no shipped pattern parameters were checked");
+    Check(unknown.empty(), "shipped patterns set parameters their nodes do not define:" + unknown);
 }
 
 void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
@@ -701,6 +740,7 @@ int main() {
           "Dense-encoded NER parameter marker should report the matching parameter");
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
+    CheckShippedPatternParameterNames();
     CheckExampleDataBoundaryPins();
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();

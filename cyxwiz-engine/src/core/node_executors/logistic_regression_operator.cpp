@@ -59,8 +59,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> LogisticRegressionOperator::Apply(
     }
     spdlog::info("LogisticRegressionNode: fit {} rows x {} features, {} classes in {} iterations", data.x.size(),
                  data.features.size(), data.classes.size(), model.n_iter);
-    return AppendClassificationPredictions(input, columns_.prediction_col, data.classes, data.numeric_labels,
-                                           prediction.labels, GetName());
+    return AppendClassicPredictions(input, columns_.prediction_col, columns_.probability_columns, data.classes,
+                                    data.numeric_labels, prediction, GetName());
 }
 
 }  // namespace cyxwiz

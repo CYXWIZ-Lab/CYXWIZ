@@ -70,6 +70,7 @@ gui::NodeType TypeFromString(const std::string& type) {
         {"TFIDFVectorizer", gui::NodeType::TFIDFVectorizer},
         {"TextVocabulary", gui::NodeType::TextVocabulary},
         {"TextPadding", gui::NodeType::TextPadding},
+        {"WordEmbeddings", gui::NodeType::WordEmbeddings},
         {"Normalize", gui::NodeType::Normalize},
         {"Embedding", gui::NodeType::Embedding},
         {"Flatten", gui::NodeType::Flatten},
@@ -154,6 +155,15 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
             break;
         case gui::NodeType::Embedding:
             one_in_out("Indices", "Embeddings");
+            break;
+        case gui::NodeType::WordEmbeddings:
+            // The vectors reach an Embedding through their saved file.
+            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                      "Text", true));
+            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                       "Vectors", false, false));
+            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                       "Rows", false, false));
             break;
         case gui::NodeType::LSTM:
         case gui::NodeType::GRU:
@@ -476,6 +486,37 @@ void ValidateSemanticFlows(const Graph& graph, const std::string& name) {
     }
 }
 
+// An Embedding that loads a Word Embeddings node's vectors (TOFIX152): the
+// same file, the Tokenizer's vocabulary, the vectors' width.
+void ValidateWordVectorWeights(const Graph& graph, const std::string& name) {
+    const auto param = [](const gui::MLNode& node, const char* key) {
+        const auto it = node.parameters.find(key);
+        return it == node.parameters.end() ? std::string() : it->second;
+    };
+    for (const auto& embedding : graph.nodes) {
+        if (embedding.type != gui::NodeType::Embedding || param(embedding, "weights_file").empty()) continue;
+        const gui::MLNode* source = nullptr;
+        for (const auto& node : graph.nodes)
+            if (node.type == gui::NodeType::WordEmbeddings && param(node, "vectors_path") == param(embedding, "weights_file"))
+                source = &node;
+        if (!source) continue;
+        Check(param(*source, "vector_size") == param(embedding, "embedding_dim"),
+              name + ": the Embedding's dimension is not the word vectors' size");
+        bool tokenizer_agrees = false;
+        for (const auto& node : graph.nodes)
+            if (node.type == gui::NodeType::TextTokenizer && param(node, "vocab_file") == param(*source, "vocab_file"))
+                tokenizer_agrees = true;
+        Check(tokenizer_agrees, name + ": the word vectors are not lined up with the Tokenizer's vocabulary file");
+        std::ifstream vocabulary(param(*source, "vocab_file"));
+        if (vocabulary) {
+            size_t tokens = 0;
+            for (std::string line; std::getline(vocabulary, line);) ++tokens;
+            Check(std::to_string(tokens) == param(embedding, "num_embeddings"),
+                  name + ": the Embedding's vocabulary size is not the vocabulary file's " + std::to_string(tokens));
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -488,12 +529,14 @@ int main() {
         root / "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
         root / "examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph",
         root / "examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph",
+        root / "examples/cyxgraph/Sentiment analysis/sentiment_analysis_lstm_word_vectors.cyxgraph",
     };
 
     for (const auto& path : graphs) {
         auto graph = LoadPatternGraph(path);
         ValidateConnectivity(graph, path.filename().string());
         ValidateSemanticFlows(graph, path.filename().string());
+        ValidateWordVectorWeights(graph, path.filename().string());
     }
 
     std::cout << "Text smoke graph pattern contracts passed\n";

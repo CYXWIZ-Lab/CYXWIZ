@@ -188,43 +188,6 @@ private:
 };
 
 /**
- * EmbeddingDialog - Configuration dialog for token embedding lookup layers.
- *
- * The Embedding node is trainable by default. This dialog can also attach
- * a prebuilt text matrix file or create a deterministic starter matrix
- * from the configured vocabulary size/dimension.
- */
-class EmbeddingDialog : public NodeConfigDialog {
-public:
-    EmbeddingDialog(MLNode* node);
-    void Apply() override;
-    void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(760, 560); }
-
-protected:
-    void RenderContent() override;
-
-private:
-    void LoadFromNode();
-    void RenderShapeTab();
-    void RenderWeightsTab();
-    void RenderAdvancedTab();
-    bool BuildAndSaveWeights();
-    bool InspectWeightFile();
-
-    int num_embeddings_ = 10000;
-    int embedding_dim_ = 256;
-    int padding_idx_ = -1;
-    float max_norm_ = 0.0f;
-    bool freeze_ = false;
-    int init_mode_ = 0;  // 0=random normal, 1=random uniform, 2=one-hot/truncated
-    char weights_file_[512] = "";
-    char output_file_[512] = "";
-    std::string status_message_;
-    bool status_is_error_ = false;
-};
-
-/**
  * FilterDialog - Configuration dialog for Filter/Query nodes
  */
 class FilterDialog : public NodeConfigDialog {

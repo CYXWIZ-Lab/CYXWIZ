@@ -48,9 +48,9 @@
   "template": {
     "nodes": [
       {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
-      {"id": "embed", "type": "Embedding", "name": "Embedding", "pos": [200, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$embedding_dim"}},
-      {"id": "rnn1", "type": "RNN", "name": "RNN Layer 1", "pos": [400, 200], "params": {"units": "$hidden_size", "activation": "$activation", "return_sequences": "true"}},
-      {"id": "rnn2", "type": "RNN", "name": "RNN Layer 2", "pos": [600, 200], "params": {"units": "$hidden_size", "activation": "$activation"}},
+      {"id": "embed", "type": "Embedding", "name": "Embedding", "pos": [200, 200], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim"}},
+      {"id": "rnn1", "type": "RNN", "name": "RNN Layer 1", "pos": [400, 200], "params": {"hidden_size": "$hidden_size", "nonlinearity": "$activation", "return_sequences": "true"}},
+      {"id": "rnn2", "type": "RNN", "name": "RNN Layer 2", "pos": [600, 200], "params": {"hidden_size": "$hidden_size", "nonlinearity": "$activation"}},
       {"id": "dense", "type": "Dense", "name": "Dense", "pos": [800, 200], "params": {"units": "32"}},
       {"id": "act", "type": "ReLU", "name": "ReLU", "pos": [1000, 200]},
       {"id": "output_layer", "type": "Dense", "name": "Output", "pos": [1200, 200], "params": {"units": "$num_classes"}},

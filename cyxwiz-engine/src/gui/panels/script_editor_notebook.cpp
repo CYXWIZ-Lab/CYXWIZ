@@ -62,6 +62,8 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
     facts.busy = running;
     facts.other_busy = other_busy;
     facts.restarting = cells.IsRestarting();
+    facts.wanted_interpreter = python_wanted_path_;
+    facts.running_interpreter = python_running_path_;
     const nbview::KernelChip chip = nbview::KernelChipFor(facts);
 
     const ImVec2 bar_min = ImGui::GetCursorScreenPos();

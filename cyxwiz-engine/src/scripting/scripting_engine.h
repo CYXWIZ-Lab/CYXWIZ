@@ -246,6 +246,7 @@ public:
         std::string interpreter_path;  // running, else the one the next start uses
         std::string source;            // "project" / "system" when running
         std::string mismatch;          // non-empty: restart needed
+        std::string wanted_path;       // with a mismatch: the interpreter the project asks for now
     };
     // Cheap enough for UI refreshes; the preview path is resolved without logging.
     InterpreterInfo GetInterpreterInfo();

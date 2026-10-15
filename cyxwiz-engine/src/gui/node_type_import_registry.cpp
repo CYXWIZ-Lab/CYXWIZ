@@ -5,11 +5,12 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 207> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 210> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
         {"Conv3D", NodeType::Conv3D},
+        {"ConvTranspose2D", NodeType::ConvTranspose2D},
         {"DepthwiseConv2D", NodeType::DepthwiseConv2D},
         {"MaxPool2D", NodeType::MaxPool2D},
         {"AvgPool2D", NodeType::AvgPool2D},
@@ -114,6 +115,7 @@ constexpr std::array<NodeTypeImportName, 207> kNodeTypeImportNames = {{
         {"Normalize", NodeType::Normalize},
         {"OneHotEncode", NodeType::OneHotEncode},
         {"TextTokenizer", NodeType::TextTokenizer},
+        {"WordEmbeddings", NodeType::WordEmbeddings},
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},
         {"NERSequenceBuilder", NodeType::NERSequenceBuilder},
@@ -186,6 +188,7 @@ constexpr std::array<NodeTypeImportName, 207> kNodeTypeImportNames = {{
         {"SVMRegressor", NodeType::SVMRegressor},
         {"GradientBoostingClassifier", NodeType::GradientBoostingClassifier},
         {"TreeModelPredictor", NodeType::TreeModelPredictor},
+        {"ClassicModelPredictor", NodeType::ClassicModelPredictor},
         {"TextCleanNode", NodeType::TextCleanNode},
         {"TFIDFVectorizer", NodeType::TFIDFVectorizer},
         {"CountVectorizer", NodeType::CountVectorizer},

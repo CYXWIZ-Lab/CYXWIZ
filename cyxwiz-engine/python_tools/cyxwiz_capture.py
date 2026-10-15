@@ -48,6 +48,13 @@ class _BackendFinder(importlib.abc.MetaPathFinder):
         return importlib.util.spec_from_file_location(name, os.path.join(self._folder, name + '.py'))
 
 
+def inline():
+    """%matplotlib in a notebook cell: figures go to the Engine again (after
+    matplotlib.use('Agg'), for example), as Jupyter's inline backend does."""
+    import matplotlib
+    matplotlib.use('module://' + BACKEND, force=True)
+
+
 def install(sink, plot_sink=None, close_sink=None):
     """Route figures to `sink(png_bytes, width, height, title)` and cyxwiz
     plots to `plot_sink` / `close_sink`."""

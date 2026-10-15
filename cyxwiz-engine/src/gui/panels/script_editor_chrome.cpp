@@ -391,13 +391,21 @@ void ScriptEditorPanel::RefreshPythonStatus() {
     const auto info = scripting_engine_->GetInterpreterInfo();
     python_started_ = info.initialized;
     python_version_ = info.version;
+    python_wanted_path_ = info.wanted_path;
+    python_running_path_ = info.interpreter_path;
     python_environment_ = info.source == "system" ? "system Python"
                           : ProjectManager::Instance().HasActiveProject() ? ProjectManager::Instance().GetProjectName()
                                                                           : "project environment";
     if (info.initialized) {
         const std::string where = info.source == "project" ? "project environment" : "system Python";
         python_status_ = "Python " + (info.version.empty() ? std::string("") : info.version + " ") + "\xC2\xB7 " + where;
-        python_tooltip_ = info.interpreter_path + (info.mismatch.empty() ? "" : "\nRestart needed: " + info.mismatch);
+        python_tooltip_ = info.interpreter_path;
+        if (!info.wanted_path.empty()) {
+            // A venv made after Python started: it is used after an Engine restart.
+            python_status_ += " \xC2\xB7 restart the Engine";
+            python_tooltip_ += "\nThe project's Python is now " + info.wanted_path +
+                               ". Python runs inside the Engine, so it switches when the Engine restarts.";
+        }
     } else {
         python_status_ = "Python \xC2\xB7 starts on first run";
         python_tooltip_ = info.interpreter_path.empty() ? std::string("No interpreter configured.") : info.interpreter_path;

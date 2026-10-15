@@ -57,7 +57,7 @@
   "template": {
     "nodes": [
       {"id": "input", "type": "DatasetInput", "name": "Token IDs", "pos": [0, 200], "params": {"shape": "[1]", "create_causal_lm_targets": "true", "max_sequence_length": "$max_sequence_length"}},
-      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [220, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$d_model"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [220, 200], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model"}},
       {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [440, 200], "params": {"d_model": "$d_model"}},
       {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [660, 200], "params": {"rate": "$dropout_rate"}},
       {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [880, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},

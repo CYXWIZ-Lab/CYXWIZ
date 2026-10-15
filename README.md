@@ -89,7 +89,7 @@ The Engine always includes the ArrayFire **CPU** runtime. GPU support comes from
 2. Select the pack in the installer (or add it later through **CyxWiz Installer**).
 3. In the Engine, open **Preferences > Devices**. Each physical device appears as a card with its compute routes. Click **Verify** on a route, or **Verify all**.
 
-Verification runs a short qualification for each route in an isolated process on your hardware and records a measured speed; training uses only verified routes, and a failed route shows its reason. A full machine typically verifies in about two minutes. On Intel GPUs the Engine recommends OpenCL; oneAPI remains available (oneAPI is known to fail on Intel UHD 630).
+Verification runs a short qualification for each route in an isolated process on your hardware and records a measured speed; training uses only verified routes, and a failed route shows its reason. A full machine typically verifies in about two minutes. On Intel GPUs the Engine recommends OpenCL; oneAPI remains available (oneAPI is known to fail on Intel UHD 630). Known GPU runtime problems and their workarounds are listed in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 A GPU pack is published only after its routes pass on real hardware. The Windows packs are verified on NVIDIA GeForce (CUDA, OpenCL) and Intel UHD 630 / Iris Xe (OpenCL, oneAPI). Linux and macOS installs are CPU-only until their packs can be verified the same way.
 
@@ -275,6 +275,7 @@ Keep changes scoped, preserve component boundaries (extend the shared backend in
 - [Examples](examples/README.md)
 - [Backend overview](cyxwiz-backend/README.md)
 - [Server Node overview](cyxwiz-server-node/README.md)
+- [Known issues](KNOWN_ISSUES.md)
 - [Security policy](SECURITY.md)
 - [Support](SUPPORT.md)
 
