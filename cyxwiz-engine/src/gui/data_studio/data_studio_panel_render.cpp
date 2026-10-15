@@ -191,6 +191,7 @@ void DataStudioPanel::RenderJobTabs() {
         if (ui::JobTab(("##job" + std::to_string(j)).c_str(), job.name.c_str(), caption.c_str(), job.job == job_) && job_ != job.job) {
             job_ = job.job;
             if (job_ == studio::Job::Ready && readiness_) readiness_->Activate();  // roles may have changed in Profile
+            if (job_ == studio::Job::Results && results_) results_->Activate();   // runs may have finished since
             if (job_ == studio::Job::Validate || job_ == studio::Job::Publish) view_time_ = -1.0;  // read what feeds the checks / outputs now
         }
     }
@@ -250,36 +251,15 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
 }
 
 void DataStudioPanel::RenderJobBody() {
-    if (job_ == studio::Job::Explore) {
-        RenderExplore();
-        return;
+    switch (job_) {
+        case studio::Job::BringIn: RenderBringIn(); break;
+        case studio::Job::Explore: RenderExplore(); break;
+        case studio::Job::Prepare: if (prepare_) prepare_->Render(); break;
+        case studio::Job::Validate: if (validate_) validate_->Render(); break;
+        case studio::Job::Ready: if (readiness_) readiness_->Render(); break;
+        case studio::Job::Publish: if (publish_) publish_->Render(); break;
+        case studio::Job::Results: if (results_) results_->Render(); break;
     }
-    if (job_ == studio::Job::BringIn) {
-        RenderBringIn();
-        return;
-    }
-    if (job_ == studio::Job::Prepare) {
-        if (prepare_) prepare_->Render();
-        return;
-    }
-    if (job_ == studio::Job::Validate) {
-        if (validate_) validate_->Render();
-        return;
-    }
-    if (job_ == studio::Job::Ready) {
-        if (readiness_) readiness_->Render();
-        return;
-    }
-    if (job_ == studio::Job::Publish) {
-        if (publish_) publish_->Render();
-        return;
-    }
-    const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_dim, "%s is the next part of Data Studio being built (TOFIX148 step 3). Its nodes are listed above; "
-                                   "Show on canvas opens them in CyxWiz Studio.",
-                       studio::JobName(job_));
-    ImGui::PopTextWrapPos();
 }
 
 void DataStudioPanel::RenderBringIn() {

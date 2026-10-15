@@ -16,6 +16,7 @@
 #include "readiness_view.h"
 #include "validate_view.h"
 #include "publish_view.h"
+#include "results_view.h"
 #include "visualizer.h"
 #include <imgui.h>
 #include <functional>
@@ -71,6 +72,7 @@ private:
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;
+    std::unique_ptr<ResultsView> results_;
     std::unique_ptr<ReadinessView> readiness_;
     std::unique_ptr<Visualizer> visualizer_;
 

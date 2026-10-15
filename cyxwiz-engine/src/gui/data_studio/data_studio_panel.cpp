@@ -28,6 +28,7 @@ DataStudioPanel::DataStudioPanel() {
     prepare_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     validate_ = std::make_unique<ValidateView>();
     validate_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
+    results_ = std::make_unique<ResultsView>();
     publish_ = std::make_unique<PublishView>();
     publish_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();

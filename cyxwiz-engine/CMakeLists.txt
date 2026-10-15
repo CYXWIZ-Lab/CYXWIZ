@@ -139,6 +139,7 @@ set(ENGINE_SOURCES
     src/core/data_studio_presentation.cpp
     src/core/data_studio_checks.cpp
     src/core/data_studio_publish.cpp
+    src/core/data_studio_results.cpp
     src/core/ml_readiness.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
@@ -681,6 +682,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/prepare_view.cpp
     src/gui/data_studio/validate_view.cpp
     src/gui/data_studio/publish_view.cpp
+    src/gui/data_studio/results_view.cpp
     src/gui/data_studio/readiness_view.cpp
     src/gui/dashboard/dashboard_window.cpp
     src/gui/dashboard/dashboard_sparse.cpp
@@ -5360,6 +5362,19 @@ set_target_properties(test_data_studio_publish PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME data_studio_publish COMMAND test_data_studio_publish)
+
+# ===== Test: Data Studio Results (TOFIX148 job 7) =====
+add_executable(test_data_studio_results
+    tests/test_data_studio_results.cpp
+    src/core/data_studio_results.cpp
+)
+target_include_directories(test_data_studio_results PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_studio_results PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
+set_target_properties(test_data_studio_results PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME data_studio_results COMMAND test_data_studio_results)
 
 # ===== Test: Data Studio Validate (TOFIX148 D4) =====
 add_executable(test_data_studio_checks
