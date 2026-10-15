@@ -21,7 +21,12 @@ of the notebook bar says which, and what it is doing:
 | `... · Busy` | A cell is running; **Interrupt** stops it at its next Python line. |
 | `... · Waiting` | Another script or a Console command holds Python; the cells wait. |
 | `Python · ... · Starts on first run` | Python starts when the first cell runs. |
-| `... · Restart the Engine` | The project now asks for another Python (for example a `python` virtual environment made after Python started). Python runs inside the Engine, so it switches when the Engine restarts; the tooltip names both interpreters. The status bar shows the same note. |
+| `... · Restart the Engine` | The project now asks for another Python (for example a `python` virtual environment made by hand after Python started). Python runs inside the Engine, so it switches when the Engine restarts; the tooltip names both interpreters. The status bar shows the same note. |
+
+A project without an environment gets one when it is created or first opened
+(`python/`, about 10 seconds). The status bar shows "Setting up the project's
+Python environment..." meanwhile, and Python waits for it, then starts in the
+new environment: no restart needed.
 
 **Restart** clears this notebook's variables and starts the `[n]` count
 again; the outputs stay. It waits until no cell, script or Console command
