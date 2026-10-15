@@ -33,6 +33,13 @@ std::string& StrRef(json& p, const char* key) {
     return p[key].get_ref<std::string&>();
 }
 
+// The next item on this line when `width` still fits, else on the next
+// line (a narrow host such as Prepare must not clip a field).
+void Next(float width) {
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+}
+
 void Label(const char* text) {
     ImGui::AlignTextToFramePadding();
     Dim(text);
@@ -135,7 +142,7 @@ bool ConditionRow(json& c, const std::vector<std::string>& columns, bool known) 
     if (op.empty()) op = "equals";
     ImGui::SetNextItemWidth(200.0f);
     changed |= ColumnField("##column", column, columns, known);
-    ImGui::SameLine();
+    Next(170.0f);
     ImGui::SetNextItemWidth(170.0f);
     if (ImGui::BeginCombo("##op", op.c_str())) {
         for (const char* o : kConditionOps) {
@@ -147,7 +154,7 @@ bool ConditionRow(json& c, const std::vector<std::string>& columns, bool known) 
         ImGui::EndCombo();
     }
     if (op != "is empty" && op != "is not empty") {
-        ImGui::SameLine();
+        Next(220.0f);
         changed |= TextField("##value", StrRef(c, "value"), op.find("one of") != std::string::npos ? "a, b, c" : "value", 220.0f);
     }
     return changed;
@@ -165,7 +172,7 @@ bool ListEditor(const char* id, json& p, const char* key, const json& fresh, con
     for (size_t i = 0; i < list.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
         changed |= row(list[i]);
-        ImGui::SameLine();
+        Next(ImGui::GetFrameHeight() + 8.0f);
         if (ui::GhostButton(ICON_FA_XMARK)) remove = static_cast<int>(i);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove");
         ImGui::PopID();
@@ -265,6 +272,18 @@ void GuidedEditor::Changed(const std::string& before_json) {
     if (on_changed) on_changed();
 }
 
+std::vector<guided::CheckNode> GuidedEditor::TakeChecks() {
+    if (!active_) return {};
+    auto split = guided::SplitOffChecks(step_);
+    if (split.checks.empty()) return {};
+    const std::string before = Json();
+    split.step.saved_context = step_.saved_context;
+    step_ = std::move(split.step);
+    picked_ = std::min(picked_, static_cast<int>(step_.ops.size()) - 1);
+    Changed(before);
+    return std::move(split.checks);
+}
+
 int64_t GuidedEditor::RowsAfter(size_t op, const std::map<std::string, int64_t>& rows) const {
     if (op >= generated_.part_names.size() || generated_.part_names[op].empty()) return -1;
     const auto found = rows.find(generated_.part_names[op]);
@@ -289,8 +308,8 @@ void GuidedEditor::Redo() {
 
 // ---- Layout ---------------------------------------------------------------------
 
-void GuidedEditor::RenderTemplateButton() {
-    if (ui::SecondaryButton("Start from a template " ICON_FA_CHEVRON_DOWN, true, nullptr, ui::ButtonSize::Regular)) {
+void GuidedEditor::RenderTemplateButton(ui::ButtonSize size) {
+    if (ui::SecondaryButton("Start from a template " ICON_FA_CHEVRON_DOWN, true, nullptr, size)) {
         ImGui::OpenPopup("##guided_templates");
     }
     if (ImGui::BeginPopup("##guided_templates")) {
@@ -314,22 +333,72 @@ void GuidedEditor::RenderTemplateButton() {
     }
 }
 
-void GuidedEditor::RenderLibrary(float height) {
+void GuidedEditor::AddOp(const guided::OpInfo& op) {
+    const std::string before = Json();
+    const int at = picked_ < 0 ? static_cast<int>(step_.ops.size()) : picked_ + 1;
+    const auto& in = at < static_cast<int>(columns_.size()) ? columns_[static_cast<size_t>(at)] : guided::Columns{};
+    std::string column;
+    for (const auto& name : in.names) {
+        if (name == "text") column = name;
+    }
+    if (column.empty() && !in.names.empty()) column = in.names.front();
+    guided::Operation added{op.id, true, guided::DefaultParams(op.id, column)};
+    if (std::string(op.id) == "choose_columns") {
+        for (const auto& name : in.names) added.params["columns"].push_back({{"name", name}, {"keep", true}});
+    }
+    step_.ops.insert(step_.ops.begin() + at, std::move(added));
+    picked_ = at;
+    Changed(before);
+}
+
+bool GuidedEditor::Matches(const guided::OpInfo& op) const {
+    std::string search = search_;
+    for (char& c : search) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (search.empty()) return true;
+    std::string haystack = std::string(op.name) + " " + op.hint + " " + op.category;
+    for (char& c : haystack) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return haystack.find(search) != std::string::npos;
+}
+
+void GuidedEditor::RenderAddMenu(ui::ButtonSize size) {
     const ui::Tokens& t = ui::CurrentTokens();
-    const float width = std::clamp(ImGui::GetContentRegionAvail().x * 0.16f, 220.0f, 300.0f);
-    if (BeginPanel("##guided_library", ImVec2(width, height), t.bg_panel)) {
+    if (ui::SecondaryButton(ICON_FA_PLUS " Add an operation " ICON_FA_CHEVRON_DOWN, true, nullptr, size)) {
+        search_[0] = '\0';
+        ImGui::OpenPopup("##guided_add");
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds it after the selected operation");
+    if (ImGui::BeginPopup("##guided_add")) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(300.0f);
+        ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Find an operation", search_, sizeof(search_));
+        const char* category = "";
+        for (const auto& op : guided::Library()) {
+            if (!Matches(op)) continue;
+            if (std::strcmp(category, op.category) != 0) {
+                category = op.category;
+                std::string upper = category;
+                for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                Coloured(upper, t.text_faint);
+            }
+            ImGui::PushID(op.id);
+            if (ImGui::MenuItem(op.name, op.hint)) AddOp(op);
+            ImGui::PopID();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void GuidedEditor::RenderLibrary(const ImVec2& size) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (BeginPanel("##guided_library", size, t.bg_panel)) {
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Find an operation", search_, sizeof(search_));
         DimWrapped("Click to add it after the selected operation.");
-        std::string search = search_;
-        for (char& c : search) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         const char* category = "";
         ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
         for (const auto& op : guided::Library()) {
-            std::string haystack = std::string(op.name) + " " + op.hint + " " + op.category;
-            for (char& c : haystack) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (!search.empty() && haystack.find(search) == std::string::npos) continue;
+            if (!Matches(op)) continue;
             if (std::strcmp(category, op.category) != 0) {
                 category = op.category;
                 ImGui::Dummy(ImVec2(0.0f, t.space_xs));
@@ -341,22 +410,7 @@ void GuidedEditor::RenderLibrary(float height) {
             const ImVec2 start = ImGui::GetCursorPos();
             if (ImGui::Selectable("##op", false, ImGuiSelectableFlags_AllowOverlap,
                                   ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 2.0f))) {
-                const std::string before = Json();
-                const int at = picked_ < 0 ? static_cast<int>(step_.ops.size()) : picked_ + 1;
-                const auto& in = at < static_cast<int>(columns_.size()) ? columns_[static_cast<size_t>(at)]
-                                                                                 : guided::Columns{};
-                std::string column;
-                for (const auto& name : in.names) {
-                    if (name == "text") column = name;
-                }
-                if (column.empty() && !in.names.empty()) column = in.names.front();
-                guided::Operation added{op.id, true, guided::DefaultParams(op.id, column)};
-                if (std::string(op.id) == "choose_columns") {
-                    for (const auto& name : in.names) added.params["columns"].push_back({{"name", name}, {"keep", true}});
-                }
-                step_.ops.insert(step_.ops.begin() + at, std::move(added));
-                picked_ = at;
-                Changed(before);
+                AddOp(op);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add \"%s\"", op.name);
             const ImVec2 after = ImGui::GetCursorPos();
@@ -371,10 +425,9 @@ void GuidedEditor::RenderLibrary(float height) {
     EndPanel();
 }
 
-void GuidedEditor::RenderCards(float height, const CardFacts& facts) {
+void GuidedEditor::RenderCards(const ImVec2& size, const CardFacts& facts) {
     const ui::Tokens& t = ui::CurrentTokens();
-    const float width = std::clamp(ImGui::GetContentRegionAvail().x * 0.29f, 300.0f, 420.0f);
-    if (BeginPanel("##guided_cards", ImVec2(width, height), t.bg_window)) {
+    if (BeginPanel("##guided_cards", size, t.bg_window)) {
         // Where the operations start.
         std::string start = "Starts from ";
         for (size_t i = 0; i < inputs_.size(); ++i) {
@@ -387,7 +440,7 @@ void GuidedEditor::RenderCards(float height, const CardFacts& facts) {
         DimWrapped(start);
         if (step_.ops.empty()) {
             ImGui::Dummy(ImVec2(0.0f, t.space_md));
-            DimWrapped("No operations yet. Add one from the library on the left, or start from a template.");
+            DimWrapped("No operations yet: add one, or start from a template.");
         }
         int move_from = -1, move_to = -1, remove = -1;
         bool toggled = false;
@@ -544,7 +597,7 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
     if (type == "keep_rows") {
         Label("Keep rows where");
         changed |= Choice("##match", StrRef(p, "match"), {"all", "any"});
-        ImGui::SameLine();
+        Next(ImGui::CalcTextSize("of these are true:").x);
         Dim("of these are true:");
         changed |= ListEditor("conditions", p, "conditions", json{{"column", ""}, {"op", "equals"}, {"value", ""}}, "+ condition",
                               [&](json& c) { return ConditionRow(c, cols, known); });
@@ -565,7 +618,7 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
             bool c = false;
             ImGui::SetNextItemWidth(240.0f);
             c |= ColumnField("##column", StrRef(k, "column"), cols, known);
-            ImGui::SameLine();
+            Next(ImGui::GetFrameHeight() + ImGui::CalcTextSize("high to low").x + 8.0f);
             bool desc = k.value("descending", false);
             if (ImGui::Checkbox("high to low", &desc)) {
                 k["descending"] = desc;
@@ -722,12 +775,12 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
             p["pattern"] = "[0-9]+";
             changed = true;
         }
-        ImGui::SameLine();
+        Next(ImGui::CalcTextSize("a Bible reference").x);
         if (ui::LinkButton("a Bible reference")) {
             p["pattern"] = "(?:[1-3] )?[A-Z][a-z]+ [0-9]+:[0-9]+";
             changed = true;
         }
-        ImGui::SameLine();
+        Next(ImGui::CalcTextSize("a year").x);
         if (ui::LinkButton("a year")) {
             p["pattern"] = "\\b(1[5-9]|20)[0-9]{2}\\b";
             changed = true;
@@ -742,7 +795,7 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
         ImGui::NewLine();
         changed |= ListEditor("key", p, "key", json{{"kind", "column"}, {"value", ""}}, "+ key part", [&](json& k) {
             bool c = Choice("##kind", StrRef(k, "kind"), {"column", "text"});
-            ImGui::SameLine();
+            Next(220.0f);
             if (StrRef(k, "kind") == "text") {
                 c |= TextField("##value", StrRef(k, "value"), "text, e.g. :1", 180.0f);
             } else {
@@ -759,7 +812,7 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
         changed |= ListEditor("bring", p, "bring", json{{"column", ""}, {"as", ""}}, "+ column", [&](json& b) {
             ImGui::SetNextItemWidth(220.0f);
             bool c = ColumnField("##column", StrRef(b, "column"), theirs, !theirs.empty());
-            ImGui::SameLine();
+            Next(ImGui::CalcTextSize("as").x + 190.0f);
             Dim("as");
             ImGui::SameLine();
             c |= TextField("##as", StrRef(b, "as"), "same name", 180.0f);
@@ -783,14 +836,14 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
             std::string& fn = StrRef(m, "function");
             bool c = Combo("##fn", fn, {"count", "count distinct", "sum", "average", "min", "max", "first", "join text"});
             if (fn != "count") {
-                ImGui::SameLine();
+                Next(200.0f);
                 ImGui::SetNextItemWidth(200.0f);
                 c |= ColumnField("##column", StrRef(m, "column"), cols, known);
             }
-            ImGui::SameLine();
+            Next(160.0f);
             c |= TextField("##name", StrRef(m, "name"), "name", 160.0f);
             if (fn == "join text") {
-                ImGui::SameLine();
+                Next(90.0f);
                 c |= TextField("##separator", StrRef(m, "separator"), "separator", 90.0f);
             }
             return c;
@@ -807,7 +860,7 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
         } else {
             changed |= column_row("A column per value of", "names_from");
             changed |= text_row("Those values", "values", "a, b, c");
-            ImGui::SameLine();
+            Next(ImGui::CalcTextSize("Find values").x);
             const bool can_find = !busy && !inputs_.empty() && inputs_.front().table && !StrRef(p, "names_from").empty();
             if (ui::LinkButton("Find values", can_find)) {
                 // Distinct values from the main input (up to 50).
@@ -846,16 +899,16 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
             ImGui::SetNextItemWidth(150.0f);
             std::string& kind = StrRef(c, "kind");
             bool ch = Combo("##kind", kind, {"row_count", "allowed_values", "unique", "not_empty"});
-            ImGui::SameLine();
+            Next(ImGui::CalcTextSize("exactly").x + 90.0f);
             if (kind == "row_count") {
                 Dim("exactly");
                 ImGui::SameLine();
                 ch |= TextField("##exact", StrRef(c, "exact"), "-", 80.0f);
-                ImGui::SameLine();
+                Next(ImGui::CalcTextSize("at least").x + 90.0f);
                 Dim("at least");
                 ImGui::SameLine();
                 ch |= TextField("##min", StrRef(c, "min"), "-", 80.0f);
-                ImGui::SameLine();
+                Next(ImGui::CalcTextSize("at most").x + 90.0f);
                 Dim("at most");
                 ImGui::SameLine();
                 ch |= TextField("##max", StrRef(c, "max"), "-", 80.0f);
@@ -863,13 +916,13 @@ bool GuidedEditor::RenderFields(guided::Operation& op, const guided::Columns& in
                 ImGui::SetNextItemWidth(200.0f);
                 ch |= ColumnField("##column", StrRef(c, "column"), cols, known);
                 if (kind == "allowed_values") {
-                    ImGui::SameLine();
+                    Next(220.0f);
                     ch |= TextField("##values", StrRef(c, "values"), "train, validation, test", 220.0f);
                 }
             }
             return ch;
         });
-        DimWrapped("A failing check stops the step with its message, so nothing after it runs on wrong data.");
+        DimWrapped("While you edit, a failing check stops the preview with its message. Saving the step turns these checks into Check nodes after it (this operation goes last).");
     }
     return changed;
 }

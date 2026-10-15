@@ -230,12 +230,39 @@ The header names the step, *SQL Query node* and what it reads.
 - **Add a step after** adds an **SQL step** or a **Guided step** after this
   one in the recipe (on the canvas, which opens a collapsed recipe).
 
-A guided step's SQL is made from its operations; Prepare shows it read-only
-and its operations are edited in the Workbench's Guided mode.
+**Guided | SQL** above the editor switches how the step is edited. A guided
+step opens in Guided mode: its operations as cards (the rows after each one
+once the step has run) and the selected operation's fields beside them, or
+below them when the window is narrow. **Add an operation** lists the
+operations by group (type to find one) and adds it after the selected card;
+**Start from a template**, **Undo** and **Redo** work on the operations, as in
+the Workbench (see [guided steps](sql-workbench.md#guided-steps)). **Save to
+step** writes the operations and the SQL they make; **Run step** saves, then
+runs. An operation marked in red must be fixed before the step saves or runs.
+
+In SQL mode a guided step's query is read-only; **Edit as SQL** (it asks first)
+turns it into an ordinary SQL step when you save. An SQL step in Guided mode
+offers **Start a guided step instead**, which replaces the query when you save
+(Reset brings it back until then).
 
 **Other steps** (a Row Count Check, a step node) show their last outcome,
 their settings as saved in the graph, **Run step**, **Open dialog** and
 **Show on canvas**; settings are changed in the node's dialog.
+
+**+ Add a step** under the step list (and **Add a step after** beside an SQL
+step) adds after the selected step: an **SQL step**, a **Guided step**, a
+**Row Filter**, **Joiner**, **GroupBy** or **Text Clean**, or any other
+preparation node from **More nodes**. The node goes on the canvas to the
+step's right, the nodes after it move right to make room (a collapsed recipe
+opens first), and it is selected; Ctrl+Z on the canvas undoes it.
+
+**Checks.** A Row Count Check node checks one of: a row count (exactly, at
+least, at most; all rows or the rows where a column is true or has a value),
+**allowed values** of a column, **unique** columns, a column **not empty**, or a
+numeric column in a **range**. A failing check stops the run with the count and
+the first offending value; nothing after it runs, and its result from an
+earlier run is dropped. A guided step's **Add checks** become these nodes when
+the step is saved.
 
 ## ML readiness
 

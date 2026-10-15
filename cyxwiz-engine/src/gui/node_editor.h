@@ -600,15 +600,23 @@ public:
     // is focused, so the dialog ends up in front of the canvas.
     enum class SubgraphRequest { Expand, Collapse, MakeRecipe, MakeGroup, ShowStep, OpenStep };
     void RequestSubgraphAction(int subgraph_id, SubgraphRequest request, int step_id = -1);
-    // Adds an empty guided SQL step after an SQL step (TOFIX147 item 3): it
-    // takes over the step's outgoing links (and its place as a recipe's
-    // output), joins the step's recipe, and is selected. Applied, like
-    // RequestSubgraphAction, at the start of the next canvas frame.
-    void RequestGuidedStepAfter(int sql_step_id) { pending_step_after_ = {sql_step_id, true, {}, {}}; }
+    // Adds a node of `type` after a step (TOFIX147 item 3; Data Studio
+    // Prepare's "Add a step", TOFIX148): it takes over the step's outgoing
+    // links (and its place as a recipe's output), joins the step's recipe,
+    // goes to the step's right (the nodes after it move right to make room)
+    // and is selected. Applied, like RequestSubgraphAction, at the start of
+    // the next canvas frame, in the order requested. `name` and `parameters`
+    // (optional) replace the node's defaults (a guided step's checks become
+    // Check nodes this way).
+    void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
+        pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
+    }
+    // The same with an empty guided SQL step.
+    void RequestGuidedStepAfter(int step_id) { pending_steps_after_.push_back({step_id, NodeType::SQLQuery, true, {}, {}, {}}); }
     // The same with an SQL step running `query` (Data Studio's "Turn into SQL
-    // step", TOFIX148): named `name`, selected and shown once added.
-    void RequestSqlStepAfter(int sql_step_id, std::string name, std::string query) {
-        pending_step_after_ = {sql_step_id, false, std::move(name), std::move(query)};
+    // step"), named `name`.
+    void RequestSqlStepAfter(int step_id, std::string name, std::string query) {
+        pending_steps_after_.push_back({step_id, NodeType::SQLQuery, false, std::move(name), std::move(query), {}});
     }
     // A node by id, also a step inside a collapsed recipe (its stored copy;
     // the canvas copy while expanded). Null when the graph has none.
@@ -937,11 +945,16 @@ private:
     PendingSubgraphRequest pending_subgraph_request_;
     void ApplySubgraphRequest();
     struct PendingStepAfter {
-        int after = -1;      // the SQL step it follows; -1: nothing pending
-        bool guided = true;  // an empty guided step, else `query`
-        std::string name, query;
-    } pending_step_after_;
+        int after = -1;  // the step it follows
+        NodeType type = NodeType::SQLQuery;
+        bool guided = false;  // SQL: an empty guided step, else `query`
+        std::string name;     // "" : the default name
+        std::string query;    // SQL: its query
+        std::map<std::string, std::string> parameters;  // over the node's defaults
+    };
+    std::vector<PendingStepAfter> pending_steps_after_;
     void ApplyStepAfterInsert();
+    void InsertStepAfter(const PendingStepAfter& request);
     // A node to select once ImNodes has drawn it (a new node is dropped from
     // the selection before its first frame).
     struct DeferredFocus {

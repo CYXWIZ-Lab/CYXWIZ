@@ -3,11 +3,13 @@
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
 #include "../../core/guided_sql.h"
+#include "../../core/node_metadata_registry.h"
 #include "../../core/sql_step_presentation.h"
 #include "../../core/sql_transform.h"
 #include "../../data/arrow_data_table.h"
 #include "../icons.h"
 #include "../node_editor.h"
+#include "../sql_workbench_ui.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
@@ -58,10 +60,12 @@ void KindChip(const std::string& text) {
 // (the Workbench's Parts count, SqlTransform on the inputs in memory).
 struct PrepareView::PartCounts {
     std::string key;
+    std::string query;  // the query counted
     std::thread worker;
     std::atomic<bool> done{false};
     SqlTransform transform;
     std::vector<std::pair<std::string, int64_t>> counts;  // in the query's order
+    std::map<std::string, int64_t> by_part;               // the same, by part name (guided cards)
     std::string error;
     ~PartCounts() {
         if (worker.joinable()) {
@@ -74,6 +78,7 @@ struct PrepareView::PartCounts {
 PrepareView::PrepareView() {
     grid_.options.data_bars = false;
     grid_.options.rows_per_page = 200;
+    guided_.on_changed = [this] { OnGuidedChanged(); };
 }
 
 PrepareView::~PrepareView() = default;
@@ -119,7 +124,11 @@ void PrepareView::SetGraph(::gui::NodeEditor* editor, const std::vector<studio::
     steps_ = studio::StepRows(steps);
     if (loaded_ >= 0 && editor_) {
         reads_.clear();
-        for (const auto& input : editor_->GetDataStepContext(loaded_).inputs) reads_ += (reads_.empty() ? "" : ", ") + input.name;
+        const auto context = editor_->GetDataStepContext(loaded_);
+        for (const auto& input : context.inputs) reads_ += (reads_.empty() ? "" : ", ") + input.name;
+        checks_after_ = context.checks.size();
+        // A run puts the inputs in memory: the operations see their columns.
+        guided_.SetInputs(StepInputs(loaded_));
     }
     const bool still_there = std::any_of(steps_.begin(), steps_.end(), [&](const studio::StepRow& r) { return r.id == selected_; });
     if (!still_there) {
@@ -144,43 +153,103 @@ void PrepareView::LoadStep(int step_id) {
     message_.clear();
     const ::gui::MLNode* node = editor_ ? editor_->FindStep(step_id) : nullptr;
     saved_query_ = node ? Param(*node, "query") : std::string();
-    guided_ = node && !Param(*node, guided::kGuidedOpsParameter).empty();
+    pane_.Editor().SetReadOnly(false);
     pane_.Editor().SetText(saved_query_);
-    pane_.Editor().SetReadOnly(guided_);
+    std::string error;
+    if (!guided_.Load(node ? Param(*node, guided::kGuidedOpsParameter) : std::string(), &error)) {
+        message_ = "The guided operations could not be read (" + error + "); the step opens as SQL.";
+        message_error_ = true;
+    }
+    mode_ = guided_.Active() ? 0 : 1;
+    confirm_start_guided_ = confirm_edit_as_sql_ = false;
+    pane_.Editor().SetReadOnly(guided_.Active());
     pane_.Refresh();
     // What it reads, and completion: the columns of its inputs when they are in memory.
     reads_.clear();
+    checks_after_ = 0;
     std::vector<std::string> columns;
     if (editor_) {
-        const auto& facts = editor_->GetNodeRunFacts();
-        for (const auto& input : editor_->GetDataStepContext(step_id).inputs) {
-            reads_ += (reads_.empty() ? "" : ", ") + input.name;
-            const auto it = facts.find(input.id);
-            if (it == facts.end() || it->second.output_dataset.empty()) continue;
-            if (auto ds = DataRegistry::Instance().GetArrowDataset(it->second.output_dataset))
-                if (auto table = ds->GetArrowTable())
-                    for (const auto& field : table->schema()->fields()) columns.push_back(field->name());
+        const auto context = editor_->GetDataStepContext(step_id);
+        for (const auto& input : context.inputs) reads_ += (reads_.empty() ? "" : ", ") + input.name;
+        checks_after_ = context.checks.size();
+        auto inputs = StepInputs(step_id);
+        for (const auto& input : inputs)
+            if (input.table)
+                for (const auto& field : input.table->schema()->fields()) columns.push_back(field->name());
+        // A guided step: its operations write the query for the inputs as they are.
+        if (guided_.SetInputs(std::move(inputs)) && guided_.Generated().sql != saved_query_ && message_.empty()) {
+            message_ = "The operations write a different query for the inputs as they are now; Save to step keeps it.";
+            message_error_ = false;
         }
     }
     pane_.SetCompletionColumns(std::move(columns));
 }
 
+std::vector<::gui::GuidedEditor::Input> PrepareView::StepInputs(int step_id) const {
+    std::vector<::gui::GuidedEditor::Input> inputs;
+    const ::gui::MLNode* step = editor_ ? editor_->FindStep(step_id) : nullptr;
+    if (!step) return inputs;
+    const auto names = sqlstep::InputNames(step->parameters);
+    const auto& facts = editor_->GetNodeRunFacts();
+    for (const auto& input : editor_->GetDataStepContext(step_id).inputs) {
+        std::shared_ptr<arrow::Table> table;
+        const auto it = facts.find(input.id);
+        if (it != facts.end() && !it->second.output_dataset.empty())
+            if (auto ds = DataRegistry::Instance().GetArrowDataset(it->second.output_dataset)) table = ds->GetArrowTable();
+        inputs.push_back({input.pin < static_cast<int>(names.size()) ? names[static_cast<size_t>(input.pin)] : std::string("input"), table});
+    }
+    return inputs;
+}
+
+void PrepareView::OnGuidedChanged() {
+    pane_.Editor().SetReadOnly(false);
+    pane_.Editor().SetText(guided_.Generated().sql);
+    pane_.Editor().SetReadOnly(true);
+    pane_.Refresh();
+}
+
 void PrepareView::SaveDraft() {
-    if (!editor_ || loaded_ < 0 || guided_) return;
+    if (!editor_ || loaded_ < 0) return;
+    if (guided_.Active() && !guided_.Generated().ok) {
+        message_ = "Fix the operations marked in red first.";
+        message_error_ = true;
+        return;
+    }
+    // Its "Add checks" become Check nodes after the step (TOFIX148 D4).
+    const auto checks = guided_.TakeChecks();
     const std::string text = pane_.Editor().GetText();
-    if (!editor_->SetStepParameters(loaded_, {{"query", text}})) {
+    std::map<std::string, std::string> values{{"query", text}};
+    std::vector<std::string> erase;
+    // A guided step keeps its operations next to the query they wrote; an
+    // SQL step keeps none (Edit as SQL).
+    if (guided_.Active()) values[guided::kGuidedOpsParameter] = guided_.Json();
+    else erase.push_back(guided::kGuidedOpsParameter);
+    if (!editor_->SetStepParameters(loaded_, values, erase)) {
         message_ = "The step is no longer in the graph.";
         message_error_ = true;
         return;
     }
     saved_query_ = text;
-    message_ = "Saved to the step (Ctrl+Z on the canvas undoes it).";
+    guided_.MarkSaved();
+    message_ = guided_.Active() ? "Saved the operations and their query to the step (Ctrl+Z on the canvas undoes it)."
+                                : "Saved to the step (Ctrl+Z on the canvas undoes it).";
     message_error_ = false;
+    if (!checks.empty()) {
+        // Added on the canvas: a collapsed recipe opens first; requested last
+        // first, each goes right after the step.
+        if (!editor_->GetNodeForConfiguration(loaded_)) {
+            const int recipe = RecipeOf(loaded_);
+            if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::Expand);
+        }
+        for (auto it = checks.rbegin(); it != checks.rend(); ++it)
+            editor_->RequestStepAfter(loaded_, ::gui::NodeType::RowCountCheck, it->name, it->parameters);
+        message_ = "Saved; its " + std::to_string(checks.size()) + " check(s) became Check nodes after the step (Ctrl+Z on the canvas undoes it).";
+    }
 }
 
 void PrepareView::RunStep(int step_id) {
     if (!editor_) return;
-    if (step_id == loaded_ && pane_.Text() != saved_query_) SaveDraft();
+    if (step_id == loaded_ && (pane_.Text() != saved_query_ || guided_.Edited())) SaveDraft();
     if (!editor_->ExecuteDataPipelineThrough(step_id, true)) {
         message_ = "A pipeline run is in progress; run again when it ends.";
         message_error_ = true;
@@ -201,19 +270,56 @@ void PrepareView::OpenInDialog(int step_id) {
     if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::OpenStep, step_id);
 }
 
-void PrepareView::AddStepAfter(int step_id, bool guided) {
+void PrepareView::AddStepAfter(int step_id, ::gui::NodeType type, bool guided) {
     if (!editor_) return;
     // A step is added on the canvas: a collapsed recipe opens first.
     if (!editor_->GetNodeForConfiguration(step_id)) {
         const int recipe = RecipeOf(step_id);
         if (recipe >= 0) editor_->RequestSubgraphAction(recipe, ::gui::NodeEditor::SubgraphRequest::Expand);
     }
-    if (guided) editor_->RequestGuidedStepAfter(step_id);
-    else editor_->RequestSqlStepAfter(step_id, "SQL step", "SELECT *\nFROM input");
+    if (type != ::gui::NodeType::SQLQuery) {
+        editor_->RequestStepAfter(step_id, type);
+        const auto* meta = NodeMetadataRegistry::Instance().GetMetadata(type);
+        message_ = "Added a " + (meta ? meta->name : std::string("step")) + " node after this one; pick it in the list, its settings are in its dialog.";
+    } else if (guided) {
+        editor_->RequestGuidedStepAfter(step_id);
+        message_ = "Added a guided step after this one; pick it in the list to add its operations.";
+    } else {
+        editor_->RequestSqlStepAfter(step_id, "SQL step", "SELECT *\nFROM input");
+        message_ = "Added an SQL step after this one; pick it in the list to write its query.";
+    }
     if (raise_canvas) raise_canvas();
-    message_ = guided ? "Added a guided step after this one; edit its operations in the Workbench (Open in Workbench)."
-                      : "Added an SQL step after this one; pick it in the list to write its query.";
     message_error_ = false;
+}
+
+void PrepareView::RenderAddStepMenu(int step_id) {
+    using ::gui::NodeType;
+    if (ImGui::MenuItem("SQL step")) AddStepAfter(step_id, NodeType::SQLQuery);
+    if (ImGui::MenuItem("Guided step")) AddStepAfter(step_id, NodeType::SQLQuery, true);
+    ImGui::Separator();
+    const auto& registry = NodeMetadataRegistry::Instance();
+    const auto item = [&](const NodeMetadata& meta) {
+        if (ImGui::MenuItem((meta.icon + "  " + meta.name).c_str())) AddStepAfter(step_id, meta.type);
+        if (ImGui::IsItemHovered() && !meta.brief_description.empty()) ImGui::SetTooltip("%s", meta.brief_description.c_str());
+    };
+    // The step nodes used most, then every other preparation node.
+    static const NodeType kCommon[] = {NodeType::FilterRows, NodeType::JoinTables, NodeType::GroupByAggregate, NodeType::TextCleanNode};
+    for (const NodeType type : kCommon)
+        if (const auto* meta = registry.GetMetadata(type)) item(*meta);
+    if (ImGui::BeginMenu("More nodes")) {
+        std::vector<const NodeMetadata*> more;
+        for (const auto* meta : registry.GetAllMetadata()) {
+            studio::Job job;
+            if (!meta || meta->status != NodeImplementationStatus::Implemented || !studio::JobOf(meta->type, job) ||
+                job != studio::Job::Prepare || meta->type == NodeType::SQLQuery || meta->type == NodeType::Subgraph ||
+                std::find(std::begin(kCommon), std::end(kCommon), meta->type) != std::end(kCommon))
+                continue;
+            more.push_back(meta);
+        }
+        std::sort(more.begin(), more.end(), [](const NodeMetadata* a, const NodeMetadata* b) { return a->name < b->name; });
+        for (const auto* meta : more) item(*meta);
+        ImGui::EndMenu();
+    }
 }
 
 void PrepareView::StartPartCounts(const studio::GraphNode& node) {
@@ -224,25 +330,20 @@ void PrepareView::StartPartCounts(const studio::GraphNode& node) {
     const std::string counts_sql = sqlstep::PartCountsQuery(query, outline);
     auto job = std::make_shared<PartCounts>();
     job->key = node.output_dataset + "@" + node.finished_at;
+    job->query = query;
     parts_ = job;
     if (counts_sql.empty() || outline.parts.size() < 2) {
         job->done = true;
         return;
     }
-    const auto names = sqlstep::InputNames(step->parameters);
-    const auto& facts = editor_->GetNodeRunFacts();
     std::vector<SqlTransformInput> inputs;
-    for (const auto& input : editor_->GetDataStepContext(node.id).inputs) {
-        const auto it = facts.find(input.id);
-        std::shared_ptr<arrow::Table> table;
-        if (it != facts.end() && !it->second.output_dataset.empty())
-            if (auto ds = DataRegistry::Instance().GetArrowDataset(it->second.output_dataset)) table = ds->GetArrowTable();
-        if (!table) {
-            job->error = "its input \"" + input.name + "\" is not in memory";
+    for (const auto& input : StepInputs(node.id)) {
+        if (!input.table) {
+            job->error = "its input (" + input.alias + " in the query) is not in memory";
             job->done = true;
             return;
         }
-        inputs.push_back({input.pin < static_cast<int>(names.size()) ? names[static_cast<size_t>(input.pin)] : std::string("input"), table});
+        inputs.push_back({input.alias, input.table});
     }
     std::vector<std::string> order;
     for (const auto& part : outline.parts) order.push_back(part.name);
@@ -252,7 +353,7 @@ void PrepareView::StartPartCounts(const studio::GraphNode& node) {
         if (!r.ok || !r.table) {
             raw->error = r.cancelled ? std::string() : r.error;
         } else {
-            std::map<std::string, int64_t> by_part;
+            auto& by_part = raw->by_part;
             const auto parts = r.table->GetColumnByName("part");
             const auto rows = r.table->GetColumnByName("row_count");
             for (int64_t i = 0; parts && rows && i < r.table->num_rows(); ++i) {
@@ -346,6 +447,16 @@ void PrepareView::RenderSteps(float height) {
                     ui::ToU32(row.tone == studio::Tone::Plain ? t.text_dim : ToneColour(row.tone)), meta.c_str(), nullptr, 0.0f, &clip);
         ImGui::PopID();
     }
+    // Add a step after the one selected (the mockup's "Add a step").
+    if (selected_ >= 0) {
+        ImGui::Spacing();
+        if (ui::SecondaryButton(ICON_FA_PLUS " Add a step " ICON_FA_CARET_DOWN)) ImGui::OpenPopup("##add_step");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds an SQL step, a guided step or a step node after the selected step");
+        if (ImGui::BeginPopup("##add_step")) {
+            RenderAddStepMenu(selected_);
+            ImGui::EndPopup();
+        }
+    }
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_faint, recipe_ >= 0 ? "The recipe is the Preparation Recipe node on the canvas; its steps run in this order."
@@ -363,16 +474,18 @@ void PrepareView::RenderSqlStep(const studio::GraphNode& node, float height) {
     // The query changed elsewhere (the Workbench, Properties) and nothing is typed here: show it.
     if (const ::gui::MLNode* step = editor_->FindStep(node.id)) {
         const std::string now = Param(*step, "query");
-        if (now != saved_query_ && pane_.Text() == saved_query_) LoadStep(node.id);
+        if (now != saved_query_ && pane_.Text() == saved_query_ && !guided_.Edited()) LoadStep(node.id);
     }
-    const bool dirty = pane_.Text() != saved_query_;
+    const bool dirty = pane_.Text() != saved_query_ || guided_.Edited();
     const bool running = editor_->IsDataPipelineRunning();
+    const bool ready = !guided_.Active() || guided_.Generated().ok;
+    guided_.busy = running;
 
     // Header: the step, what it is, what it reads.
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_bright, "%s", node.name.c_str());
     ImGui::SameLine(0.0f, 10.0f);
-    KindChip(guided_ ? "SQL Query node \xC2\xB7 guided" : "SQL Query node");
+    KindChip(guided_.Active() ? "SQL Query node \xC2\xB7 guided" : "SQL Query node");
     if (!reads_.empty()) {
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::AlignTextToFramePadding();
@@ -383,22 +496,48 @@ void PrepareView::RenderSqlStep(const studio::GraphNode& node, float height) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.warning, "not saved");
     }
-    if (guided_) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "A guided step: its SQL is made from its operations, edited in the Workbench's Guided mode "
-                                       "(Open in Workbench). Shown here read-only.");
-        ImGui::PopTextWrapPos();
+    // How the step is edited: from operations (Guided) or as its query (SQL).
+    static const char* const kModes[] = {"Guided", "SQL"};
+    ui::SegmentedControl("##prepare_mode", kModes, 2, &mode_);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Guided: build the step from operations. SQL: the query itself.");
+    if (mode_ == 0) {
+        RenderGuided(std::clamp(height * 0.46f, 240.0f, 480.0f));
+    } else {
+        if (guided_.Active()) {
+            // SQL mode on a guided step: the query is read-only.
+            ImGui::SameLine(0.0f, 12.0f);
+            ImGui::AlignTextToFramePadding();
+            if (!confirm_edit_as_sql_) {
+                ImGui::TextColored(t.info, ICON_FA_CIRCLE_INFO " Written from the operations (read-only).");
+                ImGui::SameLine();
+                if (ui::LinkButton("Edit as SQL")) confirm_edit_as_sql_ = true;
+            } else {
+                ImGui::TextColored(t.warning, "The operations go when you save.");
+                ImGui::SameLine();
+                if (ui::LinkButton("Edit as SQL")) {
+                    confirm_edit_as_sql_ = false;
+                    guided_.Stop();
+                    pane_.Editor().SetReadOnly(false);
+                    message_ = "The query is yours to edit; Save to step keeps it as an SQL step (Reset undoes this).";
+                    message_error_ = false;
+                }
+                ImGui::SameLine();
+                if (ui::LinkButton("Cancel")) confirm_edit_as_sql_ = false;
+            }
+        }
+        pane_.Render(std::clamp(height * 0.38f, 140.0f, 360.0f));
+        // Ctrl+Enter runs the step, as in the Workbench.
+        if (pane_.Editor().IsFocused() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !running && ready)
+            RunStep(node.id);
     }
 
-    pane_.Render(std::clamp(height * 0.38f, 140.0f, 360.0f));
-    // Ctrl+Enter runs the step, as in the Workbench.
-    if (pane_.Editor().IsFocused() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !running) RunStep(node.id);
-
-    if (ui::PrimaryButton(ICON_FA_PLAY " Run step", !running, "The Data Pipeline is running", ui::ButtonSize::Small)) RunStep(node.id);
+    if (ui::PrimaryButton(ICON_FA_PLAY " Run step", !running && ready, running ? "The Data Pipeline is running" : "Fix the operations marked in red",
+                          ui::ButtonSize::Small))
+        RunStep(node.id);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Saves the query to the step, then runs the Data Pipeline through it and its checks (Ctrl+Enter).");
+        ImGui::SetTooltip("Saves the step, then runs the Data Pipeline through it and its checks (Ctrl+Enter in the query).");
     ImGui::SameLine();
-    if (ui::SecondaryButton("Save to step", dirty && !guided_, "No changes to save")) SaveDraft();
+    if (ui::SecondaryButton("Save to step", dirty && ready, !dirty ? "No changes to save" : "Fix the operations marked in red")) SaveDraft();
     if (dirty) {
         ImGui::SameLine();
         if (ui::LinkButton("Reset")) LoadStep(node.id);
@@ -408,8 +547,7 @@ void PrepareView::RenderSqlStep(const studio::GraphNode& node, float height) {
     ImGui::SameLine();
     if (ui::SecondaryButton("Add a step after " ICON_FA_CARET_DOWN)) ImGui::OpenPopup("##add_after");
     if (ImGui::BeginPopup("##add_after")) {
-        if (ImGui::MenuItem("SQL step")) AddStepAfter(node.id, false);
-        if (ImGui::MenuItem("Guided step")) AddStepAfter(node.id, true);
+        RenderAddStepMenu(node.id);
         ImGui::EndPopup();
     }
     if (!message_.empty()) {
@@ -418,6 +556,70 @@ void PrepareView::RenderSqlStep(const studio::GraphNode& node, float height) {
         ImGui::PopTextWrapPos();
     }
     RenderResult(node);
+}
+
+// Guided mode: the operations as cards and the picked one's fields (the
+// Workbench's guided editor); the library is a menu, the screen being narrower.
+void PrepareView::RenderGuided(float height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (!guided_.Active()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "This step is written in SQL. A guided step builds it from operations instead; it replaces "
+                                       "the query when you save (Reset brings the query back until then).");
+        ImGui::PopTextWrapPos();
+        if (ui::SecondaryButton("Start a guided step instead")) confirm_start_guided_ = true;
+        if (confirm_start_guided_) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(t.warning, "Replace the query with operations?");
+            ImGui::SameLine();
+            if (ui::LinkButton("Yes, start")) {
+                confirm_start_guided_ = false;
+                guided_.Start();
+            }
+            ImGui::SameLine();
+            if (ui::LinkButton("Cancel")) confirm_start_guided_ = false;
+        }
+        ImGui::Spacing();
+        return;
+    }
+    // The tools beside Guided | SQL, or on the next line when they do not fit.
+    const float tools = ui::ButtonWidth(ICON_FA_PLUS " Add an operation " ICON_FA_CHEVRON_DOWN, ui::ButtonSize::Small) +
+                        ui::ButtonWidth("Start from a template " ICON_FA_CHEVRON_DOWN, ui::ButtonSize::Small) +
+                        ui::ButtonWidth("Undo", ui::ButtonSize::Small) + ui::ButtonWidth("Redo", ui::ButtonSize::Small) +
+                        ImGui::GetStyle().ItemSpacing.x * 3.0f;
+    ImGui::SameLine(0.0f, 12.0f);
+    if (ImGui::GetContentRegionAvail().x < tools) ImGui::NewLine();
+    guided_.RenderAddMenu(ui::ButtonSize::Small);
+    ImGui::SameLine();
+    guided_.RenderTemplateButton(ui::ButtonSize::Small);
+    ImGui::SameLine();
+    if (ui::GhostButton("Undo", guided_.CanUndo(), "Nothing to undo")) guided_.Undo();
+    ImGui::SameLine();
+    if (ui::GhostButton("Redo", guided_.CanRedo(), "Nothing to redo")) guided_.Redo();
+
+    // Rows after each operation: the last run's count per part, while the
+    // operations still write that query.
+    ::gui::GuidedEditor::CardFacts facts;
+    if (parts_ && parts_->done && parts_->error.empty() && parts_->query == pane_.Text()) facts.rows = &parts_->by_part;
+    if (!guided_.Inputs().empty() && guided_.Inputs().front().table) facts.input_rows = guided_.Inputs().front().table->num_rows();
+    facts.checks_after = checks_after_;
+
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.y;
+    if (width >= 760.0f) {
+        guided_.RenderCards(ImVec2(std::clamp(width * 0.4f, 300.0f, 420.0f), height), facts);
+        ImGui::SameLine();
+        if (::gui::sqlwb::BeginPanel("##prepare_guided_fields", ImVec2(0.0f, height), t.bg_panel)) guided_.RenderEditor();
+        ::gui::sqlwb::EndPanel();
+    } else {
+        // Narrow (Properties docked beside): the fields below the cards.
+        const float cards_h = std::floor(height * 0.45f);
+        guided_.RenderCards(ImVec2(0.0f, cards_h), facts);
+        if (::gui::sqlwb::BeginPanel("##prepare_guided_fields", ImVec2(0.0f, height - cards_h - spacing), t.bg_panel))
+            guided_.RenderEditor();
+        ::gui::sqlwb::EndPanel();
+    }
 }
 
 void PrepareView::RenderOtherStep(const studio::GraphNode& node) {
@@ -449,6 +651,7 @@ void PrepareView::RenderOtherStep(const studio::GraphNode& node) {
     if (loaded_ != node.id) {
         loaded_ = node.id;
         message_.clear();
+        guided_.Load({});  // no operations: this step is not an SQL step
     }
     // Its settings, as saved in the graph.
     if (step && !step->parameters.empty() &&

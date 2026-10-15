@@ -152,6 +152,8 @@ MLNode* SqlWorkbenchDialog::CurrentNode() {
 void SqlWorkbenchDialog::Apply() {
     MLNode* node = CurrentNode();
     if (!node) return;
+    // Its "Add checks" become Check nodes after the step (TOFIX148 D4).
+    const auto checks = guided_.TakeChecks();
     saved_query_ = pane_.Editor().GetText();
     node->parameters["query"] = saved_query_;
     guided_.MarkSaved();
@@ -159,6 +161,12 @@ void SqlWorkbenchDialog::Apply() {
         // A guided step keeps its operations next to the query they wrote.
         node->parameters[cyxwiz::guided::kGuidedOpsParameter] = guided_.Json();
         AddMessage("Saved the operations and their query to the step.", false);
+        if (!checks.empty() && node_editor_) {
+            // Requested last first: each goes right after the step.
+            for (auto it = checks.rbegin(); it != checks.rend(); ++it)
+                node_editor_->RequestStepAfter(node_id_, NodeType::RowCountCheck, it->name, it->parameters);
+            AddMessage("Its " + std::to_string(checks.size()) + " check(s) became Check nodes after the step.", false);
+        }
     } else {
         // Written in SQL now: no operations stay behind.
         node->parameters.erase(cyxwiz::guided::kGuidedOpsParameter);

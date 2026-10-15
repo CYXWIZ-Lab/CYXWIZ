@@ -5,11 +5,14 @@
 // Workbench's editor pane in place (Save to step writes the node, with an undo
 // point, also inside a collapsed recipe); Run step runs the Data Pipeline
 // through the step and its checks; its result shows in the table grid with
-// the rows each part of the query keeps. Other steps show their settings and
-// open in their dialog. Guided steps are edited in the Workbench's Guided
-// mode (D3 brings form steps here).
+// the rows each part of the query keeps. A guided (form) step is edited in
+// place in Guided mode with the Workbench's guided editor (D3: the guided
+// operations stay the form UI; none of them has a canonical operator to
+// lower to, checks aside, which D4 moves to Row Count Checks). Other steps
+// show their settings and open in their dialog.
 
 #include "../../core/data_studio_presentation.h"
+#include "../guided_editor.h"
 #include "../sql_editor_pane.h"
 #include "../table_grid.h"
 
@@ -45,14 +48,20 @@ private:
 
     void RenderSteps(float height);
     void RenderSqlStep(const studio::GraphNode& node, float height);
+    void RenderGuided(float height);
     void RenderOtherStep(const studio::GraphNode& node);
     void RenderResult(const studio::GraphNode& node);
     void LoadStep(int step_id);
     void SaveDraft();
     void RunStep(int step_id);
     void OpenInDialog(int step_id);
-    void AddStepAfter(int step_id, bool guided);
+    // Adds a node after a step (on the canvas): an SQL step (guided or not) or another step node.
+    void AddStepAfter(int step_id, ::gui::NodeType type, bool guided = false);
+    void RenderAddStepMenu(int step_id);  // the "Add a step" menu's items
     void StartPartCounts(const studio::GraphNode& node);
+    // The step's inputs by the names its query uses, with their tables when in memory.
+    std::vector<::gui::GuidedEditor::Input> StepInputs(int step_id) const;
+    void OnGuidedChanged();  // the operations' SQL into the editor (read-only)
     const studio::GraphNode* NodeById(int id) const;
     int RecipeOf(int step_id) const;  // the recipe holding a step (-1: none)
 
@@ -68,8 +77,12 @@ private:
     ::gui::SqlEditorPane pane_{"data_studio_prepare"};
     int loaded_ = -1;                // the step in the editor
     std::string saved_query_;        // its query when loaded or saved
-    bool guided_ = false;            // a guided step: its SQL is generated
+    ::gui::GuidedEditor guided_;     // Active(): a guided step, its SQL written from its operations
+    int mode_ = 1;                   // 0 Guided, 1 SQL
+    bool confirm_start_guided_ = false;
+    bool confirm_edit_as_sql_ = false;
     std::string reads_;              // the step's inputs ("Tier 1 books (ZIP text)")
+    size_t checks_after_ = 0;        // Row Count Checks after the step
     std::string message_;
     bool message_error_ = false;
 

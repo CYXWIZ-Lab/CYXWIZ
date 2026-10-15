@@ -3,6 +3,7 @@
 #include "subgraph_document.h"
 #include "../core/graph_node_factory.h"
 #include "../core/guided_sql.h"
+#include "../core/node_metadata_registry.h"
 #include "../core/preparation_recipe.h"
 #include "../core/sql_step_contract.h"
 #include "properties.h"
@@ -551,44 +552,90 @@ void NodeEditor::ApplyStepAfterInsert() {
             deferred_focus_ = {};
         }
     }
-    if (pending_step_after_.after < 0) return;
+    if (pending_steps_after_.empty()) return;
     // A recipe being expanded first (Data Studio): its steps join the canvas then.
     if (pending_subgraph_request_.subgraph_id >= 0) return;
-    const PendingStepAfter request = std::move(pending_step_after_);
-    pending_step_after_ = {};
+    const auto requests = std::move(pending_steps_after_);
+    pending_steps_after_.clear();
+    for (const auto& request : requests) InsertStepAfter(request);
+}
+
+void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     const int after_id = request.after;
     const MLNode* after = FindNodeById(after_id);
-    if (!after || after->type != NodeType::SQLQuery || after->outputs.empty()) return;
-    if (!CanReplaceGraph(request.guided ? "add a guided step" : "add an SQL step")) return;
+    if (!after || after->outputs.empty()) return;
+    const bool sql = request.type == NodeType::SQLQuery;
+    std::string kind = GetNodeTypeName(request.type);
+    if (const auto* meta = cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(request.type)) kind = meta->name;
+    const std::string operation = sql ? (request.guided ? "add a guided step" : "add an SQL step") : "add a " + kind + " step";
+    if (!CanReplaceGraph(operation.c_str())) return;
 
     SaveUndoState();
     if (properties_panel_) properties_panel_->ClearNodeReferences();
     const int after_out = after->outputs.front().id;
-    // Below the step it follows: the place to its right usually holds the
-    // next node already.
-    ImVec2 position(after->initial_pos_x, after->initial_pos_y + 150.0f);
-    if (const auto cached = cached_node_positions_.find(after_id); cached != cached_node_positions_.end()) {
-        position = ImVec2(cached->second.x, cached->second.y + 150.0f);
+    // To the step's right, as far as the node after it already is (the
+    // graph's own spacing); the nodes after it move right by as much, so the
+    // links stay straight.
+    const auto place = [&](int id, const MLNode& node) {
+        // A place set this frame (an earlier insert moved it) comes first.
+        if (const auto pending = pending_positions_.find(id); pending != pending_positions_.end()) return pending->second;
+        const auto cached = cached_node_positions_.find(id);
+        return cached != cached_node_positions_.end() ? cached->second : ImVec2(node.initial_pos_x, node.initial_pos_y);
+    };
+    const ImVec2 at = place(after_id, *after);
+    float shift = 0.0f;
+    for (const auto& link : links_) {
+        const MLNode* next = link.from_node == after_id ? FindNodeById(link.to_node) : nullptr;
+        if (!next) continue;
+        const float gap = place(next->id, *next).x - at.x;
+        if (gap > 0.0f && (shift == 0.0f || gap < shift)) shift = gap;
+    }
+    if (shift <= 0.0f) {
+        // Nothing to its right: the step's width and a gap.
+        const float width = cached_node_positions_.count(after_id) ? ImNodes::GetNodeDimensions(after_id).x / zoom_ : 120.0f;
+        shift = width + 100.0f;
+    }
+    shift = std::clamp(shift, 120.0f, 600.0f);
+    const ImVec2 position(at.x + shift, at.y);
+    std::set<int> downstream;
+    std::vector<int> frontier{after_id};
+    while (!frontier.empty()) {
+        const int from = frontier.back();
+        frontier.pop_back();
+        for (const auto& link : links_)
+            if (link.from_node == from && link.to_node != after_id && downstream.insert(link.to_node).second) frontier.push_back(link.to_node);
+    }
+    for (const int id : downstream) {
+        const MLNode* node = FindNodeById(id);
+        if (!node) continue;
+        const ImVec2 from = place(id, *node);
+        pending_positions_[id] = ImVec2(from.x + shift, from.y);
     }
 
     // An empty guided step passes the rows through until operations are
-    // added in the guided editor; an SQL step runs the query it was given.
-    MLNode step = CreateNode(NodeType::SQLQuery, request.guided ? after->name + " (guided)"
-                                                 : request.name.empty() ? after->name + " (query)" : request.name);
-    if (request.guided) {
-        const cyxwiz::guided::GuidedStep empty;
-        step.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(empty);
-        step.parameters["query"] = cyxwiz::guided::GenerateSql(empty, {}).sql;
-    } else {
-        step.parameters["query"] = request.query;
+    // added; an SQL step runs the query it was given; other nodes start with
+    // their defaults.
+    MLNode step = CreateNode(request.type, !request.name.empty() ? request.name
+                                           : !sql                ? kind
+                                           : request.guided      ? after->name + " (guided)"
+                                                                 : after->name + " (query)");
+    if (sql) {
+        if (request.guided) {
+            const cyxwiz::guided::GuidedStep empty;
+            step.parameters[cyxwiz::guided::kGuidedOpsParameter] = cyxwiz::guided::ToJson(empty);
+            step.parameters["query"] = cyxwiz::guided::GenerateSql(empty, {}).sql;
+        } else {
+            step.parameters["query"] = request.query;
+        }
+        step.parameters["input_alias"] = "input";
+        step.parameters[cyxwiz::kSqlContractParameter] = cyxwiz::kSqlContractVersion;
     }
-    step.parameters["input_alias"] = "input";
-    step.parameters[cyxwiz::kSqlContractParameter] = cyxwiz::kSqlContractVersion;
+    for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
     step.initial_pos_x = position.x;
     step.initial_pos_y = position.y;
     step.has_initial_position = true;
     if (step.inputs.empty() || step.outputs.empty()) {
-        spdlog::error("A new SQL step has no pins; nothing added");
+        spdlog::error("A new {} node has no input or output pin; nothing added", kind);
         return;
     }
     const int step_in = step.inputs.front().id;
@@ -620,7 +667,7 @@ void NodeEditor::ApplyStepAfterInsert() {
     RebuildPinLookup();
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
-    spdlog::info("Added {} step {} after SQL step {}", request.guided ? "a guided" : "an SQL", step_id, after_id);
+    spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {

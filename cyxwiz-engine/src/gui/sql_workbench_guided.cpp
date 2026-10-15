@@ -99,10 +99,10 @@ void SqlWorkbenchDialog::RenderGuided(float height) {
     if (guided_changed_at_ >= 0.0 && ImGui::GetTime() - guided_changed_at_ > 0.5) StartGuidedPreview();
 
     const ui::Tokens& t = ui::CurrentTokens();
-    guided_.RenderLibrary(height);
+    guided_.RenderLibrary(ImVec2(std::clamp(ImGui::GetContentRegionAvail().x * 0.16f, 220.0f, 300.0f), height));
     ImGui::SameLine();
     const bool counted = !part_rows_.empty() && part_rows_draft_ == pane_.Text();
-    guided_.RenderCards(height, {counted ? &part_rows_ : nullptr, GuidedInputRows(), context_.checks.size()});
+    guided_.RenderCards(ImVec2(std::clamp(ImGui::GetContentRegionAvail().x * 0.29f, 300.0f, 420.0f), height), {counted ? &part_rows_ : nullptr, GuidedInputRows(), context_.checks.size()});
     ImGui::SameLine();
     ImGui::BeginGroup();
     const float editor_h = std::floor(height * 0.5f);

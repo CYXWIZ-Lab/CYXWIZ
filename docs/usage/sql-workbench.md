@@ -117,7 +117,8 @@ plan.
 
 A guided step is an SQL step built from operations instead of typed SQL. In
 the Workbench, choose **Guided**, then **Start a guided step instead** (or
-**Start from a template**).
+**Start from a template**). Data Studio > Prepare edits guided steps in place
+with the same editor ([Data Studio](data_studio.md#prepare)).
 
 - **Operations**, in five groups:
   - Rows: Keep rows where, Remove duplicate rows, Sort rows, Keep first /
@@ -146,6 +147,11 @@ the Workbench, choose **Guided**, then **Start a guided step instead** (or
   because the operations are not kept.
 - An operation with a problem (a missing column, a bad pattern) is marked in
   red with the reason, and the step cannot run until it is fixed.
+- **Add checks** goes last. While you edit, its checks run with the preview
+  and a failing one stops it with its message. When the step is saved, each
+  check becomes a **Row Count Check** node right after the step (row count,
+  allowed values, unique, not empty) and the operation leaves the step; Ctrl+Z
+  on the canvas undoes it. Placed before other operations, it is marked in red.
 
 The step stores its operations (`guided_ops`) and the SQL they generate
 (`query`). Graphs and runs use the SQL, so a guided step runs exactly like any

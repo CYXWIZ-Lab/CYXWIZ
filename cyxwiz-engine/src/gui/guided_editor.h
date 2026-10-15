@@ -7,8 +7,10 @@
 // query, runs and saving, and hears of every change through on_changed.
 
 #include "../core/guided_sql.h"
+#include "ui_buttons.h"
 
 #include <arrow/api.h>
+#include <imgui.h>
 
 #include <cstdint>
 #include <functional>
@@ -52,6 +54,10 @@ public:
     // The operations differ from the ones loaded or last saved.
     bool Edited() const;
     void MarkSaved() { saved_json_ = active_ ? Json() : std::string(); }
+    // Saving: the last "Add checks" operation leaves the step and its checks
+    // come back as Check node settings (TOFIX148 D4); the SQL is written
+    // again without it (on_changed). Undo brings the operation back.
+    std::vector<cyxwiz::guided::CheckNode> TakeChecks();
     int Picked() const { return picked_; }
     // Rows after operation `op`, or -1 when `rows` does not have its part.
     int64_t RowsAfter(size_t op, const std::map<std::string, int64_t>& rows) const;
@@ -61,9 +67,11 @@ public:
     void Undo();
     void Redo();
 
-    void RenderTemplateButton();  // "Start from a template" and its menu
-    void RenderLibrary(float height);
-    void RenderCards(float height, const CardFacts& facts);
+    void RenderTemplateButton(cyxwiz::ui::ButtonSize size = cyxwiz::ui::ButtonSize::Regular);  // and its menu
+    // The library as a menu, for a narrow host (Prepare).
+    void RenderAddMenu(cyxwiz::ui::ButtonSize size = cyxwiz::ui::ButtonSize::Regular);
+    void RenderLibrary(const ImVec2& size);
+    void RenderCards(const ImVec2& size, const CardFacts& facts);
     void RenderEditor();  // the picked operation's fields
 
     // After every change of the operations, with the new SQL written.
@@ -76,6 +84,8 @@ private:
     void Regenerate();
     void Changed(const std::string& before_json);  // undo point, regenerate, on_changed
     bool RenderFields(cyxwiz::guided::Operation& op, const cyxwiz::guided::Columns& in);
+    void AddOp(const cyxwiz::guided::OpInfo& op);  // after the picked operation
+    bool Matches(const cyxwiz::guided::OpInfo& op) const;  // the search finds it
 
     bool active_ = false;
     cyxwiz::guided::GuidedStep step_;
