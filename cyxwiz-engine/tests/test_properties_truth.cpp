@@ -276,6 +276,12 @@ int main() {
         Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
                   HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
               "GloVe training needs the text column too");
+        vectors.parameters["source"] = "fasttext";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "fastText training needs the text column too");
         const auto* outputs = FindProperty(report, "word_embeddings_outputs");
         Check(outputs != nullptr && outputs->message.find("PipelineOperatorFactory") != std::string::npos,
               "WordEmbeddings truth should describe operator-factory routing");

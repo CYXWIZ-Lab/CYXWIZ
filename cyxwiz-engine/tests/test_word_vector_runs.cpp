@@ -209,6 +209,32 @@ int main() {
     const std::string curve = cyxwiz::WordVectorCurveCsv(*book.Find(1));
     Check(curve.rfind("epoch,cost,seconds\n1,0.03414,20.8\n2,0.01822,31.0\n", 0) == 0, "curve CSV:\n" + curve);
 
+    // A fastText run: the Pieces card and the pieces in the line-up.
+    cyxwiz::WordVectorRunBook pieces_book;
+    auto start = Start("fastText skip-gram", 5, 5, 11);
+    start.figures.push_back({"bucket", 2000000});
+    start.figures.push_back({"min_n", 3});
+    start.figures.push_back({"max_n", 6});
+    pieces_book.Record(start, 0.0);
+    view = cyxwiz::BuildWordVectorRunView(*pieces_book.Find(1), 1.0);
+    Check(view.cards[3].label == "Pieces" && view.cards[3].value == "2,000,000" &&
+              view.cards[3].line1 == "buckets" + kDot + "3 to 6 letters" && view.cards[0].label == "Loss per example",
+          "fastText Pieces card: " + view.cards[3].line1);
+    pieces_book.Record(Event("Training", "Trained", 0.9f, {{"pieces_per_word", 21.66}, {"elapsed", 30.0}}, {}, 11),
+                       30.0);
+    pieces_book.Record(Event("Aligning", "Lined up", 0.92f,
+                             {{"tokens", 5000}, {"found", 4919}, {"lowercase", 0}, {"pieces", 4}, {"missing", 73},
+                              {"elapsed", 31.0}},
+                             {}, 11),
+                       31.0);
+    view = cyxwiz::BuildWordVectorRunView(*pieces_book.Find(1), 31.5);
+    Check(view.cards[3].line2 == "21.7 pieces per word" &&
+              view.steps[1].detail == "4,919 found" + kDot + "4 from pieces" + kDot + "73 missing",
+          "fastText line-up step: " + view.steps[1].detail);
+    Check(cyxwiz::BuildWordVectorRunRow(*pieces_book.Find(1)).settings ==
+              "100 dims" + kDot + "window 5" + kDot + "5 epochs" + kDot + "pieces 3-6",
+          "fastText settings in the runs table");
+
     Check(cyxwiz::WordVectorDuration(42.24) == "42.2 s" && cyxwiz::WordVectorDuration(184.0) == "3 min 04 s" &&
               cyxwiz::WordVectorDuration(3725.0) == "1 h 02 min",
           "durations");

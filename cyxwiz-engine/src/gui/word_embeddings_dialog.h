@@ -48,12 +48,20 @@ private:
         std::optional<cyxwiz::WordCoverageView> coverage;
         size_t vocab_size = 0;
         std::vector<std::string> missing_words;
+        bool fasttext = false;  // a fastText model (.bin)
     };
 
     std::string Get(const std::string& key) const;
     void Set(const std::string& key, const std::string& value);
     bool Training() const { return Get("source") != "pretrained"; }  // word2vec or GloVe
     bool GloVe() const { return Get("source") == "glove"; }
+    bool FastText() const { return Get("source") == "fasttext"; }
+    // The file the run saves its vectors to (the default when empty).
+    std::string VectorsPath() const;
+    // fastText: a word the vectors lack, built from its n-grams (the trained
+    // model of this session or the pretrained .bin); false when there is none.
+    bool UnseenWordVector(const std::string& word, std::vector<float>& vector, size_t& pieces, bool& trained) const;
+    void RenderUnseenWordsChoice();
     std::string Resolve(const std::string& path) const;
 
     void RefreshInputs();
@@ -101,6 +109,7 @@ private:
     std::optional<cyxwiz::WordCoverageView> coverage_;
     size_t vocab_size_ = 0;
     std::vector<std::string> missing_words_;
+    bool read_fasttext_ = false;  // the pretrained file is a fastText model
 
     bool run_started_ = false;  // this dialog started the graph run
     uint64_t run_task_ = 0;
@@ -115,6 +124,7 @@ private:
     std::string query_word_;
     std::vector<std::pair<std::string, double>> nearest_;
     std::string nearest_note_;
+    std::string nearest_badge_;  // fastText: "not in the training words · from 26 pieces"
 };
 
 }  // namespace gui

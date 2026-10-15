@@ -247,6 +247,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp      # Fix B Band 1
     src/core/node_executors/text_feature_matrix.cpp          # Shared dense/CSR text output
@@ -1717,6 +1718,7 @@ add_executable(test_debug_executor
     src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -1935,6 +1937,7 @@ add_executable(test_document_token_windows
     tests/test_document_token_windows.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp)
@@ -1950,6 +1953,7 @@ add_executable(test_text_tokenizer_operator
     tests/test_text_tokenizer_operator.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -1983,6 +1987,7 @@ find_package(Catch2 CONFIG REQUIRED)
 add_executable(test_bpe_piece_policy_operator tests/test_bpe_piece_policy_operator.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp)
@@ -2443,6 +2448,7 @@ add_executable(test_word_embeddings_operator
     tests/test_word_embeddings_operator.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
 )
 target_include_directories(test_word_embeddings_operator PRIVATE
@@ -2461,6 +2467,10 @@ if(WIN32)
         NOMINMAX
     )
 endif()
+# A fastText .bin from gensim (the pretrained fastText path).
+target_compile_definitions(test_word_embeddings_operator PRIVATE
+    CYXWIZ_FASTTEXT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/word_embeddings/small_fasttext.bin"
+)
 set_target_properties(test_word_embeddings_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
@@ -2614,6 +2624,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
@@ -2876,6 +2887,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
@@ -2978,6 +2990,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
@@ -3077,6 +3090,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
@@ -3589,6 +3603,7 @@ add_executable(test_text_arrow_materializer
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -3626,6 +3641,7 @@ add_executable(test_text_arrow_training_launch
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -3726,6 +3742,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
@@ -3810,6 +3827,7 @@ add_executable(test_text_gui_training_launch
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -4881,6 +4899,7 @@ add_executable(test_causal_lm_testing
     tests/test_causal_lm_testing.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -5026,6 +5045,7 @@ add_executable(test_text_arrow_adapter
     src/core/formats/text_dataset.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -5063,6 +5083,7 @@ add_executable(test_text_dataset_batcher_arrow
     src/core/formats/text_dataset.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -5186,6 +5207,7 @@ add_executable(test_debugger_contracts
     src/core/debug_run_store.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -5791,6 +5813,9 @@ add_custom_target(copy_test_computation_truth_word_embeddings_fixture
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/glove_reference.json"
         "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/glove_reference.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/fasttext_reference.json"
+        "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/fasttext_reference.json"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR}/word_embeddings"
         "$<TARGET_FILE_DIR:test_computation_truth_word_embeddings>/computation_truth_fixtures/word_embeddings"
@@ -6488,6 +6513,7 @@ add_executable(test_pipeline_materializer_cache
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
@@ -6850,6 +6876,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
+    src/core/fasttext_model_store.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp

@@ -21,6 +21,7 @@
 #include "arrayfire_indexed.h"
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
+#include "word2vec_sampling.h"
 
 #include <arrayfire.h>
 
@@ -36,30 +37,11 @@ namespace {
 
 constexpr dim_t kSyncSteps = 64;
 
-// W[key] -= alpha * (sum of the rows with that key).
-void ScatterSubtract(af::array& w, const af::array& keys, const af::array& rows, double alpha) {
-    if (keys.elements() == 0) return;
-    if (keys.elements() == 1) {
-        w(keys, af::span) -= static_cast<float>(alpha) * rows;
-        return;
-    }
-    af::array sorted, order;
-    SortWithIndex(sorted, order, keys, 0, true);
-    af::array unique, sums;
-    af::sumByKey(unique, sums, sorted, af::lookup(rows, order, 0), 0);
-    w(unique, af::span) -= static_cast<float>(alpha) * sums;
-}
-
-af::array Softplus(const af::array& x) {
-    return af::max(x, 0.0f) + af::log1p(af::exp(-af::abs(x)));
-}
-
 // One step. `inputs` [B, C] (-1 = no word), `outputs` [B], `negatives` [B, K]
 // (-1 = none), all s32. Returns the summed loss (a device scalar).
 af::array Step(af::array& w_in, af::array& w_out, const af::array& inputs, const af::array& outputs,
                const af::array& negatives, double alpha) {
     const dim_t b = inputs.dims(0), c = inputs.dims(1), d = w_in.dims(1);
-    const dim_t k = negatives.elements() == 0 ? 0 : negatives.dims(1);
 
     // h: the input word (skip-gram) or the mean of the context words (CBOW).
     const af::array valid = inputs >= 0;
@@ -69,30 +51,16 @@ af::array Step(af::array& w_in, af::array& w_out, const af::array& inputs, const
     const af::array masked = af::moddims(rows_in, b, c, d) * af::tile(af::moddims(weight, b, c, 1), 1, 1, static_cast<unsigned>(d));
     const af::array h = af::moddims(af::sum(masked, 1), b, d) / af::tile(count, 1, static_cast<unsigned>(d));
 
-    // Targets: the true output (label 1) then the negatives (label 0).
-    const af::array targets = k > 0 ? af::join(1, outputs, negatives) : outputs;  // [B, K+1]
-    const af::array flat_targets = af::flat(targets);
-    const af::array target_valid = (flat_targets >= 0).as(f32);
-    const af::array label = af::join(0, af::constant(1.0f, b), af::constant(0.0f, b * k));
-    const af::array u = af::lookup(w_out, af::select(flat_targets >= 0, flat_targets, 0.0), 0);  // [B(K+1), d]
-    const af::array h_rep = af::tile(h, static_cast<unsigned>(k + 1), 1);
-    const af::array score = af::sum(u * h_rep, 1);
-    const af::array loss = af::sum(af::select(label > 0.5f, Softplus(-score), Softplus(score)) * target_valid);
-    const af::array g = (af::sigmoid(score) - label) * target_valid;  // dLoss / dscore
-    const af::array g_rep = af::tile(g, 1, static_cast<unsigned>(d));
-    af::array grad_out = g_rep * h_rep;
-    const af::array grad_h = af::moddims(af::sum(af::moddims(g_rep * u, b, k + 1, d), 1), b, d);
+    // The outputs and negatives, then the input side from dLoss / dh.
+    af::array grad_h;
+    const af::array loss = NegativeSamplingStep(w_out, h, outputs, negatives, alpha, grad_h);
     // Each context word gets its share of the mean's gradient; an empty slot
     // gets none.
     af::array grad_in = af::moddims(
         af::tile(af::moddims(grad_h / af::tile(count, 1, static_cast<unsigned>(d)), b, 1, d), 1, static_cast<unsigned>(c), 1),
         b * c, d) * af::tile(af::flat(weight), 1, static_cast<unsigned>(d));
-    grad_out.eval();
     grad_in.eval();
-
-    // Empty slots (-1) update row 0 by a zero gradient instead of being
-    // filtered out: af::where would make the host wait for its count.
-    ScatterSubtract(w_out, af::select(flat_targets >= 0, flat_targets, 0.0).as(s32), grad_out, alpha);
+    // Empty slots (-1) update row 0 by a zero gradient.
     ScatterSubtract(w_in, af::flat(af::select(valid, inputs, 0.0)).as(s32), grad_in, alpha);
     w_in.eval();
     w_out.eval();
@@ -188,73 +156,17 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
                        [](long long c) { return static_cast<float>(c); });
         const af::array count_f(v, counts_float.data());
 
-        // Down-sampling: gensim's keep probability per word.
-        af::array keep_probability = af::constant(1.0f, v, f32);
-        if (options.sample > 0.0) {
-            const float threshold = static_cast<float>(options.sample * static_cast<double>(af::sum<double>(count_f)));
-            keep_probability = af::min((af::sqrt(count_f / threshold) + 1.0f) * (threshold / count_f), 1.0f);
-        }
-        // Negatives: a table where each word fills a share of slots
-        // proportional to count^0.75.
-        constexpr dim_t kTableSize = 1000000;
-        const af::array power = af::pow(count_f, 0.75f);
-        const af::array slots = af::floor(af::scan(power / af::sum<float>(power), 0) * static_cast<float>(kTableSize));
-        const af::array starts = af::join(0, af::constant(0.0f, 1), slots(af::seq(0, static_cast<double>(v) - 2)));
-        const af::array has_slots = slots > starts;
-        const af::array start_words = af::where(has_slots);
-        // Slot t belongs to the last word that starts at or before it: mark
-        // each start with its word and carry the running maximum.
-        af::array word_at_start = af::constant(-1, kTableSize, s32);
-        word_at_start(starts(start_words).as(s32)) = start_words.as(s32);
-        const af::array noise_table = af::scan(word_at_start, 0, AF_BINARY_MAX);
+        const af::array keep_probability = KeepProbability(count_f, options.sample);
+        const af::array noise_table = NoiseTable(count_f);
 
         const double total_estimate = static_cast<double>(options.epochs) * static_cast<double>(n) * 2.0 * window;
         double done = 0.0;
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
-            // Kept words of this epoch, in corpus order.
-            const af::array kept = af::where(af::randu(af::dim4(n), f32, engine) < keep_probability(corpus));
-            const dim_t m = kept.elements();
-            if (m < 2) continue;
-            const af::array words = corpus(kept).as(s32);
-            const af::array sentence = corpus_sentence(kept).as(s32);
-            // gensim: reduced_window = random % window, so the reach is 1..window.
-            const af::array reach =
-                af::min(af::floor(af::randu(af::dim4(m), f32, engine) * static_cast<float>(window)), static_cast<float>(window - 1));
-            const af::array position = af::range(af::dim4(m), 0, s32);
-
-            // Context slot (o, side) of each centre: valid when inside the
-            // sentence and within the centre's reach.
-            std::vector<af::array> context_cols;
-            for (int o = 1; o <= window; ++o) {
-                for (const int side : {-1, 1}) {
-                    const af::array other = position + side * o;
-                    const af::array inside = other >= 0 && other < static_cast<int>(m);
-                    const af::array clamped = af::select(inside, other, 0.0);
-                    const af::array ok = inside && (sentence(clamped) == sentence) &&
-                                         (static_cast<float>(window - o) >= reach);
-                    context_cols.push_back(af::select(ok, words(clamped), -1.0));
-                }
-            }
-            af::array contexts = context_cols.front();
-            for (size_t i = 1; i < context_cols.size(); ++i) contexts = af::join(1, contexts, context_cols[i]);  // [m, 2W]
-            contexts.eval();
-
-            // Examples in corpus order: CBOW one per centre; skip-gram one per
-            // (centre, context) with the context word as input (gensim).
-            af::array ex_inputs, ex_outputs;
-            if (options.cbow) {
-                const af::array any = af::anyTrue(contexts >= 0, 1);
-                const af::array centres = af::where(any);
-                ex_inputs = contexts(centres, af::span);
-                ex_outputs = words(centres);
-            } else {
-                const af::array flat_by_centre = af::flat(contexts.T());  // centre-major
-                const af::array valid = af::where(flat_by_centre >= 0);
-                ex_inputs = flat_by_centre(valid);
-                ex_outputs = words(valid / static_cast<unsigned>(2 * window)).as(s32);
-            }
-            ex_inputs.eval();
-            ex_outputs.eval();
+            const EpochExamples epoch_examples =
+                MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, false, engine);
+            if (epoch_examples.outputs.isempty()) continue;
+            const af::array& ex_inputs = epoch_examples.inputs;
+            const af::array& ex_outputs = epoch_examples.outputs;
             const dim_t examples = ex_outputs.elements();
             // The loss stays on the device; reading it each step would stall
             // the queue. The host waits every kSyncSteps steps, so a stop is
@@ -266,13 +178,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
                 const af::seq rows(static_cast<double>(start), static_cast<double>(end - 1));
                 const af::array batch_out = ex_outputs(rows);
                 const af::array batch_in = options.cbow ? ex_inputs(rows, af::span) : af::array(ex_inputs(rows));
-                const af::array slot =
-                    af::min(af::floor(af::randu(af::dim4((end - start) * k), f32, engine) * static_cast<float>(kTableSize)),
-                            static_cast<float>(kTableSize - 1))
-                        .as(s32);
-                af::array negatives = af::moddims(af::lookup(noise_table, slot), end - start, k);
-                // gensim skips a negative that is the target word.
-                negatives = af::select(negatives == af::tile(batch_out, 1, static_cast<unsigned>(k)), -1.0, negatives);
+                const af::array negatives = DrawNegatives(noise_table, batch_out, k, engine);
                 const double progress = std::min(1.0, done / total_estimate);
                 const double alpha = options.alpha - (options.alpha - options.min_alpha) * progress;
                 epoch_loss += af::sum(Step(w_in, w_out, batch_in, batch_out, negatives, alpha));

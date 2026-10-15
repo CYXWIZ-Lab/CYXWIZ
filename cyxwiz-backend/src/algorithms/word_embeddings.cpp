@@ -72,6 +72,40 @@ std::string AsciiLower(const std::string& word) {
     return lower;
 }
 
+// A letter or digit: ASCII letters and digits, and the letters of other
+// scripts (Latin, Greek and Cyrillic to Georgian, CJK, Hangul); punctuation,
+// symbols and emoji are not. Invalid UTF-8 counts as none.
+bool HasLetterOrDigit(const std::string& token) {
+    for (size_t i = 0; i < token.size();) {
+        const unsigned char c = static_cast<unsigned char>(token[i]);
+        char32_t cp = 0;
+        size_t length = 1;
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c & 0xE0) == 0xC0) {
+            cp = c & 0x1F;
+            length = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            cp = c & 0x0F;
+            length = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            cp = c & 0x07;
+            length = 4;
+        } else {
+            return false;
+        }
+        if (i + length > token.size()) return false;
+        for (size_t k = 1; k < length; ++k) cp = (cp << 6) | (static_cast<unsigned char>(token[i + k]) & 0x3F);
+        i += length;
+        const bool ascii_alnum = (cp >= '0' && cp <= '9') || (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z');
+        const bool letter = (cp >= 0xC0 && cp <= 0x24F && cp != 0xD7 && cp != 0xF7) || (cp >= 0x370 && cp <= 0x1FFF) ||
+                            (cp >= 0x2C00 && cp <= 0x2DFF) || (cp >= 0x3040 && cp <= 0x9FFF) ||
+                            (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0xF900 && cp <= 0xFAFF);
+        if (ascii_alnum || letter) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 WordVectors WordEmbeddings::LoadText(const std::string& path, size_t max_words) {
@@ -166,7 +200,9 @@ WordVectors WordEmbeddings::LoadBinary(const std::string& path, size_t max_words
 WordVectors WordEmbeddings::Load(const std::string& path, size_t max_words) {
     const auto dot = path.find_last_of('.');
     const std::string extension = dot == std::string::npos ? "" : AsciiLower(path.substr(dot));
-    return extension == ".bin" ? LoadBinary(path, max_words) : LoadText(path, max_words);
+    if (extension != ".bin") return LoadText(path, max_words);
+    return IsFastTextBin(path) ? LoadFastTextBin(path, nullptr, nullptr, nullptr, max_words)
+                               : LoadBinary(path, max_words);
 }
 
 bool WordEmbeddings::SaveText(const WordVectors& vectors, const std::string& path, std::string* error) {
@@ -199,26 +235,24 @@ bool WordEmbeddings::SaveText(const WordVectors& vectors, const std::string& pat
     return true;
 }
 
-std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVectors& vectors,
-                                                                     const std::string& word, int k,
-                                                                     std::string* error) {
+namespace {
+
+// The `k` rows most similar to `query` [dim] by cosine, most similar first;
+// row `self` (or none, -1) left out.
+std::vector<std::pair<std::string, double>> NearestRows(const WordVectors& vectors, const af::array& query, int self,
+                                                        int k, const char* operation, std::string* error) {
     std::vector<std::pair<std::string, double>> nearest;
-    if (!vectors.success || vectors.dim <= 0 || k <= 0 ||
-        vectors.values.size() != vectors.words.size() * static_cast<size_t>(vectors.dim))
-        return nearest;
-    const auto found = std::find(vectors.words.begin(), vectors.words.end(), word);
-    if (found == vectors.words.end()) return nearest;
-    const unsigned self = static_cast<unsigned>(found - vectors.words.begin());
     try {
         const dim_t n = static_cast<dim_t>(vectors.words.size()), dim = vectors.dim;
         const af::array table = af::array(dim, n, vectors.values.data());  // [dim, n]
         const af::array norms = af::max(af::sqrt(af::sum(table * table, 0)), 1e-12f);
         const af::array unit = table / af::tile(norms, static_cast<unsigned>(dim), 1);
-        af::array similarity = af::flat(af::matmul(af::lookup(unit, af::array(1, &self), 1), unit, AF_MAT_TRANS, AF_MAT_NONE));
-        similarity(self) = -2.0f;  // leave the word itself out
+        const af::array q = query / af::max(af::sqrt(af::sum(query * query)), 1e-12f);
+        af::array similarity = af::flat(af::matmul(q, unit, AF_MAT_TRANS, AF_MAT_NONE));
+        if (self >= 0) similarity(self) = -2.0f;  // leave the word itself out
         af::array sorted, order;
         SortWithIndex(sorted, order, similarity, 0, false);
-        const dim_t take = std::min<dim_t>(static_cast<dim_t>(k), n - 1);
+        const dim_t take = std::min<dim_t>(static_cast<dim_t>(k), self >= 0 ? n - 1 : n);
         if (take <= 0) return nearest;
         std::vector<float> values(static_cast<size_t>(take));
         std::vector<unsigned> rows(static_cast<size_t>(take));
@@ -227,16 +261,53 @@ std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVe
         top_values.eval();
         top_rows.eval();
         MaterializeArrayFireToHost(top_values, values.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                                   "WordEmbeddings::Nearest", "top_k_similarity");
-        MaterializeArrayFireToHost(top_rows, rows.data(), ArrayFireHostSyncCategory::OutputMaterialization,
-                                   "WordEmbeddings::Nearest", "top_k_rows");
+                                   operation, "top_k_similarity");
+        MaterializeArrayFireToHost(top_rows, rows.data(), ArrayFireHostSyncCategory::OutputMaterialization, operation,
+                                   "top_k_rows");
         for (dim_t i = 0; i < take; ++i)
             nearest.emplace_back(vectors.words[rows[static_cast<size_t>(i)]], static_cast<double>(values[static_cast<size_t>(i)]));
     } catch (const af::exception& e) {
         nearest.clear();
-        if (error) *error = std::string("WordEmbeddings::Nearest failed on the ArrayFire device: ") + e.what();
+        if (error) *error = std::string(operation) + " failed on the ArrayFire device: " + e.what();
     }
     return nearest;
+}
+
+bool Usable(const WordVectors& vectors) {
+    return vectors.success && vectors.dim > 0 && !vectors.words.empty() &&
+           vectors.values.size() == vectors.words.size() * static_cast<size_t>(vectors.dim);
+}
+
+}  // namespace
+
+std::vector<std::pair<std::string, double>> WordEmbeddings::Nearest(const WordVectors& vectors,
+                                                                     const std::string& word, int k,
+                                                                     std::string* error) {
+    if (!Usable(vectors) || k <= 0) return {};
+    const auto found = std::find(vectors.words.begin(), vectors.words.end(), word);
+    if (found == vectors.words.end()) return {};
+    const size_t self = static_cast<size_t>(found - vectors.words.begin());
+    const size_t dim = static_cast<size_t>(vectors.dim);
+    try {
+        const af::array query(static_cast<dim_t>(dim), vectors.values.data() + self * dim);
+        return NearestRows(vectors, query, static_cast<int>(self), k, "WordEmbeddings::Nearest", error);
+    } catch (const af::exception& e) {
+        if (error) *error = std::string("WordEmbeddings::Nearest failed on the ArrayFire device: ") + e.what();
+        return {};
+    }
+}
+
+std::vector<std::pair<std::string, double>> WordEmbeddings::NearestTo(const WordVectors& vectors,
+                                                                       const std::vector<float>& vector, int k,
+                                                                       std::string* error) {
+    if (!Usable(vectors) || k <= 0 || vector.size() != static_cast<size_t>(vectors.dim)) return {};
+    try {
+        return NearestRows(vectors, af::array(static_cast<dim_t>(vector.size()), vector.data()), -1, k,
+                           "WordEmbeddings::NearestTo", error);
+    } catch (const af::exception& e) {
+        if (error) *error = std::string("WordEmbeddings::NearestTo failed on the ArrayFire device: ") + e.what();
+        return {};
+    }
 }
 
 std::vector<float> WordEmbeddings::RowMeans(const std::vector<float>& table, int dim, const std::vector<int>& tokens,
@@ -302,7 +373,8 @@ WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vecto
         lower.emplace(AsciiLower(vectors.words[r]), static_cast<int>(r));
     }
     const int m = static_cast<int>(vocabulary.size());
-    std::vector<unsigned> found_ids, found_rows, missing_ids;
+    std::vector<unsigned> found_ids, found_rows, missing_ids, piece_ids;
+    std::vector<std::string> piece_tokens;
     bool unknown_is_mean = false;
     for (int id = 0; id < m; ++id) {
         if (id == options.pad_id) continue;
@@ -320,6 +392,9 @@ WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vecto
             found_ids.push_back(static_cast<unsigned>(id));
             found_rows.push_back(static_cast<unsigned>(low->second));
             ++out.lowercase;
+        } else if (options.pieces && id != options.unknown_id && HasLetterOrDigit(token)) {
+            piece_ids.push_back(static_cast<unsigned>(id));
+            piece_tokens.push_back(token);
         } else {
             missing_ids.push_back(static_cast<unsigned>(id));
             if (id != options.unknown_id) {
@@ -327,6 +402,17 @@ WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vecto
                 out.missing_words.push_back(token);
             }
         }
+    }
+    // fastText: the tokens built from their n-grams, counted apart and left out
+    // of the mean and the random rows' scale.
+    WordVectors pieces;
+    if (!piece_tokens.empty()) {
+        pieces = options.pieces(piece_tokens);
+        if (!pieces.success || pieces.dim != vectors.dim || pieces.words.size() != piece_tokens.size() ||
+            pieces.values.size() != piece_tokens.size() * static_cast<size_t>(vectors.dim))
+            return fail("The vectors built from n-grams do not fit: " + pieces.error_message);
+        out.pieces = piece_tokens.size();
+        out.piece_words = piece_tokens;
     }
 
     try {
@@ -338,6 +424,10 @@ WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vecto
             const af::array rows(static_cast<dim_t>(found_rows.size()), found_rows.data());
             const af::array ids(static_cast<dim_t>(found_ids.size()), found_ids.data());
             aligned(af::span, ids) = af::lookup(table, rows, 1);
+        }
+        if (!piece_ids.empty()) {
+            const af::array ids(static_cast<dim_t>(piece_ids.size()), piece_ids.data());
+            aligned(af::span, ids) = af::array(dim, static_cast<dim_t>(piece_ids.size()), pieces.values.data());
         }
         if (!missing_ids.empty() && options.missing == "random") {
             const float scale = af::stdev<float>(af::flat(table), AF_VARIANCE_POPULATION);

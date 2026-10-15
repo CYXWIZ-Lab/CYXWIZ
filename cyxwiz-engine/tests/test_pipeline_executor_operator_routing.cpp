@@ -3943,6 +3943,20 @@ int main(int argc, char** argv) {
           "WordEmbeddings architecture validation should be central and specific: " +
               bad_word_embeddings_architecture_executor.GetLastError());
 
+    const std::string bad_word_embeddings_unseen_json =
+        R"({"nodes":[)"
+        R"({"id":364,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":365,"type":"WordEmbeddings","name":"BadUnseenWords","parameters":{)"
+        R"("source":"fasttext","text_col":"phrase","unseen_words":"guess"}})"
+        R"(],"links":[{"start_node":364,"end_node":365}]})";
+    cyxwiz::PipelineExecutor bad_word_embeddings_unseen_executor;
+    Check(!bad_word_embeddings_unseen_executor.ExecutePipeline(bad_word_embeddings_unseen_json) &&
+              bad_word_embeddings_unseen_executor.GetLastError().find("unseen_words") != std::string::npos,
+          "WordEmbeddings unseen_words validation should be central and specific: " +
+              bad_word_embeddings_unseen_executor.GetLastError());
+
     const std::string bad_linear_regression_intercept_json =
         R"({"nodes":[)"
         R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"

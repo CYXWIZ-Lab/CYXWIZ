@@ -1,6 +1,7 @@
 #include "word_embeddings_operator.h"
 
 #include "text_column_utils.h"
+#include "../fasttext_model_store.h"
 #include "../word_embeddings_presentation.h"
 #include "tree_classification_utils.h"
 
@@ -87,7 +88,8 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
     glove_ = GloVeOptions{};
     row_vectors_ = false;
     const std::string op = GetName();
-    if (!ParseChoice(params, "source", {"pretrained", "word2vec", "glove"}, source_, op, error)) return false;
+    if (!ParseChoice(params, "source", {"pretrained", "word2vec", "glove", "fasttext"}, source_, op, error))
+        return false;
     vectors_file_ = Param(params, "vectors_file");
     vocab_file_ = Param(params, "vocab_file");
     text_col_ = Param(params, "text_col");
@@ -143,6 +145,25 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
         !ParseDoubleParam(params, "weighting_power", glove_.alpha, op, error) ||
         !ParseDoubleParam(params, "glove_learning_rate", glove_.learning_rate, op, error))
         return false;
+    // fastText: word2vec's settings, plus the n-gram lengths and buckets.
+    fasttext_.cbow = word2vec_.cbow;
+    fasttext_.vector_size = word2vec_.vector_size;
+    fasttext_.window = word2vec_.window;
+    fasttext_.min_count = word2vec_.min_count;
+    fasttext_.negative = word2vec_.negative;
+    fasttext_.epochs = word2vec_.epochs;
+    fasttext_.batch_size = word2vec_.batch_size;
+    fasttext_.sample = word2vec_.sample;
+    fasttext_.alpha = word2vec_.alpha;
+    fasttext_.min_alpha = word2vec_.min_alpha;
+    fasttext_.seed = word2vec_.seed;
+    if (!ParseIntParam(params, "min_n", fasttext_.min_n, op, error) ||
+        !ParseIntParam(params, "max_n", fasttext_.max_n, op, error) ||
+        !ParseIntParam(params, "bucket", fasttext_.bucket, op, error))
+        return false;
+    std::string unseen = "pieces";
+    if (!ParseChoice(params, "unseen_words", {"pieces", "missing"}, unseen, op, error)) return false;
+    unseen_from_pieces_ = unseen == "pieces";
     if (!ParseBoolParam(params, "row_vectors", row_vectors_, op, error)) return false;
 
     if (source_ != "pretrained") {
@@ -154,7 +175,7 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
             error = op + ": vector_size and min_count must be at least 1";
             return false;
         }
-        if (source_ == "word2vec" &&
+        if ((source_ == "word2vec" || source_ == "fasttext") &&
             (word2vec_.window < 1 || word2vec_.negative < 1 || word2vec_.epochs < 1 || word2vec_.batch_size < 1 ||
              !(word2vec_.alpha > 0.0) || word2vec_.min_alpha < 0.0 || word2vec_.sample < 0.0)) {
             error = op + ": window, negative, epochs and batch_size must be at least 1, alpha positive, min_alpha "
@@ -167,8 +188,14 @@ bool WordEmbeddingsOperator::Configure(const std::map<std::string, std::string>&
                          "glove_learning_rate positive, weighting_power not negative";
             return false;
         }
+        if (source_ == "fasttext" &&
+            (fasttext_.min_n < 1 || fasttext_.max_n < fasttext_.min_n || fasttext_.bucket < 0)) {
+            error = op + ": min_n must be at least 1, max_n at least min_n and bucket not negative";
+            return false;
+        }
     } else if (vectors_file_.empty()) {
-        error = op + ": choose a vector file ('vectors_file': .txt, .vec or .bin) or train word2vec or GloVe";
+        error = op + ": choose a vector file ('vectors_file': .txt, .vec or .bin) or train word2vec, GloVe or "
+                     "fastText";
         return false;
     }
     if (row_vectors_ && text_col_.empty()) {
@@ -244,8 +271,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
     }
     ARROW_RETURN_NOT_OK(CheckCancellation(op));
 
+    Vocabulary vocabulary;
+    if (!vocab_file_.empty() && !vocabulary.LoadFromFile(vocab_file_))
+        return arrow::Status::IOError(op + ": cannot read the vocabulary " + vocab_file_);
+
     WordVectors vectors;
     std::string source_summary;
+    // fastText: where the vectors of tokens the vectors lack come from (the
+    // trained model, or the .bin read again for those tokens).
+    std::shared_ptr<const FastTextModel> fasttext_model;
+    std::string fasttext_file;
     const auto figures = [](const std::vector<double>& values) {
         std::string text;
         for (const double value : values) {
@@ -325,6 +360,58 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                          GroupedCount(static_cast<size_t>(model.pairs)) + " word pairs, " +
                          std::to_string(glove_.epochs) + " epochs, " + kCostPerEpoch + figures(model.epoch_cost) +
                          ")";
+    } else if (source_ == "fasttext") {
+        const std::string method = fasttext_.cbow ? "fastText CBOW" : "fastText skip-gram";
+        publish("Training", "Training fastText", 0.05,
+                {{"dims", fasttext_.vector_size}, {"window", fasttext_.window}, {"epochs", fasttext_.epochs},
+                 {"min_count", fasttext_.min_count}, {"bucket", fasttext_.bucket}, {"min_n", fasttext_.min_n},
+                 {"max_n", fasttext_.max_n}},
+                {{"method", method}, {"saved", vectors_path_}, {"vocabulary_file", vocab_file_}});
+        FastTextOptions options = fasttext_;
+        options.on_vocabulary = [&](size_t words) {
+            publish("Training", "Training fastText", 0.05, {{"words", static_cast<double>(words)}});
+        };
+        options.on_epoch_loss = [&](int epoch, double loss, long long examples) {
+            publish("Training", "Training fastText, epoch " + std::to_string(epoch),
+                    0.05 + 0.85 * epoch / std::max(1, fasttext_.epochs),
+                    {{"epoch", epoch}, {"loss", loss}, {"examples", static_cast<double>(examples)}});
+        };
+        options.on_progress = [&](double done, int epoch) {
+            report("Training", "Training fastText, epoch " + std::to_string(epoch), 0.05 + 0.85 * done);
+            return !IsCancellationRequested();
+        };
+        auto model = std::make_shared<FastTextModel>(WordEmbeddings::TrainFastText(sentences, options));
+        if (!model->success) {
+            if (IsCancellationRequested()) return arrow::Status::Cancelled(op + ": training cancelled");
+            return arrow::Status::Invalid(op + ": " + model->error_message);
+        }
+        vectors = WordEmbeddings::FastTextVectors(*model);
+        if (!vectors.success) return arrow::Status::Invalid(op + ": " + vectors.error_message);
+        size_t pieces = 0;
+        for (const auto& word : model->words)
+            pieces += WordEmbeddings::FastTextBuckets(word, model->min_n, model->max_n, model->bucket).size();
+        publish("Training", "Trained fastText", 0.9,
+                {{"pieces_per_word", static_cast<double>(pieces) / static_cast<double>(model->words.size())}});
+        source_summary = "trained " + std::to_string(vectors.words.size()) + " words x " +
+                         std::to_string(vectors.dim) + " (fastText " + (fasttext_.cbow ? "CBOW" : "skip-gram") +
+                         ", n-grams " + std::to_string(fasttext_.min_n) + "-" + std::to_string(fasttext_.max_n) +
+                         ", " + GroupedCount(static_cast<size_t>(fasttext_.bucket)) + " buckets, " +
+                         std::to_string(fasttext_.epochs) + " epochs, " + kLossPerEpoch +
+                         figures(model->epoch_loss) + ")";
+        fasttext_model = std::move(model);
+    } else if (WordEmbeddings::IsFastTextBin(vectors_file_)) {
+        // A fastText model: with a vocabulary only the rows it needs.
+        report("Reading", "Reading " + vectors_file_, 0.05);
+        FastTextFileInfo info;
+        vectors = vocab_file_.empty()
+                      ? WordEmbeddings::LoadFastTextBin(vectors_file_, nullptr, nullptr, &info, max_words_)
+                      : WordEmbeddings::LoadFastTextBinFor(vectors_file_, vocabulary.GetWords(),
+                                                           alignment_.lowercase_fallback, &info);
+        if (!vectors.success) return arrow::Status::IOError(op + ": " + vectors.error_message);
+        source_summary = "read " + std::to_string(vectors.words.size()) + " of " +
+                         std::to_string(info.words.size()) + " words x " + std::to_string(vectors.dim) +
+                         " (fastText model, " + GroupedCount(static_cast<size_t>(info.bucket)) + " buckets)";
+        fasttext_file = vectors_file_;
     } else {
         report("Reading", "Reading " + vectors_file_, 0.05);
         vectors = WordEmbeddings::Load(vectors_file_, max_words_);
@@ -337,12 +424,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
     std::string coverage;
     if (!vocab_file_.empty()) {
         report("Aligning", "Lining up with " + vocab_file_, 0.92);
-        Vocabulary vocabulary;
-        if (!vocabulary.LoadFromFile(vocab_file_))
-            return arrow::Status::IOError(op + ": cannot read the vocabulary " + vocab_file_);
         WordAlignmentOptions options = alignment_;
         options.pad_id = vocabulary.PadIndex();
         options.unknown_id = vocabulary.UnkIndex();
+        const bool fasttext = fasttext_model || !fasttext_file.empty();
+        if (fasttext && unseen_from_pieces_) {
+            options.pieces = [&](const std::vector<std::string>& tokens) {
+                return fasttext_model ? WordEmbeddings::FastTextVectors(*fasttext_model, &tokens)
+                                      : WordEmbeddings::LoadFastTextBin(fasttext_file, &tokens);
+            };
+        }
         const auto aligned = WordEmbeddings::Align(vectors, vocabulary.GetWords(), options);
         if (!aligned.success) return arrow::Status::Invalid(op + ": " + aligned.error_message);
         vectors.words = vocabulary.GetWords();
@@ -355,6 +446,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                 {{"tokens", static_cast<double>(vectors.words.size())},
                  {"found", static_cast<double>(aligned.exact)},
                  {"lowercase", static_cast<double>(aligned.lowercase)},
+                 {"pieces", static_cast<double>(aligned.pieces)},
                  {"missing", static_cast<double>(aligned.missing)}},
                 {{"special", BuildWordCoverageView(aligned.exact, aligned.lowercase, aligned.missing, {},
                                                    token(options.pad_id), token(options.unknown_id),
@@ -362,6 +454,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
                                  .special}});
         coverage = "; vocabulary " + std::to_string(vectors.words.size()) + " tokens: " + std::to_string(aligned.exact) +
                    " found, " + std::to_string(aligned.lowercase) + " in lowercase, " +
+                   (fasttext ? std::to_string(aligned.pieces) + " from pieces, " : std::string()) +
                    std::to_string(aligned.missing) + " missing";
     }
 
@@ -374,6 +467,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         if (!WordEmbeddings::SaveText(vectors, vectors_path_, &error))
             return arrow::Status::IOError(op + ": cannot save the vectors: " + error);
     }
+    // The dialog builds unseen words from the model kept for the session.
+    if (fasttext_model) KeepFastTextModel(vectors_path_, fasttext_model);
     publish("Done", vectors_path_.empty() ? "Trained the vectors" : "Saved the vectors", 0.94, {});
 
     // Pin 0: word, v_0 .. v_{d-1}.

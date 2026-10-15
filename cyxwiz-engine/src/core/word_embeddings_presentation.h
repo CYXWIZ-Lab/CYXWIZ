@@ -30,9 +30,11 @@ struct WordCoverageView {
     std::string found;         // "4,824 found as written"
     std::string lowercase;     // "0 found in lowercase"
     std::string missing;       // "172 missing"
+    std::string pieces;        // fastText: "4 built from pieces" (empty otherwise)
     std::string special;       // "[PAD] zeros · [UNK] mean"
     float found_share = 0.0f;  // of the counted tokens (PAD and UNK left out), for the bar
     float lowercase_share = 0.0f;
+    float pieces_share = 0.0f;
     std::string missing_preview;  // "Missing, first of 172:"
     std::vector<std::string> preview_words;
     std::string missing_kind;  // "mostly punctuation, digits and symbols", or empty
@@ -45,6 +47,17 @@ WordCoverageView BuildWordCoverageView(size_t exact, size_t lowercase, size_t mi
                                        const std::vector<std::string>& missing_words, const std::string& pad,
                                        const std::string& unknown, const std::string& missing_rows,
                                        const std::string& unknown_row, size_t preview = 13);
+
+// fastText: tokens built from character n-grams join the counts and the bar.
+void AddPiecesToCoverage(WordCoverageView& view, size_t exact, size_t lowercase, size_t pieces, size_t missing);
+
+// "fastText model (.bin) · 16,334 words · 2,000,000 pieces · 100 values each ·
+// 813 MB · read 3.1 s".
+std::string FastTextFileSummary(size_t words, int bucket, int dim, unsigned long long bytes, double seconds);
+
+// The note beside a word fastText builds from its n-grams: "not in the
+// training words · from 26 pieces" (`trained`) or "... the model's words ...".
+std::string UnseenWordNote(bool trained, size_t pieces);
 
 // The share (0..1) a pipeline step reports in its status, "...: Training
 // word2vec, epoch 3 (62%)"; -1 when the status has none.

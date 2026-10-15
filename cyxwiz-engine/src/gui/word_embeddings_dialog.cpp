@@ -10,6 +10,7 @@
 #include "../core/arrow_dataset.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_registry.h"
+#include "../core/fasttext_model_store.h"
 #include "../core/file_dialogs.h"
 #include "../core/node_executors/word_embeddings_operator.h"
 #include "../core/node_metadata_registry.h"
@@ -38,6 +39,7 @@ namespace fs = std::filesystem;
 
 constexpr float kLabelWidth = 170.0f;
 constexpr float kSmallField = 110.0f;
+constexpr float kTinyField = 56.0f;
 constexpr int kNearest = 10;
 constexpr size_t kMissingListed = 2000;  // chips on the Vocabulary tab
 const char* const kDot = " \xC2\xB7 ";  // " · "
@@ -167,6 +169,12 @@ void WordEmbeddingsDialog::Set(const std::string& key, const std::string& value)
     if (Get(key) == value) return;
     params_[key] = value;
     has_changes_ = true;
+    if (key == "source") {
+        // Another source's vectors: the last lookup no longer applies.
+        nearest_.clear();
+        nearest_badge_.clear();
+        nearest_note_.clear();
+    }
 }
 
 // A relative path is the project's, as the run reads it.
@@ -229,7 +237,8 @@ void WordEmbeddingsDialog::FindTokenizerVocabulary() {
 
 std::string WordEmbeddingsDialog::ReadKey() const {
     std::string key;
-    for (const char* k : {"vectors_file", "max_words", "vocab_file", "lowercase_fallback", "missing", "unknown", "seed"})
+    for (const char* k : {"vectors_file", "max_words", "vocab_file", "lowercase_fallback", "missing", "unknown",
+                          "seed", "unseen_words"})
         key += Get(k) + '\n';
     return key;
 }
@@ -242,8 +251,12 @@ void WordEmbeddingsDialog::StartRead() {
     coverage_.reset();
     missing_words_.clear();
     vocab_size_ = 0;
+    read_fasttext_ = false;
     nearest_.clear();
+    nearest_badge_.clear();
+    nearest_note_.clear();
     const std::string file = Resolve(Get("vectors_file"));
+    const bool pieces = Get("unseen_words") != "missing";
     if (file.empty()) return;
     const std::string vocab = Resolve(Get("vocab_file"));
     size_t max_words = 0;
@@ -262,31 +275,57 @@ void WordEmbeddingsDialog::StartRead() {
     read_ = std::make_shared<ReadJob>();
     const auto job = read_;
     cyxwiz::AsyncTaskManager::Instance().RunAsync(
-        "Word Embeddings: read " + FileName(file), [job, file, vocab, max_words, options](cyxwiz::LambdaTask& task) {
+        "Word Embeddings: read " + FileName(file),
+        [job, file, vocab, max_words, options, pieces](cyxwiz::LambdaTask& task) {
             try {
                 // The alignment runs where training runs: a worker starts on
                 // ArrayFire's default backend, not the selected device.
                 cyxwiz::Device::ActivateProcessDeviceOnThisThread();
                 task.ReportProgress(0.1f, "Reading " + FileName(file));
-                std::string first_line;
-                {
-                    std::ifstream in(file, std::ios::binary);
-                    std::getline(in, first_line);
-                }
+                cyxwiz::Vocabulary vocabulary;
+                if (!vocab.empty() && !vocabulary.LoadFromFile(vocab))
+                    throw std::runtime_error("cannot read the vocabulary " + vocab);
+                // A fastText model reads only the rows the vocabulary needs.
+                const bool fasttext = cyxwiz::WordEmbeddings::IsFastTextBin(file);
                 const auto start = std::chrono::steady_clock::now();
-                auto vectors = std::make_shared<cyxwiz::WordVectors>(cyxwiz::WordEmbeddings::Load(file, max_words));
-                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-                if (!vectors->success) throw std::runtime_error(vectors->error_message);
-                const std::string summary = cyxwiz::VectorFileSummary(cyxwiz::VectorFileFormat(file, first_line),
-                                                                      vectors->words.size(), vectors->dim, seconds);
+                std::shared_ptr<cyxwiz::WordVectors> vectors;
+                std::string summary;
+                if (fasttext) {
+                    cyxwiz::FastTextFileInfo info;
+                    vectors = std::make_shared<cyxwiz::WordVectors>(
+                        vocab.empty()
+                            ? cyxwiz::WordEmbeddings::LoadFastTextBin(file, nullptr, nullptr, &info, max_words)
+                            : cyxwiz::WordEmbeddings::LoadFastTextBinFor(file, vocabulary.GetWords(),
+                                                                         options.lowercase_fallback, &info));
+                    if (!vectors->success) throw std::runtime_error(vectors->error_message);
+                    const double seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                    summary = cyxwiz::FastTextFileSummary(info.words.size(), info.bucket, info.dim, info.file_bytes,
+                                                          seconds);
+                } else {
+                    std::string first_line;
+                    {
+                        std::ifstream in(file, std::ios::binary);
+                        std::getline(in, first_line);
+                    }
+                    vectors = std::make_shared<cyxwiz::WordVectors>(cyxwiz::WordEmbeddings::Load(file, max_words));
+                    const double seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                    if (!vectors->success) throw std::runtime_error(vectors->error_message);
+                    summary = cyxwiz::VectorFileSummary(cyxwiz::VectorFileFormat(file, first_line),
+                                                        vectors->words.size(), vectors->dim, seconds);
+                }
                 std::optional<cyxwiz::WordCoverageView> coverage;
                 std::vector<std::string> missing;
                 size_t vocab_size = 0;
                 if (!vocab.empty()) {
                     task.ReportProgress(0.8f, "Lining up with " + FileName(vocab));
-                    cyxwiz::Vocabulary vocabulary;
-                    if (!vocabulary.LoadFromFile(vocab)) throw std::runtime_error("cannot read the vocabulary " + vocab);
                     auto aligned_options = options;
+                    if (fasttext && pieces) {
+                        aligned_options.pieces = [&](const std::vector<std::string>& tokens) {
+                            return cyxwiz::WordEmbeddings::LoadFastTextBin(file, &tokens);
+                        };
+                    }
                     aligned_options.pad_id = vocabulary.PadIndex();
                     aligned_options.unknown_id = vocabulary.UnkIndex();
                     const auto& words = vocabulary.GetWords();
@@ -300,6 +339,9 @@ void WordEmbeddingsDialog::StartRead() {
                                                              aligned.missing_words, word_at(aligned_options.pad_id),
                                                              word_at(aligned_options.unknown_id), options.missing,
                                                              options.unknown);
+                    if (fasttext)
+                        cyxwiz::AddPiecesToCoverage(*coverage, aligned.exact, aligned.lowercase, aligned.pieces,
+                                                    aligned.missing);
                     missing = aligned.missing_words;
                     vocab_size = words.size();
                 }
@@ -309,6 +351,7 @@ void WordEmbeddingsDialog::StartRead() {
                 job->coverage = std::move(coverage);
                 job->missing_words = std::move(missing);
                 job->vocab_size = vocab_size;
+                job->fasttext = fasttext;
             } catch (const std::exception& e) {
                 {
                     std::lock_guard<std::mutex> lock(job->mutex);
@@ -330,6 +373,7 @@ void WordEmbeddingsDialog::PollRead() {
     coverage_ = read_->coverage;
     missing_words_ = std::move(read_->missing_words);
     vocab_size_ = read_->vocab_size;
+    read_fasttext_ = read_->fasttext;
     read_.reset();
 }
 
@@ -348,6 +392,8 @@ void WordEmbeddingsDialog::StartTraining() {
     run_vectors_.reset();
     run_finished_at_.clear();
     nearest_.clear();
+    nearest_badge_.clear();
+    nearest_note_.clear();
     run_started_ = node_editor_->ExecuteDataPipelineThrough(node_->id, false);
     run_task_ = run_started_ ? node_editor_->GetDataPipelineTaskId() : 0;
     if (!run_started_) run_error_ = "The step was not run; the notice says why.";
@@ -494,10 +540,10 @@ bool WordEmbeddingsDialog::Choice(const char* id, const char* key, const char* c
 }
 
 void WordEmbeddingsDialog::RenderSource() {
-    const char* labels[] = {"Pretrained file", "Train word2vec", "Train GloVe"};
-    const char* values[] = {"pretrained", "word2vec", "glove"};
+    const char* labels[] = {"Pretrained file", "Train word2vec", "Train GloVe", "Train fastText"};
+    const char* values[] = {"pretrained", "word2vec", "glove", "fasttext"};
     Label("Source");
-    Choice("##source", "source", labels, values, 3);
+    Choice("##source", "source", labels, values, 4);
     ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_sm));
     if (Training()) {
         RenderTraining();
@@ -512,7 +558,7 @@ void WordEmbeddingsDialog::RenderPretrained() {
     FileField("##vectors_file", "vectors_file", "Choose word vectors", false);
     Label("Read");
     if (Get("vectors_file").empty()) {
-        Faint("Choose a GloVe, fastText or word2vec file.");
+        Faint("Choose a GloVe, fastText or word2vec file, or a fastText model (.bin).");
     } else if (read_) {
         Wrapped(t.accent_text, std::string(ICON_FA_SPINNER) + "  Reading...");
     } else if (!read_error_.empty()) {
@@ -523,7 +569,10 @@ void WordEmbeddingsDialog::RenderPretrained() {
     Label("Read at most");
     IntField("##max_words", "max_words", kSmallField);
     ImGui::Indent(kLabelWidth);
-    Faint("0 reads every word. Formats: GloVe .txt, fastText / word2vec .vec, word2vec binary .bin.");
+    Faint(read_fasttext_ && !Get("vocab_file").empty()
+              ? "Not used with a vocabulary: a fastText model reads only the rows the vocabulary needs."
+              : "0 reads every word. Formats: GloVe .txt, fastText / word2vec .vec, word2vec binary .bin, "
+                "fastText model .bin.");
     ImGui::Unindent(kLabelWidth);
     ImGui::Dummy(ImVec2(0, t.space_sm));
     RenderCoverage(false);
@@ -589,16 +638,20 @@ void WordEmbeddingsDialog::RenderCoverage(bool full_list) {
         draw->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.bg_input), 4.0f);
         const float found = width * view.found_share;
         const float lower = width * view.lowercase_share;
+        const float pieces = width * view.pieces_share;
+        draw->AddRectFilled(at, ImVec2(at.x + found + lower + pieces, at.y + height), ui::ToU32(t.accent_text), 4.0f,
+                            ImDrawFlags_RoundCornersLeft);
         draw->AddRectFilled(at, ImVec2(at.x + found + lower, at.y + height), ui::ToU32(t.info), 4.0f,
                             ImDrawFlags_RoundCornersLeft);
         draw->AddRectFilled(at, ImVec2(at.x + found, at.y + height), ui::ToU32(t.success), 4.0f,
                             ImDrawFlags_RoundCornersLeft);
-        if (found + lower < width)
-            draw->AddRectFilled(ImVec2(at.x + found + lower, at.y), ImVec2(at.x + width, at.y + height),
+        if (found + lower + pieces < width)
+            draw->AddRectFilled(ImVec2(at.x + found + lower + pieces, at.y), ImVec2(at.x + width, at.y + height),
                                 ui::ToU32(t.caution), 4.0f, ImDrawFlags_RoundCornersRight);
         ImGui::Dummy(ImVec2(width, height));
         Chip(std::string(ICON_FA_CIRCLE_CHECK " ") + view.found, t.success, true);
         Chip(view.lowercase, t.text, false);
+        if (!view.pieces.empty()) Chip(view.pieces, t.accent_text, false);
         Chip(std::string(ICON_FA_TRIANGLE_EXCLAMATION " ") + view.missing, t.caution, false);
         if (!view.special.empty()) Chip(view.special, t.info, false);
         if (!view.missing_preview.empty()) {
@@ -668,6 +721,12 @@ void WordEmbeddingsDialog::RenderTraining() {
 
 void WordEmbeddingsDialog::RenderWord2VecSettings() {
     const auto& t = ui::CurrentTokens();
+    if (FastText()) {
+        Label("How it learns");
+        Dim("Like word2vec, but a word's vector is the average of its own vector and the vectors of its pieces "
+            "(character n-grams such as <th, the, her, rap, apy>; < and > mark the ends). A word it never saw "
+            "gets a vector from its pieces.");
+    }
     const char* model_labels[] = {"Skip-gram", "CBOW"};
     const char* model_values[] = {"skipgram", "cbow"};
     Label("Model");
@@ -690,9 +749,34 @@ void WordEmbeddingsDialog::RenderWord2VecSettings() {
         }
         ImGui::EndTable();
     }
-    const std::string advanced = "Advanced: down-sampling " + Get("sample") + kDot + "learning rate " + Get("alpha") +
-                                 " to " + Get("min_alpha") + kDot + "batch " + Get("batch_size") +
-                                 "###advanced";
+    // fastText's buckets on the device: rows x vector size x 4 bytes.
+    long long buckets = 0, dims = 0;
+    try {
+        buckets = std::stoll(Get("bucket"));
+        dims = std::stoll(Get("vector_size"));
+    } catch (...) {
+    }
+    char memory[48] = "";
+    const double megabytes = static_cast<double>(buckets) * static_cast<double>(dims) * 4.0 / 1e6;
+    if (megabytes >= 1000.0) std::snprintf(memory, sizeof(memory), "%.1f GB", megabytes / 1000.0);
+    else std::snprintf(memory, sizeof(memory), "%.0f MB", megabytes);
+    if (FastText()) {
+        Label("Pieces (n-grams)");
+        IntField("##min_n", "min_n", kTinyField);
+        ImGui::SameLine(0.0f, t.space_md);
+        ImGui::TextUnformatted("to");
+        ImGui::SameLine(0.0f, t.space_md);
+        IntField("##max_n", "max_n", kTinyField);
+        ImGui::SameLine(0.0f, t.space_md);
+        ImGui::TextUnformatted("letters");
+    }
+    const std::string advanced =
+        "Advanced: " +
+        (FastText() ? "buckets " + cyxwiz::GroupedCount(static_cast<size_t>(std::max(0LL, buckets))) + " (" + memory +
+                          " on the device at " + Get("vector_size") + " values)" + kDot
+                    : std::string()) +
+        "down-sampling " + Get("sample") + kDot + "learning rate " + Get("alpha") + " to " + Get("min_alpha") + kDot +
+        "batch " + Get("batch_size") + "###advanced";
     ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     const bool open = ImGui::TreeNodeEx(advanced.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
     ImGui::PopStyleColor();
@@ -707,6 +791,15 @@ void WordEmbeddingsDialog::RenderWord2VecSettings() {
         FloatField("##min_alpha", "min_alpha", kSmallField);
         Label("Batch");
         IntField("##batch_size", "batch_size", kSmallField);
+        if (FastText()) {
+            Label("Buckets");
+            IntField("##bucket", "bucket", kSmallField);
+            ImGui::SameLine(0.0f, t.space_md);
+            Dim(std::string(memory) + " on the device");
+            Faint("Pieces are hashed into the buckets (fastText's hash), so the table has a fixed size whatever the "
+                  "text. 2,000,000 is fastText's and gensim's default; fewer buckets save device memory. Model, "
+                  "window, negative samples, epochs and the learning rate are word2vec's settings, shared.");
+        }
         Faint("gensim's names and defaults. Training runs on the selected device; the same seed repeats a run.");
         ImGui::TreePop();
     }
@@ -818,12 +911,56 @@ void WordEmbeddingsDialog::RenderVocabulary() {
     }
     ImGui::Unindent(kLabelWidth);
     ImGui::Dummy(ImVec2(0, t.space_sm));
+    if (FastText() || (!Training() && read_fasttext_)) RenderUnseenWordsChoice();
     if (Training()) {
         if (!run_outcome_.empty() && !vocab.empty()) Dim("Latest run: " + cyxwiz::ShortEpochFigures(run_outcome_));
         else if (!vocab.empty()) Faint("Train to see how the vocabulary lines up.");
     } else {
         RenderCoverage(true);
     }
+}
+
+void WordEmbeddingsDialog::RenderUnseenWordsChoice() {
+    const char* labels[] = {"Build from pieces", "Missing words rule"};
+    const char* values[] = {"pieces", "missing"};
+    Label("Words not trained");
+    Choice("##unseen_words", "unseen_words", labels, values, 2);
+    ImGui::Indent(kLabelWidth);
+    Faint("Tokens without a vector take the mean of their pieces' vectors (fastText). Tokens with no letter or digit "
+          "(punctuation) follow the Missing words rule either way.");
+    ImGui::Unindent(kLabelWidth);
+    ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_sm));
+}
+
+std::string WordEmbeddingsDialog::VectorsPath() const {
+    const std::string path = Get("vectors_path");
+    if (!path.empty()) return Resolve(path);
+    return Resolve("artifacts/" +
+                   cyxwiz::WordEmbeddingsOperator::DefaultVectorsFile(node_ ? node_->id : 0, node_ ? node_->name : ""));
+}
+
+bool WordEmbeddingsDialog::UnseenWordVector(const std::string& word, std::vector<float>& vector, size_t& pieces,
+                                            bool& trained) const {
+    const std::vector<std::string> wanted = {word};
+    std::vector<cyxwiz::FastTextSource> sources;
+    cyxwiz::WordVectors built;
+    if (Training()) {
+        if (!FastText()) return false;
+        const auto model = cyxwiz::FindFastTextModel(VectorsPath());
+        if (!model) return false;
+        built = cyxwiz::WordEmbeddings::FastTextVectors(*model, &wanted, &sources);
+        pieces = cyxwiz::WordEmbeddings::FastTextBuckets(word, model->min_n, model->max_n, model->bucket).size();
+        trained = true;
+    } else {
+        if (!read_fasttext_) return false;
+        cyxwiz::FastTextFileInfo info;
+        built = cyxwiz::WordEmbeddings::LoadFastTextBin(Resolve(Get("vectors_file")), &wanted, &sources, &info);
+        pieces = cyxwiz::WordEmbeddings::FastTextBuckets(word, info.min_n, info.max_n, info.bucket).size();
+        trained = false;
+    }
+    if (!built.success || sources.empty() || sources.front() == cyxwiz::FastTextSource::None) return false;
+    vector = built.values;
+    return true;
 }
 
 void WordEmbeddingsDialog::RenderNearest() {
@@ -856,12 +993,28 @@ void WordEmbeddingsDialog::RenderNearest() {
     if (entered || (ImGui::IsItemDeactivatedAfterEdit() && query_word_ != query_)) {
         query_word_ = query_;
         std::string error;
+        nearest_badge_.clear();
         nearest_ = cyxwiz::WordEmbeddings::Nearest(*vectors, query_word_, kNearest, &error);
+        // fastText: a word the vectors lack, from its pieces.
+        std::vector<float> built;
+        size_t pieces = 0;
+        bool trained = false;
+        if (nearest_.empty() && error.empty() && !query_word_.empty() &&
+            std::find(vectors->words.begin(), vectors->words.end(), query_word_) == vectors->words.end() &&
+            UnseenWordVector(query_word_, built, pieces, trained)) {
+            nearest_ = cyxwiz::WordEmbeddings::NearestTo(*vectors, built, kNearest, &error);
+            nearest_badge_ = cyxwiz::UnseenWordNote(trained, pieces);
+        }
         nearest_note_ = !error.empty() ? error
                         : nearest_.empty() && !query_word_.empty()
                             ? "No vector for \"" + query_word_ + "\" in these " +
                                   cyxwiz::GroupedCount(vectors->words.size()) + " words."
                             : std::string();
+    }
+    if (!nearest_badge_.empty()) {
+        ImGui::Indent(kLabelWidth);
+        Wrapped(t.accent_text, nearest_badge_);
+        ImGui::Unindent(kLabelWidth);
     }
     if (!nearest_note_.empty()) Wrapped(t.caution, nearest_note_);
     if (nearest_.empty()) return;

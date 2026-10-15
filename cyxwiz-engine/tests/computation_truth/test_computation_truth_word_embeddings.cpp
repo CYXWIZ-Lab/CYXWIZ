@@ -4,7 +4,9 @@
 // - word2vec steps against PyTorch and training quality against gensim:
 //   fixtures/word2vec_reference.json (reference/generate_word2vec_fixtures.py);
 // - GloVe counts and steps against numpy / PyTorch and training quality against the reference GloVe:
-//   fixtures/glove_reference.json (reference/generate_glove_fixtures.py). Runs on the active ArrayFire
+//   fixtures/glove_reference.json (reference/generate_glove_fixtures.py);
+// - fastText hash, pieces, steps and vectors against gensim / PyTorch and training quality against gensim:
+//   fixtures/fasttext_reference.json (reference/generate_fasttext_fixtures.py). Runs on the active ArrayFire
 // backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|oneapi|cpu).
 #include "test_device_selection.h"
 
@@ -14,10 +16,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -286,6 +290,247 @@ void RunGloVeQuality(const json& c) {
     Check(!WordEmbeddings::TrainGloVe(sentences, options).success, "glove: a stop refuses the model");
 }
 
+// fastText's hash and pieces, as gensim computes them.
+void RunFastTextHash(const json& c) {
+    const auto texts = c.at("texts").get<std::vector<std::string>>();
+    const auto hashes = c.at("hashes").get<std::vector<uint32_t>>();
+    for (size_t i = 0; i < texts.size(); ++i)
+        Check(WordEmbeddings::FastTextHash(texts[i]) == hashes[i],
+              "fastText hash of '" + texts[i] + "': " + std::to_string(WordEmbeddings::FastTextHash(texts[i])) +
+                  ", gensim " + std::to_string(hashes[i]));
+}
+
+void RunFastTextNgrams(const json& c) {
+    for (const auto& row : c.at("rows")) {
+        const auto word = row.at("word").get<std::string>();
+        const int min_n = row.at("min_n").get<int>(), max_n = row.at("max_n").get<int>();
+        const std::string name =
+            "fastText n-grams of '" + word + "' " + std::to_string(min_n) + ".." + std::to_string(max_n);
+        Check(WordEmbeddings::FastTextNgrams(word, min_n, max_n) == row.at("ngrams").get<std::vector<std::string>>(),
+              name + " differ from gensim");
+        Check(WordEmbeddings::FastTextBuckets(word, min_n, max_n, 2000000) ==
+                  row.at("buckets").get<std::vector<int>>(),
+              name + ": buckets differ from gensim");
+    }
+}
+
+cyxwiz::FastTextModel FastTextFixtureModel(const json& c) {
+    cyxwiz::FastTextModel model;
+    model.words = c.at("words").get<std::vector<std::string>>();
+    model.min_n = c.at("min_n").get<int>();
+    model.max_n = c.at("max_n").get<int>();
+    model.bucket = c.at("bucket").get<int>();
+    model.dim = c.at("dim").get<int>();
+    model.word_rows = c.at("word_rows").get<std::vector<float>>();
+    model.ngram_rows = c.at("ngram_rows").get<std::vector<float>>();
+    if (c.contains("output_vectors")) model.output_vectors = c.at("output_vectors").get<std::vector<float>>();
+    return model;
+}
+
+void RunFastTextSteps(const json& c) {
+    auto model = FastTextFixtureModel(c);
+    std::vector<cyxwiz::Word2VecBatch> batches;
+    for (const auto& b : c.at("batches")) {
+        cyxwiz::Word2VecBatch batch;
+        batch.inputs = b.at("inputs").get<std::vector<int>>();
+        batch.context_width = b.at("context_width").get<int>();
+        batch.outputs = b.at("outputs").get<std::vector<int>>();
+        batch.negatives = b.at("negatives").get<std::vector<int>>();
+        batch.negative = b.at("negative").get<int>();
+        batch.alpha = b.at("alpha").get<double>();
+        batches.push_back(std::move(batch));
+    }
+    const std::string name = "fastText steps (" + c.at("label").get<std::string>() + ")";
+    std::vector<double> losses;
+    std::string error;
+    Check(WordEmbeddings::FastTextSteps(model, batches, &losses, &error), name + ": " + error);
+    const auto expected_losses = c.at("losses").get<std::vector<double>>();
+    Check(losses.size() == expected_losses.size(), name + ": loss count");
+    for (size_t i = 0; i < losses.size(); ++i)
+        Check(std::abs(losses[i] - expected_losses[i]) <= 1e-5 * (1.0 + std::abs(expected_losses[i])),
+              name + " " + std::to_string(i) + ": loss " + std::to_string(losses[i]) + ", PyTorch " +
+                  std::to_string(expected_losses[i]));
+    CheckValues(model.word_rows, c.at("expected_word_rows"), 1e-5, name + ": word rows");
+    CheckValues(model.ngram_rows, c.at("expected_ngram_rows"), 1e-5, name + ": n-gram rows");
+    CheckValues(model.output_vectors, c.at("expected_output"), 1e-5, name + ": output rows");
+}
+
+void RunFastTextVectors(const json& c) {
+    const auto model = FastTextFixtureModel(c);
+    const auto wanted = c.at("wanted").get<std::vector<std::string>>();
+    std::vector<cyxwiz::FastTextSource> sources;
+    const auto vectors = WordEmbeddings::FastTextVectors(model, &wanted, &sources);
+    Check(vectors.success && vectors.words == wanted, "fastText vectors: " + vectors.error_message);
+    std::vector<double> expected;
+    for (const auto& row : c.at("expected"))
+        for (const auto& x : row) expected.push_back(x.get<double>());
+    CheckValues(vectors.values, json(expected), 1e-6, "fastText vectors (word, pieces, none)");
+    const auto expected_sources = c.at("sources").get<std::vector<int>>();
+    for (size_t i = 0; i < wanted.size(); ++i)
+        Check(static_cast<int>(sources[i]) == expected_sources[i], "fastText source of '" + wanted[i] + "'");
+}
+
+// How often each word's nearest known word (cosine, not itself) is in its
+// group; `vectors` row i is `vectors.words[i]`, `known` the vocabulary's vectors.
+double NearestKnownAccuracy(const cyxwiz::WordVectors& vectors, const cyxwiz::WordVectors& known,
+                            const std::map<std::string, int>& group_of) {
+    const size_t dim = static_cast<size_t>(known.dim);
+    const auto unit = [&](const std::vector<float>& values, size_t r) {
+        std::vector<double> row(values.begin() + static_cast<long long>(r * dim),
+                                values.begin() + static_cast<long long>((r + 1) * dim));
+        double norm = 0.0;
+        for (const double x : row) norm += x * x;
+        for (double& x : row) x /= std::sqrt(std::max(norm, 1e-30));
+        return row;
+    };
+    size_t same = 0;
+    for (size_t i = 0; i < vectors.words.size(); ++i) {
+        const auto row = unit(vectors.values, i);
+        double best = -2.0;
+        size_t best_j = 0;
+        for (size_t j = 0; j < known.words.size(); ++j) {
+            if (known.words[j] == vectors.words[i]) continue;
+            const auto other = unit(known.values, j);
+            double dot = 0.0;
+            for (size_t k = 0; k < dim; ++k) dot += row[k] * other[k];
+            if (dot > best) {
+                best = dot;
+                best_j = j;
+            }
+        }
+        same += group_of.at(vectors.words[i]) == group_of.at(known.words[best_j]) ? 1 : 0;
+    }
+    return static_cast<double>(same) / static_cast<double>(vectors.words.size());
+}
+
+// Trained on the device with gensim's settings: the groups (and unseen
+// variants built from pieces) are as separable as gensim makes them (within
+// 0.1), the loss falls, and a run repeats for a seed.
+void RunFastTextQuality(const json& c) {
+    const auto& s = c.at("settings");
+    cyxwiz::FastTextOptions options;
+    options.cbow = c.at("cbow").get<bool>();
+    options.vector_size = s.at("vector_size").get<int>();
+    options.window = s.at("window").get<int>();
+    options.min_count = s.at("min_count").get<int>();
+    options.negative = s.at("negative").get<int>();
+    options.sample = s.at("sample").get<double>();
+    options.epochs = s.at("epochs").get<int>();
+    options.alpha = s.at("alpha").get<double>();
+    options.min_alpha = s.at("min_alpha").get<double>();
+    options.min_n = s.at("min_n").get<int>();
+    options.max_n = s.at("max_n").get<int>();
+    options.bucket = s.at("bucket").get<int>();
+    const auto sentences = c.at("sentences").get<std::vector<std::vector<std::string>>>();
+    const auto groups = c.at("groups").get<std::vector<std::vector<std::string>>>();
+    const auto unseen = c.at("unseen").get<std::vector<std::string>>();
+    const std::string name = "fastText " + c.at("label").get<std::string>();
+    const auto model = WordEmbeddings::TrainFastText(sentences, options);
+    Check(model.success, name + ": " + model.error_message);
+    Check(model.epoch_loss.size() == static_cast<size_t>(options.epochs) &&
+              model.epoch_loss.back() < model.epoch_loss.front(),
+          name + ": the loss falls; per epoch:" + [&] {
+              std::string text;
+              for (const double loss : model.epoch_loss) text += " " + std::to_string(loss);
+              return text;
+          }());
+    std::map<std::string, int> group_of;
+    std::vector<std::string> names;
+    for (size_t g = 0; g < groups.size(); ++g) {
+        for (const auto& w : groups[g]) {
+            group_of[w] = static_cast<int>(g);
+            group_of[w + "x"] = static_cast<int>(g);
+            names.push_back(w);
+        }
+    }
+    std::vector<cyxwiz::FastTextSource> sources;
+    const auto known = WordEmbeddings::FastTextVectors(model, &names);
+    const auto built = WordEmbeddings::FastTextVectors(model, &unseen, &sources);
+    Check(known.success && built.success, name + ": vectors");
+    Check(std::all_of(sources.begin(), sources.end(),
+                      [](cyxwiz::FastTextSource source) { return source == cyxwiz::FastTextSource::Pieces; }),
+          name + ": unseen words are built from pieces");
+    const double accuracy = NearestKnownAccuracy(known, known, group_of);
+    const double unseen_accuracy = NearestKnownAccuracy(built, known, group_of);
+    const double reference = c.at("gensim_accuracy").get<double>();
+    const double unseen_reference = c.at("gensim_unseen_accuracy").get<double>();
+    std::cout << name << ": nearest neighbour in its own group " << accuracy << " (gensim " << reference
+              << "), unseen words " << unseen_accuracy << " (gensim " << unseen_reference << "), loss per example "
+              << model.epoch_loss.front() << " -> " << model.epoch_loss.back() << std::endl;
+    Check(accuracy >= reference - 0.1 && unseen_accuracy >= unseen_reference - 0.1,
+          name + ": group accuracy " + std::to_string(accuracy) + " / unseen " + std::to_string(unseen_accuracy));
+    const auto again = WordEmbeddings::TrainFastText(sentences, options);
+    Check(again.success && again.word_rows == model.word_rows && again.ngram_rows == model.ngram_rows,
+          name + ": a run repeats for one seed");
+}
+
+// A fastText .bin written by gensim's save_facebook_model: its header and
+// words, its vectors (words and unseen words) as load_facebook_model gives
+// them, and a vocabulary lined up with n-gram vectors for what it lacks.
+void RunFastTextBin(const json& c, const fs::path& root) {
+    const std::string path = (root / "word_embeddings" / c.at("file").get<std::string>()).string();
+    const auto words = c.at("words").get<std::vector<std::string>>();
+    Check(WordEmbeddings::IsFastTextBin(path) &&
+              !WordEmbeddings::IsFastTextBin((root / "word_embeddings" / "vectors.bin").string()),
+          "fastText .bin told from word2vec binary");
+    const auto info = WordEmbeddings::ReadFastTextInfo(path);
+    Check(info.success, "fastText .bin header: " + info.error_message);
+    Check(info.dim == c.at("dim").get<int>() && info.min_n == c.at("min_n").get<int>() &&
+              info.max_n == c.at("max_n").get<int>() && info.bucket == c.at("bucket").get<int>() &&
+              info.model == c.at("model").get<std::string>() && info.words == words,
+          "fastText .bin header and words");
+
+    const auto all = WordEmbeddings::Load(path);
+    Check(all.success && all.words == words, "Load reads a fastText .bin: " + all.error_message);
+    CheckValues(std::vector<float>(all.values.begin(), all.values.begin() + 3 * info.dim), c.at("first_vectors"), 1e-5,
+                "fastText .bin: the first words' vectors");
+    const auto first_two = WordEmbeddings::Load(path, 2);
+    Check(first_two.success && first_two.words.size() == 2, "fastText .bin: read at most 2 words");
+
+    const auto wanted = c.at("wanted").get<std::vector<std::string>>();
+    std::vector<cyxwiz::FastTextSource> sources;
+    const auto vectors = WordEmbeddings::LoadFastTextBin(path, &wanted, &sources);
+    Check(vectors.success && vectors.words == wanted, "fastText .bin vectors: " + vectors.error_message);
+    std::vector<double> expected;
+    for (const auto& row : c.at("expected"))
+        for (const auto& x : row) expected.push_back(x.get<double>());
+    CheckValues(vectors.values, json(expected), 1e-5, "fastText .bin vectors (words, pieces, none) vs gensim");
+    const auto expected_sources = c.at("sources").get<std::vector<int>>();
+    for (size_t i = 0; i < wanted.size(); ++i)
+        Check(static_cast<int>(sources[i]) == expected_sources[i], "fastText .bin source of '" + wanted[i] + "'");
+
+    const auto vocabulary = c.at("vocabulary").get<std::vector<std::string>>();
+    const auto found = WordEmbeddings::LoadFastTextBinFor(path, vocabulary, true);
+    Check(found.success && found.words == std::vector<std::string>({"sleep", "worry"}),
+          "fastText .bin: only the vocabulary's words are read");
+    cyxwiz::WordAlignmentOptions options;
+    options.pieces = [&](const std::vector<std::string>& tokens) {
+        return WordEmbeddings::LoadFastTextBin(path, &tokens);
+    };
+    const auto aligned = WordEmbeddings::Align(found, vocabulary, options);
+    Check(aligned.success, "fastText line-up: " + aligned.error_message);
+    Check(aligned.exact == 1 && aligned.lowercase == 1 && aligned.pieces == 1 && aligned.missing == 2 &&
+              aligned.piece_words == std::vector<std::string>({"sleepyx"}),
+          "fastText line-up: 1 found, 1 in lowercase, 1 from pieces, 2 missing (punctuation, emoji)");
+    for (const auto& [id, row] : c.at("aligned_rows").items()) {
+        const size_t r = static_cast<size_t>(std::stoi(id));
+        CheckValues(std::vector<float>(aligned.values.begin() + static_cast<long long>(r * 6),
+                                       aligned.values.begin() + static_cast<long long>((r + 1) * 6)),
+                    row, 1e-5, "fastText line-up row " + id);
+    }
+    // A model cut short is refused with a reason.
+    const fs::path cut = fs::temp_directory_path() / "cyxwiz_fasttext_cut.bin";
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::string head(200, '\0');
+        in.read(head.data(), static_cast<std::streamsize>(head.size()));
+        std::ofstream(cut, std::ios::binary) << head;
+    }
+    const auto refused = WordEmbeddings::ReadFastTextInfo(cut.string());
+    Check(!refused.success && !refused.error_message.empty(), "a cut fastText .bin is refused");
+    fs::remove(cut);
+}
+
 // Nearest words by cosine, and row means of token vectors, against numpy.
 void RunNearest(const json& c, const fs::path& root) {
     const auto vectors = WordEmbeddings::Load((root / "word_embeddings" / c.at("file").get<std::string>()).string());
@@ -416,7 +661,25 @@ int main(int, char** argv) {
         else RunGloVeQuality(c);
         ++passed;
     }
+    std::ifstream fasttext_in(root / "fasttext_reference.json");
+    Check(static_cast<bool>(fasttext_in), "cannot open the fastText fixture");
+    const json fasttext = json::parse(fasttext_in);
+    for (const auto& c : fasttext.at("cases")) {
+        if (c.at("op") == "hash") RunFastTextHash(c);
+        else if (c.at("op") == "ngrams") RunFastTextNgrams(c);
+        else if (c.at("op") == "steps") RunFastTextSteps(c);
+        else if (c.at("op") == "vectors") RunFastTextVectors(c);
+        else if (c.at("op") == "bin") RunFastTextBin(c, root);
+        else RunFastTextQuality(c);
+        ++passed;
+    }
     std::string error;
+    Check(!WordEmbeddings::TrainFastText({{"one"}}).success, "fastText: fewer than two words is refused");
+    cyxwiz::FastTextOptions bad_pieces;
+    bad_pieces.min_n = 4;
+    bad_pieces.max_n = 3;
+    Check(!WordEmbeddings::TrainFastText({{"a", "b", "a", "b", "a", "b", "a", "b", "a", "b"}}, bad_pieces).success,
+          "fastText: max_n below min_n is refused");
     Check(!WordEmbeddings::CountCooccurrences({0, 7}, {0, 0}, 3, 2, &error).success,
           "a GloVe token outside the vocabulary is refused");
     cyxwiz::GloVeState two_words;

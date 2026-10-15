@@ -1,8 +1,10 @@
 #pragma once
 
 // Word Embeddings node (TOFIX152): word vectors from a pretrained file
-// (GloVe / fastText / word2vec .txt .vec .bin) or trained with word2vec or GloVe
-// on the input's text column, on the selected device (cyxwiz/word_embeddings.h).
+// (GloVe / fastText / word2vec .txt .vec .bin, fastText models .bin) or trained
+// with word2vec, GloVe or fastText on the input's text column, on the selected
+// device (cyxwiz/word_embeddings.h). With fastText, vocabulary tokens the
+// vectors lack are built from their character n-grams (`unseen_words`).
 // - Pin 0, Vectors: a table word, v_0 .. v_{d-1}; in the token-id order of
 //   `vocab_file` when one is given (lined up, with a coverage report), else in
 //   the file's / the trained vocabulary's order. Saved as word2vec text to
@@ -44,7 +46,7 @@ public:
     static std::string DefaultVectorsFile(int node_id, const std::string& node_name);
 
 private:
-    std::string source_ = "pretrained";  // pretrained, word2vec or glove
+    std::string source_ = "pretrained";  // pretrained, word2vec, glove or fasttext
     std::string vectors_file_;
     size_t max_words_ = 0;
     std::string vocab_file_;
@@ -52,6 +54,8 @@ private:
     std::string text_col_;
     Word2VecOptions word2vec_;
     GloVeOptions glove_;
+    FastTextOptions fasttext_;
+    bool unseen_from_pieces_ = true;
     std::string vectors_path_;
     bool row_vectors_ = false;
 

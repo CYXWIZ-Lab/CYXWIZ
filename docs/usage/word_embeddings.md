@@ -2,8 +2,9 @@
 
 The **Word Embeddings** node gives every word a vector of numbers, so words
 used alike sit close together ("therapy" near "counseling", "cbt", "emdr").
-It reads vectors someone already trained (GloVe, fastText, word2vec files) or
-trains word2vec or GloVe on a text column of your data, on the selected device.
+It reads vectors someone already trained (GloVe, fastText, word2vec files and
+fastText models) or trains word2vec, GloVe or fastText on a text column of your
+data, on the selected device.
 
 ```
 Data Input (texts) -> Word Embeddings -> Vectors -> (an Embedding layer loads the saved file)
@@ -49,6 +50,14 @@ project, replaced at each run, which is where an Embedding layer finds them.
      time left ("Counted 8,024,345 word pairs · about 3 min 11 s left"); the
      cost per epoch is drawn on the Training Dashboard. When it ends the
      summary shows the first and last cost.
+   - **Train fastText**: word2vec that also learns vectors for the pieces of
+     each word (character n-grams of 3 to 6 letters, such as `<th`, `the`,
+     `rap`, `apy>`; `<` and `>` mark the ends), so a word it never saw, or a
+     misspelling, still gets a vector from its pieces. The settings are
+     word2vec's (model, window, negative samples, epochs, learning rate) plus
+     **Pieces** (n-gram lengths) and, under Advanced, **Buckets** (2,000,000,
+     with the device memory they take shown). The run shows on the Training
+     Dashboard like word2vec's, with a **Pieces** card.
 4. **Vocabulary**: the Text Tokenizer's vocabulary file (filled in from the
    graph's Text Tokenizer when there is one). The vectors are then lined up
    with it: the Source tab shows how many tokens were found as written, found
@@ -56,8 +65,16 @@ project, replaced at each run, which is where an Embedding layer finds them.
    cannot draw, such as an emoji, shows as its code point, `U+1F60A`).
    [PAD] gets zeros and [UNK] the mean vector; missing words get zeros or
    random values (**Missing words**). Empty keeps the file's own words.
+   With fastText (trained, or a fastText `.bin`), **Words not trained**
+   builds a token without a vector from its pieces (**Build from pieces**,
+   the default) and the line-up counts them as "built from pieces"; tokens
+   with no letter or digit (punctuation, symbols, emoji) follow the Missing
+   words rule either way.
 5. **Nearest words**: type a word and press Enter for its 10 nearest words by
-   cosine similarity, a quick check that the vectors make sense.
+   cosine similarity, a quick check that the vectors make sense. With fastText
+   a word the vectors lack still gets neighbours from its pieces, noted "not
+   in the training words · from 26 pieces" (the model of this session's run,
+   or the `.bin` read again for that word).
 6. **Outputs**: where the vectors are saved, and **Row vectors** for the Rows
    pin.
 
@@ -107,9 +124,21 @@ A word-vector run shows:
 | GloVe text (`.txt`) | no header; a word then its values on each line |
 | fastText / word2vec text (`.vec`) | a first line `count dim`, then a word and its values per line |
 | word2vec binary (`.bin`) | the `.bin` extension |
+| fastText model (`.bin`) | the `.bin` extension and fastText's magic number (793712314) at the start |
 
-Files are read as gensim's `KeyedVectors.load_word2vec_format` reads them; a
-repeated word keeps its first vector.
+Text and word2vec files are read as gensim's
+`KeyedVectors.load_word2vec_format` reads them; a repeated word keeps its first
+vector.
+
+A fastText model (fastText's own `.bin`, version 12, as fastText and gensim's
+`save_facebook_model` write it) holds the words' and the pieces' rows. With a
+vocabulary file only the rows the vocabulary needs are read (each token's word
+row and its pieces' rows), so a 7 GB model such as `cc.en.300.bin` is not read
+whole; a token the model lacks is built from its pieces. [UNK]'s mean is the
+mean of the tokens found. The dialog shows "fastText model (.bin) · 16,334
+words · 2,000,000 pieces · 100 values each · 813 MB · read 3.1 s". Quantized
+(`.ftz`) and supervised (classifier) models are refused with a reason; use
+their `.vec` file.
 
 ## word2vec settings
 
@@ -158,6 +187,50 @@ medication 0.772, counselling 0.762.
 
 After 1 or 2 epochs every word still points the same way (cosine near 1.0
 with all words, in the reference too); use the full 25 epochs.
+
+## fastText settings
+
+gensim's FastText names and defaults: model (skip-gram or CBOW), vector size
+100, window 5, minimum count 5, negative samples 5, epochs 5, down-sampling
+1e-3, learning rate 0.025 to 0.0001, batch 512 and seed, all shared with
+word2vec (same keys), plus `min_n` 3 and `max_n` 6 (piece lengths), `bucket`
+2,000,000 (rows the pieces are hashed into, fastText's FNV-1a hash; 4 x vector
+size bytes each on the device, 800 MB at 100 values) and `unseen_words`
+(`pieces` or `missing`).
+
+How it learns: as word2vec, but a word's input vector is the mean of its own
+row and its pieces' rows. In skip-gram the centre word, with its pieces,
+predicts each context word; in CBOW the context words' rows and pieces predict
+the centre. Each row of the mean takes its share of the gradient (the gradient
+of the mean). fastText and gensim give every row the whole gradient, one
+example at a time; summed over a 512-example batch, where a common piece such
+as `ing>` serves hundreds of examples at once, that diverged (on 20,000
+sentiment posts the loss per example went from 79.6 to 1.2 million in the
+second epoch). A word's saved vector is the mean of its row and its pieces'
+rows; a word outside the vocabulary gets the mean of its pieces' rows.
+
+**Speed and quality (measured 2026-10-15)** on the sentiment set (16,334
+words, 24.6 million skip-gram examples per epoch, 2,000,000 buckets) on a
+GTX 1050 Ti (CUDA): about 230 s per epoch, 5 epochs in 1,152 s; gensim 4.4.0
+takes 395.5 s on one CPU thread (106.8 s on four). The loss per example falls
+from 2.544 to 2.413. The two models share 57% of each word's 10 nearest
+neighbours (top 1,000 words; two gensim runs with different seeds share 77%).
+Words the training never saw, from their pieces: anxietyy -> anxiety 0.990,
+depressionn -> depression 0.986, overthinkingg -> overthinking 0.985,
+psychiatristt -> psychiatrist 0.997, counsellingg -> counselling 0.970.
+Neighbours lean towards words that share letters ("therapy": therapys,
+hypnotherapy, radiotherapy, psychotherapy; "depressed": repressed,
+deppressed, oppressed), fastText's trade-off.
+
+The device keeps the word and piece rows ((words + buckets) x vector size x 4
+bytes: 807 MB here). Each skip-gram batch reads a word's rows from a padded
+table: the words of 98% of the text use a narrow one, the long tail (up to 99
+rows, such as `jwkdrbp6bk528dudk`) runs in batches of its own.
+
+On this project no vocabulary token is built from pieces: the vocabulary file
+comes from the same posts and its 5,000 tokens are all frequent words (even at
+minimum count 20). Pieces fill in for a vocabulary from other text, for rare
+words below the minimum count, and with pretrained fastText models.
 
 ## With an Embedding layer
 
@@ -231,16 +304,26 @@ The check graph is `word_embeddings_check.cyxgraph` in the test project
 - `test_computation_truth_word_embeddings`: reading, lining up, nearest words,
   row means and word2vec steps against gensim 4.4.0 / PyTorch fixtures; GloVe
   counts, AdaGrad steps and group quality against numpy / PyTorch
-  (`reference/generate_glove_fixtures.py`).
+  (`reference/generate_glove_fixtures.py`); fastText hash, pieces, steps,
+  vectors, group quality (words and unseen variants) and a fastText `.bin`
+  (header, vectors, a vocabulary lined up with pieces) against gensim /
+  PyTorch (`reference/generate_fasttext_fixtures.py`). Runs on CUDA, OpenCL
+  and CPU.
 - `test_word_embeddings_operator`: the node (lined-up table, saved file, Rows,
   long rows averaged in several device blocks, word2vec and GloVe training
   repeat, GloVe's two progress stages, the dashboard's figures: settings,
   vocabulary, pairs, each epoch's loss or cost, the line-up, the end;
-  refusals).
-- `test_word_embeddings_presentation`: the dialog's wording.
+  fastText trained and lined up with a token built from pieces, Words not
+  trained as missing, the model kept for the dialog, a fastText `.bin` read
+  for a vocabulary; refusals).
+- `test_word_embeddings_presentation`: the dialog's wording (with the
+  pieces in the line-up, the fastText file summary, the unseen-word note).
 - `test_word_vector_runs`: the dashboard's word-vector runs, on the real
   GloVe run (status, steps, cards, time left, result, table rows, CSV) and
-  word2vec, cancelled and failed runs.
-- `benchmark_word_vectors <word2vec|glove> <tokens.txt> [epochs] [batch] [out.vec]`
+  word2vec, fastText (Pieces card), cancelled and failed runs.
+- `benchmark_word_vectors <word2vec|glove|fasttext> <tokens.txt> [epochs] [batch] [out.vec] [buckets]`
   and `scripts/word2vec_neighbour_overlap.py`: speed and agreement with gensim
-  or the GloVe reference.
+  or the GloVe reference; fastText also prints the neighbours of misspellings
+  it never saw.
+- `scripts/arrayfire_probes/sum_by_key_runs`: a standalone check of
+  `sumByKey` on sorted keys with runs (run after an ArrayFire upgrade).

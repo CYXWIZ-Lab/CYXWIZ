@@ -1,8 +1,10 @@
 // Word Embeddings node operator (TOFIX152): pretrained vectors lined up with a
 // vocabulary, the saved .vec file, the Rows output (each row's mean vector),
-// word2vec training on the text column, and the refusals.
+// word2vec, GloVe and fastText training on the text column, a fastText .bin, and
+// the refusals.
 
 #include "../src/core/node_executors/word_embeddings_operator.h"
+#include "../src/core/fasttext_model_store.h"
 #include "../src/core/word_embeddings_presentation.h"
 
 #include <cyxwiz/word_embeddings.h>
@@ -16,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -278,6 +281,89 @@ void CheckGloVeTraining() {
           "a zero count cap is refused");
 }
 
+// fastText trained on the text and lined up: a token the text lacks is built
+// from its pieces (or missing with unseen_words = missing); the model is kept
+// for the dialog's unseen words.
+void CheckFastTextTraining(const fs::path& dir) {
+    std::vector<std::string> texts;
+    for (int i = 0; i < 300; ++i) texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
+    const fs::path vocab = dir / "fasttext_vocab.txt";
+    std::ofstream(vocab) << "[PAD]\n[UNK]\ncat\nmouse\nmice\n!!\n";
+    const fs::path saved = dir / "fasttext.vec";
+    const auto params = [&](const std::string& unseen) {
+        return std::map<std::string, std::string>{
+            {"source", "fasttext"}, {"text_col", "text"}, {"vector_size", "8"}, {"window", "2"},
+            {"min_count", "2"}, {"epochs", "2"}, {"bucket", "200"}, {"min_n", "3"}, {"max_n", "4"},
+            {"vocab_file", vocab.string()}, {"vectors_path", saved.string()}, {"unseen_words", unseen}};
+    };
+    cyxwiz::WordEmbeddingsOperator op;
+    std::vector<cyxwiz::OperatorFigures> figures;
+    op.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+        if (!event.figures.empty()) figures.push_back(event.Figures());
+    });
+    std::string error;
+    Check(op.Configure(params("pieces"), error), "configures fastText: " + error);
+    auto result = op.Apply(TextTable(texts));
+    Check(result.ok(), "trains fastText: " + result.status().ToString());
+    Check((*result)->num_rows() == 6 && (*result)->num_columns() == 9, "fastText: 6 tokens x 8 values");
+    Check(figures.front().Note("method") == "fastText skip-gram" && figures.front().Figure("bucket") == 200 &&
+              figures.front().Figure("min_n") == 3 && figures.front().Figure("max_n") == 4,
+          "fastText's first figures name its settings");
+    const auto per_word = std::find_if(figures.begin(), figures.end(), [](const cyxwiz::OperatorFigures& event) {
+        return event.Has("pieces_per_word");
+    });
+    Check(per_word != figures.end() && per_word->Figure("pieces_per_word") > 1.0, "pieces per word reported");
+    const auto line_up = std::find_if(figures.begin(), figures.end(),
+                                      [](const cyxwiz::OperatorFigures& event) { return event.Has("tokens"); });
+    Check(line_up != figures.end() && line_up->Figure("found") == 2 && line_up->Figure("pieces") == 1 &&
+              line_up->Figure("missing") == 1,
+          "cat and mouse found, mice built from pieces, !! missing");
+    Check(op.OutcomeSummary().find("fastText skip-gram") != std::string::npos &&
+              op.OutcomeSummary().find("1 from pieces") != std::string::npos,
+          "outcome names fastText and the pieces: " + op.OutcomeSummary());
+    // The row of "mice" (id 4) is not zeros; "!!" (id 5) is.
+    float mice = 0.0f, bangs = 0.0f;
+    for (int d = 0; d < 8; ++d) {
+        mice += std::abs(Value(*result, "v_" + std::to_string(d), 4));
+        bangs += std::abs(Value(*result, "v_" + std::to_string(d), 5));
+    }
+    Check(mice > 0.0f && bangs == 0.0f, "mice has a vector from its pieces, !! zeros");
+    const auto kept = cyxwiz::FindFastTextModel(saved.string());
+    Check(kept && kept->bucket == 200 && kept->words.size() == 6, "the model is kept for the dialog");
+
+    cyxwiz::WordEmbeddingsOperator missing_op;
+    figures.clear();
+    missing_op.SetProgressCallback([&](const cyxwiz::PipelineOperatorProgress& event) {
+        if (!event.figures.empty()) figures.push_back(event.Figures());
+    });
+    Check(missing_op.Configure(params("missing"), error) && missing_op.Apply(TextTable(texts)).ok(),
+          "fastText with unseen words as missing: " + error);
+    const auto as_missing = std::find_if(figures.begin(), figures.end(),
+                                         [](const cyxwiz::OperatorFigures& event) { return event.Has("tokens"); });
+    Check(as_missing->Figure("pieces") == 0 && as_missing->Figure("missing") == 2, "mice missing with the rule");
+    Check(!missing_op.Configure({{"source", "fasttext"}, {"text_col", "text"}, {"min_n", "5"}, {"max_n", "4"}},
+                                error) &&
+              error.find("max_n") != std::string::npos,
+          "max_n below min_n is refused");
+}
+
+// A fastText .bin read for a vocabulary: only its words' rows, the rest from
+// pieces.
+void CheckFastTextBin(const fs::path& dir, const fs::path& model) {
+    const fs::path vocab = dir / "fasttext_bin_vocab.txt";
+    std::ofstream(vocab) << "[PAD]\n[UNK]\nsleep\nWorry\nsleepyx\n!!\n";
+    cyxwiz::WordEmbeddingsOperator op;
+    std::string error;
+    Check(op.Configure({{"vectors_file", model.string()}, {"vocab_file", vocab.string()}}, error),
+          "configures a fastText .bin: " + error);
+    auto result = op.Apply(TextTable({"x"}));
+    Check(result.ok(), "reads a fastText .bin: " + result.status().ToString());
+    Check((*result)->num_rows() == 6 && (*result)->num_columns() == 7, "6 tokens x 6 values");
+    Check(op.OutcomeSummary().find("fastText model") != std::string::npos &&
+              op.OutcomeSummary().find("1 found, 1 in lowercase, 1 from pieces, 1 missing") != std::string::npos,
+          "sleep, Worry in lowercase, sleepyx from pieces, !! missing: " + op.OutcomeSummary());
+}
+
 void CheckRefusals() {
     cyxwiz::WordEmbeddingsOperator op;
     std::string error;
@@ -296,7 +382,10 @@ void CheckRefusals() {
 
 }  // namespace
 
-int main() {
+int main(int, char** argv) {
+    // The gensim fastText .bin: beside the test (a copied build) or in the source tree.
+    fs::path model = fs::path(argv[0]).parent_path() / "small_fasttext.bin";
+    if (!fs::exists(model)) model = CYXWIZ_FASTTEXT_FIXTURE;
     const fs::path dir = fs::temp_directory_path() / "cyxwiz_word_embeddings_operator";
     fs::create_directories(dir);
     CheckPretrainedAligned(dir);
@@ -305,6 +394,8 @@ int main() {
     CheckTraining();
     CheckTrainingLineUpFigures(dir);
     CheckGloVeTraining();
+    CheckFastTextTraining(dir);
+    CheckFastTextBin(dir, model);
     CheckRefusals();
     fs::remove_all(dir);
     std::cout << "word embeddings operator tests passed\n";

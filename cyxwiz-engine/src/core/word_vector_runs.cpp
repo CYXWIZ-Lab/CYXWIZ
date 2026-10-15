@@ -84,6 +84,9 @@ const WordVectorRun* WordVectorRunBook::Record(const OperatorFigures& event, dou
         fresh.window = static_cast<int>(event.Figure("window", 0));
         fresh.epochs = static_cast<int>(event.Figure("epochs", 0));
         fresh.min_count = static_cast<int>(event.Figure("min_count", 0));
+        fresh.bucket = static_cast<int>(event.Figure("bucket", -1));
+        fresh.min_n = static_cast<int>(event.Figure("min_n", 0));
+        fresh.max_n = static_cast<int>(event.Figure("max_n", 0));
         fresh.started_at = event.Figure("elapsed", 0.0);
         // word2vec trains at once; GloVe counts first.
         if (!fresh.GloVe()) fresh.training_from = fresh.started_at;
@@ -101,6 +104,7 @@ const WordVectorRun* WordVectorRunBook::Record(const OperatorFigures& event, dou
     if (!event.message.empty()) run->message = event.message;
     run->step_share = event.progress;
     if (event.Has("words")) run->words = static_cast<long long>(event.Figure("words"));
+    if (event.Has("pieces_per_word")) run->pieces_per_word = event.Figure("pieces_per_word");
     if (event.Has("pairs")) {
         run->pairs = static_cast<long long>(event.Figure("pairs"));
         run->counted_at = run->elapsed;
@@ -122,6 +126,7 @@ const WordVectorRun* WordVectorRunBook::Record(const OperatorFigures& event, dou
         run->tokens = static_cast<long long>(event.Figure("tokens"));
         run->found = static_cast<long long>(event.Figure("found", 0));
         run->lowercase = static_cast<long long>(event.Figure("lowercase", 0));
+        run->pieces = static_cast<long long>(event.Figure("pieces", 0));
         run->missing = static_cast<long long>(event.Figure("missing", 0));
         run->special = event.Note("special");
     }
@@ -254,6 +259,8 @@ WordVectorRunView BuildWordVectorRunView(const WordVectorRun& run, double now) {
     if (!run.vocabulary_file.empty()) {
         add_step("Lining up with the vocabulary", run.tokens >= 0, training_done && run.tokens < 0,
                  GroupedCount(static_cast<size_t>(run.found)) + " found" + kDot +
+                     (run.FastText() ? GroupedCount(static_cast<size_t>(run.pieces)) + " from pieces" + kDot
+                                     : std::string()) +
                      GroupedCount(static_cast<size_t>(run.missing)) + " missing",
                  "matching tokens");
     }
@@ -325,6 +332,18 @@ WordVectorRunView BuildWordVectorRunView(const WordVectorRun& run, double now) {
             amount.value = run.Live() ? "counting..." : kDash;
             amount.line2 = window + kDot + "closer pairs count more";
         }
+    } else if (run.FastText()) {
+        // The n-gram rows instead of examples (the mockup's Pieces card).
+        amount.label = "Pieces";
+        amount.value = run.bucket >= 0 ? GroupedCount(static_cast<size_t>(run.bucket)) : kDash;
+        amount.line1 = "buckets" + kDot + std::to_string(run.min_n) + " to " + std::to_string(run.max_n) + " letters";
+        if (run.pieces_per_word >= 0.0) {
+            char text[48];
+            std::snprintf(text, sizeof(text), "%.1f pieces per word", run.pieces_per_word);
+            amount.line2 = text;
+        } else {
+            amount.line2 = window;
+        }
     } else {
         amount.label = "Examples";
         if (!run.examples.empty()) {
@@ -346,6 +365,8 @@ WordVectorRunView BuildWordVectorRunView(const WordVectorRun& run, double now) {
                 "Lined up", FileName(run.vocabulary_file) + kDot + GroupedCount(static_cast<size_t>(run.tokens)) +
                                 " tokens: " + GroupedCount(static_cast<size_t>(run.found)) + " found, " +
                                 GroupedCount(static_cast<size_t>(run.lowercase)) + " in lowercase, " +
+                                (run.FastText() ? GroupedCount(static_cast<size_t>(run.pieces)) + " from pieces, "
+                                                : std::string()) +
                                 GroupedCount(static_cast<size_t>(run.missing)) + " missing");
         }
         if (!run.special.empty()) view.result.emplace_back("Special", run.special);
@@ -373,6 +394,7 @@ WordVectorRunRow BuildWordVectorRunRow(const WordVectorRun& run) {
     row.method = run.method;
     row.settings = std::to_string(run.dims) + " dims" + kDot + "window " + std::to_string(run.window) + kDot +
                    std::to_string(run.epochs) + " epochs";
+    if (run.FastText()) row.settings += kDot + "pieces " + std::to_string(run.min_n) + "-" + std::to_string(run.max_n);
     row.words = run.words >= 0 ? GroupedCount(static_cast<size_t>(run.words)) : kDash;
     if (run.GloVe()) {
         row.per_epoch = run.pairs >= 0 ? GroupedCount(static_cast<size_t>(run.pairs)) + " pairs" : kDash;

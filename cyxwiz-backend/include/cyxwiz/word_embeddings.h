@@ -8,6 +8,7 @@
 #include "cyxwiz/api_export.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <utility>
@@ -33,6 +34,10 @@ struct CYXWIZ_API WordAlignmentOptions {
     int pad_id = 0;                   // row of zeros (-1: none)
     int unknown_id = 1;               // -1: none
     unsigned seed = 0;                // for "random"
+    // fastText: vectors built from character n-grams for tokens found neither
+    // as written nor in lowercase that have a letter or digit (empty: none).
+    // Called once with those tokens; they count as `pieces`, not in the mean.
+    std::function<WordVectors(const std::vector<std::string>& tokens)> pieces;
 };
 
 // A vocabulary's rows, row-major [vocab.size(), dim], and how they were found.
@@ -41,8 +46,10 @@ struct CYXWIZ_API WordAlignment {
     int dim = 0;
     size_t exact = 0;      // found as written
     size_t lowercase = 0;  // found in lowercase
+    size_t pieces = 0;     // built from character n-grams (fastText)
     size_t missing = 0;    // no vector (PAD and UNK are not counted)
     std::vector<std::string> missing_words;  // in vocabulary order
+    std::vector<std::string> piece_words;    // in vocabulary order
 
     bool success = false;
     std::string error_message;
@@ -161,6 +168,71 @@ struct CYXWIZ_API GloVeModel {
     std::string error_message;
 };
 
+// fastText training settings (Bojanowski et al. 2017): word2vec's, with
+// gensim's names and defaults (FastText), plus the character n-grams ("pieces")
+// hashed into `bucket` rows.
+struct CYXWIZ_API FastTextOptions {
+    bool cbow = false;      // false: skip-gram (the centre word predicts each context word)
+    int vector_size = 100;
+    int window = 5;
+    int min_count = 5;
+    int negative = 5;
+    double sample = 1e-3;
+    int epochs = 5;
+    double alpha = 0.025;
+    double min_alpha = 1e-4;
+    int batch_size = 512;
+    unsigned seed = 1;
+    size_t max_vocab = 0;
+    int min_n = 3;          // n-gram lengths in characters, of "<word>"
+    int max_n = 6;
+    int bucket = 2000000;   // n-gram rows (0: no n-grams, plain word2vec rows)
+    std::function<bool(double done, int epoch)> on_progress;
+    std::function<void(size_t words)> on_vocabulary;
+    std::function<void(int epoch, double loss, long long examples)> on_epoch_loss;
+};
+
+// A fastText model: the vocabulary (most frequent first), its counts, the
+// input rows of the words and of the n-gram buckets, and the output rows.
+// A word's vector is the mean of its own row and its n-grams' rows; a word
+// outside the vocabulary gets the mean of its n-grams' rows (fastText, gensim).
+struct CYXWIZ_API FastTextModel {
+    std::vector<std::string> words;
+    std::vector<long long> counts;
+    int dim = 0;
+    int min_n = 3;
+    int max_n = 6;
+    int bucket = 0;
+    std::vector<float> word_rows;       // [words, dim]
+    std::vector<float> ngram_rows;      // [bucket, dim]
+    std::vector<float> output_vectors;  // [words, dim]
+    std::vector<double> epoch_loss;     // mean loss per example in each epoch
+    long long examples = 0;
+
+    bool success = false;
+    std::string error_message;
+};
+
+// How a word got its fastText vector.
+enum class FastTextSource : int { Word = 0, Pieces = 1, None = 2 };
+
+// What a fastText .bin holds (fastText's own format, as fastText and gensim's
+// save_facebook_model write it).
+struct CYXWIZ_API FastTextFileInfo {
+    int version = 0;
+    int dim = 0;
+    int min_n = 0;
+    int max_n = 0;
+    int bucket = 0;
+    std::string model;               // "skip-gram", "cbow"
+    std::vector<std::string> words;  // in file order
+    long long tokens = 0;            // words of the training text
+    unsigned long long file_bytes = 0;
+
+    bool success = false;
+    std::string error_message;
+};
+
 class CYXWIZ_API WordEmbeddings {
 public:
     // Text format: one word per line followed by its values, separated by
@@ -172,10 +244,32 @@ public:
     // word2vec binary: "count dim\n", then per word the word, a space and dim
     // little-endian float32 values.
     static WordVectors LoadBinary(const std::string& path, size_t max_words = 0);
-    // .bin is binary; anything else is text.
+    // .bin is a fastText model (LoadFastTextBin) when it starts with
+    // fastText's magic number, word2vec binary otherwise; anything else is text.
     static WordVectors Load(const std::string& path, size_t max_words = 0);
 
-    // The vectors in the order of `vocabulary` (token id = position).
+    // True when the file starts with fastText's magic number (793712314).
+    static bool IsFastTextBin(const std::string& path);
+    // The header and words of a fastText .bin. Quantized (.ftz) and
+    // supervised (label) models are refused.
+    static FastTextFileInfo ReadFastTextInfo(const std::string& path);
+    // Vectors of `words` from a fastText .bin (its first `max_words` words, or
+    // all, when null), reading only the rows they need: a word of the model
+    // from its row and its n-grams, another word from its n-grams (zeros
+    // without any). `sources` gets how each was made; `info` the file's facts.
+    static WordVectors LoadFastTextBin(const std::string& path, const std::vector<std::string>* words = nullptr,
+                                       std::vector<FastTextSource>* sources = nullptr,
+                                       FastTextFileInfo* info = nullptr, size_t max_words = 0);
+    // The vectors of the model words a vocabulary takes: each token as
+    // written, else in lowercase (`lowercase_fallback`), for Align; with
+    // options.pieces = LoadFastTextBin of the rest, a vocabulary lines up
+    // without reading the whole model.
+    static WordVectors LoadFastTextBinFor(const std::string& path, const std::vector<std::string>& vocabulary,
+                                          bool lowercase_fallback, FastTextFileInfo* info = nullptr);
+
+    // The vectors in the order of `vocabulary` (token id = position); with
+    // options.pieces, tokens with a letter or digit that are not found take
+    // vectors from it.
     static WordAlignment Align(const WordVectors& vectors, const std::vector<std::string>& vocabulary,
                                const WordAlignmentOptions& options = {});
 
@@ -189,6 +283,11 @@ public:
     // no vector, or when the device fails (then `error` says why).
     static std::vector<std::pair<std::string, double>> Nearest(const WordVectors& vectors, const std::string& word,
                                                                 int k = 10, std::string* error = nullptr);
+    // The `k` words most similar to `vector` (a word the vectors lack, such as
+    // a fastText word built from its n-grams), most similar first.
+    static std::vector<std::pair<std::string, double>> NearestTo(const WordVectors& vectors,
+                                                                  const std::vector<float>& vector, int k = 10,
+                                                                  std::string* error = nullptr);
 
     // One vector per text row: the mean of its tokens' rows of `table`
     // (row-major [table_rows, dim]); `tokens` holds row-major token ids per text
@@ -225,6 +324,33 @@ public:
     // exactly for one seed on one device.
     static GloVeModel TrainGloVe(const std::vector<std::vector<std::string>>& sentences,
                                  const GloVeOptions& options = {});
+
+    // fastText's hash of UTF-8 bytes (FNV-1a, each byte taken as a signed char,
+    // as fastText's dictionary.cc and gensim's ft_hash_bytes).
+    static uint32_t FastTextHash(const std::string& bytes);
+    // The character n-grams of "<word>", min_n..max_n characters (UTF-8 aware),
+    // in fastText's order.
+    static std::vector<std::string> FastTextNgrams(const std::string& word, int min_n, int max_n);
+    // The n-grams' bucket rows (hash % bucket); empty when bucket is 0.
+    static std::vector<int> FastTextBuckets(const std::string& word, int min_n, int max_n, int bucket);
+    // Runs `batches` in order on `model` (word, n-gram and output rows updated
+    // in place); a batch input is a vocabulary word whose input vector is the
+    // mean of its row and its n-grams' rows (CBOW: of all its input words'
+    // rows), and each of those rows takes its share of the gradient of that
+    // mean. `losses` gets each batch's summed loss.
+    static bool FastTextSteps(FastTextModel& model, const std::vector<Word2VecBatch>& batches,
+                              std::vector<double>* losses, std::string* error = nullptr);
+    // Trains fastText on tokenised sentences on the device, as word2vec
+    // (vocabulary, down-sampling, windows, negatives) with n-gram rows; a run
+    // repeats exactly for one seed on one device.
+    static FastTextModel TrainFastText(const std::vector<std::vector<std::string>>& sentences,
+                                       const FastTextOptions& options = {});
+    // Vectors of `words` (the model's own words when null), on the device: a
+    // vocabulary word from its row and its n-grams, another word from its
+    // n-grams (zeros when it has none, or the model has no buckets). `sources`
+    // gets how each was made.
+    static WordVectors FastTextVectors(const FastTextModel& model, const std::vector<std::string>* words = nullptr,
+                                       std::vector<FastTextSource>* sources = nullptr);
 };
 
 }  // namespace cyxwiz

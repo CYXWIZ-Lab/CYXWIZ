@@ -116,6 +116,32 @@ WordCoverageView BuildWordCoverageView(size_t exact, size_t lowercase, size_t mi
     return view;
 }
 
+void AddPiecesToCoverage(WordCoverageView& view, size_t exact, size_t lowercase, size_t pieces, size_t missing) {
+    view.pieces = GroupedCount(pieces) + " built from pieces";
+    const size_t counted = exact + lowercase + pieces + missing;
+    if (counted == 0) return;
+    view.found_share = static_cast<float>(exact) / static_cast<float>(counted);
+    view.lowercase_share = static_cast<float>(lowercase) / static_cast<float>(counted);
+    view.pieces_share = static_cast<float>(pieces) / static_cast<float>(counted);
+}
+
+std::string FastTextFileSummary(size_t words, int bucket, int dim, unsigned long long bytes, double seconds) {
+    char size[32], read[32];
+    if (bytes >= 1000000000ull)
+        std::snprintf(size, sizeof(size), "%.1f GB", static_cast<double>(bytes) / 1e9);
+    else
+        std::snprintf(size, sizeof(size), "%.0f MB", static_cast<double>(bytes) / 1e6);
+    std::snprintf(read, sizeof(read), "read %.1f s", seconds);
+    return std::string("fastText model (.bin)") + kDot + GroupedCount(words) + " words" + kDot +
+           GroupedCount(static_cast<size_t>(bucket < 0 ? 0 : bucket)) + " pieces" + kDot + std::to_string(dim) +
+           " values each" + kDot + size + kDot + read;
+}
+
+std::string UnseenWordNote(bool trained, size_t pieces) {
+    return std::string(trained ? "not in the training words" : "not in the model's words") + kDot + "from " +
+           GroupedCount(pieces) + (pieces == 1 ? " piece" : " pieces");
+}
+
 float StepShareFromStatus(const std::string& status) {
     const auto close = status.rfind("%)");
     if (close == std::string::npos) return -1.0f;

@@ -2467,22 +2467,24 @@ void AddTreeModelPredictorTruth(NodeTruthReport& report, const MLNode& node) {
 void AddWordEmbeddingsTruth(NodeTruthReport& report, const MLNode& node) {
     const auto* source_param = FindParameter(node, "source");
     const std::string source = source_param ? *source_param : "pretrained";
-    const bool train = source == "word2vec" || source == "glove";
+    const bool train = source == "word2vec" || source == "glove" || source == "fasttext";
     auto row_vectors = ResolveBoolProperty(node, "Row vectors", "row_vectors", false,
         TruthOwner::Runtime, false, true,
         "Adds each row's mean word vector as emb_ columns on the Rows pin.");
     const bool rows = row_vectors.effective_value == "true";
     report.properties.push_back(ResolveStringProperty(node, "Source", "source", "pretrained",
         TruthOwner::Runtime, false, true, false,
-        "pretrained reads a vector file; word2vec and glove train on the text column on the device."));
+        "pretrained reads a vector file; word2vec, glove and fasttext train on the text column on the device."));
     if (!train) {
         report.properties.push_back(ResolveStringProperty(node, "Vector file", "vectors_file", "",
             TruthOwner::Runtime, false, true, true,
-            "GloVe .txt, fastText / word2vec .vec, or word2vec .bin."));
+            "GloVe .txt, fastText / word2vec .vec, word2vec .bin or a fastText model .bin."));
     }
     report.properties.push_back(ResolveStringProperty(node, "Text column", "text_col", "",
         TruthOwner::Runtime, false, true, train || rows,
-        train ? (source == "glove" ? "GloVe trains on this column." : "word2vec trains on this column.")
+        train ? (source == "glove"      ? "GloVe trains on this column."
+                 : source == "fasttext" ? "fastText trains on this column."
+                                        : "word2vec trains on this column.")
               : "Row vectors average the words of this column."));
     report.properties.push_back(ResolveStringProperty(node, "Vocabulary file", "vocab_file",
         "the vectors' own words", TruthOwner::Runtime, false, true, false,

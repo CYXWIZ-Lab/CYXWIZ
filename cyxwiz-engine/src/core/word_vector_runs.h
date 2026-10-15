@@ -19,13 +19,17 @@ struct WordVectorRun {
     int number = 0;  // 1, 2, ... in this session
     int node_id = -1;
     std::string node_name;
-    std::string method;  // "GloVe", "word2vec skip-gram", "word2vec CBOW"
+    std::string method;  // "GloVe", "word2vec skip-gram", "word2vec CBOW", "fastText skip-gram", ...
     std::string saved;   // the .vec path ("" when not saved)
     std::string vocabulary_file;
     int dims = 0;
     int window = 0;
     int epochs = 0;
     int min_count = 0;
+    int bucket = -1;              // fastText: n-gram rows
+    int min_n = 0;
+    int max_n = 0;
+    double pieces_per_word = -1.0;
 
     State state = State::Running;
     std::string stage;  // the operator's: Counting, Training, Aligning, Done
@@ -46,11 +50,13 @@ struct WordVectorRun {
     long long tokens = -1;         // vocabulary file tokens, once lined up
     long long found = 0;
     long long lowercase = 0;
+    long long pieces = 0;          // built from n-grams (fastText)
     long long missing = 0;
     std::string special;           // "[PAD] zeros · [UNK] mean"
     std::string used_by;           // "Embedding (5,000 x 100)", set by the GUI
 
     bool GloVe() const { return method == "GloVe"; }
+    bool FastText() const { return method.rfind("fastText", 0) == 0; }
     bool Live() const { return state == State::Running; }
 };
 

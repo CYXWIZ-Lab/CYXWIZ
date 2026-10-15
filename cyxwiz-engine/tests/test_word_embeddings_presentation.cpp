@@ -64,6 +64,27 @@ int main() {
     view = cyxwiz::BuildWordCoverageView(3, 0, 0, {}, "[PAD]", "", "zeros", "mean");
     Check(view.missing_preview.empty() && view.special == "[PAD] zeros" && view.found_share == 1.0f, "all found");
 
+    // fastText: the sentiment vocabulary against the model trained on it (no
+    // token built from pieces), and a vocabulary from other text.
+    view = cyxwiz::BuildWordCoverageView(4919, 0, 77, {".", ","}, "[PAD]", "[UNK]", "zeros", "mean");
+    cyxwiz::AddPiecesToCoverage(view, 4919, 0, 0, 77);
+    Check(view.pieces == "0 built from pieces" && view.pieces_share == 0.0f &&
+              std::abs(view.found_share - 4919.0f / 4996.0f) < 1e-6f,
+          "no pieces on the sentiment vocabulary");
+    cyxwiz::AddPiecesToCoverage(view, 900, 50, 40, 10);
+    Check(std::abs(view.pieces_share - 0.04f) < 1e-6f && std::abs(view.found_share - 0.9f) < 1e-6f &&
+              view.pieces == "40 built from pieces",
+          "pieces join the bar");
+    Check(cyxwiz::FastTextFileSummary(16334, 2000000, 100, 813300000ull, 3.14) ==
+              "fastText model (.bin)" + kDot + "16,334 words" + kDot + "2,000,000 pieces" + kDot + "100 values each" +
+                  kDot + "813 MB" + kDot + "read 3.1 s",
+          "fastText file summary");
+    Check(cyxwiz::FastTextFileSummary(2000000, 2000000, 300, 7240000000ull, 41.0).find("7.2 GB") != std::string::npos,
+          "a large model in GB");
+    Check(cyxwiz::UnseenWordNote(true, 26) == "not in the training words" + kDot + "from 26 pieces" &&
+              cyxwiz::UnseenWordNote(false, 1) == "not in the model's words" + kDot + "from 1 piece",
+          "unseen word note");
+
     Check(std::abs(cyxwiz::StepShareFromStatus("Vectors: Training word2vec, epoch 3 (62%)") - 0.62f) < 1e-6f,
           "share from the status");
     Check(cyxwiz::StepShareFromStatus("Executing node 3 of 4") < 0.0f, "no share");
