@@ -30,7 +30,11 @@ plt.show()
 
 The Engine sets matplotlib's backend for you (`module://cyxwiz_mpl_backend`,
 drawn with Agg); `matplotlib.use(...)` with another backend opens that
-backend's own windows instead.
+backend's own windows instead. In a notebook cell, `%matplotlib inline` (or
+any `%matplotlib` line, as notebooks made in Jupyter have) sets the Engine's
+backend again from that line on, so a notebook that first called
+`matplotlib.use('Agg')` still shows its figures. Other `%` magics are not
+supported and stop the cell with a syntax error.
 
 Plot Output toolbar: previous / next, zoom (or mouse wheel, drag to pan),
 Fit, 100%, copy to the clipboard, save as PNG, close, clear all, and **All /
