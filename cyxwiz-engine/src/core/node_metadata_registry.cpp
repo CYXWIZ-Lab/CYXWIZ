@@ -3897,14 +3897,17 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 // Time Series Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
-    // Check step (data_studio_design.md 5.3): count checks, stop on failure.
+    // Check step (data_studio_design.md 5.3; TOFIX148 D4, one check model):
+    // row counts, allowed values, unique, not empty, range; stop on failure.
     RegisterNode({NodeType::RowCountCheck, NodeCategory::DataTransform,
         "Row Count Check", ICON_FA_CHECK_DOUBLE,
-        {"check", "count", "rows", "expect", "quality"}, 0, false,
-        "Stop the run unless the row count matches the expectation", "", "",
+        {"check", "count", "rows", "expect", "quality", "allowed", "unique", "empty", "range"}, 0, false,
+        "Stop the run unless the data holds: a row count, allowed values, unique, not empty or a range", "", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
         {{"Data", PinType::Dataset, true, "The same table, when the check passes"}},
         {{"check_name", "string", "", "Label shown when the check fails", {}, ""},
+         {"check", "enum", "row_count", "What is checked",
+          {"row_count", "allowed_values", "unique", "not_empty", "range"}, ""},
          {"expected_rows", "string", "", "Exact number of rows expected", {}, ""},
          {"min_rows", "string", "", "Fewest rows allowed", {}, ""},
          {"max_rows", "string", "", "Most rows allowed", {}, ""},
@@ -3912,6 +3915,11 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
           "Count only rows where this boolean column is true", {}, ""},
          {"count_column", "string", "", "Count only rows where this column equals count_value", {}, ""},
          {"count_value", "string", "", "Value to match in count_column (compared as text)", {}, ""},
+         {"column", "string", "", "allowed_values, not_empty, range: the column checked", {}, ""},
+         {"columns", "string", "", "unique: the columns whose values must not repeat (comma list)", {}, ""},
+         {"allowed", "string", "", "allowed_values: the values allowed (comma list, compared as text)", {}, ""},
+         {"min_value", "string", "", "range: the smallest value allowed", {}, ""},
+         {"max_value", "string", "", "range: the largest value allowed", {}, ""},
          {"on_failure", "enum", "stop", "What a failed check does", {"stop"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 

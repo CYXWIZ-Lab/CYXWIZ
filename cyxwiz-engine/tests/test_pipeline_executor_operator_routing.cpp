@@ -1766,6 +1766,35 @@ void CheckRowCountCheckStep() {
               error.find("not both") != std::string::npos,
           "the two count modes are exclusive (got: " + error + ")");
 
+    // TOFIX148 D4: the other kinds of the one check model.
+    Check(run(check(2, {{"check", "allowed_values"}, {"column", "empty_text"}, {"allowed", "true, false"}}), error),
+          "allowed values pass: " + error);
+    Check(!run(check(2, {{"check", "allowed_values"}, {"check_name", "flags"}, {"column", "empty_text"}, {"allowed", "false"}}), error) &&
+              error.find("'flags' failed: empty_text has 2 value(s) outside false (first: 'true')") != std::string::npos,
+          "a value outside the list stops the run with the count and the first value (got: " + error + ")");
+    Check(run(check(2, {{"check", "unique"}, {"columns", "id"}}), error), "unique ids pass: " + error);
+    Check(run(check(2, {{"check", "unique"}, {"columns", "empty_text, id"}}), error), "unique column pairs pass: " + error);
+    Check(!run(check(2, {{"check", "unique"}, {"columns", "empty_text"}}), error) &&
+              error.find("empty_text repeats in 3 row(s) (first: 'false')") != std::string::npos,
+          "a repeated value stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "not_empty"}, {"column", "id"}}), error), "a filled column passes: " + error);
+    Check(!run(check(2, {{"check", "not_empty"}, {"column", "text"}}), error) &&
+              error.find("text is empty in 2 row(s)") != std::string::npos,
+          "empty text stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "range"}, {"column", "id"}, {"min_value", "1"}, {"max_value", "5"}}), error),
+          "values in range pass: " + error);
+    Check(!run(check(2, {{"check", "range"}, {"column", "id"}, {"max_value", "4.5"}}), error) &&
+              error.find("id is not at most 4.5 in 1 row(s) (first: 5)") != std::string::npos,
+          "a value out of range stops the run (got: " + error + ")");
+    Check(!run(check(2, {{"check", "range"}, {"column", "text"}, {"min_value", "0"}}), error) &&
+              error.find("needs a numeric column") != std::string::npos,
+          "a range check on text is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"check", "allowed_values"}, {"column", "text"}}), error) &&
+              error.find("list the allowed values") != std::string::npos,
+          "allowed values need a list (got: " + error + ")");
+    Check(!run(check(2, {{"check", "between"}, {"column", "id"}}), error) && error.find("is not one of") != std::string::npos,
+          "an unknown kind is a configuration error (got: " + error + ")");
+
     registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
     fs::remove(csv);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
