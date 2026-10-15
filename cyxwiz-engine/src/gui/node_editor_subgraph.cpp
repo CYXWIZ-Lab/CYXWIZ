@@ -511,14 +511,16 @@ void NodeEditor::ApplySubgraphRequest() {
     const int id = pending.subgraph_id;
     // Expanding adds the steps to the canvas; select one only once ImNodes
     // has drawn it, or the selection is dropped.
-    const auto expand_then_show = [&](int step_id, SubgraphRequest then) {
+    const auto expand_then_show = [&](int step_id, SubgraphRequest then, bool raise) {
         ExpandSubgraph(id);
-        if (step_id >= 0) pending_subgraph_request_ = {id, then, step_id, 2};
+        if (step_id >= 0) pending_subgraph_request_ = {id, then, step_id, 2, raise};
     };
     switch (pending.request) {
         case SubgraphRequest::Expand: {
+            // Expanding selects the first step but leaves the window order as
+            // it is (Data Studio expands a recipe to add a step to it).
             const auto summary = GetSubgraphSummary(id);
-            expand_then_show(summary.steps.empty() ? -1 : summary.steps.front().id, SubgraphRequest::ShowStep);
+            expand_then_show(summary.steps.empty() ? -1 : summary.steps.front().id, SubgraphRequest::ShowStep, false);
             break;
         }
         case SubgraphRequest::Collapse:
@@ -534,9 +536,9 @@ void NodeEditor::ApplySubgraphRequest() {
         case SubgraphRequest::ShowStep:
         case SubgraphRequest::OpenStep:
             if (const SubgraphData* data = GetSubgraphData(id); data && !data->expanded) {
-                expand_then_show(pending.step_id, pending.request);
+                expand_then_show(pending.step_id, pending.request, pending.raise);
             } else {
-                FocusNode(pending.step_id);
+                FocusNode(pending.step_id, pending.raise);
                 if (pending.request == SubgraphRequest::OpenStep) ConfigureNode(pending.step_id);
             }
             break;
@@ -548,7 +550,8 @@ void NodeEditor::ApplyStepAfterInsert() {
         if (deferred_focus_.frames > 0) {
             --deferred_focus_.frames;
         } else {
-            FocusNode(deferred_focus_.node_id);
+            // Selected, not raised: a step added from Data Studio leaves it in front.
+            FocusNode(deferred_focus_.node_id, false);
             deferred_focus_ = {};
         }
     }

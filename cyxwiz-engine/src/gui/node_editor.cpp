@@ -77,7 +77,7 @@ void NodeEditor::SetAllNodesPinState(NodePinState state) {
     }
 }
 
-void NodeEditor::FocusNode(int node_id) {
+void NodeEditor::FocusNode(int node_id, bool raise) {
     if (node_id < 0) {
         return;
     }
@@ -88,7 +88,7 @@ void NodeEditor::FocusNode(int node_id) {
         node_id = data->internal_nodes.front().id;
     }
     pending_focus_node_id_ = node_id;
-    Raise();
+    if (raise) Raise();
 }
 
 void NodeEditor::ShowNodes(std::vector<int> node_ids) {

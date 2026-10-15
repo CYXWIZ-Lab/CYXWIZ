@@ -288,7 +288,7 @@ void PrepareView::AddStepAfter(int step_id, ::gui::NodeType type, bool guided) {
         editor_->RequestSqlStepAfter(step_id, "SQL step", "SELECT *\nFROM input");
         message_ = "Added an SQL step after this one; pick it in the list to write its query.";
     }
-    if (raise_canvas) raise_canvas();
+    // It joins the step list here; the canvas shows it when you go there.
     message_error_ = false;
 }
 

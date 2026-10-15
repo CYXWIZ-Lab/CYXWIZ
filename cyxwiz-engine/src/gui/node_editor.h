@@ -571,8 +571,9 @@ public:
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
 
-    // Select a node in the canvas and frame it into view.
-    void FocusNode(int node_id);
+    // Select a node in the canvas and frame it into view; `raise` brings
+    // CyxWiz Studio forward (false: framed when it next shows).
+    void FocusNode(int node_id, bool raise = true);
     // Select these nodes and frame them all into view (Data Studio's Show on
     // canvas); applied in the canvas's next frame, like FocusNode.
     void ShowNodes(std::vector<int> node_ids);
@@ -604,7 +605,7 @@ public:
     // Prepare's "Add a step", TOFIX148): it takes over the step's outgoing
     // links (and its place as a recipe's output), joins the step's recipe,
     // goes to the step's right (the nodes after it move right to make room)
-    // and is selected. Applied, like RequestSubgraphAction, at the start of
+    // and is selected (CyxWiz Studio is not brought forward). Applied, like RequestSubgraphAction, at the start of
     // the next canvas frame, in the order requested. `name` and `parameters`
     // (optional) replace the node's defaults (a guided step's checks become
     // Check nodes this way).
@@ -945,6 +946,7 @@ private:
     PendingSubgraphRequest pending_subgraph_request_;
     void ApplySubgraphRequest();
     struct PendingStepAfter {
+        bool raise = true;       // ShowStep brings CyxWiz Studio forward
         int after = -1;  // the step it follows
         NodeType type = NodeType::SQLQuery;
         bool guided = false;  // SQL: an empty guided step, else `query`
