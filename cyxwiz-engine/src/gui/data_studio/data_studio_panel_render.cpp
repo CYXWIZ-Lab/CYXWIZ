@@ -358,11 +358,15 @@ void DataStudioPanel::RenderStatusBar() {
     if (view_.last_run.empty()) ImGui::TextColored(t.text_dim, "No run in this session");
     else ImGui::TextColored(view_.last_run_tone == studio::Tone::Ok ? t.text_dim : ToneColour(view_.last_run_tone), "Last run: %s",
                             view_.last_run.c_str());
+    // Right-aligned, and only where the last-run line leaves room for it.
     const char* how = "Runs through the Data Pipeline executor";
-    const float how_w = ImGui::CalcTextSize(how).x;
-    if (ImGui::GetContentRegionAvail().x > how_w + 20.0f) {
-        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - how_w);
+    const float how_x = ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(how).x;
+    ImGui::SameLine();
+    if (ImGui::GetCursorPosX() + 20.0f <= how_x) {
+        ImGui::SetCursorPosX(how_x);
         ImGui::TextColored(t.text_faint, "%s", how);
+    } else {
+        ImGui::NewLine();
     }
 }
 
