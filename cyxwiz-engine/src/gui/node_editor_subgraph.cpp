@@ -288,6 +288,35 @@ void NodeEditor::ExpandSubgraph(int node_id) {
         links_.push_back(link);
     }
 
+    // Room for the frame: outside nodes it would cover move right of it
+    // (the Export beside a collapsed recipe); Collapse puts them back.
+    {
+        std::set<int> members{node_id};
+        std::vector<ImVec2> steps;
+        for (const auto& internal : data->internal_nodes) {
+            members.insert(internal.id);
+            steps.push_back(pending_positions_[internal.id]);
+        }
+        std::vector<detail::PlacedNode> outside;
+        for (const auto& node : nodes_) {
+            if (members.count(node.id)) continue;
+            const auto at = cached_node_positions_.find(node.id);
+            const ImVec2 pos = at != cached_node_positions_.end() ? at->second : ImVec2(node.initial_pos_x, node.initial_pos_y);
+            const ImVec2 size = at != cached_node_positions_.end()
+                ? ImVec2(ImNodes::GetNodeDimensions(node.id).x / zoom_, ImNodes::GetNodeDimensions(node.id).y / zoom_)
+                : ImVec2(100.0f, 100.0f);
+            outside.push_back({node.id, pos, size});
+        }
+        auto& made = room_made_[node_id];
+        made.clear();
+        for (const auto& [id, to] : detail::MakeRoomForFrame(detail::EstimateExpandedFrame(steps), outside)) {
+            for (const auto& n : outside)
+                if (n.id == id) made.push_back({id, n.pos, to});
+            pending_positions_[id] = to;
+        }
+        if (!made.empty()) spdlog::debug("Expanding subgraph {} moved {} node(s) right to make room", node_id, made.size());
+    }
+
     pending_positions_frames_ = 3;
     RebuildPinLookup();
     ClearValidationState();
@@ -353,6 +382,18 @@ void NodeEditor::CollapseSubgraph(int node_id) {
         pending_positions_[node_id] = position;
         pending_positions_frames_ = 3;
         ImNodes::SetNodeGridSpacePos(node_id, position);
+    }
+    // The nodes Expand moved to make room go back, unless they were moved since.
+    if (const auto made = room_made_.find(node_id); made != room_made_.end()) {
+        for (const auto& move : made->second) {
+            const auto now = cached_node_positions_.find(move.id);
+            if (!FindNodeById(move.id) || now == cached_node_positions_.end()) continue;
+            if (std::abs(now->second.x - move.to.x) < 1.0f && std::abs(now->second.y - move.to.y) < 1.0f) {
+                pending_positions_[move.id] = move.from;
+                pending_positions_frames_ = 3;
+            }
+        }
+        room_made_.erase(made);
     }
     spdlog::info("Collapsed subgraph {}", node_id);
 }

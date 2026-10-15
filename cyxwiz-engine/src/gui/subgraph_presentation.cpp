@@ -154,4 +154,40 @@ SubgraphFrameActions DrawExpandedSubgraphFrames(const std::vector<MLNode>& nodes
     draw->ChannelsSetCurrent(original_channel);
     return actions;
 }
+
+ImVec4 EstimateExpandedFrame(const std::vector<ImVec2>& steps) {
+    // As DrawExpandedSubgraphFrames draws it at zoom 1: a step's label above
+    // it, its name below, the frame's padding and header around them all.
+    ImVec4 frame(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (const ImVec2& p : steps) {
+        frame.x = std::min(frame.x, p.x - 60.0f);
+        frame.y = std::min(frame.y, p.y - 30.0f);
+        frame.z = std::max(frame.z, p.x + 220.0f);
+        frame.w = std::max(frame.w, p.y + 110.0f);
+    }
+    if (steps.empty()) return ImVec4(0, 0, 0, 0);
+    frame.x -= 18.0f;
+    frame.y -= 18.0f + 30.0f;
+    frame.z += 18.0f;
+    frame.w += 18.0f;
+    return frame;
+}
+
+std::map<int, ImVec2> MakeRoomForFrame(const ImVec4& frame, const std::vector<PlacedNode>& outside, float gap) {
+    std::map<int, ImVec2> moved;
+    const auto covered = [&](const PlacedNode& n) {
+        return n.pos.x < frame.z && n.pos.x + n.size.x > frame.x && n.pos.y < frame.w && n.pos.y + n.size.y > frame.y;
+    };
+    float leftmost = FLT_MAX;
+    for (const auto& n : outside)
+        if (covered(n)) leftmost = std::min(leftmost, n.pos.x);
+    if (leftmost == FLT_MAX) return moved;
+    const float shift = frame.z + gap - leftmost;
+    for (const auto& n : outside) {
+        // The frame's band: the rows it spans, so far-off rows stay put.
+        const bool in_band = n.pos.y < frame.w && n.pos.y + n.size.y > frame.y;
+        if (covered(n) || (in_band && n.pos.x >= leftmost)) moved[n.id] = ImVec2(n.pos.x + shift, n.pos.y);
+    }
+    return moved;
+}
 }

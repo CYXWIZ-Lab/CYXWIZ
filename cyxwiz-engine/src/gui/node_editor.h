@@ -970,6 +970,13 @@ private:
         bool raise = true;       // ShowStep brings CyxWiz Studio forward
     };
     PendingSubgraphRequest pending_subgraph_request_;
+    // Nodes an Expand moved right to make room for the frame, by subgraph;
+    // Collapse moves them back when they are still where Expand put them.
+    struct RoomMove {
+        int id = -1;
+        ImVec2 from, to;
+    };
+    std::map<int, std::vector<RoomMove>> room_made_;
     void ApplySubgraphRequest();
     struct PendingStepAfter {
         int after = -1;  // the step it follows
