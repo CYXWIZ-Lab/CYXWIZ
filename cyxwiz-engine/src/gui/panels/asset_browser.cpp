@@ -371,8 +371,9 @@ namespace {
 // Fingerprint of what the tree shows: every visible entry's path, size and
 // modification time, with the scanner's filters (hidden entries and .cyxwiz
 // project files skipped). Any add, delete, rename or write changes it.
-// The prepared-data cache (cache/materialized) and *.tmp files are left out:
-// training writes them while it prepares, and they are not browsed.
+// The project's cache/ folder and *.tmp files are left out: the Engine writes
+// them itself (cache/materialized while training prepares, cache/query_results
+// on each query, cache/ingestion), so they are not a change made to the project.
 std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
     std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
     const auto mix = [&hash](const void* data, size_t size) {
@@ -389,8 +390,8 @@ std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
         const fs::path& path = it->path();
         const std::string name = path.filename().string();
         std::error_code entry_ec;
-        const bool engine_cache =
-            name == "materialized" && path.parent_path().filename() == "cache";
+        std::error_code same_ec;
+        const bool engine_cache = name == "cache" && fs::equivalent(path.parent_path(), root, same_ec);
         if ((!show_hidden && !name.empty() && name[0] == '.') || path.extension() == ".cyxwiz" ||
             path.extension() == ".tmp" || engine_cache) {
             if (it->is_directory(entry_ec)) it.disable_recursion_pending();
