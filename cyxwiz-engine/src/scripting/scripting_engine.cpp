@@ -1590,7 +1590,9 @@ std::string ScriptingEngine::CallLanguageTool(const std::string& function, const
 }
 
 bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
-    if (script_running_) return false;
+    // Freeing the notebook's objects runs their finalizers here: not while a
+    // script, a Console command or other Python work runs (the caller retries).
+    if (script_running_ || command_running_ || python_busy_) return false;
     if (!IsInitialized()) return true;  // nothing ran yet
     try {
         py::gil_scoped_acquire acquire;
