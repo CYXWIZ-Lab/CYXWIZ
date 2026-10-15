@@ -2850,13 +2850,12 @@ endif()
 set_target_properties(test_plugin_unload_registrations PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# ===== Test: Legacy PipelineExecutor operator routing =====
-add_executable(test_pipeline_executor_operator_routing
-    tests/test_pipeline_executor_operator_routing.cpp
+# The PipelineExecutor and every operator it runs, without the GUI: the routing
+# test and the out-of-core benchmark (TOFIX154) build from this one list.
+set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/plot/node_result_plan.cpp
     src/core/pipeline_type_names.cpp
     src/core/preparation_recipe.cpp
-    tests/test_ordered_text_aggregation.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
@@ -2933,6 +2932,13 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/csv_records.cpp
     tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
+)
+
+# ===== Test: Legacy PipelineExecutor operator routing =====
+add_executable(test_pipeline_executor_operator_routing
+    tests/test_pipeline_executor_operator_routing.cpp
+    tests/test_ordered_text_aggregation.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
 )
 target_link_libraries(test_pipeline_executor_operator_routing PRIVATE cyxwiz-training-core)
 
@@ -4219,6 +4225,28 @@ if(WIN32)
     )
 else()
 endif()
+
+# ===== Tool: out-of-core baseline benchmark (TOFIX154) =====
+add_executable(cyxwiz-bench-out-of-core
+    tests/tool_bench_out_of_core.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+)
+target_include_directories(cyxwiz-bench-out-of-core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cyxwiz-bench-out-of-core PRIVATE
+    cyxwiz-training-core
+    cyxwiz-backend
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+if(WIN32)
+    target_compile_definitions(cyxwiz-bench-out-of-core PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(cyxwiz-bench-out-of-core PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Properties AS COMPILED card (TOFIX123) =====
 add_executable(test_compiled_node_presentation
@@ -6670,12 +6698,13 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing
-        test_pipeline_operator_materializer_parity)
+        test_pipeline_operator_materializer_parity cyxwiz-bench-out-of-core)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
 if(HighFive_FOUND)
     foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input
-            test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+            test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity
+            cyxwiz-bench-out-of-core)
         target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
     endforeach()
 endif()
@@ -6732,7 +6761,8 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
-        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity
+        cyxwiz-bench-out-of-core)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
     target_link_libraries(${archive_input_target} PRIVATE LibArchive::LibArchive)
 endforeach()
@@ -6740,7 +6770,8 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
-        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity
+        cyxwiz-bench-out-of-core)
     cyxwiz_target_html_parser(${html_target})
 endforeach()
 add_executable(test_html_document_text tests/test_html_document_text.cpp)
