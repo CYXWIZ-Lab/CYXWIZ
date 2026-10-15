@@ -1,8 +1,9 @@
 """word2vec references (TOFIX152). Run with Python 3.12: py -3.12 generate_word2vec_fixtures.py
 
 1. Steps: PyTorch float32 runs the same SGNS steps as WordEmbeddings::Word2VecSteps
-   (SGD on the summed loss of a batch, all rows from the same old values) on
-   given matrices and batches; the test must land on the same matrices.
+   (SGD on the summed loss of a batch, all rows from the same old values; CBOW
+   gives every context word the mean's whole gradient, gensim's rule) on given
+   matrices and batches; the test must land on the same matrices.
 2. Quality: gensim 4 Word2Vec (workers=1) on a corpus of word groups; the test
    trains ours with the same settings and compares how often a word's nearest
    neighbour is in its own group (vectors from different generators differ, so
@@ -25,14 +26,13 @@ def sgns_steps(w_in, w_out, batches):
     w_out = torch.tensor(w_out, dtype=torch.float32)
     losses = []
     for batch in batches:
-        w_in.requires_grad_(True)
         w_out.requires_grad_(True)
         b, c, k = len(batch["outputs"]), batch["context_width"], batch["negative"]
         inputs = torch.tensor(batch["inputs"]).reshape(b, c)
         valid = (inputs >= 0).float()
         count = valid.sum(1).clamp(min=1.0)
         rows = w_in[inputs.clamp(min=0)] * valid.unsqueeze(2)
-        h = rows.sum(1) / count.unsqueeze(1)
+        h = (rows.sum(1) / count.unsqueeze(1)).detach().requires_grad_(True)
         targets = torch.cat([torch.tensor(batch["outputs"]).reshape(b, 1),
                              torch.tensor(batch["negatives"]).reshape(b, k)], dim=1)
         target_valid = (targets >= 0).float()
@@ -44,8 +44,11 @@ def sgns_steps(w_in, w_out, batches):
                             torch.nn.functional.softplus(score)) * target_valid).sum()
         loss.backward()
         with torch.no_grad():
-            w_in = w_in - batch["alpha"] * w_in.grad
-            w_out = w_out - batch["alpha"] * w_out.grad
+            # Every context word takes the whole dLoss/dh (skip-gram: the one input).
+            flat = inputs.reshape(-1)
+            grads = (h.grad.unsqueeze(1) * valid.unsqueeze(2)).reshape(b * c, -1)
+            w_in = w_in.index_add(0, flat.clamp(min=0), grads, alpha=-batch["alpha"])
+            w_out = (w_out - batch["alpha"] * w_out.grad).detach()
         losses.append(float(loss.detach()))
     return w_in.detach().numpy(), w_out.detach().numpy(), losses
 

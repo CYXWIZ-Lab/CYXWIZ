@@ -4840,7 +4840,7 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
          {"sample", "float", "1e-3", "Down-sampling threshold for frequent words (0: off)", {}, "", "Down-sampling", "word2vec", false, true},
          {"alpha", "float", "0.025", "Starting learning rate", {}, "", "Learning rate", "word2vec", false, true},
          {"min_alpha", "float", "0.0001", "Learning rate at the end", {}, "", "Final learning rate", "word2vec", false, true},
-         {"batch_size", "int", "512", "Examples per device step", {}, "", "Batch", "word2vec", false, true},
+         {"batch_size", "int", "2048", "Examples per device step (word2vec and fastText)", {}, "", "Batch", "word2vec", false, true},
          {"train_seed", "int", "1", "Seed of the initial vectors and the sampling (word2vec, GloVe and fastText); the same seed repeats a run", {}, "", "Seed", "Training"},
          {"glove_window", "int", "10", "GloVe: largest distance between two counted words (a pair d apart counts 1/d)", {}, "", "Window", "GloVe"},
          {"glove_epochs", "int", "25", "GloVe: passes over the word pairs", {}, "", "Epochs", "GloVe"},

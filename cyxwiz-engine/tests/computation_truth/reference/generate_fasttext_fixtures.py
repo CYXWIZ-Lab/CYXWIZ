@@ -6,8 +6,9 @@
 2. Steps: PyTorch float32 runs the steps of WordEmbeddings::FastTextSteps on
    given rows and batches: an input word's vector is the mean of its row and
    its n-grams' rows (CBOW: of all its input words' rows); the output rows
-   take SGD on the summed loss; each input row of the mean takes its share
-   (dLoss/dmean over the rows in the mean); all rows from the same old values.
+   take SGD on the summed loss; every input row of the mean takes the whole
+   dLoss/dmean (fastText's and gensim's update); all rows from the same old
+   values.
 3. Vectors: a vocabulary word = mean of its row and its n-gram rows, another
    word = mean of its n-gram rows (gensim's adjust_vectors and get_vector).
 4. Quality: gensim 4 FastText (workers=1) on a corpus of word groups; the test
@@ -77,7 +78,7 @@ def fasttext_steps(words, minn, maxn, bucket, w_in, w_out, batches):
         with torch.no_grad():
             new_in = w_in.clone()
             for e, rows in enumerate(example_rows):
-                share = 1.0 / len(rows)
+                share = 1.0
                 for r in rows:
                     new_in[r] -= batch["alpha"] * share * h.grad[e]
             w_in = new_in

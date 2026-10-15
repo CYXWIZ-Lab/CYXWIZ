@@ -9,11 +9,22 @@
 
 #include <arrayfire.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace cyxwiz {
 
 constexpr dim_t kNoiseTableSize = 1000000;
+
+// Examples per device step: `batch_size`, but at most 8 per vocabulary word.
+// A step sums the updates of a row from the same old values; with a small
+// vocabulary a 2,048 batch gives each row about 50 of them and diverged (a
+// 40-word corpus: loss 1e17, then NaN), where 8 per word trains as gensim's
+// one-at-a-time updates do. A real vocabulary (thousands of words) keeps the
+// whole batch.
+inline dim_t StepBatch(int batch_size, dim_t vocabulary) {
+    return (std::max)(dim_t{1}, (std::min)(static_cast<dim_t>(batch_size), 8 * vocabulary));
+}
 
 // W[key] -= alpha * (sum of the rows with that key).
 inline void ScatterSubtract(af::array& w, const af::array& keys, const af::array& rows, double alpha) {
@@ -56,11 +67,21 @@ inline af::array NoiseTable(const af::array& count_f) {
     return af::scan(word_at_start, 0, AF_BINARY_MAX);
 }
 
-// The examples of one epoch, in corpus order. CBOW: one per centre, `inputs`
+// The examples of one epoch, shuffled. CBOW: one per centre, `inputs`
 // [E, 2 * window] context words (-1 = none) predicting `outputs` [E] centres.
 // Skip-gram: one per (centre, context); word2vec's input is the context word
 // predicting the centre (gensim), fastText's the centre predicting the
 // context (`centre_input`, as fastText and gensim's FastText do).
+// Shuffled because a batch updates every row from the same old values: in
+// corpus order a centre's examples (and a sentence's words) share a batch, where
+// gensim applies them one after another; shuffled they spread over batches,
+// so batches of 2,048 train as well as 512 did in order (TOFIX152).
+// fastText's skip-gram shuffles whole centres instead: a centre's examples
+// stay together, so its piece rows (about 22 per word, in an 800 MB table)
+// are read once for all of them. Same neighbours as shuffling every example
+// (0.70 shared with gensim on 20,000 posts), an epoch of the sentiment set
+// 170 s instead of 301 s. word2vec keeps the full shuffle: grouped, its
+// neighbours moved away from gensim's (0.51 against 0.55) at the same speed.
 struct EpochExamples {
     af::array inputs;
     af::array outputs;
@@ -109,11 +130,36 @@ inline EpochExamples MakeEpochExamples(const af::array& corpus, const af::array&
         const af::array centre = words(valid / static_cast<unsigned>(2 * window)).as(s32);
         out.inputs = centre_input ? centre : context;
         out.outputs = centre_input ? context : centre;
+        if (centre_input) {
+            // One random key per centre, shared by its examples.
+            const af::array centre_key = af::randu(af::dim4(m), f32, engine);
+            af::array keys, order;
+            af::sort(keys, order, centre_key(valid / static_cast<unsigned>(2 * window)),
+                     af::range(af::dim4(out.outputs.elements()), 0, u32), 0, true);
+            out.inputs = out.inputs(order);
+            out.outputs = out.outputs(order);
+            out.inputs.eval();
+            out.outputs.eval();
+            return out;
+        }
     }
+    af::array keys, order;
+    af::sort(keys, order, af::randu(af::dim4(out.outputs.elements()), f32, engine),
+             af::range(af::dim4(out.outputs.elements()), 0, u32), 0, true);
+    out.inputs = cbow ? af::array(out.inputs(order, af::span)) : af::array(out.inputs(order));
+    out.outputs = out.outputs(order);
     out.inputs.eval();
     out.outputs.eval();
     return out;
 }
+
+// Returns the device memory ArrayFire keeps cached from building an epoch's
+// examples (sorts, copies: about a gigabyte on the sentiment set). Kept, it
+// filled a 4 GB card, and every step whose buffers had a new size (the
+// sum-by-key results change size each batch) made ArrayFire free and wait:
+// fastText ran an epoch in 453 s instead of 170 s, word2vec's later epochs
+// in 80 to 100 s instead of about 50 s.
+inline void ReleaseEpochScratch() { af::deviceGC(); }
 
 // `k` negatives per example from the noise table; one equal to the example's
 // output is skipped (-1), as gensim does.

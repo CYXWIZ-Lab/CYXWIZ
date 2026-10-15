@@ -1,8 +1,10 @@
 // word2vec, GloVe and fastText training speed and quality on a real corpus
 // (TOFIX152), not a ctest. Input: one sentence per line, words split by spaces
 // (already lowercased and split as the Word Embeddings node splits them).
-//   benchmark_word_vectors <word2vec|glove|fasttext> <tokens.txt> [epochs] [batch_size] [out.vec] [buckets]
+//   benchmark_word_vectors <word2vec|word2vec-cbow|glove|fasttext> <tokens.txt> [epochs] [batch_size]
+//                          [out.vec] [buckets]
 // fastText also prints the nearest words of misspellings it never saw.
+// CYXWIZ_BENCH_SEED sets the training seed (default 1), for seed-to-seed checks.
 // Prints the time and loss (cost) of each epoch and the nearest words of a few
 // probes; with out.vec, saves the vectors (word2vec text) for a comparison
 // with gensim or scripts/glove_reference.py (scripts/word2vec_neighbour_overlap.py).
@@ -49,9 +51,9 @@ std::function<bool(double, int)> EpochReporter(std::chrono::steady_clock::time_p
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    if (argc < 3 || (mode != "word2vec" && mode != "glove" && mode != "fasttext")) {
-        std::fprintf(stderr, "usage: benchmark_word_vectors <word2vec|glove|fasttext> <tokens.txt> [epochs] "
-                             "[batch_size] [out.vec]\n");
+    if (argc < 3 || (mode != "word2vec" && mode != "word2vec-cbow" && mode != "glove" && mode != "fasttext")) {
+        std::fprintf(stderr, "usage: benchmark_word_vectors <word2vec|word2vec-cbow|glove|fasttext> <tokens.txt> "
+                             "[epochs] [batch_size] [out.vec] [buckets]\n");
         return 2;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);  // progress shows while it runs
@@ -70,10 +72,12 @@ int main(int argc, char** argv) {
     }
     const auto start = std::chrono::steady_clock::now();
     cyxwiz::WordVectors vectors;
-    if (mode == "word2vec") {
+    if (mode == "word2vec" || mode == "word2vec-cbow") {
         cyxwiz::Word2VecOptions options;
+        options.cbow = mode == "word2vec-cbow";
         options.epochs = argc > 3 ? std::atoi(argv[3]) : 5;
         if (argc > 4) options.batch_size = std::atoi(argv[4]);
+        if (const char* seed = std::getenv("CYXWIZ_BENCH_SEED")) options.seed = static_cast<unsigned>(std::atoi(seed));
         options.on_progress = EpochReporter(start);
         const auto model = cyxwiz::WordEmbeddings::TrainWord2Vec(sentences, options);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -92,6 +96,7 @@ int main(int argc, char** argv) {
         options.epochs = argc > 3 ? std::atoi(argv[3]) : 5;
         if (argc > 4) options.batch_size = std::atoi(argv[4]);
         if (argc > 6) options.bucket = std::atoi(argv[6]);
+        if (const char* seed = std::getenv("CYXWIZ_BENCH_SEED")) options.seed = static_cast<unsigned>(std::atoi(seed));
         options.on_progress = EpochReporter(start);
         const auto model = cyxwiz::WordEmbeddings::TrainFastText(sentences, options);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -126,6 +131,7 @@ int main(int argc, char** argv) {
         cyxwiz::GloVeOptions options;
         options.epochs = argc > 3 ? std::atoi(argv[3]) : 25;
         if (argc > 4) options.batch_size = std::atoi(argv[4]);
+        if (const char* seed = std::getenv("CYXWIZ_BENCH_SEED")) options.seed = static_cast<unsigned>(std::atoi(seed));
         options.on_progress = EpochReporter(start);
         const auto model = cyxwiz::WordEmbeddings::TrainGloVe(sentences, options);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();

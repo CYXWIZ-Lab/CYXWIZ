@@ -4,14 +4,13 @@
 //   hashed with fastText's FNV-1a into `bucket` rows; computed on the host from
 //   the strings, as the vocabulary is.
 // - Input table [words + bucket, dim]: a word's input vector is the mean of its
-//   row and its n-grams' rows (fastText averages over all of them). Each of
-//   those rows takes its share of the gradient (the gradient of the mean, as
-//   our word2vec CBOW). fastText and gensim give every row the whole gradient,
-//   one example at a time; summed over a batch, where a common n-gram's or a
-//   frequent context word's row serves hundreds of examples from the same old
-//   values, that diverged (skip-gram on 20,000 sentiment posts: loss per
-//   example 79.6, then 1.2 million; CBOW at once). Rows used several times in a
-//   batch get the sum (sort-by-key + sum-by-key).
+//   row and its n-grams' rows (fastText averages over all of them). Every one of
+//   those rows takes the whole gradient of the mean, as fastText and gensim
+//   update; rows used several times in a batch get the sum (sort-by-key +
+//   sum-by-key). It trains stably because each epoch's examples are shuffled
+//   (word2vec_sampling.h); in corpus order it diverged. Giving each row only its
+//   share instead left the neighbours far from gensim's (overlap 0.42 against
+//   0.70, gensim's seed-to-seed 0.74, on 20,000 sentiment posts).
 // - Skip-gram: the centre word (with its pieces) predicts each context word;
 //   CBOW: the mean over the context words' rows and pieces predicts the centre.
 // - Output side, sampling and negatives: word2vec's (word2vec_sampling.h).
@@ -185,11 +184,10 @@ af::array StepPadded(af::array& w_in, af::array& w_out, const af::array& table, 
     }
     af::array grad_h;
     const af::array loss = NegativeSamplingStep(w_out, h, outputs, negatives, alpha, grad_h);
-    // Each row of the mean takes its share of the gradient (an empty slot
-    // updates row 0 by zero).
-    const af::array share = grad_h / af::tile(count, 1, static_cast<unsigned>(d));
+    // Every row of the mean takes the whole gradient (an empty slot updates
+    // row 0 by zero).
     af::array grad_rows =
-        af::tile(share, static_cast<unsigned>(width), 1) * af::tile(valid, 1, static_cast<unsigned>(d));
+        af::tile(grad_h, static_cast<unsigned>(width), 1) * af::tile(valid, 1, static_cast<unsigned>(d));
     grad_rows.eval();
     ScatterSubtract(w_in, keys, grad_rows, alpha);
     w_in.eval();
@@ -218,8 +216,8 @@ af::array Step(af::array& w_in, af::array& w_out, const DevicePieces& pieces, co
 
     af::array grad_h;
     const af::array loss = NegativeSamplingStep(w_out, h, outputs, negatives, alpha, grad_h);
-    // Each row of the mean takes its share of the gradient.
-    af::array grad_rows = af::lookup(grad_h / af::tile(counts, 1, static_cast<unsigned>(d)), example, 0);
+    // Every row of the mean takes the whole gradient.
+    af::array grad_rows = af::lookup(grad_h, example, 0);
     grad_rows.eval();
     ScatterSubtract(w_in, rows, grad_rows, alpha);
     w_in.eval();
@@ -379,8 +377,6 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
         const af::array keep_probability = KeepProbability(count_f, options.sample);
         const af::array noise_table = NoiseTable(count_f);
 
-        const double total_estimate = static_cast<double>(options.epochs) * static_cast<double>(n) * 2.0 * window;
-        double done = 0.0;
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
             const EpochExamples examples_of_epoch =
                 MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, true, engine);
@@ -396,21 +392,23 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
             const auto run = [&](const af::array& batch_in, const af::array& batch_out, const af::array* table,
                                  dim_t total) {
                 const af::array negatives = DrawNegatives(noise_table, batch_out, k, engine);
-                const double progress = std::min(1.0, done / total_estimate);
+                // gensim: the rate falls linearly with the share of the run done.
+                const double progress = std::min(
+                    1.0, (static_cast<double>(epoch) + static_cast<double>(processed) / static_cast<double>(examples)) /
+                             options.epochs);
                 const double alpha = options.alpha - (options.alpha - options.min_alpha) * progress;
                 epoch_loss += af::sum(table ? StepPadded(w_in, w_out, *table, batch_in, batch_out, negatives, alpha)
                                             : Step(w_in, w_out, pieces, batch_in, batch_out, negatives, total, alpha));
                 epoch_loss.eval();
                 if (++steps % kSyncSteps == 0) af::sync();
                 const dim_t size = batch_out.elements();
-                done += static_cast<double>(size);
                 processed += size;
                 return !options.on_progress ||
                        options.on_progress(std::min(1.0, (static_cast<double>(epoch) + static_cast<double>(processed) /
                                                           static_cast<double>(examples)) / options.epochs),
                                            epoch + 1);
             };
-            const dim_t batch = options.batch_size;
+            const dim_t batch = StepBatch(options.batch_size, v);
             if (!pieces.narrow.isempty()) {
                 // Skip-gram: short and long words apart, the long batches
                 // spread among the short ones.
@@ -426,6 +424,7 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
                     part_out[p] = ex_outputs(part_idx[p]);
                     part_batches[p] = (count + batch - 1) / batch;
                 }
+                ReleaseEpochScratch();
                 while (next[0] < part_batches[0] || next[1] < part_batches[1]) {
                     const bool long_turn = next[0] >= part_batches[0] ||
                                            (next[1] < part_batches[1] &&
@@ -445,6 +444,7 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
                 af::array per_example = RowsPerExample(pieces, ex_inputs);
                 if (batches * batch > examples)
                     per_example = af::join(0, per_example, af::constant(0, batches * batch - examples, s32));
+                ReleaseEpochScratch();
                 std::vector<int> rows_in_batch(static_cast<size_t>(batches));
                 af::array batch_rows = af::sum(af::moddims(per_example, batch, batches), 0).as(s32);
                 batch_rows.eval();

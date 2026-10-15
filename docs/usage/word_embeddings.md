@@ -144,20 +144,28 @@ their `.vec` file.
 
 gensim's names and defaults (`Word2Vec`): vector size 100, window 5,
 minimum count 5, negative samples 5, epochs 5, down-sampling 1e-3, learning
-rate 0.025 falling to 0.0001, plus **Batch** (examples per device step, 512)
-and **Seed** (the same seed repeats a run on one device).
+rate 0.025 falling to 0.0001, plus **Batch** (examples per device step,
+2048) and **Seed** (the same seed repeats a run on one device).
 
 Training runs in batches on the device. One step applies the summed gradient
-of its batch's examples; larger batches than 512 diverge (a frequent word
-gets the sum of too many gradients), so keep the default.
+of its batch's examples, with gensim's update rules (in CBOW every context word
+takes the whole gradient). Each epoch's examples are shuffled first, so a
+frequent word's examples spread over many steps; in corpus order large
+batches diverged. The learning rate falls linearly over the run, as gensim's
+does. A step uses at most 8 examples per vocabulary word, so a small
+vocabulary (tens of words) takes smaller steps and stays stable; a real
+vocabulary keeps the whole batch. Batches of 512 give the same quality more
+slowly; 8192 is faster but further from gensim.
 
-**Speed (measured 2026-10-14)** on the sentiment set below (53,043 rows,
-6.0 M words, 24.6 M skip-gram examples per epoch): about 115 s per epoch on a
-GTX 1050 Ti (CUDA), against 26 s per epoch for gensim on 4 CPU threads. Five
-epochs take about 10 minutes here. The vectors are good (see the example),
-but a 1-epoch run shares 37% of each word's 10 nearest neighbours with
-gensim, while two gensim runs with different seeds share 60%. Faster, closer
-training is open work (TOFIX152).
+**Speed and quality (measured 2026-10-15)** on the sentiment set below (53,043
+rows, 16,334 words, 24.6 M skip-gram examples per epoch), skip-gram, 5 epochs,
+GTX 1050 Ti (CUDA): 247 s (about 49 s per epoch; before this work 115 s per
+epoch), against 68 s for gensim on 4 CPU threads. The run shares 59% of each
+word's 10 nearest neighbours with gensim (top 1,000 words); two gensim runs
+with different seeds share 65%. Nearest words of "therapy": counseling 0.814,
+cbt 0.802, counselling 0.788, emdr 0.765, dbt 0.752. On 20,000 posts (3
+epochs) the same changes took a run from 134 s and 39% shared to 54 s and
+55% (gensim seed to seed 60%), and CBOW from 40% to 62% shared (gensim 63%).
 
 ## GloVe settings
 
@@ -192,7 +200,7 @@ with all words, in the reference too); use the full 25 epochs.
 
 gensim's FastText names and defaults: model (skip-gram or CBOW), vector size
 100, window 5, minimum count 5, negative samples 5, epochs 5, down-sampling
-1e-3, learning rate 0.025 to 0.0001, batch 512 and seed, all shared with
+1e-3, learning rate 0.025 to 0.0001, batch 2048 and seed, all shared with
 word2vec (same keys), plus `min_n` 3 and `max_n` 6 (piece lengths), `bucket`
 2,000,000 (rows the pieces are hashed into, fastText's FNV-1a hash; 4 x vector
 size bytes each on the device, 800 MB at 100 values) and `unseen_words`
@@ -201,20 +209,27 @@ size bytes each on the device, 800 MB at 100 values) and `unseen_words`
 How it learns: as word2vec, but a word's input vector is the mean of its own
 row and its pieces' rows. In skip-gram the centre word, with its pieces,
 predicts each context word; in CBOW the context words' rows and pieces predict
-the centre. Each row of the mean takes its share of the gradient (the gradient
-of the mean). fastText and gensim give every row the whole gradient, one
-example at a time; summed over a 512-example batch, where a common piece such
-as `ing>` serves hundreds of examples at once, that diverged (on 20,000
-sentiment posts the loss per example went from 79.6 to 1.2 million in the
-second epoch). A word's saved vector is the mean of its row and its pieces'
-rows; a word outside the vocabulary gets the mean of its pieces' rows.
+the centre. Every row of the mean takes the whole gradient, as fastText and
+gensim update. Batches train stably because each epoch's examples are
+shuffled (as for word2vec); in corpus order a common piece such as `ing>`
+summed hundreds of updates in one step and diverged. A word's saved vector is
+the mean of its row and its pieces' rows; a word outside the vocabulary gets
+the mean of its pieces' rows.
 
 **Speed and quality (measured 2026-10-15)** on the sentiment set (16,334
 words, 24.6 million skip-gram examples per epoch, 2,000,000 buckets) on a
-GTX 1050 Ti (CUDA): about 230 s per epoch, 5 epochs in 1,152 s; gensim 4.4.0
-takes 395.5 s on one CPU thread (106.8 s on four). The loss per example falls
-from 2.544 to 2.413. The two models share 57% of each word's 10 nearest
-neighbours (top 1,000 words; two gensim runs with different seeds share 77%).
+GTX 1050 Ti (CUDA): about 178 s per epoch, 5 epochs in 890 s (1,152 s before
+the changes below); gensim 4.4.0 takes 395.5 s on one CPU thread (106.8 s on
+four). The loss per example falls from 2.551 to 2.428. The two models share
+71% of each word's 10 nearest neighbours (top 1,000 words; 57% before; two
+gensim runs with different seeds share 77%).
+
+Each epoch's examples are shuffled by centre word: a centre's examples stay
+together, so its piece rows are read once for all of them (shuffling every
+example was 301 s per epoch, same quality). After building an epoch's
+examples the trainers return ArrayFire's cached scratch memory to the device:
+kept, it filled the 4 GB card and every step waited on memory (453 s per
+epoch).
 Words the training never saw, from their pieces: anxietyy -> anxiety 0.990,
 depressionn -> depression 0.986, overthinkingg -> overthinking 0.985,
 psychiatristt -> psychiatrist 0.997, counsellingg -> counselling 0.970.
@@ -275,7 +290,7 @@ vector of token id *i*:
 The graph carries notes on the canvas, and `examples/cyxgraph/Sentiment analysis/word_vectors_graph.md` explains it node by node (how the vocabulary file is made, the line-up step, word vectors versus the Embedding).
 
 Steps: open the graph, double-click **Word vectors (word2vec)** and **Train**
-(2 epochs, about 4 minutes on a GTX 1050 Ti), then **Train** the graph. Freeze
+(2 epochs, under 2 minutes on a GTX 1050 Ti), then **Train** the graph. Freeze
 is off, so the vectors are fine-tuned with the rest of the model; turn it on
 to keep them as trained. Training does not run the Word Embeddings node: if
 its file is missing, the Embedding stops with "could not open embedding

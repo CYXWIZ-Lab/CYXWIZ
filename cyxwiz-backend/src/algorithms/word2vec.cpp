@@ -2,7 +2,10 @@
 // sampling, gensim's settings (Word2Vec), run in mini-batches on the device.
 // - Step: SGD on the sum of a batch's losses; a row used by several examples
 //   gets the sum of their gradients (sort-by-key + sum-by-key, as the Embedding
-//   backward). PyTorch with the same matrices and batches is the oracle.
+//   backward). CBOW gives every context word the mean's whole gradient
+//   (gensim's rule). PyTorch with the same matrices and batches is the oracle.
+// - Each epoch's examples are shuffled and the learning rate falls with the
+//   share of the run done, as gensim's does (TOFIX152 speed/quality work).
 // - Trainer: the vocabulary (min_count, most frequent first) is counted on the
 //   host from the strings; everything numeric runs on the device: down-sampling
 //   (gensim's keep probability), each position's window drawn from 1..window,
@@ -54,11 +57,13 @@ af::array Step(af::array& w_in, af::array& w_out, const af::array& inputs, const
     // The outputs and negatives, then the input side from dLoss / dh.
     af::array grad_h;
     const af::array loss = NegativeSamplingStep(w_out, h, outputs, negatives, alpha, grad_h);
-    // Each context word gets its share of the mean's gradient; an empty slot
-    // gets none.
-    af::array grad_in = af::moddims(
-        af::tile(af::moddims(grad_h / af::tile(count, 1, static_cast<unsigned>(d)), b, 1, d), 1, static_cast<unsigned>(c), 1),
-        b * c, d) * af::tile(af::flat(weight), 1, static_cast<unsigned>(d));
+    // Every context word takes the whole gradient of the mean (gensim's CBOW
+    // with cbow_mean: its error is not divided by the count); an empty slot
+    // gets none. Dividing it (the mean's true gradient) left CBOW short of
+    // gensim: neighbour overlap 0.40 against gensim's seed-to-seed 0.63, 0.62
+    // with gensim's rule (20,000 sentiment posts, TOFIX152).
+    af::array grad_in = af::moddims(af::tile(af::moddims(grad_h, b, 1, d), 1, static_cast<unsigned>(c), 1), b * c, d) *
+                        af::tile(af::flat(weight), 1, static_cast<unsigned>(d));
     grad_in.eval();
     // Empty slots (-1) update row 0 by a zero gradient.
     ScatterSubtract(w_in, af::flat(af::select(valid, inputs, 0.0)).as(s32), grad_in, alpha);
@@ -143,6 +148,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
     const dim_t v = static_cast<dim_t>(model.vectors.words.size()), d = options.vector_size;
     const dim_t n = static_cast<dim_t>(tokens.size());
     const int window = options.window, k = options.negative;
+    const dim_t batch = StepBatch(options.batch_size, v);
 
     try {
         af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
@@ -159,12 +165,11 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
         const af::array keep_probability = KeepProbability(count_f, options.sample);
         const af::array noise_table = NoiseTable(count_f);
 
-        const double total_estimate = static_cast<double>(options.epochs) * static_cast<double>(n) * 2.0 * window;
-        double done = 0.0;
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
             const EpochExamples epoch_examples =
                 MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, false, engine);
             if (epoch_examples.outputs.isempty()) continue;
+            ReleaseEpochScratch();
             const af::array& ex_inputs = epoch_examples.inputs;
             const af::array& ex_outputs = epoch_examples.outputs;
             const dim_t examples = ex_outputs.elements();
@@ -173,18 +178,21 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
             // seen soon and the queue stays short.
             af::array epoch_loss = af::constant(0.0f, 1, f32);
             dim_t steps = 0;
-            for (dim_t start = 0; start < examples; start += options.batch_size) {
-                const dim_t end = std::min(examples, start + static_cast<dim_t>(options.batch_size));
+            for (dim_t start = 0; start < examples; start += batch) {
+                const dim_t end = std::min(examples, start + batch);
                 const af::seq rows(static_cast<double>(start), static_cast<double>(end - 1));
                 const af::array batch_out = ex_outputs(rows);
                 const af::array batch_in = options.cbow ? ex_inputs(rows, af::span) : af::array(ex_inputs(rows));
                 const af::array negatives = DrawNegatives(noise_table, batch_out, k, engine);
-                const double progress = std::min(1.0, done / total_estimate);
+                // gensim: the rate falls linearly with the share of the run done
+                // (epochs done plus the share of this epoch's examples).
+                const double progress = std::min(
+                    1.0, (static_cast<double>(epoch) + static_cast<double>(start) / static_cast<double>(examples)) /
+                             options.epochs);
                 const double alpha = options.alpha - (options.alpha - options.min_alpha) * progress;
                 epoch_loss += af::sum(Step(w_in, w_out, batch_in, batch_out, negatives, alpha));
                 epoch_loss.eval();
                 if (++steps % kSyncSteps == 0) af::sync();
-                done += static_cast<double>(end - start);
                 if (options.on_progress &&
                     !options.on_progress(std::min(1.0, (static_cast<double>(epoch) + static_cast<double>(end) /
                                                         static_cast<double>(examples)) / options.epochs), epoch + 1))

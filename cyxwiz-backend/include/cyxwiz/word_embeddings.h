@@ -66,7 +66,7 @@ struct CYXWIZ_API Word2VecOptions {
     int epochs = 5;
     double alpha = 0.025;       // learning rate, falling linearly to min_alpha
     double min_alpha = 1e-4;
-    int batch_size = 512;       // examples per device step
+    int batch_size = 2048;      // examples per device step (shuffled; see word2vec_sampling.h)
     unsigned seed = 1;
     size_t max_vocab = 0;       // keep the most frequent words only (0: all)
     // Called after each device step with the share of training done (0..1) and
@@ -181,7 +181,7 @@ struct CYXWIZ_API FastTextOptions {
     int epochs = 5;
     double alpha = 0.025;
     double min_alpha = 1e-4;
-    int batch_size = 512;
+    int batch_size = 2048;
     unsigned seed = 1;
     size_t max_vocab = 0;
     int min_n = 3;          // n-gram lengths in characters, of "<word>"
@@ -336,8 +336,9 @@ public:
     // Runs `batches` in order on `model` (word, n-gram and output rows updated
     // in place); a batch input is a vocabulary word whose input vector is the
     // mean of its row and its n-grams' rows (CBOW: of all its input words'
-    // rows), and each of those rows takes its share of the gradient of that
-    // mean. `losses` gets each batch's summed loss.
+    // rows), and every one of those rows takes the whole gradient of that
+    // mean (fastText's and gensim's update). `losses` gets each batch's summed
+    // loss.
     static bool FastTextSteps(FastTextModel& model, const std::vector<Word2VecBatch>& batches,
                               std::vector<double>* losses, std::string* error = nullptr);
     // Trains fastText on tokenised sentences on the device, as word2vec

@@ -50,8 +50,8 @@ saved file, the line-up and the Embedding are the same.
 learns vectors for the pieces of each word (3 to 6 letters such as `<th`,
 `the`, `apy>`), so a word the posts never contain, or a misspelling, still
 gets a vector from its pieces: "anxietyy" lands next to anxiety (0.99),
-"depressionn" next to depression. 5 epochs take about 19 minutes on a GTX
-1050 Ti (2 epochs about 8). Its neighbours lean towards words that share
+"depressionn" next to depression. 5 epochs take about 15 minutes on a GTX
+1050 Ti (2 epochs about 6). Its neighbours lean towards words that share
 letters ("therapy": therapys, hypnotherapy, psychotherapy). On this project
 almost every vocabulary token is a trained word; the line-up shows the rest
 as "built from pieces".
