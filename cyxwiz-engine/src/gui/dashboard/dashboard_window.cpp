@@ -1048,6 +1048,13 @@ void DashboardWindow::RenderEmbedded() {
 void DashboardWindow::DrawVisualizeToolbar() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (ui::SecondaryButton(ICON_FA_PLUS " New plot", profile_ != nullptr, "Looking at the data first")) ImGui::OpenPopup("##new_plot");
+    // The list of plot types is long: it stays inside the main window and
+    // scrolls, instead of becoming a window of its own past the bottom edge.
+    {
+        const ImGuiViewport* main = ImGui::GetMainViewport();
+        const float below = main->WorkPos.y + main->WorkSize.y - ImGui::GetItemRectMax().y - 12.0f;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, std::max(200.0f, below)));
+    }
     if (ImGui::BeginPopup("##new_plot")) {
         std::string group;
         for (const auto& k : WidgetKinds()) {
@@ -1076,6 +1083,7 @@ void DashboardWindow::DrawVisualizeToolbar() {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
+    ImGui::SameLine();
     if (ui::SecondaryButton("Remove", selected != nullptr, "No plot selected")) RemoveWidget(selected_);
     ImGui::SameLine();
     if (ui::SecondaryButton("Clear all", !spec_.widgets.empty(), "No plots")) {
@@ -1083,15 +1091,24 @@ void DashboardWindow::DrawVisualizeToolbar() {
         views_.clear();
         selected_.clear();
     }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
     const size_t n = spec_.widgets.size();
-    if (!note_.empty() && ImGui::GetTime() < note_until_) ImGui::TextColored(t.text_dim, "%s", note_.c_str());
-    else ImGui::TextColored(t.text_dim, "%zu %s \xC2\xB7 this session", n, n == 1 ? "plot" : "plots");
+    const bool noting = !note_.empty() && ImGui::GetTime() < note_until_;
+    const std::string line = noting ? note_ : std::to_string(n) + (n == 1 ? " plot" : " plots") + " \xC2\xB7 this session";
+    // Beside the buttons when it fits, else wrapped on its own line (a long note must not clip).
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(line.c_str()).x) ImGui::NewLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", line.c_str());
+    ImGui::PopTextWrapPos();
     if (const auto entry = DatasetCatalog::Instance().Resolve(dataset_)) {
         const std::string data = "Data at " + entry->Shown() + " \xC2\xB7 " + Thousands(static_cast<double>(entry->rows)) + " rows";
         const float w = ImGui::CalcTextSize(data.c_str()).x;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8.0f, ImGui::GetContentRegionMax().x - w));
+        // Right-aligned where the line leaves room, else on the next line.
+        ImGui::SameLine();
+        const float right = ImGui::GetContentRegionMax().x - w;
+        if (ImGui::GetCursorPosX() + 8.0f <= right) ImGui::SetCursorPosX(right);
+        else ImGui::NewLine();
         ImGui::TextColored(t.text_faint, "%s", data.c_str());
     }
 }
