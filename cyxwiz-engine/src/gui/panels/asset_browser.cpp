@@ -1314,7 +1314,7 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     std::string ext = fs::path(path).extension().string();
 
     // Scripts
-    if (ext == ".py" || ext == ".cyx") return AssetType::Script;
+    if (ext == ".py" || ext == ".pyw" || ext == ".cyx" || ext == ".ipynb") return AssetType::Script;
 
     // Models (note: .h5 can be Keras models OR HDF5 datasets - we prioritize datasets)
     if (ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
