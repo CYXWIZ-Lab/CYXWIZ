@@ -369,8 +369,8 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **Export**: save image as PNG or SVG, copy image, save data as CSV, copy
   data, Plot with Python (copies a matplotlib script; paste it in the
   Script Editor and run it to get the figure in Plot Output).
-- The window icon opens the plot in its own window; **Open in Visualizer**
-  sends the column to the Visualizer.
+- The window icon opens the plot in its own window. To keep plots of a
+  dataset or turn one into a Plot node, use Data Studio > Explore > Visualize.
 
 Plot colours come from the theme (Preferences > Theme): the series
 colours, the plot area (a shade of the window colour) and the text.

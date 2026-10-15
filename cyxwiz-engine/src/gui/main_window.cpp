@@ -53,7 +53,6 @@
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/annotation_editor_panel.h"
-#include "panels/visualization_panel.h"
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
@@ -76,7 +75,6 @@
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/data_profiler_panel.h"
 #include "panels/correlation_matrix_panel.h"
 #include "panels/missing_value_panel.h"
 #include "panels/outlier_detection_panel.h"
@@ -625,7 +623,6 @@ MainWindow::MainWindow()
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
-    visualization_panel_ = std::make_unique<cyxwiz::VisualizationPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
@@ -664,7 +661,6 @@ MainWindow::MainWindow()
     lr_finder_panel_->SetNodeEditor(node_editor_.get());
 
     // Data Science panels (Phase 3)
-    data_profiler_panel_ = std::make_unique<cyxwiz::DataProfilerPanel>();
     correlation_matrix_panel_ = std::make_unique<cyxwiz::CorrelationMatrixPanel>();
     missing_value_panel_ = std::make_unique<cyxwiz::MissingValuePanel>();
     outlier_detection_panel_ = std::make_unique<cyxwiz::OutlierDetectionPanel>();
@@ -674,11 +670,6 @@ MainWindow::MainWindow()
     hypothesis_test_panel_ = std::make_unique<cyxwiz::HypothesisTestPanel>();
     distribution_fitter_panel_ = std::make_unique<cyxwiz::DistributionFitterPanel>();
     regression_panel_ = std::make_unique<cyxwiz::RegressionPanel>();
-
-    // Connect TableViewer to VisualizationPanel
-    if (table_viewer_ && visualization_panel_) {
-        table_viewer_->SetVisualizationPanel(visualization_panel_.get());
-    }
 
     // Advanced Tools panels (Phase 5)
     dim_reduction_panel_ = std::make_unique<cyxwiz::DimReductionPanel>();
@@ -1731,13 +1722,6 @@ MainWindow::MainWindow()
     });
 
     // Set up Data Science callbacks (Tools menu - Phase 3)
-    toolbar_->SetOpenDataProfilerCallback([this]() {
-        if (data_profiler_panel_) {
-            data_profiler_panel_->Toggle();
-            spdlog::info("Toggled Data Profiler panel");
-        }
-    });
-
     toolbar_->SetOpenCorrelationMatrixCallback([this]() {
         if (correlation_matrix_panel_) {
             correlation_matrix_panel_->Toggle();
@@ -2740,8 +2724,6 @@ MainWindow::~MainWindow() {
     missing_value_panel_.reset();
     spdlog::info("~MainWindow: correlation_matrix_panel_");
     correlation_matrix_panel_.reset();
-    spdlog::info("~MainWindow: data_profiler_panel_");
-    data_profiler_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
     spdlog::info("~MainWindow: architecture_diagram_");
@@ -3106,7 +3088,6 @@ void MainWindow::Render() {
     TimedRender("script editor", script_editor_);
     TimedRender("table viewer", table_viewer_);
     TimedRender("annotation editor", annotation_editor_panel_);
-    TimedRender("visualization", visualization_panel_);
     TimedRender("connection dialog", connection_dialog_);
     TimedRender("job status", job_status_panel_);
     TimedRender("p2p training", p2p_training_panel_);
@@ -3133,7 +3114,6 @@ void MainWindow::Render() {
     TimedRender("lr finder", lr_finder_panel_);
 
     // Render Data Science panels (Phase 3)
-    TimedRender("data profiler", data_profiler_panel_);
     TimedRender("correlation matrix", correlation_matrix_panel_);
     TimedRender("missing value", missing_value_panel_);
     TimedRender("outlier detection", outlier_detection_panel_);
@@ -3523,7 +3503,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
     add("Table Viewer", ICON_FA_TABLE, table_viewer_, "Data");
     add("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_, "Data");
-    add("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_, "Data");
     add("Query Console", ICON_FA_MAGNIFYING_GLASS_CHART, query_console_, "Data");
     add("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_, "Data");
     add("Plot Output", ICON_FA_CHART_AREA, plot_output_panel_, "Data");
@@ -3596,7 +3575,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
     // Data Science panels (Phase 3)
-    if (data_profiler_panel_) data_profiler_panel_->SetVisible(false);
     if (correlation_matrix_panel_) correlation_matrix_panel_->SetVisible(false);
     if (missing_value_panel_) missing_value_panel_->SetVisible(false);
     if (outlier_detection_panel_) outlier_detection_panel_->SetVisible(false);

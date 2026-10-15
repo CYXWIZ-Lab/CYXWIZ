@@ -14,7 +14,6 @@
 namespace cyxwiz {
 
 // Forward declaration
-class VisualizationPanel;
 
 struct DatasetProfile;
 
@@ -57,8 +56,6 @@ public:
     void OpenVariable(const VariablesView::OpenRequest& request, const scripting::VariablesService::Result& result);
 
     // Visualization integration
-    void SetVisualizationPanel(VisualizationPanel* viz) { visualization_panel_ = viz; }
-    void SendToVisualizer(int column = -1);  // -1 = all columns, otherwise specific column
 
 private:
     // Tab structure
@@ -190,7 +187,6 @@ private:
     size_t find_rows_ = 0;
 
     // Visualization integration
-    VisualizationPanel* visualization_panel_ = nullptr;
 
     scripting::ScriptingEngine* engine_ = nullptr;
     int select_tab_ = -1;  // a replaced tab to bring to the front next frame

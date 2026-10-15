@@ -140,7 +140,7 @@ int main() {
         "train.load_checkpoint", "train.run_test", "train.quick_test", "train.view_test_results",
         "train.compare_test_results", "train.export_test_report", "tools.clear_cache", "tools.gc",
         "tools.model_summary", "tools.flops", "tools.architecture_diagram", "tools.lr_finder",
-        "data.profiler", "data.missing_values", "data.outliers", "data.correlation",
+        "data.missing_values", "data.outliers", "data.correlation",
         "data.normalization", "data.standardization", "data.log_transform", "data.boxcox", "data.feature_scaling",
         "tools.descriptive_stats", "tools.hypothesis_test", "tools.regression", "tools.distribution_fitter",
         "tools.cross_validation", "tools.confusion_matrix", "tools.roc_auc", "tools.pr_curve",
@@ -209,7 +209,6 @@ int main() {
     Check(ShortcutFor("table.slice_step", Context::TableViewer) == "Up, Down", "Data Viewer slice keys documented");
     Check(ShortcutFor("editor.select_occurrences", Context::ScriptEditor) == "Ctrl+Shift+L", "editor keys documented");
     Check(ShortcutFor("tools.model_summary", Context::Any).empty(), "Model Summary has no chord");
-    Check(ShortcutFor("data.profiler", Context::Any).empty(), "Data Profiler has no chord");
     // Window-wise: F5 and Ctrl+S do the matching action in the Script Editor.
     Check(ShortcutFor("train.start", Context::Any) == "F5" && ShortcutFor("script.run", Context::ScriptEditor) == "F5",
           "F5 runs in both windows");

@@ -26,88 +26,6 @@ enum class ColumnDataType {
 };
 
 /**
- * Histogram bin for numeric data visualization
- */
-struct HistogramBin {
-    double low = 0.0;
-    double high = 0.0;
-    size_t count = 0;
-    float percentage = 0.0f;
-};
-
-/**
- * Top value entry for categorical data
- */
-struct TopValue {
-    std::string value;
-    size_t count = 0;
-    float percentage = 0.0f;
-};
-
-/**
- * Column profile containing comprehensive statistics
- */
-struct ColumnProfile {
-    std::string name;
-    ColumnDataType dtype = ColumnDataType::Unknown;
-
-    // Basic counts
-    size_t total_count = 0;
-    size_t non_null_count = 0;
-    size_t null_count = 0;
-    size_t unique_count = 0;
-    float null_percentage = 0.0f;
-
-    // Numeric statistics (only valid for Numeric/Integer types)
-    double min = 0.0;
-    double max = 0.0;
-    double mean = 0.0;
-    double median = 0.0;
-    double std_dev = 0.0;
-    double variance = 0.0;
-    double q1 = 0.0;          // 25th percentile
-    double q3 = 0.0;          // 75th percentile
-    double iqr = 0.0;         // Interquartile range
-    double skewness = 0.0;
-    double kurtosis = 0.0;
-    double sum = 0.0;
-
-    // Distribution
-    std::vector<HistogramBin> histogram;
-
-    // For categorical data
-    std::vector<TopValue> top_values;
-
-    // Memory estimate (bytes)
-    size_t memory_estimate = 0;
-
-    // Helper methods
-    bool IsNumeric() const {
-        return dtype == ColumnDataType::Numeric || dtype == ColumnDataType::Integer;
-    }
-
-    std::string GetDTypeString() const;
-};
-
-/**
- * Full dataset profile
- */
-struct DataProfile {
-    std::string source_name;
-    size_t row_count = 0;
-    size_t column_count = 0;
-    size_t total_nulls = 0;
-    float null_percentage = 0.0f;
-    size_t memory_estimate = 0;
-
-    std::vector<ColumnProfile> columns;
-
-    // Get column by name
-    const ColumnProfile* GetColumn(const std::string& name) const;
-    ColumnProfile* GetColumn(const std::string& name);
-};
-
-/**
  * Correlation result between two columns
  */
 struct CorrelationResult {
@@ -367,25 +285,6 @@ public:
     DataAnalyzer() = default;
     ~DataAnalyzer() = default;
 
-    // ========== Data Profiling ==========
-
-    /**
-     * Generate comprehensive profile for a DataTable
-     * @param table The data table to analyze
-     * @param histogram_bins Number of bins for histograms (default: 20)
-     * @param top_n Number of top values to include for categorical (default: 10)
-     * @return Complete data profile
-     */
-    DataProfile ProfileTable(const DataTable& table, int histogram_bins = 20, int top_n = 10);
-
-    /**
-     * Profile a single column
-     */
-    ColumnProfile ProfileColumn(const DataTable& table, const std::string& column_name,
-                                 int histogram_bins = 20, int top_n = 10);
-    ColumnProfile ProfileColumn(const DataTable& table, size_t column_index,
-                                 int histogram_bins = 20, int top_n = 10);
-
     // ========== Correlation Analysis ==========
 
     /**
@@ -600,30 +499,7 @@ public:
                                                       const std::vector<double>& y,
                                                       const std::vector<std::string>& predictor_names = {});
 
-private:
-    // Helper to build histogram
-    std::vector<HistogramBin> BuildHistogram(const std::vector<double>& values,
-                                              double min_val, double max_val,
-                                              int num_bins);
-
-    // Helper to get top N values for categorical data
-    std::vector<TopValue> GetTopValues(const std::vector<std::string>& values, int top_n);
 };
-
-/**
- * Get string representation of column data type
- */
-inline std::string ColumnProfile::GetDTypeString() const {
-    switch (dtype) {
-        case ColumnDataType::Numeric: return "Numeric";
-        case ColumnDataType::Integer: return "Integer";
-        case ColumnDataType::Categorical: return "Categorical";
-        case ColumnDataType::Boolean: return "Boolean";
-        case ColumnDataType::DateTime: return "DateTime";
-        case ColumnDataType::Mixed: return "Mixed";
-        default: return "Unknown";
-    }
-}
 
 /**
  * Get string representation of outlier detection method

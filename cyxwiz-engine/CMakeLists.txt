@@ -512,11 +512,9 @@ set(ENGINE_SOURCES
     src/gui/panels/table_viewer.cpp
     src/gui/panels/table_viewer_dialogs.cpp
     src/gui/panels/table_viewer_editing.cpp
-    src/gui/panels/table_viewer_visualization.cpp
     src/gui/panels/table_viewer_stats.cpp
     src/gui/panels/table_viewer_tabs.cpp
     src/gui/panels/table_viewer_plot.cpp
-    src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
     src/gui/panels/connection_dialog_reservation.cpp
@@ -554,7 +552,6 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/data_profiler_panel.cpp
     src/gui/panels/correlation_matrix_panel.cpp
     src/gui/panels/missing_value_panel.cpp
     src/gui/panels/outlier_detection_panel.cpp
@@ -861,7 +858,6 @@ set(ENGINE_HEADERS
     src/gui/panels/model_summary_panel.h
     src/gui/panels/architecture_diagram.h
     src/gui/panels/lr_finder_panel.h
-    src/gui/panels/data_profiler_panel.h
     src/gui/panels/correlation_matrix_panel.h
     src/gui/panels/missing_value_panel.h
     src/gui/panels/outlier_detection_panel.h

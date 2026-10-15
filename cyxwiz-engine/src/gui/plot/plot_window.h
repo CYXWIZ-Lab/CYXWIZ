@@ -63,9 +63,6 @@ public:
     // Shown and brought to the front on the next frame.
     void Focus();
 
-    // Optional: "Open in Visualizer" with the X column's index.
-    std::function<void(int column)> on_open_visualizer;
-
 private:
     void Rebuild();
     void Poll();

@@ -1308,11 +1308,6 @@ void PlotWindow::DrawSettings() {
         const std::string script = PythonScript();
         if (!script.empty()) ImGui::SetClipboardText(script.c_str());
     }
-    if (on_open_visualizer) {
-        const int x = ColumnIndex(spec_.x_column.empty() && !spec_.y_columns.empty() ? spec_.y_columns.front() : spec_.x_column);
-        if (ui::SecondaryButton("Open in Visualizer", x >= 0, "Choose a column first", ui::ButtonSize::Small, w))
-            on_open_visualizer(x);
-    }
     if (changed && auto_title && spec_.title == title_buf_) {
         spec_.title = DefaultTitle(spec_);
         std::snprintf(title_buf_, sizeof(title_buf_), "%s", spec_.title.c_str());

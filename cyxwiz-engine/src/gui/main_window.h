@@ -44,7 +44,6 @@ class TrainingPlotPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
 class AnnotationEditorPanel;
-class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
@@ -62,7 +61,6 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class DataProfilerPanel;
 class CorrelationMatrixPanel;
 class MissingValuePanel;
 class OutlierDetectionPanel;
@@ -357,7 +355,6 @@ private:
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
-    std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
@@ -383,7 +380,6 @@ private:
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Data Science panels (Phase 3)
-    std::unique_ptr<cyxwiz::DataProfilerPanel> data_profiler_panel_;
     std::unique_ptr<cyxwiz::CorrelationMatrixPanel> correlation_matrix_panel_;
     std::unique_ptr<cyxwiz::MissingValuePanel> missing_value_panel_;
     std::unique_ptr<cyxwiz::OutlierDetectionPanel> outlier_detection_panel_;

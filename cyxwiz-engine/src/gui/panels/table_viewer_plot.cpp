@@ -4,13 +4,11 @@ namespace cyxwiz {
 
 // TOFIX134 P1 step 1.5: the Plot window replaces Quick Plot. Every Quick Plot
 // entry point (column menu, Stats Plot, a variable opened to plot) opens it
-// with the plot type and column; the window keeps Plot with Python and Open
-// in Visualizer.
+// with the plot type and column; the window keeps Plot with Python.
 void TableViewerPanel::OpenPlot(TableTab* tab, plot::Kind kind, int x_column, int y_column) {
     if (!tab || !tab->grid.table) return;
     if (!plot_window_) {
         plot_window_ = std::make_unique<plot::PlotWindow>("table_viewer_plot");
-        plot_window_->on_open_visualizer = [this](int column) { SendToVisualizer(column); };
     }
     const auto& headers = tab->grid.table->GetHeaders();
     const auto name = [&](int c) {

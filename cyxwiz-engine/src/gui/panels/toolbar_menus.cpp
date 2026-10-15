@@ -459,7 +459,6 @@ void ToolbarPanel::BuildActionHandlers() {
     call("data.import", import_dataset_callback_);
     call("data.create_custom", create_custom_dataset_callback_);
     call("data.statistics", dataset_statistics_callback_);
-    call("data.profiler", open_data_profiler_callback_);
     call("data.missing_values", open_missing_value_callback_);
     call("data.outliers", open_outlier_detection_callback_);
     call("data.correlation", open_correlation_matrix_callback_);

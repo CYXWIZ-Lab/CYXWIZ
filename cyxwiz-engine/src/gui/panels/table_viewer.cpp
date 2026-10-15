@@ -10,7 +10,6 @@
 #include "../ui_tokens.h"
 #include "../separate_windows.h"
 #include <imgui_internal.h>
-#include "visualization_panel.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>

@@ -203,7 +203,6 @@ public:
     void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
 
     // Data Science callbacks (Phase 3)
-    void SetOpenDataProfilerCallback(std::function<void()> cb) { open_data_profiler_callback_ = cb; }
     void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
     void SetOpenMissingValuePanelCallback(std::function<void()> cb) { open_missing_value_callback_ = cb; }
     void SetOpenOutlierDetectionCallback(std::function<void()> cb) { open_outlier_detection_callback_ = cb; }
@@ -670,7 +669,6 @@ private:
     std::function<void()> open_lr_finder_callback_;
 
     // Data Science callbacks (Phase 3)
-    std::function<void()> open_data_profiler_callback_;
     std::function<void()> open_correlation_matrix_callback_;
     std::function<void()> open_missing_value_callback_;
     std::function<void()> open_outlier_detection_callback_;
