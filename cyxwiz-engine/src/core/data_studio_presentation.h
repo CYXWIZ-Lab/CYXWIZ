@@ -32,12 +32,13 @@ struct GraphNode {
     int recipe_steps = 0;
     std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)
     std::string balance;       // a Data Loader's balance mode
-    std::map<std::string, std::string> parameters;  // checks and validators: their settings (Validate)
+    std::map<std::string, std::string> parameters;  // checks, validators and outputs: their settings (Validate, Publish)
     // Its latest run in this session.
     bool ran = false;
     int64_t rows = -1, columns = -1;
     double seconds = 0.0;
     std::string outcome, error, output_dataset, finished_at;
+    std::string written_path;  // the file an output node wrote (Publish)
 };
 
 struct Dataset {

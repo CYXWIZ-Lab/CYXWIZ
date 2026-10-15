@@ -27,8 +27,8 @@ Data Pipeline executor.
 - **Jobs**: **Bring in**, **Explore**, **Prepare**, **Validate**, **ML
   readiness**, **Publish**, **Results**, each with a line saying where it
   stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage*,
-  *1 output*). Bring in, Explore, Prepare, Validate and ML readiness are
-  built; the other jobs list their nodes and are being built (TOFIX148).
+  *1 output*). Every job but Results is built; Results lists its nodes and
+  is being built (TOFIX148).
 - **In the graph**: the nodes doing the open job, by kind (*Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
@@ -353,3 +353,41 @@ changed. The train split's roles come from its profile, cached in the
 project's `cache/query_results` like Explore > Profile's. When several
 columns read as Text (a hash column does too), the longest one is used;
 set Text on another column in Profile to choose it.
+
+## Publish
+
+The graph's outputs (Export CSV, Export JSON, Export Parquet, Data Output) in
+one table: **output (node)**, what it **reads** (the step, past any checks in
+front of it), the file it **writes** (relative to the project when inside it;
+the full path on hover) and when it was **last written** (*15,349 rows -
+15:19:58*, *not written yet*, *failed* with the error). Click a row to show its
+lineage; **Show** selects the node on the canvas.
+
+**Lineage beside the file.** Every time an output writes its file, the run
+also writes `<file>.lineage.json` beside it, whether the run came from
+Publish, Run step or Execute Pipeline. Publish shows the selected output's:
+
+- **Made by**: the recipe and its revision (the first 12 hex digits of the
+  SHA-256 of its steps' types and settings, so any change to a step changes
+  it) and the number of steps;
+- **Inputs**: each Data Input's file with its size and SHA-256;
+- **Result**: rows, columns, the file's size and SHA-256;
+- **Checks**: *4 of 4 pass*, or the first one that did not;
+- **Written**: when, from which graph file.
+
+**Steps** opens the list of steps above the output. The file itself also holds
+each step's settings and outcome, the schema, and the full digests.
+
+**Publish...** (here or in the header) opens *Publish dataset*:
+
+- **Output**: one of the graph's outputs (its name and file are set and it
+  runs), or **New Parquet export**, which adds an Export Parquet node reading
+  **Reads** (for a step inside a recipe, the recipe's result) and runs it.
+- **Name** is the node's name; **Location** is the file, relative to the
+  project unless it starts with a drive (suggested:
+  `datasets/published/<step>.parquet`).
+- **Publish** writes the file and its lineage; the table and the card update
+  when the run ends. Ctrl+Z on the canvas undoes the node change.
+
+**Add Data Output** adds a Data Output node reading the step chosen in the
+rail (or the last step); its format and file are set in its dialog.

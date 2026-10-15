@@ -5,6 +5,7 @@
 #include "data_studio_panel.h"
 #include "../separate_windows.h"
 
+#include "../../core/data_studio_publish.h"
 #include "../../core/dataset_catalog.h"
 #include "../../core/sql_editing.h"
 #include "../../core/dataset_picker_presentation.h"
@@ -27,6 +28,8 @@ DataStudioPanel::DataStudioPanel() {
     prepare_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     validate_ = std::make_unique<ValidateView>();
     validate_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
+    publish_ = std::make_unique<PublishView>();
+    publish_->show_on_canvas = [this](const std::vector<int>& ids) { ShowOnCanvas(ids); };
     readiness_ = std::make_unique<ReadinessView>();
     readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };
     readiness_->on_show_node = [this](int id) { ShowOnCanvas({id}); };
@@ -91,8 +94,11 @@ void DataStudioPanel::RefreshView() {
             n.type = type;
             n.name = name;
             if (parameters) {
-                // Validate shows a check's (or validator's) rule from its settings.
-                if (type == ::gui::NodeType::RowCountCheck || type == ::gui::NodeType::DataValidator) n.parameters = *parameters;
+                // Validate shows a check's (or validator's) rule from its settings,
+                // Publish an output's file.
+                if (type == ::gui::NodeType::RowCountCheck || type == ::gui::NodeType::DataValidator ||
+                    studio::IsOutputNode(type))
+                    n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
                 const auto registry = parameters->find("dataset_name");
@@ -109,6 +115,7 @@ void DataStudioPanel::RefreshView() {
                 n.error = f->second.error;
                 n.output_dataset = f->second.output_dataset;
                 n.finished_at = f->second.finished_at;
+                n.written_path = f->second.written_path;
             }
             in.nodes.push_back(std::move(n));
             return true;
@@ -152,10 +159,11 @@ void DataStudioPanel::RefreshView() {
     // What feeds each check, in the graph as it runs (recipes lowered): read
     // only while Validate shows, since it builds the pipeline document.
     std::string pipeline_error;
-    if (node_editor_ && job_ == studio::Job::Validate) {
+    if (node_editor_ && (job_ == studio::Job::Validate || job_ == studio::Job::Publish)) {
         const auto links = node_editor_->GetDataPipelineLinks(&pipeline_error);
         for (auto& n : in.nodes) {
-            if (n.type != ::gui::NodeType::RowCountCheck && n.type != ::gui::NodeType::DataValidator) continue;
+            if (n.type != ::gui::NodeType::RowCountCheck && n.type != ::gui::NodeType::DataValidator && !studio::IsOutputNode(n.type))
+                continue;
             n.input_from.clear();
             int pin = -1;
             for (const auto& link : links)
@@ -174,6 +182,7 @@ void DataStudioPanel::RefreshView() {
             if (n.recipe) recipes.push_back(n.id);
         validate_->SetGraph(node_editor_, graph_nodes_, recipes, active_dataset_, pipeline_error);
     }
+    if (publish_) publish_->SetGraph(node_editor_, graph_nodes_, active_dataset_);
     if (readiness_) {
         readiness_->SetSplitSets(view_.split_sets, view_.balance);
         // The tab's caption says what the last check found ("5 · no leakage").

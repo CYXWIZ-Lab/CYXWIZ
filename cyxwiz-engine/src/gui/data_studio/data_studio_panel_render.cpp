@@ -123,7 +123,12 @@ void DataStudioPanel::RenderHeader() {
         open_node_editor_callback_();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open CyxWiz Studio on this graph");
     ImGui::SameLine();
-    ui::PrimaryButton("Publish...", false, "Publishing with lineage comes with the Publish job (TOFIX148 step 3)");
+    if (ui::PrimaryButton("Publish...", node_editor_ != nullptr && publish_ && !publish_->IsRunning(),
+                          !node_editor_ ? "No graph is open" : "The Data Pipeline is running")) {
+        job_ = studio::Job::Publish;
+        view_time_ = -1.0;  // read what feeds the outputs now
+        publish_->OpenPublish();
+    }
     ImGui::Spacing();
 }
 
@@ -186,7 +191,7 @@ void DataStudioPanel::RenderJobTabs() {
         if (ui::JobTab(("##job" + std::to_string(j)).c_str(), job.name.c_str(), caption.c_str(), job.job == job_) && job_ != job.job) {
             job_ = job.job;
             if (job_ == studio::Job::Ready && readiness_) readiness_->Activate();  // roles may have changed in Profile
-            if (job_ == studio::Job::Validate) view_time_ = -1.0;                 // read what feeds the checks now
+            if (job_ == studio::Job::Validate || job_ == studio::Job::Publish) view_time_ = -1.0;  // read what feeds the checks / outputs now
         }
     }
 }
@@ -263,6 +268,10 @@ void DataStudioPanel::RenderJobBody() {
     }
     if (job_ == studio::Job::Ready) {
         if (readiness_) readiness_->Render();
+        return;
+    }
+    if (job_ == studio::Job::Publish) {
+        if (publish_) publish_->Render();
         return;
     }
     const ui::Tokens& t = ui::CurrentTokens();
