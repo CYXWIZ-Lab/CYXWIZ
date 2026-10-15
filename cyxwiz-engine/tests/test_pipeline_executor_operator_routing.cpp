@@ -1732,6 +1732,19 @@ void CheckRowCountCheckStep() {
           "a wrong count stops the run with the numbers (got: " + error + ")");
     Check(!registry.GetArrowDataset("ds_operator_RowCountCheck_2"),
           "a failed check leaves no result from its earlier, passing run");
+    {
+        // Two checks in a row: when the first fails, the second (never
+        // reached) keeps no result from the earlier run either.
+        const auto chain = [&](const std::string& first_expected) {
+            const json graph = {{"nodes", json::array({input, check(2, {{"expected_rows", first_expected}}), check(3, {{"expected_rows", "5"}})})},
+                                {"links", json::array({{{"start_node", 1}, {"end_node", 2}}, {{"start_node", 2}, {"end_node", 3}}})}};
+            cyxwiz::PipelineExecutor executor;
+            return executor.ExecutePipeline(graph.dump());
+        };
+        Check(chain("5") && registry.GetArrowDataset("ds_operator_RowCountCheck_3"), "both checks pass and the second has a result");
+        Check(!chain("6") && !registry.GetArrowDataset("ds_operator_RowCountCheck_3"),
+              "a check after a failed one keeps no result from the earlier run");
+    }
     Check(!run(check(2, {{"expected_rows", "3"}, {"count_true_column", "empty_text"}}), error) &&
               error.find("rows where empty_text is true, found 2") != std::string::npos,
           "a wrong conditional count names the column (got: " + error + ")");

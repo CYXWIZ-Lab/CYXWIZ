@@ -4722,14 +4722,21 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
     pipeline_execution_active_ =
         task_info.state == cyxwiz::TaskState::Pending ||
         task_info.state == cyxwiz::TaskState::Running;
+    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     // Run facts for Properties (TOFIX146): copied while the run is live and
     // once more when it ends; earlier runs' facts stay for nodes not rerun.
+    // A node this run meant to run but never reached (a step before it
+    // failed) is still pending at the end: its earlier facts go, so it
+    // reads "not run" instead of an old "pass".
     if (pipeline_executor_ && !pipeline_facts_final_) {
         for (auto& [id, facts] : pipeline_executor_->GetNodeRunFacts()) node_run_facts_[id] = std::move(facts);
         pipeline_facts_final_ = !pipeline_execution_active_;
+        if (pipeline_facts_final_) {
+            for (const auto& [node_id, event] : snapshot.node_states)
+                if (event == cyxwiz::PipelineNodeExecutionEvent::Pending) node_run_facts_.erase(node_id);
+        }
     }
 
-    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
     for (const auto& [node_id, event] : snapshot.node_states) {
         switch (event) {
             case cyxwiz::PipelineNodeExecutionEvent::Pending:

@@ -49,6 +49,11 @@ namespace cyxwiz {
 
 namespace {
 
+// The registry name of an operator node's result.
+std::string OperatorOutputName(const std::string& type, int id) {
+    return "ds_operator_" + type + "_" + std::to_string(id);
+}
+
 bool TryParseFiniteDouble(const std::string& value, double& out);
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
 bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type);
@@ -5796,11 +5801,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
     ExecutionContext& ctx,
     gui::NodeType type) {
-    // The node's result from an earlier run goes first: when this run fails
-    // (a check that no longer holds), nothing stale is left that looks current.
-    const std::string output_dataset_name =
-        "ds_operator_" + node.type + "_" + std::to_string(node.id);
-    DataRegistry::Instance().UnregisterTabularDataset(output_dataset_name);
+    const std::string output_dataset_name = OperatorOutputName(node.type, node.id);
     std::map<std::string, std::string> operator_parameters = node.parameters;
     // File parameters saved project-relative resolve against the project root,
     // like Data Input and export paths (otherwise the process directory is used).
@@ -7020,6 +7021,10 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     for (const auto& node : nodes) {
         if (node.needs_execution) {
             total_nodes_to_execute++;
+            // An operator node's result from an earlier run goes first: when
+            // this run fails at it, or before it, nothing stale is left that
+            // looks current (a check that no longer holds).
+            DataRegistry::Instance().UnregisterTabularDataset(OperatorOutputName(node.type, node.id));
             NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
