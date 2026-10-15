@@ -5796,6 +5796,11 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
     ExecutionContext& ctx,
     gui::NodeType type) {
+    // The node's result from an earlier run goes first: when this run fails
+    // (a check that no longer holds), nothing stale is left that looks current.
+    const std::string output_dataset_name =
+        "ds_operator_" + node.type + "_" + std::to_string(node.id);
+    DataRegistry::Instance().UnregisterTabularDataset(output_dataset_name);
     std::map<std::string, std::string> operator_parameters = node.parameters;
     // File parameters saved project-relative resolve against the project root,
     // like Data Input and export paths (otherwise the process directory is used).
@@ -5879,8 +5884,6 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     }
 
     auto output_table = result.ValueOrDie();
-    const std::string output_dataset_name =
-        "ds_operator_" + node.type + "_" + std::to_string(node.id);
     auto output_dataset = registry.RegisterArrowTable(output_table, output_dataset_name);
     if (!output_dataset) {
         ReportError(node.type + ": failed to register operator output dataset");

@@ -1730,6 +1730,8 @@ void CheckRowCountCheckStep() {
     Check(!run(check(2, {{"check_name", "all verses"}, {"expected_rows", "6"}}), error) &&
               error.find("'all verses' failed: expected exactly 6 rows, found 5") != std::string::npos,
           "a wrong count stops the run with the numbers (got: " + error + ")");
+    Check(!registry.GetArrowDataset("ds_operator_RowCountCheck_2"),
+          "a failed check leaves no result from its earlier, passing run");
     Check(!run(check(2, {{"expected_rows", "3"}, {"count_true_column", "empty_text"}}), error) &&
               error.find("rows where empty_text is true, found 2") != std::string::npos,
           "a wrong conditional count names the column (got: " + error + ")");
