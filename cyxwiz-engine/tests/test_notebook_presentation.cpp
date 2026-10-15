@@ -51,6 +51,22 @@ int main() {
     KernelFacts cold;
     cold.environment = "sentiment";
     Check(KernelChipFor(cold).text == "Python \xC2\xB7 sentiment \xC2\xB7 Starts on first run", "before Python starts");
+    // A venv made after Python started (company-site report, 2026-10-15).
+    KernelFacts moved;
+    moved.python_version = "3.12.9";
+    moved.environment = "system Python";
+    moved.started = true;
+    moved.wanted_interpreter = "D:\\proj\\python\\Scripts\\python.exe";
+    moved.running_interpreter = "C:\\Python312\\python.exe";
+    const KernelChip moved_chip = KernelChipFor(moved);
+    Check(moved_chip.text == "Python 3.12.9 \xC2\xB7 system Python \xC2\xB7 Restart the Engine" &&
+              moved_chip.tone == Tone::Warning,
+          "a new project interpreter asks for an Engine restart");
+    Check(moved_chip.tooltip.find("D:\\proj\\python\\Scripts\\python.exe") != std::string::npos &&
+              moved_chip.tooltip.find("C:\\Python312\\python.exe") != std::string::npos,
+          "the tooltip names both interpreters");
+    moved.busy = true;
+    Check(KernelChipFor(moved).text.find("Busy") != std::string::npos, "a running cell still shows Busy");
 
     RunFacts r;
     r.running = true;

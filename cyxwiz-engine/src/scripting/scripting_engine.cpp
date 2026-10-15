@@ -182,7 +182,8 @@ ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() {
     if (info.initialized) {
         info.interpreter_path = python_engine_->ActiveInterpreterPath();
         info.source = python_engine_->ActiveSource();
-        python_engine_->HasInterpreterMismatch(&info.mismatch);
+        if (python_engine_->HasInterpreterMismatch(&info.mismatch))
+            info.wanted_path = python_engine_->PreviewInterpreterPath();
         if (cached_python_version_.empty() && !python_busy_ &&
             !command_running_ && !script_running_) {
             try {

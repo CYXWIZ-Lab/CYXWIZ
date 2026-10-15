@@ -39,6 +39,11 @@ struct KernelFacts {
     bool busy = false;            // this notebook runs a cell
     bool other_busy = false;      // another script holds Python
     bool restarting = false;
+    // Set when the project now asks for another interpreter (a venv made
+    // after Python started): Python runs inside the Engine, so the switch
+    // needs an Engine restart; the notebook's Restart only clears variables.
+    std::string wanted_interpreter;
+    std::string running_interpreter;
 };
 KernelChip KernelChipFor(const KernelFacts& facts);
 
