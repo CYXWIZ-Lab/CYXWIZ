@@ -24,6 +24,11 @@ bool IsLabelEdge(const CompiledGraphPlan& plan, const CompiledGraphEdge& edge) {
            edge.to_pin_id == plan.label_target_pin_id;
 }
 
+// The labels a data step hands to the loss's Targets pin.
+bool FeedsLossTargets(const CompiledGraphPlan& plan, const CompiledGraphEdge& edge) {
+    return edge.to_node_id == plan.loss_node_id && edge.to_pin_id == plan.label_target_pin_id;
+}
+
 bool IsLossToOptimizerEdge(const CompiledGraphPlan& plan,
                            const CompiledGraphEdge& edge) {
     return plan.optimizer_node_id >= 0 &&
@@ -576,6 +581,14 @@ void TraceLayer(const char* stage, size_t index, Module& module,
 Tensor GraphExecutableModel::Forward(const Tensor& input) {
     tensor_cache_.clear();
     CacheTensor(plan_.data_node_id, plan_.data_pin_id, input);
+    // A Data Input built in the Engine has one Dataset pin (no Tensor "Data"
+    // pin): the batch leaves it on every pin that is not its labels, and the
+    // data steps after it hand it on.
+    for (const auto& edge : plan_.edges) {
+        if (edge.from_node_id == plan_.data_node_id && !IsLabelEdge(plan_, edge) && !FeedsLossTargets(plan_, edge)) {
+            CacheTensor(plan_.data_node_id, edge.from_pin_id, input);
+        }
+    }
 
     for (const auto& node : plan_.nodes) {
         if (node.node_id == plan_.data_node_id ||
@@ -657,6 +670,23 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
                 output = RunMergeForward(node.type, inputs);
             }
             executed = true;
+        } else {
+            // A data step between the data node and the layers (Data Split,
+            // Data Loader) hands the batch on: the layers read it from the
+            // step's output pins. Without this a graph whose loader fed more
+            // than one layer stopped with "missing cached input tensor".
+            const auto incoming = TensorIncomingEdges(plan_, node.node_id);
+            const Tensor* passed = incoming.size() == 1
+                                       ? FindCachedTensor(incoming.front().from_node_id, incoming.front().from_pin_id)
+                                       : nullptr;
+            if (passed) {
+                for (const auto& edge : plan_.edges) {
+                    if (edge.from_node_id == node.node_id && !FeedsLossTargets(plan_, edge)) {
+                        CacheTensor(node.node_id, edge.from_pin_id, *passed);
+                    }
+                }
+            }
+            continue;
         }
 
         if (!executed) {
@@ -806,10 +836,19 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
                 AccumulatePinGrad(pin_grads, incoming[i].from_node_id,
                                   incoming[i].from_pin_id, input_grads[i]);
             }
+        } else if (incoming.size() == 1) {
+            // A data step passed the batch on unchanged: so does its gradient.
+            AccumulatePinGrad(pin_grads, incoming.front().from_node_id, incoming.front().from_pin_id, grad);
         }
     }
 
+    // The input gradient: what reached the data node's pins (its Data pin, or
+    // the Dataset pin of a Data Input built in the Engine).
     auto data_grad = pin_grads.find({plan_.data_node_id, plan_.data_pin_id});
+    if (data_grad == pin_grads.end()) {
+        data_grad = pin_grads.lower_bound({plan_.data_node_id, (std::numeric_limits<int>::min)()});
+        if (data_grad != pin_grads.end() && data_grad->first.first != plan_.data_node_id) data_grad = pin_grads.end();
+    }
     return data_grad != pin_grads.end() ? data_grad->second.Clone()
                                         : Tensor::Zeros(grad_output.Shape(),
                                                         grad_output.GetDataType());

@@ -100,6 +100,20 @@ def build() -> list[dict[str, Any]]:
         return g(torch.bmm(first, second).flatten(1))
 
     cases.append(case("split_bmm", 2, 1, {"Dense C": g}, torch.randn(4, 5, 3), split_bmm, (4, 2)))
+
+    # No Split: the data itself feeds three branches (the multi-branch example
+    # graph, examples/cyxgraph/branching): Dense A1 -> ReLU -> Dense A2, plus a
+    # Projection, Add -> ReLU; Wide -> Tanh; Concatenate -> Dense C.
+    a1, a2, p = torch.nn.Linear(6, 5), torch.nn.Linear(5, 5), torch.nn.Linear(6, 5)
+    w, cc = torch.nn.Linear(6, 3), torch.nn.Linear(8, 2)
+
+    def fanout(x):
+        deep = torch.relu(a2(torch.relu(a1(x))) + p(x))
+        return cc(torch.cat([deep, torch.tanh(w(x))], 1))
+
+    cases.append(case("fanout_residual_concat", 0, 1,
+                      {"Dense A1": a1, "Dense A2": a2, "Projection": p, "Wide": w, "Dense C": cc},
+                      torch.randn(4, 6), fanout, (4, 2)))
     return cases
 
 

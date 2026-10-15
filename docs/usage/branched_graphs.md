@@ -55,12 +55,43 @@ Input 2 before Input 1 changes nothing.
 
 Each problem is reported on the node, with the shapes involved.
 
+## Fan-out without Split
+
+A node's output can feed several nodes at once: link the Data Loader (or any
+layer) to each branch. Every branch receives the whole tensor, and the
+gradients that come back from the branches are summed. Split is only needed
+to give the branches different parts of a tensor.
+
 ## Training
 
 A branched graph trains through the graph executable model: every layer
 runs once, tensors are kept per output pin, and gradients flow back to each
 pin separately. A Split's backward pass concatenates its two branch
-gradients. The results match PyTorch (`branch_graph_pytorch_parity`).
+gradients. The data steps before the layers (Data Split, Data Loader) hand
+the batch on unchanged. The results match PyTorch (`branch_graph_pytorch_parity`,
+including a Data Loader feeding three branches).
+
+## Example: multi-branch classifier
+
+`examples/cyxgraph/branching/blobs_multibranch_classifier.cyxgraph`
+(17 nodes, 19 links) classifies `examples/datasets/metric_blobs.csv`
+(480 rows, 8 features, 4 classes). Every batch goes three ways:
+
+```
+Data Input -> Data Split -> Data Loader -+-> Dense 32 -> ReLU -> Dense 32 -+
+                                         |                                 +-> Add -> ReLU -+
+                                         +-> Dense 32 (projection) --------+                +-> Concatenate [48]
+                                         |                                                  |
+                                         +-> Dense 16 -> Tanh ------------------------------+
+
+Concatenate -> Dropout -> Dense 4 -> Cross Entropy -> Adam -> Output
+```
+
+The deep branch and the projection are added (a residual connection, so they
+have the same width), and the wide Tanh branch is concatenated beside them.
+Open it, double-click **Metric blobs** and **Apply**, then **Train**.
+Measured 2026-10-15 (GTX 1050 Ti, CUDA): early stop after 11 of 30 epochs
+in 8 s, training accuracy 97.9%, validation accuracy 98.6%.
 
 Code export: the pycyxwiz export writes the split; the PyTorch, TensorFlow
 and Keras exports still write a straight chain, so a branched graph does not
