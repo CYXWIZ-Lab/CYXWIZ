@@ -49,8 +49,6 @@ private:
     void EditCheck(const studio::CheckRow& row);
     void SubmitForm();
     void SubmitValidator();
-    // The node a new validator reads: the target, or its recipe's result.
-    int ValidatorSource(int target, std::string* what) const;
     void RunChecks();
     void LoadColumns();
     int RecipeOf(int step_id) const;  // the recipe holding a step (-1: none)

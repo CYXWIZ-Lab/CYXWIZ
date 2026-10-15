@@ -22,7 +22,11 @@ void Visualizer::Render() {
         return;
     }
     auto& view = plots_[current_dataset_];
-    if (!view) view = std::make_unique<dashboard::DashboardWindow>("visualize_" + current_dataset_, dashboard::DashboardWindow::Mode::Visualize);
+    if (!view) {
+        view = std::make_unique<dashboard::DashboardWindow>("visualize_" + current_dataset_, dashboard::DashboardWindow::Mode::Visualize);
+        view->keep_blocker = keep_blocker;
+        view->on_keep = on_keep;
+    }
     const auto entry = DatasetCatalog::Instance().Resolve(current_dataset_);
     if (entry) view->SetData(current_dataset_, entry->Shown());
     else view->ClearData("This dataset is no longer loaded: pick it again or load it in its Data Input.");

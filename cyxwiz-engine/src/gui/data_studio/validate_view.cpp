@@ -76,6 +76,15 @@ std::vector<std::string> SplitList(const std::string& list) {
     return out;
 }
 
+std::string ValidatorReads(const std::vector<studio::GraphNode>& nodes, int target, int recipe) {
+    // A branch from a recipe step reads the recipe's result
+    // (NodeEditor::BranchSource): say so.
+    for (const auto& n : nodes)
+        if (recipe >= 0 ? n.id == recipe : n.id == target)
+            return recipe >= 0 ? "the recipe \"" + n.name + "\" (its result)" : "\"" + n.name + "\"";
+    return "the step";
+}
+
 }  // namespace
 
 void ValidateView::SetGraph(::gui::NodeEditor* editor, const std::vector<studio::GraphNode>& nodes, const std::vector<int>& recipes,
@@ -550,23 +559,6 @@ void ValidateView::SubmitForm() {
     editing_ = -1;
 }
 
-int ValidateView::ValidatorSource(int target, std::string* what) const {
-    int from = target;
-    if (what)
-        for (const auto& t : targets_)
-            if (t.id == target) *what = "\"" + t.name + "\"";
-    // A recipe's steps all lead to its output, so a validator of a step
-    // inside one reads the recipe's result: the recipe node, or its output
-    // step while it is expanded on the canvas.
-    if (const int recipe = RecipeOf(target); recipe >= 0 && editor_) {
-        const auto summary = editor_->GetSubgraphSummary(recipe);
-        from = summary.expanded && !summary.steps.empty() ? summary.steps.back().id : recipe;
-        if (what)
-            for (const auto& n : nodes_)
-                if (n.id == recipe) *what = "the recipe \"" + n.name + "\" (its result)";
-    }
-    return from;
-}
 
 void ValidateView::RenderValidatorForm() {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -601,8 +593,7 @@ void ValidateView::RenderValidatorForm() {
             }
             ImGui::EndCombo();
         }
-        std::string what;
-        ValidatorSource(target_, &what);
+        const std::string what = ValidatorReads(nodes_, target_, RecipeOf(target_));
         if (what.rfind("the recipe", 0) == 0) {
             Next(ImGui::CalcTextSize(what.c_str()).x + 60.0f);
             ImGui::AlignTextToFramePadding();
@@ -659,9 +650,8 @@ void ValidateView::SubmitValidator() {
         }
         message_ = "Saved the Data Validator's rules (Ctrl+Z on the canvas undoes it). Run checks to see its issues.";
     } else {
-        std::string what;
-        const int from = ValidatorSource(target_, &what);
-        editor_->RequestBranchAfter(from, ::gui::NodeType::DataValidator, parameters);
+        const std::string what = ValidatorReads(nodes_, target_, RecipeOf(target_));
+        editor_->RequestBranchAfter(target_, ::gui::NodeType::DataValidator, parameters);
         message_ = "Added a Data Validator reading " + what + " (Ctrl+Z on the canvas undoes it). Run checks to see its issues.";
     }
     message_error_ = false;

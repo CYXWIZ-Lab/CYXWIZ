@@ -196,7 +196,15 @@ settings as the Dashboard.
 - On the right: title, plot type, the columns (with their roles), Colour by,
   **All settings in the Plot window**, and **View SQL** (the query the plot
   runs, Open in Query tab, Copy).
+- **Keep as Plot node** adds the selected plot to the graph as a Plot node
+  reading the node that made the data (a Data Input, a step, or a recipe's
+  result for a step inside a recipe), placed below it; the Explore strip lists
+  it and Ctrl+Z on the canvas undoes it. The Plot node is kept with the graph
+  and reads the data again when it opens. Off, with the reason on hover, when
+  no plot is selected or the data is not a table of this graph's nodes.
 - **Remove** and **Clear all** remove the selected plot or all of them.
+- The list of plot types scrolls inside the main window; a long note after
+  an action goes on its own line.
 - **Add to Dashboard** copies the plot into a Dashboard node on the same
   data: the dashboards of the open graph are listed (one on other data is
   greyed, with the reason), plus **New Dashboard node on Spotify**, which

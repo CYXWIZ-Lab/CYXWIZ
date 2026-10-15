@@ -395,7 +395,9 @@ Data Input (mnist_784.csv) --> Plot
   time, and **Refresh** (**Cancel** while it runs).
 - A loaded Data Input is read as it is. A node after it (a filter, a
   transform) is run on its own with only the nodes above it; progress and
-  Cancel are in Task View. The first plot is picked for you: the counts of
+  Cancel are in Task View. A Preparation Recipe runs as its steps, as the
+  Data Pipeline runs it: the plot reads the recipe's result (the header names
+  its last step, *Data at Check: nothing admitted*). The first plot is picked for you: the counts of
   a label column (class, label, target or y), otherwise of a text column,
   otherwise a histogram of the first number column. The plot type, the
   columns and the labels you choose are saved in the node.

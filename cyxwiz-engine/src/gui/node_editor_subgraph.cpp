@@ -605,8 +605,20 @@ void NodeEditor::ApplyStepAfterInsert() {
     for (const auto& request : requests) InsertStepAfter(request);
 }
 
+int NodeEditor::BranchSource(int step_id) const {
+    for (const auto& data : subgraphs_) {
+        const bool member = std::any_of(data.internal_nodes.begin(), data.internal_nodes.end(),
+                                        [&](const MLNode& internal) { return internal.id == step_id; });
+        if (!member) continue;
+        if (!data.expanded) return data.subgraph_node_id;
+        const auto summary = GetSubgraphSummary(data.subgraph_node_id);
+        return summary.steps.empty() ? step_id : summary.steps.back().id;
+    }
+    return step_id;
+}
+
 void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
-    const int after_id = request.after;
+    const int after_id = request.branch ? BranchSource(request.after) : request.after;
     const MLNode* after = FindNodeById(after_id);
     if (!after || after->outputs.empty()) return;
     const bool sql = request.type == NodeType::SQLQuery;
@@ -629,11 +641,12 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     };
     const ImVec2 at = place(after_id, *after);
     if (request.branch) {
-        // A branch: below the step, a little to the right; nothing moves.
+        // A branch: below the step and right of its label (the link clears
+        // the label); nothing moves.
         const float height = cached_node_positions_.count(after_id) ? ImNodes::GetNodeDimensions(after_id).y / zoom_ : 80.0f;
         MLNode step = CreateNode(request.type, !request.name.empty() ? request.name : kind);
         for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
-        step.initial_pos_x = at.x + 60.0f;
+        step.initial_pos_x = at.x + 160.0f;
         step.initial_pos_y = at.y + height + 80.0f;
         step.has_initial_position = true;
         if (step.inputs.empty()) {

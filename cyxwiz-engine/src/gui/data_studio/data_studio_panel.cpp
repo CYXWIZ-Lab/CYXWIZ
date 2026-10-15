@@ -30,6 +30,18 @@ DataStudioPanel::DataStudioPanel() {
     readiness_ = std::make_unique<ReadinessView>();
     readiness_->on_profile = [this](const std::string& dataset) { ShowProfile(dataset); };
     readiness_->on_show_node = [this](int id) { ShowOnCanvas({id}); };
+    visualizer_->keep_blocker = [this](const std::string& dataset) -> std::string {
+        if (!node_editor_) return "No graph is open";
+        if (!NodeOfDataset(dataset)) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the rail";
+        return "";
+    };
+    visualizer_->on_keep = [this](const std::string& dataset, const std::string& title, const std::string& spec_json) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(dataset);
+        if (!from || !node_editor_) return "The data's node is no longer in the graph.";
+        const std::string name = "Plot: " + title;
+        node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::Plot, {{"plot_spec", spec_json}}, name);
+        return "Added the Plot node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+    };
     query_editor_->step_blocker = [this](const std::vector<std::string>& inputs) { return StepBlocker(inputs); };
     query_editor_->on_turn_into_step = [this](const std::string& sql, const std::vector<std::string>& inputs) {
         return TurnIntoStep(sql, inputs);
@@ -174,6 +186,13 @@ const studio::GraphNode* DataStudioPanel::NodeMaking(const std::string& table) c
     const std::string registry = DatasetCatalog::Instance().NameFor(table);
     for (const auto& n : graph_nodes_)
         if (!n.output_dataset.empty() && (n.output_dataset == registry || n.output_dataset == table)) return &n;
+    return nullptr;
+}
+
+const studio::GraphNode* DataStudioPanel::NodeOfDataset(const std::string& dataset) const {
+    if (const studio::GraphNode* n = NodeMaking(dataset)) return n;
+    for (const auto& n : graph_nodes_)
+        if (n.type == ::gui::NodeType::DataInput && !dataset.empty() && n.dataset_name == dataset) return &n;
     return nullptr;
 }
 

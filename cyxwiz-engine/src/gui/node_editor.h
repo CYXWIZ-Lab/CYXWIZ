@@ -619,8 +619,9 @@ public:
     // Prepare's "Add a step", TOFIX148): it takes over the step's outgoing
     // links (and its place as a recipe's output), joins the step's recipe,
     // goes to the step's right (the nodes after it move right to make room)
-    // and is selected (CyxWiz Studio is not brought forward). Applied, like RequestSubgraphAction, at the start of
-    // the next canvas frame, in the order requested. `name` and `parameters`
+    // and is selected (CyxWiz Studio is not brought forward). Applied, like
+    // RequestSubgraphAction, at the start of the next canvas frame, in the
+    // order requested. `name` and `parameters`
     // (optional) replace the node's defaults (a guided step's checks become
     // Check nodes this way).
     void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
@@ -630,9 +631,11 @@ public:
     // it, below the step (Data Studio's Data Validator: its output is an
     // issues table, not the rows, so it must not take over the step's links).
     // It never joins a recipe (each recipe step must lead to the recipe's
-    // output), so after a recipe step pass the recipe or its output step.
-    void RequestBranchAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
-        PendingStepAfter request{step_id, type, false, {}, {}, std::move(parameters)};
+    // output): after a step inside one it reads the recipe's result
+    // (BranchSource). Data Studio's Keep as Plot node adds Plots this way.
+    void RequestBranchAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters = {},
+                            std::string name = {}) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }
@@ -643,6 +646,10 @@ public:
     void RequestSqlStepAfter(int step_id, std::string name, std::string query) {
         pending_steps_after_.push_back({step_id, NodeType::SQLQuery, false, std::move(name), std::move(query), {}});
     }
+    // What a branch from `step_id` reads: the step, or, for a step inside a
+    // recipe or group, its result: the subgraph node while collapsed, its
+    // last step while expanded.
+    int BranchSource(int step_id) const;
     // A node by id, also a step inside a collapsed recipe (its stored copy;
     // the canvas copy while expanded). Null when the graph has none.
     const MLNode* FindStep(int node_id) const;

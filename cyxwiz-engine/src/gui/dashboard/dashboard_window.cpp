@@ -1083,6 +1083,18 @@ void DashboardWindow::DrawVisualizeToolbar() {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
+    {
+        // The plot as a node in the graph (approved board: Keep as Plot node).
+        const std::string blocker = !on_keep ? std::string("No graph is open")
+                                    : !selected ? std::string("Make a plot first")
+                                    : keep_blocker ? keep_blocker(dataset_) : std::string();
+        if (ui::SecondaryButton(ICON_FA_CHART_SIMPLE " Keep as Plot node", blocker.empty(), blocker.c_str())) {
+            note_ = on_keep(dataset_, WidgetTitle(*selected), plot::SpecToJson(selected->plot));
+            note_until_ = ImGui::GetTime() + 6.0;
+        }
+        if (ImGui::IsItemHovered() && blocker.empty())
+            ImGui::SetTooltip("Adds a Plot node with this plot to the graph, reading the node that made this data; it is kept with the graph.");
+    }
     ImGui::SameLine();
     if (ui::SecondaryButton("Remove", selected != nullptr, "No plot selected")) RemoveWidget(selected_);
     ImGui::SameLine();

@@ -90,6 +90,8 @@ private:
     void RefreshView();
     // The node whose last run made `table` (a name a query used), or null.
     const studio::GraphNode* NodeMaking(const std::string& table) const;
+    // The node whose table `dataset` is: a node's last result or a Data Input's dataset (null: none).
+    const studio::GraphNode* NodeOfDataset(const std::string& dataset) const;
     std::string StepBlocker(const std::vector<std::string>& inputs) const;
     std::string TurnIntoStep(const std::string& sql, const std::vector<std::string>& inputs);
     void ShowOnCanvas(const std::vector<int>& node_ids);
