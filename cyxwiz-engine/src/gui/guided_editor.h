@@ -31,7 +31,7 @@ public:
     struct CardFacts {
         const std::map<std::string, int64_t>* rows = nullptr;  // part name -> rows, when counted for this SQL
         int64_t input_rows = -1;                                // rows the first operation receives
-        size_t checks_after = 0;                                // Row Count Checks after the step
+        size_t checks_after = 0;                                // Check nodes after the step
     };
 
     // Reads a step's guided_ops ("": an SQL step). False, with `error`, when

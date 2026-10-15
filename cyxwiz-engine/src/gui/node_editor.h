@@ -370,7 +370,7 @@ public:
     // Execute data pipeline using DuckDB (Phase 2)
     bool ExecuteDataPipeline();
     // Run only what `node_id` needs: its upstream steps and itself, plus the
-    // Row Count Checks chained right after it when `with_checks` (TOFIX146
+    // Check nodes chained right after it when `with_checks` (TOFIX146
     // "Run step" / "Preview output"). `include_step` false runs only the
     // steps before it (the SQL Workbench's "Load inputs").
     bool ExecuteDataPipelineThrough(int node_id, bool with_checks, bool include_step = true) {
@@ -381,7 +381,7 @@ public:
     bool IsDataPipelineRunning() const { return pipeline_execution_active_; }
 
     // A data step's neighbours in the executable graph (recipes lowered to
-    // their steps): what feeds each input pin and the Row Count Checks that
+    // their steps): what feeds each input pin and the Check nodes that
     // follow it. `error` says why the graph could not be read.
     struct DataStepNeighbour {
         int id = -1;

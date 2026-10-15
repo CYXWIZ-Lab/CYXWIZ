@@ -3900,7 +3900,7 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
     // Check step (data_studio_design.md 5.3; TOFIX148 D4, one check model):
     // row counts, allowed values, unique, not empty, range; stop on failure.
     RegisterNode({NodeType::RowCountCheck, NodeCategory::DataTransform,
-        "Row Count Check", ICON_FA_CHECK_DOUBLE,
+        "Check", ICON_FA_CHECK_DOUBLE,
         {"check", "count", "rows", "expect", "quality", "allowed", "unique", "empty", "range"}, 0, false,
         "Stop the run unless the data holds: a row count, allowed values, unique, not empty or a range", "", "",
         {{"Data", PinType::Dataset, true, "Input table"}},

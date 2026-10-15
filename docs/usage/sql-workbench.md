@@ -91,7 +91,7 @@ the step's real input tables. Nothing is written until **Save to step**.
   numbers also get minimum, median, mean and maximum.
 - **Rows removed**: the rows each part dropped compared with the part before
   it, so you can see what a filter took out.
-- **Checks**: the step's Row Count Checks, run on the draft's result before
+- **Checks**: the step's Check nodes, run on the draft's result before
   you save it.
 - **Messages**: what happened, newest last.
 
@@ -149,7 +149,7 @@ with the same editor ([Data Studio](data_studio.md#prepare)).
   red with the reason, and the step cannot run until it is fixed.
 - **Add checks** goes last. While you edit, its checks run with the preview
   and a failing one stops it with its message. When the step is saved, each
-  check becomes a **Row Count Check** node right after the step (row count,
+  check becomes a **Check** node right after the step (row count,
   allowed values, unique, not empty) and the operation leaves the step; Ctrl+Z
   on the canvas undoes it. Placed before other operations, it is marked in red.
 

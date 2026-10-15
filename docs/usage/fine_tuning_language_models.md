@@ -41,7 +41,7 @@ ORDER BY id
   column is refused; select the fields you need instead.
 - Keep the chat template in one place: generation and chat must render the
   prompt exactly the same way as training did.
-- Add a Row Count Check so a wrong filter cannot silently drop examples.
+- Add a Check so a wrong filter cannot silently drop examples.
 
 ## 3. Build supervised windows (Text Tokenizer)
 
@@ -120,7 +120,7 @@ the effective batch.
 ## Typical graph
 
 ```
-Data Input (JSON Lines) -> Preparation Recipe (SQL render + Row Count Check)
+Data Input (JSON Lines) -> Preparation Recipe (SQL render + Check)
     -> Text Tokenizer (causal windows, Response column, saved vocabulary)
     -> Export Parquet
 Training graph: Data Input (windows) -> Data Loader (Start from, context)

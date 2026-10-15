@@ -535,7 +535,7 @@ void GuidedEditor::RenderCards(const ImVec2& size, const CardFacts& facts) {
         } else if (toggled) {
             Changed(before);
         }
-        // Checks that come from the graph (Row Count Checks after the step).
+        // Checks that come from the graph (Check nodes after the step).
         if (facts.checks_after > 0) {
             ImGui::Dummy(ImVec2(0.0f, t.space_sm));
             Dim("Checks after this step in the recipe: " + std::to_string(facts.checks_after));

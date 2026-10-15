@@ -8,7 +8,7 @@
 // the rows each part of the query keeps. A guided (form) step is edited in
 // place in Guided mode with the Workbench's guided editor (D3: the guided
 // operations stay the form UI; none of them has a canonical operator to
-// lower to, checks aside, which D4 moves to Row Count Checks). Other steps
+// lower to, checks aside, which D4 moves to Check nodes). Other steps
 // show their settings and open in their dialog.
 
 #include "../../core/data_studio_presentation.h"
@@ -82,7 +82,7 @@ private:
     bool confirm_start_guided_ = false;
     bool confirm_edit_as_sql_ = false;
     std::string reads_;              // the step's inputs ("Tier 1 books (ZIP text)")
-    size_t checks_after_ = 0;        // Row Count Checks after the step
+    size_t checks_after_ = 0;        // Check nodes after the step
     std::string message_;
     bool message_error_ = false;
 

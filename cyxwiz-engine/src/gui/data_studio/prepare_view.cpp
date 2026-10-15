@@ -438,7 +438,7 @@ void PrepareView::RenderSteps(float height) {
             ImGui::SetTooltip("%s", tip.c_str());
         }
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const char* icon = row.sql ? ICON_FA_CODE : row.kind == "Row Count Check" ? ICON_FA_CIRCLE_CHECK : ICON_FA_GEAR;
+        const char* icon = row.sql ? ICON_FA_CODE : row.kind == "Check" ? ICON_FA_CIRCLE_CHECK : ICON_FA_GEAR;
         dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(row.sql ? t.accent_text : t.text_faint), icon);
         const ImVec4 clip(at.x, at.y, at.x + w - 4.0f, at.y + line * 2.0f + 4.0f);
         dl->AddText(nullptr, 0.0f, ImVec2(at.x + 26.0f, at.y + 2.0f), ui::ToU32(t.text_bright), row.name.c_str(), nullptr, 0.0f, &clip);

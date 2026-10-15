@@ -153,7 +153,7 @@ public:
     }
 
     // A short result statement from the last successful Apply, shown with the
-    // node's run facts (for example a Row Count Check's "passed: 3712 rows ...").
+    // node's run facts (for example a Check's "passed: 3712 rows ...").
     // Empty when the operator has nothing to add beyond its output table.
     virtual std::string OutcomeSummary() const { return {}; }
 

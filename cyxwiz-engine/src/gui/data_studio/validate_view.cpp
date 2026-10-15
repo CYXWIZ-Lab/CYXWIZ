@@ -191,7 +191,7 @@ void ValidateView::Render() {
     }
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_faint, "Each check is a Row Count Check node after the step it reads: it passes the rows on when its rule "
+    ImGui::TextColored(t.text_faint, "Each check is a Check node after the step it reads: it passes the rows on when its rule "
                                      "holds and stops the run when it does not, so nothing after it sees wrong data. A guided step's "
                                      "\"Add checks\" makes these nodes too.");
     ImGui::PopTextWrapPos();
@@ -225,7 +225,7 @@ void ValidateView::RenderTable() {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_bright, "%s", r.name.c_str());
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s node\nDouble-click: show it on the canvas", r.validator ? "Data Validator" : "Row Count Check");
+            ImGui::SetTooltip("%s node\nDouble-click: show it on the canvas", r.validator ? "Data Validator" : "Check");
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && show_on_canvas) show_on_canvas({r.id});
         }
         ImGui::TableNextColumn();

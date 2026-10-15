@@ -99,7 +99,7 @@ GuidedStep MakeTemplate(std::string_view id, const std::string& text_column);
 // The step's checks as Check nodes (TOFIX148 D4, one check model): "Add
 // checks" is the last operation; while editing it runs as SQL (the preview
 // stops on a failed check), and when the step is saved its checks become
-// Row Count Check nodes after the step and the operation leaves the step.
+// Check nodes after the step and the operation leaves the step.
 struct CheckNode {
     std::string name;                               // "Check: split values"
     std::map<std::string, std::string> parameters;  // the node's settings (check, column, ...)

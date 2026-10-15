@@ -65,7 +65,7 @@ const cyxwiz::PipelineNodeRunFacts* FactsFor(const NodeEditor* editor, int node_
     return it == facts.end() ? nullptr : &it->second;
 }
 
-// The count a Row Count Check found, from its outcome "passed: <n> ...".
+// The count a Check found, from its outcome "passed: <n> ...".
 std::string CheckCount(const std::string& outcome) {
     const std::string prefix = "passed: ";
     if (outcome.rfind(prefix, 0) != 0) return "";
@@ -530,7 +530,7 @@ void Properties::RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadat
     // ---- Checks after this step.
     SectionTitle("Checks after this step");
     if (view.context.checks.empty()) {
-        DimText("None. Add a Row Count Check after this step to stop the run when a count is wrong.");
+        DimText("None. Add a Check after this step to stop the run when a count is wrong.");
     }
     for (const auto& check : view.context.checks) {
         ImGui::PushID(check.id);

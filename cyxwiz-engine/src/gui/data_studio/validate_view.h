@@ -4,7 +4,7 @@
 // checks as a table (the check node, what it reads, its rule, its last run)
 // with Run checks, and "Add a check" with the five kinds of the one check
 // model (row count, allowed values, unique, not empty, range) or a Data
-// Validator. A check is a Row Count Check node added after the step it
+// Validator. A check is a Check node added after the step it
 // checks; Edit changes that node. The model is core/data_studio_checks.
 
 #include "../../core/data_studio_checks.h"

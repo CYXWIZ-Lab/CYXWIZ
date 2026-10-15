@@ -83,7 +83,7 @@ const char* TypeLabel(NodeType type) {
         case NodeType::Dashboard: return "Dashboard";
         case NodeType::Subgraph: return "Preparation Recipe";
         case NodeType::SQLQuery: return "SQL Query";
-        case NodeType::RowCountCheck: return "Row Count Check";
+        case NodeType::RowCountCheck: return "Check";
         case NodeType::DataValidator: return "Data Validator";
         case NodeType::DataSplit: return "Data Split";
         case NodeType::DataLoader: return "Data Loader";
@@ -149,7 +149,7 @@ const Dataset* DatasetOfInput(const Input& in, const GraphNode& n) {
 }
 
 void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
-    // One chip per named type ("Row Count Check × 4"); Prepare's other step
+    // One chip per named type ("Check × 4"); Prepare's other step
     // nodes share one chip naming them.
     std::map<std::string, NodeChip> by_type;
     std::vector<std::string> order;

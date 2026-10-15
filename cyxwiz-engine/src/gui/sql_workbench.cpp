@@ -455,7 +455,7 @@ void SqlWorkbenchDialog::PollRun() {
 }
 
 void SqlWorkbenchDialog::EvaluateChecks() {
-    // The step's Row Count Checks, run on the draft's result with the
+    // The step's Check nodes, run on the draft's result with the
     // operator the pipeline uses.
     check_outcomes_.clear();
     for (const auto& check : context_.checks) {
@@ -1038,7 +1038,7 @@ void SqlWorkbenchDialog::RenderRemoved() {
 void SqlWorkbenchDialog::RenderChecks() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (context_.checks.empty()) {
-        DimWrapped("This step has no Row Count Checks after it. Add one in the graph to stop a run when a count is "
+        DimWrapped("This step has no Check nodes after it. Add one in the graph to stop a run when a count is "
                    "wrong.");
         return;
     }

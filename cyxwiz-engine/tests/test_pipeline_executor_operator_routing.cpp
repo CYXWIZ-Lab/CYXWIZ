@@ -1688,7 +1688,7 @@ void CheckSqlStep() {
     std::cout << "SQL step (contract 1) passed\n";
 }
 
-// TOFIX101 package E: the Row Count Check step passes data through when the
+// TOFIX101 package E: the Check step passes data through when the
 // count holds and stops the run when it does not.
 void CheckRowCountCheckStep() {
     namespace fs = std::filesystem;
@@ -1813,7 +1813,7 @@ void CheckRowCountCheckStep() {
     registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
     fs::remove(csv);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
-    std::cout << "Row Count Check step passed\n";
+    std::cout << "Check step passed\n";
 }
 
 // TOFIX101 package C2: a SQL step reads several named inputs (one pin each),

@@ -1,6 +1,6 @@
 // Data Studio's shell model (TOFIX148 step 3): jobs, rail, node strip and the
 // last run, on the Berean tier1 graph as it runs in the Engine (Data Input ->
-// recipe tier1_paragraphs [SQL step + 4 Row Count Checks] -> Export Parquet).
+// recipe tier1_paragraphs [SQL step + 4 Check nodes] -> Export Parquet).
 
 #include "../src/core/data_studio_presentation.h"
 
@@ -105,9 +105,9 @@ int main() {
               prep[1].name == "SQL Query" && prep[1].note == "tier1_paragraphs",
           "Prepare chips: the recipe and its SQL step");
     const auto& val = JobOfView(v, Job::Validate);
-    Check(val.chips.size() == 1 && val.chips[0].name == "Row Count Check" && val.chips[0].note == "\xC3\x97 4" &&
+    Check(val.chips.size() == 1 && val.chips[0].name == "Check" && val.chips[0].note == "\xC3\x97 4" &&
               val.node_ids.size() == 4,
-          "Validate chip: Row Count Check x 4");
+          "Validate chip: Check x 4");
     Check(JobOfView(v, Job::Explore).chips.empty(), "Explore: no kept views yet");
 
     Check(v.rail.size() == 4 && v.rail[0].title == "Data Inputs" && v.rail[1].title == "Node results" &&
@@ -213,7 +213,7 @@ int main() {
         Check(rows.size() == 3 && rows[0].sql && rows[0].kind == "SQL Query" && rows[0].meta == "failed" &&
                   rows[0].tone == Tone::Error && rows[0].tip.find("Binder Error") != std::string::npos,
               "a failed SQL step");
-        Check(rows[1].kind == "Row Count Check" && rows[1].meta == "failed" && !rows[1].sql, "a failed check");
+        Check(rows[1].kind == "Check" && rows[1].meta == "failed" && !rows[1].sql, "a failed check");
         Check(rows[2].kind == "step node" && rows[2].meta == "not run", "a step node not run");
         const auto ran = StepRows({Ran(Node(162, NodeType::SQLQuery, "tier1_paragraphs"), 15349, 13, 3.1, "12:39:04", "ds_sql_162"),
                                    Ran(Node(347, NodeType::RowCountCheck, "Check: paragraphs"), 15349, 13, 0.1, "12:39:05",

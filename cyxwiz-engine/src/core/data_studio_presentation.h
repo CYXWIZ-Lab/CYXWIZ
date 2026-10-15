@@ -72,7 +72,7 @@ struct RailSection {
 };
 
 struct NodeChip {
-    std::string name;          // "Data Input", "Row Count Check"
+    std::string name;          // "Data Input", "Check"
     std::string note;          // "× 4", "tier1_paragraphs"
     std::vector<int> ids;
 };
@@ -130,7 +130,7 @@ View Build(const Input& input);
 struct StepRow {
     int id = -1;
     std::string name;          // "tier1_paragraphs"
-    std::string kind;          // "SQL Query", "Row Count Check", "step node"
+    std::string kind;          // "SQL Query", "Check", "step node"
     std::string meta;          // "15,349 rows · 3.1 s", "pass", "failed", "not run"
     std::string tip;           // the error or a check's outcome
     Tone tone = Tone::Plain;

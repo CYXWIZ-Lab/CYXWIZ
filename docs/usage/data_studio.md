@@ -29,7 +29,7 @@ Data Pipeline executor.
   stands (*1 Data Input*, *1 recipe*, *4 of 4 pass*, *no leakage*,
   *1 output*). Bring in, Explore, Prepare, Validate and ML readiness are
   built; the other jobs list their nodes and are being built (TOFIX148).
-- **In the graph**: the nodes doing the open job, by kind (*Row Count Check
+- **In the graph**: the nodes doing the open job, by kind (*Check
   x 4*, *Preparation Recipe tier1_paragraphs*, *step nodes Row Filter,
   ...*). Click one, or **Show on canvas**, to select and frame them in
   CyxWiz Studio; a collapsed recipe stands for its steps.
@@ -207,7 +207,7 @@ settings as the Dashboard.
 
 The graph's Preparation Recipe, step by step. On the left, **RECIPE STEPS
 (NODES)**: each step node in run order with its kind and its last run
-(*SQL Query - 15,349 rows - 3.3 s*, *Row Count Check - pass*, *failed* in red
+(*SQL Query - 15,349 rows - 3.3 s*, *Check - pass*, *failed* in red
 with the error on hover, *not run*). Click a step to show it; double-click to
 show it on the canvas. A graph with several recipes lists them first; nodes
 that prepare data outside a recipe are listed as *Steps outside a recipe*.
@@ -217,7 +217,7 @@ completion with its inputs' columns once they are loaded, find, Format).
 The header names the step, *SQL Query node* and what it reads.
 
 - **Run step** (Ctrl+Enter in the editor) saves the query to the step, then
-  runs the Data Pipeline through it and its Row Count Checks. The rows it
+  runs the Data Pipeline through it and its Check nodes. The rows it
   made show below (*15,349 rows - 13 columns - at 21:16:55*, the first 1,000
   in the grid) with the rows each part of the query keeps (*src 7 > parts
   17,083 > kept 15,385 > result 15,349*). The checks' *pass* / *fail* show in
@@ -245,7 +245,7 @@ turns it into an ordinary SQL step when you save. An SQL step in Guided mode
 offers **Start a guided step instead**, which replaces the query when you save
 (Reset brings it back until then).
 
-**Other steps** (a Row Count Check, a step node) show their last outcome,
+**Other steps** (a Check, a step node) show their last outcome,
 their settings as saved in the graph, **Run step**, **Open dialog** and
 **Show on canvas**; settings are changed in the node's dialog.
 
@@ -257,7 +257,7 @@ step's right, the nodes after it move right to make room (a collapsed recipe
 opens first), and it is selected there; Data Studio stays in front, and the
 step joins the list. Ctrl+Z on the canvas undoes it.
 
-**Checks.** A Row Count Check node checks one of: a row count (exactly, at
+**Checks.** A Check node checks one of: a row count (exactly, at
 least, at most; all rows or the rows where a column is true or has a value),
 **allowed values** of a column, **unique** columns, a column **not empty**, or a
 numeric column in a **range**. A failing check stops the run with the count and
@@ -288,7 +288,7 @@ canvas.
   rule's fields pick from the step's columns once it has run (type them
   before). *Rule:* shows the rule as it will read, and **Add check** stays off,
   with the reason on hover, until the form is complete. The check is added as
-  a Row Count Check node right after the step (a collapsed recipe opens on
+  a Check node right after the step (a collapsed recipe opens on
   the canvas; Data Studio stays in front); Ctrl+Z on the canvas undoes it.
 - **Edit** in a check's row opens the same form on that node: change the kind
   or the rule; **Save check** writes the node (Ctrl+Z on the canvas undoes it).

@@ -1,6 +1,6 @@
 // Data Studio > Validate's model (TOFIX148 D4): the checks table and the
 // "Add a check" form, on the Berean tier1 recipe's four checks as they run in
-// the Engine (tier1_paragraphs SQL step -> 4 Row Count Checks in a chain).
+// the Engine (tier1_paragraphs SQL step -> 4 Check nodes in a chain).
 
 #include "../src/core/data_studio_checks.h"
 
