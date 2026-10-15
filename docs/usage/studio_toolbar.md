@@ -37,6 +37,12 @@ highlighted while shown); the node, link and selection counts.
   its progress and **Cancel** while it runs. **Export**.
 - **Compile** (F7), **Local Debug** (F6) and **Train**. While training,
   Train becomes the epoch and **Stop**.
+- A reopened project keeps each Data Input's settings, not its loaded data.
+  **Train** loads the Data Inputs that feed the Data Loader first, as their
+  **Apply** would (the Training Dashboard says "Loading Sentiment CSV before
+  training..."), then trains. If one cannot be loaded, *Cannot Start
+  Training* says why ("Could not load the data before training: ... file not
+  found: ..."). HDF5 sources are still applied in their dialog.
 - While a graph trains (from the moment its data is being prepared), tests,
   or runs a pipeline or simulation, the graph and the project stay as they
   are: loading or clearing a graph shows *Graph replacement locked*, and

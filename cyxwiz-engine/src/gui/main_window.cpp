@@ -23,6 +23,8 @@
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "loaders/data_loader.h"
+#include "node_config_dialog.h"
+#include "../core/graph_topology_utils.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
 #include "node_editor.h"
@@ -558,6 +560,7 @@ MainWindow::MainWindow()
     // Original panels
     node_editor_ = std::make_unique<NodeEditor>();
     node_editor_->SetGraphPreparationBusyCallback([this] { return test_preparation_task_ != nullptr; });
+    node_editor_->SetTrainingDataLoadingCallback([this] { return !data_input_loads_.empty(); });
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
@@ -3121,6 +3124,7 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    PollDataInputLoads();
     // Dataset labels for the catalog: each Data Input node's name for its
     // dataset, so Data Studio and queries say "Spotify", not ds_datainput_1,
     // and each node's name for the table a pipeline run made from it.
@@ -3787,11 +3791,92 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     spdlog::info("Default panel visibility set - showing only core panels");
 }
 
+bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!data_input_loads_.empty()) {
+        spdlog::info("Train: the graph's data is still loading; training starts when it is loaded");
+        return true;
+    }
+    if (!node_editor_) return false;
+    const auto ids = cyxwiz::CollectDataInputsToLoad(nodes, links, [](const std::string& name) {
+        return cyxwiz::loaders::GetByRegisteredDataset(name) != nullptr;
+    });
+    std::string names;
+    for (const int id : ids) {
+        MLNode* node = node_editor_->GetNodeForConfiguration(id);
+        if (!node) continue;
+        auto dialog = std::make_unique<DataInputDialog>(node);
+        dialog->SetNodeEditor(node_editor_.get());
+        dialog->Apply();
+        spdlog::info("Train: loading '{}' first (its data is not loaded in this session)", node->name);
+        names += (names.empty() ? "" : ", ") + node->name;
+        data_input_loads_.push_back({id, node->name, std::move(dialog)});
+    }
+    if (data_input_loads_.empty()) return false;
+    data_input_loads_project_ = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    if (training_plot_panel_) {
+        training_plot_panel_->SetPreparationState(true, "Loading " + names + " before training...", 0.01f);
+        training_plot_panel_->SetVisible(true);
+    }
+    return true;
+}
+
+// The loads Train started: when all have ended, train, or say which data
+// could not be loaded and why.
+void MainWindow::PollDataInputLoads() {
+    if (data_input_loads_.empty()) return;
+    bool busy = false;
+    for (auto& load : data_input_loads_) {
+        load.dialog->RebindNode(node_editor_ ? node_editor_->GetNodeForConfiguration(load.node_id) : nullptr);
+        load.dialog->PollLoad();
+        busy = busy || load.dialog->IsBusy();
+    }
+    if (busy) return;
+    std::vector<cyxwiz::ValidationIssue> failures;
+    std::string failed_names;
+    for (const auto& load : data_input_loads_) {
+        const MLNode* node = node_editor_ ? node_editor_->GetNodeForConfiguration(load.node_id) : nullptr;
+        const auto name = node ? node->parameters.find("dataset_name") : std::map<std::string, std::string>::const_iterator{};
+        if (node && name != node->parameters.end() && cyxwiz::loaders::GetByRegisteredDataset(name->second)) continue;
+        const std::string why = load.dialog->LoadMessage().empty() ? "the node was removed" : load.dialog->LoadMessage();
+        failures.push_back({cyxwiz::IssueLevel::Error, load.node_id, load.node_name,
+                            "Could not load the data before training: " + why, ""});
+        failed_names += (failed_names.empty() ? "" : ", ") + load.node_name;
+    }
+    data_input_loads_.clear();
+    if (!node_editor_ || cyxwiz::ProjectManager::Instance().GetProjectRoot() != data_input_loads_project_) {
+        spdlog::info("Train: the project changed while its data loaded; not training");
+        return;
+    }
+    const auto nodes = node_editor_->GetNodes();
+    const auto links = node_editor_->GetLinks();
+    if (!failures.empty()) {
+        spdlog::error("Train: could not load {}", failed_names);
+        BuildCompileResult(nodes, links);
+        // The load's reason replaces the compiler's "open the node and click
+        // Apply" for those nodes: Apply would fail the same way.
+        std::erase_if(compile_result_issues_, [&](const cyxwiz::ValidationIssue& issue) {
+            return issue.message.rfind("Data is not loaded", 0) == 0 &&
+                   std::any_of(failures.begin(), failures.end(),
+                               [&](const cyxwiz::ValidationIssue& failure) { return failure.node_id == issue.node_id; });
+        });
+        compile_result_issues_.insert(compile_result_issues_.begin(), failures.begin(), failures.end());
+        compile_result_success_ = false;
+        compile_result_mode_ = CompileResultMode::BlockedTrain;
+        show_compile_result_popup_ = true;
+        if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("Could not load " + failed_names);
+        return;
+    }
+    StartTrainingFromGraph(nodes, links);
+}
+
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
     if (test_preparation_task_ || cyxwiz::TestManager::Instance().IsTestingActive()) {
         spdlog::warn("Train: wait for Run Test preparation/evaluation or cancel it first");
         return;
     }
+    // A reopened project keeps each Data Input's settings, not its loaded
+    // data: load what training needs first, then train.
+    if (StartDataInputLoads(nodes, links)) return;
 
     const bool memory_confirmation_accepted =
         materialization_memory_confirmation_accepted_once_;

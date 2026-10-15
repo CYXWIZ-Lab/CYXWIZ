@@ -74,6 +74,8 @@ public:
     // ignore it. Stored as a raw pointer — the NodeEditor outlives the
     // Properties panel.
     void SetNodeEditor(NodeEditor* editor) { node_editor_ = editor; }
+    // The node moved (the editor's node list grew) or is gone (nullptr).
+    void RebindNode(MLNode* node) { node_ = node; }
 
 protected:
     virtual void RenderContent() = 0;
@@ -230,6 +232,11 @@ public:
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
     bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
     bool CanApply() const override { return !IsHdf5Source(); }
+    // Train loads a Data Input a reopened project has not loaded through a
+    // dialog it never shows (the same Apply as OK): the load's result is
+    // taken here each frame, as RenderContent does for a shown dialog.
+    void PollLoad() { PollAsyncLoadResult(); }
+    const std::string& LoadMessage() const { return apply_status_message_; }
 
 protected:
     void RenderContent() override;

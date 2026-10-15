@@ -366,6 +366,9 @@ public:
     // Graph replacement admission is checked by all load/clear entry points.
     std::string GetGraphReplacementBlockReason() const;
     bool CanReplaceGraph(const char* operation);
+    void SetTrainingDataLoadingCallback(std::function<bool()> callback) {
+        training_data_loading_callback_ = std::move(callback);
+    }
     void SetGraphPreparationBusyCallback(std::function<bool()> callback) {
         graph_preparation_busy_callback_ = std::move(callback);
     }
@@ -1026,6 +1029,7 @@ private:
     // Training animation state
     std::atomic<bool> is_training_{false};
     std::function<bool()> graph_preparation_busy_callback_;
+    std::function<bool()> training_data_loading_callback_;
 
     float training_animation_time_ = 0.0f;
 

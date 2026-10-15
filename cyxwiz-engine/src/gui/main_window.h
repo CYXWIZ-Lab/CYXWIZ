@@ -23,6 +23,7 @@ class LiveGraphCompile;
 namespace gui {
 
 class NodeEditor;
+class DataInputDialog;
 class Console;
 class Viewport;
 class Properties;
@@ -326,6 +327,19 @@ private:
     std::string accepted_materialization_memory_risk_;
     std::vector<MLNode> pending_memory_confirmation_nodes_;
     std::vector<NodeLink> pending_memory_confirmation_links_;
+
+    // Train on a reopened project: the Data Inputs it has not loaded load
+    // first, each through an unshown Data Input dialog (the same Apply as its
+    // OK), then training starts with the loaded graph.
+    struct DataInputLoad {
+        int node_id = -1;
+        std::string node_name;
+        std::unique_ptr<DataInputDialog> dialog;
+    };
+    std::vector<DataInputLoad> data_input_loads_;
+    std::string data_input_loads_project_;
+    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollDataInputLoads();
 
     // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
     // fingerprint of the (nodes, links) tuple at the moment of the last
