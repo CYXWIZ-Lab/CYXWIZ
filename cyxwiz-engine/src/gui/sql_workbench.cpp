@@ -132,6 +132,7 @@ SqlWorkbenchDialog::SqlWorkbenchDialog(MLNode* node)
     title_ = "SQL Workbench - " + step_name_ + "###sql_workbench_" + std::to_string(node_id_);
     saved_query_ = node ? Param(*node, "query") : std::string();
     pane_.Editor().SetText(saved_query_);
+    guided_.on_changed = [this] { OnGuidedChanged(); };
     if (node) LoadGuided(*node);
 }
 
@@ -153,15 +154,14 @@ void SqlWorkbenchDialog::Apply() {
     if (!node) return;
     saved_query_ = pane_.Editor().GetText();
     node->parameters["query"] = saved_query_;
-    if (guided_active_) {
+    guided_.MarkSaved();
+    if (guided_.Active()) {
         // A guided step keeps its operations next to the query they wrote.
-        guided_saved_json_ = cyxwiz::guided::ToJson(guided_);
-        node->parameters[cyxwiz::guided::kGuidedOpsParameter] = guided_saved_json_;
+        node->parameters[cyxwiz::guided::kGuidedOpsParameter] = guided_.Json();
         AddMessage("Saved the operations and their query to the step.", false);
     } else {
         // Written in SQL now: no operations stay behind.
         node->parameters.erase(cyxwiz::guided::kGuidedOpsParameter);
-        guided_saved_json_.clear();
         AddMessage("Saved the query to the step.", false);
     }
 }
@@ -171,12 +171,7 @@ void SqlWorkbenchDialog::Reset() {
     if (node) saved_query_ = Param(*node, "query");
     pane_.Editor().SetReadOnly(false);
     pane_.Editor().SetText(saved_query_);
-    if (node) {
-        LoadGuided(*node);
-        guided_generated_ = cyxwiz::guided::GenerateSql(guided_, GuidedContext());
-        guided_columns_ = cyxwiz::guided::TrackColumns(guided_, GuidedContext());
-        guided_inputs_key_.clear();
-    }
+    if (node) LoadGuided(*node);
     AddMessage("Back to the step's saved query.", false);
 }
 
@@ -444,7 +439,7 @@ void SqlWorkbenchDialog::PollRun() {
     if (preview_part_after_counts_ && run->kind == RunKind::Counts) {
         preview_part_after_counts_ = false;
         if (result.ok) {
-            int part = GuidedPartIndex(guided_picked_);
+            int part = GuidedPartIndex(guided_.Picked());
             if (part < 0) part = static_cast<int>(pane_.Outline().parts.size()) - 1;
             StartRun(RunKind::ToPart, static_cast<size_t>(std::max(0, part)), true);
         }
@@ -531,7 +526,6 @@ void SqlWorkbenchDialog::RenderContent() {
         pane_.Editor().SetText(saved_query_);
         pane_.Refresh();
         LoadGuided(*node);
-        guided_inputs_key_.clear();
     }
 
     // Ctrl+Enter runs the step, Ctrl+Shift+Enter the selection.
@@ -554,7 +548,7 @@ void SqlWorkbenchDialog::RenderContent() {
         RenderCompare();
         return;
     }
-    if (guided_active_) {
+    if (guided_.Active()) {
         // SQL mode on a guided step: the query is read-only.
         Coloured(ICON_FA_CIRCLE_INFO " Written from the guided operations (read-only).", t.info);
         ImGui::SameLine();
@@ -565,7 +559,7 @@ void SqlWorkbenchDialog::RenderContent() {
             ImGui::SameLine();
             if (ui::LinkButton("Edit as SQL")) {
                 confirm_edit_as_sql_ = false;
-                guided_active_ = false;
+                guided_.Stop();
                 pane_.Editor().SetReadOnly(false);
                 AddMessage("The query is yours to edit; Save to step keeps it as an SQL step (Reset to saved undoes this).", false);
             }
@@ -573,7 +567,7 @@ void SqlWorkbenchDialog::RenderContent() {
             if (ui::LinkButton("Cancel")) confirm_edit_as_sql_ = false;
         }
     }
-    const float content_h = body_h - (guided_active_ ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
+    const float content_h = body_h - (guided_.Active() ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
     RenderSidePanel(content_h);
     ImGui::SameLine();
     ImGui::BeginGroup();
