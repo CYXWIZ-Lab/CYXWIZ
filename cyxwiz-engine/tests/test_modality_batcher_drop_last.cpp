@@ -1,5 +1,6 @@
 #include "../src/core/audio_dataset_batcher.h"
 #include "../src/core/image_dataset_batcher.h"
+#include "../src/core/image_utils.h"
 
 #include <cmath>
 #include <cstdint>
@@ -245,6 +246,73 @@ void TestImageBatcher(const fs::path& root) {
     }
 }
 
+// A 2x2 8-bit BMP with a grayscale palette (OpenCV reads it as one channel).
+void WriteGrayBmp8(const fs::path& path, uint8_t value) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    const uint32_t palette = 256 * 4, row = 4, pixels = row * 2;
+    out.put('B');
+    out.put('M');
+    WriteLe32(out, 14 + 40 + palette + pixels);
+    WriteLe32(out, 0);
+    WriteLe32(out, 14 + 40 + palette);
+    WriteLe32(out, 40);
+    WriteLe32(out, 2);
+    WriteLe32(out, 2);
+    WriteLe16(out, 1);
+    WriteLe16(out, 8);
+    for (int i = 0; i < 6; ++i) WriteLe32(out, i == 4 ? 256 : 0);
+    for (int i = 0; i < 256; ++i) {
+        for (int c = 0; c < 3; ++c) out.put(static_cast<char>(i));
+        out.put(0);
+    }
+    for (int y = 0; y < 2; ++y) {
+        out.put(static_cast<char>(value));
+        out.put(static_cast<char>(value));
+        out.put(0);
+        out.put(0);
+    }
+}
+
+void TestGrayscaleImages(const fs::path& root) {
+    // Grayscale files are read as RGB: they used to stay one channel and the
+    // batcher gave them all-zero samples.
+    const auto gray_root = root / "gray";
+    WriteGrayBmp8(gray_root / "class_a" / "g0.bmp", 128);
+    WriteGrayBmp8(gray_root / "class_b" / "g1.bmp", 128);
+    cyxwiz::DataRegistry::ImageDatasetEntry entry;
+    entry.folder_path = gray_root.string();
+    entry.layout = 0;
+    entry.num_images = 2;
+    entry.num_classes = 2;
+    cyxwiz::ImagePreprocessingConfig preprocessing;
+    preprocessing.resize_mode = cyxwiz::ResizeMode::Exact;
+    preprocessing.target_width = 2;
+    preprocessing.target_height = 2;
+    cyxwiz::ImageDatasetBatcher batcher(entry, preprocessing, 2, 1.0f, false, 0, 17);
+    const auto batch = batcher.GetNextBatch();
+    Check(batch.size == 2, "both grayscale images form a batch");
+    const float* pixels = batch.data.ReadData<float>();
+    for (size_t i = 0; i < batch.size * 2 * 2 * 3; ++i) {
+        Check(std::abs(pixels[i] - 128.0f / 255.0f) < 0.01f,
+              "a grayscale pixel 128 reads as 0.5 in each of R, G, B");
+    }
+
+    // A 16-bit file scales by 65535, not 255.
+    const auto pgm = root / "gray16.pgm";
+    {
+        std::ofstream out(pgm, std::ios::binary);
+        out << "P5\n1 1\n65535\n";
+        out.put(static_cast<char>(0x80));
+        out.put(0);
+    }
+    std::vector<float> data;
+    int width = 0, height = 0, channels = 0;
+    Check(cyxwiz::ImageUtils::LoadImage(pgm.string(), data, width, height, channels) && channels == 3 &&
+              data.size() == 3 && std::abs(data[0] - 32768.0f / 65535.0f) < 0.001f,
+          "a 16-bit grayscale pixel 32768 reads as 0.5 in R, G, B");
+}
+
 void TestAudioBatcher(const fs::path& root) {
     const auto audio_root = root / "audio";
     WriteMonoWav16(audio_root / "class_a" / "a0.wav", MakeWave(0), 8000);
@@ -286,6 +354,7 @@ int main() {
     fs::create_directories(root);
 
     TestImageBatcher(root);
+    TestGrayscaleImages(root);
     TestAudioBatcher(root);
 
     fs::remove_all(root);

@@ -23,21 +23,23 @@ bool ImageUtils::LoadImage(const std::string& path,
 
     width = img.cols;
     height = img.rows;
-    channels = img.channels();
 
-    // Convert BGR to RGB if color image
-    if (channels == 3 || channels == 4) {
-        if (channels == 4) {
-            cv::cvtColor(img, img, cv::COLOR_BGRA2RGB);
-            channels = 3;  // Drop alpha channel
-        } else {
-            cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
-        }
+    // Always RGB: a grayscale file in a colour dataset was kept at one
+    // channel, and the batcher (H x W x 3 per sample) then gave it zeros.
+    switch (img.channels()) {
+        case 1: cv::cvtColor(img, img, cv::COLOR_GRAY2RGB); break;
+        case 3: cv::cvtColor(img, img, cv::COLOR_BGR2RGB); break;
+        case 4: cv::cvtColor(img, img, cv::COLOR_BGRA2RGB); break;  // alpha dropped
+        default:
+            spdlog::error("ImageUtils: {} has {} channels; expected 1, 3 or 4", path, img.channels());
+            return false;
     }
+    channels = 3;
 
-    // Convert to float [0, 1]
+    // Float in [0, 1], whatever the depth (8- or 16-bit files).
+    const double scale = img.depth() == CV_16U ? 1.0 / 65535.0 : img.depth() == CV_8U ? 1.0 / 255.0 : 1.0;
     cv::Mat float_img;
-    img.convertTo(float_img, CV_32FC(channels), 1.0 / 255.0);
+    img.convertTo(float_img, CV_32FC3, scale);
 
     // Copy to output vector
     size_t num_pixels = width * height * channels;
