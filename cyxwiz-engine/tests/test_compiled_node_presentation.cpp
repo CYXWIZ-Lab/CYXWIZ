@@ -113,6 +113,10 @@ void CheckNer() {
 
     const auto concat = Card(ner, "Concat Word + POS", "Concatenate");
     Check(concat.kind == cyxwiz::CompiledStatusKind::Ok && concat.status == "Compiled", "NER concat compiled");
+    const auto unloaded = Card(ner, "Concat Word + POS", "Concatenate", false);
+    Check(unloaded.kind == cyxwiz::CompiledStatusKind::Pending && unloaded.status == "Compiled, data not loaded" &&
+              unloaded.status_note == "Data not loaded: shapes come from the saved data contract.",
+          "with the data not loaded the chip says so, as Compile reports it");
     Check(concat.role == "Layer 1 of 4: word + POS fusion (with Word Embedding and POS Embedding)",
           "fused layer role names both Embeddings: " + concat.role);
     Check(concat.input_sample == "[96, 2]" && concat.output_sample == "[96, 116]" &&
