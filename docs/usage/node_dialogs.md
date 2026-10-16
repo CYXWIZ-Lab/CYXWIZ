@@ -94,3 +94,24 @@ strip keeps the earlier load and says the last Apply failed.
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
 (which columns to load, then the rows to skip and the row limit),
 **Memory** and **Audit**.
+
+### Source: the file or folder, then how its rows are used
+
+**1. Source** has one field, **File or folder**, with **Browse file...**
+and **Browse folder...**. Under it, **Detected** says what it is:
+
+- a file: its format and columns (*CSV table, 30.0 MB, 3 columns: (unnamed),
+  statement, status*), with **Format options** (format, delimiter, header
+  row, decimal separator, quote character, missing values; a ZIP's member
+  list). Change the format only when the extension is wrong.
+- a folder: what its files are (*Image folder: flat folder, 25,000 images*,
+  or *2 class folders (cat, dog)*), with **Scan again**.
+
+**2. Use the rows as** offers only the uses that fit the source. A table
+file can be used as **Table** (a label column; every other column is an
+input feature), **Text** (a text column and a label column), **Token
+tagging** (token, tag, POS and sentence columns) or **Time series**. A
+folder of images is used as images (**Labels from**: class folders, or a
+flat folder and a labels CSV), a folder of audio as audio (labels, sample
+rate, length), a folder of text files as text. Training, validation and
+test roles come from the graph's Data Split, not from this node.

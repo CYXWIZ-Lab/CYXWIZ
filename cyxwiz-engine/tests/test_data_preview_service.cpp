@@ -2,6 +2,7 @@
 #include "../src/core/data_preview_service.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/gui/data_input_capabilities.h"
 #include "../src/gui/data_input_preview.h"
 #include "../src/gui/data_preview_page_cache.h"
 
@@ -248,6 +249,30 @@ int main() {
               auto_tsv.rows == std::vector<std::vector<std::string>>{{"1", "2"}},
           "Auto TSV preview must use tabs, not the default comma");
     fs::remove(tsv_path);
+
+    // A folder's kind and classes (TOFIX129 B-10).
+    {
+        const fs::path folder = fs::temp_directory_path() / "cyxwiz_scan_folder";
+        fs::remove_all(folder);
+        for (const char* file : {"cat/a.jpg", "cat/b.png", "dog/c.jpg", "dog/deep/d.jpeg", "notes/readme.txt"}) {
+            fs::create_directories((folder / file).parent_path());
+            std::ofstream(folder / file) << "x";
+        }
+        const auto scan = gui::data_input::ScanFolder(folder.string());
+        Check(scan.kind == gui::data_input::FolderKind::Images && scan.files == 4 &&
+                  scan.class_names == std::vector<std::string>({"cat", "dog"}),
+              "a folder of image class folders reads as Images with classes cat and dog");
+        fs::remove_all(folder);
+        fs::create_directories(folder);
+        for (const char* file : {"a.wav", "b.wav", "labels.csv"}) std::ofstream(folder / file) << "x";
+        const auto flat = gui::data_input::ScanFolder(folder.string());
+        Check(flat.kind == gui::data_input::FolderKind::Audio && flat.files == 2 && flat.class_names.empty(),
+              "a flat folder of clips reads as Audio without classes");
+        Check(gui::data_input::ScanFolder((folder / "missing").string()).kind ==
+                  gui::data_input::FolderKind::Unknown,
+              "a missing folder is Unknown");
+        fs::remove_all(folder);
+    }
 
     // The quote character (TOFIX129 B-3): a single quote groups the comma,
     // an empty quote reads quotes as text; the preview, the applied-settings

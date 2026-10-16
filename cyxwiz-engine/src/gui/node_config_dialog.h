@@ -274,7 +274,20 @@ private:
     void RenderRowsAndColumnsTab();
 
     // File source sub-renderers
-    void RenderTabularOptions();
+    // Source tab (B-10): one file-or-folder field; a folder's files say what
+    // it is; a file's rows get a use (table, text, token tagging, time series).
+    void SetSource(const std::string& path);
+    void RescanFolder();
+    void RenderFormatOptions();
+    void RenderLabelColumn();
+    void RenderTextColumns();
+    void RenderImageLabels();
+    void RenderAudioLoading();
+    void RenderDatasetRoleNote();
+    char source_buf_[512] = {};
+    bool format_options_open_ = false;
+    data_input::FolderScan folder_scan_;
+    std::string folder_scan_path_;
     bool IsHdf5Source() const;
     void SyncHdf5InspectorSource();
     void RestoreOriginalHdf5Source();
@@ -296,9 +309,6 @@ private:
     void RenderSequenceColumns();
     void RenderSequenceSummary();
     void ApplySequenceSettings();
-    void RenderImageOptions();
-    void RenderAudioOptions();
-    void RenderTextOptions();
     // "Preprocessing (done by nodes)": the nodes after this input that do
     // its preprocessing (text: tokenizer / vectorizers / Word Embeddings;
     // images: Resize, Normalize; audio: Spectrogram / Mel / MFCC), with Open
@@ -369,7 +379,7 @@ private:
     int sample_rate_ = 16000;
     float duration_sec_ = 5.0f;     // pad/truncate to this length
 
-    // STATE: Text options (Phase 3). Populated by RenderTextOptions
+    // STATE: Text options (Phase 3). Populated by RenderTextColumns
     // and consumed by the text branch of Apply(). The dialog's text
     // category targets CSV / JSON / TXT files with an explicit text
     // column and optional label column — the tokenizer then builds
@@ -383,7 +393,7 @@ private:
     // "SingleFile" meaning CSV/JSON/TXT picked via the shared file
     // picker (the default — this is how most Kaggle text datasets
     // ship) and "CorpusSubdirs" meaning folder/<class>/*.txt with a
-    // folder picker exposed inline in RenderTextOptions. The underlying
+    // folder chosen in Source. The underlying
     // TextDataset class auto-detects file vs directory at construction
     // time, so the dispatch is purely a dialog-level choice about
     // which picker to show.
