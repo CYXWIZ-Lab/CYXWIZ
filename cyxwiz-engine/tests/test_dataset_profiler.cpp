@@ -1,6 +1,7 @@
 // Dataset profiler (TOFIX134 P3.5): known numbers on a small table through
 // the real query engine.
 
+#include "../src/core/data_budget.h"
 #include "../src/core/dataset_profiler.h"
 
 #include <arrow/api.h>
@@ -107,6 +108,21 @@ int main() {
         stopped.should_stop = [] { return true; };
         Check(ProfileTable("Spotify", run, stopped).error == "Cancelled.", "cancellation");
         Check(!ProfileTable("Nope", run).ok(), "an unknown table is an error");
+
+        // Exact counts hold every value (DuckDB cannot spill them all): over a
+        // quarter of the data budget the profile is approximate (TOFIX154; a
+        // 5 M-row table on disk ran out of memory): top values from
+        // approx_top_k counted exactly, duplicate rows not counted.
+        SetDataBudgetBytes(1);
+        DatasetProfile approximate = ProfileTable("Spotify", run, options);
+        SetDataBudgetBytes(0);
+        Check(approximate.ok() && !approximate.exact && approximate.rows == 11,
+              "over the budget: approximate, 11 rows (" + approximate.error + ")");
+        Check(approximate.Find("genre")->facts.distinct == 3 && approximate.Find("popularity")->max == 100,
+              "approximate counts of a small table are still right");
+        const auto& top = approximate.Find("genre")->top;
+        Check(!top.empty() && top[0].first == "pop" && top[0].second == 5, "approximate top values are counted exactly");
+        Check(!approximate.duplicates_known, "an approximate profile does not count duplicate rows");
     }
     {
         // A table in memory (a query's result) is profiled the same way, on a

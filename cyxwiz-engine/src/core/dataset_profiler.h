@@ -12,8 +12,13 @@
 // outliers (1.5 x IQR), a 20-bin histogram, the top 10 values, text length,
 // and the share of values that read as dates or file paths (for roles). Per
 // table: duplicate rows and the strongest correlations.
-// Wide tables (more than kExactColumns columns) use DuckDB's approximate
-// distinct counts and quartiles; the profile says so (exact = false).
+// Wide tables (more than kExactColumns columns), and tables whose values
+// take more than a quarter of the data budget (exact distinct counts,
+// quartiles, top values and duplicate rows hold every value, and DuckDB
+// cannot spill all of them; TOFIX154), are profiled approximately: DuckDB's
+// approximate distinct counts and quartiles, top values found by
+// approx_top_k and then counted exactly, duplicate rows not counted. The
+// profile says so (exact = false).
 
 #include "dataset_contract.h"
 #include "session_query_engine.h"
@@ -70,6 +75,7 @@ struct ProfileOptions {
 using QueryRunner = std::function<QueryResult(const QueryRequest&)>;
 
 constexpr size_t kExactColumns = 64;      // beyond this many columns: approximate distinct counts and quartiles
+constexpr size_t kExactBytesPerValue = 16; // what an exact count holds per value, plus a text's own bytes
 constexpr size_t kDetailColumns = 200;    // histograms, top values: the first this many columns
 constexpr size_t kCorrelationColumns = 30;
 

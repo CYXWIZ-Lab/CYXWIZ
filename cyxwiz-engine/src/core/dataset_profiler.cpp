@@ -1,5 +1,7 @@
 #include "dataset_profiler.h"
 
+#include "data_budget.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -125,7 +127,24 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
         p.error = "'" + table + "' has no columns.";
         return p;
     }
-    const bool wide = p.columns.size() > kExactColumns;
+    // Exact counts keep every value in memory, which DuckDB cannot always
+    // spill: a table whose values take more than a quarter of the data
+    // budget is profiled approximately, like a wide one. One streaming pass
+    // measures it (rows, and the bytes of its texts).
+    bool wide = p.columns.size() > kExactColumns;
+    if (!wide) {
+        std::string sql = "SELECT count(*) AS n";
+        for (size_t i = 0; i < p.columns.size(); ++i)
+            if (p.columns[i].facts.type == ColumnFacts::Type::Text)
+                sql += ", coalesce(sum(strlen(" + Q::QuoteIdentifier(p.columns[i].facts.name) + ")), 0) AS t" + std::to_string(i);
+        QueryResult measured = query(sql + from);
+        if (!measured.ok) return p;
+        uint64_t bytes = static_cast<uint64_t>(AsCount(Cell(measured.table, "n"))) * p.columns.size() * kExactBytesPerValue;
+        for (size_t i = 0; i < p.columns.size(); ++i)
+            if (p.columns[i].facts.type == ColumnFacts::Type::Text)
+                bytes += static_cast<uint64_t>(AsCount(Cell(measured.table, "t" + std::to_string(i))));
+        wide = bytes > DataResultThresholdBytes();
+    }
     p.exact = !wide;
 
     // 2. Counts, distinct values, ranges, quartiles, text length (in batches of columns).
@@ -244,8 +263,26 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
         auto& c = p.columns[i];
         const std::string col = Q::QuoteIdentifier(c.facts.name);
         if (!c.numeric || c.facts.distinct <= 50) {
-            QueryResult r = query("SELECT CAST(" + col + " AS VARCHAR) AS v, count(*) AS n" + from + " WHERE " + col +
-                                  " IS NOT NULL GROUP BY 1 ORDER BY n DESC, v LIMIT " + std::to_string(kTopValues));
+            // Approximate: approx_top_k's candidates (fixed memory), each
+            // then counted exactly; a GROUP BY over every value would not fit.
+            std::string where = " WHERE " + col + " IS NOT NULL";
+            std::vector<QueryParam> candidates;
+            if (!p.exact) {
+                // One row per candidate (results carry nested types as text).
+                QueryResult k = query("SELECT unnest(approx_top_k(CAST(" + col + " AS VARCHAR), " + std::to_string(kTopValues) +
+                                      ")) AS v" + from);
+                if (!k.ok) return p;
+                std::string in;
+                for (int64_t row = 0; k.table && row < k.table->num_rows(); ++row) {
+                    const auto value = Cell(k.table, "v", row);
+                    if (!value) continue;
+                    in += in.empty() ? "?" : ", ?";
+                    candidates.push_back(QueryParam::Of(AsText(value)));
+                }
+                where += in.empty() ? std::string(" AND FALSE") : " AND CAST(" + col + " AS VARCHAR) IN (" + in + ")";
+            }
+            QueryResult r = query("SELECT CAST(" + col + " AS VARCHAR) AS v, count(*) AS n" + from + where +
+                                  " GROUP BY 1 ORDER BY n DESC, v LIMIT " + std::to_string(kTopValues), std::move(candidates));
             if (!r.ok) return p;
             for (int64_t row = 0; row < r.table->num_rows(); ++row)
                 c.top.emplace_back(AsText(Cell(r.table, "v", row)), AsCount(Cell(r.table, "n", row)));
@@ -284,8 +321,8 @@ DatasetProfile ProfileTable(const std::string& table, const QueryRunner& run, co
         for (size_t j = b; j < end; ++j) p.columns[nums[j]].outliers = AsCount(Cell(r.table, "o" + std::to_string(nums[j])));
     }
 
-    // 5. Duplicate rows (narrow enough tables).
-    if (p.columns.size() <= kDetailColumns && !stop()) {
+    // 5. Duplicate rows (narrow enough tables, profiled exactly).
+    if (p.exact && p.columns.size() <= kDetailColumns && !stop()) {
         progress(0.92f, "Looking for duplicate rows");
         QueryResult r = query("SELECT count(*) AS n FROM (SELECT DISTINCT *" + from + ")");
         if (!r.ok) return p;
