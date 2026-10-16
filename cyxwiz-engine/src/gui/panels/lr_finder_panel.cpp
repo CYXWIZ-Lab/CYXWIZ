@@ -1,6 +1,7 @@
 #include "lr_finder_panel.h"
 #include "../node_editor.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -163,7 +164,7 @@ void LRFinderPanel::RenderProgress() {
     ImGui::Text("Iteration: %d / %d", current, num_iterations_);
 
     if (!status_message_.empty()) {
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", status_message_.c_str());
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "%s", status_message_.c_str());
     }
 }
 
@@ -199,14 +200,14 @@ void LRFinderPanel::RenderResults() {
 
         // Raw loss
         if (!show_smoothed_ || smoothed_losses_.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(0.4f, 0.6f, 1.0f, 0.7f), 1.5f);
+            ImPlot::SetNextLineStyle(ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.7f), 1.5f);
             ImPlot::PlotLine("Loss", learning_rates_.data(), losses_.data(),
                             static_cast<int>(losses_.size()));
         }
 
         // Smoothed loss
         if (show_smoothed_ && !smoothed_losses_.empty()) {
-            ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), 2.0f);
+            ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 1), 2.0f);
             ImPlot::PlotLine("Smoothed Loss", learning_rates_.data(), smoothed_losses_.data(),
                             static_cast<int>(smoothed_losses_.size()));
         }
@@ -215,18 +216,18 @@ void LRFinderPanel::RenderResults() {
         if (suggested_lr_ > 0.0f) {
             double suggested_arr[] = {static_cast<double>(suggested_lr_), static_cast<double>(suggested_lr_)};
             double y_range[] = {0.0, static_cast<double>(min_loss_ * 3)};
-            ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextLineStyle(ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotLine("Suggested LR", suggested_arr, y_range, 2);
 
             // Annotation
             ImPlot::Annotation(suggested_lr_, min_loss_ * 1.5,
-                              ImVec4(1.0f, 0.5f, 0.0f, 1.0f), ImVec2(10, -10), true,
+                              ui::CurrentTokens().accent, ImVec2(10, -10), true,
                               "Suggested: %.2e", suggested_lr_);
         }
 
         // Mark min loss
         if (min_loss_lr_ > 0.0f) {
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ui::SeriesColour(ui::CurrentTokens(), 2));
             ImPlot::PlotScatter("Min Loss", &min_loss_lr_, &min_loss_, 1);
         }
 
@@ -257,7 +258,7 @@ void LRFinderPanel::RenderSuggestions() {
 
     if (suggested_lr_ > 0.0f) {
         // Main suggestion
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().success);
         ImGui::Text("Recommended Learning Rate: %.2e", suggested_lr_);
         ImGui::PopStyleColor();
 
@@ -300,7 +301,7 @@ void LRFinderPanel::RenderSuggestions() {
             spdlog::info("Copied LR to clipboard: {}", buffer);
         }
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().warning,
                           "Could not determine optimal learning rate.");
         ImGui::TextWrapped(
             "The loss curve may not have a clear minimum. Try:\n"

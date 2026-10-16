@@ -1,5 +1,9 @@
 #include "pr_curve_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -20,16 +24,16 @@ void PRCurvePanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_CHART_LINE) + " Precision-Recall Curve###PRCurvePanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("pr_curve", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         if (pr_result_.success) {
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::Text("AP %.4f", pr_result_.average_precision);
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "%d points", static_cast<int>(pr_result_.precision.size()));
             if (ImGui::BeginTabBar("PRTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " PR Curve")) {
                     RenderPRCurve();
@@ -46,78 +50,59 @@ void PRCurvePanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("Select true labels and prediction scores, then click Compute.");
+            ui::EmptyState(ICON_FA_CHART_LINE, "No PR curve yet",
+                           "Pick the true labels and the prediction scores, then Compute PR Curve.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void PRCurvePanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("pr_curve_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     if (!column_names_.empty()) {
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_TAGS " Column Selection");
-        ImGui::Spacing();
-
+        ui::SettingsSection("Columns");
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) col_names_c.push_back(name.c_str());
 
-        ImGui::Combo("True Labels (0/1)", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Prediction Scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("True labels (0 / 1)");
+        ImGui::Combo("##true_labels", &true_label_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        ui::FieldLabel("Prediction scores");
+        ImGui::Combo("##scores", &score_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_CALCULATOR " Compute PR Curve", ImVec2(-1, 30))) {
+        if (ui::PrimaryButton("Compute PR Curve", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             ComputePRCurve();
         }
     }
 
-    if (pr_result_.success) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text(ICON_FA_CIRCLE_INFO " Results");
-        ImGui::BulletText("Avg Precision: %.4f", pr_result_.average_precision);
-        ImGui::BulletText("Points: %d", static_cast<int>(pr_result_.precision.size()));
-    }
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void PRCurvePanel::RenderPRCurve() {
     if (!pr_result_.success) return;
 
-    ImGui::Text("Precision-Recall Curve (AP = %.4f)", pr_result_.average_precision);
-    ImGui::Spacing();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     if (ImPlot::BeginPlot("##PRCurve", ImVec2(-1, -1))) {
         ImPlot::SetupAxes("Recall", "Precision");
-        ImPlot::SetupAxisLimits(ImAxis_X1, 0, 1);
-        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1);
+        // A little past [0, 1], so curve segments along x = 0 and y = 1 are
+        // not hidden under the plot frame.
+        ImPlot::SetupAxisLimits(ImAxis_X1, -0.02, 1.02);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.02, 1.02);
 
         // PR curve
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.5f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("PR", pr_result_.recall.data(), pr_result_.precision.data(), static_cast<int>(pr_result_.recall.size()));
 
         // Shade area under curve
-        ImPlot::SetNextFillStyle(ImVec4(0.0f, 0.5f, 1.0f, 0.2f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
         ImPlot::PlotShaded("AP Area", pr_result_.recall.data(), pr_result_.precision.data(), static_cast<int>(pr_result_.recall.size()), 0);
 
         // Iso-F1 curves
@@ -131,7 +116,7 @@ void PRCurvePanel::RenderPRCurve() {
                 }
             }
             if (!iso_r.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.7f, 0.7f, 0.7f, 0.5f), 1.0f);
+                ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.5f), 1.0f);
                 char label[32];
                 snprintf(label, sizeof(label), "F1=%.1f", f1_val);
                 ImPlot::PlotLine(label, iso_r.data(), iso_p.data(), static_cast<int>(iso_r.size()));
@@ -144,6 +129,8 @@ void PRCurvePanel::RenderPRCurve() {
 
 void PRCurvePanel::RenderF1Curve() {
     if (!pr_result_.success || f1_scores_.empty()) return;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text("F1 Score vs Threshold");
     ImGui::Spacing();
@@ -191,11 +178,11 @@ void PRCurvePanel::RenderF1Curve() {
             sorted_f1[i] = plot_f1[order[i]];
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.8f, 0.2f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
         ImPlot::PlotLine("F1", sorted_t.data(), sorted_f1.data(), static_cast<int>(sorted_t.size()));
 
         // Mark best point
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, t.accent_text, 2, t.accent_text);
         ImPlot::PlotScatter("Best", &best_threshold, &best_f1, 1);
 
         ImPlot::EndPlot();
@@ -213,20 +200,21 @@ void PRCurvePanel::RenderMetrics() {
     ImGui::Spacing();
 
     // AP interpretation
+    const ui::Tokens& t = ui::CurrentTokens();
     const char* interpretation;
     ImVec4 color;
     if (pr_result_.average_precision >= 0.9) {
         interpretation = "Excellent";
-        color = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+        color = t.success;
     } else if (pr_result_.average_precision >= 0.7) {
         interpretation = "Good";
-        color = ImVec4(0.6f, 0.8f, 0.0f, 1.0f);
+        color = ui::Mix(t.success, t.warning, 0.5f);
     } else if (pr_result_.average_precision >= 0.5) {
         interpretation = "Fair";
-        color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+        color = t.warning;
     } else {
         interpretation = "Poor";
-        color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        color = t.error;
     }
 
     ImGui::TextColored(color, "Interpretation: %s", interpretation);
@@ -275,12 +263,8 @@ void PRCurvePanel::RenderMetrics() {
     }
 }
 
-void PRCurvePanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void PRCurvePanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     column_names_ = current_table_->GetHeaders();
     true_label_column_ = 0;
     int max_col = static_cast<int>(column_names_.size()) - 1;

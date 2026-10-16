@@ -1,5 +1,10 @@
 #include "kmeans_panel.h"
+#include <cyxwiz/device.h>
+#include "../../core/async_task_manager.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_analyzer.h"
 #include <imgui.h>
@@ -8,30 +13,6 @@
 #include <algorithm>
 
 namespace cyxwiz {
-
-// Cluster colors (distinct colors for up to 20 clusters)
-const ImU32 KMeansPanel::CLUSTER_COLORS[MAX_CLUSTERS] = {
-    IM_COL32(31, 119, 180, 255),   // Blue
-    IM_COL32(255, 127, 14, 255),   // Orange
-    IM_COL32(44, 160, 44, 255),    // Green
-    IM_COL32(214, 39, 40, 255),    // Red
-    IM_COL32(148, 103, 189, 255),  // Purple
-    IM_COL32(140, 86, 75, 255),    // Brown
-    IM_COL32(227, 119, 194, 255),  // Pink
-    IM_COL32(127, 127, 127, 255),  // Gray
-    IM_COL32(188, 189, 34, 255),   // Olive
-    IM_COL32(23, 190, 207, 255),   // Cyan
-    IM_COL32(174, 199, 232, 255),  // Light Blue
-    IM_COL32(255, 187, 120, 255),  // Light Orange
-    IM_COL32(152, 223, 138, 255),  // Light Green
-    IM_COL32(255, 152, 150, 255),  // Light Red
-    IM_COL32(197, 176, 213, 255),  // Light Purple
-    IM_COL32(196, 156, 148, 255),  // Light Brown
-    IM_COL32(247, 182, 210, 255),  // Light Pink
-    IM_COL32(199, 199, 199, 255),  // Light Gray
-    IM_COL32(219, 219, 141, 255),  // Light Olive
-    IM_COL32(158, 218, 229, 255),  // Light Cyan
-};
 
 KMeansPanel::KMeansPanel() : Panel("K-Means Clustering", true) {
 }
@@ -44,59 +25,31 @@ KMeansPanel::~KMeansPanel() {
 }
 
 void KMeansPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_BULLSEYE) + " K-Means Clustering###KMeansPanel").c_str(), &is_open_)) {
-        // Update available tables
-        if (data_registry_) {
-            available_tables_ = data_registry_->GetTableNames();
-        }
-
-        // Left panel - Configuration
-        ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);
-
+    if (ImGui::Begin((std::string(ICON_FA_BULLSEYE) + " K-Means Clustering###KMeansPanel").c_str(), &visible_)) {
+        ui::BeginSettingsColumn("kmeans", 320.0f);
         RenderDataSelector();
-        ImGui::Separator();
         RenderParameters();
-        ImGui::Separator();
         RenderElbowAnalysis();
-
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        // Right panel - Results
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
-
+        ui::BeginResultsArea();
         RenderResults();
-
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void KMeansPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Selection");
-    ImGui::Spacing();
-
-    // Table selector
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
+    ui::SettingsSection("Data");
+    source_.Render("kmeans_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     // Column selection
     if (!column_names_.empty()) {
-        ImGui::Text("Feature Columns:");
-        ImGui::BeginChild("ColumnSelect", ImVec2(0, 150), true);
+        ui::SettingsSection("Columns");
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "Feature columns");
+        ui::BeginInsetList("##columns", 150);
 
         for (size_t i = 0; i < column_names_.size(); ++i) {
             bool selected = selected_columns_[i];
@@ -105,18 +58,23 @@ void KMeansPanel::RenderDataSelector() {
             }
         }
 
-        ImGui::EndChild();
+        ui::EndInsetList();
 
         // X/Y axis for scatter plot
-        ImGui::Text("Scatter Plot Axes:");
-
         std::vector<const char*> col_names_c;
         for (const auto& name : column_names_) {
             col_names_c.push_back(name.c_str());
         }
 
-        ImGui::Combo("X Axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
-        ImGui::Combo("Y Axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+        if (ImGui::BeginTable("##xy", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ui::FieldLabel("X axis");
+            ImGui::Combo("##x_axis", &x_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::TableNextColumn();
+            ui::FieldLabel("Y axis");
+            ImGui::Combo("##y_axis", &y_axis_column_, col_names_c.data(), static_cast<int>(col_names_c.size()));
+            ImGui::EndTable();
+        }
 
         // Optional label column
         std::vector<const char*> label_options = {"None"};
@@ -124,70 +82,80 @@ void KMeansPanel::RenderDataSelector() {
             label_options.push_back(name.c_str());
         }
         int label_idx = label_column_idx_ + 1;  // Offset for "None"
-        if (ImGui::Combo("Label Column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
+        ui::FieldLabel("Label column");
+        if (ImGui::Combo("##label_column", &label_idx, label_options.data(), static_cast<int>(label_options.size()))) {
             label_column_idx_ = label_idx - 1;
         }
     }
 }
 
 void KMeansPanel::RenderParameters() {
-    ImGui::Text(ICON_FA_SLIDERS " Parameters");
-    ImGui::Spacing();
+    ui::SettingsSection("Parameters");
 
-    ImGui::SliderInt("Number of Clusters (k)", &n_clusters_, 2, 20);
-    ImGui::SliderInt("Max Iterations", &max_iter_, 10, 1000);
-    ImGui::SliderInt("Initializations", &n_init_, 1, 20);
+    ui::FieldLabel("Number of clusters (k)");
+    ImGui::SliderInt("##n_clusters", &n_clusters_, 2, 20);
+    ui::FieldLabel("Max iterations");
+    ImGui::SliderInt("##max_iter", &max_iter_, 10, 1000);
+    ui::FieldLabel("Initializations");
+    ImGui::SliderInt("##n_init", &n_init_, 1, 20);
 
     const char* init_methods[] = {"Random", "K-Means++"};
-    ImGui::Combo("Initialization", &init_method_, init_methods, 2);
+    ui::FieldLabel("Initialization");
+    ImGui::Combo("##init_method", &init_method_, init_methods, 2);
 
     ImGui::Spacing();
 
     // Run button
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Run K-Means", ImVec2(-1, 30))) {
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "Clustering is running" : "Pick a dataset first";
+    if (ui::PrimaryButton("Run K-Means", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
         RunClustering();
     }
 
-    if (!can_run) ImGui::EndDisabled();
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Cancel button
     if (is_computing_) {
-        if (ImGui::Button(ICON_FA_STOP " Cancel", ImVec2(-1, 30))) {
+        if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
             cancel_requested_ = true;
         }
 
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         const int progress_total = progress_total_.load();
         if (progress_total > 0) {
-            ImGui::Text("Computing... %d / %d", progress_iteration_.load(), progress_total);
+            ImGui::TextWrapped("Computing... %d / %d", progress_iteration_.load(), progress_total);
         } else {
-            ImGui::Text("Computing... Iteration %d", progress_iteration_.load());
+            ImGui::TextWrapped("Computing... Iteration %d", progress_iteration_.load());
         }
-        ImGui::Text("Inertia: %.4f", progress_inertia_.load());
+        ImGui::TextWrapped("Inertia: %.4f", progress_inertia_.load());
+        ImGui::PopStyleColor();
     }
 
     if (!status_message_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
 void KMeansPanel::RenderElbowAnalysis() {
-    ImGui::Text(ICON_FA_CHART_LINE " Elbow Analysis");
-    ImGui::Spacing();
+    ui::SettingsSection("Elbow analysis");
 
-    ImGui::SliderInt("K Min", &elbow_k_min_, 1, 10);
-    ImGui::SliderInt("K Max", &elbow_k_max_, elbow_k_min_ + 1, 20);
-
-    bool can_run = !is_computing_ && !input_data_.empty();
-    if (!can_run) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS_CHART " Find Optimal K", ImVec2(-1, 25))) {
-        RunElbowAnalysis();
+    if (ImGui::BeginTable("##k_range", 2, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ui::FieldLabel("K min");
+        ImGui::SliderInt("##k_min", &elbow_k_min_, 1, 10);
+        ImGui::TableNextColumn();
+        ui::FieldLabel("K max");
+        ImGui::SliderInt("##k_max", &elbow_k_max_, elbow_k_min_ + 1, 20);
+        ImGui::EndTable();
     }
 
-    if (!can_run) ImGui::EndDisabled();
+    bool can_run = !is_computing_ && current_table_ != nullptr;
+    const char* run_reason = is_computing_ ? "Clustering is running" : "Pick a dataset first";
+    if (ui::SecondaryButton("Find Optimal K", can_run, run_reason, ui::ButtonSize::Regular, -FLT_MIN)) {
+        RunElbowAnalysis();
+    }
 
     // Show elbow result
     if (!elbow_result_.k_values.empty()) {
@@ -214,7 +182,8 @@ void KMeansPanel::RenderElbowAnalysis() {
 
 void KMeansPanel::RenderResults() {
     if (!result_.success) {
-        ImGui::Text("Run K-Means clustering to see results.");
+        ui::EmptyState(ICON_FA_BULLSEYE, "No clusters yet",
+                       "Pick a dataset and feature columns, then Run K-Means.");
         return;
     }
 
@@ -320,6 +289,8 @@ void KMeansPanel::RenderScatterPlot() {
         y_idx = (std::min)(1, static_cast<int>(input_data_[0].size()) - 1);
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     if (ImPlot::BeginPlot("##ScatterPlot", ImVec2(-1, -1))) {
         ImPlot::SetupAxes(column_names_[x_axis_column_].c_str(),
                          column_names_[y_axis_column_].c_str());
@@ -339,8 +310,8 @@ void KMeansPanel::RenderScatterPlot() {
             }
 
             if (!x_data.empty()) {
-                ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color);
+                ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4, color, IMPLOT_AUTO, color);
 
                 std::string label = "Cluster " + std::to_string(k);
                 ImPlot::PlotScatter(label.c_str(), x_data.data(), y_data.data(),
@@ -359,7 +330,7 @@ void KMeansPanel::RenderScatterPlot() {
                 }
             }
 
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, ImVec4(0, 0, 0, 1), 2);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross, 10, t.text_bright, 2, t.text_bright);
             ImPlot::PlotScatter("Centroids", cx.data(), cy.data(), static_cast<int>(cx.size()));
         }
 
@@ -378,6 +349,8 @@ void KMeansPanel::RenderCentroidsTable() {
         }
     }
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Cluster Centroids:");
     ImGui::Spacing();
 
@@ -395,7 +368,7 @@ void KMeansPanel::RenderCentroidsTable() {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImVec4 color = ImGui::ColorConvertU32ToFloat4(CLUSTER_COLORS[k % MAX_CLUSTERS]);
+            ImVec4 color = ui::SeriesColour(t, static_cast<size_t>(k));
             ImGui::TextColored(color, "%d", k);
 
             for (size_t f = 0; f < result_.centroids[k].size() && f < feature_names.size(); ++f) {
@@ -408,16 +381,8 @@ void KMeansPanel::RenderCentroidsTable() {
     }
 }
 
-void KMeansPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || selected_table_idx_ >= static_cast<int>(available_tables_.size())) {
-        return;
-    }
-
-    if (!data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void KMeansPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     // Get column names
     column_names_ = current_table_->GetHeaders();
     selected_columns_.assign(column_names_.size(), false);
@@ -448,9 +413,9 @@ void KMeansPanel::LoadSelectedData() {
     status_message_ = "Data loaded. Select columns and run clustering.";
 }
 
-void KMeansPanel::RunClustering() {
-    if (!current_table_ || is_computing_) return;
-
+// Rows of the selected columns that parse as numbers; false (with a
+// status message) when there is nothing to cluster.
+bool KMeansPanel::CollectInputData() {
     // Collect selected column indices
     std::vector<int> col_indices;
     for (size_t i = 0; i < selected_columns_.size(); ++i) {
@@ -461,7 +426,7 @@ void KMeansPanel::RunClustering() {
 
     if (col_indices.size() < 2) {
         status_message_ = "Please select at least 2 columns.";
-        return;
+        return false;
     }
 
     // Extract data
@@ -495,8 +460,13 @@ void KMeansPanel::RunClustering() {
 
     if (input_data_.empty()) {
         status_message_ = "No valid numeric data found.";
-        return;
+        return false;
     }
+    return true;
+}
+
+void KMeansPanel::RunClustering() {
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     // Start clustering in background thread
     is_computing_ = true;
@@ -510,36 +480,40 @@ void KMeansPanel::RunClustering() {
         compute_thread_.join();
     }
 
-    compute_thread_ = std::thread([this]() {
-        std::string init_method = (init_method_ == 1) ? "kmeans++" : "random";
-
-        result_ = Clustering::KMeans(
-            input_data_,
-            n_clusters_,
-            max_iter_,
+    // The worker gets copies of its inputs and hands the result to the UI
+    // thread; panel state is only touched there.
+    std::string init_method = (init_method_ == 1) ? "kmeans++" : "random";
+    compute_thread_ = std::thread([this, data = input_data_, k = n_clusters_, max_iter = max_iter_, init_method,
+                                   n_init = n_init_, tol = tolerance_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        KMeansResult result = Clustering::KMeans(
+            data,
+            k,
+            max_iter,
             init_method,
-            n_init_,
-            tolerance_,
+            n_init,
+            tol,
             0,  // Random seed
             [this](int iter, double inertia) {
                 progress_iteration_ = iter;
                 progress_inertia_ = inertia;
             }
         );
-
-        is_computing_ = false;
-
-        if (result_.success) {
-            status_message_ = "Clustering complete. " + std::to_string(result_.n_clusters) +
-                             " clusters found in " + std::to_string(result_.n_iterations) + " iterations.";
-        } else {
-            status_message_ = "Clustering failed: " + result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            result_ = std::move(result);
+            if (result_.success) {
+                status_message_ = "Clustering complete. " + std::to_string(result_.n_clusters) +
+                                 " clusters found in " + std::to_string(result_.n_iterations) + " iterations.";
+            } else {
+                status_message_ = "Clustering failed: " + result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 
 void KMeansPanel::RunElbowAnalysis() {
-    if (!current_table_ || is_computing_ || input_data_.empty()) return;
+    if (!current_table_ || is_computing_ || !CollectInputData()) return;
 
     is_computing_ = true;
     cancel_requested_ = false;
@@ -552,25 +526,27 @@ void KMeansPanel::RunElbowAnalysis() {
         compute_thread_.join();
     }
 
-    compute_thread_ = std::thread([this]() {
-        elbow_result_ = Clustering::ComputeElbowAnalysis(
-            input_data_,
-            elbow_k_min_,
-            elbow_k_max_,
+    compute_thread_ = std::thread([this, data = input_data_, k_min = elbow_k_min_, k_max = elbow_k_max_]() {
+        Device::ActivateProcessDeviceOnThisThread();
+        ElbowAnalysis result = Clustering::ComputeElbowAnalysis(
+            data,
+            k_min,
+            k_max,
             [this](int current, int total) {
                 progress_iteration_ = current;
                 progress_total_ = total;
             }
         );
-
-        is_computing_ = false;
-
-        if (elbow_result_.success) {
-            n_clusters_ = elbow_result_.suggested_k;
-            status_message_ = "Elbow analysis complete. Suggested K: " + std::to_string(elbow_result_.suggested_k);
-        } else {
-            status_message_ = "Elbow analysis failed: " + elbow_result_.error_message;
-        }
+        AsyncTaskManager::Instance().PostToMainThread(alive_, [this, result = std::move(result)]() mutable {
+            elbow_result_ = std::move(result);
+            if (elbow_result_.success) {
+                n_clusters_ = elbow_result_.suggested_k;
+                status_message_ = "Elbow analysis complete. Suggested K: " + std::to_string(elbow_result_.suggested_k);
+            } else {
+                status_message_ = "Elbow analysis failed: " + elbow_result_.error_message;
+            }
+            is_computing_ = false;
+        });
     });
 }
 

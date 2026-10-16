@@ -24,6 +24,12 @@ option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and back
 set(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR "" CACHE PATH
     "Release-signed trust, catalog, and manifest bundle staged below runtime/")
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
+# Before any add_subdirectory: add_test() in a directory processed before
+# enable_testing() is dropped, which hid every contract test registered
+# from cyxwiz-engine (cmake/CyxWizInstallerTargets.cmake) from ctest.
+if(CYXWIZ_BUILD_TESTS)
+    enable_testing()
+endif()
 option(CYXWIZ_ENABLE_SENTENCEPIECE "Enable optional SentencePiece tokenizer provider" OFF)
 if(CYXWIZ_ENABLE_SENTENCEPIECE)
     message(STATUS
@@ -36,7 +42,6 @@ option(CYXWIZ_ENABLE_OPENCL "Enable OpenCL support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_ONNX "Enable ONNX Runtime support" ON)
 option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
 option(CYXWIZ_ENABLE_PYTORCH "Enable LibTorch for the PyTorch parity oracle tests and the server node's optional TorchScript model import; never an engine compute dependency (docs/architecture/backend-compute-frameworks.md)" ON)
-option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
 option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 option(CYXWIZ_BUILD_ASSISTANT_PLUGIN "Build the experimental CyxWiz assistant plugin" OFF)
 option(CYXWIZ_BUILD_MUJOCO_PLUGIN "Build the optional MuJoCo simulation plugin" OFF)
@@ -48,10 +53,6 @@ if(WIN32)
 elseif(APPLE)
     set(CYXWIZ_PLATFORM "macOS")
     add_compile_definitions(CYXWIZ_PLATFORM_MACOS)
-elseif(ANDROID)
-    set(CYXWIZ_PLATFORM "Android")
-    add_compile_definitions(CYXWIZ_PLATFORM_ANDROID)
-    set(CYXWIZ_ANDROID_BUILD ON)
 elseif(UNIX)
     set(CYXWIZ_PLATFORM "Linux")
     add_compile_definitions(CYXWIZ_PLATFORM_LINUX)
@@ -482,27 +483,25 @@ if(CYXWIZ_HAS_ONNX)
     message(STATUS "MNIST ONNX test enabled")
 endif()
 
-# Platform-specific builds
-if(NOT CYXWIZ_ANDROID_BUILD)
-    if(CYXWIZ_BUILD_ENGINE)
-        add_subdirectory(redist/bootstrapper)
-        add_subdirectory(cyxwiz-engine)
-        target_link_libraries(cyxwiz-engine PRIVATE
-            cyxwiz-backend-pack-maintenance
-            cyxwiz-backend-pack-service
-            cyxwiz-runtime-bootstrap
-        )
-        include(CyxWizReleasePackaging)
-        cyxwiz_add_release_packaging_targets()
-    endif()
+# Applications
+if(CYXWIZ_BUILD_ENGINE)
+    add_subdirectory(redist/bootstrapper)
+    add_subdirectory(cyxwiz-engine)
+    target_link_libraries(cyxwiz-engine PRIVATE
+        cyxwiz-backend-pack-maintenance
+        cyxwiz-backend-pack-service
+        cyxwiz-runtime-bootstrap
+    )
+    include(CyxWizReleasePackaging)
+    cyxwiz_add_release_packaging_targets()
+endif()
 
-    if(CYXWIZ_BUILD_SERVER_NODE)
-        add_subdirectory(cyxwiz-server-node)
-    endif()
+if(CYXWIZ_BUILD_SERVER_NODE)
+    add_subdirectory(cyxwiz-server-node)
 endif()
 
 # Example plugins (shared libraries)
-if(CYXWIZ_BUILD_ENGINE AND NOT CYXWIZ_ANDROID_BUILD)
+if(CYXWIZ_BUILD_ENGINE)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
     add_subdirectory(plugins/examples/activation_nodes)
@@ -562,6 +561,5 @@ message(STATUS "  ONNX Runtime: ${CYXWIZ_HAS_ONNX}")
 message(STATUS "  ONNX Export: ${CYXWIZ_HAS_ONNX_EXPORT}")
 message(STATUS "  GGUF/llama.cpp: ${CYXWIZ_HAS_GGUF}")
 message(STATUS "  PyTorch/LibTorch: ${CYXWIZ_HAS_PYTORCH}")
-message(STATUS "  Android Build: ${CYXWIZ_ANDROID_BUILD}")
 message(STATUS "==========================================")
 message(STATUS "")

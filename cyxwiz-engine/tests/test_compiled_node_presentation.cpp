@@ -113,6 +113,10 @@ void CheckNer() {
 
     const auto concat = Card(ner, "Concat Word + POS", "Concatenate");
     Check(concat.kind == cyxwiz::CompiledStatusKind::Ok && concat.status == "Compiled", "NER concat compiled");
+    const auto unloaded = Card(ner, "Concat Word + POS", "Concatenate", false);
+    Check(unloaded.kind == cyxwiz::CompiledStatusKind::Pending && unloaded.status == "Compiled, data not loaded" &&
+              unloaded.status_note == "Data not loaded: shapes come from the saved data contract.",
+          "with the data not loaded the chip says so, as Compile reports it");
     Check(concat.role == "Layer 1 of 4: word + POS fusion (with Word Embedding and POS Embedding)",
           "fused layer role names both Embeddings: " + concat.role);
     Check(concat.input_sample == "[96, 2]" && concat.output_sample == "[96, 116]" &&
@@ -162,7 +166,12 @@ void CheckNer() {
     Check(!failed.issues.empty() && failed.issues.front().error &&
               failed.issues.front().message.find("Concatenate dim is 1") != std::string::npos,
           "the node's own compiler error is listed");
-    Check(failed.status_note == "1 error on this node. Shapes appear once the graph compiles.",
+    // Since 7f862079 (TOFIX140 A2) the branched-graph shape pass also reports
+    // the merge mismatch on the node: [96, 100] and [96, 16] differ outside dim 1.
+    Check(failed.issues.size() == 2 && failed.issues[1].error &&
+              failed.issues[1].message.find("Concatenate inputs differ outside dim 1") != std::string::npos,
+          "the node's shape-mismatch error is listed too");
+    Check(failed.status_note == "2 errors on this node. Shapes appear once the graph compiles.",
           "status names the node's error count: " + failed.status_note);
     Check(failed.role == "Word + POS fusion, rejected by the compiler (see below)",
           "a rejected fusion Concatenate says what it would have been: " + failed.role);
@@ -180,6 +189,16 @@ void CheckNer() {
     const auto not_compiled = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
                                                              IdNamed(ner.graph, "Dropout"), none);
     Check(not_compiled.status == "Not compiled yet" && !not_compiled.has_shapes, "before the first compile");
+
+    // Data Pipeline mode: no training compile, even with an older result around.
+    cyxwiz::CompiledNodeInputs pipeline = counting;
+    pipeline.state = cyxwiz::LiveCompileState::Failed;
+    pipeline.data_pipeline = true;
+    const auto pipeline_card = cyxwiz::BuildCompiledNodeCard(ner.graph.nodes, ner.graph.links,
+                                                             IdNamed(ner.graph, "Dropout"), pipeline);
+    Check(pipeline_card.status == "Not compiled for training" && !pipeline_card.has_shapes &&
+              pipeline_card.kind == cyxwiz::CompiledStatusKind::None,
+          "a Data Pipeline graph shows no training compile status");
 }
 
 void CheckBerean() {
@@ -203,12 +222,36 @@ void CheckBerean() {
     }
 }
 
+void CheckDataOnlyGraph() {
+    // A data recipe (a source and an SQL step, no model) is not a failed compile.
+    std::vector<gui::MLNode> nodes(2);
+    nodes[0].id = 1;
+    nodes[0].type = gui::NodeType::DataInput;
+    nodes[0].name = "Books";
+    nodes[1].id = 2;
+    nodes[1].type = gui::NodeType::SQLQuery;
+    nodes[1].name = "Paragraphs";
+    nodes[1].parameters = {{"query", "SELECT * FROM input"}, {"input_alias", "input"}, {"sql_contract_version", "1"}};
+    const std::vector<gui::NodeLink> links;
+    const auto config = cyxwiz::GraphCompiler{}.Compile(nodes, links, true);
+    Check(!config.is_valid, "a data-only graph does not compile for training");
+    cyxwiz::CompiledNodeInputs inputs;
+    inputs.state = cyxwiz::LiveCompileState::Failed;
+    inputs.config = &config;
+    const auto card = cyxwiz::BuildCompiledNodeCard(nodes, links, 2, inputs);
+    Check(card.status == "No model to compile" && card.kind == cyxwiz::CompiledStatusKind::None,
+          "a data step in a data-only graph is not shown as a failed compile: " + card.status);
+    Check(card.issues.empty() && card.no_shapes_text.find("rejected") == std::string::npos,
+          "training-graph complaints are not listed as the data step's errors");
+}
+
 }  // namespace
 
 int main() {
     CheckFormatting();
     CheckNer();
     CheckBerean();
+    CheckDataOnlyGraph();
     std::cout << "Compiled node presentation passed\n";
     return 0;
 }

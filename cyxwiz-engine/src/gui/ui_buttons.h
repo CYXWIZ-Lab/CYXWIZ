@@ -5,6 +5,8 @@
 // bordered secondary, text link, and danger. Each returns true when clicked
 // while enabled; a disabled button still shows `disabled_reason` on hover.
 
+struct ImVec4;
+
 namespace cyxwiz::ui {
 
 enum class ButtonSize { Small, Regular };
@@ -16,6 +18,11 @@ bool SecondaryButton(const char* label, bool enabled = true,
                      const char* disabled_reason = nullptr,
                      ButtonSize size = ButtonSize::Small, float width = 0.0f);
 bool LinkButton(const char* label, bool enabled = true);
+// Toolbar action: no fill until hovered; `on` gives it the secondary fill
+// (a panel that is shown, a toggle that is set). `text` (optional) colours
+// the label, e.g. a green run arrow.
+bool GhostButton(const char* label, bool enabled = true, const char* disabled_reason = nullptr,
+                 bool on = false, ButtonSize size = ButtonSize::Small, const ImVec4* text = nullptr);
 bool DangerButton(const char* label, bool enabled = true,
                   const char* disabled_reason = nullptr,
                   ButtonSize size = ButtonSize::Small);
@@ -33,10 +40,28 @@ float ChipButtonWidth(const char* label);
 // the selection changed; `selected` is updated.
 bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
 
+// Rounded status pill with a coloured dot (a kernel or service state).
+// Returns true when clicked.
+bool StatusPill(const char* id, const char* text, const ImVec4& dot);
+float StatusPillWidth(const char* text);
+
 // Width a ToggleChip will take.
 float ToggleChipWidth(const char* label, const char* count);
 
+// One of a row of filter chips where exactly one is chosen (Variable
+// Explorer: All, Tables, ...): accent fill when chosen, faint fill
+// otherwise, the count muted. Returns true when clicked.
+bool FilterChip(const char* id, const char* label, const char* count, bool chosen);
+float FilterChipWidth(const char* label, const char* count);
+
+// A tab of a row of jobs (Data Studio): the name, a dim caption under it, an
+// accent line under the chosen one; no fill. Returns true when clicked.
+bool JobTab(const char* id, const char* label, const char* caption, bool chosen);
+float JobTabWidth(const char* label, const char* caption);
+
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
+// Height a button will take, for reserving room below a growing widget.
+float ButtonHeight(ButtonSize size);
 
 }  // namespace cyxwiz::ui

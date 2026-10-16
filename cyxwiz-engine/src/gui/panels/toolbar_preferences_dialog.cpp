@@ -5,6 +5,8 @@
 #include "../ui_buttons.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
+#include "../../core/engine_config.h"
+#include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
 #include "../../core/route_qualification_service.h"
@@ -12,6 +14,7 @@
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <cstring>
@@ -48,21 +51,22 @@ const char* ArrayFireBackendIcon(DeviceType type) {
 }
 
 ImVec4 ArrayFireBackendColor(DeviceType type) {
+    const ui::Tokens& t = ui::CurrentTokens();
     switch (type) {
-        case DeviceType::CPU: return ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
-        case DeviceType::CUDA: return ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
-        case DeviceType::OPENCL: return ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
-        case DeviceType::ONEAPI: return ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
-        default: return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+        case DeviceType::CPU: return t.series[0];
+        case DeviceType::CUDA: return t.series[1];
+        case DeviceType::OPENCL: return t.series[2];
+        case DeviceType::ONEAPI: return t.series[3];
+        default: return t.text_dim;
     }
 }
 
 } // namespace
 
 void ToolbarPanel::RenderPreferencesDialog() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
-        // Note: shortcuts_ is initialized in RenderEditMenu() when Preferences is clicked
 
         // Python settings have been moved to PythonSettingsPanel
         // This initialization code is no longer needed
@@ -118,19 +122,49 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    ImGui::Text("Materialization Memory");
+                    ImGui::Text("Logs");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::Text("Hard limit (MB):");
-                    ImGui::SetNextItemWidth(160.0f);
-                    ImGui::InputInt("##materialization_memory_limit_mb",
-                                    &materialization_memory_limit_mb_,
-                                    256,
-                                    1024);
-                    materialization_memory_limit_mb_ = std::clamp(
-                        materialization_memory_limit_mb_, 0, 2000000);
-                    ImGui::TextDisabled(
-                        "0 uses the automatic available-RAM safety budget.");
+                    {
+                        // Engine-wide, applied and saved at once.
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        bool record_debug = engine_config.RecordDebugLogs();
+                        if (ImGui::Checkbox("Record Debug messages", &record_debug)) {
+                            engine_config.SetRecordDebugLogs(record_debug);
+                            engine_config.Save();
+                            spdlog::set_level(record_debug ? spdlog::level::debug : spdlog::level::info);
+                        }
+                        ImGui::TextDisabled("Shown in the Console under Debug and written to engine_log.txt. "
+                                            "Off: Info, warnings and errors only.");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Data");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // Engine-wide (it is about this PC), applied and saved
+                        // at once (TOFIX154).
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        int budget_mb = static_cast<int>(engine_config.DataBudgetBytes() >> 20);
+                        ImGui::Text("Data budget (MB):");
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::InputInt("##data_budget_mb", &budget_mb, 256, 1024)) {
+                            budget_mb = std::clamp(budget_mb, 0, 2000000);
+                            engine_config.SetDataBudgetBytes(static_cast<uint64_t>(budget_mb) << 20);
+                            engine_config.Save();
+                            cyxwiz::SetDataBudgetBytes(engine_config.DataBudgetBytes());
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled(
+                            "0 uses half of this PC's memory (%s). Now %s: tables over %s stay on disk, "
+                            "and a step that needs more than the budget stops before loading.",
+                            cyxwiz::FormatDataBytes(cyxwiz::DefaultDataBudgetBytes()).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str(),
+                            cyxwiz::FormatDataBytes(cyxwiz::DataResultThresholdBytes()).c_str());
+                        ImGui::PopTextWrapPos();
+                    }
 
                     ImGui::EndTabItem();
                 }
@@ -144,15 +178,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    ImGui::Text("Editor Theme:");
-                    ImGui::SetNextItemWidth(200);
-                    const char* theme_items[] = { "Dark", "Light", "Retro Blue", "Monokai", "Dracula", "One Dark", "GitHub" };
-                    int prev_theme = editor_theme_;
-                    if (ImGui::Combo("##editor_theme", &editor_theme_, theme_items, IM_ARRAYSIZE(theme_items))) {
-                        if (editor_theme_callback_ && editor_theme_ != prev_theme) {
-                            editor_theme_callback_(editor_theme_);
-                        }
-                    }
+                    // Code colours follow the Engine theme (TOFIX133 P1); there is
+                    // no separate editor theme any more.
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Code colours follow the Engine theme (View > Theme).");
+                    ImGui::PopTextWrapPos();
 
                     ImGui::Spacing();
                     ImGui::Spacing();
@@ -343,89 +373,13 @@ void ToolbarPanel::RenderPreferencesDialog() {
                 }
 
                 // ========== Keyboard Shortcuts Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts")) {
+                const ImGuiTabItemFlags shortcuts_flags =
+                    preferences_select_tab_ == "Shortcuts" ? ImGuiTabItemFlags_SetSelected
+                                                           : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts", nullptr, shortcuts_flags)) {
                     preferences_tab_ = 5;
-                    ImGui::Spacing();
-
-                    ImGui::TextDisabled("Double-click a shortcut to edit. Some shortcuts are system-level and cannot be changed.");
-                    ImGui::Spacing();
-
-                    // Table of shortcuts with category grouping
-                    if (ImGui::BeginTable("ShortcutsTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 320))) {
-                        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
-                        ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 150);
-                        ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableHeadersRow();
-
-                        std::string current_category = "";
-                        for (int i = 0; i < static_cast<int>(shortcuts_.size()); ++i) {
-                            auto& shortcut = shortcuts_[i];
-
-                            // Check if we're entering a new category
-                            if (shortcut.category != current_category) {
-                                current_category = shortcut.category;
-
-                                // Render category header row
-                                ImGui::TableNextRow();
-                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
-
-                                ImGui::TableNextColumn();
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                                ImGui::TextUnformatted(ICON_FA_FOLDER);
-                                ImGui::SameLine();
-                                ImGui::Text("%s", current_category.c_str());
-                                ImGui::PopStyleColor();
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextDisabled("---");
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextDisabled("---");
-                            }
-
-                            ImGui::TableNextRow();
-
-                            // Action column (indented to show hierarchy)
-                            ImGui::TableNextColumn();
-                            ImGui::Text("  %s", shortcut.action.c_str());
-
-                            // Shortcut column
-                            ImGui::TableNextColumn();
-                            if (editing_shortcut_index_ == i) {
-                                // Edit mode
-                                ImGui::SetNextItemWidth(-1);
-                                if (ImGui::InputText("##edit_shortcut", shortcut_edit_buffer_, sizeof(shortcut_edit_buffer_), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                                    shortcut.shortcut = shortcut_edit_buffer_;
-                                    editing_shortcut_index_ = -1;
-                                }
-                                if (ImGui::IsItemDeactivated() && !ImGui::IsItemActive()) {
-                                    editing_shortcut_index_ = -1;
-                                }
-                            } else {
-                                // Display mode
-                                if (shortcut.editable) {
-                                    if (ImGui::Selectable(shortcut.shortcut.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-                                        editing_shortcut_index_ = i;
-                                        strncpy(shortcut_edit_buffer_, shortcut.shortcut.c_str(), sizeof(shortcut_edit_buffer_) - 1);
-                                    }
-                                } else {
-                                    ImGui::TextDisabled("%s", shortcut.shortcut.c_str());
-                                }
-                            }
-
-                            // Description column
-                            ImGui::TableNextColumn();
-                            ImGui::TextDisabled("%s", shortcut.description.c_str());
-                        }
-
-                        ImGui::EndTable();
-                    }
-
-                    ImGui::Spacing();
-                    if (ImGui::Button("Reset to Defaults")) {
-                        shortcuts_.clear();  // Will be re-initialized on next open
-                    }
-
+                    preferences_select_tab_.clear();
+                    RenderShortcutsPreferences();
                     ImGui::EndTabItem();
                 }
 
@@ -455,15 +409,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             : "Currently Active Backend:");
                     ImGui::SameLine();
                     if (has_run_bound_device) {
-                        ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                        ImVec4 backend_color = t.text_dim;
                         if (active_run_trace.effective_backend == "arrayfire_cpu") {
-                            backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                            backend_color = t.series[0];
                         } else if (active_run_trace.effective_backend == "arrayfire_cuda") {
-                            backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                            backend_color = t.series[1];
                         } else if (active_run_trace.effective_backend == "arrayfire_opencl") {
-                            backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                            backend_color = t.series[2];
                         } else if (active_run_trace.effective_backend == "arrayfire_oneapi") {
-                            backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                            backend_color = t.series[3];
                         }
                         ImGui::TextColored(
                             backend_color,
@@ -528,38 +482,38 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         auto* current_device = cyxwiz::Device::GetCurrentDevice();
                         if (current_device) {
                             const char* backend_name = "Unknown";
-                            ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                            ImVec4 backend_color = t.text_dim;
                             switch (current_device->GetType()) {
                                 case cyxwiz::DeviceType::CPU:
                                     backend_name = "CPU";
-                                    backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                                    backend_color = t.series[0];
                                     break;
                                 case cyxwiz::DeviceType::CUDA:
                                     backend_name = "CUDA (NVIDIA)";
-                                    backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                                    backend_color = t.series[1];
                                     break;
                                 case cyxwiz::DeviceType::OPENCL:
                                     backend_name = "OpenCL";
-                                    backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                                    backend_color = t.series[2];
                                     break;
                                 case cyxwiz::DeviceType::ONEAPI:
                                     backend_name = "oneAPI";
-                                    backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                                    backend_color = t.series[3];
                                     break;
                                 case cyxwiz::DeviceType::METAL:
                                     backend_name = "Metal (unsupported)";
-                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    backend_color = t.text_dim;
                                     break;
                                 case cyxwiz::DeviceType::VULKAN:
                                     backend_name = "Vulkan (unsupported)";
-                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    backend_color = t.text_dim;
                                     break;
                                 default:
                                     break;
                             }
                             ImGui::TextColored(backend_color, "%s %s", ICON_FA_CIRCLE_CHECK, backend_name);
                         } else {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
+                            ImGui::TextColored(t.warning, "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
                         }
                         } catch (...) {
                             ImGui::TextDisabled("Unable to query");
@@ -575,29 +529,27 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
 
                     if (has_run_bound_device &&
-                        !active_run_trace.fallback_policy.empty()) {
+                        !active_run_trace.execution_policy.empty()) {
                         const bool run_is_strict =
-                            active_run_trace.fallback_policy ==
-                            "forbid_native_cpu_fallback";
+                            active_run_trace.execution_policy ==
+                            "strict";
                         ImGui::TextDisabled(
                             training_active ? "Current run" : "Last run");
                         ImGui::SameLine(130.0f);
                         ImGui::TextColored(
                             run_is_strict
-                                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                                : ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                                ? t.success
+                                : t.warning,
                             "%s",
-                            run_is_strict
-                                ? "Strict ArrayFire residency"
-                                : "Compatibility with recorded fallback");
+                            cyxwiz::RecordedExecutionPolicyDisplayName(
+                                active_run_trace.execution_policy));
                     }
 
                     const auto next_run_policy =
                         cyxwiz::GetNextRunExecutionPolicy();
                     const auto selected_policy =
                         next_run_policy.value_or(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     ImGui::TextDisabled("Next runs");
                     ImGui::SameLine(130.0f);
                     if (training_active) {
@@ -606,21 +558,22 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const bool compatibility_clicked = ImGui::RadioButton(
                         "Compatibility##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Compatibility);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Allow declared native CPU compatibility paths and record observed fallback");
+                            "May finish on ArrayFire's CPU backend when the selected GPU is not verified,\n"
+                            "runs stages the placement plan does not put on the device, and dumps the\n"
+                            "first batch's debug samples.");
                     }
                     ImGui::SameLine();
                     const bool strict_clicked = ImGui::RadioButton(
                         "Strict residency##execution_policy",
                         selected_policy ==
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback);
+                            cyxwiz::ExecutionPolicy::Strict);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "Reject non-ArrayFire placement before training and terminate on unexpected fallback");
+                            "Stays on the selected device: no ArrayFire CPU recovery, and the run is\n"
+                            "refused before training if any stage is not placed on the device.");
                     }
                     if (training_active) {
                         ImGui::EndDisabled();
@@ -628,7 +581,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const auto persist_policy = [&](auto policy,
                                                     const char* description) {
                         std::string persistence_error;
-                        if (!cyxwiz::UpdateDefaultFallbackPolicyAtomic(
+                        if (!cyxwiz::UpdateDefaultExecutionPolicyAtomic(
                                 cyxwiz::GetComputeRuntimeConfigPath(),
                                 policy,
                                 persistence_error)) {
@@ -646,14 +599,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     };
                     if (!training_active && compatibility_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                AllowNativeCpuFallback,
+                            cyxwiz::ExecutionPolicy::Compatibility,
                             "compatibility execution policy");
                     } else if (!training_active && strict_clicked) {
                         persist_policy(
-                            cyxwiz::ArrayFireFallbackPolicy::
-                                ForbidNativeCpuFallback,
-                            "strict ArrayFire residency policy");
+                            cyxwiz::ExecutionPolicy::Strict,
+                            "strict execution policy");
                     }
 
                     ImGui::Spacing();
@@ -670,14 +621,13 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         "Choose a candidate ArrayFire route. OK validates and commits it.");
                     if (training_active) {
                         ImGui::TextColored(
-                            ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                            t.warning,
                             "%s Training is active; device changes are disabled until the run finishes.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
                     } else {
                         ImGui::TextDisabled(
                             "The candidate remains local until you click OK.");
                     }
-                    ImGui::TextDisabled("Operator fallbacks are reported as native CPU fallback events.");
                     ImGui::Spacing();
 
                     // Initialize device list if needed
@@ -787,7 +737,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     // Device selection list
                     if (cached_devices_.empty()) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No compute devices found!");
+                        ImGui::TextColored(t.error, "No compute devices found!");
                     } else {
                         auto* active_device = cyxwiz::Device::GetCurrentDevice();
                         const auto pending_selection =
@@ -963,7 +913,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
                             ImGui::TextColored(
-                                ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                                t.warning,
                                 "%s This compute route is not authorized for normal training.",
                                 ICON_FA_TRIANGLE_EXCLAMATION);
                             ImGui::Separator();
@@ -1264,7 +1214,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         if (task_failed || !device_selection_error_.empty()) {
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextColored(
-                                ImVec4(1.0f, 0.48f, 0.45f, 1.0f),
+                                t.caution,
                                 "%s Verification did not complete: %s",
                                 ICON_FA_TRIANGLE_EXCLAMATION,
                                 task_failed
@@ -1310,7 +1260,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 std::replace(fastest_label.begin(),
                                              fastest_label.end(), '_', ' ');
                                 ImGui::TextColored(
-                                    ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
+                                    t.success,
                                     "%s Fastest verified route for the dense benchmark",
                                     ICON_FA_GAUGE_HIGH);
                                 ImGui::BulletText(
@@ -1504,7 +1454,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     nullptr,
                     ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::TextColored(
-                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                    t.error,
                     "%s Selection was not changed",
                     ICON_FA_TRIANGLE_EXCLAMATION);
                 ImGui::Separator();

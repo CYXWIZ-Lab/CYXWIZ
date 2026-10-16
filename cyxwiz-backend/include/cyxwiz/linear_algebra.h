@@ -131,7 +131,8 @@ public:
         const std::vector<std::vector<double>>& A
     );
 
-    // Matrix rank
+    // Matrix rank: singular values above tolerance * max(rows, cols) * the largest;
+    // the tolerance is at least the compute precision's epsilon.
     static ScalarResult Rank(
         const std::vector<std::vector<double>>& A,
         double tolerance = 1e-10

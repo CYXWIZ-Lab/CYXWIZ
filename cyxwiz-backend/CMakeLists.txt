@@ -5,27 +5,16 @@ project(cyxwiz-backend VERSION 0.1.0)
 # Add cmake module path for custom Find modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-# Find ArrayFire (needs to be installed separately)
-# Download from: https://arrayfire.com/download
+# ArrayFire is required: every computation runs on it (its CUDA, OpenCL or CPU
+# backend; TOFIX140). Download from: https://arrayfire.com/download
 find_package(ArrayFire QUIET)
-
 if(NOT ArrayFire_FOUND)
-    if(CYXWIZ_BUILD_ENGINE)
-        message(FATAL_ERROR
-            "ArrayFire is required when CYXWIZ_BUILD_ENGINE=ON. "
-            "Install ArrayFire and set ArrayFire_DIR to its CMake package "
-            "directory, or configure a backend-only build with "
-            "-DCYXWIZ_BUILD_ENGINE=OFF.")
-    endif()
-    message(WARNING
-        "ArrayFire not found. Building backend without ArrayFire because "
-        "CYXWIZ_BUILD_ENGINE=OFF; this is not the public Engine runtime path.")
-    message(STATUS "Download ArrayFire from: https://arrayfire.com/download")
-    set(CYXWIZ_HAS_ARRAYFIRE FALSE)
-else()
-    message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
-    set(CYXWIZ_HAS_ARRAYFIRE TRUE)
+    message(FATAL_ERROR
+        "ArrayFire is required: the backend computes on ArrayFire only (its CPU "
+        "backend is the CPU option). Install ArrayFire and set ArrayFire_DIR to "
+        "its CMake package directory.")
 endif()
+message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -148,7 +137,6 @@ set(BACKEND_SOURCES
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
     src/algorithms/arrayfire_host_materialization.cpp
-    src/algorithms/backend_placement_observation.cpp
     src/algorithms/providers/neural_provider_registry.cpp
     src/algorithms/providers/neural_device_interop.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
@@ -175,13 +163,12 @@ set(BACKEND_SOURCES
     src/algorithms/layers/embedding.cpp
     src/algorithms/layers/normalization.cpp
     src/algorithms/layers/layer_norm_arrayfire.cpp
+    src/algorithms/layers/group_norm_arrayfire.cpp
     src/algorithms/layers/rms_norm.cpp
     src/algorithms/layers/conv1d.cpp
-    src/algorithms/layers/conv1d_native.cpp
     src/algorithms/layers/conv2d.cpp
-    src/algorithms/layers/conv2d_native.cpp
+    src/algorithms/layers/depthwise_conv2d.cpp
     src/algorithms/layers/conv_transpose2d.cpp
-    src/algorithms/layers/conv_transpose2d_native.cpp
     src/algorithms/layers/upsampling.cpp
     src/algorithms/layers/pixel_shuffle.cpp
     src/algorithms/layers/dense.cpp
@@ -196,7 +183,6 @@ set(BACKEND_SOURCES
     src/algorithms/layers/lstm_state_parameters.cpp
     src/algorithms/layers/lstm_initialization.cpp
     src/algorithms/layers/lstm_backward.cpp
-    src/algorithms/layers/lstm_direction_helpers.cpp
     src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp
@@ -209,16 +195,29 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/tensor_modules.cpp
     src/algorithms/sequential/attention_modules.cpp
+    src/algorithms/sequential/volume_modules.cpp
+    src/algorithms/image/image_augmentation.cpp
+    src/algorithms/image/image_quality.cpp
     src/algorithms/sequential/transformer_modules.cpp
     src/algorithms/sequential/normalization_modules.cpp
     src/algorithms/sequential/spatial_normalization_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
-    src/algorithms/clustering.cpp
+    src/algorithms/analysis_device.cpp
     src/algorithms/clustering_kmeans.cpp
     src/algorithms/clustering_dbscan.cpp
     src/algorithms/clustering_hierarchical.cpp
     src/algorithms/clustering_gmm.cpp
+    src/algorithms/classic_ml_naive_bayes.cpp
+    src/algorithms/classic_ml_knn.cpp
+    src/algorithms/classic_ml_logistic.cpp
+    src/algorithms/classic_ml_svm.cpp
+    src/algorithms/classic_ml_svm_probability.cpp
+    src/algorithms/word_embeddings.cpp
+    src/algorithms/word2vec.cpp
+    src/algorithms/glove.cpp
+    src/algorithms/fasttext.cpp
+    src/algorithms/fasttext_bin.cpp
     src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
@@ -291,7 +290,6 @@ set(BACKEND_HEADERS
     include/cyxwiz/device.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
-    include/cyxwiz/backend_placement_observation.h
     include/cyxwiz/optimizers/adaptive.h
     include/cyxwiz/optimizers/adam.h
     include/cyxwiz/optimizers/lamb.h
@@ -405,209 +403,209 @@ if(WIN32)
     target_link_libraries(cyxwiz-backend PRIVATE ws2_32)
 endif()
 
-if(CYXWIZ_HAS_ARRAYFIRE)
-    target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
-    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
+target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
+# Marks code that links ArrayFire; only sources shared with the ArrayFire-free
+# installer (route qualification) still test it.
+target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
 
-    # Optional OpenCL neural-network provider (tofix68, device-keyed dispatch
-    # tenant #2): hand-written tiled OpenCL GEMMs + fused cell kernels behind
-    # the same INeuralNetworkProvider boundary as the NVIDIA provider. OFF by
-    # default; independent of CUDA (an OpenCL ICD is the only requirement).
-    option(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER
-           "Enable the optional OpenCL neural-network provider" OFF)
-    if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
-        find_package(OpenCL QUIET)
-        if(OpenCL_FOUND)
-            message(STATUS "OpenCL DNN provider enabled (OpenCL ${OpenCL_VERSION_STRING})")
-            target_sources(cyxwiz-backend PRIVATE
-                src/algorithms/providers/opencl_cell_provider.cpp
-            )
-            target_link_libraries(cyxwiz-backend PUBLIC OpenCL::OpenCL)
-            target_compile_definitions(cyxwiz-backend PUBLIC
-                CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
-            set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
-            # Optional CLBlast GEMMs (vcpkg manifest feature `opencl-clblast`).
-            # OFF by default; the provider's built-in tiled kernels remain the
-            # fallback at runtime even when CLBlast is linked.
-            option(CYXWIZ_ENABLE_OPENCL_CLBLAST
-                   "Use CLBlast GEMMs in the OpenCL neural provider" OFF)
-            if(CYXWIZ_ENABLE_OPENCL_CLBLAST)
-                find_package(CLBlast CONFIG QUIET)
-                if(CLBlast_FOUND)
-                    message(STATUS "OpenCL DNN provider: CLBlast GEMMs enabled")
-                    target_link_libraries(cyxwiz-backend PRIVATE clblast)
-                    target_compile_definitions(cyxwiz-backend PRIVATE
-                        CYXWIZ_HAS_OPENCL_CLBLAST)
-                else()
-                    message(WARNING
-                        "CYXWIZ_ENABLE_OPENCL_CLBLAST=ON but CLBlast was not "
-                        "found (install the vcpkg feature opencl-clblast) - "
-                        "using built-in GEMM kernels")
-                endif()
-            endif()
-        else()
-            message(WARNING
-                "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "
-                "found - provider disabled")
-            set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER FALSE)
-        endif()
-    endif()
-
-    # Optional oneAPI (SYCL) neural provider (tofix112 phase 5b, tenant #3):
-    # fused attention on ArrayFire's oneAPI backend. The kernels are a
-    # separate library built with the Intel DPC++ compiler (icx) and loaded
-    # at runtime by oneapi_sycl_provider.cpp, so cyxwiz-backend itself keeps
-    # building with the host compiler. OFF by default. The toolkit must be
-    # the SYCL generation ArrayFire's afoneapi links (sycl8 = oneAPI 2025.x).
-    option(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER
-           "Enable the optional oneAPI (SYCL) neural-network provider" OFF)
-    if(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER)
-        set(_cyxwiz_oneapi_default "")
-        if(DEFINED ENV{CMPLR_ROOT})
-            set(_cyxwiz_oneapi_default "$ENV{CMPLR_ROOT}")
-        elseif(DEFINED ENV{ONEAPI_ROOT})
-            set(_cyxwiz_oneapi_default "$ENV{ONEAPI_ROOT}/compiler/latest")
-        endif()
-        set(CYXWIZ_ONEAPI_COMPILER_ROOT "${_cyxwiz_oneapi_default}" CACHE PATH
-            "Intel oneAPI DPC++ compiler root (holds bin/icx and the env script), e.g. D:/Intel/oneAPI/2025.1")
-        if(WIN32)
-            set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icx.exe")
-            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/oneapi-vars.bat")
-            if(NOT EXISTS "${_cyxwiz_oneapi_env}")
-                set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.bat")
-            endif()
-            set(_cyxwiz_oneapi_kernels_name "cyxwiz-oneapi-kernels.dll")
-        else()
-            set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icpx")
-            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.sh")
-            set(_cyxwiz_oneapi_kernels_name "libcyxwiz-oneapi-kernels.so")
-        endif()
-        if(EXISTS "${_cyxwiz_icx}" AND EXISTS "${_cyxwiz_oneapi_env}")
-            message(STATUS "oneAPI DNN provider enabled (DPC++ at ${CYXWIZ_ONEAPI_COMPILER_ROOT})")
-            set(_cyxwiz_oneapi_src "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.cpp")
-            set(_cyxwiz_oneapi_hdr "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.h")
-            set(_cyxwiz_oneapi_out_dir "${CMAKE_CURRENT_BINARY_DIR}/oneapi")
-            set(_cyxwiz_oneapi_out "${_cyxwiz_oneapi_out_dir}/${_cyxwiz_oneapi_kernels_name}")
-            file(MAKE_DIRECTORY "${_cyxwiz_oneapi_out_dir}")
-            if(WIN32)
-                # icx on Windows needs the MSVC environment of the host compiler.
-                string(REGEX REPLACE "/Tools/MSVC/.*$" "" _cyxwiz_vc_dir "${CMAKE_CXX_COMPILER}")
-                set(_cyxwiz_vcvars "${_cyxwiz_vc_dir}/Auxiliary/Build/vcvars64.bat")
-                file(TO_NATIVE_PATH "${_cyxwiz_vcvars}" _n_vcvars)
-                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_env}" _n_env)
-                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_src}" _n_src)
-                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_out}" _n_out)
-                set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.bat")
-                file(WRITE "${_cyxwiz_oneapi_script}"
-                    "@echo off\r\n"
-                    "call \"${_n_vcvars}\" >nul || exit /b 1\r\n"
-                    "call \"${_n_env}\" --force >nul 2>nul\r\n"
-                    "icx -fsycl /nologo /EHsc /O2 /DNDEBUG /LD \"${_n_src}\" /Fe:\"${_n_out}\" || exit /b 1\r\n")
-                set(_cyxwiz_oneapi_command cmd /c "${_cyxwiz_oneapi_script}")
-            else()
-                set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.sh")
-                file(WRITE "${_cyxwiz_oneapi_script}"
-                    "set -e\n"
-                    ". \"${_cyxwiz_oneapi_env}\" >/dev/null 2>&1 || true\n"
-                    "icpx -fsycl -O2 -DNDEBUG -fPIC -shared \"${_cyxwiz_oneapi_src}\" -o \"${_cyxwiz_oneapi_out}\"\n")
-                set(_cyxwiz_oneapi_command sh "${_cyxwiz_oneapi_script}")
-            endif()
-            add_custom_command(
-                OUTPUT "${_cyxwiz_oneapi_out}"
-                COMMAND ${_cyxwiz_oneapi_command}
-                DEPENDS "${_cyxwiz_oneapi_src}" "${_cyxwiz_oneapi_hdr}"
-                COMMENT "Building oneAPI SYCL kernels with the Intel DPC++ compiler"
-                VERBATIM)
-            add_custom_target(cyxwiz-oneapi-kernels ALL DEPENDS "${_cyxwiz_oneapi_out}")
-            add_dependencies(cyxwiz-backend cyxwiz-oneapi-kernels)
-            # The provider looks for the kernels next to the backend library.
-            add_custom_command(TARGET cyxwiz-backend POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_cyxwiz_oneapi_out}" "$<TARGET_FILE_DIR:cyxwiz-backend>"
-                VERBATIM)
-            install(FILES "${_cyxwiz_oneapi_out}" DESTINATION bin)
-            target_sources(cyxwiz-backend PRIVATE
-                src/algorithms/providers/oneapi_sycl_provider.cpp
-            )
-            target_compile_definitions(cyxwiz-backend PUBLIC
-                CYXWIZ_HAS_ONEAPI_DNN_PROVIDER)
-            set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER TRUE)
-        else()
-            message(WARNING
-                "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER=ON but the DPC++ compiler was not "
-                "found under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}' "
-                "- provider disabled")
-            set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER FALSE)
-        endif()
-    endif()
-
-    if(CYXWIZ_ENABLE_CUDA)
-        # Keep CUDA backend support runtime-selected via ArrayFire.
-        # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.
-        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
-        message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
-
-        # Optional NVIDIA neural-network provider (tofix68): cuBLAS GEMMs +
-        # fused cell kernels behind the INeuralNetworkProvider boundary.
-        # OFF by default so portable builds never require the CUDA Toolkit.
-        option(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER
-               "Enable the optional NVIDIA cuBLAS neural-network provider" OFF)
-        if(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER)
-            find_package(CUDAToolkit QUIET)
-            if(CUDAToolkit_FOUND)
-                message(STATUS "NVIDIA DNN provider enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
-                target_sources(cyxwiz-backend PRIVATE
-                    src/algorithms/providers/nvidia_cublas_provider.cpp
-                )
-                target_link_libraries(cyxwiz-backend PUBLIC
-                    CUDA::cudart CUDA::cublas CUDA::nvrtc CUDA::cuda_driver)
-                target_compile_definitions(cyxwiz-backend PUBLIC
-                    CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
-                set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)
+# Optional OpenCL neural-network provider (tofix68, device-keyed dispatch
+# tenant #2): hand-written tiled OpenCL GEMMs + fused cell kernels behind
+# the same INeuralNetworkProvider boundary as the NVIDIA provider. OFF by
+# default; independent of CUDA (an OpenCL ICD is the only requirement).
+option(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER
+       "Enable the optional OpenCL neural-network provider" OFF)
+if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
+    find_package(OpenCL QUIET)
+    if(OpenCL_FOUND)
+        message(STATUS "OpenCL DNN provider enabled (OpenCL ${OpenCL_VERSION_STRING})")
+        target_sources(cyxwiz-backend PRIVATE
+            src/algorithms/providers/opencl_cell_provider.cpp
+        )
+        target_link_libraries(cyxwiz-backend PUBLIC OpenCL::OpenCL)
+        target_compile_definitions(cyxwiz-backend PUBLIC
+            CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
+        set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
+        # Optional CLBlast GEMMs (vcpkg manifest feature `opencl-clblast`).
+        # OFF by default; the provider's built-in tiled kernels remain the
+        # fallback at runtime even when CLBlast is linked.
+        option(CYXWIZ_ENABLE_OPENCL_CLBLAST
+               "Use CLBlast GEMMs in the OpenCL neural provider" OFF)
+        if(CYXWIZ_ENABLE_OPENCL_CLBLAST)
+            find_package(CLBlast CONFIG QUIET)
+            if(CLBlast_FOUND)
+                message(STATUS "OpenCL DNN provider: CLBlast GEMMs enabled")
+                target_link_libraries(cyxwiz-backend PRIVATE clblast)
+                target_compile_definitions(cyxwiz-backend PRIVATE
+                    CYXWIZ_HAS_OPENCL_CLBLAST)
             else()
                 message(WARNING
-                    "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON but the CUDA "
-                    "Toolkit was not found - provider disabled")
-                set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER FALSE)
+                    "CYXWIZ_ENABLE_OPENCL_CLBLAST=ON but CLBlast was not "
+                    "found (install the vcpkg feature opencl-clblast) - "
+                    "using built-in GEMM kernels")
             endif()
         endif()
+    else()
+        message(WARNING
+            "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "
+            "found - provider disabled")
+        set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER FALSE)
+    endif()
+endif()
 
-        # NCCL for distributed GPU training (optional).
-        option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
-        if(CYXWIZ_ENABLE_NCCL)
-            find_package(CUDAToolkit QUIET)
-            if(CUDAToolkit_FOUND)
-                message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
-                find_package(NCCL QUIET)
-                if(NCCL_FOUND)
-                    message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
-                    if(NCCL_VERSION)
-                        message(STATUS "  NCCL version: ${NCCL_VERSION}")
-                    endif()
-                    target_sources(cyxwiz-backend PRIVATE
-                        src/algorithms/distributed/nccl_backend.cpp
-                    )
-                    target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl CUDA::cudart)
-                    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
-                    set(CYXWIZ_HAS_NCCL TRUE)
-                else()
-                    message(WARNING "NCCL not found - distributed GPU training will use the native CPU distributed backend")
-                    message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
-                    set(CYXWIZ_HAS_NCCL FALSE)
+# Optional oneAPI (SYCL) neural provider (tofix112 phase 5b, tenant #3):
+# fused attention on ArrayFire's oneAPI backend. The kernels are a
+# separate library built with the Intel DPC++ compiler (icx) and loaded
+# at runtime by oneapi_sycl_provider.cpp, so cyxwiz-backend itself keeps
+# building with the host compiler. OFF by default. The toolkit must be
+# the SYCL generation ArrayFire's afoneapi links (sycl8 = oneAPI 2025.x).
+option(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER
+       "Enable the optional oneAPI (SYCL) neural-network provider" OFF)
+if(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER)
+    set(_cyxwiz_oneapi_default "")
+    if(DEFINED ENV{CMPLR_ROOT})
+        set(_cyxwiz_oneapi_default "$ENV{CMPLR_ROOT}")
+    elseif(DEFINED ENV{ONEAPI_ROOT})
+        set(_cyxwiz_oneapi_default "$ENV{ONEAPI_ROOT}/compiler/latest")
+    endif()
+    set(CYXWIZ_ONEAPI_COMPILER_ROOT "${_cyxwiz_oneapi_default}" CACHE PATH
+        "Intel oneAPI DPC++ compiler root (holds bin/icx and the env script), e.g. D:/Intel/oneAPI/2025.1")
+    if(WIN32)
+        set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icx.exe")
+        set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/oneapi-vars.bat")
+        if(NOT EXISTS "${_cyxwiz_oneapi_env}")
+            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.bat")
+        endif()
+        set(_cyxwiz_oneapi_kernels_name "cyxwiz-oneapi-kernels.dll")
+    else()
+        set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icpx")
+        set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.sh")
+        set(_cyxwiz_oneapi_kernels_name "libcyxwiz-oneapi-kernels.so")
+    endif()
+    if(EXISTS "${_cyxwiz_icx}" AND EXISTS "${_cyxwiz_oneapi_env}")
+        message(STATUS "oneAPI DNN provider enabled (DPC++ at ${CYXWIZ_ONEAPI_COMPILER_ROOT})")
+        set(_cyxwiz_oneapi_src "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.cpp")
+        set(_cyxwiz_oneapi_hdr "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.h")
+        set(_cyxwiz_oneapi_out_dir "${CMAKE_CURRENT_BINARY_DIR}/oneapi")
+        set(_cyxwiz_oneapi_out "${_cyxwiz_oneapi_out_dir}/${_cyxwiz_oneapi_kernels_name}")
+        file(MAKE_DIRECTORY "${_cyxwiz_oneapi_out_dir}")
+        if(WIN32)
+            # icx on Windows needs the MSVC environment of the host compiler.
+            string(REGEX REPLACE "/Tools/MSVC/.*$" "" _cyxwiz_vc_dir "${CMAKE_CXX_COMPILER}")
+            set(_cyxwiz_vcvars "${_cyxwiz_vc_dir}/Auxiliary/Build/vcvars64.bat")
+            file(TO_NATIVE_PATH "${_cyxwiz_vcvars}" _n_vcvars)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_env}" _n_env)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_src}" _n_src)
+            file(TO_NATIVE_PATH "${_cyxwiz_oneapi_out}" _n_out)
+            set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.bat")
+            file(WRITE "${_cyxwiz_oneapi_script}"
+                "@echo off\r\n"
+                "call \"${_n_vcvars}\" >nul || exit /b 1\r\n"
+                "call \"${_n_env}\" --force >nul 2>nul\r\n"
+                "icx -fsycl /nologo /EHsc /O2 /DNDEBUG /LD \"${_n_src}\" /Fe:\"${_n_out}\" || exit /b 1\r\n")
+            set(_cyxwiz_oneapi_command cmd /c "${_cyxwiz_oneapi_script}")
+        else()
+            set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.sh")
+            file(WRITE "${_cyxwiz_oneapi_script}"
+                "set -e\n"
+                ". \"${_cyxwiz_oneapi_env}\" >/dev/null 2>&1 || true\n"
+                "icpx -fsycl -O2 -DNDEBUG -fPIC -shared \"${_cyxwiz_oneapi_src}\" -o \"${_cyxwiz_oneapi_out}\"\n")
+            set(_cyxwiz_oneapi_command sh "${_cyxwiz_oneapi_script}")
+        endif()
+        add_custom_command(
+            OUTPUT "${_cyxwiz_oneapi_out}"
+            COMMAND ${_cyxwiz_oneapi_command}
+            DEPENDS "${_cyxwiz_oneapi_src}" "${_cyxwiz_oneapi_hdr}"
+            COMMENT "Building oneAPI SYCL kernels with the Intel DPC++ compiler"
+            VERBATIM)
+        add_custom_target(cyxwiz-oneapi-kernels ALL DEPENDS "${_cyxwiz_oneapi_out}")
+        add_dependencies(cyxwiz-backend cyxwiz-oneapi-kernels)
+        # The provider looks for the kernels next to the backend library.
+        add_custom_command(TARGET cyxwiz-backend POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_cyxwiz_oneapi_out}" "$<TARGET_FILE_DIR:cyxwiz-backend>"
+            VERBATIM)
+        install(FILES "${_cyxwiz_oneapi_out}" DESTINATION bin)
+        target_sources(cyxwiz-backend PRIVATE
+            src/algorithms/providers/oneapi_sycl_provider.cpp
+        )
+        target_compile_definitions(cyxwiz-backend PUBLIC
+            CYXWIZ_HAS_ONEAPI_DNN_PROVIDER)
+        set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER TRUE)
+    else()
+        message(WARNING
+            "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER=ON but the DPC++ compiler was not "
+            "found under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}' "
+            "- provider disabled")
+        set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER FALSE)
+    endif()
+endif()
+
+if(CYXWIZ_ENABLE_CUDA)
+    # Keep CUDA backend support runtime-selected via ArrayFire.
+    # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
+    message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
+
+    # Optional NVIDIA neural-network provider (tofix68): cuBLAS GEMMs +
+    # fused cell kernels behind the INeuralNetworkProvider boundary.
+    # OFF by default so portable builds never require the CUDA Toolkit.
+    option(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER
+           "Enable the optional NVIDIA cuBLAS neural-network provider" OFF)
+    if(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER)
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "NVIDIA DNN provider enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
+            target_sources(cyxwiz-backend PRIVATE
+                src/algorithms/providers/nvidia_cublas_provider.cpp
+            )
+            target_link_libraries(cyxwiz-backend PUBLIC
+                CUDA::cudart CUDA::cublas CUDA::nvrtc CUDA::cuda_driver)
+            target_compile_definitions(cyxwiz-backend PUBLIC
+                CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
+            set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)
+        else()
+            message(WARNING
+                "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON but the CUDA "
+                "Toolkit was not found - provider disabled")
+            set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER FALSE)
+        endif()
+    endif()
+
+    # NCCL for distributed GPU training (optional).
+    option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
+    if(CYXWIZ_ENABLE_NCCL)
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "CUDA Toolkit found: ${CUDAToolkit_VERSION}")
+            find_package(NCCL QUIET)
+            if(NCCL_FOUND)
+                message(STATUS "NCCL found: ${NCCL_LIBRARIES}")
+                if(NCCL_VERSION)
+                    message(STATUS "  NCCL version: ${NCCL_VERSION}")
                 endif()
+                target_sources(cyxwiz-backend PRIVATE
+                    src/algorithms/distributed/nccl_backend.cpp
+                )
+                target_link_libraries(cyxwiz-backend PUBLIC NCCL::nccl CUDA::cudart)
+                target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
+                set(CYXWIZ_HAS_NCCL TRUE)
             else()
-                message(WARNING "CUDA Toolkit not found - NCCL backend disabled")
+                message(WARNING "NCCL not found - distributed GPU training will use the native CPU distributed backend")
+                message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
                 set(CYXWIZ_HAS_NCCL FALSE)
             endif()
+        else()
+            message(WARNING "CUDA Toolkit not found - NCCL backend disabled")
+            set(CYXWIZ_HAS_NCCL FALSE)
         endif()
     endif()
+endif()
 
-    if(CYXWIZ_ENABLE_OPENCL)
-        # Keep OpenCL runtime-selected via ArrayFire, like CUDA: device
-        # identity resolves clGetDeviceInfo and afcl_get_device_id at runtime,
-        # so the portable backend never imports OpenCL or afopencl.
-        target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
-    endif()
+if(CYXWIZ_ENABLE_OPENCL)
+    # Keep OpenCL runtime-selected via ArrayFire, like CUDA: device
+    # identity resolves clGetDeviceInfo and afcl_get_device_id at runtime,
+    # so the portable backend never imports OpenCL or afopencl.
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
 endif()
 
 if(CMAKE_DL_LIBS)

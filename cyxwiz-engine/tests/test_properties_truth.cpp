@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -143,9 +144,25 @@ int main() {
     }
 
     {
+        // A file parameter's patterns become the Browse dialog's filter.
+        cyxwiz::ParameterDefinition model_path(
+            "model_path", "file", "", "", {}, "*.cyxclassic.json; *.json");
+        const auto filters = gui::properties_rules::FileParameterFilters(model_path);
+        Check(filters.size() == 2 && filters[0].first == "Supported files" &&
+                  filters[0].second == "cyxclassic.json,json" &&
+                  filters[1].second == "*",
+              "file patterns should become one Supported files filter plus All Files");
+        cyxwiz::ParameterDefinition any_file("file_path", "file");
+        const auto any = gui::properties_rules::FileParameterFilters(any_file);
+        Check(any.size() == 1 && any[0].second == "*",
+              "a file parameter without patterns should offer All Files");
+    }
+
+    {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
-        // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring).
-        Check(covered.size() == 77,
+        // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
+        // WordEmbeddings (TOFIX152).
+        Check(covered.size() == 78,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -235,6 +252,39 @@ int main() {
               "TransformerDecoder should expose its executable transformer contract");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::PositionalEncoding),
               "PositionalEncoding should expose its executable transformer contract");
+    }
+
+    {
+        auto vectors = MakeNode(3, gui::NodeType::WordEmbeddings, "Word Embeddings");
+        auto report = gui::properties_truth::ResolveNodeTruth(vectors);
+        const auto* file = FindProperty(report, "vectors_file");
+        Check(file != nullptr && HasStatus(*file, gui::properties_truth::TruthStatus::Missing),
+              "WordEmbeddings pretrained without a vector file should be visible as missing");
+        const auto* text = FindProperty(report, "text_col");
+        Check(text != nullptr && !HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "pretrained vectors without row vectors do not need a text column");
+        vectors.parameters["source"] = "word2vec";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        Check(FindProperty(report, "vectors_file") == nullptr,
+              "training does not show the vector file");
+        text = FindProperty(report, "text_col");
+        Check(text != nullptr && HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "training without a text column should be visible as missing");
+        vectors.parameters["source"] = "glove";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "GloVe training needs the text column too");
+        vectors.parameters["source"] = "fasttext";
+        report = gui::properties_truth::ResolveNodeTruth(vectors);
+        text = FindProperty(report, "text_col");
+        Check(FindProperty(report, "vectors_file") == nullptr && text != nullptr &&
+                  HasStatus(*text, gui::properties_truth::TruthStatus::Missing),
+              "fastText training needs the text column too");
+        const auto* outputs = FindProperty(report, "word_embeddings_outputs");
+        Check(outputs != nullptr && outputs->message.find("PipelineOperatorFactory") != std::string::npos,
+              "WordEmbeddings truth should describe operator-factory routing");
     }
 
     {
@@ -1484,39 +1534,6 @@ int main() {
 
     {
         auto output = MakeNode(3, gui::NodeType::Output, "Output");
-        output.parameters["classes"] = "4";
-
-        const auto report = gui::properties_truth::ResolveNodeTruth(output);
-        const auto* classes = FindProperty(report, "num_classes");
-        Check(classes != nullptr,
-              "Output should surface canonical num_classes truth");
-        Check(classes->source_key == "classes",
-              "legacy classes key should feed Output class truth");
-        Check(classes->effective_value == "4",
-              "legacy classes key should resolve as effective Output classes");
-        Check(HasStatus(*classes,
-                        gui::properties_truth::TruthStatus::AliasUsed),
-              "legacy classes key should be marked alias-used");
-    }
-
-    {
-        auto output = MakeNode(3, gui::NodeType::Output, "Output");
-        output.parameters["num_classes"] = "5";
-        output.parameters["classes"] = "4";
-
-        const auto report = gui::properties_truth::ResolveNodeTruth(output);
-        const auto* classes = FindProperty(report, "num_classes");
-        Check(classes != nullptr,
-              "Output should surface class truth when both keys exist");
-        Check(classes->effective_value == "5",
-              "canonical num_classes should win over classes alias");
-        Check(HasStatus(*classes,
-                        gui::properties_truth::TruthStatus::Conflicting),
-              "conflicting Output class aliases should be visible");
-    }
-
-    {
-        auto output = MakeNode(3, gui::NodeType::Output, "Output");
         output.parameters["num_classes"] = "10";
 
         gui::properties_truth::DatasetTruthFact fact;
@@ -1587,8 +1604,6 @@ int main() {
             output, "num_classes", "7");
         Check(output.parameters["num_classes"] == "7",
               "canonical Output num_classes should be written");
-        Check(output.parameters["classes"] == "7",
-              "compat Output classes alias should be written");
 
         auto export_node = MakeNode(3, gui::NodeType::DataOutput, "Data Output");
         export_node.parameters["path"] = "old.csv";
@@ -1639,6 +1654,33 @@ int main() {
         report = gui::properties_truth::ResolveNodeTruth(loader);
         seed = FindProperty(report, "model_seed");
         Check(seed && HasStatus(*seed, gui::properties_truth::TruthStatus::Conflicting), "invalid seed must be visible in Properties");
+    }
+
+    {
+        // A "fixed" parameter (the SQL contract version) accepts only its default.
+        cyxwiz::ParameterDefinition contract{"sql_contract_version", "fixed", "1", "SQL step contract version"};
+        std::string error;
+        Check(gui::properties_rules::ValidateParameter("1", contract, error), "fixed parameter accepts its default");
+        Check(!gui::properties_rules::ValidateParameter("2", contract, error) && error.find("expected 1") != std::string::npos,
+              "fixed parameter rejects another value");
+        Check(!gui::properties_rules::ValidateParameter("", contract, error), "fixed parameter rejects an empty value");
+    }
+
+    {
+        // A parameter the node type declares is current, not stale, without a truth rule.
+        auto sql = MakeNode(950, gui::NodeType::SQLQuery, "SQL step");
+        sql.parameters["query"] = "SELECT * FROM input";
+        sql.parameters["leftover"] = "x";
+        const std::set<std::string> declared = {"query", "input_alias", "input_aliases", "sql_contract_version"};
+        gui::properties_truth::NodeTruthContext context;
+        context.declared_parameters = &declared;
+        const auto report = gui::properties_truth::ResolveNodeTruth(sql, context);
+        const auto* query = FindRaw(report, "query");
+        Check(query && HasStatus(*query, gui::properties_truth::TruthStatus::OK) && query->maps_to == "query",
+              "declared parameter is not stale");
+        const auto* leftover = FindRaw(report, "leftover");
+        Check(leftover && HasStatus(*leftover, gui::properties_truth::TruthStatus::Stale),
+              "undeclared parameter stays stale");
     }
     std::cout << "Properties truth resolver tests passed\n";
     return 0;

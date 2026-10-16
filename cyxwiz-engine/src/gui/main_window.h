@@ -1,10 +1,14 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <functional>
+#include <map>
+#include <utility>
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
+#include "../core/compile_report_presentation.h"
 
 namespace cyxwiz {
 class ProjectManager;
@@ -20,10 +24,10 @@ class LiveGraphCompile;
 namespace gui {
 
 class NodeEditor;
+class DataInputDialog;
 class Console;
 class Viewport;
 class Properties;
-// class TrainingEvaluationPanel;  // Phase 5: Removed - functionality moved to node-based workflow
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -39,12 +43,9 @@ namespace cyxwiz {
 class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingPlotPanel;
-class PlotTestControlPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
-class DataExplorerPanel;
 class AnnotationEditorPanel;
-class VisualizationPanel;
 class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
@@ -62,7 +63,6 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class DataProfilerPanel;
 class CorrelationMatrixPanel;
 class MissingValuePanel;
 class OutlierDetectionPanel;
@@ -94,7 +94,6 @@ class StandardizationPanel;
 class LogTransformPanel;
 class BoxCoxPanel;
 class FeatureScalingPanel;
-class OptimizerSettingsPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -141,6 +140,8 @@ class DataStudioPanel;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
+struct StudioDebuggerRunControl;
+struct StudioDebuggerRunInputs;
 enum class StudioDebuggerRunMode;
 } // namespace cyxwiz
 
@@ -165,7 +166,6 @@ public:
     void Render();
     void ResetDockLayout();
     Console* GetConsole() { return console_.get(); }
-    cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
     NodeEditor* GetNodeEditor() { return node_editor_.get(); }
     bool OpenGraphInNodeEditor(const std::string& path);
@@ -203,6 +203,8 @@ public:
     // Exit request callback (set by Application to trigger window close)
     using ExitRequestCallback = std::function<void()>;
     void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }
+    // Opens a .py or .cyx file in the Script Editor and shows the editor.
+    void OpenScriptFile(const std::string& file_path);
 
     // Debug logging pointers (set by Application)
     void SetIdleLogPtr(bool* ptr);
@@ -211,7 +213,6 @@ public:
     void SaveProjectSettings();      // Save current editor settings and layout to project
     void LoadProjectSettings();      // Load editor settings and layout from project
     void SaveLayout();               // Save only ImGui layout to project
-    void LoadLayout();               // Load only ImGui layout from project
 
     // Called when project is opened/closed
     void OnProjectOpened(const std::string& project_root);
@@ -221,11 +222,16 @@ public:
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
-    void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
-    void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
+    void SetDefaultPanelVisibility(bool force = false);  // Hide tool panels, show only core panels
+    std::map<std::string, bool> default_panel_visibility_;  // registered panels before any saved state
     void RenderSidebar();
     void RenderStatusBar();
+    // Renders a panel under a frame-metrics timer (Tools > Diagnostics > Frame Time Overlay).
+    template <class PanelPtr>
+    void TimedRender(const char* name, PanelPtr& panel);
+    // Status bar height follows the interface text size (TOFIX129).
+    static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
@@ -244,9 +250,14 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
+    // Opens the compile report (main_window_compile_report.cpp) for what the
+    // compile found, or for why Train / Local Debug / a checkpoint load
+    // stopped (`stop_reason`, empty when the findings say it).
+    void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
+    void LoadCheckpointForTesting();
     void RenderOperationErrorPopup();
     void RenderMaterializationMemoryConfirmationPopup();
     bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
@@ -257,13 +268,14 @@ private:
                                                 int sample_index,
                                                 std::vector<MLNode> nodes,
                                                 std::vector<NodeLink> links,
-                                                int explain_node_id = -1);
+                                                int explain_node_id = -1,
+                                                const cyxwiz::StudioDebuggerRunControl* control = nullptr,
+                                                const cyxwiz::StudioDebuggerRunInputs* inputs = nullptr);
     void RecordArtifactConsistencyTrace(
         const cyxwiz::DebugArtifactConsistencyInput& input);
 
-    // Run Local Debug: gate on Compile, then execute one forward +
-    // one backward pass on synthetic data via DebugExecutor. Feeds the
-    // result through the compile popup (in CompileResultMode::Debug mode).
+    // Run Local Debug (F6) as a background Studio Debugger run: compile
+    // gate, preflight, then one synthetic forward/backward pass.
     void LocalDebugGraphAndReport();
 
     // Shared compile pass used by both the explicit Compile button and
@@ -272,38 +284,19 @@ private:
     void BuildCompileResult(const std::vector<MLNode>& nodes,
                             const std::vector<NodeLink>& links);
 
-    // Which flow opened the compile popup. Drives title + header text
-    // in RenderCompileResultPopup:
-    //   Compile       - explicit Compile button / F7 (informational)
-    //   Debug         - Local Debug run finished (success or warnings)
-    //   BlockedTrain  - Train button refused to start because of Error
-    //                   issues in the compiled graph
-    //   BlockedDebug  - Local Debug button refused to run because the
-    //                   compile gate found Error issues
-    enum class CompileResultMode {
-        Compile,
-        Debug,
-        BlockedTrain,
-        BlockedDebug,
-    };
-
-    // Compile popup state. compile_result_issues_ holds the structured
-    // findings (errors / warnings / info) from GraphCompiler::Compile or
-    // DebugExecutor::Run so the popup can render them with severity icons.
-    // compile_result_summary_ is the human-readable architecture summary
-    // (layers, dataset, batch, etc.) shown below the issue list —
-    // Local Debug runs replace it with a per-layer trace instead.
-    // compile_result_mode_ selects the header + title text.
+    // The compile report (TOFIX129 B3): the findings, placements and
+    // configuration of the last compile, and the report built from them when
+    // the popup opens (core/compile_report_presentation).
     bool show_compile_result_popup_ = false;
     bool show_operation_error_popup_ = false;
     std::string operation_error_title_;
     std::string operation_error_message_;
     bool compile_result_success_ = false;
-    CompileResultMode compile_result_mode_ = CompileResultMode::Compile;
-    std::string compile_result_message_;     // legacy single-string fallback
-    std::string compile_result_summary_;
+    bool compile_result_has_config_ = false;
+    cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
+    cyxwiz::compile_report::Report compile_report_;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.
@@ -311,6 +304,8 @@ private:
     bool materialization_memory_confirmation_accepted_once_ = false;
     int materialization_memory_confirmation_node_id_ = -1;
     uint64_t materialization_memory_confirmation_estimated_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_available_bytes_ = 0;
+    uint64_t materialization_memory_confirmation_budget_bytes_ = 0;
     std::string materialization_memory_confirmation_detail_;
     std::string materialization_memory_confirmation_risk_;
     std::string materialization_memory_confirmation_node_;
@@ -319,6 +314,19 @@ private:
     std::string accepted_materialization_memory_risk_;
     std::vector<MLNode> pending_memory_confirmation_nodes_;
     std::vector<NodeLink> pending_memory_confirmation_links_;
+
+    // Train on a reopened project: the Data Inputs it has not loaded load
+    // first, each through an unshown Data Input dialog (the same Apply as its
+    // OK), then training starts with the loaded graph.
+    struct DataInputLoad {
+        int node_id = -1;
+        std::string node_name;
+        std::unique_ptr<DataInputDialog> dialog;
+    };
+    std::vector<DataInputLoad> data_input_loads_;
+    std::string data_input_loads_project_;
+    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollDataInputLoads();
 
     // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
     // fingerprint of the (nodes, links) tuple at the moment of the last
@@ -340,18 +348,14 @@ private:
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
     void UpdateLiveCompile();
-    // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
-    std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
-    std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
     std::unique_ptr<cyxwiz::AnnotationEditorPanel> annotation_editor_panel_;
-    std::unique_ptr<cyxwiz::VisualizationPanel> visualization_panel_;
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
@@ -377,7 +381,6 @@ private:
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Data Science panels (Phase 3)
-    std::unique_ptr<cyxwiz::DataProfilerPanel> data_profiler_panel_;
     std::unique_ptr<cyxwiz::CorrelationMatrixPanel> correlation_matrix_panel_;
     std::unique_ptr<cyxwiz::MissingValuePanel> missing_value_panel_;
     std::unique_ptr<cyxwiz::OutlierDetectionPanel> outlier_detection_panel_;
@@ -417,7 +420,6 @@ private:
     std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
     std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
     std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
-    std::unique_ptr<cyxwiz::OptimizerSettingsPanel> optimizer_settings_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
@@ -482,9 +484,9 @@ private:
     // Startup script manager
     std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
-    bool show_about_dialog_;
-    bool show_demo_window_;
     bool first_time_layout_;
+    bool reset_layout_requested_ = false;
+    int front_tabs_countdown_ = 0;  // frames until the default tabs come to the front
 
     // Network components
     network::JobManager* job_manager_ = nullptr;

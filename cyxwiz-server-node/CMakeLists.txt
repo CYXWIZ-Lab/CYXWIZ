@@ -21,14 +21,7 @@ find_package(OpenSSL REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(jwt-cpp CONFIG REQUIRED)
 
-# Optional: Find ArrayFire for GPU support
-find_package(ArrayFire QUIET)
-if(ArrayFire_FOUND)
-    message(STATUS "ArrayFire found - GPU support enabled")
-    # Note: CYXWIZ_HAS_ARRAYFIRE is added per-target, not globally
-else()
-    message(WARNING "ArrayFire not found - GPU metrics will be limited")
-endif()
+# ArrayFire (and CYXWIZ_HAS_ARRAYFIRE) comes with cyxwiz-backend, which requires it.
 
 # ========== GUI Dependencies (Conditional) ==========
 if(CYXWIZ_BUILD_GUI)
@@ -61,6 +54,7 @@ set(SHARED_CORE_SOURCES
     src/core/metrics_storage.cpp
     src/core/device_pool.cpp
     src/api/api_key_manager.cpp
+    src/auth/token_refresh.cpp
 )
 
 # ========== IPC Sources ==========
@@ -171,6 +165,9 @@ if(CYXWIZ_BUILD_DAEMON)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-daemon PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(cyxwiz-server-daemon PRIVATE
         cyxwiz-training-core
         fmt::fmt
@@ -207,12 +204,6 @@ if(CYXWIZ_BUILD_DAEMON)
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
-    endif()
-
-    # ArrayFire linkage
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-daemon PRIVATE CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     # ONNX Runtime linkage
@@ -280,6 +271,9 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     endif()
 
     # Core libraries
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(cyxwiz-server-gui PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(cyxwiz-server-gui PRIVATE
         fmt::fmt
         spdlog::spdlog
@@ -327,12 +321,6 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
         )
     else()
         target_link_libraries(cyxwiz-server-gui PRIVATE pthread)
-    endif()
-
-    # ArrayFire linkage (for device pool)
-    if(ArrayFire_FOUND)
-        target_link_libraries(cyxwiz-server-gui PRIVATE ArrayFire::af)
-        target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     # ONNX Runtime linkage
@@ -400,6 +388,9 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_job_execution_service PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_job_execution_service PRIVATE
         cyxwiz-training-core
         Catch2::Catch2
@@ -415,6 +406,7 @@ if(CYXWIZ_BUILD_TESTS)
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        httplib::httplib
     )
 
     target_compile_definitions(test_job_execution_service PRIVATE
@@ -532,6 +524,9 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
 
+    # cpp-httplib is header-only: every file that includes it must agree on TLS
+    # support, or the program holds two layouts of the same class (TOFIX136).
+    target_compile_definitions(test_security PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(test_security PRIVATE
         Catch2::Catch2
         Catch2::Catch2WithMain

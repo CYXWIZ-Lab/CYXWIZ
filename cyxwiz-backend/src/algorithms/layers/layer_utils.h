@@ -6,8 +6,6 @@
 
 namespace cyxwiz {
 
-enum class BackendFallbackReason;
-
 size_t Pool4DIndex(size_t h, size_t w, size_t c, size_t b,
                    size_t width, size_t channels, size_t batch_size);
 
@@ -20,36 +18,6 @@ size_t CheckedLayerProduct(size_t left,
                            size_t right,
                            const char* layer_name,
                            const char* quantity);
-void RecordLayerArrayFireFallback(const char* operation_name,
-                                  BackendFallbackReason reason,
-                                  const char* error_message,
-                                  const Tensor& tensor,
-                                  const char* tensor_name);
-void RecordLayerArrayFireFallback(const char* operation_name,
-                                  const char* error_message,
-                                  const Tensor& tensor,
-                                  const char* tensor_name);
-
-// tofix67 slice 7: like RecordLayerArrayFireFallback, but ALSO records a
-// placement observation the compiler can consume. node_type_name must be
-// the compiler's node-type spelling (e.g. "Conv2D", not
-// "Conv2DLayer::Forward"); layer_input must be the layer's runtime input
-// (Backward sites pass their cached forward input) so the input-only key
-// matches the compile-time lookup. Exported for placement-evidence tests.
-CYXWIZ_API void RecordLayerArrayFireFallbackObservation(
-    const char* operation_name,
-    const char* node_type_name,
-    BackendFallbackReason reason,
-    const char* error_message,
-    const Tensor& layer_input,
-    const char* tensor_name);
-CYXWIZ_API void RecordLayerArrayFireFallbackObservation(
-    const char* operation_name,
-    const char* node_type_name,
-    const char* error_message,
-    const Tensor& layer_input,
-    const char* tensor_name);
-
 struct ResizeLinearSample {
     size_t lower = 0;
     size_t upper = 0;

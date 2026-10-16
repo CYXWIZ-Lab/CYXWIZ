@@ -65,7 +65,6 @@ TEST_CASE("Spatial head construction rejects ambiguous layouts",
   CHECK_FALSE(ResolveSpatialSequentialHead(config));
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Spatial Flatten preserves row ordering and backward lifecycle",
           "[spatial_head][residency]") {
   BackendLane lane;
@@ -80,10 +79,7 @@ TEST_CASE("Spatial Flatten preserves row ordering and backward lifecycle",
     Tensor result, gradient;
     ResetConvObservations();
     {
-      ScopedArrayFireFallbackPolicy strict(
-          ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
       ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-      ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
       result = module.Forward(spatial);
       gradient = SpatialBatchToRows(module.Backward(rows));
       gradient.GetSemanticArray().eval();
@@ -91,7 +87,6 @@ TEST_CASE("Spatial Flatten preserves row ordering and backward lifecycle",
     }
     CHECK(conv_host_sync_count == 0);
     CHECK(conv_host_sync_bytes == 0);
-    CHECK(conv_fallback_count == 0);
     CheckValues(result, {batch, 12}, values);
     CheckValues(gradient, {batch, 12}, values);
     CHECK_THROWS_AS(module.Backward(DeviceOnlyOnes({batch + 1, 12})),
@@ -139,10 +134,7 @@ TEST_CASE("Built spatial heads train two batch sizes and reload weights",
         Tensor predictions, loss, dx;
         ResetConvObservations();
         {
-          ScopedArrayFireFallbackPolicy strict(
-              ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
           ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-          ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
           predictions = built.model->Forward(
               SpatialBatchFromRows(rows, config.input_shape));
           loss = built.loss->Forward(predictions, targets);
@@ -162,7 +154,6 @@ TEST_CASE("Built spatial heads train two batch sizes and reload weights",
         }
         CHECK(conv_host_sync_count == 0);
         CHECK(conv_host_sync_bytes == 0);
-        CHECK(conv_fallback_count == 0);
         const float second_prediction = 1.0f - .05f * features - .03f;
         CheckValues(predictions, {batch, 1},
                     batch == 2 ? std::vector<float>{1, 2}
@@ -194,4 +185,3 @@ TEST_CASE("Built spatial heads train two batch sizes and reload weights",
     }
   }
 }
-#endif

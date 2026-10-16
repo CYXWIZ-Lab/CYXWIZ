@@ -1,34 +1,27 @@
 #pragma once
 
+// Start page (TOFIX129 piece A2): recent projects, starter graphs, and the
+// ways in (create, open, open folder, continue without a project). Grouping,
+// search and the Create checks come from core/start_page_presentation; the
+// look comes from the shared tokens and widgets, so the page follows the
+// active theme.
+
+#include "create_project_dialog.h"
+
+#include <functional>
+#include <set>
 #include <string>
 #include <vector>
-#include <ctime>
 
 namespace cyxwiz {
 
-/**
- * @brief Professional start page inspired by Visual Studio 2026
- *
- * Full-screen start experience with:
- * - Search bar for filtering recent projects
- * - Chronological grouping (This week, This month, Older)
- * - Action cards (Create, Open, Clone, Continue)
- * - Professional styling
- */
 class StartPage {
 public:
     enum class Result {
-        InProgress,        // Still showing the page
-        ProjectSelected,   // User selected a project
-        ExampleGraphSelected, // User selected a starter graph template
-        ContinueWithout,   // Continue without project
-        Exit               // User closed the window
-    };
-
-    struct RecentProject {
-        std::string name;
-        std::string path;
-        std::time_t last_opened;
+        InProgress,            // Still showing the page
+        ProjectSelected,       // A project was opened or created
+        ExampleGraphSelected,  // A starter graph was chosen
+        ContinueWithout        // Continue without a project
     };
 
     struct StarterGraph {
@@ -39,90 +32,62 @@ public:
         std::string path;
     };
 
-    StartPage();
-    ~StartPage() = default;
+    // Python status shown as a chip at the top right; clicking it calls
+    // `on_click` (the application opens the Python dialog).
+    struct PythonStatus {
+        std::string text;   // "Python 3.12.8 ready", "Checking Python...", "Python not found"
+        int level = 0;      // 0 = ready, 1 = checking, 2 = needs attention
+        std::function<void()> on_click;
+    };
 
-    /**
-     * @brief Render the start page
-     * @return false when the page should close
-     */
+    StartPage();
+
+    // Returns false when the page is done.
     bool Render();
 
-    /**
-     * @brief Get the result of the start page interaction
-     */
     Result GetResult() const { return result_; }
-
-    /**
-     * @brief Get the selected project path (valid when result is ProjectSelected)
-     */
     std::string GetSelectedProjectPath() const { return selected_project_path_; }
-
-    /**
-     * @brief Get the selected starter graph path (valid when result is ExampleGraphSelected)
-     */
     std::string GetSelectedGraphPath() const { return selected_graph_path_; }
 
-private:
-    // Rendering sections
-    void RenderSearchBar();
-    void RenderStarterGraphs();
-    void RenderRecentProjects();
-    void RenderActionCards();
-    void RenderProjectTemplateButton(const char* label, int template_index);
-    void RenderBottomBar();
-    void RenderCreateProjectDialog();
+    void SetPythonStatus(PythonStatus status) { python_ = std::move(status); }
 
-    // Project grouping by time
+private:
     void LoadRecentProjects();
     void LoadStarterGraphs();
-    void GroupProjectsByTime();
-    bool IsThisWeek(std::time_t time) const;
-    bool IsThisMonth(std::time_t time) const;
 
-    // Search filtering
-    void FilterProjects();
+    void RenderHeader();
+    void RenderRecentProjects(float height);
+    void RenderStartActions();
+    void RenderStarterGraphs(float height);
+    void RenderFooter();
+    void HandleKeys();
 
-    // Actions
     void OpenProject(const std::string& path);
-    void OpenStarterGraph(const StarterGraph& starter);
-    void CreateNewProject();
-    void CreateNewProjectFromTemplate(int template_index);
     void OpenExistingProject();
     void OpenProjectFolder();
-    void ContinueWithoutProject();
+    void SetStatus(std::string text, bool problem = false);
 
-    // State
     Result result_ = Result::InProgress;
     std::string selected_project_path_;
     std::string selected_graph_path_;
 
-    // Recent projects
-    std::vector<RecentProject> all_projects_;
-    std::vector<RecentProject> this_week_;
-    std::vector<RecentProject> this_month_;
-    std::vector<RecentProject> older_;
-
-    // Starter graph templates
+    struct Recent {
+        std::string name;
+        std::string path;
+        long long last_opened = 0;
+    };
+    std::vector<Recent> recent_;
     std::vector<StarterGraph> starter_graphs_;
 
-    // Search
-    char search_buffer_[256] = {0};
-    bool search_active_ = false;
+    char search_[256] = {};
+    std::string selected_path_;          // selected recent project (file path)
+    std::string menu_for_path_;          // recent project whose Actions menu is open
+    std::set<std::string> collapsed_groups_;
 
-    // UI state
-    bool show_this_week_ = true;
-    bool show_this_month_ = true;
-    bool show_older_ = true;
-
-    // Dialogs
-    bool show_create_dialog_ = false;
-    std::string create_error_;  // shown in the Create dialog
-
-    // Create project dialog state
-    char project_name_buf_[256] = {0};
-    char project_location_buf_[512] = {0};
-    int selected_project_template_index_ = 0;
+    CreateProjectDialog create_dialog_;
+    PythonStatus python_;
+    std::string status_ = "Ready";
+    bool status_problem_ = false;
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz

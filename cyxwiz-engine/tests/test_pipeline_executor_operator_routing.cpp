@@ -1,7 +1,11 @@
 #include "core/arrow_dataset.h"
+#include "core/data_budget.h"
+#include "core/duckdb_connector.h"
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
+#include "core/dataset_lineage.h"
+#include "core/sha256_digest.h"
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
@@ -9,6 +13,13 @@
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
+#include "core/sql_step_presentation.h"
+#include "core/guided_sql.h"
+#include "core/sql_plan.h"
+#include "core/sql_transform.h"
+#include "core/dataset_profiler.h"
+#include "core/plot/node_result_plan.h"
+#include "core/graph_document.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include <thread>
@@ -22,7 +33,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <memory>
+#include <map>
 #include <limits>
 #include <set>
 #include <string>
@@ -291,10 +305,13 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "Join",
         "JSONPathExtractor",
         "KMeansCluster",
+        "KNNClassifier",
         "LabelEncoder",
         "LinearRegressionNode",
+        "LogisticRegressionNode",
         "LogTransform",
         "MathFormula",
+        "NaiveBayesClassifier",
         "NERSequenceBuilder",
         "NERTagVocabulary",
         "OrdinalEncoder",
@@ -324,6 +341,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "StationarityTest",
         "StandardScaler",
         "StringManipulation",
+        "SVMClassifier",
+        "SVMRegressor",
         "TableCropper",
         "TargetEncoder",
         "TreeModelPredictor",
@@ -345,6 +364,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSLag",
         "TSWindow",
         "ValueCounts",
+        "WordEmbeddings",
     };
     return names;
 }
@@ -622,6 +642,63 @@ void CheckTrack70RowAndColumnLimits() {
     }
 }
 
+// TOFIX134 P2: the Plot node's result lane runs only the nodes above the
+// plot (a graph with a Dense layer beside them still runs) and finds the
+// table of the node wired into the plot.
+void CheckPlotLaneRunsOnlyTheClosure() {
+    namespace fs = std::filesystem;
+    using gui::MLNode;
+    using gui::NodeLink;
+    using gui::NodeType;
+    const fs::path csv_path = fs::temp_directory_path() / "cyxwiz_plot_lane.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "x,y,class\n1,10,a\n2,20,b\n3,30,a\n4,40,b\n";
+    }
+    int pin = 5000;
+    const auto node = [&pin](int id, NodeType type, const char* name, int ins, int outs) {
+        MLNode n{};
+        n.id = id;
+        n.type = type;
+        n.name = name;
+        for (int i = 0; i < ins; ++i) { gui::NodePin p{}; p.id = pin++; p.is_input = true; n.inputs.push_back(p); }
+        for (int i = 0; i < outs; ++i) { gui::NodePin p{}; p.id = pin++; n.outputs.push_back(p); }
+        return n;
+    };
+    MLNode input = node(93001, NodeType::DataInput, "Data Input", 0, 1);
+    input.parameters = {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                        {"has_header", "true"}, {"delimiter", ","}, {"decimal_point", "."},
+                        {"skip_rows", "0"}, {"max_rows", "0"}, {"missing_value_tokens", ""},
+                        {"selected_columns", "[]"}, {"force_disk_backed", "false"}};
+    MLNode filter = node(93002, NodeType::FilterRows, "Filter Rows", 1, 1);
+    filter.parameters["condition"] = "x > 1";
+    MLNode dense = node(93003, NodeType::Dense, "Dense", 1, 1);
+    MLNode plot = node(93009, NodeType::DescribeStats, "Plot", 1, 0);
+    const auto link = [](int id, const MLNode& a, const MLNode& b) {
+        NodeLink l{};
+        l.id = id;
+        l.from_node = a.id;
+        l.from_pin = a.outputs[0].id;
+        l.to_node = b.id;
+        l.to_pin = b.inputs[0].id;
+        return l;
+    };
+    const std::vector<MLNode> nodes = {input, filter, dense, plot};
+    const std::vector<NodeLink> links = {link(1, input, filter), link(2, filter, dense), link(3, filter, plot)};
+    const auto plan = cyxwiz::plot::PlanNodeResult(93009, nodes, links, [](const std::string&) { return false; });
+    Check(plan.state == cyxwiz::plot::NodeResultPlan::State::Run, "plot lane: the closure is runnable");
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(plan.pipeline_json),
+          "plot lane: the closure runs although Dense sits beside it: " + executor.GetLastError());
+    const auto it = executor.NodeResults().find(plan.feeder_id);
+    Check(it != executor.NodeResults().end(), "plot lane: the feeder's result is named");
+    auto table = cyxwiz::DataRegistry::Instance().GetArrowDataset(it->second);
+    Check(table && table->GetNumRows() == 3, "plot lane: the filtered table (3 of 4 rows) is in the registry");
+    std::error_code error;
+    fs::remove(csv_path, error);
+    std::cout << "plot lane: closure only, feeder result found (" << it->second << ")\n";
+}
+
 void CheckPipelineDataInputUsesProjectIngestionCache() {
     namespace fs = std::filesystem;
 
@@ -695,18 +772,48 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
         R"("source_type":"file","file_path":")" +
         JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true","delimiter":",",)"
-        R"("force_disk_backed":"true"}})"
-        R"(],"links":[]})";
+        R"("force_disk_backed":"true"}},)"
+        R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})"
+        R"(],"links":[{"start_node":91002,"end_node":91003}]})";
+    // TOFIX154: a disk-backed Data Input feeds the next step, which reads it
+    // whole when that fits the data budget, and stops before loading if not.
     cyxwiz::PipelineExecutor disk_backed;
     disk_backed.SetIngestionCacheRoot(cache_root.string());
-    Check(!disk_backed.ExecutePipeline(disk_backed_json) &&
-              disk_backed.GetLastError().find(
-                  "currently require an in-memory Arrow table") !=
-                  std::string::npos,
-          "Pipeline DataInput should fail explicitly when the selected "
-          "disk-backed backend cannot feed transformation operators");
+    Check(disk_backed.ExecutePipeline(disk_backed_json),
+          "a disk-backed Data Input should feed the next step: " + disk_backed.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_datainput_91002"),
+          "the disk-backed Data Input stays a Parquet file");
+    const auto disk_facts = disk_backed.GetNodeRunFacts();
+    Check(disk_facts.count(91002) && disk_facts.at(91002).rows == 2,
+          "the disk-backed Data Input reports its rows");
+    Check(disk_facts.count(91003) && disk_facts.at(91003).rows == 2,
+          "the step after it reads every row");
+    // Under a tiny budget: a SQL step (SortRows) still runs, DuckDB reading
+    // the file and writing its result to disk; a step that needs its input
+    // whole (RobustScaler: quantiles) stops before loading.
+    cyxwiz::SetDataBudgetBytes(1);
+    cyxwiz::PipelineExecutor over_budget;
+    over_budget.SetIngestionCacheRoot(cache_root.string());
+    Check(over_budget.ExecutePipeline(disk_backed_json),
+          "a SQL step runs over a file under any budget: " + over_budget.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_sort_91003") &&
+              over_budget.GetNodeRunFacts().at(91003).rows == 2,
+          "its result over the threshold stays on disk");
+    std::string scaler_json = disk_backed_json;
+    const std::string sort_step = R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})";
+    scaler_json.replace(scaler_json.find(sort_step), sort_step.size(),
+        R"({"id":91003,"type":"RobustScaler","name":"Scale","parameters":{"columns":"value"}})");
+    cyxwiz::PipelineExecutor whole_table;
+    whole_table.SetIngestionCacheRoot(cache_root.string());
+    Check(!whole_table.ExecutePipeline(scaler_json) &&
+              whole_table.GetLastError().find("over the data budget") != std::string::npos,
+          "a step that reads its input whole stops before loading over the budget: " +
+              whole_table.GetLastError());
+    cyxwiz::SetDataBudgetBytes(0);
+    registry.UnregisterTabularDataset("ds_sort_91003");
 
     registry.UnregisterTabularDataset("ds_datainput_91002");
+    registry.UnregisterTabularDataset("ds_datainput_91002_in_memory");
     fs::remove(csv_path, error);
     fs::remove_all(cache_root, error);
 }
@@ -797,6 +904,43 @@ void CheckFocusedExportOutputPaths() {
     Check(fs::exists(parquet_dir_file),
           "ExportParquet should create a Parquet file inside the selected directory");
 
+    // Lineage (TOFIX148 Publish): an export writes <file>.lineage.json naming
+    // the graph, its steps in run order, the input's digest, the checks and the result.
+    {
+        const fs::path lineage_out = parquet_dir / "with_lineage.parquet";
+        const std::string lineage_json =
+            R"({"graph":"D:/demo/graph.cyxgraph","nodes":[)"
+            R"({"id":90009,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":90010,"type":"RowCountCheck","name":"Check: two rows","recipe":"r1","parameters":{)"
+            R"("check":"row_count","expected_rows":"2"}},)"
+            R"({"id":90011,"type":"ExportParquet","name":"Export","parameters":{)"
+            R"("path":")" + JsonEscapePath(lineage_out.string()) + R"("}})"
+            R"(],"links":[{"start_node":90009,"end_node":90010},{"start_node":90010,"end_node":90011}]})";
+        cyxwiz::PipelineExecutor lineage_executor;
+        Check(lineage_executor.ExecutePipeline(lineage_json), "export with a check should run: " + lineage_executor.GetLastError());
+        cyxwiz::DatasetLineage lineage;
+        std::string lineage_error;
+        Check(cyxwiz::ReadLineage(lineage_out.string(), lineage, lineage_error), "lineage beside the export: " + lineage_error);
+        Check(lineage.graph == "D:/demo/graph.cyxgraph", "lineage names the graph");
+        Check(lineage.steps.size() == 2 && lineage.steps[0].type == "DataInput" && lineage.steps[1].type == "RowCountCheck",
+              "lineage lists the steps above the export in run order");
+        Check(lineage.recipe == "r1" && lineage.recipe_revision.size() == 12, "lineage names the recipe and its revision");
+        Check(lineage.checks.size() == 1 && lineage.checks[0].passed, "lineage records the passed check");
+        std::string csv_digest;
+        Check(cyxwiz::Sha256File(csv_path, csv_digest, lineage_error) && lineage.inputs.size() == 1 &&
+                  lineage.inputs[0].sha256 == csv_digest,
+              "lineage records the input file's SHA-256");
+        std::string out_digest;
+        Check(cyxwiz::Sha256File(lineage_out, out_digest, lineage_error) && lineage.output.sha256 == out_digest,
+              "lineage records the written file's SHA-256");
+        Check(lineage.rows == 2 && lineage.columns == 2 && lineage.schema.size() == 2, "lineage records the result's shape");
+        const auto& facts = lineage_executor.GetNodeRunFacts();
+        Check(facts.count(90011) && facts.at(90011).written_path == lineage_out.string(), "run facts record the written path");
+        registry.UnloadDataset("ds_datainput_90009");
+    }
+
     registry.UnloadDataset("ds_datainput_90001");
     registry.UnloadDataset("ds_datainput_90003");
     registry.UnloadDataset("ds_datainput_90005");
@@ -868,6 +1012,613 @@ void CheckDocumentWindowPipeline() {
     Check(loaded && produced->GetArrowTable()->Equals(*loaded->GetArrowTable(),true),"Pipeline export/reload preserves IDs, references and schema metadata");
     std::cout<<"Document window pipeline export/reload passed\n";
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
+}
+
+void CheckSqlPartQueries() {
+    // TOFIX146 Workbench: "Run to part" and "rows after each part" run in
+    // DuckDB exactly as the step does (read-only SqlTransform).
+    arrow::Int64Builder ids;
+    arrow::StringBuilder words;
+    for (int64_t i = 1; i <= 4; ++i) {
+        Check(ids.Append(i).ok() && words.Append("w" + std::to_string(i)).ok(), "build input");
+    }
+    std::shared_ptr<arrow::Array> id_array, word_array;
+    Check(ids.Finish(&id_array).ok() && words.Finish(&word_array).ok(), "finish input");
+    auto input = arrow::Table::Make(
+        arrow::schema({arrow::field("id", arrow::int64()), arrow::field("word", arrow::utf8())}),
+        {id_array, word_array});
+    const std::string sql =
+        "-- Two parts\n"
+        "WITH a AS (SELECT * FROM input WHERE id > 1),\n"
+        "-- keep two\n"
+        "b AS (SELECT * FROM a WHERE id < 4)\n"
+        "SELECT id, word FROM b ORDER BY id DESC;\n";
+    const auto outline = cyxwiz::sqlstep::OutlineSqlQuery(sql);
+    Check(outline.structured && outline.parts.size() == 3, "three parts");
+    cyxwiz::SqlTransform transform;
+    const auto through_a = transform.Run(cyxwiz::sqlstep::QueryThroughPart(sql, outline, 0), {{"input", input}});
+    Check(through_a.ok && through_a.table->num_rows() == 3, "run to part a: " + through_a.error);
+    const auto whole = transform.Run(cyxwiz::sqlstep::QueryThroughPart(sql, outline, 2), {{"input", input}});
+    Check(whole.ok && whole.table->num_rows() == 2, "run to result is the whole query: " + whole.error);
+    const auto counts = transform.Run(cyxwiz::sqlstep::PartCountsQuery(sql, outline), {{"input", input}});
+    Check(counts.ok, "part counts query: " + counts.error);
+    if (counts.ok) {
+        const auto parts = std::static_pointer_cast<arrow::StringArray>(counts.table->GetColumnByName("part")->chunk(0));
+        const auto rows = std::static_pointer_cast<arrow::Int64Array>(counts.table->GetColumnByName("row_count")->chunk(0));
+        Check(counts.table->num_rows() == 3 && parts->GetString(0) == "a" && rows->Value(0) == 3 &&
+                  parts->GetString(1) == "b" && rows->Value(1) == 2 && parts->GetString(2) == "result" &&
+                  rows->Value(2) == 2,
+              "rows after each part: a 3, b 2, result 2");
+    }
+    // Rows a part removed: b drops id 4 from a.
+    const auto removed = transform.Run(cyxwiz::sqlstep::RemovedRowsQuery(sql, outline, 1), {{"input", input}});
+    Check(removed.ok && removed.table->num_rows() == 1, "b removed one row from a: " + removed.error);
+    // Check binds without running; a wrong column is reported with its line.
+    const auto checked = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(checked.ok && !checked.table, "check passes without a result table: " + checked.error);
+    const auto wrong = transform.Run("SELECT id,\n nothing FROM input", {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(!wrong.ok && wrong.error.find("nothing") != std::string::npos, "check names the unknown column: " + wrong.error);
+    Check(cyxwiz::sqlstep::ErrorLine(wrong.error) == 2, "the error points at line 2: " + wrong.error);
+    // A parse error reads as text, not DuckDB's JSON, and keeps its line.
+    const auto typo = transform.Run("SELECT id\nFORM input", {{"input", input}}, cyxwiz::SqlRunMode::Check);
+    Check(!typo.ok && typo.error.find("syntax error") != std::string::npos &&
+              typo.error.find("exception_type") == std::string::npos,
+          "a parse error is readable: " + typo.error);
+    Check(cyxwiz::sqlstep::ErrorLine(typo.error) == 2, "the parse error points at line 2: " + typo.error);
+    // Explain plans without running and refuses what Run refuses.
+    const auto plan = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Explain);
+    Check(plan.ok && plan.plan.find("SEQ_SCAN") != std::string::npos && plan.plan.find("id>1") != std::string::npos &&
+              plan.plan_text.find("SEQ_SCAN") != std::string::npos,
+          "explain gives a JSON plan with the scan and its filter, and its text: " + plan.plan);
+    {
+        auto estimate = cyxwiz::sqlplan::ParsePlanJson(plan.plan);
+        Check(estimate.error.empty() && !estimate.timed && !estimate.ops.empty(), "the estimate plan reads: " + estimate.error);
+        const auto timed = transform.Run(sql, {{"input", input}}, cyxwiz::SqlRunMode::Profile);
+        Check(timed.ok, "a timed run: " + timed.error);
+        auto profile = cyxwiz::sqlplan::ParsePlanJson(timed.plan);
+        cyxwiz::sqlplan::ExplainPlan(profile, sql, outline);
+        Check(profile.timed && profile.rows_out == 2 && profile.slowest >= 0, "the timed plan has rows and times");
+        bool scan_part = false;
+        for (const auto& op : profile.ops) {
+            scan_part = scan_part || (op.name == "SEQ_SCAN" && !op.parts.empty() && op.parts.front() == "a");
+        }
+        Check(scan_part, "the input scan belongs to part a");
+    }
+    const auto copy = transform.Run("COPY input TO 'x.csv'", {{"input", input}}, cyxwiz::SqlRunMode::Explain);
+    Check(!copy.ok, "explain refuses a statement that is not a SELECT");
+    // Column profile of the whole result.
+    const auto profile = cyxwiz::ProfileArrow(whole.table);
+    Check(profile.ok() && profile.columns.size() == 2, "profile: " + profile.error);
+    const auto& id = profile.columns[0];
+    const auto& word = profile.columns[1];
+    Check(id.numeric && id.min == 2 && id.max == 3 && id.median == 2.5 && word.facts.distinct == 2 &&
+              word.facts.non_null == word.facts.distinct,
+          "profile: id 2..3 median 2.5, word 2 distinct");
+    std::cout << "SQL part queries passed\n";
+}
+
+void CheckGuidedOperations() {
+    // TOFIX146 step 5: every guided operation's SQL runs in the step's
+    // read-only DuckDB and does what its summary says.
+    using json = nlohmann::json;
+    const auto strings = [](std::vector<std::string> values) {
+        arrow::StringBuilder b;
+        for (const auto& v : values) Check(b.Append(v).ok(), "string");
+        std::shared_ptr<arrow::Array> a;
+        Check(b.Finish(&a).ok(), "finish");
+        return a;
+    };
+    const auto ints = [](std::vector<int64_t> values) {
+        arrow::Int64Builder b;
+        for (const auto v : values) Check(b.Append(v).ok(), "int");
+        std::shared_ptr<arrow::Array> a;
+        Check(b.Finish(&a).ok(), "finish");
+        return a;
+    };
+    auto sermons = arrow::Table::Make(
+        arrow::schema({arrow::field("sermon_id", arrow::utf8()), arrow::field("title", arrow::utf8()),
+                       arrow::field("book_code", arrow::utf8()), arrow::field("chapter", arrow::int64()),
+                       arrow::field("text", arrow::utf8()), arrow::field("word_count", arrow::int64()),
+                       arrow::field("split", arrow::utf8())}),
+        {strings({"S1", "S2", "S3", "S4", "S5"}),
+         strings({"The Immutability of God", "The Remembrance of Christ", "Two Coverings", "Sons of Jacob", "The Sin of Unbelief"}),
+         strings({"MAL", "1CO", "PRO", "MAL", "2KI"}), ints({3, 11, 38, 3, 7}),
+         strings({"First para _italic_ [1].\n\nSecond para.\n\n\nThird", "One\r\n\r\nTwo", "START body END tail", "Only one", "A. B! C?"}),
+         ints({6459, 4000, 7000, 5200, 6000}), strings({"unassigned", "unassigned", "unassigned", "unassigned", "unassigned"})});
+    auto manifest = arrow::Table::Make(
+        arrow::schema({arrow::field("partition_document_id", arrow::utf8()), arrow::field("split", arrow::utf8())}),
+        {strings({"MAL 3:1", "1CO 11:1", "2KI 7:1"}), strings({"train", "validation", "test"})});
+
+    cyxwiz::guided::Context context;
+    context.inputs = {"sermons", "manifest"};
+    for (const auto& table : {std::make_pair(std::string("sermons"), sermons), std::make_pair(std::string("manifest"), manifest)}) {
+        for (const auto& field : table.second->schema()->fields()) {
+            context.columns[table.first].push_back(field->name());
+            if (arrow::is_integer(field->type()->id())) context.whole_number_columns.insert(field->name());
+        }
+    }
+    cyxwiz::SqlTransform transform;
+    const auto run = [&](const cyxwiz::guided::GuidedStep& step) {
+        const auto generated = cyxwiz::guided::GenerateSql(step, context);
+        Check(generated.ok, "guided step generates");
+        return transform.Run(generated.sql, {{"sermons", sermons}, {"manifest", manifest}});
+    };
+    const auto one = [&](const char* type, json params) {
+        cyxwiz::guided::GuidedStep step;
+        step.ops.push_back({type, true, std::move(params)});
+        const auto result = run(step);
+        Check(result.ok, std::string(type) + " runs: " + result.error);
+        return result.table;
+    };
+    const auto cell = [](const std::shared_ptr<arrow::Table>& table, const char* column, int64_t row) {
+        auto scalar = table->GetColumnByName(column)->GetScalar(row);
+        return scalar.ok() && (*scalar)->is_valid ? (*scalar)->ToString() : std::string("<null>");
+    };
+
+    // Board 3's example: look up the chapter's split, keep matched long
+    // sermons, choose and rename columns, check.
+    {
+        cyxwiz::guided::GuidedStep step;
+        step.ops.push_back({"look_up", true, {{"table", "manifest"},
+                            {"key", json::array({{{"kind", "column"}, {"value", "book_code"}}, {{"kind", "text"}, {"value", " "}},
+                                                 {{"kind", "column"}, {"value", "chapter"}}, {{"kind", "text"}, {"value", ":1"}}})},
+                            {"other_key", "partition_document_id"},
+                            {"bring", json::array({{{"column", "split"}, {"as", "chapter_split"}}})}, {"no_match", "keep"}}});
+        step.ops.push_back({"keep_rows", true, {{"match", "all"}, {"conditions", json::array({
+                            {{"column", "chapter_split"}, {"op", "is not empty"}, {"value", ""}},
+                            {{"column", "word_count"}, {"op", "at least"}, {"value", "5000"}}})}}});
+        step.ops.push_back({"choose_columns", true, {{"columns", json::array({
+                            {{"name", "sermon_id"}, {"keep", true}}, {{"name", "word_count"}, {"keep", true}},
+                            {{"name", "split"}, {"keep", false}}, {{"name", "chapter_split"}, {"keep", true}, {"rename", "split"}}})}}});
+        step.ops.push_back({"add_checks", true, {{"checks", json::array({
+                            {{"kind", "allowed_values"}, {"column", "split"}, {"values", "train, validation, test"}},
+                            {{"kind", "unique"}, {"column", "sermon_id"}}, {{"kind", "row_count"}, {"exact", "3"}}})}}});
+        const auto result = run(step);
+        Check(result.ok && result.table->num_rows() == 3 && result.table->num_columns() == 3,
+              "board 3 example: 3 rows x 3 columns: " + result.error);
+        if (result.ok) {
+            Check(cell(result.table, "sermon_id", 0) == "S1" && cell(result.table, "split", 0) == "train" &&
+                      cell(result.table, "sermon_id", 2) == "S5" && cell(result.table, "split", 2) == "test",
+                  "matched splits");
+        }
+        // Rows after each operation, as the Workbench counts them.
+        const auto generated = cyxwiz::guided::GenerateSql(step, context);
+        const auto outline = cyxwiz::sqlstep::OutlineSqlQuery(generated.sql);
+        const auto counts = transform.Run(cyxwiz::sqlstep::PartCountsQuery(generated.sql, outline), {{"sermons", sermons}, {"manifest", manifest}});
+        Check(counts.ok && counts.table->num_rows() == 5, "rows after each operation: " + counts.error);
+        if (counts.ok) {
+            const auto rows = std::static_pointer_cast<arrow::Int64Array>(counts.table->GetColumnByName("row_count")->chunk(0));
+            Check(rows->Value(0) == 5 && rows->Value(1) == 3 && rows->Value(4) == 3, "5 looked up, 3 kept, 3 out");
+        }
+        // A failing check stops the step with its message.
+        step.ops[3].params["checks"][2]["exact"] = "4";
+        const auto failing = run(step);
+        Check(!failing.ok && failing.error.find("expected exactly 4 rows, found 3") != std::string::npos,
+              "a failing check stops the step: " + failing.error);
+        step.ops[0].params["no_match"] = "stop";
+        step.ops[3].params["checks"][2]["exact"] = "3";
+        const auto stopped = run(step);
+        Check(!stopped.ok && stopped.error.find("1 row(s) have no match in manifest; the first is PRO 38:1") != std::string::npos,
+              "no match stops the step and names the key: " + stopped.error);
+    }
+
+    // Every operation on its own.
+    auto t = one("keep_rows", {{"match", "any"}, {"conditions", json::array({{{"column", "book_code"}, {"op", "is one of"}, {"value", "MAL, PRO"}},
+                                                                              {{"column", "title"}, {"op", "starts with"}, {"value", "The Sin"}}})}});
+    Check(t && t->num_rows() == 4, "keep rows (any): 4");
+    t = one("remove_duplicates", {{"columns", json::array({"book_code"})}});
+    Check(t && t->num_rows() == 4 && cell(t, "sermon_id", 3) == "S5", "remove duplicates by book keeps the first: 4");
+    t = one("sort_rows", {{"keys", json::array({{{"column", "word_count"}, {"descending", true}}})}});
+    Check(t && cell(t, "sermon_id", 0) == "S3", "sort high to low");
+    t = one("keep_first", {{"mode", "first"}, {"count", "2"}});
+    Check(t && t->num_rows() == 2, "first 2");
+    t = one("keep_first", {{"mode", "sample"}, {"count", "2"}});
+    Check(t && t->num_rows() == 2, "sample 2");
+    t = one("keep_first", {{"mode", "every"}, {"count", "2"}});
+    Check(t && t->num_rows() == 3 && cell(t, "sermon_id", 1) == "S3", "every 2nd: S1, S3, S5");
+    t = one("add_column", {{"name", "words"}, {"formula", "word count"}, {"column", "title"}});
+    Check(t && cell(t, "words", 0) == "4", "word count of a title");
+    t = one("add_column", {{"name", "thousands"}, {"formula", "arithmetic"}, {"column", "word_count"}, {"operator", "/"}, {"value", "1000"}});
+    Check(t && cell(t, "thousands", 0).rfind("6.459", 0) == 0, "arithmetic: " + (t ? cell(t, "thousands", 0) : std::string()));
+    t = one("add_column", {{"name", "long"}, {"formula", "condition"}, {"condition", {{"column", "word_count"}, {"op", "at least"}, {"value", "6000"}}},
+                           {"then", "long"}, {"else", "short"}});
+    Check(t && cell(t, "long", 0) == "long" && cell(t, "long", 1) == "short", "condition column");
+    t = one("change_type", {{"column", "chapter"}, {"to", "text"}, {"on_error", "empty"}});
+    Check(t && t->schema()->GetFieldByName("chapter")->type()->id() == arrow::Type::STRING, "change type to text");
+    t = one("split_merge", {{"mode", "split"}, {"column", "title"}, {"separator", " "}, {"names", json::array({"first_word", "second_word"})}});
+    Check(t && cell(t, "second_word", 0) == "Immutability", "split a column");
+    t = one("split_merge", {{"mode", "merge"}, {"columns", json::array({"book_code", "chapter"})}, {"separator", " "}, {"name", "ref"}});
+    Check(t && cell(t, "ref", 0) == "MAL 3", "merge columns");
+    t = one("clean_text", {{"column", "text"}, {"trim", true}, {"collapse_spaces", true}, {"remove_markup", true}, {"remove_footnote_marks", true}, {"case", "unchanged"}});
+    Check(t && cell(t, "text", 0) == "First para italic. Second para. Third", "clean text: " + (t ? cell(t, "text", 0) : std::string()));
+    t = one("find_replace", {{"column", "title"}, {"find", "the"}, {"replace", "a"}, {"pattern", false}, {"match_case", false}});
+    Check(t && cell(t, "title", 0) == "a Immutability of God", "find and replace, any case");
+    t = one("keep_between", {{"column", "text"}, {"start", "START"}, {"end", "END"}, {"keep_markers", false}, {"if_missing", "keep"}});
+    Check(t && cell(t, "text", 2) == " body " && cell(t, "text", 3) == "Only one", "keep between markers; rows without them kept");
+    t = one("split_into_rows", {{"column", "text"}, {"by", "paragraphs"}, {"index_name", "text_index"}, {"drop_empty", true}});
+    Check(t && t->num_rows() == 8 && cell(t, "text_index", 2) == "3" && cell(t, "text", 3) == "One",
+          "split into paragraphs, Windows line breaks too: 3 + 2 + 1 + 1 + 1");
+    t = one("split_into_rows", {{"column", "text"}, {"by", "sentences"}, {"index_name", "n"}, {"drop_empty", true}});
+    Check(t && t->num_rows() >= 9, "split into sentences");
+    t = one("extract_pattern", {{"column", "sermon_id"}, {"pattern", "[0-9]+"}, {"group", "0"}, {"name", "number"}});
+    Check(t && cell(t, "number", 4) == "5", "extract a number");
+    t = one("append_rows", {{"table", "manifest"}});
+    Check(t && t->num_rows() == 8, "append rows by name: 5 + 3");
+    t = one("group_summarise", {{"by", json::array({"book_code"})}, {"measures", json::array({{{"function", "count"}},
+                                {{"function", "sum"}, {"column", "word_count"}, {"name", "words"}},
+                                {{"function", "join text"}, {"column", "sermon_id"}, {"separator", "+"}, {"name", "ids"}}})}});
+    Check(t && t->num_rows() == 4, "group by book: 4 groups");
+    t = one("pivot_unpivot", {{"mode", "pivot"}, {"names_from", "book_code"}, {"values", "MAL, 1CO, PRO, 2KI"}, {"values_from", "word_count"}, {"function", "sum"}, {"group_by", json::array()}});
+    Check(t && t->num_rows() == 1 && t->schema()->GetFieldByName("MAL") != nullptr, "pivot: a column per book");
+    t = one("pivot_unpivot", {{"mode", "unpivot"}, {"columns", json::array({"chapter", "word_count"})}, {"name_column", "measure"}, {"value_column", "amount"}});
+    Check(t && t->num_rows() == 10, "unpivot two columns: 10 rows");
+    t = one("assign_split", {{"key", json::array({"sermon_id"})}, {"train", "60"}, {"validation", "20"}, {"test", "20"}, {"salt", "v1"}, {"name", "split"}});
+    bool valid = t != nullptr;
+    for (int64_t r = 0; t && r < t->num_rows(); ++r) {
+        const std::string s = cell(t, "split", r);
+        valid = valid && (s == "train" || s == "validation" || s == "test");
+    }
+    Check(valid && t->num_columns() == 7, "assign split replaces the split column with train/validation/test");
+    const auto again = one("assign_split", {{"key", json::array({"sermon_id"})}, {"train", "60"}, {"validation", "20"}, {"test", "20"}, {"salt", "v1"}, {"name", "split"}});
+    Check(t && again && t->Equals(*again), "the split is stable");
+    t = one("number_rows", {{"name", "n"}, {"partition_by", json::array({"book_code"})}, {"order_by", json::array({{{"column", "word_count"}, {"descending", true}}})}});
+    Check(t && t->num_rows() == 5, "number rows within books");
+    std::cout << "Guided operations passed\n";
+}
+
+void CheckNodeRunFacts() {
+    // TOFIX146: each node's latest run facts (rows, columns, time, outcome)
+    // for the SQL step Properties and Workbench.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_node_run_facts";
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    { std::ofstream file(csv); file << "id,word\n1,alpha\n2,beta\n3,gamma\n4,delta\n"; }
+    auto graph = [&](const std::string& expected) {
+        return R"({"nodes":[{"id":93101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":93102,"type":"SQLQuery","name":"Long words","parameters":{"sql_contract_version":"1","input_alias":"input","query":"SELECT id, word, length(word) AS letters FROM input WHERE length(word) >= 5"}},)"
+            R"({"id":93103,"type":"RowCountCheck","name":"Check: long words","parameters":{"check_name":"long words","expected_rows":")" + expected +
+            R"(","count_column":"letters","count_value":"5","on_failure":"stop"}}],"links":[{"start_node":93101,"end_node":93102},{"start_node":93102,"end_node":93103}]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(graph("3")), "run facts pipeline: " + executor.GetLastError());
+    const auto facts = executor.GetNodeRunFacts();
+    Check(facts.count(93101) && facts.count(93102) && facts.count(93103), "facts for every executed node");
+    const auto& sql = facts.at(93102);
+    Check(sql.output_dataset == "ds_sql_93102", "SQL step output dataset: " + sql.output_dataset);
+    Check(sql.rows == 3 && sql.columns == 3, "SQL step rows/columns: " + std::to_string(sql.rows) + "x" + std::to_string(sql.columns));
+    Check(sql.seconds >= 0.0 && sql.finished_at.size() == 8 && sql.error.empty(), "SQL step time and clock");
+    Check(facts.at(93101).rows == 4, "Data Input rows");
+    const auto& check = facts.at(93103);
+    Check(check.outcome == "passed: 3 rows where letters = '5' (expected exactly 3)", "check outcome: " + check.outcome);
+    Check(check.rows == 3, "check passes its rows through");
+
+    cyxwiz::PipelineExecutor failing;
+    Check(!failing.ExecutePipeline(graph("2")), "a failing check stops the run");
+    const auto failed = failing.GetNodeRunFacts();
+    Check(failed.count(93103) && failed.at(93103).error.find("'long words' failed") != std::string::npos,
+          "the failing check records its error: " + (failed.count(93103) ? failed.at(93103).error : std::string("none")));
+    Check(failed.count(93102) && failed.at(93102).rows == 3, "nodes before the failure keep their facts");
+    fs::remove_all(dir);
+    std::cout << "Node run facts passed\n";
+}
+
+void CheckLazyEvaluation() {
+    // TOFIX154 item 10: an executor kept between runs reuses an unchanged
+    // node's result; a changed parameter or source file reruns that node and
+    // everything below it; a node that writes a file always runs.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_lazy_evaluation";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto csv = dir / "rows.csv";
+    { std::ofstream file(csv); file << "id,word\n1,alpha\n2,beta\n3,gamma\n"; }
+    auto graph = [&](const std::string& min_letters) {
+        return R"({"nodes":[{"id":94101,"type":"DataInput","name":"Rows","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")" +
+            JsonEscapePath(csv.string()) +
+            R"("}},{"id":94102,"type":"SQLQuery","name":"Long","parameters":{"sql_contract_version":"1","input_alias":"input","query":"SELECT id, word FROM input WHERE length(word) >= )" +
+            min_letters + R"("}},{"id":94103,"type":"ExportCSV","name":"Export","parameters":{"file_path":")" +
+            JsonEscapePath((dir / "out.csv").string()) +
+            R"("}}],"links":[{"start_node":94101,"end_node":94102},{"start_node":94102,"end_node":94103}]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    std::set<int> executed;
+    executor.SetNodeExecutionCallback([&executed](int id, cyxwiz::PipelineNodeExecutionEvent event, const std::string&) {
+        if (event == cyxwiz::PipelineNodeExecutionEvent::Executing) executed.insert(id);
+    });
+    auto run = [&](const std::string& min_letters) {
+        executed.clear();
+        Check(executor.ExecutePipeline(graph(min_letters)), "lazy run: " + executor.GetLastError());
+        return executed;
+    };
+    Check(run("5") == std::set<int>{94101, 94102, 94103}, "the first run executes every node");
+    Check(run("5") == std::set<int>{94103}, "an unchanged rerun executes only the export (it writes a file)");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 2, "the reused SQL step keeps its facts");
+    Check(run("4") == std::set<int>{94102, 94103}, "a changed parameter reruns that step and below");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 3, "the rerun step has its new rows");
+    { std::ofstream file(csv, std::ios::app); file << "4,delta\n"; }
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "an edited source file reruns everything");
+    Check(executor.GetNodeRunFacts().at(94102).rows == 4, "the rerun reads the edited file");
+    for (int id : {94101, 94102}) cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(
+        id == 94101 ? "ds_datainput_94101" : "ds_sql_94102");
+    Check(run("4") == std::set<int>{94101, 94102, 94103}, "a result that is gone is computed again");
+    // The kept executor reopens DuckDB when the data budget changes.
+    {
+        cyxwiz::DuckDBConnector connector;
+        Check(connector.MatchesDataBudget(), "a new DuckDB connection matches the data budget");
+        cyxwiz::SetDataBudgetBytes(512ULL << 20);
+        Check(!connector.MatchesDataBudget(), "a changed data budget no longer matches");
+        Check(run("5") == std::set<int>{94102, 94103}, "a run after a budget change works");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    fs::remove_all(dir);
+    std::cout << "Lazy evaluation passed\n";
+}
+
+// TOFIX154: a unique check on a table on disk runs as one DuckDB GROUP BY
+// (it needs every key, so it does not stream): the same verdict as in
+// memory, and the file passes through uncopied.
+void CheckUniqueOnDisk() {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_unique_on_disk";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto file = dir / "keys.parquet";
+    {
+        arrow::Int64Builder ids, keys;
+        arrow::StringBuilder names;
+        for (int64_t i = 0; i < 1000; ++i) {
+            Check(ids.Append(i).ok() && keys.Append(i % 400).ok() && names.Append("n" + std::to_string(i % 400)).ok(),
+                  "unique fixture values");
+        }
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("id", arrow::int64()),
+                                                       arrow::field("key", arrow::int64()),
+                                                       arrow::field("name", arrow::utf8())}),
+                                        {ids.Finish().ValueOrDie(), keys.Finish().ValueOrDie(),
+                                         names.Finish().ValueOrDie()});
+        auto out = arrow::io::FileOutputStream::Open(file.string()).ValueOrDie();
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out, 100).ok() && out->Close().ok(),
+              "unique fixture written in row groups of 100");
+    }
+    auto graph = [&](bool disk, const std::string& columns) {
+        return std::string(R"({"nodes":[{"id":95301,"type":"DataInput","name":"Keys","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95302,"type":"RowCountCheck","name":"Unique","parameters":{"check":"unique","check_name":"keys","columns":")" +
+            columns + R"("}}],"links":[{"start_node":95301,"end_node":95302}]})";
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    for (const bool disk : {false, true}) {
+        const std::string where = disk ? "on disk" : "in memory";
+        if (disk) cyxwiz::SetDataBudgetBytes(1);
+        {
+            cyxwiz::PipelineExecutor executor;
+            Check(executor.ExecutePipeline(graph(disk, "id")), "unique id passes " + where + ": " + executor.GetLastError());
+            const auto facts = executor.GetNodeRunFacts();
+            Check(facts.at(95302).outcome == "passed: id unique in 1000 rows",
+                  "unique id outcome " + where + ": " + facts.at(95302).outcome);
+            const auto output = facts.at(95302).output_dataset;
+            if (disk) {
+                const auto passed = registry.GetParquetBackedDataset(output);
+                Check(passed && passed->GetNumRows() == 1000 && passed->GetFilePath() == file.string(),
+                      "on disk the check passes the same file through");
+            } else {
+                const auto passed = registry.GetArrowDataset(output);
+                Check(passed && passed->GetNumRows() == 1000, "in memory the check passes the table through");
+            }
+            registry.UnregisterTabularDataset(output);
+        }
+        for (const std::string columns : {"key", "key,name"}) {
+            cyxwiz::PipelineExecutor executor;
+            Check(!executor.ExecutePipeline(graph(disk, columns)), "repeated " + columns + " fails " + where);
+            const auto error = executor.GetLastError();
+            const std::string what = columns == "key" ? "key" : "key, name";
+            Check(error.find("'keys' failed: " + what + " repeats in 600 row(s)") != std::string::npos,
+                  "repeated " + columns + " " + where + " gives the count: " + error);
+        }
+        registry.UnregisterTabularDataset("ds_datainput_95301");
+        cyxwiz::SetDataBudgetBytes(0);
+    }
+    // The pivot step's "Find values" on a table on disk: the first distinct
+    // values, a row group at a time, stopping once it has them.
+    {
+        const auto keys = cyxwiz::ParquetBackedDataset::Open(file.string(), "find_values");
+        Check(keys != nullptr, "the key file opens");
+        const auto names = keys->FirstDistinctValues("name", 50);
+        Check(names.size() == 50 && names.front() == "n0" && names.back() == "n49",
+              "the first 50 names in file order");
+        Check(keys->FirstDistinctValues("key", 500).size() == 400, "every distinct key when fewer than asked");
+        Check(keys->FirstDistinctValues("missing", 5).empty(), "a missing column gives none");
+    }
+    fs::remove_all(dir);
+    std::cout << "Unique on disk passed\n";
+}
+
+void CheckStreamingScaler() {
+    // TOFIX154 step 4: StandardScaler over a Parquet file of 10 row groups,
+    // streamed (input on disk, tiny budget) and in memory: the same output.
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "cyxwiz_streaming_scaler";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto file = dir / "values.parquet";
+    {
+        arrow::Int64Builder ids;
+        arrow::DoubleBuilder values;
+        for (int64_t i = 0; i < 1000; ++i) {
+            Check(ids.Append(i).ok() && values.Append(i * 0.37 + std::sin(static_cast<double>(i)) * 5.0).ok(),
+                  "streaming fixture values");
+        }
+        auto table = arrow::Table::Make(arrow::schema({arrow::field("id", arrow::int64()),
+                                                       arrow::field("value", arrow::float64())}),
+                                        {ids.Finish().ValueOrDie(), values.Finish().ValueOrDie()});
+        auto out = arrow::io::FileOutputStream::Open(file.string()).ValueOrDie();
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out, 100).ok() && out->Close().ok(),
+              "streaming fixture written in row groups of 100");
+    }
+    auto graph = [&](const std::string& scaler, bool disk) {
+        return std::string(R"({"nodes":[{"id":95101,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95102,"type":")" + scaler + R"(","name":"Scale","parameters":{"columns":"value"}}],"links":[{"start_node":95101,"end_node":95102}]})";
+    };
+    auto scaled = [&](const std::string& scaler, bool disk) {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(graph(scaler, disk)), scaler + " run (" + (disk ? "disk" : "memory") +
+                                                                 "): " + executor.GetLastError());
+        const auto output = executor.GetNodeRunFacts().at(95102).output_dataset;
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        std::shared_ptr<arrow::Table> table;
+        if (auto memory = registry.GetArrowDataset(output)) table = memory->GetArrowTable();
+        else if (auto stored = registry.GetParquetBackedDataset(output)) table = stored->ReadAll();
+        Check(table && table->num_rows() == 1000, "scaler output has every row");
+        std::vector<double> values;
+        for (const auto& chunk : table->GetColumnByName("value")->chunks()) {
+            if (chunk->type_id() == arrow::Type::FLOAT) {  // the scaler writes float32
+                const auto floats = std::static_pointer_cast<arrow::FloatArray>(chunk);
+                values.insert(values.end(), floats->raw_values(), floats->raw_values() + floats->length());
+            } else {
+                const auto doubles = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                values.insert(values.end(), doubles->raw_values(), doubles->raw_values() + doubles->length());
+            }
+        }
+        registry.UnregisterTabularDataset(output);
+        registry.UnregisterTabularDataset("ds_datainput_95101");
+        return values;
+    };
+    for (const std::string scaler : {"StandardScaler", "MinMaxScaler"}) {
+        const auto in_memory = scaled(scaler, false);
+        cyxwiz::SetDataBudgetBytes(1);
+        const auto streamed = scaled(scaler, true);
+        cyxwiz::SetDataBudgetBytes(0);
+        double worst = 0.0;
+        for (size_t i = 0; i < in_memory.size(); ++i) worst = std::max(worst, std::abs(in_memory[i] - streamed[i]));
+        Check(worst < 1e-6, "streamed and in-memory " + scaler + " agree (max difference " + std::to_string(worst) + ")");
+    }
+
+    // LogTransform (row by row) then a row-count check (passes its input
+    // through): streamed and in memory give the same rows and outcome.
+    auto log_graph = [&](bool disk, const std::string& expected) {
+        return std::string(R"({"nodes":[{"id":95201,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
+            (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
+            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"value_col":"id"}},)"
+            R"({"id":95203,"type":"RowCountCheck","name":"Count","parameters":{"check_name":"all rows","expected_rows":")" + expected +
+            R"("}}],"links":[{"start_node":95201,"end_node":95202},{"start_node":95202,"end_node":95203}]})";
+    };
+    auto logged = [&](bool disk) {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(log_graph(disk, "1000")),
+              std::string("log + check run (") + (disk ? "disk" : "memory") + "): " + executor.GetLastError());
+        const auto facts = executor.GetNodeRunFacts();
+        Check(facts.at(95203).outcome == "passed: 1000 rows (expected exactly 1000)",
+              "the streamed check counts every row: " + facts.at(95203).outcome);
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        const auto output = facts.at(95203).output_dataset;
+        std::shared_ptr<arrow::Table> table;
+        if (auto memory = registry.GetArrowDataset(output)) table = memory->GetArrowTable();
+        else if (auto stored = registry.GetParquetBackedDataset(output)) table = stored->ReadAll();
+        Check(table && table->num_rows() == 1000, "the check passes every row through");
+        std::vector<double> values;
+        for (const auto& chunk : table->GetColumnByName("id")->chunks()) {
+            const auto floats = std::static_pointer_cast<arrow::FloatArray>(chunk);
+            values.insert(values.end(), floats->raw_values(), floats->raw_values() + floats->length());
+        }
+        for (const auto& name : {facts.at(95202).output_dataset, output, std::string("ds_datainput_95201")})
+            registry.UnregisterTabularDataset(name);
+        return values;
+    };
+    // Readers of a table on disk (TOFIX154 step 5): the first rows read only
+    // the row groups they need; 0 rows give the columns; a plot's sample is
+    // row groups spread over the whole file.
+    {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        Check(registry.LoadTabularParquet(file.string(), "streaming_preview", true) ==
+                  cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked,
+              "the fixture opens on disk");
+        const auto preview = registry.ReadTablePreview("streaming_preview", 250);
+        Check(preview && preview->num_rows() == 250, "a preview reads its first 250 rows");
+        const auto columns = registry.ReadTablePreview("streaming_preview", 0);
+        Check(columns && columns->num_rows() == 0 && columns->num_columns() == 2, "0 rows give the columns");
+        const auto sample = registry.GetParquetBackedDataset("streaming_preview")->ReadSpreadRowGroups(300);
+        Check(sample && sample->num_rows() == 300, "a spread sample reads 3 of the 10 row groups");
+        auto ids = std::static_pointer_cast<arrow::Int64Array>(
+            arrow::Concatenate(sample->GetColumnByName("id")->chunks()).ValueOrDie());
+        Check(ids->Value(0) == 0 && ids->Value(299) >= 600, "the sample spans the file, not only its start");
+        registry.UnregisterTabularDataset("streaming_preview");
+    }
+
+    const auto logged_in_memory = logged(false);
+    cyxwiz::SetDataBudgetBytes(1);
+    const auto logged_streamed = logged(true);
+    {
+        cyxwiz::PipelineExecutor failing;
+        Check(!failing.ExecutePipeline(log_graph(true, "999")) &&
+                  failing.GetLastError().find("expected exactly 999 rows, found 1000") != std::string::npos,
+              "a streamed check that fails stops the run: " + failing.GetLastError());
+        cyxwiz::DataRegistry::Instance().UnregisterTabularDataset("ds_datainput_95201");
+    }
+    cyxwiz::SetDataBudgetBytes(0);
+    Check(logged_in_memory == logged_streamed, "streamed and in-memory LogTransform agree");
+    fs::remove_all(dir);
+    std::cout << "Streaming scaler passed\n";
+}
+
+void CheckJsonLinesInput() {
+    // TOFIX143 P1b: DataInput reads JSON Lines into Arrow (nested objects become
+    // structs, arrays lists, keys missing in some rows become nulls).
+    namespace fs=std::filesystem;
+    const auto dir=fs::temp_directory_path()/"cyxwiz_json_lines_input";
+    fs::create_directories(dir);
+    const auto jsonl=dir/"records.jsonl", plain=dir/"records.json";
+    { std::ofstream file(jsonl,std::ios::binary); file <<
+        R"({"id":"r1","split":"train","messages":[{"role":"user","content":"Q1"},{"role":"assistant","content":"A1"}],"evidence":[{"kind":"scripture","reference":"John 3:16"}]})" "\n"
+        R"({"id":"r2","split":"validation","messages":[{"role":"user","content":"Q2"},{"role":"assistant","content":"A2"}],"evidence":[{"kind":"teaching","author":"Maclaren"}]})" "\n"; }
+    { std::ofstream file(plain,std::ios::binary); file << R"([{"id":"r1"}])"; }
+    auto graph=[&](int id,const fs::path& path,const std::string& extra) {
+        return R"({"nodes":[{"id":)"+std::to_string(id)+R"(,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json",)"+extra+R"("file_path":")"+
+            JsonEscapePath(path.string())+R"("}}],"links":[]})";
+    };
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(graph(92001,jsonl,"")),"JSON Lines input: "+executor.GetLastError());
+    auto loaded=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_datainput_92001");
+    Check(loaded!=nullptr,"JSON Lines dataset registered");
+    const auto table=loaded->GetArrowTable();
+    Check(table->num_rows()==2 && table->num_columns()==4,"JSON Lines rows and columns");
+    const auto messages=table->GetColumnByName("messages");
+    Check(messages && messages->type()->id()==arrow::Type::LIST &&
+          std::static_pointer_cast<arrow::ListType>(messages->type())->value_type()->id()==arrow::Type::STRUCT,
+          "JSON Lines arrays of objects become list<struct>");
+    const auto evidence=std::static_pointer_cast<arrow::ListType>(table->GetColumnByName("evidence")->type());
+    const auto fields=std::static_pointer_cast<arrow::StructType>(evidence->value_type());
+    Check(fields->GetFieldByName("reference") && fields->GetFieldByName("author"),
+          "keys from every row are kept: "+evidence->ToString());
+    Check(table->GetColumnByName("split")->GetScalar(1).ValueOrDie()->ToString()=="validation","JSON Lines values");
+    cyxwiz::PipelineExecutor plain_executor;
+    Check(!plain_executor.ExecutePipeline(graph(92002,plain,"")),"plain JSON must be refused");
+    Check(plain_executor.GetLastError().find("JSON Lines")!=std::string::npos,
+          "plain JSON error names JSON Lines: "+plain_executor.GetLastError());
+    cyxwiz::PipelineExecutor flagged;
+    Check(!flagged.ExecutePipeline(graph(92003,plain,R"("json_lines":"true",)")),"a JSON array is not JSON Lines");
+    // SQL reads the nested JSON Lines columns (lists of structs) and returns flat columns.
+    const std::string sql_graph =
+        R"({"nodes":[{"id":92011,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json","json_lines":"true","file_path":")"+
+        JsonEscapePath(jsonl.string())+
+        R"("}},{"id":92012,"type":"SQLQuery","name":"Answers","parameters":{"sql_contract_version":"1","input_alias":"records","query":"SELECT id, list_filter(messages, m -> m.role = 'assistant')[1].content AS answer, CAST(len(evidence) AS BIGINT) AS n_evidence, evidence[1].kind AS first_kind FROM records ORDER BY id"}}],"links":[{"start_node":92011,"end_node":92012}]})";
+    cyxwiz::PipelineExecutor sql_executor;
+    Check(sql_executor.ExecutePipeline(sql_graph),"SQL over JSON Lines: "+sql_executor.GetLastError());
+    auto answers=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_sql_92012");
+    Check(answers && answers->GetArrowTable()->num_rows()==2,"SQL over JSON Lines rows");
+    const auto answer_table=answers->GetArrowTable();
+    Check(answer_table->GetColumnByName("answer")->GetScalar(1).ValueOrDie()->ToString()=="A2" &&
+          answer_table->GetColumnByName("first_kind")->GetScalar(0).ValueOrDie()->ToString()=="scripture",
+          "SQL reads nested list<struct> fields");
+    const std::string nested_result =
+        R"({"nodes":[{"id":92013,"type":"DataInput","name":"Records","parameters":{"source_type":"file","type":"json","json_lines":"true","file_path":")"+
+        JsonEscapePath(jsonl.string())+
+        R"("}},{"id":92014,"type":"SQLQuery","name":"Nested out","parameters":{"sql_contract_version":"1","input_alias":"records","query":"SELECT messages FROM records"}}],"links":[{"start_node":92013,"end_node":92014}]})";
+    cyxwiz::PipelineExecutor nested_executor;
+    Check(!nested_executor.ExecutePipeline(nested_result),"nested SQL results stay refused (results are flat)");
+    fs::remove_all(dir);
+    std::cout<<"JSON Lines input passed\n";
 }
 
 void CheckTokenizerProjectVocabulary() {
@@ -1267,7 +2018,7 @@ void CheckSqlStep() {
     std::cout << "SQL step (contract 1) passed\n";
 }
 
-// TOFIX101 package E: the Row Count Check step passes data through when the
+// TOFIX101 package E: the Check step passes data through when the
 // count holds and stops the run when it does not.
 void CheckRowCountCheckStep() {
     namespace fs = std::filesystem;
@@ -1309,6 +2060,21 @@ void CheckRowCountCheckStep() {
     Check(!run(check(2, {{"check_name", "all verses"}, {"expected_rows", "6"}}), error) &&
               error.find("'all verses' failed: expected exactly 6 rows, found 5") != std::string::npos,
           "a wrong count stops the run with the numbers (got: " + error + ")");
+    Check(!registry.GetArrowDataset("ds_operator_RowCountCheck_2"),
+          "a failed check leaves no result from its earlier, passing run");
+    {
+        // Two checks in a row: when the first fails, the second (never
+        // reached) keeps no result from the earlier run either.
+        const auto chain = [&](const std::string& first_expected) {
+            const json graph = {{"nodes", json::array({input, check(2, {{"expected_rows", first_expected}}), check(3, {{"expected_rows", "5"}})})},
+                                {"links", json::array({{{"start_node", 1}, {"end_node", 2}}, {{"start_node", 2}, {"end_node", 3}}})}};
+            cyxwiz::PipelineExecutor executor;
+            return executor.ExecutePipeline(graph.dump());
+        };
+        Check(chain("5") && registry.GetArrowDataset("ds_operator_RowCountCheck_3"), "both checks pass and the second has a result");
+        Check(!chain("6") && !registry.GetArrowDataset("ds_operator_RowCountCheck_3"),
+              "a check after a failed one keeps no result from the earlier run");
+    }
     Check(!run(check(2, {{"expected_rows", "3"}, {"count_true_column", "empty_text"}}), error) &&
               error.find("rows where empty_text is true, found 2") != std::string::npos,
           "a wrong conditional count names the column (got: " + error + ")");
@@ -1345,10 +2111,39 @@ void CheckRowCountCheckStep() {
               error.find("not both") != std::string::npos,
           "the two count modes are exclusive (got: " + error + ")");
 
+    // TOFIX148 D4: the other kinds of the one check model.
+    Check(run(check(2, {{"check", "allowed_values"}, {"column", "empty_text"}, {"allowed", "true, false"}}), error),
+          "allowed values pass: " + error);
+    Check(!run(check(2, {{"check", "allowed_values"}, {"check_name", "flags"}, {"column", "empty_text"}, {"allowed", "false"}}), error) &&
+              error.find("'flags' failed: empty_text has 2 value(s) outside false (first: 'true')") != std::string::npos,
+          "a value outside the list stops the run with the count and the first value (got: " + error + ")");
+    Check(run(check(2, {{"check", "unique"}, {"columns", "id"}}), error), "unique ids pass: " + error);
+    Check(run(check(2, {{"check", "unique"}, {"columns", "empty_text, id"}}), error), "unique column pairs pass: " + error);
+    Check(!run(check(2, {{"check", "unique"}, {"columns", "empty_text"}}), error) &&
+              error.find("empty_text repeats in 3 row(s) (first: 'false')") != std::string::npos,
+          "a repeated value stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "not_empty"}, {"column", "id"}}), error), "a filled column passes: " + error);
+    Check(!run(check(2, {{"check", "not_empty"}, {"column", "text"}}), error) &&
+              error.find("text is empty in 2 row(s)") != std::string::npos,
+          "empty text stops the run (got: " + error + ")");
+    Check(run(check(2, {{"check", "range"}, {"column", "id"}, {"min_value", "1"}, {"max_value", "5"}}), error),
+          "values in range pass: " + error);
+    Check(!run(check(2, {{"check", "range"}, {"column", "id"}, {"max_value", "4.5"}}), error) &&
+              error.find("id is not at most 4.5 in 1 row(s) (first: 5)") != std::string::npos,
+          "a value out of range stops the run (got: " + error + ")");
+    Check(!run(check(2, {{"check", "range"}, {"column", "text"}, {"min_value", "0"}}), error) &&
+              error.find("needs a numeric column") != std::string::npos,
+          "a range check on text is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"check", "allowed_values"}, {"column", "text"}}), error) &&
+              error.find("list the allowed values") != std::string::npos,
+          "allowed values need a list (got: " + error + ")");
+    Check(!run(check(2, {{"check", "between"}, {"column", "id"}}), error) && error.find("is not one of") != std::string::npos,
+          "an unknown kind is a configuration error (got: " + error + ")");
+
     registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
     fs::remove(csv);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
-    std::cout << "Row Count Check step passed\n";
+    std::cout << "Check step passed\n";
 }
 
 // TOFIX101 package C2: a SQL step reads several named inputs (one pin each),
@@ -1609,7 +2404,151 @@ void CheckPreparationRecipe() {
     std::cout << "Preparation Recipe lowering passed\n";
 }
 
+// TOFIX140: the analysis demo graph (examples/cyxgraph/analysis) opens as saved
+// and each Plot node's lane runs, as a double-click does in the Engine: Log
+// Transform -> Robust Scaler -> PCA -> K-Means / DBSCAN on the selected device.
+void CheckCustomerSegmentsDemoGraph() {
+    namespace fs = std::filesystem;
+    using gui::NodeType;
+    const fs::path graph_path = fs::path(CYXWIZ_SOURCE_ROOT) / "examples" / "cyxgraph" / "analysis" /
+                                "customer_segments_analysis.cyxgraph";
+    std::ifstream in(graph_path, std::ios::binary);
+    Check(static_cast<bool>(in), "demo graph: cannot open " + graph_path.string());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cyxwiz::GraphDocument graph;
+    std::string error;
+    Check(cyxwiz::ParseGraphDocument(text, graph, error), "demo graph: loads: " + error);
+    Check(graph.links.size() == 8, "demo graph: all 8 links resolve");
+    const auto type_of = [&](int id) {
+        for (const auto& node : graph.nodes) if (node.id == id) return node.type;
+        return NodeType::Dense;
+    };
+    Check(type_of(1) == NodeType::DataInput && type_of(2) == NodeType::LogTransform &&
+              type_of(3) == NodeType::RobustScaler && type_of(4) == NodeType::PCANode &&
+              type_of(5) == NodeType::KMeansCluster && type_of(6) == NodeType::DBSCANCluster &&
+              type_of(7) == NodeType::Plot && type_of(8) == NodeType::Plot && type_of(9) == NodeType::Plot,
+          "demo graph: node types");
+    // The CSV path is relative: found beside the graph, as when the Engine opens it.
+    cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(graph_path.string());
+
+    const auto run_plot = [&](int plot_id) {
+        const auto plan = cyxwiz::plot::PlanNodeResult(plot_id, graph.nodes, graph.links,
+                                                       [](const std::string&) { return false; });
+        Check(plan.state == cyxwiz::plot::NodeResultPlan::State::Run,
+              "demo graph: plot " + std::to_string(plot_id) + " is runnable: " + plan.reason);
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(plan.pipeline_json),
+              "demo graph: plot " + std::to_string(plot_id) + " runs: " + executor.GetLastError());
+        const auto it = executor.NodeResults().find(plan.feeder_id);
+        Check(it != executor.NodeResults().end(), "demo graph: feeder result named");
+        auto dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(it->second);
+        Check(dataset != nullptr, "demo graph: feeder table registered");
+        return dataset->GetArrowTable();
+    };
+    const auto int_column = [](const std::shared_ptr<arrow::Table>& table, const std::string& name) {
+        const auto column = table->GetColumnByName(name);
+        Check(column != nullptr, "demo graph: column " + name);
+        std::vector<int> values;
+        for (const auto& chunk : column->chunks()) {
+            const auto& ints = static_cast<const arrow::Int32Array&>(*chunk);
+            for (int64_t i = 0; i < ints.length(); ++i) values.push_back(ints.Value(i));
+        }
+        return values;
+    };
+
+    // PCA: two components plus the segment codes, every row kept.
+    const auto pca = run_plot(7);
+    Check(pca->num_rows() == 248 && pca->GetColumnByName("pc_0") && pca->GetColumnByName("pc_1"),
+          "demo graph: PCA gives pc_0, pc_1 for 248 rows");
+    const std::vector<int> segment = int_column(pca, "y");
+    std::map<int, int> segment_sizes;
+    for (int code : segment) ++segment_sizes[code];
+    int outlier_code = -1;
+    for (const auto& [code, size] : segment_sizes) if (size == 8) outlier_code = code;
+    Check(segment_sizes.size() == 5 && outlier_code >= 0, "demo graph: 4 segments of 60 and 8 outliers");
+
+    // K-Means: each cluster is (almost) one segment.
+    const std::vector<int> kmeans = int_column(run_plot(8), "cluster_id");
+    std::map<int, std::map<int, int>> counts;
+    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_code) ++counts[kmeans[i]][segment[i]];
+    int agree = 0;
+    for (const auto& [cluster, by_segment] : counts) {
+        int best = 0;
+        for (const auto& entry : by_segment) best = std::max(best, entry.second);
+        agree += best;
+    }
+    Check(counts.size() == 4 && agree >= 228, "demo graph: K-Means recovers the segments (" +
+                                                   std::to_string(agree) + " of 240)");
+
+    // DBSCAN: four clusters, and most planted outliers are noise.
+    const std::vector<int> dbscan = int_column(run_plot(9), "cluster_id");
+    std::set<int> clusters;
+    int noise_outliers = 0;
+    for (size_t i = 0; i < dbscan.size(); ++i) {
+        if (dbscan[i] >= 0) clusters.insert(dbscan[i]);
+        if (dbscan[i] == -1 && segment[i] == outlier_code) ++noise_outliers;
+    }
+    Check(clusters.size() == 4 && noise_outliers >= 5, "demo graph: DBSCAN finds 4 clusters and flags " +
+                                                           std::to_string(noise_outliers) + " of 8 outliers");
+    std::cout << "demo graph: customer segments analysis runs (K-Means " << agree << "/240, DBSCAN noise outliers "
+              << noise_outliers << "/8)\n";
+}
+
+void CheckDataInputFormats() {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const auto pipeline = [](const std::map<std::string, std::string>& parameters) {
+        return json{{"nodes", json::array({{
+            {"id", 9904}, {"type", "DataInput"}, {"name", "FormatTest"},
+            {"parameters", parameters}}})}, {"links", json::array()}};
+    };
+    const auto csv_path = fs::temp_directory_path() /
+        ("cyxwiz_data_input_formats_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".csv");
+    {
+        std::ofstream csv(csv_path);
+        csv << "x,label\n1,a\n2,b\n3,c\n";
+    }
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    for (bool default_header : {true, false}) {
+        std::map<std::string, std::string> parameters{
+            {"source_type", "file"}, {"file_path", csv_path.string()}, {"file_type", "auto"}};
+        if (!default_header) parameters["has_header"] = "false";
+        cyxwiz::PipelineExecutor executor;
+        const bool executed = executor.ExecutePipeline(pipeline(parameters).dump());
+        Check(executed, "Auto CSV should execute: " + executor.GetLastError());
+        auto dataset = registry.GetArrowDataset("ds_datainput_9904");
+        Check(dataset != nullptr, "Auto CSV must register its table");
+        Check(dataset->GetNumRows() == (default_header ? 3 : 4),
+              "Auto CSV must preserve its header default and honor explicit false");
+        Check(dataset->GetSchema()->field(0)->name() == (default_header ? "x" : "f0"),
+              "Auto CSV must preserve column names when no header setting is saved");
+        registry.UnregisterTabularDataset("ds_datainput_9904");
+    }
+    fs::remove(csv_path);
+    for (const auto* key : {"type", "file_type"}) {
+        for (const auto* format : {"auto", "hdf5"}) {
+            for (const auto* extension : {"h5", "HDF5", "hdf"}) {
+                cyxwiz::PipelineExecutor executor;
+                Check(!executor.ExecutePipeline(pipeline({
+                    {"source_type", "file"}, {key, format},
+                    {"file_path", std::string("not-opened.") + extension}}).dump()),
+                    "Explicit and Auto HDF5 must fail preflight");
+                const auto error = executor.GetLastError();
+                Check(error.find("not supported") != std::string::npos &&
+                          (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
+                      "HDF5 must fail with a format reason before file I/O: " + error);
+            }
+        }
+    }
+    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 rejections)\n";
+}
+
 int main(int argc, char** argv) {
+    if (argc == 1 || (argc == 2 && std::string(argv[1]) == "--data-input-formats")) {
+        CheckDataInputFormats();
+        if (argc == 2) return 0;
+    }
     if (argc == 6 && std::string(argv[1]) == "--html-selection") {
         std::ifstream file(argv[3], std::ios::binary);
         Check(file.good(), "Cannot open member selection file");
@@ -1703,6 +2642,16 @@ int main(int argc, char** argv) {
     if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
     if(argc==2 && std::string(argv[1])=="--tokenizer-project-vocab") { CheckTokenizerProjectVocabulary(); return 0; }
     if(argc==2 && std::string(argv[1])=="--export-path-base") { CheckExportPathBase(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--json-lines") { CheckJsonLinesInput(); return 0; }
+    if(argc==1) CheckJsonLinesInput();
+    if(argc==2 && std::string(argv[1])=="--node-run-facts") { CheckNodeRunFacts(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--lazy") { CheckLazyEvaluation(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--streaming") { CheckStreamingScaler(); CheckUniqueOnDisk(); return 0; }
+    if(argc==1) { CheckStreamingScaler(); CheckUniqueOnDisk(); }
+    if(argc==1) CheckLazyEvaluation();
+    if(argc==2 && std::string(argv[1])=="--sql-parts") { CheckSqlPartQueries(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--guided") { CheckGuidedOperations(); return 0; }
+    if(argc==1) { CheckNodeRunFacts(); CheckSqlPartQueries(); CheckGuidedOperations(); }
     if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&
@@ -1727,6 +2676,14 @@ int main(int argc, char** argv) {
         CheckTrack70RowAndColumnLimits();
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--plot-lane") {
+        CheckPlotLaneRunsOnlyTheClosure();
+        return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--analysis-demo") {
+        CheckCustomerSegmentsDemoGraph();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--pipeline-ingestion-cache") {
         CheckPipelineDataInputUsesProjectIngestionCache();
@@ -1738,6 +2695,8 @@ int main(int argc, char** argv) {
     CheckValidationBadSchemaRoutingCoverage();
     CheckTrack70RowAndColumnLimits();
     CheckPipelineDataInputUsesProjectIngestionCache();
+    CheckPlotLaneRunsOnlyTheClosure();
+    CheckCustomerSegmentsDemoGraph();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
 
@@ -1784,6 +2743,14 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_random_forest_model.json";
     const fs::path gradient_boosting_model_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_gradient_boosting_model.json";
+    const fs::path naive_bayes_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_naive_bayes_model.json";
+    const fs::path knn_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_knn_model.json";
+    const fs::path logistic_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_logistic_model.json";
+    const fs::path svm_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_svm_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -2307,6 +3274,155 @@ int main(int argc, char** argv) {
     Check(fs::exists(gradient_boosting_model_path),
           "GradientBoostingClassifier model_path should write a model artifact");
 
+    const std::string naive_bayes_json =
+        R"({"nodes":[)"
+        R"({"id":9601,"type":"DataInput","name":"BayesInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9602,"type":"NaiveBayesClassifier","name":"Bayes","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"nb_pred",)"
+        R"("model_path":")" +
+        JsonEscapePath(naive_bayes_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9601,"end_node":9602}]})";
+
+    cyxwiz::PipelineExecutor naive_bayes_executor;
+    Check(naive_bayes_executor.ExecutePipeline(naive_bayes_json),
+          "PipelineExecutor routes NaiveBayesClassifier through "
+          "PipelineOperatorFactory: " +
+              naive_bayes_executor.GetLastError());
+    auto naive_bayes_output =
+        registry.GetArrowDataset("ds_operator_NaiveBayesClassifier_9602");
+    auto naive_bayes_table =
+        naive_bayes_output ? naive_bayes_output->GetArrowTable() : nullptr;
+    Check(naive_bayes_table != nullptr && naive_bayes_table->num_rows() == 4 &&
+              naive_bayes_table->schema()->GetFieldIndex("nb_pred") >= 0,
+          "NaiveBayesClassifier operator appends its prediction column");
+    Check(naive_bayes_table != nullptr &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 0) == 0.0 &&
+              ReadNumericValue(naive_bayes_table, "nb_pred", 3) == 1.0,
+          "NaiveBayesClassifier predicts the separable training rows");
+    Check(fs::exists(naive_bayes_model_path),
+          "NaiveBayesClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_NaiveBayesClassifier_9602");
+    fs::remove(naive_bayes_model_path);
+
+    const std::string knn_json =
+        R"({"nodes":[)"
+        R"({"id":9605,"type":"DataInput","name":"KnnInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9606,"type":"KNNClassifier","name":"Knn","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"knn_pred",)"
+        R"("n_neighbors":"1","model_path":")" +
+        JsonEscapePath(knn_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9605,"end_node":9606}]})";
+
+    cyxwiz::PipelineExecutor knn_executor;
+    Check(knn_executor.ExecutePipeline(knn_json),
+          "PipelineExecutor routes KNNClassifier through PipelineOperatorFactory: " +
+              knn_executor.GetLastError());
+    auto knn_output = registry.GetArrowDataset("ds_operator_KNNClassifier_9606");
+    auto knn_table = knn_output ? knn_output->GetArrowTable() : nullptr;
+    Check(knn_table != nullptr && knn_table->num_rows() == 4 &&
+              ReadNumericValue(knn_table, "knn_pred", 0) == 0.0 &&
+              ReadNumericValue(knn_table, "knn_pred", 3) == 1.0,
+          "KNNClassifier (k=1) predicts each training row's own class");
+    Check(fs::exists(knn_model_path),
+          "KNNClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_KNNClassifier_9606");
+    fs::remove(knn_model_path);
+
+    const std::string logistic_json =
+        R"({"nodes":[)"
+        R"({"id":9609,"type":"DataInput","name":"LogisticInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9610,"type":"LogisticRegressionNode","name":"Logistic","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"lr_pred",)"
+        R"("C":"100","model_path":")" +
+        JsonEscapePath(logistic_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9609,"end_node":9610}]})";
+
+    cyxwiz::PipelineExecutor logistic_executor;
+    Check(logistic_executor.ExecutePipeline(logistic_json),
+          "PipelineExecutor routes LogisticRegressionNode through PipelineOperatorFactory: " +
+              logistic_executor.GetLastError());
+    auto logistic_output = registry.GetArrowDataset("ds_operator_LogisticRegressionNode_9610");
+    auto logistic_table = logistic_output ? logistic_output->GetArrowTable() : nullptr;
+    Check(logistic_table != nullptr && logistic_table->num_rows() == 4 &&
+              ReadNumericValue(logistic_table, "lr_pred", 0) == 0.0 &&
+              ReadNumericValue(logistic_table, "lr_pred", 3) == 1.0,
+          "LogisticRegressionNode predicts the separable training rows");
+    Check(fs::exists(logistic_model_path),
+          "LogisticRegressionNode model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_LogisticRegressionNode_9610");
+    fs::remove(logistic_model_path);
+
+    const std::string svm_json =
+        R"({"nodes":[)"
+        R"({"id":9613,"type":"DataInput","name":"SvmInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9614,"type":"SVMClassifier","name":"Svm","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"svm_pred",)"
+        R"("kernel":"linear","C":"10","model_path":")" +
+        JsonEscapePath(svm_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9613,"end_node":9614}]})";
+
+    cyxwiz::PipelineExecutor svm_executor;
+    Check(svm_executor.ExecutePipeline(svm_json),
+          "PipelineExecutor routes SVMClassifier through PipelineOperatorFactory: " +
+              svm_executor.GetLastError());
+    auto svm_output = registry.GetArrowDataset("ds_operator_SVMClassifier_9614");
+    auto svm_table = svm_output ? svm_output->GetArrowTable() : nullptr;
+    Check(svm_table != nullptr && svm_table->num_rows() == 4 &&
+              ReadNumericValue(svm_table, "svm_pred", 0) == 0.0 &&
+              ReadNumericValue(svm_table, "svm_pred", 3) == 1.0,
+          "SVMClassifier predicts the separable training rows");
+    Check(fs::exists(svm_model_path),
+          "SVMClassifier model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_SVMClassifier_9614");
+    fs::remove(svm_model_path);
+
+    // SVR on the 4-row table: x, z -> label as a number; a linear kernel with
+    // a large C fits the straight line within epsilon.
+    const std::string svr_json =
+        R"({"nodes":[)"
+        R"({"id":9617,"type":"DataInput","name":"SvrInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9618,"type":"SVMRegressor","name":"Svr","parameters":{)"
+        R"("target_col":"label","feature_cols":"x","prediction_col":"svr_pred",)"
+        R"("kernel":"linear","C":"100","epsilon":"0.05","model_path":")" +
+        JsonEscapePath(svm_model_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9617,"end_node":9618}]})";
+
+    cyxwiz::PipelineExecutor svr_executor;
+    Check(svr_executor.ExecutePipeline(svr_json),
+          "PipelineExecutor routes SVMRegressor through PipelineOperatorFactory: " +
+              svr_executor.GetLastError());
+    auto svr_output = registry.GetArrowDataset("ds_operator_SVMRegressor_9618");
+    auto svr_table = svr_output ? svr_output->GetArrowTable() : nullptr;
+    Check(svr_table != nullptr && svr_table->num_rows() == 4 &&
+              svr_table->schema()->GetFieldIndex("svr_pred") >= 0 &&
+              ReadNumericValue(svr_table, "svr_pred", 0) < 0.5 &&
+              ReadNumericValue(svr_table, "svr_pred", 3) > 0.5,
+          "SVMRegressor appends a numeric prediction that follows the target");
+    Check(fs::exists(svm_model_path),
+          "SVMRegressor model_path should write a model artifact");
+    registry.UnloadDataset("ds_operator_SVMRegressor_9618");
+    fs::remove(svm_model_path);
+
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
         R"({"id":224,"type":"DataInput","name":"PredictInput","parameters":{)"
@@ -2590,14 +3706,23 @@ int main(int argc, char** argv) {
         bool source_node;
     };
 
+    // TOFIX134 retired VisualizeData: reject the old type, without requiring
+    // it to remain in the live node capability registry.
+    auto retired_graph = nlohmann::json::parse(unsupported_json);
+    retired_graph["nodes"][1]["type"] = "VisualizeData";
+    retired_graph["nodes"][1]["name"] = "Retired visualizer";
+    cyxwiz::PipelineExecutor retired_visualizer;
+    Check(!retired_visualizer.ExecutePipeline(retired_graph.dump()),
+          "Retired VisualizeData should remain rejected");
+    Check(retired_visualizer.GetLastError().find("VisualizeData") != std::string::npos,
+          "Retired visualizer rejection should identify its type");
+
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
-        {"SVMRegressor", false},
         {"TrainTestSplit", false},
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
-        {"VisualizeData", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},
@@ -2664,9 +3789,7 @@ int main(int argc, char** argv) {
         {"ExportExcel", false},
         {"IFFTNode", false},
         {"WaveletTransform", false},
-        {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
-        {"ImagePreprocessor", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
         {"TSVFile", false},
@@ -2720,6 +3843,30 @@ int main(int argc, char** argv) {
                   " should use central fail-closed runtime reason: " +
                   fail_closed_executor.GetLastError());
         fail_closed_id += 2;
+    }
+
+    {
+        // TOFIX134 P2.3 (bbf6843f) retired VisualizeData for the Plot node:
+        // it has no runtime-capability entry and a pipeline using it fails.
+        Check(cyxwiz::ResolvePipelineFailClosedReason("VisualizeData") == nullptr,
+              "retired VisualizeData should have no fail-closed capability entry");
+        const std::string retired_json =
+            R"({"nodes":[)"
+            R"({"id":)" + std::to_string(fail_closed_id) +
+            R"(,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":)" + std::to_string(fail_closed_id + 1) +
+            R"(,"type":"VisualizeData","name":"VisualizeData","parameters":{}})"
+            R"(],"links":[{"start_node":)" + std::to_string(fail_closed_id) +
+            R"(,"end_node":)" + std::to_string(fail_closed_id + 1) + R"(}]})";
+        cyxwiz::PipelineExecutor retired_executor;
+        Check(!retired_executor.ExecutePipeline(retired_json),
+              "retired VisualizeData should fail closed in PipelineExecutor");
+        Check(retired_executor.GetLastError().find(
+                  "unsupported node type 'VisualizeData'") != std::string::npos,
+              "retired VisualizeData should be named as an unsupported node type: " +
+                  retired_executor.GetLastError());
     }
 
     struct SequenceVocabularyExecutableCase {
@@ -2912,11 +4059,11 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor bad_data_input_json_type_executor;
     Check(!bad_data_input_json_type_executor.ExecutePipeline(
               bad_data_input_json_type_json),
-          "DataInput json type should fail validation until JSON loading is real");
+          "DataInput plain JSON (not JSON Lines) must fail");
     Check(bad_data_input_json_type_executor.GetLastError().find(
-              "DataInput type 'json' is not supported") !=
+              "only JSON Lines is supported") !=
               std::string::npos,
-          "DataInput json type validation should be specific: " +
+          "DataInput plain JSON error should point to JSON Lines: " +
               bad_data_input_json_type_executor.GetLastError());
 
     const std::string bad_data_input_excel_type_json =
@@ -2975,7 +4122,7 @@ int main(int argc, char** argv) {
     const std::string bad_data_input_file_type_alias_json =
         R"({"nodes":[)"
         R"({"id":430,"type":"DataInput","name":"BadFileTypeAlias","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.json","file_type":"json"}})"
+        R"("source_type":"file","file_path":"ignored.xlsx","file_type":"excel"}})"
         R"(],"links":[]})";
 
     cyxwiz::PipelineExecutor bad_data_input_file_type_alias_executor;
@@ -2983,7 +4130,7 @@ int main(int argc, char** argv) {
               bad_data_input_file_type_alias_json),
           "DataInput unsupported file_type alias should fail validation");
     Check(bad_data_input_file_type_alias_executor.GetLastError().find(
-              "DataInput file_type 'json' is not supported") !=
+              "DataInput file_type 'excel' is not supported") !=
               std::string::npos,
           "DataInput unsupported file_type alias error should be specific: " +
               bad_data_input_file_type_alias_executor.GetLastError());
@@ -3158,6 +4305,38 @@ int main(int argc, char** argv) {
           "TextTokenizer tokenizer_type validation should be central and specific: " +
               bad_text_tokenizer_type_executor.GetLastError());
 
+    const std::string bad_word_embeddings_architecture_json =
+        R"({"nodes":[)"
+        R"({"id":362,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":363,"type":"WordEmbeddings","name":"BadWordModel","parameters":{)"
+        R"("source":"word2vec","text_col":"phrase","architecture":"glove"}})"
+        R"(],"links":[{"start_node":362,"end_node":363}]})";
+
+    cyxwiz::PipelineExecutor bad_word_embeddings_architecture_executor;
+    Check(!bad_word_embeddings_architecture_executor.ExecutePipeline(
+              bad_word_embeddings_architecture_json),
+          "WordEmbeddings unsupported architecture should fail validation");
+    Check(bad_word_embeddings_architecture_executor.GetLastError().find("architecture") != std::string::npos &&
+              bad_word_embeddings_architecture_executor.GetLastError().find("glove") != std::string::npos,
+          "WordEmbeddings architecture validation should be central and specific: " +
+              bad_word_embeddings_architecture_executor.GetLastError());
+
+    const std::string bad_word_embeddings_unseen_json =
+        R"({"nodes":[)"
+        R"({"id":364,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":365,"type":"WordEmbeddings","name":"BadUnseenWords","parameters":{)"
+        R"("source":"fasttext","text_col":"phrase","unseen_words":"guess"}})"
+        R"(],"links":[{"start_node":364,"end_node":365}]})";
+    cyxwiz::PipelineExecutor bad_word_embeddings_unseen_executor;
+    Check(!bad_word_embeddings_unseen_executor.ExecutePipeline(bad_word_embeddings_unseen_json) &&
+              bad_word_embeddings_unseen_executor.GetLastError().find("unseen_words") != std::string::npos,
+          "WordEmbeddings unseen_words validation should be central and specific: " +
+              bad_word_embeddings_unseen_executor.GetLastError());
+
     const std::string bad_linear_regression_intercept_json =
         R"({"nodes":[)"
         R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"
@@ -3219,6 +4398,115 @@ int main(int argc, char** argv) {
     }
     Check(regression_artifact_count == 1,
           "regression fit should create one project-owned Model artifact");
+
+    // Classic Model Predictor (TOFIX145): the Model pin, then the saved file.
+    const fs::path classic_artifact_root =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_classic_artifacts";
+    fs::remove_all(classic_artifact_root);
+    const std::string classic_model_pin_json =
+        R"({"nodes":[)"
+        R"({"id":9211,"type":"DataInput","name":"Labelled","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9212,"type":"NaiveBayesClassifier","name":"Fit NB","parameters":{"target_col":"label"}},)"
+        R"({"id":9213,"type":"ClassicModelPredictor","name":"Score NB","parameters":{"prediction_col":"scored"}})"
+        R"(],"links":[)"
+        R"({"start_node":9211,"end_node":9212,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9211,"end_node":9213,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9212,"end_node":9213,"start_pin_index":1,"end_pin_index":1})"
+        R"(]})";
+    cyxwiz::PipelineExecutor classic_model_pin_executor;
+    classic_model_pin_executor.SetArtifactRoot(classic_artifact_root.string());
+    Check(classic_model_pin_executor.ExecutePipeline(classic_model_pin_json),
+          "a classic Model output should route into the Classic Model Predictor: " +
+              classic_model_pin_executor.GetLastError());
+    auto classic_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9213");
+    Check(classic_scored != nullptr, "Classic Model Predictor should register its scored table");
+    Check(ReadNumericValue(classic_scored->GetArrowTable(), "scored", 0) == 0.0 &&
+              ReadNumericValue(classic_scored->GetArrowTable(), "scored", 3) == 1.0,
+          "Classic Model Predictor should score with the fitted naive Bayes model");
+    fs::path classic_saved_model;
+    for (const auto& entry : fs::recursive_directory_iterator(classic_artifact_root)) {
+        if (entry.is_regular_file() && entry.path().string().find(".cyxclassic.json") != std::string::npos)
+            classic_saved_model = entry.path();
+    }
+    Check(!classic_saved_model.empty(), "the naive Bayes fit should save its model");
+
+    const std::string classic_saved_file_json =
+        R"({"nodes":[)"
+        R"({"id":9214,"type":"DataInput","name":"New rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9215,"type":"ClassicModelPredictor","name":"Score saved","parameters":{"model_path":")" +
+        JsonEscapePath(classic_saved_model.string()) + R"("}})"
+        R"(],"links":[{"start_node":9214,"end_node":9215,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_saved_file_executor;
+    Check(classic_saved_file_executor.ExecutePipeline(classic_saved_file_json),
+          "Classic Model Predictor should load a saved model file: " + classic_saved_file_executor.GetLastError());
+    auto classic_saved_scored = registry.GetArrowDataset("ds_operator_ClassicModelPredictor_9215");
+    Check(classic_saved_scored != nullptr &&
+              ReadNumericValue(classic_saved_scored->GetArrowTable(), "prediction", 3) == 1.0,
+          "the saved model should score like the one from the Model pin");
+
+    const std::string classic_no_model_json =
+        R"({"nodes":[)"
+        R"({"id":9216,"type":"DataInput","name":"Rows","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9217,"type":"ClassicModelPredictor","name":"No model","parameters":{}})"
+        R"(],"links":[{"start_node":9216,"end_node":9217,"start_pin_index":0,"end_pin_index":0}]})";
+    cyxwiz::PipelineExecutor classic_no_model_executor;
+    Check(!classic_no_model_executor.ExecutePipeline(classic_no_model_json) &&
+              classic_no_model_executor.GetLastError().find("Model output") != std::string::npos,
+          "Classic Model Predictor without a model should say how to give it one: " +
+              classic_no_model_executor.GetLastError());
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9213");
+    registry.UnloadDataset("ds_operator_ClassicModelPredictor_9215");
+    fs::remove_all(classic_artifact_root);
+
+    // Word Embeddings (TOFIX152): pin 0 is the vectors table, pin 1 the input
+    // rows with their mean vectors; each downstream link reads its own pin.
+    const fs::path word_vectors_dir = fs::temp_directory_path() / "cyxwiz_pipeline_executor_word_vectors";
+    fs::remove_all(word_vectors_dir);
+    fs::create_directories(word_vectors_dir);
+    const fs::path word_vectors_file = word_vectors_dir / "small.vec";
+    std::ofstream(word_vectors_file) << "3 2\nthe 1 2\nparis 3 5\nlondon -1 0.5\n";
+    const fs::path word_text_csv = word_vectors_dir / "texts.csv";
+    std::ofstream(word_text_csv) << "text\nthe paris\nlondon\nthe\nnothing here\n";
+    const fs::path word_vectors_saved = word_vectors_dir / "saved.vec";
+    const std::string word_embeddings_json =
+        R"({"nodes":[)"
+        R"({"id":9401,"type":"DataInput","name":"Texts","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(word_text_csv.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9402,"type":"WordEmbeddings","name":"Vectors","parameters":{"vectors_file":")" +
+        JsonEscapePath(word_vectors_file.string()) + R"(","text_col":"text","row_vectors":"true","vectors_path":")" +
+        JsonEscapePath(word_vectors_saved.string()) + R"("}},)"
+        R"({"id":9403,"type":"RowCountCheck","name":"Words","parameters":{"check_name":"words","expected_rows":"3"}},)"
+        R"({"id":9404,"type":"RowCountCheck","name":"Rows","parameters":{"check_name":"rows","expected_rows":"4"}})"
+        R"(],"links":[)"
+        R"({"start_node":9401,"end_node":9402,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9403,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9402,"end_node":9404,"start_pin_index":1,"end_pin_index":0})"
+        R"(]})";
+    cyxwiz::PipelineExecutor word_embeddings_executor;
+    Check(word_embeddings_executor.ExecutePipeline(word_embeddings_json),
+          "Word Embeddings should run with both output pins routed: " + word_embeddings_executor.GetLastError());
+    auto word_rows = registry.GetArrowDataset("ds_operator_RowCountCheck_9404");
+    Check(word_rows != nullptr && word_rows->GetArrowTable()->GetColumnByName("emb_1") != nullptr &&
+              word_rows->GetArrowTable()->num_rows() == 4,
+          "the node linked to the Rows pin should get the rows with their mean vectors");
+    auto word_table = registry.GetArrowDataset("ds_operator_RowCountCheck_9403");
+    Check(word_table != nullptr && word_table->GetArrowTable()->GetColumnByName("word") != nullptr,
+          "the node linked to the Vectors pin should get the vectors table");
+    Check(word_embeddings_executor.NodePinResults().count({9402, 1}) == 1,
+          "the Rows table is published for pin 1");
+    Check(fs::exists(word_vectors_saved), "Word Embeddings saves its vectors");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9403");
+    registry.UnloadDataset("ds_operator_RowCountCheck_9404");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402");
+    registry.UnloadDataset("ds_operator_WordEmbeddings_9402_pin1");
+    fs::remove_all(word_vectors_dir);
 
     const std::string bad_linear_regression_feature_type_json =
         R"({"nodes":[)"
@@ -3690,6 +4978,68 @@ int main(int argc, char** argv) {
               "missing required parameter 'target_col'") != std::string::npos,
           "GradientBoostingClassifier missing target_col validation should be specific: " +
               missing_gradient_boosting_target_executor.GetLastError());
+
+    const std::string missing_naive_bayes_target_json =
+        R"({"nodes":[)"
+        R"({"id":9603,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9604,"type":"NaiveBayesClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":9603,"end_node":9604}]})";
+
+    cyxwiz::PipelineExecutor missing_naive_bayes_target_executor;
+    Check(!missing_naive_bayes_target_executor.ExecutePipeline(
+              missing_naive_bayes_target_json) &&
+              missing_naive_bayes_target_executor.GetLastError().find(
+                  "missing required parameter 'target_col'") != std::string::npos,
+          "NaiveBayesClassifier missing target_col should fail validation: " +
+              missing_naive_bayes_target_executor.GetLastError());
+
+    const std::string bad_knn_metric_json =
+        R"({"nodes":[)"
+        R"({"id":9607,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9608,"type":"KNNClassifier","name":"BadMetric","parameters":{)"
+        R"("target_col":"y","metric":"chebyshev"}})"
+        R"(],"links":[{"start_node":9607,"end_node":9608}]})";
+
+    cyxwiz::PipelineExecutor bad_knn_metric_executor;
+    Check(!bad_knn_metric_executor.ExecutePipeline(bad_knn_metric_json) &&
+              bad_knn_metric_executor.GetLastError().find("metric") != std::string::npos,
+          "KNNClassifier unknown metric should fail validation: " +
+              bad_knn_metric_executor.GetLastError());
+
+    const std::string bad_logistic_c_json =
+        R"({"nodes":[)"
+        R"({"id":9611,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9612,"type":"LogisticRegressionNode","name":"BadC","parameters":{)"
+        R"("target_col":"y","C":"0"}})"
+        R"(],"links":[{"start_node":9611,"end_node":9612}]})";
+
+    cyxwiz::PipelineExecutor bad_logistic_c_executor;
+    Check(!bad_logistic_c_executor.ExecutePipeline(bad_logistic_c_json) &&
+              bad_logistic_c_executor.GetLastError().find("C") != std::string::npos,
+          "LogisticRegressionNode C = 0 should fail validation: " +
+              bad_logistic_c_executor.GetLastError());
+
+    const std::string bad_svm_kernel_json =
+        R"({"nodes":[)"
+        R"({"id":9615,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9616,"type":"SVMClassifier","name":"BadKernel","parameters":{)"
+        R"("target_col":"y","kernel":"laplacian"}})"
+        R"(],"links":[{"start_node":9615,"end_node":9616}]})";
+
+    cyxwiz::PipelineExecutor bad_svm_kernel_executor;
+    Check(!bad_svm_kernel_executor.ExecutePipeline(bad_svm_kernel_json) &&
+              bad_svm_kernel_executor.GetLastError().find("kernel") != std::string::npos,
+          "SVMClassifier unknown kernel should fail validation: " +
+              bad_svm_kernel_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
@@ -4854,6 +6204,25 @@ int main(int argc, char** argv) {
     Check(joined_table != nullptr, "Join output table exists");
     Check(joined_table->num_rows() == 3,
           "Join on x should match all rows in the self-join fixture");
+
+    // TOFIX154: the same self-join over two disk inputs under a tiny budget
+    // goes to a file; the repeated column name x is renamed, not refused.
+    {
+        std::string disk_join_json = join_json;
+        for (size_t at = 0; (at = disk_join_json.find(R"("has_header":"true")", at)) != std::string::npos;) {
+            disk_join_json.insert(at, R"("force_disk_backed":"true",)");
+            at += 60;
+        }
+        cyxwiz::SetDataBudgetBytes(1);
+        cyxwiz::PipelineExecutor disk_join;
+        Check(disk_join.ExecutePipeline(disk_join_json),
+              "a join of two disk inputs with a shared key name runs: " + disk_join.GetLastError());
+        const auto facts = disk_join.GetNodeRunFacts();
+        Check(facts.count(103) && facts.at(103).rows == 3, "the disk join matches every row");
+        Check(registry.IsParquetBackedDataset("ds_join_103"), "the disk join result stays on disk");
+        cyxwiz::SetDataBudgetBytes(0);
+        registry.UnregisterTabularDataset("ds_join_103");
+    }
 
     const fs::path join_left_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_join_left.csv";

@@ -5,7 +5,6 @@
 // Includes cycle detection, reachability analysis, and graph integrity checks.
 
 #include "node_editor.h"
-#include "node_editor_shape_inference.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
@@ -92,14 +91,6 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
 
 std::vector<ValidationWarning> NodeEditor::ValidateShapes() {
     std::vector<ValidationWarning> warnings;
-
-    // First, compute shapes for all nodes
-    if (shape_inference_) {
-        shape_inference_->ComputeAllShapes(nodes_, links_);
-    } else {
-        spdlog::error("ValidateShapes: shape_inference_ is null");
-        return warnings;
-    }
 
     // Check each link for shape mismatches
     for (const auto& link : links_) {

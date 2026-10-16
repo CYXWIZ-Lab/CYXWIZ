@@ -66,7 +66,7 @@ cyxwiz::TrainingConfiguration MakeConfig(
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
     config.log_interval = 0;
-    config.forbid_native_cpu_fallback = true;
+    config.strict_execution = true;
     config.checkpoint_dir = checkpoint_dir.string();
 
     cyxwiz::CompiledLayer dense;
@@ -136,8 +136,6 @@ int main() {
     }
     Check(saw_sparse_forward && saw_sparse_backward,
           "training trace must prove sparse first-layer forward/backward use");
-    Check(trace.native_cpu_fallback_count == 0,
-          "strict sparse training must not use native CPU fallback");
 
     std::cout << "Sparse TrainingExecutor lifecycle tests passed\n";
     return 0;

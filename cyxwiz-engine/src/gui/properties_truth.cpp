@@ -2462,6 +2462,44 @@ void AddTreeModelPredictorTruth(NodeTruthReport& report, const MLNode& node) {
         "PipelineOperatorFactory routes TreeModelPredictor to the native tree model predictor operator."));
 }
 
+// Word Embeddings (TOFIX152): edited in its dialog; the vector file or the
+// text column is required by the chosen source.
+void AddWordEmbeddingsTruth(NodeTruthReport& report, const MLNode& node) {
+    const auto* source_param = FindParameter(node, "source");
+    const std::string source = source_param ? *source_param : "pretrained";
+    const bool train = source == "word2vec" || source == "glove" || source == "fasttext";
+    auto row_vectors = ResolveBoolProperty(node, "Row vectors", "row_vectors", false,
+        TruthOwner::Runtime, false, true,
+        "Adds each row's mean word vector as emb_ columns on the Rows pin.");
+    const bool rows = row_vectors.effective_value == "true";
+    report.properties.push_back(ResolveStringProperty(node, "Source", "source", "pretrained",
+        TruthOwner::Runtime, false, true, false,
+        "pretrained reads a vector file; word2vec, glove and fasttext train on the text column on the device."));
+    if (!train) {
+        report.properties.push_back(ResolveStringProperty(node, "Vector file", "vectors_file", "",
+            TruthOwner::Runtime, false, true, true,
+            "GloVe .txt, fastText / word2vec .vec, word2vec .bin or a fastText model .bin."));
+    }
+    report.properties.push_back(ResolveStringProperty(node, "Text column", "text_col", "",
+        TruthOwner::Runtime, false, true, train || rows,
+        train ? (source == "glove"      ? "GloVe trains on this column."
+                 : source == "fasttext" ? "fastText trains on this column."
+                                        : "word2vec trains on this column.")
+              : "Row vectors average the words of this column."));
+    report.properties.push_back(ResolveStringProperty(node, "Vocabulary file", "vocab_file",
+        "the vectors' own words", TruthOwner::Runtime, false, true, false,
+        "The Text Tokenizer's vocabulary: the vectors come out in its token-id order."));
+    report.properties.push_back(ResolveStringProperty(node, "Save vectors", "vectors_path",
+        "project artifacts", TruthOwner::Runtime, false, true, false,
+        "An Embedding layer loads this .vec file as its weights."));
+    report.properties.push_back(std::move(row_vectors));
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Outputs",
+        "word_embeddings_outputs",
+        rows ? "Vectors (word, v_0..) and Rows (input + emb_0..)" : "Vectors (word, v_0..)",
+        "PipelineOperatorFactory routes WordEmbeddings to the word embeddings operator; Rows is output pin 1."));
+}
+
 const MLNode* FindNodeById(const std::vector<MLNode>& nodes, int id) {
     const auto it = std::find_if(nodes.begin(), nodes.end(),
                                  [id](const MLNode& node) {
@@ -2614,7 +2652,7 @@ const DatasetTruthFact* FindUniqueDatasetClassFact(const NodeTruthContext& conte
     return selected;
 }
 
-void AddRawParameters(NodeTruthReport& report, const MLNode& node) {
+void AddRawParameters(NodeTruthReport& report, const MLNode& node, const NodeTruthContext& context) {
     std::map<std::string, std::string> canonical_by_key;
     std::set<std::string> canonical_keys;
     for (const auto& property : report.properties) {
@@ -2647,6 +2685,9 @@ void AddRawParameters(NodeTruthReport& report, const MLNode& node) {
                    !HasNonEmptyParameter(node, "dataset_name")) {
             raw.maps_to = "dataset_name";
             AddStatus(raw, TruthStatus::AliasUsed);
+        } else if (context.declared_parameters && context.declared_parameters->count(key) > 0) {
+            raw.maps_to = key;
+            AddStatus(raw, TruthStatus::OK);
         } else {
             AddStatus(raw, TruthStatus::Stale);
             raw.maps_to = "";
@@ -2855,6 +2896,7 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::ExportParquet,
         NodeType::ExportJSON,
         NodeType::TreeModelPredictor,
+        NodeType::WordEmbeddings,
     };
     return node_types;
 }
@@ -3320,6 +3362,10 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         AddTreeModelPredictorTruth(report, node);
     }
 
+    if (node.type == NodeType::WordEmbeddings) {
+        AddWordEmbeddingsTruth(report, node);
+    }
+
     if (IsLossNode(node.type)) {
         AddLossTruth(report, node);
     }
@@ -3329,7 +3375,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             node,
             "Output classes",
             "num_classes",
-            {"classes"},
+            {},
             "10",
             TruthOwner::Compiler,
             true,
@@ -3392,7 +3438,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         report.properties.push_back(std::move(width));
     }
 
-    AddRawParameters(report, node);
+    AddRawParameters(report, node, context);
     MarkIssues(report);
     return report;
 }
@@ -3405,10 +3451,6 @@ void WriteCanonicalAndAliases(MLNode& node,
         node.parameters["label_column"] = value;
     } else if (canonical_key == "label_column") {
         node.parameters["text_label_column"] = value;
-    } else if (canonical_key == "num_classes") {
-        node.parameters["classes"] = value;
-    } else if (canonical_key == "classes") {
-        node.parameters["num_classes"] = value;
     } else if (canonical_key == "file_path") {
         node.parameters.erase("path");
     } else if (canonical_key == "file_type") {

@@ -76,6 +76,21 @@ void CheckFitCard() {
     Check(estimating.status == "Estimating..." && estimating.start_enabled && !estimating.has_bars,
           "Start stays available while estimating");
 
+    cyxwiz::JobFitInputs unreadable;
+    unreadable.estimate = cyxwiz::JobEstimateState::Failed;
+    unreadable.estimate_error = "Data Input 'Token sequence CSV': file not found: D:/old/tokens.csv";
+    unreadable.estimate_data_error = true;
+    const auto data_problem = cyxwiz::BuildJobFitCard(unreadable);
+    Check(data_problem.status == "Data problem" && !data_problem.start_enabled && data_problem.has_reason &&
+              data_problem.reason == unreadable.estimate_error,
+          "a data error in the probe turns Start off with the probe's words: " + data_problem.status);
+    cyxwiz::JobFitInputs unmeasured;
+    unmeasured.estimate = cyxwiz::JobEstimateState::Failed;
+    unmeasured.estimate_error = "no device";
+    Check(cyxwiz::BuildJobFitCard(unmeasured).status == "Not estimated" &&
+              cyxwiz::BuildJobFitCard(unmeasured).start_enabled,
+          "any other probe failure still lets the node decide");
+
     auto refused_inputs = Ready(1 * kGiB, "");
     refused_inputs.rejection_reason =
         "Out of memory: the job needs about 1.0 GB of device memory (training 0.5 GB + runtime); cuda:0 has 1.0 GB";

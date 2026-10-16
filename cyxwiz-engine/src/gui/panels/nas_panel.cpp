@@ -1,5 +1,6 @@
 #include "nas_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -194,9 +195,10 @@ void NASPanel::RenderCurrentScore() {
 
             float normalized = static_cast<float>(value / max_good);
             ImVec4 color;
-            if (normalized >= 0.7f) color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-            else if (normalized >= 0.4f) color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f);
-            else color = ImVec4(0.8f, 0.4f, 0.2f, 1.0f);
+            const ui::Tokens& tokens = ui::CurrentTokens();
+            if (normalized >= 0.7f) color = tokens.success;
+            else if (normalized >= 0.4f) color = tokens.warning;
+            else color = tokens.caution;
 
             ImGui::TextColored(color, "%.3f", value);
             ImGui::SameLine();
@@ -417,7 +419,7 @@ void NASPanel::RenderSearchProgress() {
 
 void NASPanel::RenderSearchResults() {
     if (!search_result_.success) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Search failed: %s",
+        ImGui::TextColored(ui::CurrentTokens().error, "Search failed: %s",
                           search_result_.error_message.c_str());
         return;
     }

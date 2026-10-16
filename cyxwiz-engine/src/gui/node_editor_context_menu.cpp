@@ -25,7 +25,20 @@ void NodeEditor::ConfigureNode(int node_id) {
     selected_node_id_ = node_id;
     selected_node_ids_.clear();
     selected_node_ids_.push_back(node_id);
+    // The canvas comes forward and shows the node; the dialog opened below
+    // asks for the front after it, so it ends up in front of the canvas.
     pending_focus_node_id_ = node_id;
+    Raise();
+
+    // A Plot node opens its Plot window (TOFIX134 P2).
+    if (node->type == NodeType::Plot) {
+        OpenPlotNode(node_id);
+        return;
+    }
+    if (node->type == NodeType::Dashboard) {
+        OpenDashboardNode(node_id);
+        return;
+    }
 
     if (properties_panel_) {
         properties_panel_->ConfigureNode(node);
@@ -80,6 +93,17 @@ void NodeEditor::ShowSingleNodeContextMenu() {
     if (ImGui::MenuItem(ICON_FA_GEAR " Configure...")) {
         ConfigureNode(right_clicked_node_id_);
         ImGui::CloseCurrentPopup();
+    }
+
+    if (node->type == NodeType::SQLQuery) {
+        if (ImGui::MenuItem(ICON_FA_PLUS " Add a guided step after")) {
+            RequestGuidedStepAfter(right_clicked_node_id_);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("A new step built from operations (no SQL) that reads this step's result; whatever "
+                              "read this step now reads the new one.");
+        }
     }
 
     if (explain_node_callback_ &&
@@ -308,7 +332,7 @@ void NodeEditor::ShowContextMenu() {
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+S", false, selected_node_ids_.size() >= 2)) {
+        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+U", false, selected_node_ids_.size() >= 2)) {
             CreateSubgraphFromSelection("");
             ImGui::CloseCurrentPopup();
         }

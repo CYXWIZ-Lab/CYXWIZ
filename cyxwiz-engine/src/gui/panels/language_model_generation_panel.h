@@ -23,6 +23,9 @@ public:
     const char* GetIcon() const override { return "LM"; }
 
 private:
+    void InvalidateOutput();
+    std::string RequireActiveTokenizerIdentity(const Tokenizer& tokenizer,
+        const std::shared_ptr<SequentialModel>& session_model) const;
     void RenderPrompt();
     void RenderControls();
     void RenderResult();
@@ -31,7 +34,6 @@ private:
     void LoadTokenizerFromCyxModel();
     void LoadModelAndTokenizerFromCyxModel();
     void RequireImportedModelPackageContract() const;
-    SequentialModel* ActiveModel() const;
     std::vector<int64_t> ParsePromptIds() const;
     std::vector<int64_t> CurrentPromptIdsForProbe() const;
     std::unique_ptr<Tokenizer> BuildTokenizer() const;
@@ -58,6 +60,10 @@ private:
     std::string imported_model_source_;
     std::string imported_model_summary_;
     LanguageModelPackageContract imported_model_contract_;
+    std::unique_ptr<Tokenizer> imported_model_tokenizer_;
+    std::string imported_model_tokenizer_data_;
+    std::weak_ptr<SequentialModel> observed_session_model_;
+    std::string session_model_status_ = "Active model: none";
 
     int max_new_tokens_ = 16;
     float temperature_ = 1.0f;
@@ -76,6 +82,7 @@ private:
     size_t last_remaining_budget_ = 0;
     std::vector<NextTokenCandidate> last_candidates_;
     std::string status_;
+    std::string action_error_;
     std::string compatibility_status_;
     std::string active_model_status_;
     std::string generated_text_;

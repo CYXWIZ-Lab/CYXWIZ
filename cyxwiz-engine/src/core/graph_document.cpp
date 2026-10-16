@@ -36,6 +36,24 @@ bool TryReadSerializedNodeType(const nlohmann::json& node_json,
     return true;
 }
 
+// Plot node types retired in TOFIX134 P2 (the single Plot node replaced
+// them); nullptr for any other type.
+const char* RetiredPlotNodeName(NodeType type) {
+    switch (type) {
+        case NodeType::BarChart: return "Bar Chart";
+        case NodeType::VisualizeData: return "Visualizer";
+        case NodeType::LinePlot: case NodeType::ScatterPlot: case NodeType::Histogram:
+        case NodeType::PieChart: case NodeType::AreaPlot: case NodeType::BoxPlot:
+        case NodeType::ViolinPlot: case NodeType::ErrorBarPlot: case NodeType::StepPlot:
+        case NodeType::HexbinPlot: case NodeType::Heatmap: case NodeType::ContourPlot:
+        case NodeType::Imshow: case NodeType::Plot3D: case NodeType::Scatter3D:
+        case NodeType::SurfacePlot: case NodeType::WireframePlot: case NodeType::PolarPlot:
+        case NodeType::QuiverPlot: case NodeType::StreamPlot: case NodeType::SpectrogramPlot:
+        case NodeType::NetworkGraph: return "plot template";
+        default: return nullptr;
+    }
+}
+
 bool HasParamValue(const std::map<std::string, std::string>& params,
                           const std::string& key) {
     auto it = params.find(key);
@@ -306,6 +324,55 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
             NodeType node_type = NodeType::Unknown;
             if (!TryReadSerializedNodeType(node_json, node_type)) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' has an unsupported type";
+                return false;
+            }
+            if (const char* retired = RetiredPlotNodeName(node_type)) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is a " + retired +
+                        " node, which the Plot node replaced: remove it from the file or rebuild the graph with "
+                        "a Plot node (its window picks the plot type)";
+                return false;
+            }
+            if (node_type == NodeType::TensorReshape) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Tensor Reshape node, which the Reshape node replaced: remove it from the file or "
+                        "rebuild the graph with a Reshape node";
+                return false;
+            }
+            if (node_type == NodeType::Bidirectional) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Bidirectional node, which the recurrent layers' bidirectional setting replaced: "
+                        "remove it from the file or use LSTM/GRU/RNN with bidirectional = true";
+                return false;
+            }
+            // TOFIX140 image transforms: the bundle nodes were retired for the
+            // single transforms; a saved one is refused with what replaced it.
+            if (node_type == NodeType::Augmentation || node_type == NodeType::GeometricTransform ||
+                node_type == NodeType::ColorTransform || node_type == NodeType::ImagePreprocessor) {
+                const char* replaced =
+                    node_type == NodeType::Augmentation
+                        ? "an Augmentation node, which the image transform nodes (Random Crop, flips, Image Rotate, "
+                          "Color Jitter...) and Augmentation Preset replaced"
+                    : node_type == NodeType::GeometricTransform
+                        ? "a Geometric Transform node, which Random Crop, Image Rotate and Horizontal / Vertical Flip "
+                          "replaced"
+                    : node_type == NodeType::ColorTransform
+                        ? "a Color Transform node, which Color Jitter replaced"
+                        : "an Image Preprocessor node, which Resize and Normalize replaced";
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is " + replaced +
+                        ": remove it from the file or rebuild that step with those nodes";
+                return false;
+            }
+            if (node_type == NodeType::SelfAttention) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Self Attention node, which Multi-Head Attention replaced: remove it from the file "
+                        "or rebuild the graph with a Multi-Head Attention node";
+                return false;
+            }
+            if (node_type == NodeType::SharedEncoder || node_type == NodeType::SiameseBranch) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is a " +
+                        (node_type == NodeType::SharedEncoder ? "Shared Encoder" : "Siamese Branch") +
+                        " node. Shared Encoder / Siamese Branch were retired: metric-learning losses run the "
+                        "model once over the stacked batch; connect the encoder layers straight to the loss";
                 return false;
             }
 

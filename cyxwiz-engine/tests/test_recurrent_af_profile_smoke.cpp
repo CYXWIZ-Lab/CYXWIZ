@@ -2,9 +2,7 @@
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "cyxwiz/tensor.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -26,7 +24,6 @@ void Check(bool condition, const std::string& message) {
 }
 
 std::string ActiveArrayFireBackendName() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         switch (af::getActiveBackend()) {
             case AF_BACKEND_CPU: return "ArrayFire CPU";
@@ -37,9 +34,6 @@ std::string ActiveArrayFireBackendName() {
     } catch (const af::exception& e) {
         return std::string("ArrayFire unavailable: ") + e.what();
     }
-#else
-    return "ArrayFire not compiled";
-#endif
 }
 
 cyxwiz::Tensor MakeInput(size_t batch_size,
@@ -136,32 +130,6 @@ void RunLstmProfileShape(const LstmProfileShape& shape,
                          int backward_eval_interval,
                          const char* scenario) {
     constexpr bool kBidirectional = false;
-    const bool default_shape =
-        shape.batch_size == 8 &&
-        shape.seq_len == 8 &&
-        shape.input_size == 16 &&
-        shape.hidden_size == 8 &&
-        shape.num_layers == 1;
-
-    cyxwiz::RecurrentCudaPlacementRequest request;
-    request.kind = cyxwiz::RecurrentLayerKind::LSTM;
-    request.batch_size = shape.batch_size;
-    request.seq_len = shape.seq_len;
-    request.input_size = shape.input_size;
-    request.hidden_size = shape.hidden_size;
-    request.num_layers = shape.num_layers;
-    request.bidirectional = kBidirectional;
-    request.return_sequences = true;
-    const auto decision = cyxwiz::EvaluateRecurrentCudaPlacement(request);
-
-    if (default_shape) {
-        Check(decision.reason_code ==
-                  cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator,
-              "small LSTM smoke shape should stay ArrayFire-CUDA eligible by policy");
-        Check(decision.should_attempt_arrayfire_cuda,
-              "small LSTM smoke shape should attempt ArrayFire CUDA when CUDA is active");
-    }
-
     const int total_runs = warmup_runs + measured_runs;
 
     cyxwiz::Tensor input =
@@ -219,11 +187,7 @@ void RunLstmProfileShape(const LstmProfileShape& shape,
               << " hidden_size=" << shape.hidden_size
               << " layers=" << shape.num_layers
               << " bidirectional=false\n"
-              << "  placement_reason=" << decision.reason_code
-              << " estimated_formal_parameter_bytes="
-              << decision.estimated_formal_parameter_bytes
-              << " limit_bytes="
-              << decision.formal_parameter_limit_bytes << "\n"
+              << "  plan=" << cyxwiz::RecurrentStagedArrayFirePlanName << "\n"
               << "  measured_runs=" << measured_runs
               << " warmup_runs=" << warmup_runs
               << " backward_eval_interval=" << backward_eval_interval
@@ -235,7 +199,7 @@ void RunLstmProfileShape(const LstmProfileShape& shape,
                  "CYXWIZ_RECURRENT_PROFILE_HIDDEN,"
                  "CYXWIZ_RECURRENT_PROFILE_LAYERS\n"
               << "  hotspot_candidates=input_projection,per_step_gate_math,"
-                 "af_to_tensor_cache_materialization,cpu_backward\n";
+                 "per_step_eval_barriers,arrayfire_backward\n";
     PrintStatsLine("forward", forward_stats);
     PrintStatsLine("backward", backward_stats);
 }

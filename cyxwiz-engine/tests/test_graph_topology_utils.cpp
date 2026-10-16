@@ -80,6 +80,29 @@ int main() {
     Check(loader != nullptr && loader->id == 4,
           "should ignore stale first DataLoader and find active one");
 
+    // Train loads the Data Inputs a reopened project has not loaded: the
+    // one feeding the loader, not the stale one, not a loaded one, not HDF5.
+    nodes[1].parameters = {{"source_type", "file"}, {"file_path", "stale.csv"}};
+    nodes[2].parameters = {{"source_type", "file"}, {"file_path", "posts.csv"}};
+    const auto none_loaded = [](const std::string&) { return false; };
+    auto to_load = cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded);
+    Check(to_load == std::vector<int>{2}, "only the Data Input feeding the loader loads");
+    nodes[2].parameters["dataset_name"] = "posts";
+    to_load = cyxwiz::CollectDataInputsToLoad(
+        nodes, links, [](const std::string& name) { return name == "posts"; });
+    Check(to_load.empty(), "a loaded dataset is not loaded again");
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded) == std::vector<int>{2},
+          "a saved name whose data is gone loads");
+    nodes[2].parameters = {{"source_type", "file"}, {"file_path", "cells.H5"}};
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded).empty(), "HDF5 is left out");
+    nodes[2].parameters = {{"source_type", "file"}, {"folder_path", "images"}};
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded) == std::vector<int>{2},
+          "a folder source loads");
+    nodes[2].parameters = {{"source_type", "database"}, {"file_path", "x.csv"}};
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded).empty(), "only file sources");
+    nodes[2].parameters.clear();
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded).empty(), "an unset node is left to the compiler");
+
     std::cout << "Graph topology utils passed\n";
     return 0;
 }

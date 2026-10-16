@@ -468,6 +468,10 @@ def copy_build_payload(
     ]
     backend = backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
+    # The Script Editor's language tools (jedi, parso, pyflakes; TOFIX133 P3),
+    # unpacked by the Engine build. Required: without them completion would
+    # quietly fall back to keywords.
+    python_tools = require_directory(paths.build / "python_tools", "Script Editor language tools")
 
     copy_file(engine, stage / engine.name)
     copy_file(route_probe, stage / route_probe.name)
@@ -481,7 +485,7 @@ def copy_build_payload(
             continue
         copy_file(library, stage / library.name)
 
-    for pattern in ("*.pyd", "pycyxwiz*.so", "cyxwiz_plotting*.so", "*.dylib"):
+    for pattern in ("*.pyd", "pycyxwiz*.so", "*.dylib"):
         for binding in sorted(paths.build.glob(pattern)):
             if binding.is_file():
                 copy_file(binding, stage / binding.name)
@@ -490,7 +494,15 @@ def copy_build_payload(
     if plugins.is_dir():
         copy_tree(plugins, stage / "plugins")
     copy_tree(paths.resources, stage / "resources")
+    if (stage / "python_tools").exists():
+        shutil.rmtree(stage / "python_tools")
+    shutil.copytree(
+        python_tools,
+        stage / "python_tools",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".unpacked"),
+    )
     copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
+    copy_file(require_file(paths.root / "KNOWN_ISSUES.md", "CyxWiz KNOWN_ISSUES.md"), stage / "KNOWN_ISSUES.md")
     copy_vcpkg_notices(paths, stage, system)
 
 
@@ -851,7 +863,9 @@ def classify_source(relative_path: Path) -> str:
         return "python"
     if value.startswith("resources/"):
         return "cyxwiz-resources"
-    if value in ("README.md", "LICENSE", "start_cyxwiz.bat", "cyxwiz"):
+    if value.startswith("python_tools/"):
+        return "python-tools"
+    if value in ("README.md", "LICENSE", "KNOWN_ISSUES.md", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"
 
@@ -971,12 +985,14 @@ def compatibility_contract(backend: str) -> dict[str, object]:
     elif backend == "cuda":
         kinds = ["gpu"]
         providers = ["nvidia-driver"]
-        recommendations = ["opencl", "cpu"]
+        # recommendation_targets = backends this pack may be recommended for
+        # once its route verifies (backend_pack_compatibility.cpp).
+        recommendations = ["cuda"]
         confidence = "stable_hardware"
     elif backend == "opencl":
         kinds = ["cpu", "gpu", "accelerator"]
         providers = ["opencl-icd"]
-        recommendations = ["cuda", "oneapi", "cpu"]
+        recommendations = ["opencl"]
         confidence = "stable_hardware"
     else:
         # No CPU: the SYCL CPU device recompiles kernels per process (sum took
@@ -984,7 +1000,8 @@ def compatibility_contract(backend: str) -> dict[str, object]:
         # benchmark in milliseconds (tofix119 D).
         kinds = ["gpu", "accelerator"]
         providers = ["sycl-unified-runtime"]
-        recommendations = ["opencl", "cpu"]
+        # oneAPI is available but never auto-preferred (route policy).
+        recommendations = []
         confidence = "stable_hardware"
     return {
         "device_kinds": kinds,

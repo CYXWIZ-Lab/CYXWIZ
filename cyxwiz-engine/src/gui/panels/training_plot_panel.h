@@ -1,11 +1,15 @@
 #pragma once
 
+#include "../plot/plot_view.h"
 #include "../panel.h"
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
+#include "../../core/word_vector_runs.h"
 #include <chrono>
 #include <functional>
-#include "../../plotting/plot_manager.h"
+#include <optional>
+#include <map>
+#include <memory>
 #include <imgui.h>
 #include <vector>
 #include <string>
@@ -76,6 +80,37 @@ public:
     void ExportPlotImage(const std::string& filepath);
     void ExportRunComparisonCSV(const std::string& filepath);
 
+    // Word-vector runs (TOFIX152): word2vec and GloVe training of a Word
+    // Embeddings node, from its figures. They have their own view behind the
+    // Run switcher and never touch the model run's charts, cards or table.
+    // Returns the run's number (0 when no run matches).
+    int RecordWordVectorFigures(const OperatorFigures& figures);
+    void RecordWordVectorProgress(int node_id, float step_share, const std::string& message);
+    // The node's live run (node -1: every live run) ended without its last
+    // figure: failed or cancelled.
+    void EndWordVectorRuns(int node_id, bool cancelled, const std::string& error);
+    // Show the dashboard on the node's latest run (the dialog's link).
+    void ShowWordVectorRun(int node_id);
+    bool HasWordVectorRun(int node_id) const;
+    // The node dialog's line under its live run ("Counted ... · about ... left").
+    std::string WordVectorRunLine(int node_id) const;
+    struct WordVectorHooks {
+        std::function<void(int node_id)> open_node_dialog;
+        std::function<void(int node_id)> cancel;
+        // The nearest words of `word` in the saved vectors; `note` says why
+        // there are none.
+        std::function<std::vector<std::pair<std::string, double>>(const std::string& saved, const std::string& word,
+                                                                  std::string& note)>
+            nearest;
+        // The vocabulary's words, most frequent first, for the quick check's word.
+        std::function<std::vector<std::string>(const std::string& saved)> words;
+        // Where the CSV exports go (the project's exports folder).
+        std::function<std::string()> export_folder;
+        // The layers that load a finished run's file ("Embedding (5,000 x 100)").
+        std::function<std::string(int node_id, const std::string& saved)> used_by;
+    };
+    void SetWordVectorHooks(WordVectorHooks hooks) { word_vector_hooks_ = std::move(hooks); }
+
     // Configuration
     void ShowLossPlot(bool show) { show_loss_plot_ = show; }
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
@@ -132,6 +167,13 @@ public:
     void SetMaterializationActionCallback(
         std::function<void(const std::string&)> callback) {
         materialization_action_callback_ = std::move(callback);
+    }
+    // Asks where to save a file (the Engine's save dialog); returns the
+    // chosen path, or nullopt when cancelled.
+    using SavePathCallback =
+        std::function<std::optional<std::string>(const std::string& title, const std::string& default_name)>;
+    void SetSavePathCallback(SavePathCallback callback) {
+        save_path_callback_ = std::move(callback);
     }
     void SetTrainingComplete(float total_time_seconds,
                              const std::string& terminal_status = "completed",
@@ -229,6 +271,8 @@ private:
     MetricSeries val_accuracy_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
+    std::string run_export_note_;  // where Export Run CSV wrote, or why it could not
+    bool run_export_failed_ = false;
     std::vector<MaterializationProgress> materialization_events_;
     std::string materialization_output_dataset_;
     std::string materialization_status_;
@@ -251,7 +295,18 @@ private:
     bool materialization_details_open_ = false;
     bool materialization_cache_refresh_requested_ = false;
     bool materialization_clear_confirm_ = false;
+
+public:
+    // Tools > Monitoring > Clear Cache: shows the panel and asks the same
+    // question as the dashboard card (TOFIX129 G3).
+    void RequestClearPreparedDataCache() {
+        SetVisible(true);
+        materialization_clear_confirm_ = true;
+    }
+
+private:
     std::function<void(const std::string&)> materialization_action_callback_;
+    SavePathCallback save_path_callback_;
 
     // UI state
     bool show_loss_plot_ = true;
@@ -305,10 +360,67 @@ private:
     bool active_checkpoint_loaded_ = false;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;
+
+    // Word-vector runs: the book, the run shown (0: the model run) and its
+    // chart and quick check.
+    WordVectorRunBook word_vector_runs_;
+    int shown_run_ = 0;
+    bool shown_run_chosen_ = false;  // picked by the user, not by a run starting
+    bool focus_requested_ = false;
+    WordVectorHooks word_vector_hooks_;
+    struct WordVectorChart {
+        std::unique_ptr<plot::PlotView> view;
+        int run = 0;
+        size_t version = ~size_t{0};
+    } word_vector_chart_;
+    struct QuickCheck {
+        char input[64] = "";
+        std::string word;
+        std::vector<std::pair<std::string, double>> rows;
+        std::string note;
+        bool looked_up = false;
+    };
+    std::map<int, QuickCheck> quick_checks_;
+    std::string word_vector_export_message_;
     mutable size_t sampled_read_events_ = 0;
 
     // Thread safety
     mutable std::mutex data_mutex_;
+
+    // Drawn copies of the series (TOFIX134 P0 item 8): reduced to a few
+    // thousand points with their smoothed curves, rebuilt only when the data
+    // or the smoothing changes. Drawing 100k points and smoothing them every
+    // frame held data_mutex_ (and so the training thread) for the frame.
+    struct DrawnSeries {
+        MetricSeries line;
+        std::vector<double> smooth_x;
+        std::vector<double> smooth_y;
+    };
+    struct DrawnCache {
+        uint64_t version = ~0ull;
+        uint64_t build = 0;  // bumped on every rebuild (data or smoothing)
+        int smoothing = 0;
+        bool smoothed = false;
+        DrawnSeries train_loss, val_loss, train_accuracy, val_accuracy;
+        std::vector<MetricSeries> custom;
+    };
+    uint64_t data_version_ = 0;
+    DrawnCache drawn_;
+    // Call with data_mutex_ held.
+    const DrawnCache& Drawn();
+
+    // Charts drawn with the shared plot view (TOFIX134 P1 step 1.6): one view
+    // per chart in the card and one in its own window.
+    struct ChartSlot {
+        std::unique_ptr<plot::PlotView> view;
+        uint64_t build = ~0ull;
+        bool log = false;
+    };
+    ChartSlot chart_slots_[3][2];  // [loss, accuracy, custom][card, window]
+    plot::Series ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn, const std::vector<double>& smooth_x,
+                              const std::vector<double>& smooth_y, int colour, bool markers) const;
+    plot::Prepared ChartData(int chart) const;
+    void DrawChart(int chart, const ImVec2& size, bool fit, bool in_window);
 
     // Helper methods
     void RenderTrainingStatus();
@@ -316,9 +428,9 @@ private:
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
-    void DrawLossPlot(const ImVec2& size, bool fit);
-    void DrawAccuracyPlot(const ImVec2& size, bool fit);
-    void DrawCustomMetricsPlot(const ImVec2& size, bool fit);
+    void DrawLossPlot(const ImVec2& size, bool fit, bool in_window = false);
+    void DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window = false);
+    void DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window = false);
     void RenderChartWindows();
     void RenderEmptyState();
     void RenderControls();
@@ -329,6 +441,17 @@ private:
     void RenderTrainingWarningSummary();
     void RenderRunComparisonTable();
     void RenderStatistics();
+    // Word-vector runs (training_word_vector_runs.cpp).
+    void RenderRunSwitcher();
+    void RenderWordVectorRun(const WordVectorRun& run);
+    void RenderWordVectorStatus(const WordVectorRun& run, const WordVectorRunView& view);
+    void RenderWordVectorSteps(const WordVectorRunView& view);
+    void RenderWordVectorCards(const WordVectorRunView& view);
+    void RenderWordVectorChart(const WordVectorRun& run, const WordVectorRunView& view);
+    void RenderWordVectorResult(const WordVectorRun& run, const WordVectorRunView& view);
+    void RenderWordVectorQuickCheck(const WordVectorRun& run);
+    void RenderWordVectorRunsTable();
+    std::string ModelRunSummary() const;
 
     // Internal helpers
     // Render() already owns data_mutex_; these helpers must only be called

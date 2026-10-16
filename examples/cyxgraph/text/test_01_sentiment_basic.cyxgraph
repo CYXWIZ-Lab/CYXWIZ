@@ -205,7 +205,7 @@
           300
         ],
         "params": {
-          "classes": "7"
+          "num_classes": "7"
         }
       }
     ],

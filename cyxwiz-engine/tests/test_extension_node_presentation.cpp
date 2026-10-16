@@ -125,13 +125,12 @@ void TestCanvasStyle() {
     undeclared.color = 0;
     Check(cyxwiz::BuildExtensionCanvasStyle(Node(nodes[4].type_id, false), &undeclared, steel_blue)
                   .box_color == steel_blue,
-          "a node without a declared colour keeps the old steel blue");
+          "a node without a declared colour takes the theme's plugin colour");
 
     const auto missing = cyxwiz::BuildExtensionCanvasStyle(Node(nodes[4].type_id, true), nullptr, steel_blue);
-    Check(missing.missing && missing.box_color == cyxwiz::kExtensionMissingBoxColor &&
-              missing.outline_color == cyxwiz::kExtensionMissingOutlineColor &&
+    Check(missing.missing && missing.box_color == 0 && missing.outline_color == 0 &&
               missing.status_line == "Not installed",
-          "a missing node is grey with an orange outline and says Not installed");
+          "a missing node leaves its colours to the theme and says Not installed");
 }
 
 void TestInfoFacts() {

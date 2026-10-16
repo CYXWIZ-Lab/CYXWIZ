@@ -34,23 +34,6 @@ const char* BackendName(DeviceType type) {
     }
 }
 
-const char* FallbackPolicyName(ArrayFireFallbackPolicy policy) {
-    return policy == ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-        ? "forbid_native_cpu_fallback"
-        : "allow_native_cpu_fallback";
-}
-
-std::optional<ArrayFireFallbackPolicy> ParseFallbackPolicy(
-    const std::string& policy) {
-    if (policy == "allow_native_cpu_fallback") {
-        return ArrayFireFallbackPolicy::AllowNativeCpuFallback;
-    }
-    if (policy == "forbid_native_cpu_fallback") {
-        return ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
-    }
-    return std::nullopt;
-}
-
 bool PublishAtomic(const std::filesystem::path& temporary,
                    const std::filesystem::path& target,
                    std::string& error) {
@@ -95,23 +78,23 @@ ComputeRuntimeConfigLoadResult LoadComputeRuntimeConfig(
         input >> document;
         if (!document.is_object() || !document.contains("schema") ||
             !document.at("schema").is_number_integer() ||
-            document.at("schema").get<int>() != 1) {
+            document.at("schema").get<int>() != ComputeRuntimeConfig{}.schema) {
             throw std::runtime_error(
                 "unsupported compute runtime configuration schema");
         }
 
         ComputeRuntimeConfig config;
-        if (!document.contains("default_fallback_policy") ||
-            !document.at("default_fallback_policy").is_string()) {
+        if (!document.contains("default_execution_policy") ||
+            !document.at("default_execution_policy").is_string()) {
             throw std::runtime_error(
-                "default_fallback_policy must be a string");
+                "default_execution_policy must be a string");
         }
-        const auto policy = ParseFallbackPolicy(
-            document.at("default_fallback_policy").get<std::string>());
+        const auto policy = ParseExecutionPolicy(
+            document.at("default_execution_policy").get<std::string>());
         if (!policy.has_value()) {
-            throw std::runtime_error("unknown default_fallback_policy");
+            throw std::runtime_error("unknown default_execution_policy");
         }
-        config.default_fallback_policy = *policy;
+        config.default_execution_policy = *policy;
 
         if (document.contains("preferred_route") &&
             !document.at("preferred_route").is_null()) {
@@ -159,7 +142,7 @@ bool SaveComputeRuntimeConfigAtomic(
     const ComputeRuntimeConfig& config,
     std::string& error) {
     error.clear();
-    if (config.schema != 1) {
+    if (config.schema != ComputeRuntimeConfig{}.schema) {
         error = "unsupported compute runtime configuration schema";
         return false;
     }
@@ -172,9 +155,9 @@ bool SaveComputeRuntimeConfigAtomic(
     }
 
     nlohmann::json document = {
-        {"schema", 1},
-        {"default_fallback_policy",
-         FallbackPolicyName(config.default_fallback_policy)}};
+        {"schema", config.schema},
+        {"default_execution_policy",
+         ExecutionPolicyName(config.default_execution_policy)}};
     if (config.preferred_route.has_value()) {
         const auto& route = *config.preferred_route;
         document["preferred_route"] = {
@@ -243,9 +226,9 @@ bool UpdatePreferredComputeRouteAtomic(
     return SaveComputeRuntimeConfigAtomic(path, config, error);
 }
 
-bool UpdateDefaultFallbackPolicyAtomic(
+bool UpdateDefaultExecutionPolicyAtomic(
     const std::filesystem::path& path,
-    ArrayFireFallbackPolicy policy,
+    ExecutionPolicy policy,
     std::string& error) {
     const auto loaded = LoadComputeRuntimeConfig(path);
     if (loaded.file_exists && !loaded.loaded) {
@@ -255,7 +238,7 @@ bool UpdateDefaultFallbackPolicyAtomic(
     ComputeRuntimeConfig config = loaded.loaded
         ? loaded.config
         : ComputeRuntimeConfig{};
-    config.default_fallback_policy = policy;
+    config.default_execution_policy = policy;
     return SaveComputeRuntimeConfigAtomic(path, config, error);
 }
 

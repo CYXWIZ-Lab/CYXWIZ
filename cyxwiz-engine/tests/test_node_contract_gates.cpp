@@ -32,7 +32,7 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 199,
+    Check(import_names.size() == 210,  // + ClassicModelPredictor (TOFIX145), ConvTranspose2D, WordEmbeddings (TOFIX152)
           "accepted graph-import name count drifted");
 
     std::set<std::string> names;
@@ -80,6 +80,7 @@ bool IsSupportedParameterType(const std::string& type) {
         "dropdown",
         "enum",
         "file",
+        "fixed",
         "float",
         "folder",
         "int",
@@ -108,6 +109,13 @@ void CheckParameterSchema(const cyxwiz::NodeMetadata& metadata) {
         Check(IsSupportedParameterType(parameter.type),
               "unsupported metadata parameter type " + context + ": " +
                   parameter.type);
+        // Help text belongs in description: a label is a few words, and a
+        // validation rule is a range or pattern, not a sentence (TOFIX143).
+        Check(parameter.display_name.size() <= 40,
+              "display name is a sentence, not a label: " + context);
+        Check(parameter.validation.find(". ") == std::string::npos &&
+                  parameter.validation.find(", ") == std::string::npos,
+              "validation holds prose, not a rule: " + context);
 
         std::set<std::string> choices;
         for (const auto& choice : parameter.enum_values) {
@@ -281,8 +289,7 @@ void CheckPropertyAndSupportContract(const cyxwiz::NodeMetadata& metadata) {
     Check(state != nullptr,
           "implemented node has no declared support state: " +
               TypeId(metadata.type));
-    Check(owner->value != "none" && owner->value != "unknown" &&
-              owner->value != "unowned_training_workflow",
+    Check(owner->value != "none" && owner->value != "unknown",
           "implemented node declares no executable/UI owner: " +
               TypeId(metadata.type) + "=" + owner->value);
     Check(state->value != "blocked" && cyxwiz::CanAddNodeToGraph(metadata),
@@ -321,10 +328,6 @@ void CheckTrainingCapabilityContract(
     };
     check_unsupported(
         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities());
-    check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities());
-    check_unsupported(
-        cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities());
 
     std::map<int, cyxwiz::PipelineTrainingSupportRole> roles_by_type;
     for (const auto& capability :
@@ -457,10 +460,15 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Resize is a training preprocessing contract since TOFIX140 A1: the
+    // compiler takes the image input shape [H,W,C] from it.
+    {
+        const auto* resize = registry.GetMetadata(gui::NodeType::Resize);
+        Check(resize != nullptr && resize->IsImplemented() &&
+                  cyxwiz::CanAddNodeToGraph(*resize) && !resize->parameters.empty(),
+              "Resize must be an implemented, addable preprocessing node");
+    }
     for (const auto [type, expected_evidence] : {
-             std::pair{gui::NodeType::Resize,
-                       cyxwiz::PipelineBackendPrimitiveEvidence::
-                           ProvenNodePrimitive},
              std::pair{gui::NodeType::AudioAugmentation,
                        cyxwiz::PipelineBackendPrimitiveEvidence::
                            RelatedHelperOnly}}) {

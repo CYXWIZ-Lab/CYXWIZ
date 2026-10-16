@@ -16,10 +16,7 @@ struct RuntimeTrainingEventTruth {
     int epoch = 0;
     int batch = 0;
     int total_batches = 0;
-    bool native_cpu_fallback = false;
-    std::string fallback_operation;
-    std::string fallback_reason;
-    std::string fallback_policy;
+    std::string execution_policy;
     uint64_t host_sync_bytes = 0;
     std::string host_sync_reason;
     std::string host_sync_category;
@@ -67,8 +64,7 @@ struct RuntimeTrainingTruth {
     bool selection_fallback_applied = false;
     std::string preflight_stage;
     int preflight_error_code = 0;
-    std::string fallback_policy;
-    uint64_t native_cpu_fallback_count = 0;
+    std::string execution_policy;
     uint64_t transfer_event_count = 0;
     uint64_t transfer_known_bytes = 0;
     uint64_t synchronization_event_count = 0;
@@ -215,7 +211,6 @@ struct RuntimeRunTruth {
     std::string preflight_stage;
     std::string placement_fingerprint;
     std::string residency_verdict;
-    uint64_t native_cpu_fallback_count = 0;
     uint64_t transfer_event_count = 0;
     uint64_t transfer_known_bytes = 0;
     uint64_t synchronization_event_count = 0;

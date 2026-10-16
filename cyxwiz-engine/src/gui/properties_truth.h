@@ -3,6 +3,7 @@
 #include "node_editor.h"
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,6 +64,7 @@ struct DatasetTruthFact {
     std::string dataset_name;
     std::string backing_store;
     bool found = false;
+    size_t rows = 0;  // rows, samples or images; 0 when unknown
     std::vector<std::string> columns;
     bool has_labels = false;
     bool has_label_column_metadata = false;
@@ -88,6 +90,9 @@ struct NodeTruthContext {
     const std::vector<NodeLink>* links = nullptr;
     const std::vector<DatasetTruthFact>* dataset_facts = nullptr;
     const std::vector<BackendPlacementTruthFact>* backend_placements = nullptr;
+    // Parameters the node type declares in its metadata: a raw parameter in
+    // this set is current, not stale, even without a truth rule of its own.
+    const std::set<std::string>* declared_parameters = nullptr;
 };
 
 struct NodeTruthReport {

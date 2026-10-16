@@ -1,454 +1,196 @@
 #include "import_dialog.h"
 #include "../icons.h"
 #include "../../core/file_dialogs.h"
+#include "../../core/model_importer.h"
+#include "../../core/model_open_presentation.h"
+#include "../../core/project_manager.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cstdio>
+#include <filesystem>
 
 namespace cyxwiz {
 
 ImportDialog::ImportDialog()
-    : Panel("Import Model", false) {
+    : Panel("Open Model File", false) {
 }
 
 ImportDialog::~ImportDialog() {
-    // Wait for import thread to finish
-    if (import_thread_ && import_thread_->joinable()) {
-        import_thread_->join();
+    for (auto& [thread, job] : workers_) {
+        if (thread.joinable()) thread.join();
     }
 }
 
 void ImportDialog::Open() {
     is_open_ = true;
-    show_result_ = false;
-    file_probed_ = false;
-
-    // Reset state
-    is_importing_ = false;
-    is_probing_ = false;
-    import_progress_ = 0;
-    import_total_ = 0;
+    // Reopened while a file is being read: that read stays on screen.
+    if (job_) return;
     input_path_[0] = '\0';
-    imported_graph_json_.clear();
-
-    // Default options
-    load_optimizer_state_ = false;
-    load_training_history_ = false;
-    strict_mode_ = true;
-    allow_shape_mismatch_ = false;
-
-    // Reset transfer learning options
-    enable_transfer_learning_ = false;
-    freeze_mode_ = 0;
-    unfreeze_last_n_ = 2;
-    layer_trainable_.clear();
+    probed_path_.clear();
+    probe_ = ProbeResult{};
+    error_.clear();
 }
 
 void ImportDialog::Close() {
     is_open_ = false;
 }
 
-void ImportDialog::Render() {
-    if (completion_pending_.exchange(false)) {
-        show_result_ = true;
-        if (import_complete_callback_) {
-            import_complete_callback_(
-                last_result_,
-                completed_import_options_,
-                completed_probe_result_,
-                imported_graph_json_,
-                completed_input_path_);
+void ImportDialog::StartJob(const std::string& path, bool extract) {
+    auto job = std::make_shared<Job>();
+    job->path = path;
+    job->extract = extract;
+    error_.clear();
+    job_ = job;
+    workers_.emplace_back(std::thread([job]() {
+        ModelImporter importer;
+        if (job->extract) {
+            job->graph_json = importer.ExtractGraph(job->path);
+        } else {
+            job->probe = importer.ProbeFile(job->path);
+        }
+        job->done = true;
+    }), job);
+}
+
+void ImportDialog::CollectJob() {
+    // Join the workers that finished (the current one and any replaced one).
+    for (auto it = workers_.begin(); it != workers_.end();) {
+        if (it->second->done.load()) {
+            it->first.join();
+            it = workers_.erase(it);
+        } else {
+            ++it;
         }
     }
+    if (!job_ || !job_->done.load()) return;
+    const std::shared_ptr<Job> job = std::move(job_);
+    job_.reset();
+    if (!job->extract) {
+        probed_path_ = job->path;
+        probe_ = job->probe;
+        return;
+    }
+    if (!job->graph_json || job->graph_json->empty()) {
+        error_ = "The graph in this file could not be read.";
+        spdlog::error("Open Model File: no graph could be extracted from {}", job->path);
+        return;
+    }
+    const bool opened = open_graph_callback_ && open_graph_callback_(probe_, *job->graph_json, job->path);
+    if (opened) {
+        Close();
+    } else {
+        error_ = "Studio could not open the graph in this file; the log has the details.";
+    }
+}
+
+void ImportDialog::Render() {
+    CollectJob();
     if (!is_open_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(550, 500), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(
-        ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f),
-        ImGuiCond_FirstUseEver,
-        ImVec2(0.5f, 0.5f)
-    );
-
-    if (ImGui::Begin("Import Model", &is_open_, ImGuiWindowFlags_NoCollapse)) {
-        if (is_importing_) {
-            RenderProgress();
-        } else if (show_result_) {
-            // Show import result
-            if (last_result_.success) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
-                    ICON_FA_CHECK " Inspection Complete");
-                ImGui::Separator();
-
-                ImGui::Text("Model: %s", last_result_.model_name.c_str());
-                ImGui::Text("Parameters: %d", last_result_.num_parameters);
-                ImGui::Text("Layers: %d", last_result_.num_layers);
-                ImGui::Text("Inspect Time: %lld ms", last_result_.load_time_ms);
-                ImGui::TextWrapped(
-                    "Weights were not loaded into a trainable Studio model. "
-                    "Only metadata was inspected and .cyxmodel graph JSON was "
-                    "extracted when present.");
-
-                if (!last_result_.warnings.empty()) {
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
-                        ICON_FA_TRIANGLE_EXCLAMATION " Warnings:");
-                    for (const auto& warning : last_result_.warnings) {
-                        ImGui::BulletText("%s", warning.c_str());
-                    }
-                }
-
-                ImGui::Separator();
-
-                if (ImGui::Button("Close", ImVec2(120, 0))) {
-                    Close();
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Import Another", ImVec2(120, 0))) {
-                    show_result_ = false;
-                    file_probed_ = false;
-                    input_path_[0] = '\0';
-                }
-            } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
-                    ICON_FA_XMARK " Import Failed");
-                ImGui::Separator();
-
-                ImGui::TextWrapped("Error: %s", last_result_.error_message.c_str());
-
-                ImGui::Separator();
-
-                if (ImGui::Button("Close", ImVec2(120, 0))) {
-                    Close();
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Try Again", ImVec2(120, 0))) {
-                    show_result_ = false;
-                }
-            }
-        } else {
-            RenderFileSelection();
-            ImGui::Separator();
-            RenderProbeInfo();
-            ImGui::Separator();
-            RenderOptions();
-            ImGui::Separator();
-            RenderButtons();
-        }
+    ImGui::SetNextWindowSize(ImVec2(600, 440), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin("Open a model file###open_model_file", &is_open_, ImGuiWindowFlags_NoCollapse)) {
+        const float footer_h = ui::ButtonHeight(ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+        ImGui::BeginChild("##open_model_body", ImVec2(0.0f, -footer_h));
+        RenderFileField();
+        RenderFile();
+        ImGui::EndChild();
+        RenderButtons();
     }
     ImGui::End();
 }
 
-void ImportDialog::RenderFileSelection() {
-    ImGui::Text(ICON_FA_FILE_IMPORT " Select Model File");
-    ImGui::Spacing();
-
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-    if (ImGui::InputText("##input_path", input_path_, sizeof(input_path_))) {
-        file_probed_ = false;  // Re-probe on path change
-    }
-
+void ImportDialog::RenderFileField() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TextColored(t.text_dim, "File");
+    const float browse = ui::ButtonWidth("Browse...", ui::ButtonSize::Small);
+    const float field = ImGui::GetContentRegionAvail().x - browse - ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetNextItemWidth((std::max)(120.0f, field));
+    ImGui::InputTextWithHint("##input_path", "A .cyxmodel, .safetensors, .onnx or .gguf file", input_path_,
+                             sizeof(input_path_));
+    // A typed path is read when the field is left or Enter is pressed, not at every keystroke.
+    const bool typed = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
-
-    if (ImGui::Button("Browse...", ImVec2(70, 0))) {
-        const char* filter =
-            "All Model Files\0*.cyxmodel;*.safetensors;*.onnx;*.gguf\0"
-            "CyxWiz Model (*.cyxmodel)\0*.cyxmodel\0"
-            "Safetensors (*.safetensors)\0*.safetensors\0"
-            "ONNX Model (*.onnx)\0*.onnx\0"
-            "GGUF (*.gguf)\0*.gguf\0"
-            "All Files (*.*)\0*.*\0";
-
-        std::string path = OpenFileDialog(filter, "Select Model File");
-        if (!path.empty()) {
-            strncpy(input_path_, path.c_str(), sizeof(input_path_) - 1);
-            file_probed_ = false;
+    if (ui::SecondaryButton("Browse...", true, nullptr, ui::ButtonSize::Small)) {
+        const std::string root = ProjectManager::Instance().GetProjectRoot();
+        const std::string exports = root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
+        const std::string folder = std::filesystem::is_directory(exports) ? exports : root;
+        const auto path = FileDialogs::OpenFile("Open a model file",
+                                                {{"Model files", "cyxmodel,safetensors,onnx,gguf"},
+                                                 {"CyxWiz package", "cyxmodel"},
+                                                 {"Safetensors", "safetensors"},
+                                                 {"ONNX", "onnx"},
+                                                 {"GGUF", "gguf"},
+                                                 {"All Files", "*"}},
+                                                folder.empty() ? nullptr : folder.c_str());
+        if (path) {
+            std::snprintf(input_path_, sizeof(input_path_), "%s", path->c_str());
+            StartJob(*path, false);
         }
+    } else if (typed && input_path_[0] != '\0' && !job_) {
+        StartJob(input_path_, false);
     }
-
-    // Auto-probe when path changes
-    if (strlen(input_path_) > 0 && !file_probed_ && !is_probing_) {
-        ProbeFile();
-    }
+    ImGui::Spacing();
 }
 
-void ImportDialog::RenderProbeInfo() {
-    ImGui::Text(ICON_FA_CIRCLE_INFO " Model Information");
-    ImGui::Spacing();
-
-    if (is_probing_) {
-        ImGui::Text(ICON_FA_SPINNER " Analyzing file...");
+void ImportDialog::RenderFile() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (job_) {
+        ImGui::TextColored(t.text_dim, job_->extract ? ICON_FA_SPINNER " Opening the graph"
+                                                     : ICON_FA_SPINNER " Reading the file");
         return;
     }
-
-    if (!file_probed_ || strlen(input_path_) == 0) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Select a file to view model information");
+    if (probed_path_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Choose a model file to see what it holds and open its graph.");
+        ImGui::PopTextWrapPos();
         return;
     }
-
-    if (!probe_result_.valid) {
-        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
-            ICON_FA_XMARK " Invalid file: %s", probe_result_.error_message.c_str());
+    const model_open::View v = model_open::BuildView(probe_);
+    ImGui::PushTextWrapPos(0.0f);
+    if (!v.readable) {
+        ImGui::TextColored(t.error, ICON_FA_CIRCLE_XMARK " This file could not be read");
+        ImGui::TextUnformatted(v.error.c_str());
+        ImGui::PopTextWrapPos();
         return;
     }
-
-    // Format info
-    ImGui::Text("Format: %s", GetFormatName(probe_result_.format).c_str());
-    if (!probe_result_.format_version.empty()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(v%s)", probe_result_.format_version.c_str());
-    }
-
-    // Model info
-    if (!probe_result_.model_name.empty()) {
-        ImGui::Text("Name: %s", probe_result_.model_name.c_str());
-    }
-    if (!probe_result_.author.empty()) {
-        ImGui::Text("Author: %s", probe_result_.author.c_str());
-    }
-
-    ImGui::Text("Parameters: %d", probe_result_.num_parameters);
-    ImGui::Text("Layers: %d", probe_result_.num_layers);
-    ImGui::Text("File Size: %.2f MB", probe_result_.file_size / (1024.0f * 1024.0f));
-
-    // Training info
-    if (probe_result_.epochs_trained.has_value()) {
-        ImGui::Text("Epochs Trained: %d", probe_result_.epochs_trained.value());
-    }
-    if (probe_result_.final_accuracy.has_value()) {
-        ImGui::Text("Final Accuracy: %.2f%%", probe_result_.final_accuracy.value() * 100.0f);
-    }
-    if (probe_result_.final_loss.has_value()) {
-        ImGui::Text("Final Loss: %.4f", probe_result_.final_loss.value());
-    }
-
-    // Content flags (for .cyxmodel)
-    if (probe_result_.format == ModelFormat::CyxModel) {
-        ImGui::Spacing();
-        ImGui::Text("Contents:");
-        ImGui::BulletText("Graph: %s", probe_result_.has_graph ? "Yes" : "No");
-        ImGui::BulletText("Optimizer State: %s", probe_result_.has_optimizer_state ? "Yes" : "No");
-        ImGui::BulletText("Training History: %s", probe_result_.has_training_history ? "Yes" : "No");
-    }
-
-    // Layer names (collapsible)
-    if (!probe_result_.layer_names.empty()) {
-        if (ImGui::TreeNode("Layers")) {
-            for (const auto& name : probe_result_.layer_names) {
-                auto shape_it = probe_result_.layer_shapes.find(name);
-                if (shape_it != probe_result_.layer_shapes.end()) {
-                    std::string shape_str = "[";
-                    for (size_t i = 0; i < shape_it->second.size(); ++i) {
-                        shape_str += std::to_string(shape_it->second[i]);
-                        if (i < shape_it->second.size() - 1) shape_str += ", ";
-                    }
-                    shape_str += "]";
-                    ImGui::BulletText("%s: %s", name.c_str(), shape_str.c_str());
-                } else {
-                    ImGui::BulletText("%s", name.c_str());
-                }
-            }
-            ImGui::TreePop();
-        }
-    }
-}
-
-void ImportDialog::RenderOptions() {
-    ImGui::Text(ICON_FA_GEAR " Inspection Options");
+    ImGui::TextColored(t.text, "%s", v.format_line.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
-
-    // Only show options for .cyxmodel format
-    if (file_probed_ && probe_result_.valid && probe_result_.format == ModelFormat::CyxModel) {
-        load_optimizer_state_ = false;
-        load_training_history_ = false;
-        ImGui::TextDisabled("Optimizer state: %s",
-                            probe_result_.has_optimizer_state
-                                ? "present, inspection only"
-                                : "not present");
-        ImGui::TextDisabled("Training history: %s",
-                            probe_result_.has_training_history
-                                ? "present, inspection only"
-                                : "not present");
-        ImGui::TextWrapped(
-            "Checkpoint tensors, optimizer state, and training history are "
-            "not loaded into a trainable Studio model by this dialog.");
+    std::vector<ui::KeyValue> rows;
+    for (const auto& [key, value] : v.rows) rows.push_back({key, value});
+    ui::FactsTable("##open_model_rows", rows);
+    if (!v.layers.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "Layers and shapes");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(v.layers.c_str());
+        ImGui::PopTextWrapPos();
     }
-
     ImGui::Spacing();
-
-    strict_mode_ = false;
-    allow_shape_mismatch_ = false;
-    ImGui::BeginDisabled(true);
-    ImGui::Checkbox("Strict Mode", &strict_mode_);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Layer matching is unavailable until import-to-training exists");
-    }
-
-    ImGui::BeginDisabled(true);
-    ImGui::Checkbox("Allow Shape Mismatch", &allow_shape_mismatch_);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Shape-mismatch loading is unavailable until weights are imported");
-    }
-
-    // Transfer Learning Options
-    if (file_probed_ && probe_result_.valid && probe_result_.num_layers > 0) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::Text("Import-to-Training Status");
-        ImGui::Spacing();
-
-        enable_transfer_learning_ = false;
-        freeze_mode_ = 0;
-        layer_trainable_.clear();
-        ImGui::TextDisabled(
-            "Fine-tuning import is not implemented in this dialog.");
-        ImGui::TextWrapped(
-            "Studio can inspect model metadata and extract .cyxmodel graphs, "
-            "but it does not yet map imported checkpoint tensors into a "
-            "trainable graph or own freeze/unfreeze optimizer behavior.");
-    }
-}
-
-void ImportDialog::RenderProgress() {
-    ImGui::Text(ICON_FA_SPINNER " Inspecting...");
-    ImGui::Spacing();
-
-    int progress = import_progress_.load();
-    int total = import_total_.load();
-
-    float fraction = (total > 0) ? static_cast<float>(progress) / total : 0.0f;
-    ImGui::ProgressBar(fraction, ImVec2(-1, 0));
-
-    {
-        std::lock_guard<std::mutex> lock(status_mutex_);
-        ImGui::Text("%s", import_status_.c_str());
-    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", v.note.c_str());
+    if (!error_.empty()) ImGui::TextColored(t.error, ICON_FA_TRIANGLE_EXCLAMATION " %s", error_.c_str());
+    ImGui::PopTextWrapPos();
 }
 
 void ImportDialog::RenderButtons() {
-    bool can_import = file_probed_ && probe_result_.valid &&
-        !is_importing_ && !completion_pending_.load();
-
-    ImGui::BeginDisabled(!can_import);
-    if (ImGui::Button(ICON_FA_FILE_IMPORT " Inspect", ImVec2(120, 30))) {
-        StartImport();
-    }
-    ImGui::EndDisabled();
-
+    const model_open::View v = model_open::BuildView(probe_);
+    const bool ready = !job_ && !probed_path_.empty();
+    const bool can_open = ready && v.can_open_graph;
+    const char* reason = job_ ? "The file is being read"
+                         : probed_path_.empty() ? "Choose a model file"
+                                                : v.open_disabled_reason.c_str();
+    const float right = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.x +
+                        ui::ButtonWidth("Open its graph", ui::ButtonSize::Regular);
+    ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - right));
+    if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) Close();
     ImGui::SameLine();
-
-    if (ImGui::Button("Cancel", ImVec2(80, 30))) {
-        Close();
-    }
-}
-
-std::string ImportDialog::OpenFileDialog(const char* filter, const char* title) {
-    (void)filter;  // Using FileDialogs which has a different filter format
-    (void)title;
-    auto result = FileDialogs::OpenModel();
-    return result.value_or("");
-}
-
-void ImportDialog::ProbeFile() {
-    if (strlen(input_path_) == 0) return;
-
-    is_probing_ = true;
-
-    // Probe in main thread for now (it's fast)
-    ModelImporter importer;
-    probe_result_ = importer.ProbeFile(input_path_);
-    file_probed_ = true;
-    is_probing_ = false;
-}
-
-void ImportDialog::StartImport() {
-    if (!file_probed_ || !probe_result_.valid) return;
-
-    is_importing_ = true;
-    show_result_ = false;
-    import_progress_ = 0;
-    import_total_ = 2;
-    imported_graph_json_.clear();
-
-    // Build import options
-    import_options_.load_optimizer_state = load_optimizer_state_;
-    import_options_.load_training_history = load_training_history_;
-    import_options_.strict_mode = strict_mode_;
-    import_options_.allow_shape_mismatch = allow_shape_mismatch_;
-
-    // Wait for any previous import thread
-    if (import_thread_ && import_thread_->joinable()) {
-        import_thread_->join();
-    }
-
-    const std::string input_path = input_path_;
-    const ProbeResult probe_result = probe_result_;
-    const ImportOptions import_options = import_options_;
-
-    // Start import in background thread
-    import_thread_ = std::make_unique<std::thread>(
-        [this, input_path, probe_result, import_options]() {
-        ModelImporter importer;
-
-        auto progress_callback = [this](int current, int total, const std::string& status) {
-            import_progress_ = current;
-            import_total_ = total;
-            {
-                std::lock_guard<std::mutex> lock(status_mutex_);
-                import_status_ = status;
-            }
-        };
-
-        progress_callback(1, 2, "Inspecting model metadata...");
-
-        // For .cyxmodel, also extract the graph
-        std::string graph_json;
-        if (probe_result.format == ModelFormat::CyxModel &&
-            probe_result.has_graph) {
-            progress_callback(2, 2, "Extracting .cyxmodel graph JSON...");
-            auto graph = importer.ExtractGraph(input_path);
-            if (graph.has_value()) {
-                graph_json = graph.value();
-            }
-        }
-
-        // This dialog intentionally does not load weights into a trainable
-        // SequentialModel. That requires a separate import-to-training
-        // contract for parameter mapping, tokenizer/preprocessor packaging,
-        // shape validation, and freeze/unfreeze optimizer ownership.
-        ImportResult result;
-        result.success = probe_result.valid;
-        result.model_name = probe_result.model_name;
-        result.format_version = probe_result.format_version;
-        result.num_parameters = probe_result.num_parameters;
-        result.num_layers = probe_result.num_layers;
-        result.layer_names = probe_result.layer_names;
-        result.warnings.push_back(
-            "No weights were loaded into a trainable Studio model.");
-        result.warnings.push_back(
-            "Fine-tuning/freeze controls require a future import-to-training contract.");
-        result.load_time_ms = 0;
-
-        last_result_ = result;
-        completed_import_options_ = import_options;
-        completed_probe_result_ = probe_result;
-        completed_input_path_ = input_path;
-        imported_graph_json_ = std::move(graph_json);
-        completion_pending_ = true;
-        is_importing_ = false;
-
-        if (result.success) {
-            spdlog::info("Model inspection completed for {}", input_path);
-        } else {
-            spdlog::error("Model inspection failed: {}", result.error_message);
-        }
-    });
+    if (ui::PrimaryButton("Open its graph", can_open, reason)) StartJob(probed_path_, true);
 }
 
 } // namespace cyxwiz

@@ -1,7 +1,8 @@
 // tofix67 slice 7: exact-shape benchmark of the recurrent staged ArrayFire
-// plan (recurrent_timestep_materialization_v1) vs the native CPU recurrent
-// path. Produces the evidence for the native-provider graduation decision
-// and for any eval-boundary change to the staged plan.
+// plan (recurrent_timestep_materialization_v1), the only LSTM / GRU path
+// besides the native providers, against those providers. Produces the
+// evidence for provider decisions and for any eval-boundary change to the
+// staged plan.
 //
 // Usage: test_recurrent_staged_benchmark cpu|cuda|opencl output.json
 
@@ -59,17 +60,13 @@ struct PathTiming {
     double backward_ms = 0.0;
 };
 
-PathTiming MeasurePath(const BenchShape& shape,
-                       const cyxwiz::Tensor& input,
-                       bool force_native,
-                       int warmup_runs,
-                       int measured_runs) {
-    // Staged/native legs measure the ArrayFire and CPU paths; the neural
-    // provider is measured by its own leg and must not hijack these.
+PathTiming MeasureStaged(const BenchShape& shape,
+                         const cyxwiz::Tensor& input,
+                         int warmup_runs,
+                         int measured_runs) {
+    // The staged leg measures the ArrayFire path; the neural providers are
+    // measured by their own legs and must not hijack it.
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    if (force_native) {
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
-    }
     std::vector<double> forward_ms;
     std::vector<double> backward_ms;
     for (int run = 0; run < warmup_runs + measured_runs; ++run) {
@@ -94,9 +91,6 @@ PathTiming MeasurePath(const BenchShape& shape,
             backward_ms.push_back(
                 std::chrono::duration<double, std::milli>(b1 - b0).count());
         }
-    }
-    if (force_native) {
-        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     }
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     PathTiming timing;
@@ -156,14 +150,8 @@ double MeasureProviderForward(const BenchShape& shape,
     }
     provider_version = provider->Version();
 
-    // Real weights from the CPU reference; one forced-native forward
-    // settles lazily initialized weight storage before GetParameters.
+    // Real weights from an LSTMLayer.
     cyxwiz::LSTMLayer reference(static_cast<int>(shape.input), shape.hidden);
-    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
-    reference.Forward(input);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
-    cyxwiz::SetNeuralProvidersDisabledForTesting(false);
     auto params = reference.GetParameters();
     const cyxwiz::Tensor W_ih = params.at("layer0_W_ih");
     const cyxwiz::Tensor W_hh = params.at("layer0_W_hh");
@@ -192,34 +180,32 @@ double MeasureProviderForward(const BenchShape& shape,
     return MedianMs(forward_ms);
 }
 
-// tofix68 P3: GRU leg — native CPU GRU forward vs provider gru_forward on
-// identical weights, forward-only, provider timed INCLUDING host<->device
+// tofix68 P3: GRU leg — staged ArrayFire GRU forward vs provider gru_forward
+// on identical weights, forward-only, provider timed INCLUDING host<->device
 // boundary copies. provider_ms is negative when no provider supports the
 // tuple.
 void MeasureGruForwardLeg(const BenchShape& shape,
                           const cyxwiz::Tensor& input,
                           int warmup_runs,
                           int measured_runs,
-                          double& native_ms,
+                          double& staged_ms,
                           double& provider_ms) {
     cyxwiz::GRULayer reference(static_cast<int>(shape.input), shape.hidden);
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
-    std::vector<double> native;
+    std::vector<double> staged;
     for (int run = 0; run < warmup_runs + measured_runs; ++run) {
         reference.ResetState();
         const auto start = std::chrono::steady_clock::now();
         reference.Forward(input);
         const auto end = std::chrono::steady_clock::now();
         if (run >= warmup_runs) {
-            native.push_back(
+            staged.push_back(
                 std::chrono::duration<double, std::milli>(end - start)
                     .count());
         }
     }
-    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
-    native_ms = MedianMs(native);
+    staged_ms = MedianMs(staged);
 
     cyxwiz::NeuralOpRequest request;
     request.target = {cyxwiz::DeviceType::CUDA, 0};
@@ -281,11 +267,11 @@ int main(int argc, char** argv) {
           activation.message);
 
     const std::vector<BenchShape> shapes = {
-        {32, 16, 32, 8},     // CUDA-eligible by estimator (3000+8*56=3448)
-        {32, 16, 32, 16},    // CUDA-eligible boundary-ish (3896)
-        {32, 32, 64, 64},    // policy-CPU on CUDA (6584)
-        {32, 64, 128, 128},  // policy-CPU on CUDA
-        {64, 64, 128, 256},  // policy-CPU on CUDA, training-realistic
+        {32, 16, 32, 8},
+        {32, 16, 32, 16},
+        {32, 32, 64, 64},
+        {32, 64, 128, 128},
+        {64, 64, 128, 256},  // training-realistic
     };
     constexpr int kWarmup = 2;
     constexpr int kMeasured = 5;
@@ -301,27 +287,8 @@ int main(int argc, char** argv) {
               << " plan=" << cyxwiz::RecurrentStagedArrayFirePlanName << "\n";
     for (size_t i = 0; i < shapes.size(); ++i) {
         const auto& shape = shapes[i];
-        cyxwiz::RecurrentCudaPlacementRequest request;
-        request.kind = cyxwiz::RecurrentLayerKind::LSTM;
-        request.batch_size = shape.batch;
-        request.seq_len = shape.seq;
-        request.input_size = shape.input;
-        request.hidden_size = static_cast<size_t>(shape.hidden);
-        request.num_layers = 1;
-        const auto decision =
-            cyxwiz::EvaluateRecurrentCudaPlacement(request);
-        // On the CUDA backend, shapes the estimator rejects run native even
-        // on the "staged" leg — the staged measurement is only meaningful
-        // when the policy allows the ArrayFire path (always true on
-        // non-CUDA ArrayFire backends).
-        const bool staged_is_arrayfire =
-            backend != "cuda" || decision.should_attempt_arrayfire_cuda;
-
         const auto input = MakeInput(shape);
-        const auto staged =
-            MeasurePath(shape, input, false, kWarmup, kMeasured);
-        const auto native =
-            MeasurePath(shape, input, true, kWarmup, kMeasured);
+        const auto staged = MeasureStaged(shape, input, kWarmup, kMeasured);
         std::string provider_version;
         const double provider_fwd_ms = MeasureProviderForward(
             shape, input, kWarmup, kMeasured, provider_version,
@@ -330,30 +297,19 @@ int main(int argc, char** argv) {
         const double opencl_provider_fwd_ms = MeasureProviderForward(
             shape, input, kWarmup, kMeasured, opencl_provider_version,
             cyxwiz::DeviceType::OPENCL);
-        double gru_native_fwd_ms = 0.0;
+        double gru_staged_fwd_ms = 0.0;
         double gru_provider_fwd_ms = -1.0;
         MeasureGruForwardLeg(shape, input, kWarmup, kMeasured,
-                             gru_native_fwd_ms, gru_provider_fwd_ms);
+                             gru_staged_fwd_ms, gru_provider_fwd_ms);
 
-        const double forward_speedup =
-            staged.forward_ms > 0.0 ? native.forward_ms / staged.forward_ms
-                                    : 0.0;
         std::cout << "shape batch=" << shape.batch << " seq=" << shape.seq
                   << " input=" << shape.input << " hidden=" << shape.hidden
-                  << " est_bytes="
-                  << decision.estimated_formal_parameter_bytes
-                  << " staged_is_arrayfire="
-                  << (staged_is_arrayfire ? "true" : "false")
                   << " staged_fwd_ms=" << staged.forward_ms
-                  << " native_fwd_ms=" << native.forward_ms
                   << " staged_bwd_ms=" << staged.backward_ms
-                  << " native_bwd_ms=" << native.backward_ms
-                  << " fwd_speedup_native_over_staged="
-                  << (forward_speedup > 0.0 ? 1.0 / forward_speedup : 0.0)
                   << " provider_fwd_ms=" << provider_fwd_ms
                   << (provider_fwd_ms > 0.0
-                          ? " provider_speedup_vs_native=" +
-                                std::to_string(native.forward_ms /
+                          ? " provider_speedup_vs_staged=" +
+                                std::to_string(staged.forward_ms /
                                                provider_fwd_ms)
                           : " provider=" + (provider_version.empty()
                                                 ? std::string("unavailable")
@@ -361,18 +317,18 @@ int main(int argc, char** argv) {
                   << " opencl_device=" << OpenclBenchDeviceIndex()
                   << " opencl_provider_fwd_ms=" << opencl_provider_fwd_ms
                   << (opencl_provider_fwd_ms > 0.0
-                          ? " opencl_provider_speedup_vs_native=" +
-                                std::to_string(native.forward_ms /
+                          ? " opencl_provider_speedup_vs_staged=" +
+                                std::to_string(staged.forward_ms /
                                                opencl_provider_fwd_ms)
                           : " opencl_provider=" +
                                 (opencl_provider_version.empty()
                                      ? std::string("unavailable")
                                      : opencl_provider_version))
-                  << " gru_native_fwd_ms=" << gru_native_fwd_ms
+                  << " gru_staged_fwd_ms=" << gru_staged_fwd_ms
                   << " gru_provider_fwd_ms=" << gru_provider_fwd_ms
                   << (gru_provider_fwd_ms > 0.0
-                          ? " gru_provider_speedup_vs_native=" +
-                                std::to_string(gru_native_fwd_ms /
+                          ? " gru_provider_speedup_vs_staged=" +
+                                std::to_string(gru_staged_fwd_ms /
                                                gru_provider_fwd_ms)
                           : std::string(" gru_provider=unavailable"))
                   << "\n";
@@ -381,21 +337,13 @@ int main(int argc, char** argv) {
              << ", \"seq\": " << shape.seq
              << ", \"input\": " << shape.input
              << ", \"hidden\": " << shape.hidden
-             << ", \"estimated_formal_parameter_bytes\": "
-             << decision.estimated_formal_parameter_bytes
-             << ", \"cuda_policy_allows\": "
-             << (decision.should_attempt_arrayfire_cuda ? "true" : "false")
-             << ", \"staged_is_arrayfire\": "
-             << (staged_is_arrayfire ? "true" : "false")
              << ", \"staged_forward_ms\": " << staged.forward_ms
              << ", \"staged_backward_ms\": " << staged.backward_ms
-             << ", \"native_forward_ms\": " << native.forward_ms
-             << ", \"native_backward_ms\": " << native.backward_ms
              << ", \"provider_forward_ms\": " << provider_fwd_ms
              << ", \"opencl_device\": " << OpenclBenchDeviceIndex()
              << ", \"opencl_provider_forward_ms\": " << opencl_provider_fwd_ms
              << ", \"opencl_provider\": \"" << opencl_provider_version << "\""
-             << ", \"gru_native_forward_ms\": " << gru_native_fwd_ms
+             << ", \"gru_staged_forward_ms\": " << gru_staged_fwd_ms
              << ", \"gru_provider_forward_ms\": " << gru_provider_fwd_ms
              << ", \"provider\": \"" << provider_version << "\"}"
              << (i + 1 < shapes.size() ? "," : "") << "\n";

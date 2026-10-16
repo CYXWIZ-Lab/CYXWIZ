@@ -1,8 +1,8 @@
 #include "cyxwiz/text_processing.h"
+#include "text_utf8.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
-#include <cctype>
 #include <regex>
 #include <numeric>
 #include <iomanip>
@@ -126,31 +126,31 @@ std::vector<std::string> TextProcessing::TokenizeWord(
     bool lowercase,
     bool remove_punct
 ) {
+    // Words are runs of letters, digits and accents of any script, read by
+    // UTF-8 code point (not by byte, and not through the C runtime's locale);
+    // any other character ends a word and is punctuation, kept as its own
+    // token unless removed. Spaces and bytes that are not UTF-8 only end a word.
     std::vector<std::string> tokens;
     std::string current_token;
-
-    for (char c : text) {
-        if (std::isalnum(static_cast<unsigned char>(c))) {
-            if (lowercase) {
-                current_token += static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(c)));
-            } else {
-                current_token += c;
-            }
-        } else if (std::ispunct(static_cast<unsigned char>(c))) {
-            if (!current_token.empty()) {
-                tokens.push_back(current_token);
-                current_token.clear();
-            }
-            if (!remove_punct) {
-                tokens.push_back(std::string(1, c));
-            }
-        } else if (std::isspace(static_cast<unsigned char>(c))) {
-            if (!current_token.empty()) {
-                tokens.push_back(current_token);
-                current_token.clear();
-            }
+    const auto end_word = [&] {
+        if (!current_token.empty()) {
+            tokens.push_back(current_token);
+            current_token.clear();
         }
+    };
+
+    for (size_t i = 0; i < text.size();) {
+        char32_t cp = 0;
+        size_t length = 1;
+        const bool valid = text_utf8::Next(text, i, cp, length);
+        if (valid && text_utf8::IsWordCharacter(cp)) {
+            text_utf8::Append(current_token, lowercase ? text_utf8::Lower(cp) : cp);
+        } else {
+            end_word();
+            if (valid && !text_utf8::IsSpace(cp) && cp >= 0x20 && cp != 0x7F && !remove_punct)
+                tokens.push_back(text.substr(i, length));
+        }
+        i += length;
     }
 
     if (!current_token.empty()) {
@@ -172,13 +172,15 @@ std::vector<std::string> TextProcessing::TokenizeSentence(const std::string& tex
             // Check if it's actually end of sentence (not abbreviation)
             bool is_end = true;
             if (text[i] == '.') {
-                // Simple check: if next char is uppercase or space followed by uppercase
-                if (i + 1 < text.length()) {
-                    char next = text[i + 1];
-                    if (std::isalpha(static_cast<unsigned char>(next)) &&
-                        !std::isupper(static_cast<unsigned char>(next))) {
-                        is_end = false;
-                    }
+                // A lowercase Latin, Greek or Cyrillic letter right after the
+                // dot ("e.g", "3.x"), read by UTF-8 character, not through
+                // the locale.
+                char32_t next = 0;
+                size_t length = 1;
+                if (i + 1 < text.length() && text_utf8::Next(text, i + 1, next, length) &&
+                    next < 0x530 && text_utf8::IsLetterOrDigit(next) && !(next >= '0' && next <= '9') &&
+                    text_utf8::Lower(next) == next) {
+                    is_end = false;
                 }
             }
 

@@ -12,6 +12,7 @@
 #include "editor_fonts.h"
 #include "icons.h"
 #include "ui_buttons.h"
+#include "separate_windows.h"
 
 #include <algorithm>
 #include <array>
@@ -780,6 +781,7 @@ void Console::RenderCommandInput(bool request_focus) {
   ImGui::PopStyleVar();
 
   if (command_suggest_open_ && !command_matches_.empty()) {
+    ::gui::NextWindowFollowsCurrent();
     ImGui::SetNextWindowPos(ImVec2(box_min.x, suggest_anchor_y - 4.0f), ImGuiCond_Always,
                             ImVec2(0.0f, 1.0f));
     RenderCommandSuggestions();

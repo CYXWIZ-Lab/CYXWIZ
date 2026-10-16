@@ -8,6 +8,10 @@
 
 namespace cyxwiz::core {
 
+// The folder of the running executable (files that ship next to the Engine,
+// e.g. python_tools/).
+std::filesystem::path ExecutableDirectory();
+
 struct RuntimeLogSavedFilterConfig {
     std::string name;
     std::string expression;
@@ -148,6 +152,18 @@ public:
     std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
     void SetRuntimeLogSavedFilters(
         const std::vector<RuntimeLogSavedFilterConfig>& filters);
+    // Record Debug messages (the Console's Debug filter, engine_log.txt) in
+    // every build: the people using the Engine are developers. On by
+    // default; Preferences > General turns it off (Info and above only).
+    bool RecordDebugLogs() const;
+    void SetRecordDebugLogs(bool record);
+
+    // ===== Data =====
+
+    // The data budget (TOFIX154, core/data_budget.h) in bytes; 0 = the
+    // default, half of physical memory. Engine-wide: it is about the machine.
+    uint64_t DataBudgetBytes() const;
+    void SetDataBudgetBytes(uint64_t bytes);
 
     // ===== Appearance (Engine-wide) =====
 
@@ -206,6 +222,8 @@ private:
     bool require_debug_before_train_ = false;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
+    bool record_debug_logs_ = true;
+    uint64_t data_budget_bytes_ = 0;
     AppearanceConfig appearance_;
 
     // Recent projects

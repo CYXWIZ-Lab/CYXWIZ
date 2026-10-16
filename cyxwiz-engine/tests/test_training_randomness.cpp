@@ -64,7 +64,7 @@ Result Run(const std::filesystem::path& path,DeviceType device,int seed,int data
     config.sequence_batch.create_causal_lm_targets=true;config.sequence_batch.target_ignore_index=-100;
     config.save_best_checkpoint=false;config.early_stopping_patience=0;
     config.checkpoint_dir=path.string();config.log_interval=1;
-    config.forbid_native_cpu_fallback=true;
+    config.strict_execution=true;
     if(previews){
         Vocabulary vocabulary_asset; vocabulary_asset.SetVocabulary(vocabulary);
         std::ostringstream artifact;Require(vocabulary_asset.SaveToStream(artifact),"preview vocabulary");
@@ -103,7 +103,6 @@ Result Run(const std::filesystem::path& path,DeviceType device,int seed,int data
         trace.FinishRun("completed");
         const auto snapshot=trace.Snapshot();
         const auto persisted=TrainingTraceCollector::LoadLastTrace();
-        Require(snapshot.native_cpu_fallback_count==0,"strict training must have zero native fallback");
         Require(snapshot.randomness.model_seed==seed&&persisted&&persisted->randomness.model_seed==seed,
                 "seed provenance must survive event eviction and trace reload");
         std::filesystem::copy_file(GetDebugRunRoot()/"current_training_trace.json",path/"training_trace.json",

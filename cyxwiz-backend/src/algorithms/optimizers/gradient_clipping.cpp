@@ -2,12 +2,11 @@
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_host_materialization.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace cyxwiz {
 
@@ -17,7 +16,6 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
     }
     if (gradients.empty()) return 0.0f;
     double squared = 0.0;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array total = af::constant(0.0f, 1);
         for (const auto& [name, grad] : gradients) {
@@ -29,21 +27,8 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
                                    "ClipGradientsByGlobalNorm::Norm", "scalar", "gradient_norm_readback");
         squared = host;
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "ClipGradientsByGlobalNorm", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext("gradients"));
-        squared = -1.0;
-    }
-    if (squared < 0.0)
-#endif
-    {
-        squared = 0.0;
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::OptimizerCpuPath, "ClipGradientsByGlobalNorm");
-        for (const auto& [name, grad] : gradients) {
-            const float* data = grad.ReadData<float>();
-            for (size_t i = 0; i < grad.NumElements(); ++i) squared += static_cast<double>(data[i]) * data[i];
-        }
+        throw std::runtime_error(std::string("ClipGradientsByGlobalNorm failed on the ArrayFire device: ") +
+                                 e.what());
     }
     const float norm = static_cast<float>(std::sqrt(squared));
     if (!std::isfinite(norm)) {

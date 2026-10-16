@@ -14,6 +14,23 @@
 
 namespace cyxwiz {
 
+void ScriptEditorPanel::StartEditorRun(const std::string& code) {
+    running_indicator_time_ = 0.0f;
+    script_running_ = scripting_engine_->ExecuteScriptAsync(code);
+    if (!script_running_ && script_output_sink_) {
+        // A notebook cell or another run holds the interpreter.
+        script_output_sink_->AppendScriptOutput(
+            running_script_name_, "Another script is running. Wait for it to finish or stop it first.", true);
+        script_output_sink_->EndScriptOutput(running_script_name_, false, false, 0.0);
+    }
+}
+
+void ScriptEditorPanel::StopScript() {
+    if (!script_running_ || !scripting_engine_) return;
+    scripting_engine_->StopScript();
+    spdlog::info("Stop script requested");
+}
+
 void ScriptEditorPanel::RunScript() {
     if (!IsActiveTabEditable() || !scripting_engine_) return;
 
@@ -75,9 +92,7 @@ void ScriptEditorPanel::DoRunScript() {
     }
 
     // Execute asynchronously
-    scripting_engine_->ExecuteScriptAsync(script);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(script);
 }
 
 void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
@@ -90,12 +105,13 @@ void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
     }
 }
 
-std::string ScriptEditorPanel::GetTabContentForPersistence(EditorTab& tab) {
+std::string ScriptEditorPanel::GetTabContentForPersistence(EditorTab& tab, const std::string& path) {
     if (!tab.cell_mode) {
         return tab.editor.GetText();
     }
 
     SyncActiveCellEditor(tab);
+    if (scriptfile::IsNotebookJson(path)) return tab.cell_manager.SerializeToIpynb();
     return tab.cell_manager.SerializeToCyx();
 }
 
@@ -188,11 +204,11 @@ std::string ScriptEditorPanel::DedentCode(const std::string& code) {
 }
 
 void ScriptEditorPanel::RunSelection() {
-    if (!IsActiveTabEditable() || !scripting_engine_) return;
+    if (!IsActiveTabTextMode() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
-    std::string selected_text = tab->editor.GetSelectedText();
+    std::string selected_text = tab->editor.Doc().SelectedText();
 
     if (selected_text.empty()) {
         spdlog::warn("No text selected");
@@ -216,13 +232,11 @@ void ScriptEditorPanel::RunSelection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(selected_text);
     spdlog::debug("Dedented selection:\n{}", dedented);
-    scripting_engine_->ExecuteScriptAsync(dedented);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(dedented);
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
-    if (!IsActiveTabEditable() || !scripting_engine_) return;
+    if (!IsActiveTabTextMode() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
@@ -254,9 +268,7 @@ void ScriptEditorPanel::RunCurrentSection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(section.code);
     spdlog::debug("Dedented section:\n{}", dedented);
-    scripting_engine_->ExecuteScriptAsync(dedented);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(dedented);
 }
 
 std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const std::string& text) {
@@ -315,8 +327,7 @@ ScriptEditorPanel::Section ScriptEditorPanel::GetCurrentSection() {
     }
 
     auto& tab = tabs_[active_tab_index_];
-    auto cursor_pos = tab->editor.GetCursorPosition();
-    int current_line = cursor_pos.mLine;
+    int current_line = tab->editor.Doc().Primary().head.line;
 
     // Get all text and parse sections
     std::string text = tab->editor.GetText();

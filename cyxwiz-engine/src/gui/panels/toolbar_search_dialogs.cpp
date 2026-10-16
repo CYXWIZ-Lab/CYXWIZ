@@ -2,6 +2,7 @@
 
 #include "toolbar.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 
 #include <cstring>
 #include <filesystem>
@@ -11,122 +12,7 @@
 
 namespace cyxwiz {
 void ToolbarPanel::RenderSearchDialogs() {
-    // ========== Find Dialog ==========
-    if (show_find_dialog_) {
-        ImGui::OpenPopup("Find");
-        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-
-        if (ImGui::BeginPopupModal("Find", &show_find_dialog_, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-            ImGui::Text("Find in current editor:");
-            ImGui::Spacing();
-
-            // Search text input
-            ImGui::SetNextItemWidth(-1);
-            bool enter_pressed = ImGui::InputText("##findtext", find_text_buffer_, sizeof(find_text_buffer_),
-                ImGuiInputTextFlags_EnterReturnsTrue);
-
-            ImGui::Spacing();
-
-            // Options
-            ImGui::Checkbox("Case sensitive", &find_case_sensitive_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Whole word", &find_whole_word_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Regex", &find_use_regex_);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Buttons
-            float button_width = 100.0f;
-
-            if (ImGui::Button("Find Next", ImVec2(button_width, 0)) || enter_pressed) {
-                if (find_callback_ && strlen(find_text_buffer_) > 0) {
-                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
-                }
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button("Find Previous", ImVec2(button_width, 0));
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Find Previous is planned");
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(button_width, 0))) {
-                show_find_dialog_ = false;
-            }
-
-            ImGui::EndPopup();
-        }
-    }
-
-    // ========== Replace Dialog ==========
-    if (show_replace_dialog_) {
-        ImGui::OpenPopup("Replace");
-        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-
-        if (ImGui::BeginPopupModal("Replace", &show_replace_dialog_, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-            ImGui::Text("Find and replace in current editor:");
-            ImGui::Spacing();
-
-            // Search text input
-            ImGui::Text("Find:");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##findtext_replace", find_text_buffer_, sizeof(find_text_buffer_));
-
-            ImGui::Spacing();
-
-            // Replace text input
-            ImGui::Text("Replace with:");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##replacetext", replace_text_buffer_, sizeof(replace_text_buffer_));
-
-            ImGui::Spacing();
-
-            // Options
-            ImGui::Checkbox("Case sensitive##replace", &find_case_sensitive_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Whole word##replace", &find_whole_word_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Regex##replace", &find_use_regex_);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Buttons
-            float button_width = 90.0f;
-
-            if (ImGui::Button("Find Next", ImVec2(button_width, 0))) {
-                if (find_callback_ && strlen(find_text_buffer_) > 0) {
-                    find_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Replace", ImVec2(button_width, 0))) {
-                if (replace_callback_ && strlen(find_text_buffer_) > 0) {
-                    replace_callback_(find_text_buffer_, replace_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Replace All", ImVec2(button_width, 0))) {
-                if (replace_all_callback_ && strlen(find_text_buffer_) > 0) {
-                    replace_all_callback_(find_text_buffer_, replace_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(button_width, 0))) {
-                show_replace_dialog_ = false;
-            }
-
-            ImGui::EndPopup();
-        }
-    }
-
+    const ui::Tokens& t = ui::CurrentTokens();
     // ========== Find in Files Dialog ==========
     if (show_find_in_files_dialog_) {
         ImGui::OpenPopup("Find in Files");
@@ -216,7 +102,7 @@ void ToolbarPanel::RenderSearchDialogs() {
                         // Display relative path if in project
                         std::filesystem::path file_path(result.file_path);
                         std::string display_path = file_path.filename().string();
-                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::TextColored(t.accent_text, ICON_FA_FILE_CODE " %s", display_path.c_str());
                         ImGui::SameLine();
                         ImGui::TextDisabled("(%s)", result.file_path.c_str());
                     }
@@ -309,11 +195,19 @@ void ToolbarPanel::RenderSearchDialogs() {
                 }
             }
             ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button("Replace All", ImVec2(100, 0));
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Replace in files is planned");
+            if (ImGui::Button("Replace All", ImVec2(100, 0))) {
+                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
+                    ReplaceInFiles(find_text_buffer_, replace_text_buffer_, find_in_files_path_,
+                                   find_in_files_pattern_, find_case_sensitive_, find_whole_word_,
+                                   find_use_regex_);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Replaces every match in the files below the folder. Files open in the editor with unsaved edits are skipped.");
+            }
+            if (!replace_in_files_summary_.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", replace_in_files_summary_.c_str());
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(100, 0))) {
@@ -345,7 +239,7 @@ void ToolbarPanel::RenderSearchDialogs() {
                         ImGui::Spacing();
                         std::filesystem::path file_path(result.file_path);
                         std::string display_path = file_path.filename().string();
-                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), ICON_FA_FILE_CODE " %s", display_path.c_str());
+                        ImGui::TextColored(t.accent_text, ICON_FA_FILE_CODE " %s", display_path.c_str());
                         ImGui::SameLine();
                         ImGui::TextDisabled("(%s)", result.file_path.c_str());
                     }

@@ -1,17 +1,13 @@
 #include "cyxwiz/tensor.h"
-#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#include <spdlog/spdlog.h>
-#endif
+#include "../algorithms/arrayfire_host_values.h"
 
 namespace cyxwiz {
 
@@ -98,37 +94,33 @@ std::vector<unsigned> NormalizeIndexSelectIndices(const std::vector<int>& indice
     return normalized;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+// Gather positions along axis on the device. Up to rank 4 on the semantic
+// view; above, the row-major flat storage viewed as [after, extent, before]
+// and gathered on ArrayFire dim 1 (already the output's row-major order).
 Tensor LookupArrayFire(const Tensor& input,
                        const std::vector<unsigned>& indices,
                        int axis,
                        const std::vector<size_t>& output_shape) {
     const af::array index_array(
         static_cast<dim_t>(indices.size()), indices.data());
-    af::array output = af::lookup(
-        input.GetSemanticArray(),
-        index_array,
-        static_cast<unsigned>(axis));
+    const std::vector<size_t>& shape = input.Shape();
+    if (shape.size() <= 4) {
+        af::array output = af::lookup(input.GetSemanticArray(), index_array, static_cast<unsigned>(axis));
+        output.eval();
+        return Tensor::FromSemanticArray(output, output_shape);
+    }
+    dim_t before = 1;
+    dim_t after = 1;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i < static_cast<size_t>(axis)) before *= static_cast<dim_t>(shape[i]);
+        if (i > static_cast<size_t>(axis)) after *= static_cast<dim_t>(shape[i]);
+    }
+    const af::array view = af::moddims(input.GetRowMajorFlatArray(), after,
+                                       static_cast<dim_t>(shape[static_cast<size_t>(axis)]), before);
+    af::array output = af::flat(af::lookup(view, index_array, 1));
     output.eval();
-    return Tensor::FromSemanticArray(output, output_shape);
+    return Tensor::FromRowMajorFlatArray(output, output_shape);
 }
-
-void RecordIndexingArrayFireFallback(const char* operation_name,
-                                     const Tensor& input,
-                                     const std::vector<size_t>& output_shape,
-                                     const std::string& attributes,
-                                     const char* error_message) {
-    tensor_backend_observation::RecordArrayFireFallback(
-        operation_name,
-        tensor_backend_observation::DataTypeName(input.GetDataType()),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {input.Shape()},
-            output_shape,
-            input.GetDataType(),
-            attributes),
-        error_message);
-}
-#endif
 
 } // namespace
 
@@ -201,65 +193,11 @@ Tensor Tensor::Slice(int dim, int start, int end, int step) const {
             begin + static_cast<int>(index) * step));
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (shape_.size() <= 4) {
-        try {
-            return LookupArrayFire(
-                *this, selected_indices, axis, out_shape);
-        } catch (const af::exception& e) {
-            RecordIndexingArrayFireFallback(
-                "Tensor::Slice",
-                *this,
-                out_shape,
-                "op=slice;axis=" + std::to_string(axis) +
-                    ";start=" + std::to_string(begin) +
-                    ";end=" + std::to_string(finish) +
-                    ";step=" + std::to_string(step),
-                e.what());
-        }
-    } else {
-        RecordIndexingArrayFireFallback(
-            "Tensor::Slice",
-            *this,
-            out_shape,
-            "op=slice;axis=" + std::to_string(axis) +
-                ";start=" + std::to_string(begin) +
-                ";end=" + std::to_string(finish) +
-                ";step=" + std::to_string(step),
-            "ArrayFire indexing supports ranks up to 4");
+    try {
+        return LookupArrayFire(*this, selected_indices, axis, out_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::Slice", e));
     }
-#endif
-
-    Tensor result(out_shape, dtype_);
-
-    const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor indexing: stride overflow");
-    const auto dst_strides = tensor_utils::RowMajorStrides(out_shape, "Tensor indexing: stride overflow");
-    const size_t total = result.NumElements();
-    const size_t element_size = tensor_utils::ElementSize(dtype_);
-    const auto* src = static_cast<const unsigned char*>(ReadData());
-    auto* dst = static_cast<unsigned char*>(result.MutableData());
-
-    std::vector<size_t> index(out_shape.size(), 0);
-    for (size_t dst_linear = 0; dst_linear < total; dst_linear++) {
-        size_t remaining = dst_linear;
-        for (size_t i = 0; i < out_shape.size(); i++) {
-            index[i] = remaining / dst_strides[i];
-            remaining %= dst_strides[i];
-        }
-
-        index[static_cast<size_t>(axis)] = selected_indices[
-            index[static_cast<size_t>(axis)]];
-
-        size_t src_linear = 0;
-        for (size_t i = 0; i < index.size(); i++) {
-            src_linear += index[i] * src_strides[i];
-        }
-        std::memcpy(dst + dst_linear * element_size,
-                    src + src_linear * element_size,
-                    element_size);
-    }
-
-    return result;
 }
 
 Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
@@ -279,61 +217,11 @@ Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
         return Tensor(out_shape, dtype_);
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (shape_.size() <= 4) {
-        try {
-            return LookupArrayFire(
-                *this, normalized_indices, axis, out_shape);
-        } catch (const af::exception& e) {
-            RecordIndexingArrayFireFallback(
-                "Tensor::IndexSelect",
-                *this,
-                out_shape,
-                "op=index_select;axis=" + std::to_string(axis) +
-                    ";indices=" + std::to_string(indices.size()),
-                e.what());
-        }
-    } else {
-        RecordIndexingArrayFireFallback(
-            "Tensor::IndexSelect",
-            *this,
-            out_shape,
-            "op=index_select;axis=" + std::to_string(axis) +
-                ";indices=" + std::to_string(indices.size()),
-            "ArrayFire indexing supports ranks up to 4");
+    try {
+        return LookupArrayFire(*this, normalized_indices, axis, out_shape);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(DeviceError("Tensor::IndexSelect", e));
     }
-#endif
-
-    Tensor result(out_shape, dtype_);
-
-    const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor indexing: stride overflow");
-    const auto dst_strides = tensor_utils::RowMajorStrides(out_shape, "Tensor indexing: stride overflow");
-    const size_t total = result.NumElements();
-    const size_t element_size = tensor_utils::ElementSize(dtype_);
-    const auto* src = static_cast<const unsigned char*>(ReadData());
-    auto* dst = static_cast<unsigned char*>(result.MutableData());
-
-    std::vector<size_t> index(out_shape.size(), 0);
-    for (size_t dst_linear = 0; dst_linear < total; dst_linear++) {
-        size_t remaining = dst_linear;
-        for (size_t i = 0; i < out_shape.size(); i++) {
-            index[i] = remaining / dst_strides[i];
-            remaining %= dst_strides[i];
-        }
-
-        index[static_cast<size_t>(axis)] = normalized_indices[
-            index[static_cast<size_t>(axis)]];
-
-        size_t src_linear = 0;
-        for (size_t i = 0; i < index.size(); i++) {
-            src_linear += index[i] * src_strides[i];
-        }
-        std::memcpy(dst + dst_linear * element_size,
-                    src + src_linear * element_size,
-                    element_size);
-    }
-
-    return result;
 }
 
 } // namespace cyxwiz

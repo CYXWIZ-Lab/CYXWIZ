@@ -19,7 +19,6 @@ namespace cyxwiz {
  */
 struct EditorSettings {
     // Script Editor settings
-    int theme = 3;           // 0=Dark, 1=Light, 2=RetroBlu, 3=Monokai, 4=Dracula, 5=OneDark, 6=GitHub
     float font_scale = 1.3f; // 1.0=Small 14px, 1.3=Medium 16px, 1.6=Large 20px, 2.0=Extra Large 24px
     int tab_size = 4;        // 2, 4, or 8
     bool show_whitespace = true;
@@ -31,7 +30,6 @@ struct EditorSettings {
     // Application-wide settings
     int app_theme = 0;       // 0=CyxWizDark, 1=CyxWizLight, 2=VSCodeDark, 3=UnrealEngine, 4=ModernDark, 5=HighContrast
     float ui_scale = 1.0f;   // Global UI scale (0.8 to 2.0)
-    uint64_t materialization_memory_limit_bytes = 0; // 0 = automatic RAM budget
 
     // JSON serialization
     static EditorSettings FromJson(const nlohmann::json& j);
@@ -117,6 +115,16 @@ public:
     void SetOnProjectOpened(ProjectCallback callback) { on_opened_ = std::move(callback); }
     void SetOnProjectClosed(ProjectCallback callback) { on_closed_ = std::move(callback); }
     void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
+    // Asked before the open project closes (Close, Open or Create another):
+    // returns false to keep it, after telling the user why (`operation` is
+    // what was asked, for example "open another project"). Closing it under
+    // a training run cancelled the run and dropped its data.
+    using CloseGuard = std::function<bool(const std::string& operation)>;
+    void SetCloseGuard(CloseGuard guard) { close_guard_ = std::move(guard); }
+    // True when no project is open or the guard lets it close.
+    bool MayCloseProject(const std::string& operation) const {
+        return !HasActiveProject() || !close_guard_ || close_guard_(operation);
+    }
     void NotifyProjectVenvReady(const std::string& project_root);
 
     // Creating a project's Python environment takes a few seconds; the UI
@@ -153,6 +161,8 @@ public:
     };
     const std::vector<RecentProject>& GetRecentProjects() const { return recent_projects_; }
     void ClearRecentProjects();
+    // Start page > Actions > Remove from this list. The project itself is untouched.
+    void RemoveRecentProject(const std::string& path);
     static constexpr size_t MAX_RECENT_PROJECTS = 10;
 
 private:
@@ -188,6 +198,7 @@ private:
     ProjectCallback on_opened_;
     ProjectCallback on_closed_;
     ProjectCallback on_venv_ready_;
+    CloseGuard close_guard_;
 
     mutable std::mutex python_env_mutex_;
     PythonEnvSetupStatus python_env_status_;

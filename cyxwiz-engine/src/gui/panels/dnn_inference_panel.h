@@ -118,9 +118,6 @@ private:
     bool show_keypoints_ = true;
     float box_thickness_ = 2.0f;
 
-    // Colors for different classes (cycled)
-    static constexpr int NUM_COLORS = 10;
-    static const ImU32 CLASS_COLORS[NUM_COLORS];
 };
 
 } // namespace cyxwiz

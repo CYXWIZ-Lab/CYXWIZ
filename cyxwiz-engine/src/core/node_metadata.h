@@ -93,7 +93,8 @@ struct ParameterDefinition {
           consumption(consumption_value) {}
 
     std::string name;
-    std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory"
+    std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory",
+                                // "fixed" (set by the engine, read-only in Properties, must equal default_value)
     std::string default_value;
     std::string description;
     std::vector<std::string> enum_values;  // For enum type
@@ -211,6 +212,9 @@ struct NodeMetadata {
     std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta")
     std::vector<SupportAxisDefinition> support_axes;
     NodePropertiesEditor properties_editor = NodePropertiesEditor::Automatic;
+    // Non-empty: the node is made another way, never added from the palette
+    // (a Subgraph comes from grouping nodes); says how to make it.
+    std::string made_by;
 
     // Helper methods
     bool IsTemplate() const { return status == NodeImplementationStatus::Template; }

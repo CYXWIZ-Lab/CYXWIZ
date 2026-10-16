@@ -18,7 +18,6 @@
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_host_materialization.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -28,7 +27,6 @@
 #else
 #include <dlfcn.h>
 #endif
-#endif
 
 #include <memory>
 #include <string>
@@ -36,7 +34,6 @@
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
 
 void* FindLoadedSymbol(const char* windows_library, const char* posix_library, const char* symbol) {
@@ -217,13 +214,11 @@ NeuralOpStatus ExecuteHostStaged(INeuralNetworkProvider& provider, const NeuralO
 }
 
 }  // namespace
-#endif
 
 NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const NeuralOpRequest& request,
                                        const std::vector<const Tensor*>& inputs,
                                        const std::vector<std::vector<size_t>>& output_shapes,
                                        std::vector<Tensor>& outputs) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (!request.device_resident) {
         return Failed("ExecuteNeuralOpOnDevice needs a request with device_resident=true");
     }
@@ -275,13 +270,6 @@ NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const N
         status.reason = ClassifyArrayFireBackendFallbackReason(e.what());
         return status;
     }
-#else
-    (void)provider; (void)request; (void)inputs; (void)output_shapes; (void)outputs;
-    NeuralOpStatus status;
-    status.reason = BackendFallbackReason::BackendInternalError;
-    status.detail = "ArrayFire is not compiled into this backend";
-    return status;
-#endif
 }
 
 }  // namespace cyxwiz

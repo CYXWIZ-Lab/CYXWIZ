@@ -5,6 +5,9 @@
 #include "core/arrow_dataset.h"
 #include "core/sequence_arrow_batcher.h"
 #include "core/checkpoint_manager.h"
+#include "core/node_executors/text_tokenizer_operator.h"
+#include <filesystem>
+#include <map>
 #include "core/model_builder.h"
 #include "core/execution_device_context.h"
 #include <arrow/api.h>
@@ -29,6 +32,71 @@ private:
     std::vector<float> row_;
 };
 
+// Run Test on supervised windows (TOFIX143): only answer targets are scored.
+// Byte BPE ids are byte + 4 and EOS is 3, so prompt "ab" + answer "cd" gives
+// ids 101 102 | 103 104 3 and answer targets 103 104 3; "" + "x" gives target 3.
+void CheckSupervisedRunTest() {
+    arrow::StringBuilder fit_ids, fit_splits, fit_texts;
+    Check(fit_ids.Append("fit").ok() && fit_splits.Append("train").ok() && fit_texts.Append("abcdx").ok(), "fit rows");
+    std::shared_ptr<arrow::Array> a, b, c;
+    Check(fit_ids.Finish(&a).ok() && fit_splits.Finish(&b).ok() && fit_texts.Finish(&c).ok(), "fit finish");
+    const auto vocab = std::filesystem::temp_directory_path() / "cyxwiz_supervised_runtest_vocab.txt";
+    std::filesystem::remove(vocab);
+    std::map<std::string, std::string> params = {{"text_col", "text"}, {"document_id_col", "document_id"},
+        {"split_col", "split"}, {"output_mode", "causal_windows"}, {"tokenizer_type", "3"}, {"lowercase", "false"},
+        {"max_length", "8"}, {"min_word_freq", "1"}, {"max_vocab_size", "260"}, {"vocab_file", vocab.string()},
+        {"vocab_build_if_missing", "true"}};
+    std::string error;
+    {
+        cyxwiz::TextTokenizerOperator fit;
+        Check(fit.Configure(params, error), "fit configure");
+        Check(fit.Apply(arrow::Table::Make(arrow::schema({arrow::field("document_id", arrow::utf8()),
+            arrow::field("split", arrow::utf8()), arrow::field("text", arrow::utf8())}), {a, b, c})).ok(), "fit vocabulary");
+    }
+    arrow::StringBuilder ids, splits, prompts, answers;
+    for (auto v : {"S1", "S2"}) Check(ids.Append(v).ok(), "ids");
+    for (int i = 0; i < 2; ++i) Check(splits.Append("train").ok(), "splits");
+    Check(prompts.Append("ab").ok() && prompts.Append("").ok() && answers.Append("cd").ok() && answers.Append("x").ok(), "rows");
+    std::shared_ptr<arrow::Array> i_ids, i_splits, i_prompts, i_answers;
+    Check(ids.Finish(&i_ids).ok() && splits.Finish(&i_splits).ok() && prompts.Finish(&i_prompts).ok() &&
+          answers.Finish(&i_answers).ok(), "finish rows");
+    params["vocab_build_if_missing"] = "false"; params["text_col"] = "prompt"; params["target_text_col"] = "response";
+    cyxwiz::TextTokenizerOperator op;
+    Check(op.Configure(params, error), "supervised configure");
+    auto windows = op.Apply(arrow::Table::Make(arrow::schema({arrow::field("document_id", arrow::utf8()),
+        arrow::field("split", arrow::utf8()), arrow::field("prompt", arrow::utf8()), arrow::field("response", arrow::utf8())}),
+        {i_ids, i_splits, i_prompts, i_answers}));
+    Check(windows.ok(), "supervised windows");
+    std::filesystem::remove(vocab);
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(*windows, "supervised_runtest");
+
+    cyxwiz::TrainingConfiguration config;
+    config.sequence_batch.enabled = true; config.sequence_batch.create_causal_lm_targets = true;
+    config.sequence_batch.create_attention_mask = true; config.sequence_batch.token_column = "token_ids";
+    config.sequence_batch.max_sequence_length = 8; config.shuffle = false; config.drop_last = false; config.has_data_split = false;
+    config.sequence_batch.sentence_id_column = "document_id";
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.loss_params["ignore_index"] = "-100"; config.loss_params["reduction"] = "mean";
+    auto built = cyxwiz::BuildSequenceBatcherFromArrowDataset(dataset, config, 2);
+    Check(built.success(), "supervised batcher");
+    cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(built, config);
+    std::vector<float> row(built.id_to_label.size());
+    for (size_t i = 0; i < row.size(); ++i) row[i] = 0.25f * static_cast<float>(i % 9);
+    double z = 0.0;
+    for (float v : row) z += std::exp(static_cast<double>(v));
+    double expected = 0.0;
+    for (int target : {103, 104, 3, 3}) expected += std::log(z) - row[static_cast<size_t>(target)];
+    expected /= 4.0;
+    auto model = std::make_shared<cyxwiz::SequentialModel>();
+    model->Add<FixedTokenLogits>(row);
+    cyxwiz::TestExecutor run(config, dataset, "", cyxwiz::TestDatasetScope::EntireProvidedDataset);
+    run.SetModel(model); run.Test(2);
+    const auto m = run.GetMetrics();
+    Check(m.is_complete && m.total_samples == 2, "supervised Run Test completes");
+    Check(m.total_target_values == 4, "Run Test scores only the 4 answer targets (an unmasked window would score 5)");
+    Check(std::abs(m.test_loss - expected) < 1e-4, "Run Test loss is the answer-only cross-entropy");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 3) {
@@ -37,7 +105,6 @@ int main(int argc, char** argv) {
             auto fixture = Json::parse(source);
             const auto activated=cyxwiz::Device(cyxwiz::DeviceType::CUDA,0).ActivateExact(true);
             Check(activated.success && activated.execution_validated,"CUDA activation");
-            cyxwiz::ScopedArrayFireFallbackPolicy policy(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
             arrow::StringBuilder tokens, groups;
             for(const auto& row:fixture.at("rows")) {
                 Check(tokens.Append(row.at("tokens").get<std::string>()).ok(),"tokens");
@@ -58,7 +125,7 @@ int main(int argc, char** argv) {
             config.output_size=config.sequence_batch.expected_token_vocabulary.size();
             config.has_data_split=true; config.train_ratio=fixture.at("train_ratio");
             config.val_ratio=fixture.at("val_ratio"); config.test_ratio=fixture.at("test_ratio");
-            config.shuffle=false; config.drop_last=false; config.forbid_native_cpu_fallback=true;
+            config.shuffle=false; config.drop_last=false; config.strict_execution=true;
             config.loss_type=gui::NodeType::CrossEntropyLoss;
             config.loss_params["ignore_index"]="-100"; config.loss_params["reduction"]="mean";
             for(const auto& entry:fixture.at("layers")) {
@@ -92,6 +159,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         Check(argc==1,"Usage: test_causal_lm_testing [fixture.json new_report.json]");
+        CheckSupervisedRunTest();
         arrow::StringBuilder tokens, groups;
         for (auto text : {"x x y", "x y", "x y", "x y", "x y x", "x y"})
             Check(tokens.Append(text).ok(),"tokens");

@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -25,17 +26,14 @@ struct RetrievalMetricResult {
     double nearest_neighbor_class_agreement = 0.0;
 };
 
+// Metric-learning evaluation runs on the ArrayFire device (TOFIX140; the CPU
+// is ArrayFire's CPU backend): embeddings of any rank [batch, ...features],
+// results read back once as a few aggregates.
+
 size_t FlattenedEmbeddingDim(const Tensor& embeddings);
 
-double EuclideanDistanceRow(const Tensor& left, const Tensor& right, size_t row,
-                            size_t dim);
-
-double EuclideanDistanceRows(const Tensor& embeddings, size_t left_row,
-                             size_t right_row, size_t dim);
-
-bool PairLabelMeansSimilar(MetricLearningLabelConvention convention,
-                           double label);
-
+// One id of a [batch] / [batch, 1] Int64 / Int32 / exact-integer Float32
+// tensor, read on the host (output metadata).
 int64_t ClassIdAt(const Tensor& class_ids, size_t row);
 
 PairMetricResult
@@ -47,5 +45,16 @@ ComputePairDistanceMetrics(const Tensor& embedding_a, const Tensor& embedding_b,
 RetrievalMetricResult ComputeRetrievalMetrics(const Tensor& embeddings,
                                               const Tensor& class_ids,
                                               size_t k);
+
+// Per pair row of two [N, ...features] batches: the Euclidean distance and,
+// when asked, the cosine similarity (zero vectors refused), computed on the
+// device in float64 where it has it and downloaded once.
+struct PairRowScores {
+    std::vector<double> distances;
+    std::vector<double> cosines;
+};
+PairRowScores ComputePairRowScores(const Tensor& embedding_a,
+                                   const Tensor& embedding_b,
+                                   bool with_cosine);
 
 } // namespace cyxwiz

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../core/data_analyzer.h"
+#include "../dataset_source.h"
 #include <imgui.h>
 #include <string>
 #include <memory>
@@ -16,7 +17,7 @@ class DataTable;
  * CorrelationMatrixPanel - Correlation heatmap visualization
  *
  * Features:
- * - Interactive heatmap with RdBu colormap
+ * - Interactive heatmap on the theme's diverging scale
  * - Hover tooltips with exact values
  * - Column selection/filtering
  * - Export to CSV/image
@@ -35,7 +36,6 @@ public:
     bool* GetVisiblePtr() { return &visible_; }
 
     // Analyze a specific table
-    void AnalyzeTable(const std::string& table_name);
     void AnalyzeTable(std::shared_ptr<DataTable> table);
 
     bool IsComputing() const { return is_computing_.load(); }
@@ -54,13 +54,10 @@ private:
     // Export
     void ExportToCSV(const std::string& filepath);
 
-    // Color mapping: -1 to +1 -> RdBu colormap
-    ImVec4 CorrelationToColor(double corr) const;
-
     bool visible_ = false;
 
     // Current data source
-    std::string selected_table_;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::shared_ptr<DataTable> current_table_;
 
     // Correlation results

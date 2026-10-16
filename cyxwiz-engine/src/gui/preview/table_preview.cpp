@@ -1,4 +1,5 @@
 #include "table_preview.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -112,13 +113,14 @@ void TablePreviewRenderer::SetData(const std::vector<std::string>& headers,
 }
 
 void TablePreviewRenderer::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (rows_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No data to display.");
+        ImGui::TextColored(t.text_dim, "No data to display.");
         return;
     }
 
     // Info and pagination
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "%zu rows, %zu columns", rows_.size(), headers_.size());
 
     ImGui::SameLine();
@@ -161,7 +163,7 @@ void TablePreviewRenderer::Render() {
 
             // Row number
             ImGui::TableNextColumn();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::Text("%d", r + 1);
             ImGui::PopStyleColor();
 
@@ -180,7 +182,7 @@ void TablePreviewRenderer::Render() {
 
     // Show note if columns were truncated
     if (static_cast<int>(headers_.size()) > 50) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
+        ImGui::TextColored(t.warning,
             "Showing 50 of %zu columns", headers_.size());
     }
 }

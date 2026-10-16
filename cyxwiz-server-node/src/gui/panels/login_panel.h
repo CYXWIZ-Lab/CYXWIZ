@@ -57,6 +57,11 @@ private:
     // Async node registration result
     std::future<auth::NodeRegistrationResult> node_registration_future_;
     bool is_registering_node_ = false;
+    // Registers this machine with the web API (after sign-in, and again when
+    // the API stopped knowing it); at most once per kRegisterRetrySeconds.
+    void StartNodeRegistration();
+    std::chrono::steady_clock::time_point last_register_attempt_;
+    static constexpr int kRegisterRetrySeconds = 60;
 
     // Offline mode
     bool offline_mode_ = false;

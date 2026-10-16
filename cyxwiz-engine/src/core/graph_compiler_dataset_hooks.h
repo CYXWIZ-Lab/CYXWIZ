@@ -6,11 +6,15 @@
 // registry (gui/loaders/data_loader.cpp); hosts without loaders keep the
 // defaults: no dataset is registered, categories carry no loader facts.
 
+#include "dataset_partitions.h"
+
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -50,6 +54,15 @@ struct GraphTextDatasetInfo {
     int max_length = 0;
 };
 
+// A Quality Analyzer's verdict on an image dataset (TOFIX140): the files
+// training leaves out, or why there is no usable analysis.
+struct GraphImageQualityResult {
+    std::string error;  // empty when usable
+    size_t total = 0;
+    size_t rejected = 0;
+    std::vector<std::string> excluded;
+};
+
 struct GraphDatasetCatalog {
     std::function<std::shared_ptr<ArrowDataset>(const std::string& name)> arrow_dataset;
     std::function<std::shared_ptr<ParquetBackedDataset>(const std::string& name)> parquet_dataset;
@@ -58,6 +71,13 @@ struct GraphDatasetCatalog {
     std::function<std::optional<GraphTextDatasetInfo>(const std::string& name)> text_info;
     // The file a tabular dataset was loaded from (source fingerprinting).
     std::function<std::optional<std::string>(const std::string& name)> source_path;
+    // What backs a dataset (the Engine answers from its dataset catalog);
+    // unset: the compiler works it out from the lookups above.
+    std::function<DatasetStorageKind(const std::string& name)> storage_kind;
+    // The Quality Analyzer verdict for an image dataset decoded at width x
+    // height, judged with the node's parameters (image_quality_analysis.cpp).
+    std::function<GraphImageQualityResult(const std::string& name, int width, int height,
+                                          const std::map<std::string, std::string>& parameters)> image_quality;
 };
 
 void SetGraphDatasetCatalog(GraphDatasetCatalog catalog);
@@ -69,5 +89,10 @@ std::shared_ptr<const SparseFeatureDataset> GraphSparseDataset(const std::string
 bool GraphDatasetIsKind(const std::string& name, GraphDatasetKind kind);
 std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& name);
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name);
+// The catalog's answer; nullopt when the installed catalog has no storage_kind.
+std::optional<DatasetStorageKind> GraphDatasetStorageKind(const std::string& name);
+// The catalog's verdict; nullopt when this host cannot judge image quality.
+std::optional<GraphImageQualityResult> GraphImageQuality(const std::string& name, int width, int height,
+                                                         const std::map<std::string, std::string>& parameters);
 
 }  // namespace cyxwiz

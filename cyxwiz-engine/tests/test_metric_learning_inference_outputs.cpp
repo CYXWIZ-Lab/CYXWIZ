@@ -11,13 +11,10 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_host_sync_events = nullptr;
 
 void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
@@ -25,7 +22,6 @@ void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
         g_host_sync_events->push_back(event);
     }
 }
-#endif
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -56,7 +52,6 @@ cyxwiz::Tensor IntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Int64);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 cyxwiz::Tensor DeviceFloatTensor(const std::vector<size_t>& shape,
                                  const std::vector<float>& values) {
     const auto host = FloatTensor(shape, values);
@@ -70,7 +65,6 @@ cyxwiz::Tensor DeviceIntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor::FromSemanticArray(
         host.GetSemanticArray(), host.Shape());
 }
-#endif
 
 void TestEmbeddingOutputResponse() {
     const auto embeddings = FloatTensor({2, 2, 2}, {
@@ -239,6 +233,43 @@ void TestOutputJsonContracts() {
               "pair-score JSON should serialize score value");
 }
 
+// Pair Score Output (TOFIX140 A5): the settings saved with a model become
+// the defaults, and its threshold answers same / different per mode.
+void TestPairScoreDefaultsAndThreshold() {
+    Check(!cyxwiz::PairScoreDefaultsFromMetadata({}).has_value(),
+          "a model without Pair Score Output has no pair-score defaults");
+    const auto defaults = cyxwiz::PairScoreDefaultsFromMetadata(
+        {{"pair_score_mode", "cosine_similarity"}, {"pair_score_threshold", "0.8"}, {"other", "x"}});
+    Check(defaults && defaults->mode == cyxwiz::PairScoreMode::CosineSimilarity &&
+              std::abs(defaults->threshold - 0.8) < 1e-12,
+          "the saved mode and threshold are read back");
+
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::EuclideanDistance, 0.5, 0.5) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::EuclideanDistance, 0.51, 0.5),
+          "distance: same at or below the threshold");
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::NegativeEuclideanDistance, -0.5, 0.5) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::NegativeEuclideanDistance, -0.6, 0.5),
+          "negative distance: same at or above -threshold");
+    Check(cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::CosineSimilarity, 0.8, 0.8) &&
+              !cyxwiz::PairScoreMeansSame(cyxwiz::PairScoreMode::CosineSimilarity, 0.79, 0.8),
+          "cosine similarity: same at or above the threshold");
+
+    // Distances 0.1 and 5 against threshold 0.5.
+    auto response = cyxwiz::BuildPairScoreOutputResponse(
+        FloatTensor({2, 2}, {0.0f, 0.0f, 0.0f, 0.0f}), FloatTensor({2, 2}, {0.1f, 0.0f, 3.0f, 4.0f}),
+        cyxwiz::PairScoreMode::EuclideanDistance);
+    cyxwiz::ApplyPairScoreThreshold(response, 0.5);
+    Check(response.same.size() == 2 && response.same[0] && !response.same[1], "same / different per pair");
+    const auto json = cyxwiz::PairScoreOutputResponseToJson(response);
+    Check(json.at("threshold").get<double>() == 0.5 && json.at("records").at(0).at("same").get<bool>() &&
+              !json.at("records").at(1).at("same").get<bool>(),
+          "the response carries the threshold and same per record");
+    const auto plain = cyxwiz::PairScoreOutputResponseToJson(cyxwiz::BuildPairScoreOutputResponse(
+        FloatTensor({1, 1}, {0.0f}), FloatTensor({1, 1}, {1.0f})));
+    Check(!plain.contains("threshold") && !plain.at("records").at(0).contains("same"),
+          "without a threshold the response is unchanged");
+}
+
 void TestOutputValidation() {
     bool rejected_embedding_metadata = false;
     try {
@@ -277,7 +308,6 @@ void TestOutputValidation() {
           "cosine pair score should reject zero vectors");
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 void TestDeviceOutputMaterializationAttribution() {
     if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
         std::cout << "SKIP: ArrayFire output attribution unavailable\n";
@@ -323,8 +353,9 @@ void TestDeviceOutputMaterializationAttribution() {
             left, right, cyxwiz::PairScoreMode::EuclideanDistance);
     }
     g_host_sync_events = nullptr;
-    Check(events.size() == 2,
-          "pair output should materialize exactly two embedding tensors");
+    // Distances are computed on the device and downloaded once (TOFIX140).
+    Check(events.size() == 1,
+          "pair output should download one score vector");
     for (const auto& event : events) {
         Check(event.attribution_category == "output_materialization" &&
                   event.attribution_operation ==
@@ -332,7 +363,6 @@ void TestDeviceOutputMaterializationAttribution() {
               "pair output reads must be attributed");
     }
 }
-#endif
 
 }  // namespace
 
@@ -342,10 +372,9 @@ int main() {
     TestPairScoreSimilarityModes();
     TestScoreModeParsing();
     TestOutputJsonContracts();
+    TestPairScoreDefaultsAndThreshold();
     TestOutputValidation();
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     TestDeviceOutputMaterializationAttribution();
-#endif
     std::cout << "Metric-learning inference outputs passed\n";
     return 0;
 }

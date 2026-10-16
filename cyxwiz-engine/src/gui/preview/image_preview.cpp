@@ -1,5 +1,6 @@
 #include "image_preview.h"
 #include "../../core/texture_manager.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -15,7 +16,7 @@ void ImagePreviewRenderer::RenderFile(const std::string& filepath, float zoom) {
     }
 
     if (file_texture_ == 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Failed to load image.");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Failed to load image.");
         return;
     }
 
@@ -39,7 +40,7 @@ void ImagePreviewRenderer::RenderSample(const std::vector<float>& data,
                                           int width, int height, int channels,
                                           float zoom) {
     if (data.empty() || width <= 0 || height <= 0) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No image data.");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "No image data.");
         return;
     }
 
@@ -92,7 +93,7 @@ void ImagePreviewRenderer::RenderGrid(const cyxwiz::DatasetHandle& handle,
 
             // Label
             if (label >= 0 && label < static_cast<int>(class_names.size())) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", class_names[label].c_str());
+                ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, "%s", class_names[label].c_str());
             } else {
                 ImGui::Text("Label: %d", label);
             }
@@ -117,7 +118,7 @@ void ImagePreviewRenderer::RenderImageInfo(int width, int height, int channels,
         float min_v = *std::min_element(data, data + data_size);
         float max_v = *std::max_element(data, data + data_size);
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[%.3f, %.3f]", min_v, max_v);
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "[%.3f, %.3f]", min_v, max_v);
     }
 }
 

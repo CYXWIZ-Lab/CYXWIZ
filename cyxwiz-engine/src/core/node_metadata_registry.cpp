@@ -475,26 +475,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                     false,
                     reason);
             }
-            if (support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
-                UpsertSupportAxis(
-                    metadata,
-                    "Training Role",
-                    PipelineTrainingSupportRoleName(
-                        PipelineTrainingSupportRole::TrainingControl),
-                    false,
-                    reason);
-            }
-            if (support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow) {
-                UpsertSupportAxis(
-                    metadata,
-                    "Training Role",
-                    PipelineTrainingSupportRoleName(
-                        PipelineTrainingSupportRole::TrainingWorkflow),
-                    false,
-                    reason);
-            }
             UpsertSupportAxis(
                 metadata,
                 "Compile",
@@ -507,15 +487,11 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 support.training_supported ? "supported" : "unsupported",
                 support.training_supported,
                 reason);
-            const bool workflow_unowned =
-                support.mode == PipelineTrainingBackendSupportMode::
-                                    UnsupportedTrainingWorkflow;
             UpsertSupportAxis(
                 metadata,
                 "Implementation Owner",
-                workflow_unowned ? "unowned_training_workflow"
-                                 : "training_backend",
-                !workflow_unowned,
+                "training_backend",
+                true,
                 reason);
 
             ApplySupportState(metadata, "blocked", false, reason);
@@ -523,16 +499,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
     for (const auto& capability :
          GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
-        apply_training_backend_status(capability.node_type);
-    }
-
-    for (const auto& capability :
-         GetPipelineUnsupportedTrainingControlCapabilities()) {
-        apply_training_backend_status(capability.node_type);
-    }
-
-    for (const auto& capability :
-         GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
         apply_training_backend_status(capability.node_type);
     }
 
@@ -645,8 +611,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             });
         if (owner_it == metadata.support_axes.end() ||
             !owner_it->supported || owner_it->value == "none" ||
-            owner_it->value == "unknown" ||
-            owner_it->value == "unowned_training_workflow") {
+            owner_it->value == "unknown") {
             UpsertSupportAxis(
                 metadata,
                 "Implementation Owner",
@@ -744,6 +709,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path classical ML baseline for polynomial regression.");
     apply_workflow_lane_guidance(
+        NodeType::SVMRegressor,
+        "classic_ml",
+        "Table-path classical ML kernel regression for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::DecisionTreeClassifier,
         "classic_ml",
         "Table-path classical ML classifier for numeric tabular features.");
@@ -756,6 +725,22 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "classic_ml",
         "Table-path boosted classical ML classifier for numeric tabular features.");
     apply_workflow_lane_guidance(
+        NodeType::NaiveBayesClassifier,
+        "classic_ml",
+        "Table-path classical ML probabilistic classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::KNNClassifier,
+        "classic_ml",
+        "Table-path classical ML nearest-neighbour classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::LogisticRegressionNode,
+        "classic_ml",
+        "Table-path classical ML linear classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::SVMClassifier,
+        "classic_ml",
+        "Table-path classical ML kernel classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
@@ -763,6 +748,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::RegressionModelPredictor,
         "classic_ml",
         "Table-path inference node for fitted linear and polynomial regression artifacts.");
+    apply_workflow_lane_guidance(
+        NodeType::ClassicModelPredictor,
+        "classic_ml",
+        "Table-path inference node for fitted classic ML models (Model input or saved file).");
 
     const std::string simulation_reason =
         "GraphExecutor owns bounded scalar control evaluation for the live "
@@ -1160,27 +1149,14 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", {"transformer", "attention", "encoder"}},
         {NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", {"transformer", "attention", "decoder"}},
         {NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", {"transformer", "position", "encoding"}},
-        {NodeType::PReLU, NodeCategory::Activation, "PReLU", {"activation", "relu"}},
         {NodeType::ELU, NodeCategory::Activation, "ELU", {"activation"}},
-        {NodeType::SELU, NodeCategory::Activation, "SELU", {"activation"}},
         {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
         {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
-        {NodeType::Augmentation, NodeCategory::Preprocessing, "Augmentation", {"augmentation", "transform"}},
-        {NodeType::TensorReshape, NodeCategory::ShapeOps, "Tensor Reshape", {"tensor", "reshape", "legacy"}},
         {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
-        {NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", {"image", "crop"}},
-        {NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", {"image", "crop", "augmentation"}},
-        {NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", {"image", "flip", "augmentation"}},
-        {NodeType::VerticalFlip, NodeCategory::Preprocessing, "Vertical Flip", {"image", "flip", "augmentation"}},
-        {NodeType::ImageRotate, NodeCategory::Preprocessing, "Image Rotate", {"image", "rotate", "augmentation"}},
-        {NodeType::ColorJitter, NodeCategory::Preprocessing, "Color Jitter", {"image", "color", "augmentation"}},
-        {NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", {"image", "blur"}},
-        {NodeType::Grayscale, NodeCategory::Preprocessing, "Grayscale", {"image", "grayscale"}},
-        {NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", {"workflow", "subgraph"}},
         {NodeType::DNNClassify, NodeCategory::DNN, "DNN Classify", {"dnn", "classification"}},
         {NodeType::DNNPoseEstimate, NodeCategory::DNN, "DNN Pose Estimate", {"dnn", "pose"}},
         {NodeType::DNNFaceDetect, NodeCategory::DNN, "DNN Face Detect", {"dnn", "face", "detection"}},
@@ -1191,48 +1167,18 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::NonMaxSuppression, NodeCategory::DNN, "Non-Max Suppression", {"detection", "nms"}},
         {NodeType::ArgMax, NodeCategory::Utility, "ArgMax", {"tensor", "argmax"}},
         {NodeType::TopK, NodeCategory::Utility, "Top K", {"tensor", "topk"}},
-        {NodeType::ThresholdFilter, NodeCategory::Preprocessing, "Threshold Filter", {"threshold", "filter"}},
+        {NodeType::ThresholdFilter, NodeCategory::DNN, "Threshold Filter", {"threshold", "filter"}},
         {NodeType::AudioAugmentation, NodeCategory::Audio, "Audio Augmentation", {"audio", "augmentation"}},
         {NodeType::RLTraining, NodeCategory::RL, "RL Training", {"reinforcement", "training"}},
         {NodeType::PivotTable, NodeCategory::DataTransform, "Pivot Table", {"table", "pivot"}},
         {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
         {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
-        {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
-        {NodeType::ImagePreprocessor, NodeCategory::Preprocessing, "Image Preprocessor", {"image", "preprocess"}},
-        {NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer", {"image", "quality"}},
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
         {NodeType::HuggingFaceDataset, NodeCategory::DataSources, "Hugging Face Dataset", {"huggingface", "dataset", "hub"}},
         {NodeType::KaggleDataset, NodeCategory::DataSources, "Kaggle Dataset", {"kaggle", "dataset"}},
-        {NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", {"augmentation", "preset"}},
-        {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
-        {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
-        {NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", {"image", "morphology"}},
-        {NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", {"image", "augmentation"}},
-        {NodeType::LinePlot, NodeCategory::Visualization, "Line Plot", {"chart", "line", "plot"}},
-        {NodeType::ScatterPlot, NodeCategory::Visualization, "Scatter Plot", {"chart", "scatter", "plot"}},
-        {NodeType::Histogram, NodeCategory::Visualization, "Histogram", {"chart", "distribution"}},
-        {NodeType::PieChart, NodeCategory::Visualization, "Pie Chart", {"chart", "pie"}},
-        {NodeType::AreaPlot, NodeCategory::Visualization, "Area Plot", {"chart", "area", "plot"}},
-        {NodeType::BoxPlot, NodeCategory::Visualization, "Box Plot", {"chart", "box", "distribution"}},
-        {NodeType::ViolinPlot, NodeCategory::Visualization, "Violin Plot", {"chart", "violin", "distribution"}},
-        {NodeType::ErrorBarPlot, NodeCategory::Visualization, "Error Bar Plot", {"chart", "error", "plot"}},
-        {NodeType::StepPlot, NodeCategory::Visualization, "Step Plot", {"chart", "step", "plot"}},
-        {NodeType::HexbinPlot, NodeCategory::Visualization, "Hexbin Plot", {"chart", "hexbin", "plot"}},
-        {NodeType::Heatmap, NodeCategory::Visualization, "Heatmap", {"chart", "heatmap"}},
-        {NodeType::ContourPlot, NodeCategory::Visualization, "Contour Plot", {"chart", "contour", "plot"}},
-        {NodeType::Imshow, NodeCategory::Visualization, "Image Display", {"image", "imshow", "visualization"}},
-        {NodeType::Plot3D, NodeCategory::Visualization, "3D Plot", {"chart", "3d", "plot"}},
-        {NodeType::Scatter3D, NodeCategory::Visualization, "3D Scatter Plot", {"chart", "scatter", "3d"}},
-        {NodeType::SurfacePlot, NodeCategory::Visualization, "Surface Plot", {"chart", "surface", "3d"}},
-        {NodeType::WireframePlot, NodeCategory::Visualization, "Wireframe Plot", {"chart", "wireframe", "3d"}},
-        {NodeType::PolarPlot, NodeCategory::Visualization, "Polar Plot", {"chart", "polar", "plot"}},
-        {NodeType::QuiverPlot, NodeCategory::Visualization, "Quiver Plot", {"chart", "vector", "plot"}},
-        {NodeType::StreamPlot, NodeCategory::Visualization, "Stream Plot", {"chart", "stream", "plot"}},
-        {NodeType::SpectrogramPlot, NodeCategory::Visualization, "Spectrogram", {"audio", "spectrogram", "plot"}},
-        {NodeType::NetworkGraph, NodeCategory::Visualization, "Network Graph", {"graph", "network", "visualization"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };
 
@@ -1311,14 +1257,17 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"generation_preview_enabled", "bool", "false", "Generate samples between training epochs", {}, "", "", "Generation previews", false, false},
          {"generation_preview_every_epochs", "int", "20", "Generate every N completed epochs", {}, "1-10000", "", "Generation previews", false, false},
          {"generation_preview_max_new_tokens", "int", "32", "Maximum generated tokens per prompt", {}, "1-128", "", "Generation previews", false, false},
-         {"generation_preview_prompts", "string", "", "One prompt per line; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
+         {"generation_preview_prompts", "string", "", "One prompt per line, or multi-line prompts separated by lines of ---; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
          {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
          {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
          {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},
          {"balance_seed", "int", "42", "Class balancing seed", {}, "0-2147483647", "", "Balancing", false, true},
          {"save_best_checkpoint", "bool", "true", "Save best validation checkpoint", {}, "", "", "Checkpoint", false, true},
          {"early_stopping_patience", "int", "5", "Early stopping patience in validation checks", {}, "0-10000", "", "Checkpoint", false, true},
-         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true}},
+         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true},
+         {"initialize_from_checkpoint", "directory", "",
+          "A checkpoint folder from an earlier run (for example checkpoints/<run>/train-<id>/best). Its weights become this model's starting point (warm start): every layer starts from the trained values and keeps training on this run's data (full fine-tuning; no layers are frozen). Only the weights are loaded: the optimizer, learning-rate schedule, epochs and random seed start fresh. Layer names and shapes, and for language models the tokenizer, must match the checkpoint exactly, or the run stops with the reason and the model is left untouched. New checkpoints record this folder as initialized_from. Empty = start from random weights.",
+          {}, "", "Start from", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // DataSplit is a graph-level training configuration node. It has a
@@ -1388,8 +1337,32 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"input_aliases", "string", "",
           "Several inputs: comma-separated table names, one input pin each (e.g. chapters, manifest)",
           {}, ""},
-         {"sql_contract_version", "string", "1", "SQL step contract version", {}, ""}},
+         {"sql_contract_version", "fixed", "1", "SQL step contract version (set by the engine)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    // Subgraph (TOFIX146 D5): made by grouping nodes, never from the palette.
+    // A visual group only tidies the canvas; a Preparation Recipe
+    // (recipe_role) runs its steps as one stage. The role is set from the
+    // canvas menu or Properties, which validate it, so its parameters are
+    // engine-owned rather than declared as editable fields.
+    {
+        NodeMetadata subgraph{NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", ICON_FA_OBJECT_GROUP,
+            {"workflow", "subgraph", "group", "recipe", "preparation"}, 0, false,
+            "A group of nodes; as a Preparation Recipe it runs its steps as one stage",
+            "A visual group only tidies the canvas and does not run. A Preparation Recipe takes one dataset, "
+            "runs its steps in order and gives one prepared dataset, exactly as the steps would as separate "
+            "nodes.", ""};
+        subgraph.made_by = "Select two or more nodes, then right-click the canvas: Actions > Create Subgraph "
+                           "(Ctrl+Shift+U).";
+        // Its owner is recipe lowering, not a UI panel: a Preparation Recipe
+        // runs as its steps (TOFIX147 item 7).
+        const std::string owner_reason =
+            "A Preparation Recipe runs: it is lowered into its steps before the pipeline runs. A visual group "
+            "only tidies the canvas and does not run.";
+        UpsertSupportAxis(subgraph, "Implementation Owner", "recipe_lowering", true, owner_reason);
+        ApplySupportState(subgraph, "real", true, owner_reason);
+        RegisterNode(std::move(subgraph));
+    }
 
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
     // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
@@ -1414,7 +1387,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"file_path", "file", "", "Parquet file", {}, "*.parquet"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::JSONFile, NodeCategory::DataSources, "JSON Reader", ICON_FA_BRACKETS_CURLY,
+    RegisterNode({NodeType::JSONFile, NodeCategory::DataSources, "JSON Reader", ICON_FA_CODE,
         {"json", "javascript"}, 0, false, "Read JSON file", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
         {{"file_path", "file", "", "JSON file", {}, "*.json"}},
@@ -1658,15 +1631,214 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
 
     RegisterNode({NodeType::Resize, NodeCategory::Preprocessing, "Resize", ICON_FA_EXPAND,
         {"image", "resize", "width", "height", "aspect"}, 0, false,
-        "Configure the image batcher's target decode dimensions",
-        "Blocked until node-level output-shape, persisted-graph, and live image-training evidence is complete. The existing image batcher consumes this configuration, but that wiring alone is not production proof.",
-        "",
-        {{"Input", PinType::Tensor, true, "Image tensor [batch, channels, H, W]"}},
-        {{"Output", PinType::Tensor, true, "Image tensor resized to the configured width and height"}},
+        "The size every image is decoded to for training",
+        "The image batcher resizes each image to this width and height (mode: exact, fit, fill or "
+        "center) and the compiler takes the model's input shape [H, W, C] from it, so the "
+        "convolution layers after it know their sizes. Required for an image Data Input.",
+        "Data Input (images) -> Resize -> Conv2D -> ... -> Flatten -> Dense",
+        {{"Input", PinType::Tensor, true, "Images from the Data Input"}},
+        {{"Output", PinType::Tensor, true, "Images resized to [height, width, channels]"}},
         {{"width", "int", "224", "Positive output width in pixels", {}, ">0", "Width", "Output shape", true},
          {"height", "int", "224", "Positive output height in pixels", {}, ">0", "Height", "Output shape", true},
          {"mode", "enum", "exact", "Aspect-ratio and crop policy", {"exact", "fit", "fill", "center"}, "", "Mode", "Resize policy"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
+
+    // Image transforms (TOFIX140): torchvision.transforms semantics, run by the
+    // image batcher on the whole batch on the ArrayFire device, between Resize
+    // and Normalize. Random nodes change training batches only.
+    RegisterNode({NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", ICON_FA_EXPAND,
+        {"image", "crop", "center"}, 0, false,
+        "Crop the middle height x width of every image",
+        "Keeps the centre of each image (torchvision CenterCrop), in training, validation and test. "
+        "The model's input shape becomes [height, width, C]. The crop must fit the image.",
+        "Resize 256 -> Center Crop 224 -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
+        {{"width", "int", "224", "Crop width in pixels, at most the image width", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Crop height in pixels, at most the image height", {}, ">0", "Height", "Output shape", true}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", ICON_FA_SHUFFLE,
+        {"image", "crop", "augmentation", "random"}, 0, false,
+        "Crop height x width at a random place in every training image",
+        "Each training image is cropped at its own random position (torchvision RandomCrop); "
+        "padding first adds a zero border on every side, so the crop may cover some of it. "
+        "Validation and test take the centre crop of the same size, so the model's input shape "
+        "is [height, width, C] in every phase.",
+        "Resize 72 -> Random Crop 64 -> Horizontal Flip -> Normalize",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
+        {{"width", "int", "224", "Crop width in pixels, at most the padded image width", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Crop height in pixels, at most the padded image height", {}, ">0", "Height", "Output shape", true},
+         {"padding", "int", "0", "Zero border added on every side before cropping (CIFAR recipe: 4)", {}, ">=0", "Padding"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", ICON_FA_ARROWS_LEFT_RIGHT,
+        {"image", "flip", "mirror", "augmentation"}, 0, false,
+        "Mirror training images left to right at random",
+        "Each training image is flipped left to right with the given probability (torchvision "
+        "RandomHorizontalFlip). Validation and test images pass through unchanged.",
+        "Resize -> Horizontal Flip -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"probability", "float", "0.5", "Chance that a training image is flipped", {}, "0-1", "Probability"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::VerticalFlip, NodeCategory::Preprocessing, "Vertical Flip", ICON_FA_ROTATE,
+        {"image", "flip", "augmentation"}, 0, false,
+        "Flip training images top to bottom at random",
+        "Each training image is flipped top to bottom with the given probability (torchvision "
+        "RandomVerticalFlip). Validation and test images pass through unchanged. Suits images "
+        "with no natural up (satellite, microscopy), not photos.",
+        "Resize -> Vertical Flip -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"probability", "float", "0.5", "Chance that a training image is flipped", {}, "0-1", "Probability"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageRotate, NodeCategory::Preprocessing, "Image Rotate", ICON_FA_ROTATE_RIGHT,
+        {"image", "rotate", "rotation", "augmentation"}, 0, false,
+        "Rotate training images by a random angle",
+        "With the given probability, each training image is rotated about its centre by an angle "
+        "drawn from [-max_angle, max_angle] degrees (torchvision RandomRotation): same size, "
+        "corners outside the image become 0. Validation and test images pass through unchanged.",
+        "Resize -> Image Rotate -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"max_angle", "float", "15.0", "Largest rotation in degrees, either way", {}, "0-180", "Max angle"},
+         {"probability", "float", "0.5", "Chance that a training image is rotated", {}, "0-1", "Probability"},
+         {"interpolation", "enum", "nearest", "Pixel sampling", {"nearest", "bilinear"}, "", "Interpolation"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ColorJitter, NodeCategory::Preprocessing, "Color Jitter", ICON_FA_PALETTE,
+        {"image", "color", "brightness", "contrast", "saturation", "hue", "augmentation"}, 0, false,
+        "Vary brightness, contrast, saturation and hue of training images",
+        "Each training image gets its own factors, applied in a random order (torchvision "
+        "ColorJitter): brightness, contrast and saturation factors from [max(0, 1 - v), 1 + v], "
+        "a hue shift from [-hue, hue]. 0 turns an adjustment off. Saturation and hue leave "
+        "one-channel images unchanged. Validation and test images pass through unchanged.",
+        "Resize -> Color Jitter -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"brightness", "float", "0.2", "Brightness spread, 0 or more", {}, ">=0", "Brightness"},
+         {"contrast", "float", "0.2", "Contrast spread, 0 or more", {}, ">=0", "Contrast"},
+         {"saturation", "float", "0.2", "Saturation spread, 0 or more", {}, ">=0", "Saturation"},
+         {"hue", "float", "0.1", "Hue shift, 0 to 0.5", {}, "0-0.5", "Hue"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", ICON_FA_BRUSH,
+        {"image", "blur", "gaussian", "smooth"}, 0, false,
+        "Smooth every image with a Gaussian kernel",
+        "Blurs each image with a kernel_size x kernel_size Gaussian of the given sigma, edges "
+        "reflected (torchvision gaussian_blur), in training, validation and test.",
+        "Resize -> Image Gaussian Blur -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"kernel_size", "int", "5", "Odd kernel width; kernel_size / 2 must be below both image sides", {}, ">0", "Kernel size"},
+         {"sigma", "float", "1.0", "Gaussian standard deviation in pixels", {}, ">0", "Sigma"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Grayscale, NodeCategory::Preprocessing, "Grayscale", ICON_FA_IMAGE,
+        {"image", "grayscale", "gray", "luminance"}, 0, false,
+        "Turn every image into one luminance channel",
+        "Each pixel becomes 0.2989 R + 0.587 G + 0.114 B (torchvision Grayscale), in training, "
+        "validation and test. The model's input shape becomes [H, W, 1].",
+        "Resize -> Grayscale -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [H, W, 1]"}},
+        {},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", ICON_FA_BRUSH,
+        {"image", "morphology", "erode", "dilate", "open", "close", "tophat"}, 0, false,
+        "Erode, dilate, open or close every image with a square kernel",
+        "Grey-level morphology with a flat kernel_size x kernel_size square, pixels outside the "
+        "image ignored (kornia.morphology, OpenCV's default border), in training, validation and "
+        "test. erode = local minimum, dilate = local maximum, open = dilate(erode), close = "
+        "erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image.",
+        "Resize -> Morphology Transform (open) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"operation", "enum", "open", "Morphological operation",
+          {"erode", "dilate", "open", "close", "gradient", "tophat", "blackhat"}, "", "Operation"},
+         {"kernel_size", "int", "3", "Odd width of the square kernel", {}, ">0", "Kernel size"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "augmentation", "preset", "recipe", "cifar", "randaugment"}, 0, false,
+        "A standard training augmentation recipe in one node",
+        "The preset compiles into the image transform nodes it stands for, so it behaves exactly as "
+        "wiring them by hand: flip = Horizontal Flip (0.5); cifar = Random Crop of the image size with "
+        "padding 4, then Horizontal Flip (0.5); cifar_cutout = cifar, then Advanced Augment cutout 16 "
+        "on every image (DeVries & Taylor 2017); randaugment = Horizontal Flip (0.5), then RandAugment "
+        "(2 ops, magnitude 9) on every image. Training images only; validation and test pass through. "
+        "Normalize stays its own node after the preset.",
+        "Resize 32 -> Augmentation Preset (cifar) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"preset", "enum", "cifar", "Augmentation recipe", {"flip", "cifar", "cifar_cutout", "randaugment"}, "", "Preset"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"image", "augmentation", "cutout", "random erasing", "mixup", "cutmix", "randaugment"}, 0, false,
+        "Erase patches of training images, or mix training images and their labels",
+        "cutout: with the given probability, a cutout_size square centred at a random pixel is set "
+        "to value, clipped at the edges (DeVries & Taylor 2017). random_erasing: a box covering "
+        "scale_min to scale_max of the image, aspect ratio ratio_min to ratio_max, is set to value "
+        "(torchvision RandomErasing; after ten misses the image is left as it is); value is a pixel "
+        "value in [0, 1], applied before Normalize. mixup / cutmix (torchvision v2 MixUp / CutMix): "
+        "with the given probability a whole batch is mixed with itself rolled by one, using one "
+        "lambda from Beta(alpha, alpha): mixup blends the images, cutmix pastes a box of area "
+        "1 - lambda; the one-hot labels are mixed the same way, so the loss must be Cross Entropy. "
+        "One mixup or cutmix per graph. randaugment (torchvision v2 RandAugment): with the given "
+        "probability each training image takes num_ops ops drawn from 14 (identity, shear x / y, "
+        "translate x / y, rotate, brightness, color, contrast, sharpness, posterize, solarize, "
+        "autocontrast, equalize) at bin magnitude of 31, signed ops with a random sign. Validation "
+        "and test images pass through unchanged.",
+        "Resize -> Random Crop -> Advanced Augment (cutout) -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"method", "enum", "cutout", "Augmentation method", {"cutout", "random_erasing", "mixup", "cutmix", "randaugment"}, "", "Method"},
+         {"probability", "float", "0.5", "Chance that a training image is erased or augmented (cutout, random_erasing, randaugment) or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
+         {"num_ops", "int", "2", "randaugment: ops applied to each image", {}, "0-10", "Ops"},
+         {"magnitude", "int", "9", "randaugment: strength bin, 0 to 30", {}, "0-30", "Magnitude"},
+         {"alpha", "float", "1.0", "mixup / cutmix: Beta(alpha, alpha) for the mixing weight", {}, ">0", "Alpha"},
+         {"cutout_size", "int", "16", "cutout: side of the square in pixels", {}, ">0", "Cutout size"},
+         {"scale_min", "float", "0.02", "random_erasing: smallest box area, as a fraction of the image", {}, "0-1", "Scale min"},
+         {"scale_max", "float", "0.33", "random_erasing: largest box area, as a fraction of the image", {}, "0-1", "Scale max"},
+         {"ratio_min", "float", "0.3", "random_erasing: smallest aspect ratio (height / width)", {}, ">0", "Ratio min"},
+         {"ratio_max", "float", "3.3", "random_erasing: largest aspect ratio (height / width)", {}, ">0", "Ratio max"},
+         {"value", "float", "0.0", "Pixel value written into the box (0 = black)", {}, "0-1", "Value"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    // Quality Analyzer (TOFIX140): a dataset filter. Its dialog measures the
+    // images once on the device; training leaves the rejected files out.
+    RegisterNode(WithPropertiesEditor({NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer",
+        ICON_FA_MAGNIFYING_GLASS_CHART,
+        {"image", "quality", "blur", "brightness", "contrast", "duplicate", "filter", "clean"}, 0, false,
+        "Leave blurry, too dark or bright, flat and near-duplicate images out of training",
+        "Open the node and click Analyze: every image is decoded at the Resize size, as the model "
+        "sees it, and measured once on the GPU. Blur is the variance of the Laplacian of the "
+        "luminance (low = blurry), brightness its mean (0 to 255), contrast its standard deviation "
+        "/ 255, and near-duplicates share a 64-bit difference hash within 4 bits (the first one "
+        "stays). The dialog shows what the checks leave out, with examples. Training leaves those "
+        "files out of every split and refuses to start without a current analysis (after the "
+        "images or the Resize size change, analyze again); changing a check needs no new analysis. "
+        "Files are never deleted.",
+        "Data Input (images) -> Quality Analyzer -> Data Split -> Data Loader -> Resize 64 -> Conv2D",
+        {{"Images", PinType::Dataset, true, "The image dataset from the Data Input"}},
+        {{"Images", PinType::Dataset, true, "The images that pass the checks; Data Split partitions them"}},
+        {{"blur_check", "bool", "true", "Leave out blurry images", {}, "", "Blur", "Checks"},
+         {"blur_min", "float", "700", "Lowest Laplacian variance kept (at the Resize size)", {}, ">=0", "Reject blur below", "Checks"},
+         {"brightness_check", "bool", "true", "Leave out too dark or too bright images", {}, "", "Brightness", "Checks"},
+         {"brightness_min", "float", "50", "Darkest mean luminance kept, 0 to 255", {}, "0-255", "Reject darker than", "Checks"},
+         {"brightness_max", "float", "220", "Brightest mean luminance kept, 0 to 255", {}, "0-255", "Reject brighter than", "Checks"},
+         {"contrast_check", "bool", "true", "Leave out flat, low-contrast images", {}, "", "Contrast", "Checks"},
+         {"contrast_min", "float", "0.12", "Lowest luminance standard deviation / 255 kept", {}, "0-1", "Reject contrast below", "Checks"},
+         {"duplicate_check", "bool", "true", "Leave out near-duplicates, keeping the first", {}, "", "Near-duplicates", "Checks"},
+         {"analysis_key", "string", "", "The analysis this node last made", {}, "", "", "", false, false,
+          ParameterConsumption::UiOnly}},
+        NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 }
 
 // =============================================================================
@@ -1687,12 +1859,6 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Matrix", PinType::Dataset, true, "Long-form Pearson correlation matrix"}},
         {},
         NodeImplementationStatus::Implemented, 0});
-
-    RegisterNode({NodeType::VisualizeData, NodeCategory::Analytics, "Visualizer", ICON_FA_CHART_LINE,
-        {"plot", "chart", "visualize"}, 0, false, "Create visualizations", "", "",
-        {{"Table", PinType::Dataset, true, "Input"}}, {},
-        {{"chart_type", "enum", "scatter", "Type", {"scatter", "bar", "line", "histogram"}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::SampleRows, NodeCategory::Analytics, "Row Sampler", ICON_FA_DICE,
         {"sample", "head", "first", "limit"}, 0, false, "Take the first rows in source order",
@@ -1784,11 +1950,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"decision", "tree", "classifier", "classification", "classic ml"}, 0, false, "Decision Tree classifier",
         "Learns decision rules from tabular features and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
-        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
-         {"model_path", "string", "", "Optional JSON path used to save the fitted tree artifact", {}, "", "Save model path", "Artifact"},
+         {"model_path", "string", "", "JSON path to save the fitted tree artifact; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"max_depth", "int", "10", "Maximum tree depth", {}, "1-2147483647"},
          {"min_samples_split", "int", "2", "Minimum samples required to split a node", {}, "2-2147483647"},
          {"min_samples_leaf", "int", "1", "Minimum samples retained in a leaf", {}, "1-2147483647"},
@@ -1799,11 +1966,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"random", "forest", "ensemble", "classification", "classic ml"}, 0, false, "Random Forest ensemble",
         "Fits a bagged ensemble of decision trees and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
-        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
-         {"model_path", "string", "", "Optional JSON path used to save the fitted forest artifact", {}, "", "Save model path", "Artifact"},
+         {"model_path", "string", "", "JSON path to save the fitted forest artifact; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"n_estimators", "int", "100", "Number of trees", {}, "1-2147483647"},
          {"max_depth", "int", "10", "Maximum depth per tree", {}, "1-2147483647"},
          {"min_samples_split", "int", "2", "Minimum samples required to split a node", {}, "2-2147483647"},
@@ -1817,11 +1985,12 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"gradient", "boosting", "classifier", "trees", "classic ml"}, 0, false, "Gradient Boosted Trees classifier",
         "Fits one-vs-rest boosted regression trees and appends a prediction column.", "",
         {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
-        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted tree model; link it to a Plot to draw the trees"}},
         {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
          {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
          {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
-         {"model_path", "string", "", "Optional JSON path used to save the fitted boosting artifact", {}, "", "Save model path", "Artifact"},
+         {"model_path", "string", "", "JSON path to save the fitted boosting artifact; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
          {"n_estimators", "int", "100", "Number of boosting rounds", {}, "1-2147483647"},
          {"learning_rate", "float", "0.1", "Positive shrinkage applied to each boosting round", {}, ""},
          {"max_depth", "int", "3", "Maximum depth of each regression tree", {}, "1-2147483647"},
@@ -1840,54 +2009,74 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
-        {"svm", "support", "vector"}, 0, false,
-        "Blocked legacy SVM classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"kernel", "enum", "rbf", "Legacy kernel selection retained for saved graphs", {"linear", "rbf", "poly", "sigmoid"}, "", "Kernel", "Compatibility"},
-         {"C", "float", "1.0", "Legacy regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"gamma", "enum", "scale", "Legacy kernel coefficient retained for saved graphs", {"scale", "auto"}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"svm", "svc", "support", "vector", "kernel", "classifier", "classic ml"}, 0, false, "Support vector classifier",
+        "Fits a kernel support vector machine on the selected device (scikit-learn's SVC; one-vs-one for more "
+        "than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVM (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"random_state", "int", "0", "Seed of the 5-fold split that calibrates the probabilities (scikit-learn random_state); used with Probability columns", {}, "0-2147483647", "Random state", "Model"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for margin violations; smaller is a softer, more regularised margin", {}, "", "Regularisation (C)", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
-        {"knn", "nearest", "neighbor"}, 0, false,
-        "Blocked legacy K-nearest-neighbors classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"n_neighbors", "int", "5", "Legacy neighbor count retained for saved graphs", {}, "1-100", "Neighbors", "Compatibility"},
-         {"weights", "enum", "uniform", "Legacy neighbor weighting retained for saved graphs", {"uniform", "distance"}, "", "Weights", "Compatibility"},
-         {"metric", "enum", "euclidean", "Legacy distance metric retained for saved graphs", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"knn", "nearest", "neighbor", "neighbour", "classifier", "classic ml"}, 0, false, "k-nearest neighbours classifier",
+        "Classifies each row by the votes of its nearest training rows, computed on the selected device "
+        "(scikit-learn's KNeighborsClassifier), and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted KNN model (its training rows and settings)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"n_neighbors", "int", "5", "Training rows that vote for each prediction", {}, "", "Neighbours", "Model"},
+         {"weights", "enum", "uniform", "Every neighbour votes equally, or closer neighbours count more (1/distance)", {"uniform", "distance"}, "", "Weights", "Model"},
+         {"metric", "enum", "euclidean", "Distance between rows", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
-        {"naive", "bayes", "classifier"}, 0, false,
-        "Blocked legacy Gaussian Naive Bayes preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"var_smoothing", "float", "1e-9", "Legacy Gaussian variance smoothing retained for saved graphs", {}, "", "Variance smoothing", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"naive", "bayes", "gaussian", "classifier", "classic ml"}, 0, false, "Gaussian naive Bayes classifier",
+        "Fits scikit-learn's Gaussian naive Bayes on the selected device (per-class means and variances) and "
+        "appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted naive Bayes model (class means, variances and priors)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"var_smoothing", "float", "1e-9", "Share of the largest feature variance added to every variance (scikit-learn var_smoothing)", {}, "", "Variance smoothing", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
-        {"logistic", "regression", "classifier"}, 0, false,
-        "Blocked legacy logistic-regression classifier preview",
-        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, probability output, or predictor is implemented.", "",
-        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
-         {"Labels", PinType::Labels, true, "Legacy label input"}},
-        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
-         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
-        {{"C", "float", "1.0", "Legacy inverse regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
-         {"solver", "enum", "lbfgs", "Legacy solver selection retained for saved graphs", {"lbfgs"}, "", "Solver", "Compatibility"},
-         {"max_iter", "int", "100", "Legacy iteration limit retained for saved graphs", {}, "1-2147483647", "Maximum iterations", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"logistic", "regression", "classifier", "softmax", "classic ml"}, 0, false, "Logistic regression classifier",
+        "Fits an L2-regularised logistic regression on the selected device (scikit-learn's LogisticRegression with "
+        "lbfgs; softmax for more than two classes) and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted logistic model (coefficients and intercepts)"}},
+        {{"target_col", "string", "", "Target label column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Inverse of the L2 regularisation strength; smaller is stronger", {}, "", "Regularisation (C)", "Model"},
+         {"max_iter", "int", "100", "Most L-BFGS iterations; the log warns when the fit stops before tol", {}, "", "Maximum iterations", "Model"},
+         {"tol", "float", "1e-4", "Stop when the largest gradient entry is at most this", {}, "", "Tolerance", "Model"}},
+        NodeImplementationStatus::Implemented, 0});
 
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,
@@ -1895,7 +2084,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits ordinary least squares from numeric table columns and appends Float32 prediction and residual columns.", "",
         {{"Data", PinType::Dataset, true, "Table containing numeric predictor and target columns"}},
         {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
-         {"Model", PinType::Parameters, true, "Reusable fitted linear-regression artifact"}},
+         {"Model", PinType::Parameters, false, "Reusable fitted linear-regression artifact"}},
         {{"feature_cols", "string", "", "Comma-separated numeric predictor columns", {}, "", "Predictor columns", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
          {"fit_intercept", "bool", "true", "Include a fitted intercept term", {}, "", "Fit intercept", "Fit Options", false, false}},
@@ -1906,10 +2095,30 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Fits one numeric predictor as powers from degree one through the selected degree, then appends Float32 prediction and residual columns.", "",
         {{"Data", PinType::Dataset, true, "Table containing one numeric predictor and a numeric target column"}},
         {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
-         {"Model", PinType::Parameters, true, "Reusable fitted polynomial-regression artifact"}},
+         {"Model", PinType::Parameters, false, "Reusable fitted polynomial-regression artifact"}},
         {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
          {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
          {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", ICON_FA_BORDER_ALL,
+        {"svm", "svr", "support", "vector", "kernel", "regression", "classic ml"}, 0, false, "Support vector regression",
+        "Fits epsilon-insensitive kernel support vector regression on the selected device (scikit-learn's SVR) and "
+        "appends a numeric prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with numeric features and a numeric target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"},
+         {"Model", PinType::Parameters, false, "Fitted SVR (support vectors, coefficients and kernel)"}},
+        {{"target_col", "string", "", "Numeric target column in the input table", {}, "", "Target column", "Columns", true},
+         {"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns except the target", {}, "", "Feature columns", "Columns"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"model_path", "string", "", "JSON path to save the fitted model; empty saves it in the project's artifacts", {}, "", "Save model path", "Artifact"},
+         {"C", "float", "1.0", "Penalty for errors beyond epsilon; smaller is smoother", {}, "", "Regularisation (C)", "Model"},
+         {"epsilon", "float", "0.1", "Errors smaller than this cost nothing (the width of the tube)", {}, "", "Epsilon", "Model"},
+         {"kernel", "enum", "rbf", "Similarity between rows", {"rbf", "linear", "poly", "sigmoid"}, "", "Kernel", "Model"},
+         {"gamma", "string", "scale", "Kernel coefficient for rbf, poly and sigmoid: scale (1 / (features x variance)), auto (1 / features) or a positive number", {}, "", "Gamma", "Model"},
+         {"degree", "int", "3", "Power of the poly kernel", {}, "", "Degree", "Model"},
+         {"coef0", "float", "0.0", "Constant term of the poly and sigmoid kernels", {}, "", "Coef0", "Model"},
+         {"tol", "float", "1e-3", "Stop when the largest optimality violation is below this", {}, "", "Tolerance", "Model"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RegressionModelPredictor, NodeCategory::Analytics, "Regression Model Predictor", ICON_FA_FILE_IMPORT,
@@ -1919,6 +2128,20 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"Model", PinType::Parameters, true, "Fitted regression artifact from a regression node"}},
         {{"Predictions", PinType::Dataset, true, "Input table plus a Float32 prediction column"}},
         {{"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ClassicModelPredictor, NodeCategory::Analytics, "Classic Model Predictor", ICON_FA_FILE_IMPORT,
+        {"classic", "model", "predict", "predictor", "inference", "artifact", "classic ml", "naive bayes", "knn",
+         "logistic", "svm", "saved"}, 0, false, "Fitted classic ML model inference",
+        "Applies a fitted Naive Bayes, KNN, Logistic Regression, SVM Classifier or SVM Regressor model to a table and "
+        "appends a prediction column. The model comes from the Model input, or from a saved model file when the Model "
+        "input is not connected. Feature columns are matched by the names the model was fitted on.", "",
+        {{"Data", PinType::Dataset, true, "Input table with the model's feature columns"},
+         {"Model", PinType::Parameters, false, "Fitted model from a classic ML node; when connected it is used instead of the saved model file"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"model_path", "file", "", "Saved classic model (.cyxclassic.json) to use when the Model input is not connected", {}, "*.cyxclassic.json;*.json", "Saved model", "Artifact"},
+         {"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"},
+         {"probability_columns", "bool", "false", "Also append one probability column per class, named <prediction column>_p_<class> (for ROC and precision-recall)", {}, "", "Probability columns", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
     // Model Evaluation
@@ -2122,98 +2345,101 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::Conv2D, NodeCategory::Layers, "Conv2D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "cnn"}, 0, false,
-        "Blocked 2D convolution layer retained for graph compatibility",
-        "Saved Conv2D nodes remain visible and inspectable, but cannot compile "
-        "or train until ModelBuilder owns a supported Conv2D module path. Use "
-        "separate activation nodes; the legacy inline activation field is not "
-        "an executable contract.",
-        "",
+        "2D convolution over an image feature map",
+        "Slides filters x kernel x kernel windows over the [H, W, C] sample; the output has "
+        "'filters' channels and, with padding 'same' at stride 1, the same height and width "
+        "(PyTorch Conv2d rules). Put an activation node after it. Runs on ArrayFire; the "
+        "shapes on the As compiled card are the training shapes.",
+        "Data Input (images) -> Resize -> Conv2D -> ReLU -> MaxPool2D -> Flatten -> Dense -> Output",
         {{"Input", PinType::Tensor, true,
-          "Input feature map [batch, channels, height, width]."}},
+          "Image feature map [H, W, C] per sample (from the Data Input or a spatial layer)."}},
         {{"Output", PinType::Tensor, true,
-          "Convolved feature map; unavailable at runtime while this node is blocked."}},
+          "Convolved feature map [H', W', filters]."}},
         {{"filters", "int", "32", "Number of output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
          {"kernel_size", "int", "3", "Square kernel width and height", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
          {"stride", "int", "1", "Spatial step between kernel applications", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "1d", "sequence"}, 0, false,
-        "Blocked 1D convolution layer retained for graph compatibility",
-        "The backend contains a native Conv1D primitive, but GraphCompiler, "
-        "ModelBuilder, and SequentialModel do not own an executable Conv1D "
-        "path. Its Tensor layout, ArrayFire-first execution, fallback, and "
-        "training integration must be proven before this node is enabled.",
+        "1-D convolution over a sequence: [L, C] -> [L_out, filters]",
+        "torch.nn.Conv1d on [N, C, L]: L_out = floor((L + 2p - kernel_size) / stride) + 1. First in the "
+        "model it reads the input rows as channel-major sequences (time-series windows: one channel per "
+        "feature; audio features: one channel per frequency bin; table rows: one channel); after an "
+        "Embedding it convolves over the tokens with one channel per embedding dimension. End the "
+        "sequence layers with Flatten or Global Avg Pool before Dense.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy sequence feature-map input; no executable Engine layout contract exists yet."}},
+          "[L, C] sequence: the model's input rows, or an Embedding's [L, E] output"}},
         {{"Output", PinType::Tensor, true,
-          "Convolved feature map; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "[L_out, filters] sequence; connect Conv1D, an activation, Flatten or Global Avg Pool"}},
+        {{"filters", "int", "32", "Output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy kernel width", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Kernel width along the sequence", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Step along the sequence", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels), keeps L at "
+          "stride 1; valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
-        {"conv", "convolution", "3d", "volume"}, 0, false,
-        "Blocked 3D convolution design node retained for graph compatibility",
-        "No backend Conv3D layer, GraphCompiler extraction, ModelBuilder module, "
-        "or SequentialModel execution path currently owns this node.",
-        "",
+        {"conv", "convolution", "3d", "volume", "voxel", "video"}, 0, false,
+        "3D convolution over a volume sample [D, H, W, C]",
+        "Slides filters x kernel x kernel x kernel windows over each [D, H, W, C] volume (CT or MRI "
+        "scans, voxel grids, short clips with time as depth); the output has 'filters' channels and, "
+        "with padding 'same' at stride 1, the same depth, height and width (PyTorch Conv3d rules). "
+        "Make it the first model layer, after a Data Input whose shape is [D, H, W, C] (each row holds "
+        "the volume channel by channel, torch x.view(N, C, D, H, W)), or after another Conv3D. Put an "
+        "activation node after it and end with Flatten before Dense. Runs on ArrayFire.",
+        "Data Input (shape [D, H, W, C]) -> Conv3D -> ReLU -> Conv3D -> ReLU -> Flatten -> Dense -> Output",
         {{"Input", PinType::Tensor, true,
-          "Legacy volume feature-map input; no executable Engine layout contract exists yet."}},
+          "Volume [D, H, W, C] per sample (the Data Input's shape, or a Conv3D output)."}},
         {{"Output", PinType::Tensor, true,
-          "Convolved volume; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Convolved volume [D', H', W', filters]."}},
+        {{"filters", "int", "32", "Number of output channels", {}, "1-1048576",
           "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy cubic-kernel size", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Cubic kernel depth, height and width", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Step between kernel applications on each axis", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
         "Depthwise Conv2D", ICON_FA_BORDER_ALL,
         {"conv", "convolution", "depthwise", "image"}, 0, false,
-        "Blocked depthwise convolution design node retained for graph compatibility",
-        "No backend depthwise layer, GraphCompiler extraction, ModelBuilder "
-        "module, or SequentialModel execution path currently owns this node.",
+        "Convolves each channel with its own kernels: [H,W,C] -> [H',W',C x depth_multiplier]",
+        "torch.nn.Conv2d(C, C x M, kernel_size, stride, padding, groups=C): output channel c x M + m "
+        "convolves input channel c alone, so it has k x k x C x M weights instead of Conv2D's "
+        "k x k x C x filters. Follow it with a 1x1 Conv2D (pointwise) for a depthwise separable block.",
         "",
-        {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
-        {{"Output", PinType::Tensor, true,
-          "Depthwise feature map; unavailable at runtime while this node is blocked."}},
-        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
-          "Output Channels", "Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map"}},
+        {{"Output", PinType::Tensor, true, "[H',W',C x depth_multiplier] feature map"}},
+        {{"kernel_size", "int", "3", "Square kernel size", {}, "1-1048576",
           "Kernel Size", "Convolution", true, false},
-         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+         {"stride", "int", "1", "Convolution stride", {}, "1-1048576",
           "Stride", "Convolution", true, false},
-         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+         {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels); valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false},
-         {"depth_multiplier", "int", "1", "Legacy channel multiplier", {}, "1-1048576",
+         {"depth_multiplier", "int", "1", "Output channels per input channel (M)", {}, "1-1048576",
           "Depth Multiplier", "Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
         {"lstm", "recurrent", "sequence"}, 0, false,
         "Trainable long short-term memory sequence layer",
         "Engine training supports unidirectional and split-path bidirectional "
         "LSTM with dropout=0.0; each direction runs as an independent "
-        "single-direction LSTM on the native CPU reference or the native "
-        "neural provider when one serves the run's device.", "",
+        "single-direction LSTM on ArrayFire (the selected device), or on the "
+        "native neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2239,8 +2465,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable gated recurrent unit sequence layer",
         "Engine training supports unidirectional and split-path bidirectional "
         "GRU with dropout=0.0; each direction runs as an independent "
-        "single-direction GRU on the native CPU reference or the native "
-        "neural provider when one serves the run's device.", "",
+        "single-direction GRU on ArrayFire (the selected device), or on the "
+        "native neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2266,8 +2492,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable simple (Elman) recurrent sequence layer",
         "Engine training supports stacked simple RNN with tanh or relu "
         "nonlinearity and dropout=0.0, unidirectional or split-path "
-        "bidirectional, on the native CPU recurrent reference layer or the "
-        "native neural provider (CUDA/OpenCL).", "",
+        "bidirectional, on ArrayFire (the selected device) or the native "
+        "neural provider (CUDA/OpenCL).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2289,18 +2515,6 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"nonlinearity", "enum", "tanh", "Cell nonlinearity: tanh or relu", {"tanh", "relu"}, "",
           "Nonlinearity", "Recurrent", true, false}},
         NodeImplementationStatus::Implemented, 0});
-
-    RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
-        {"bidirectional", "wrapper", "sequence"}, 0, false,
-        "Blocked standalone bidirectional-wrapper compatibility node",
-        "The bidirectional setting belongs to concrete LSTM/GRU nodes and must "
-        "follow their own verified execution limits. No standalone wrapper binds "
-        "an inner recurrent layer in GraphCompiler, ModelBuilder, or SequentialModel.", "",
-        {{"Input", PinType::Tensor, true, "Legacy sequence input."}},
-        {{"Output", PinType::Tensor, true, "Legacy merged directional output; unavailable while blocked."}},
-        {{"merge_mode", "string", "concat", "Historical merge-mode text", {}, "",
-          "Merge Mode", "Wrapper", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed Dense", ICON_FA_REPEAT,
         {"time", "distributed", "sequence", "token", "ner", "token classifier"}, 0, false,
@@ -2355,13 +2569,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
         {"groupnorm", "normalization", "small batch", "channels"}, 0, false,
-        "Normalize channels in groups for each sample (blocked Engine layer)",
-        "The saved-graph contract matches the native GroupNormLayer constructor, but Studio has no "
-        "ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
-        "eventually be Float32 [H,W,C,N], with num_channels equal to C and divisible by num_groups.", "",
-        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        "Normalize channels in groups for each sample",
+        "Normalizes each sample over groups of channels (PyTorch GroupNorm); num_groups must divide "
+        "the input's channel count, which the compiler takes from the layer before it.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+          "Normalized feature map, same shape."}},
         {{"num_groups", "int", "32", "Number of channel groups; must divide num_channels", {},
           "1-1048576", "Groups", "Normalization", true, false},
          {"num_channels", "int", "256", "Expected input channel count C", {},
@@ -2370,38 +2583,37 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "0.000000001-1.0", "Epsilon", "Normalization", true, true},
          {"affine", "bool", "true", "Learn one scale and bias per channel", {}, "",
           "Affine", "Normalization", false, true}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
         {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,
-        "Normalize each channel independently per sample (blocked Engine layer)",
-        "The saved-graph contract matches the native InstanceNorm2DLayer constructor, but Studio has "
-        "no ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
-        "eventually be Float32 [H,W,C,N], with num_features equal to C.", "",
-        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        "Normalize each channel independently per sample",
+        "Normalizes every channel of every sample over its height and width (PyTorch "
+        "InstanceNorm2d); the channel count comes from the layer before it.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+          "Normalized feature map, same shape."}},
         {{"num_features", "int", "64", "Expected input channel count C", {},
           "1-1048576", "Channels", "Normalization", true, false},
          {"eps", "float", "1e-5", "Positive numerical-stability term", {},
           "0.000000001-1.0", "Epsilon", "Normalization", true, true},
          {"affine", "bool", "false", "Learn one scale and bias per channel", {}, "",
           "Affine", "Normalization", false, true}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
         {"attention", "transformer", "self-attention"}, 0, false,
         "Trainable self-attention over a sequence tensor",
         "Connect one sequence tensor to Query. Studio uses it as query, key, and value. "
-        "Cross-attention and attention masks remain fail-closed until their "
-        "multi-input runtime contract is implemented.",
+        "For attention over another sequence use the Cross Attention node; attention masks "
+        "remain fail-closed.",
         "",
         {{"Query", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features], used as query, key, and value."},
          {"Key", PinType::Tensor, false,
-          "Reserved for cross-attention; connecting this pin is currently rejected."},
+          "Not used: connecting it is rejected; use the Cross Attention node."},
          {"Value", PinType::Tensor, false,
-          "Reserved for cross-attention; connecting this pin is currently rejected."},
+          "Not used: connecting it is rejected; use the Cross Attention node."},
          {"Mask", PinType::Tensor, false,
           "Reserved for attention masking; connecting this pin is currently rejected."}},
         {{"Output", PinType::Tensor, true,
@@ -2529,189 +2741,171 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Encoding Type", "Position", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
-        {"attention", "self_attention", "transformer"}, 0, false,
-        "Blocked self-attention compatibility node",
-        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
-        "Studio has no distinct SelfAttention GraphCompiler/ModelBuilder owner. "
-        "Use Multi-Head Attention for the supported unary self-attention path.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
-         {"Key", PinType::Tensor, true, "Legacy key tensor [batch, key/value length, embed_dim]."},
-         {"Value", PinType::Tensor, true, "Legacy value tensor [batch, key/value length, embed_dim]."},
-         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
-         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
-          "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
-          "Dropout", "Attention", true, false},
-         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
-          "Batch First", "Layout", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
     RegisterNode({NodeType::CrossAttention, NodeCategory::Attention, "Cross Attention", ICON_FA_BULLSEYE,
-        {"attention", "cross_attention", "transformer"}, 0, false,
-        "Blocked cross-attention compatibility node",
-        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
-        "Studio has no multi-input CrossAttention GraphCompiler/ModelBuilder owner.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
-         {"Key", PinType::Tensor, true, "Legacy context key tensor [batch, key/value length, embed_dim]."},
-         {"Value", PinType::Tensor, true, "Legacy context value tensor [batch, key/value length, embed_dim]."},
-         {"Mask", PinType::Tensor, false, "Optional legacy cross-attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
-         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+        {"attention", "cross_attention", "cross-attention", "encoder-decoder", "transformer"}, 0, false,
+        "Trainable attention of one sequence (Query) over another (Key / Value)",
+        "Each Query position attends over the Key / Value sequence: softmax(Q K^T / sqrt(d)) V per head, "
+        "with learned projections W_q, W_k, W_v, W_o (torch.nn.MultiheadAttention(query, key, value), "
+        "batch first). Query is [batch, query length, embed_dim]; Key and Value are [batch, key length, "
+        "embed_dim] and may come from another branch with a different length (link the same layer to both "
+        "for the usual memory input). The output has the Query's shape. Code export does not support it yet.",
+        "",
+        {{"Query", PinType::Tensor, true, "Query sequence [batch, query length, embed_dim]."},
+         {"Key", PinType::Tensor, true, "Key sequence [batch, key length, embed_dim]."},
+         {"Value", PinType::Tensor, true, "Value sequence [batch, key length, embed_dim] (often the same as Key)."}},
+        {{"Output", PinType::Tensor, true, "Attention result [batch, query length, embed_dim]."}},
+        {{"embed_dim", "int", "512", "Feature width of Query, Key and Value", {}, "1-65536",
           "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
-          "Dropout", "Attention", true, false},
-         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
-          "Batch First", "Layout", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"num_heads", "int", "8", "Number of attention heads; embed_dim must divide evenly", {}, "1-4096",
+          "Attention Heads", "Attention", true, false},
+         {"dropout", "float", "0.0", "Dropout on the attention weights while training", {}, "0.0-0.999",
+          "Dropout", "Regularization", false, false},
+         {"use_bias", "bool", "true", "Enable bias in the attention projections", {}, "",
+          "Use Bias", "Advanced", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LinearAttention, NodeCategory::Attention, "Linear Attention", ICON_FA_BULLSEYE,
-        {"attention", "linear_attention", "performer"}, 0, false,
-        "Blocked linear-attention compatibility node",
-        "Saved graphs retain the historical linear-attention sketch, but no "
-        "backend primitive or Studio training owner implements its advertised semantics.", "",
-        {{"Query", PinType::Tensor, true, "Legacy query tensor."},
-         {"Key", PinType::Tensor, true, "Legacy key tensor."},
-         {"Value", PinType::Tensor, true, "Legacy value tensor."},
-         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
-        {{"Output", PinType::Tensor, true, "Legacy linear-attention result; unavailable while blocked."}},
-        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+        {"attention", "linear_attention", "linear-attention", "kernel attention", "transformer"}, 0, false,
+        "Trainable self-attention whose cost grows linearly with sequence length",
+        "Self-attention without softmax (Katharopoulos et al. 2020): per head, "
+        "out_i = phi(q_i) . sum_j phi(k_j) v_j^T / (phi(q_i) . sum_j phi(k_j) + eps), with learned "
+        "projections W_q, W_k, W_v, W_o and phi = elu(x) + 1 or relu(x). Each head summarises keys and values "
+        "once, so the cost is O(length x head_dim^2) instead of O(length^2): use it for long sequences where "
+        "Multi-Head Attention runs out of memory. Causal attends to earlier positions only (computed as a "
+        "masked length x length product). Input and output are [batch, length, embed_dim]. Code export does "
+        "not support it yet.",
+        "",
+        {{"Input", PinType::Tensor, true, "Sequence [batch, length, embed_dim]."}},
+        {{"Output", PinType::Tensor, true, "Attention result [batch, length, embed_dim]."}},
+        {{"embed_dim", "int", "512", "Feature width of the input sequence", {}, "1-65536",
           "Embedding Dimension", "Attention", true, false},
-         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
-          "Heads", "Attention", true, false},
-         {"feature_map", "enum", "elu", "Legacy kernel feature-map sketch",
-          {"elu", "relu", "favor+"}, "", "Feature Map", "Approximation", true, false},
-         {"eps", "float", "1e-6", "Legacy numerical-stability epsilon", {}, "0.0-1.0",
-          "Epsilon", "Approximation", true, false},
-         {"causal", "bool", "false", "Legacy causal-attention flag", {}, "",
-          "Causal", "Attention", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"num_heads", "int", "8", "Number of heads; embed_dim must divide evenly", {}, "1-4096",
+          "Attention Heads", "Attention", true, false},
+         {"feature_map", "enum", "elu", "Kernel feature map phi: elu = elu(x) + 1 (always positive), relu = max(x, 0)",
+          {"elu", "relu"}, "", "Feature Map", "Attention", true, false},
+         {"eps", "float", "1e-6", "Added to each normaliser to avoid division by zero", {}, "0.0-1.0",
+          "Epsilon", "Advanced", false, true},
+         {"causal", "bool", "false", "Attend to the current and earlier positions only", {}, "",
+          "Causal", "Attention", false, false},
+         {"use_bias", "bool", "true", "Enable bias in the Q, K, V and output projections", {}, "",
+          "Use Bias", "Advanced", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
         {"maxpool", "pooling"}, 0, false,
-        "Blocked 2D max-pooling layer retained for graph compatibility",
-        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        "Keeps the largest value of each pooling window",
+        "Reduces height and width by the stride (PyTorch MaxPool2d rules); the channel count "
+        "stays. Runs on ArrayFire.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pooled feature map [H', W', C]."}},
+        {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
-         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
           "Stride", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
         {"avgpool", "average", "pooling"}, 0, false,
-        "Blocked 2D average-pooling layer retained for graph compatibility",
-        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        "Averages each pooling window",
+        "Reduces height and width by the stride (PyTorch AvgPool2d rules); the channel count "
+        "stays. Runs on ArrayFire.", "",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pooled feature map [H', W', C]."}},
+        {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
-         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
           "Stride", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
         {"global", "max", "pooling"}, 0, false,
-        "Blocked global max-pooling design node retained for graph compatibility",
-        "No backend global-max layer or ModelBuilder/SequentialModel execution "
-        "path currently owns this node.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Channel summary; unavailable at runtime while this node is blocked."}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        "Takes each channel's maximum over H and W ([H,W,C] -> [C]) or over L ([L,C] -> [C])",
+        "torch adaptive_max_pool2d(x, 1).flatten(1) (adaptive_max_pool1d after Conv1D): ends the "
+        "convolution section the way Flatten does, with one value per channel; the gradient goes to the "
+        "position holding the maximum.", "",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map or [L,C] sequence from a convolution layer"}},
+        {{"Output", PinType::Tensor, true, "[C] channel maxima; connect a Dense layer"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalAvgPool, NodeCategory::Pooling, "Global Avg Pool", ICON_FA_COMPRESS,
         {"global", "average", "pooling"}, 0, false,
-        "Blocked global average-pooling layer retained for graph compatibility",
-        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training.", "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Channel average; unavailable at runtime while this node is blocked."}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        "Averages each channel over H and W: [H,W,C] -> [C]",
+        "torch adaptive_avg_pool2d(x, 1).flatten(1): ends the convolution section the way Flatten "
+        "does, with one value per channel instead of H x W x C, so the Dense after it needs C inputs.", "",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map from a convolution, pooling or normalisation layer"}},
+        {{"Output", PinType::Tensor, true, "[C] channel averages; connect a Dense layer"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdaptiveAvgPool, NodeCategory::Pooling,
         "Adaptive Average Pool", ICON_FA_COMPRESS,
         {"pooling", "adaptive", "average"}, 0, false,
-        "Blocked adaptive average-pooling design node retained for graph compatibility",
-        "No backend adaptive-pooling layer, GraphCompiler extraction, "
-        "ModelBuilder module, or SequentialModel execution path currently owns this node.",
+        "Average-pools any [H,W,C] feature map to output_size x output_size",
+        "torch.nn.AdaptiveAvgPool2d(output_size): output cell i averages input rows "
+        "floor(i x H / s) .. ceil((i + 1) x H / s) - 1 (likewise columns), so any input size gives the "
+        "same output size. Stays in the convolution section: Flatten or a global pool still ends it.",
         "",
-        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
-        {{"Output", PinType::Tensor, true,
-          "Adaptively pooled feature map; unavailable at runtime while this node is blocked."}},
-        {{"output_size", "int", "1", "Legacy square output size", {}, "1-1048576",
+        {{"Input", PinType::Tensor, true, "[H,W,C] feature map"}},
+        {{"Output", PinType::Tensor, true, "[output_size, output_size, C] feature map"}},
+        {{"output_size", "int", "1", "Output height and width", {}, "1-1048576",
           "Output Size", "Pooling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ConvTranspose2D, NodeCategory::Upsampling, "ConvTranspose2D", ICON_FA_EXPAND,
         {"convtranspose", "transposed", "convolution", "upsample"}, 0, false,
-        "Blocked transposed-convolution layer retained for graph compatibility",
-        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct an executable Studio layer. "
-        "ArrayFire-first forward/backward and training ownership remain unproven.",
+        "Transposed convolution: learned upsampling",
+        "Enlarges the sample by the stride (PyTorch ConvTranspose2d rules: (H-1)*stride - "
+        "2*padding + kernel + output_padding) with out_channels channels. The input channel "
+        "count comes from the layer before it. Runs on ArrayFire.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+          "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
-        {{"in_channels", "int", "64", "Legacy input-channel count", {}, "1-1048576",
+          "Upsampled feature map [H', W', out_channels]."}},
+        {{"in_channels", "int", "64", "Expected input channels (the compiler uses the actual count)", {}, "1-1048576",
           "Input Channels", "Transposed Convolution", true, false},
-         {"out_channels", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+         {"out_channels", "int", "32", "Output channels", {}, "1-1048576",
           "Output Channels", "Transposed Convolution", true, false},
-         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+         {"kernel_size", "int", "3", "Square kernel size", {}, "1-1048576",
           "Kernel Size", "Transposed Convolution", true, false},
-         {"stride", "int", "2", "Legacy spatial stride", {}, "1-1048576",
+         {"stride", "int", "2", "Spatial stride (the upsampling factor)", {}, "1-1048576",
           "Stride", "Transposed Convolution", true, false},
-         {"padding", "int", "1", "Legacy symmetric input padding", {}, "0-1048576",
+         {"padding", "int", "1", "Symmetric input padding", {}, "0-1048576",
           "Padding", "Transposed Convolution", true, false},
-         {"output_padding", "int", "1", "Legacy output-shape adjustment", {}, "0-1048576",
+         {"output_padding", "int", "1", "Extra size on one side of the output (smaller than the stride)", {}, "0-1048576",
           "Output Padding", "Transposed Convolution", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
         {"upsample", "resize", "interpolate"}, 0, false,
-        "Blocked spatial upsampling layer retained for graph compatibility",
-        "ArrayFire-first nearest/bilinear execution and exact ModelBuilder construction exist. "
-        "Studio remains blocked pending spatial batch-layout and saved-graph training integration. "
-        "Interpolation codes remain 0=nearest and 1=bilinear for saved-graph compatibility.",
+        "Enlarge the sample by a whole factor",
+        "Nearest or bilinear interpolation on ArrayFire; height and width are multiplied by the "
+        "scale factor, the channels stay. Interpolation codes: 0=nearest, 1=bilinear.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+          "Image feature map [H, W, C] per sample."}},
         {{"Output", PinType::Tensor, true,
-          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
-        {{"scale_factor", "int", "2", "Legacy positive spatial scale", {}, "1-1048576",
+          "Upsampled feature map [H*scale, W*scale, C]."}},
+        {{"scale_factor", "int", "2", "Positive spatial scale", {}, "1-1048576",
           "Scale Factor", "Upsampling", true, false},
-         {"mode", "enum", "0", "Legacy interpolation code: 0=nearest, 1=bilinear",
+         {"mode", "enum", "0", "Interpolation: 0=nearest, 1=bilinear",
           {"0", "1"}, "", "Interpolation Mode", "Upsampling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PixelShuffle, NodeCategory::Upsampling, "Pixel Shuffle", ICON_FA_EXPAND,
         {"pixel", "shuffle", "subpixel", "upsample"}, 0, false,
-        "Blocked depth-to-space layer retained for graph compatibility",
-        "ArrayFire-first depth-to-space execution, channel-divisibility validation, "
-        "and exact ModelBuilder construction exist. Studio remains blocked pending "
-        "spatial batch-layout and saved-graph training integration.",
+        "Depth to space: trade channels for resolution",
+        "Rearranges channels into a larger sample (PyTorch PixelShuffle): the channel count must "
+        "be divisible by the square of the upscale factor. Runs on ArrayFire.",
         "",
         {{"Input", PinType::Tensor, true,
-          "Legacy image feature map whose channels must be divisible by upscale_factor squared."}},
+          "Image feature map [H, W, C] per sample, C divisible by upscale_factor squared."}},
         {{"Output", PinType::Tensor, true,
-          "Depth-to-space result; unavailable at runtime while this node is blocked."}},
-        {{"upscale_factor", "int", "2", "Legacy positive spatial upscale factor", {}, "1-1048576",
+          "Feature map [H*r, W*r, C/r^2]."}},
+        {{"upscale_factor", "int", "2", "Positive spatial upscale factor", {}, "1-1048576",
           "Upscale Factor", "Upsampling", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,
         {"flatten", "reshape"}, 0, false, "Collapse each sample to one feature dimension", "", "",
@@ -2755,11 +2949,16 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Split, NodeCategory::ShapeOps, "Split", ICON_FA_CODE_BRANCH,
-        {"split", "chunk", "shape", "tensor"}, 0, false, "Split tensor along a dimension", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output 1", PinType::Tensor, true, "First split"}, {"Output 2", PinType::Tensor, true, "Second split"}},
-        {{"split_size", "int", "2", "Split size", {}, ""}, {"dim", "int", "0", "Dimension", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {"split", "chunk", "branch", "shape", "tensor"}, 0, false,
+        "Split a tensor in two along a sample dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor to split"}},
+        {{"Output 1", PinType::Tensor, true, "The first split_size entries along dim"},
+         {"Output 2", PinType::Tensor, false, "The remaining entries along dim (may stay unconnected)"}},
+        {{"split_size", "int", "2", "Entries in Output 1; Output 2 takes the rest", {}, "1-1048576",
+          "Split size", "Split", true, false},
+         {"dim", "int", "1", "Batched dimension to split (1 = features; 0, the batch, is refused)", {}, "",
+          "Dimension", "Split", true, false}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Concatenate, NodeCategory::MergeOps, "Concatenate", ICON_FA_CODE_BRANCH,
         {"concatenate", "concat", "cat", "merge", "tensor"}, 0, false, "Concatenate tensors along a dimension", "", "",
@@ -2921,11 +3120,15 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBatchMatMul, NodeCategory::Analytics, "Tensor Batch MatMul", ICON_FA_CALCULATOR,
-        {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Blocked batched matrix multiplication retained for graph compatibility", "", "",
-        {{"A", PinType::Tensor, true, "Left tensor [batch, rows, inner]"},
-         {"B", PinType::Tensor, true, "Right tensor [batch, inner, columns] with the same data type"}},
+        {"tensor", "batch", "matmul", "matrix", "linalg", "bmm"}, 0, false,
+        "Multiply two matrices per sample (torch.bmm)",
+        "Per sample A [rows, inner] times B [inner, columns] gives [rows, columns]; A is the first input, B the "
+        "second (the order matters). Both usually come from branches of the same graph. Trains: the gradient "
+        "goes to both inputs (dA = G B^T, dB = A^T G).", "",
+        {{"A", PinType::Tensor, true, "Left matrix per sample [batch, rows, inner]"},
+         {"B", PinType::Tensor, true, "Right matrix per sample [batch, inner, columns], same data type"}},
         {{"Output", PinType::Tensor, true, "Batched matrix product [batch, rows, columns]"}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorCompare, NodeCategory::Analytics, "Tensor Compare", ICON_FA_CALCULATOR,
         {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare A with a scalar or a second tensor", "", "",
@@ -3020,6 +3223,26 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
         {{"alpha", "float", "1.0", "Positive negative-saturation scale", {}, ">0"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SELU, NodeCategory::Activation, "SELU", ICON_FA_BOLT,
+        {"selu", "activation", "self-normalizing"}, 0, false, "Scaled exponential linear unit",
+        "scale * (x if x > 0 else alpha * (exp(x) - 1)) with the fixed constants of Klambauer et al. "
+        "(PyTorch SELU); keeps activations self-normalising in deep Dense stacks.", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::PReLU, NodeCategory::Activation, "PReLU", ICON_FA_BOLT,
+        {"prelu", "parametric", "relu", "activation"}, 0, false, "ReLU with a learned negative slope",
+        "max(0, x) + a * min(0, x) with a learned (PyTorch PReLU): one shared slope, or one per feature "
+        "of the input's dimension 1 ([batch, features] rows). Inside a convolution section only the "
+        "shared slope applies.", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {{"num_parameters", "int", "1", "1 = one shared slope; otherwise one slope per input feature",
+          {}, "1-1048576", "Slopes", "PReLU", true, false},
+         {"init", "float", "0.25", "Initial value of every slope", {}, "", "Initial slope", "PReLU", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Swish, NodeCategory::Activation, "Swish", ICON_FA_BOLT,
@@ -3294,83 +3517,98 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
+    // Learning-rate schedulers (TOFIX140 A3): fed by the optimizer's State
+    // output; GraphCompiler turns the one on the training optimizer into
+    // TrainingConfiguration::scheduler and TrainingExecutor steps it after
+    // each epoch (Reduce LR: after each validated epoch) and checkpoints it.
+    const PortDefinition scheduler_input{"Optimizer", PinType::Optimizer, true,
+                                        "The training optimizer's State output; this scheduler sets its learning rate"};
     RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,
-        {"step", "scheduler"}, 0, false,
-        "Blocked legacy step learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"step_size", "int", "10", "Legacy epoch interval retained for saved graphs", {}, "", "Step size", "Compatibility"},
-         {"gamma", "float", "0.1", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"step", "scheduler", "learning rate", "decay"}, 0, false,
+        "Multiplies the learning rate by gamma every step_size epochs",
+        "torch.optim.lr_scheduler.StepLR: lr = learning_rate x gamma^floor(epoch / step_size), stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"step_size", "int", "10", "Epochs between decays", {}, "1-1000000", "Step size", "Schedule"},
+         {"gamma", "float", "0.1", "Factor applied at each decay", {}, "0.0-1000000.0", "Gamma", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SINE,
-        {"cosine", "scheduler"}, 0, false,
-        "Blocked legacy cosine-annealing scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"T_max", "int", "100", "Legacy annealing period retained for saved graphs", {}, "", "T max", "Compatibility"},
-         {"eta_min", "float", "0.0", "Legacy minimum learning rate retained for saved graphs", {}, "", "Minimum learning rate", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"cosine", "annealing", "scheduler", "learning rate"}, 0, false,
+        "Anneals the learning rate along a cosine to eta_min over T_max epochs",
+        "torch.optim.lr_scheduler.CosineAnnealingLR: lr = eta_min + (learning_rate - eta_min) x (1 + cos(pi x epoch / T_max)) / 2, stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"T_max", "int", "100", "Epochs from learning_rate down to eta_min (usually the run's epoch count)", {}, "1-1000000", "T max", "Schedule"},
+         {"eta_min", "float", "0.0", "Lowest learning rate", {}, "0.0-1000000.0", "Minimum learning rate", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ReduceOnPlateau, NodeCategory::Training, "Reduce LR", ICON_FA_GRADUATION_CAP,
-        {"plateau", "scheduler"}, 0, false,
-        "Blocked legacy reduce-on-plateau scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"mode", "enum", "min", "Legacy monitored-metric direction retained for saved graphs", {"min", "max"}, "", "Mode", "Compatibility"},
-         {"factor", "float", "0.1", "Legacy multiplicative reduction retained for saved graphs", {}, "", "Factor", "Compatibility"},
-         {"patience", "int", "10", "Legacy plateau patience retained for saved graphs", {}, "", "Patience", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"plateau", "reduce", "scheduler", "learning rate"}, 0, false,
+        "Cuts the learning rate when the validation loss stops improving",
+        "torch.optim.lr_scheduler.ReduceLROnPlateau(mode='min', threshold_mode='abs', cooldown=0) on the validation loss, stepped after each epoch that ran validation. Needs validation data.", "",
+        {scheduler_input}, {},
+        {{"factor", "float", "0.1", "Factor applied when the loss plateaus", {}, "0.0-0.999999", "Factor", "Schedule"},
+         {"patience", "int", "10", "Validated epochs without improvement before a cut", {}, "0-1000000", "Patience", "Schedule"},
+         {"threshold", "float", "0.0001", "Smallest decrease of the validation loss that counts as improvement (absolute)", {}, "0.0-1000000.0", "Threshold", "Schedule"},
+         {"min_lr", "float", "0.0", "Learning rate floor", {}, "0.0-1000000.0", "Minimum learning rate", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExponentialLR, NodeCategory::Training, "Exponential LR", ICON_FA_GRADUATION_CAP,
-        {"exponential", "scheduler"}, 0, false,
-        "Blocked legacy exponential learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"gamma", "float", "0.95", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"exponential", "scheduler", "learning rate", "decay"}, 0, false,
+        "Multiplies the learning rate by gamma after every epoch",
+        "torch.optim.lr_scheduler.ExponentialLR: lr = learning_rate x gamma^epoch, stepped after each completed epoch.", "",
+        {scheduler_input}, {},
+        {{"gamma", "float", "0.95", "Factor applied after each epoch", {}, "0.0-1000000.0", "Gamma", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::WarmupScheduler, NodeCategory::Training, "Warmup LR", ICON_FA_GRADUATION_CAP,
-        {"warmup", "scheduler"}, 0, false,
-        "Blocked legacy warmup learning-rate scheduler preview",
-        "Saved-graph compatibility contract only. Backend warmup primitives exist, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint one for this node.", "",
-        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
-        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
-        {{"warmup_steps", "int", "1000", "Legacy warmup duration retained for saved graphs", {}, "", "Warmup steps", "Compatibility"},
-         {"warmup_ratio", "float", "0.1", "Legacy starting-rate ratio retained for saved graphs", {}, "", "Warmup ratio", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"warmup", "linear", "scheduler", "learning rate"}, 0, false,
+        "Ramps the learning rate up linearly over the first epochs",
+        "torch.optim.lr_scheduler.LinearLR(start_factor, end_factor=1.0, total_iters=warmup_epochs): lr = learning_rate x (start_factor + (1 - start_factor) x min(epoch / warmup_epochs, 1)), stepped after each completed epoch. For per-update warmup with decay, use the optimizer's lr_schedule instead.", "",
+        {scheduler_input}, {},
+        {{"warmup_epochs", "int", "5", "Epochs to reach learning_rate", {}, "1-1000000", "Warmup epochs", "Schedule"},
+         {"start_factor", "float", "0.1", "First epoch's learning rate as a fraction of learning_rate (above 0, at most 1)", {}, "0.000001-1.0", "Start factor", "Schedule"}},
+        NodeImplementationStatus::Implemented, 0});
 
+    // Regularization penalties (TOFIX140 A4): wired between the loss and the
+    // optimizer (Loss -> L2 -> Optimizer). GraphCompiler turns the one on the
+    // training loss into TrainingConfiguration::regularization and
+    // TrainingExecutor adds the penalty's gradient to every optimizer step.
+    const PortDefinition penalty_input{"Loss", PinType::Loss, true,
+                                       "The training loss output"};
+    const PortDefinition penalty_output{"Loss", PinType::Loss, true,
+                                        "The loss plus the penalty; connect it to the optimizer's Loss input"};
     RegisterNode({NodeType::L1Regularization, NodeCategory::Regularization, "L1 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l1", "regularization"}, 0, false,
-        "Blocked legacy L1 penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"l1", "lasso", "penalty", "regularization"}, 0, false,
+        "Adds lambda x the sum of absolute parameter values to the loss",
+        "loss = loss + lambda x sum(|w|) over every trainable parameter (weights and biases), as in PyTorch's "
+        "loss + lam * sum(p.abs().sum() for p in model.parameters()). Its gradient lambda x sign(w) joins every "
+        "optimizer step before gradient clipping. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::L2Regularization, NodeCategory::Regularization, "L2 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l2", "regularization"}, 0, false,
-        "Blocked legacy L2 penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss. AdamW weight decay is a separate optimizer behavior.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"l2", "ridge", "penalty", "regularization"}, 0, false,
+        "Adds lambda x the sum of squared parameter values to the loss",
+        "loss = loss + lambda x sum(w^2) over every trainable parameter (weights and biases), as in PyTorch's "
+        "loss + lam * sum(p.pow(2).sum() for p in model.parameters()). Its gradient 2 x lambda x w joins every "
+        "optimizer step before gradient clipping. With SGD this equals the optimizer's weight_decay = 2 x lambda; "
+        "with Adam the penalty passes through the moment estimates, and AdamW's weight_decay is decoupled, so "
+        "they differ. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ElasticNet, NodeCategory::Regularization, "Elastic Net", ICON_FA_GRADUATION_CAP,
-        {"elasticnet", "regularization"}, 0, false,
-        "Blocked legacy Elastic Net penalty preview",
-        "Saved-graph compatibility contract only. No Engine owner reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss.", "",
-        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
-        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
-        {{"lambda", "float", "0.01", "Legacy overall penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"},
-         {"l1_ratio", "float", "0.5", "Legacy L1 share retained for saved graphs", {}, "", "L1 ratio", "Compatibility"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"elasticnet", "elastic net", "penalty", "regularization"}, 0, false,
+        "Adds a mix of the L1 and L2 penalties to the loss",
+        "loss = loss + lambda x (l1_ratio x sum(|w|) + (1 - l1_ratio) x sum(w^2)) over every trainable parameter "
+        "(weights and biases). l1_ratio 1 is L1 Regularization, 0 is L2 Regularization. The gradient joins every "
+        "optimizer step before gradient clipping. The reported training loss is the data loss without the penalty.", "",
+        {penalty_input}, {penalty_output},
+        {{"lambda", "float", "0.01", "Penalty strength", {}, "0.0-1000000.0", "Lambda", "Penalty"},
+         {"l1_ratio", "float", "0.5", "Share of the L1 term (0 to 1); the rest is L2", {}, "0.0-1.0", "L1 ratio", "Penalty"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Output, NodeCategory::Training, "Output", ICON_FA_ARROW_RIGHT,
         {"output", "final", "predictions", "classes"}, 0, false,
@@ -3391,121 +3629,145 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairDatasetBuilder, NodeCategory::Training, "Pair Dataset Builder", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "pair", "siamese"}, 0, false,
-        "Blocked metric-learning pair-batch contract",
-        "Preserves pair-column and label-convention settings for saved graphs. A production owner must materialize those columns as device-ready paired tensors before this node can execute.", "",
-        {{"Rows", PinType::Dataset, true, "Source rows with sample A/B columns and labels"}},
-        {{"Pair Batch", PinType::Dataset, true, "Typed PairBatch payload"}},
-        {{"sample_a_column", "string", "", "First sample column", {}, ""},
-         {"sample_b_column", "string", "", "Second sample column", {}, ""},
-         {"pair_label_column", "string", "", "Pair label column", {}, ""},
-         {"label_convention", "enum", "contrastive_zero_similar", "Label convention",
-          {"contrastive_zero_similar", "cosine_one_similar"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "siamese", "embedding"}, 0, false,
+        "Turns each batch of class-labelled rows into same-class and different-class pairs",
+        "For every row of a batch it picks a partner from the same batch, using the Data node's label column as "
+        "the class id: rows take a same-class partner and an other-class partner in turn (the other kind when "
+        "one is missing). The model then sees the stacked batch [firsts; seconds] and runs once over it, so one "
+        "encoder embeds both sides; the pair labels (similar or not) go to the loss. Picks depend on the "
+        "DataLoader seed, epoch, batch and row only, so runs replay. Mining 'hard' instead passes the batch "
+        "through and the loss takes, for every row, its farthest same-class row and its closest other-class "
+        "row from the embeddings. Needs a Contrastive or Cosine Embedding Loss.", "",
+        {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
+        {{"Pairs", PinType::Tensor, true, "Stacked [firsts; seconds] rows (random) or the batch (hard)"}},
+        {{"mining", "enum", "random", "How partners are picked: random in-batch picks, or the hardest ones "
+          "from the embeddings", {"random", "hard"}, "", "Mining", "Sampling"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "triplet", "siamese"}, 0, false,
-        "Blocked metric-learning triplet-batch contract",
-        "Preserves anchor, positive, and negative column settings for saved graphs. A production owner must materialize those columns as device-ready triplet tensors before this node can execute.", "",
-        {{"Rows", PinType::Dataset, true, "Source rows with triplet sample columns"}},
-        {{"Triplet Batch", PinType::Dataset, true, "Typed TripletBatch payload"}},
-        {{"anchor_column", "string", "", "Anchor sample column", {}, ""},
-         {"positive_column", "string", "", "Positive sample column", {}, ""},
-         {"negative_column", "string", "", "Negative sample column", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
-    RegisterNode({NodeType::SharedEncoder, NodeCategory::Training, "Shared Encoder", ICON_FA_SHARE_NODES,
-        {"metric", "learning", "shared", "encoder", "siamese"}, 0, false,
-        "Blocked metric-learning shared-encoder contract",
-        "Declares one encoder identity for saved metric-learning graphs. Visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented.", "",
-        {{"Encoder", PinType::Tensor, true, "Encoder layer chain"}},
-        {{"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
-        {{"encoder_id", "string", "shared_encoder", "Shared encoder id", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
-    RegisterNode({NodeType::SiameseBranch, NodeCategory::Training, "Siamese Branch", ICON_FA_CODE_BRANCH,
-        {"metric", "learning", "branch", "siamese"}, 0, false,
-        "Blocked metric-learning encoder-branch contract",
-        "Preserves a branch role and shared-encoder reference for saved graphs. The visual runtime does not yet route branch tensors through shared parameters.", "",
-        {{"Input", PinType::Tensor, true, "Branch input"},
-         {"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
-        {{"Embedding", PinType::Tensor, true, "Branch embedding"}},
-        {{"branch", "enum", "a", "Branch role", {"a", "b", "anchor", "positive", "negative"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "triplet", "siamese", "embedding"}, 0, false,
+        "Turns each batch of class-labelled rows into anchor, positive and negative rows",
+        "For every row of a batch it picks a positive from the other rows of the same class and a negative "
+        "from the rows of other classes, using the Data node's label column as the class id. The model then sees "
+        "the stacked batch [anchors; positives; negatives] and runs once over it, so one encoder (one set of "
+        "weights) embeds all three. Rows whose class has no other row in the batch are not anchors; a batch "
+        "with no triplet is skipped. Picks depend on the DataLoader seed, epoch, batch and row only, so runs "
+        "replay. Mining 'hard' or 'semi_hard' instead passes the batch through and the loss picks from the "
+        "embeddings: hard = for every row its farthest same-class and closest other-class row; semi_hard = for "
+        "every same-class pair, the closest other-class row farther away than the pair (FaceNet). Needs a "
+        "Triplet Loss.", "",
+        {{"Data", PinType::Tensor, true, "Class-labelled feature rows from the Data node"}},
+        {{"Triplets", PinType::Tensor, true, "Stacked [anchors; positives; negatives] rows (random) or the batch"}},
+        {{"mining", "enum", "random", "How positives and negatives are picked: random in-batch picks, or hard / "
+          "semi-hard ones from the embeddings", {"random", "hard", "semi_hard"}, "", "Mining", "Sampling"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "contrastive", "loss"}, 0, false,
-        "Blocked metric-learning contrastive-loss contract",
-        "Uses the saved-graph convention 0=similar and 1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Loss", PinType::Loss, true, "Contrastive loss"}},
-        {{"margin", "float", "1.0", "Distance margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "contrastive", "siamese", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Pulls same-class pairs together and pushes other pairs at least a margin apart",
+        "loss = mean over pairs of d^2 for a same-class pair and max(0, margin - d)^2 otherwise, d the Euclidean "
+        "distance between the two embeddings. Splits the stacked [firsts; seconds] embeddings from the Pair "
+        "Dataset Builder. Accuracy calls a pair similar when d < margin / 2.", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [2P, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "1.0", "Distance other-class pairs are pushed beyond", {}, "0.0-1000000.0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CosineEmbeddingLoss, NodeCategory::Training, "Cosine Embedding Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "cosine", "loss"}, 0, false,
-        "Blocked metric-learning cosine-loss contract",
-        "Uses the saved-graph convention 1=similar and -1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Loss", PinType::Loss, true, "Cosine embedding loss"}},
-        {{"margin", "float", "0.0", "Cosine margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "cosine", "siamese", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Turns same-class pairs to the same direction and other pairs below a cosine margin",
+        "loss = mean over pairs of 1 - cos(a, b) for a same-class pair and max(0, cos(a, b) - margin) otherwise "
+        "(torch.nn.functional.cosine_embedding_loss). Splits the stacked [firsts; seconds] embeddings from the "
+        "Pair Dataset Builder. Accuracy calls a pair similar when cos(a, b) > (1 + margin) / 2.", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [2P, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "0.0", "Cosine above which other-class pairs are penalised", {}, "-1.0-1.0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TripletLoss, NodeCategory::Training, "Triplet Loss", ICON_FA_SCALE_BALANCED,
-        {"metric", "learning", "triplet", "loss"}, 0, false,
-        "Blocked metric-learning triplet-loss contract",
-        "Preserves the margin for anchor, positive, and negative embeddings. A backend primitive exists, but the visual training path does not own the triplet/shared-encoder update.", "",
-        {{"Anchor", PinType::Tensor, true, "Anchor embedding"},
-         {"Positive", PinType::Tensor, true, "Positive embedding"},
-         {"Negative", PinType::Tensor, true, "Negative embedding"}},
-        {{"Loss", PinType::Loss, true, "Triplet loss"}},
-        {{"margin", "float", "1.0", "Triplet margin", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "triplet", "embedding", "criterion", "objective", "loss"}, 0, false,
+        "Pulls same-class embeddings together and pushes other classes at least a margin further away",
+        "loss = mean over triplets of max(0, d(a, p) - d(a, n) + margin), d the Euclidean distance "
+        "(torch.nn.functional.triplet_margin_loss, p = 2). Splits the stacked [anchors; positives; negatives] "
+        "embeddings from the Triplet Dataset Builder and returns their gradient stacked the same way. Accuracy "
+        "is the triplet accuracy: the share of triplets with d(a, p) < d(a, n).", "",
+        {{"Embeddings", PinType::Tensor, true, "Stacked [3T, D] embeddings from the encoder"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"margin", "float", "1.0", "How much further a negative must be than the positive", {}, ">0",
+          "Margin", "Loss"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairMetrics, NodeCategory::Training, "Pair Metrics", ICON_FA_CHART_LINE,
-        {"metric", "learning", "pair", "metrics"}, 0, false,
-        "Blocked metric-learning pair-metrics contract",
-        "Preserves the distance threshold for saved graphs. The visual runtime does not yet compute and report pair metrics from routed embedding batches.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"},
-         {"Labels", PinType::Labels, true, "Pair labels"}},
-        {{"Metrics", PinType::Dataset, true, "Pair metric rows"}},
-        {{"threshold", "float", "0.5", "Distance threshold", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "metrics", "verification", "evaluation"}, 0, false,
+        "Measures how well a metric model tells same-class pairs from other pairs",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. At every validated epoch "
+        "(validation rows), at the end of training (held-out test rows) and in the Test step, each row of a "
+        "batch is paired with a same-class or an other-class row of that batch in turn (seeded by the Data "
+        "Loader seed) and a pair is called similar when the Euclidean distance of its embeddings is at most "
+        "the threshold. Reports the pair accuracy and the mean distance of same-class and of other-class "
+        "pairs. Cosine Embedding models are measured on L2-normalised embeddings.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"threshold", "float", "0.5", "Distance at or below which a pair is called similar", {}, "0.0-1000000.0",
+          "Threshold", "Metrics"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RetrievalMetrics, NodeCategory::Training, "Retrieval Metrics", ICON_FA_CHART_LINE,
-        {"metric", "learning", "retrieval", "metrics"}, 0, false,
-        "Blocked metric-learning retrieval-metrics contract",
-        "Preserves the retrieval cutoff for recall@k, MRR, and nearest-neighbor agreement. The visual runtime does not yet own metric computation and reporting.", "",
-        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"},
-         {"Class IDs", PinType::Labels, true, "Class ids"}},
-        {{"Metrics", PinType::Dataset, true, "Retrieval metric rows"}},
-        {{"k", "int", "10", "Retrieval cutoff", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "retrieval", "metrics", "recall", "mrr", "evaluation"}, 0, false,
+        "Measures how well a metric model finds rows of the same class among their nearest neighbours",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. At every validated epoch "
+        "(validation rows), at the end of training (held-out test rows) and in the Test step, every row is a "
+        "query against all the other rows (leave-one-out, Euclidean distance; up to 4096 rows): Recall@k is "
+        "the share of queries with a same-class row among their k nearest, MRR the mean of 1 / rank of the "
+        "first same-class row, 1-NN agreement the share whose nearest row is of their class. Cosine "
+        "Embedding models are measured on L2-normalised embeddings.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"k", "int", "10", "How many nearest rows Recall@k looks at", {}, "1-1000", "k", "Metrics"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::EmbeddingOutput, NodeCategory::Training, "Embedding Output", ICON_FA_CUBE,
-        {"metric", "learning", "embedding", "output"}, 0, false,
-        "Blocked metric-learning embedding-output contract",
-        "Preserves embedding-output metadata settings for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
-        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"}},
-        {{"Embedding Records", PinType::Dataset, true, "Embedding output records"}},
-        {{"include_metadata", "bool", "true", "Include sample/class metadata", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "embedding", "output", "export", "parquet"}, 0, false,
+        "Writes the trained encoder's embeddings of a partition to a Parquet file",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. After training, every row "
+        "of the chosen partition (all, train, validation or test) goes through the trained encoder once and "
+        "the file gets one row per data row: columns e0 .. e(D-1) and, with metadata, the class id, the "
+        "partition and the row's position in it. A relative path is taken from the project folder. Load the "
+        "file with a Data Input to plot it (a 2-D embedding is a scatter coloured by class).", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"},
+         {"Class IDs", PinType::Labels, true, "Class ids from the Data node's label column"}},
+        {},
+        {{"file_path", "string", "exports/embeddings.parquet", "Parquet file to write (relative: in the project)", {},
+          "", "File", "Output"},
+         {"partition", "enum", "all", "Which rows to embed", {"all", "train", "validation", "test"}, "",
+          "Rows", "Output"},
+         {"include_metadata", "bool", "true", "Add the class id, partition and row columns", {}, "",
+          "Metadata", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairScoreOutput, NodeCategory::Training, "Pair Score Output", ICON_FA_CHART_LINE,
-        {"metric", "learning", "pair", "score", "output"}, 0, false,
-        "Blocked metric-learning pair-score output contract",
-        "Preserves distance or similarity scoring mode for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
-        {{"Embedding A", PinType::Tensor, true, "First embedding"},
-         {"Embedding B", PinType::Tensor, true, "Second embedding"}},
-        {{"Pair Scores", PinType::Dataset, true, "Pair score records"}},
-        {{"score_mode", "enum", "distance", "Score mode",
-          {"distance", "negative_distance", "cosine_similarity"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"metric", "learning", "pair", "score", "output", "verification", "serving"}, 0, false,
+        "Sets how the trained model scores pairs when it is served",
+        "Side node on the encoder output of a Pair / Triplet Dataset Builder graph. Its score mode and "
+        "threshold are saved with the trained model; the local inference server's /v1/pair-score uses them "
+        "when a request gives no score_mode, and answers same / different: same when the distance is at most "
+        "the threshold (distance), the negative distance at least -threshold (negative_distance), or the "
+        "cosine similarity at least the threshold (cosine_similarity). Pair Metrics shows which threshold "
+        "separates same-class from other-class pairs.", "",
+        {{"Embeddings", PinType::Tensor, true, "The encoder output (the layer that feeds the loss)"}},
+        {},
+        {{"score_mode", "enum", "distance", "What a pair's score is",
+          {"distance", "negative_distance", "cosine_similarity"}, "", "Score", "Serving"},
+         {"threshold", "float", "0.5", "Where same / different is decided (see the help)", {}, "", "Threshold",
+          "Serving"}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
@@ -3556,12 +3818,15 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         {"tokenize", "text", "nlp", "vocabulary", "padding"}, 0, false,
         "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Tokens", PinType::Tensor, true, "Token indices"}},
+        {{"Tokens", PinType::Dataset, true, "Token table: the token id columns and the label, for Data Split"}},
         {{"tokenizer_type", "enum", "1", "Mode (3: Byte BPE; 4: WordPiece; 5/6: optional SentencePiece; Byte BPE lowercase=false)", {"0", "1", "2", "3", "4", "5", "6"}, ""},
          {"text_col", "string", "", "Text column", {}, "Required for encoding and round-trip modes; ignored by decode mode."},
          {"output_mode", "enum", "wide", "Token output", {"wide", "causal_windows", "decode", "roundtrip"}, ""},
          {"document_id_col", "string", "", "Unique document ID column (windows)", {}, ""},
          {"split_col", "string", "split", "Source split column (windows)", {}, ""},
+         {"target_text_col", "string", "",
+          "Supervised fine-tuning (causal_windows output only). Each row becomes one training window: the Text column (the prompt), then this column (the answer) plus EOS. The loss counts only the answer's tokens, so the model learns to answer the prompt instead of learning to repeat it. Needs an existing vocabulary file; a row longer than one window stops the run with its document id. Empty = ordinary windows where every token is a target.",
+          {}, "", "Response column"},
          {"token_ids_col", "string", "token_ids", "Token ID list column (decode)", {}, "String column containing IDs separated by spaces or commas; decode mode falls back to tok_0..tok_n when absent."},
          {"label_col", "string", "", "Label column", {}, ""},
          {"max_length", "int", "256", "Max sequence length", {}, ""},
@@ -3655,14 +3920,17 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 // Time Series Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
-    // Check step (data_studio_design.md 5.3): count checks, stop on failure.
+    // Check step (data_studio_design.md 5.3; TOFIX148 D4, one check model):
+    // row counts, allowed values, unique, not empty, range; stop on failure.
     RegisterNode({NodeType::RowCountCheck, NodeCategory::DataTransform,
-        "Row Count Check", ICON_FA_CHECK_DOUBLE,
-        {"check", "count", "rows", "expect", "quality"}, 0, false,
-        "Stop the run unless the row count matches the expectation", "", "",
+        "Check", ICON_FA_CHECK_DOUBLE,
+        {"check", "count", "rows", "expect", "quality", "allowed", "unique", "empty", "range"}, 0, false,
+        "Stop the run unless the data holds: a row count, allowed values, unique, not empty or a range", "", "",
         {{"Data", PinType::Dataset, true, "Input table"}},
         {{"Data", PinType::Dataset, true, "The same table, when the check passes"}},
         {{"check_name", "string", "", "Label shown when the check fails", {}, ""},
+         {"check", "enum", "row_count", "What is checked",
+          {"row_count", "allowed_values", "unique", "not_empty", "range"}, ""},
          {"expected_rows", "string", "", "Exact number of rows expected", {}, ""},
          {"min_rows", "string", "", "Fewest rows allowed", {}, ""},
          {"max_rows", "string", "", "Most rows allowed", {}, ""},
@@ -3670,6 +3938,11 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
           "Count only rows where this boolean column is true", {}, ""},
          {"count_column", "string", "", "Count only rows where this column equals count_value", {}, ""},
          {"count_value", "string", "", "Value to match in count_column (compared as text)", {}, ""},
+         {"column", "string", "", "allowed_values, not_empty, range: the column checked", {}, ""},
+         {"columns", "string", "", "unique: the columns whose values must not repeat (comma list)", {}, ""},
+         {"allowed", "string", "", "allowed_values: the values allowed (comma list, compared as text)", {}, ""},
+         {"min_value", "string", "", "range: the smallest value allowed", {}, ""},
+         {"max_value", "string", "", "range: the largest value allowed", {}, ""},
          {"on_failure", "enum", "stop", "What a failed check does", {"stop"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -4152,14 +4425,14 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Vectors", PinType::Dataset, true, "Dense Arrow columns or immutable sparse CSR features with optional y labels; fitted state preserves the term-to-column mapping"}},
         {{"text_col", "string", "", "Text column", {}, "Required string/large_string column to vectorize.", "", "", true, false},
          {"label_col", "string", "", "Label column", {}, "Optional label column copied to output as y."},
-         {"max_features", "int", "2000", "Max vocabulary size", {}, "Dense output width cap. Memory scales as rows x max_features x float32 before temporary materializer overhead."},
+         {"max_features", "int", "2000", "Max vocabulary size: the dense output width cap. Memory scales as rows x max_features x float32 before temporary materializer overhead.", {}, "1-2147483647"},
          {"min_df", "int", "1", "Min document frequency", {}, "Keep terms appearing in at least this many documents."},
          {"use_idf", "bool", "true", "Use IDF", {}, "Apply inverse-document-frequency weighting."},
          {"smooth_idf", "bool", "true", "Smooth IDF", {}, "Use smoothed IDF to avoid zero-division and soften rare-term weights."},
          {"norm", "dropdown", "l2", "Row normalization", {"l1", "l2", "none"}, "Normalize each output feature row."},
-         {"ngram_range", "dropdown", "1,1", "N-gram range", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}, "Canonical minimum,maximum n-gram sizes. Larger ranges increase vocabulary planning and dense output cost."},
+         {"ngram_range", "dropdown", "1,1", "N-gram range: Canonical minimum,maximum n-gram sizes. Larger ranges increase vocabulary planning and dense output cost.", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}, ""},
          {"stop_words", "dropdown", "english", "Stop words", {"english", "none"}, "Use none for sentiment tasks where negation words such as 'not' matter."},
-         {"output_format", "dropdown", "dense", "Output format", {"dense", "sparse"}, "Dense publishes Arrow feature columns. Sparse publishes immutable host CSR and is supported only as the final preprocessing output before a Dense-first, non-sequence training path; batches are densified at Tensor ingress."},
+         {"output_format", "dropdown", "dense", "Output format: Dense publishes Arrow feature columns. Sparse publishes immutable host CSR and is supported only as the final preprocessing output before a Dense-first, non-sequence training path; batches are densified at Tensor ingress.", {"dense", "sparse"}, ""},
          {"operation_mode", "enum", "fit_transform", "Fit a vocabulary and IDF weights on this input or transform with a saved training artifact", {"fit_transform", "transform_only"}, "", "Mode", "Fitted vectorizer state"},
          {"save_state", "bool", "false", "Persist the ordered vocabulary, feature mapping, and IDF weights for validation, test, or inference", {}, "", "Save fitted state", "Fitted vectorizer state"},
          {"state_path", "file", "", "Artifact path to save during Fit + Transform or load during Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted vectorizer state"},
@@ -4173,12 +4446,12 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Vectors", PinType::Dataset, true, "Dense Arrow columns or immutable sparse CSR features with optional y labels; fitted state preserves the term-to-column mapping"}},
         {{"text_col", "string", "", "Text column", {}, "Required string/large_string column to vectorize.", "", "", true, false},
          {"label_col", "string", "", "Label column", {}, "Optional label column copied to output as y."},
-         {"max_features", "int", "2000", "Max vocabulary size", {}, "Dense output width cap. Memory scales as rows x max_features x float32 before temporary materializer overhead."},
+         {"max_features", "int", "2000", "Max vocabulary size: the dense output width cap. Memory scales as rows x max_features x float32 before temporary materializer overhead.", {}, "1-2147483647"},
          {"norm", "dropdown", "l2", "Row normalization", {"l1", "l2", "none"}, "Normalize each output feature row."},
-         {"ngram_range", "dropdown", "1,1", "N-gram range", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}, "Canonical minimum,maximum n-gram sizes. Larger ranges increase vocabulary planning and dense output cost."},
+         {"ngram_range", "dropdown", "1,1", "N-gram range: Canonical minimum,maximum n-gram sizes. Larger ranges increase vocabulary planning and dense output cost.", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}, ""},
          {"stop_words", "dropdown", "english", "Stop words", {"english", "none"}, "Use none for sentiment tasks where negation words such as 'not' matter."},
-         {"binary", "bool", "false", "Binary counts", {}, "When true, output term presence instead of term frequency before optional row normalization."},
-         {"output_format", "dropdown", "dense", "Output format", {"dense", "sparse"}, "Dense publishes Arrow feature columns. Sparse publishes immutable host CSR and is supported only as the final preprocessing output before a Dense-first, non-sequence training path; batches are densified at Tensor ingress."},
+         {"binary", "bool", "false", "Binary counts: When true, output term presence instead of term frequency before optional row normalization.", {}, ""},
+         {"output_format", "dropdown", "dense", "Output format: Dense publishes Arrow feature columns. Sparse publishes immutable host CSR and is supported only as the final preprocessing output before a Dense-first, non-sequence training path; batches are densified at Tensor ingress.", {"dense", "sparse"}, ""},
          {"operation_mode", "enum", "fit_transform", "Fit an ordered vocabulary on this input or transform with a saved training artifact", {"fit_transform", "transform_only"}, "", "Mode", "Fitted vectorizer state"},
          {"save_state", "bool", "false", "Persist the ordered vocabulary and feature mapping for validation, test, or inference", {}, "", "Save fitted state", "Fitted vectorizer state"},
          {"state_path", "file", "", "Artifact path to save during Fit + Transform or load during Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted vectorizer state"},
@@ -4407,23 +4680,42 @@ void NodeMetadataRegistry::InitializeInterpretationNodes() {
 // implementations.
 // =============================================================================
 void NodeMetadataRegistry::InitializeVisualizationNodes() {
-    RegisterNode({NodeType::BarChart, NodeCategory::Visualization, "Bar Chart",
-        ICON_FA_CHART_COLUMN,
-        {"bar", "chart", "distribution", "histogram", "counts", "class"},
+    // One Plot node (TOFIX134 P2, owner D2 revision): the plot type is picked
+    // in its window. It plots the data at its position (the node result
+    // lane runs only the nodes above it); it is not a pipeline step and
+    // training skips it.
+    RegisterNode({NodeType::Plot, NodeCategory::Visualization, "Plot",
+        ICON_FA_CHART_SIMPLE,
+        {"plot", "chart", "graph", "visualize", "histogram", "scatter", "line", "bar", "pie", "box",
+         "violin", "heatmap", "area", "step", "stem", "error", "distribution"},
         0, false,
-        "Count and plot a categorical column. Cat 2 inspection — "
-        "double-click to open the rendering dialog. Pick a dataset + "
-        "column, the chart counts distinct values and renders an "
-        "ImPlot bar chart sorted by frequency with an imbalance flag "
-        "when max/min >= 10x.",
-        "", "",
-        {{"Data", PinType::Tensor, true, "Tabular stream to chart"},
-         {"Labels", PinType::Labels, false, "Optional label stream"}},
+        "A chart of the data at this point; double-click to open it and pick the plot type.",
+        "Connect any table: a Data Input, a transform or an evaluation node. Only the nodes above "
+        "the plot run, in the background; nodes that run only inside training cannot be plotted "
+        "yet and the node says so. The plot type, columns and labels are saved in the node; the "
+        "data is read again, never saved in the graph.",
+        "",
+        {{"Data", PinType::Tensor, false, "The table to plot"}},
         {},
-        {{"chart_type", "dropdown", "bar", "Orient", {"bar", "horizontal_bar"}, ""},
-         {"column", "string", "", "Column", {}, ""},
-         {"title", "string", "Bar Chart", "Title", {}, ""},
-         {"max_bars", "int", "20", "Top-N cap", {}, ""}},
+        {{"plot_spec", "string", "", "Plot settings (set in the Plot window)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    // The Dashboard node (TOFIX134 P3, approved board 13): the same window
+    // family as Plot, starting with an automatic layout of the data at its
+    // position; widgets are KPIs, tables and every plot type.
+    RegisterNode({NodeType::Dashboard, NodeCategory::Visualization, "Dashboard",
+        ICON_FA_TABLE_COLUMNS,
+        {"dashboard", "kpi", "overview", "profile", "explore", "eda", "summary", "report", "widgets", "filter"},
+        0, false,
+        "A dashboard of the data at this point; double-click to open it.",
+        "Connect any table. The dashboard starts with an automatic layout from the data's profile and "
+        "column roles (the target, a card per column, correlations); add, remove and arrange widgets, and "
+        "click a bar to filter every widget. The layout and filters are saved in the node; the data is read "
+        "again, never saved in the graph.",
+        "",
+        {{"Data", PinType::Tensor, false, "The table to look at"}},
+        {},
+        {{"dashboard_spec", "string", "", "Dashboard layout (set in the Dashboard window)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 
@@ -4526,13 +4818,50 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
          {"kernel", "string", "0.25,0.5,0.25", "Required comma-separated finite kernel taps", {}, "", "", "", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
-        {"embeddings", "word2vec", "glove", "vectors", "nlp"}, 0, false,
-        "Word Embeddings", "", "",
-        {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Embeddings", PinType::Dataset, false, "Embeddings"}},
-        {{"method", "dropdown", "word2vec", "Method", {"word2vec", "glove", "fasttext"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode(WithPropertiesEditor({NodeType::WordEmbeddings, NodeCategory::TextProcessing, "Word Embeddings", ICON_FA_CUBE,
+        {"embeddings", "word2vec", "glove", "fasttext", "vectors", "pretrained", "nlp"}, 0, false,
+        "Word vectors from a pretrained file or trained with word2vec, GloVe or fastText",
+        "Reads GloVe / fastText / word2vec vectors (.txt, .vec, .bin) and fastText models (.bin), or trains word2vec "
+        "(skip-gram or CBOW), GloVe or fastText (word2vec with character n-grams) on a text column on the selected "
+        "device, lines them up with a vocabulary (the Text Tokenizer's vocabulary file; with fastText, tokens without "
+        "a vector are built from their n-grams) and saves them for an Embedding layer to load. Optionally adds each "
+        "row's mean word vector as columns.", "",
+        {{"Text", PinType::Dataset, true, "Table with the text column (for training and row vectors)"}},
+        {{"Vectors", PinType::Dataset, false, "word, v_0 .. v_{d-1}: one row per vocabulary token, in token-id order (also saved; an Embedding layer loads the file)"},
+         {"Rows", PinType::Dataset, false, "The input plus emb_0 .. emb_{d-1}, each row's mean word vector (with Row vectors on)"}},
+        {{"source", "enum", "pretrained", "Pretrained vector file, or train word2vec, GloVe or fastText on the text column", {"pretrained", "word2vec", "glove", "fasttext"}, "", "Source", "Source"},
+         {"vectors_file", "file", "", "Pretrained vectors: GloVe .txt, fastText / word2vec .vec, word2vec .bin, fastText model .bin", {}, "*.txt;*.vec;*.bin", "Vector file", "Source"},
+         {"max_words", "int", "0", "Read at most this many words of the file (0: all)", {}, "", "Read at most", "Source"},
+         {"text_col", "string", "", "Text column to train on and to average for row vectors", {}, "", "Text column", "Source"},
+         {"vocab_file", "file", "", "Vocabulary to line the vectors up with (the Text Tokenizer's vocabulary file); empty keeps the vectors' own words", {}, "*.txt", "Vocabulary file", "Vocabulary"},
+         {"lowercase_fallback", "bool", "true", "Look a token up in lowercase when it is not found as written", {}, "", "Match lowercase", "Vocabulary"},
+         {"missing", "enum", "zeros", "Rows of tokens without a vector: zeros, or random at the vectors' spread", {"zeros", "random"}, "", "Missing words", "Vocabulary"},
+         {"unknown", "enum", "mean", "The unknown token's row: the mean vector, or as a missing word", {"mean", "missing"}, "", "Unknown token", "Vocabulary"},
+         {"seed", "int", "0", "Seed of the random rows of missing words", {}, "", "Random seed", "Vocabulary"},
+         {"unseen_words", "enum", "pieces", "fastText: tokens without a vector (with a letter or digit) built from their character n-grams, or treated as missing words", {"pieces", "missing"}, "", "Words not trained", "Vocabulary"},
+         {"architecture", "enum", "skipgram", "word2vec and fastText model: skip-gram predicts the context from a word, CBOW a word from its context", {"skipgram", "cbow"}, "", "Model", "word2vec"},
+         {"vector_size", "int", "100", "Values per word vector (word2vec, GloVe and fastText)", {}, "", "Vector size", "Training"},
+         {"window", "int", "5", "Largest distance between a word and its context", {}, "", "Window", "word2vec"},
+         {"min_count", "int", "5", "Words seen fewer times are left out (word2vec, GloVe and fastText)", {}, "", "Minimum count", "Training"},
+         {"negative", "int", "5", "Noise words per example (negative sampling)", {}, "", "Negative samples", "word2vec"},
+         {"epochs", "int", "5", "Passes over the text", {}, "", "Epochs", "word2vec"},
+         {"sample", "float", "1e-3", "Down-sampling threshold for frequent words (0: off)", {}, "", "Down-sampling", "word2vec", false, true},
+         {"alpha", "float", "0.025", "Starting learning rate", {}, "", "Learning rate", "word2vec", false, true},
+         {"min_alpha", "float", "0.0001", "Learning rate at the end", {}, "", "Final learning rate", "word2vec", false, true},
+         {"batch_size", "int", "2048", "Examples per device step (word2vec and fastText)", {}, "", "Batch", "word2vec", false, true},
+         {"train_seed", "int", "1", "Seed of the initial vectors and the sampling (word2vec, GloVe and fastText); the same seed repeats a run", {}, "", "Seed", "Training"},
+         {"glove_window", "int", "10", "GloVe: largest distance between two counted words (a pair d apart counts 1/d)", {}, "", "Window", "GloVe"},
+         {"glove_epochs", "int", "25", "GloVe: passes over the word pairs", {}, "", "Epochs", "GloVe"},
+         {"x_max", "float", "100", "GloVe: pairs seen more often all weigh the same", {}, "", "Count cap", "GloVe", false, true},
+         {"weighting_power", "float", "0.75", "GloVe: weight of rarer pairs, (count / x_max) to this power", {}, "", "Weighting power", "GloVe", false, true},
+         {"glove_learning_rate", "float", "0.05", "GloVe: AdaGrad learning rate", {}, "", "Learning rate", "GloVe", false, true},
+         {"glove_batch", "int", "8192", "GloVe: word pairs per device step", {}, "", "Batch", "GloVe", false, true},
+         {"min_n", "int", "3", "fastText: shortest character n-gram of \"<word>\"", {}, "", "Pieces from", "fastText"},
+         {"max_n", "int", "6", "fastText: longest character n-gram", {}, "", "Pieces to", "fastText"},
+         {"bucket", "int", "2000000", "fastText: rows the n-grams are hashed into (4 x vector size bytes each on the device)", {}, "", "Buckets", "fastText", false, true},
+         {"vectors_path", "file", "", "Where the vectors are saved (word2vec .vec text); empty saves them in the project's artifacts", {}, "*.vec", "Save vectors", "Outputs"},
+         {"row_vectors", "bool", "false", "Also output each row's mean word vector as columns emb_0 .. emb_{d-1} (Rows pin)", {}, "", "Row vectors", "Outputs"}},
+        NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 
     RegisterNode({NodeType::NamedEntityRecognizer, NodeCategory::TextProcessing, "NER", ICON_FA_TAG,
         {"ner", "named", "entity", "recognition", "nlp"}, 0, false,

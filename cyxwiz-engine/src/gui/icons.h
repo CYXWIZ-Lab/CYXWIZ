@@ -59,6 +59,7 @@
 #define ICON_FA_EYE                 "\xef\x81\xae"  // U+F06E
 #define ICON_FA_EYE_SLASH           "\xef\x81\xb0"  // U+F070
 #define ICON_FA_BARS                "\xef\x83\x89"  // U+F0C9
+#define ICON_FA_ELLIPSIS            "\xef\x85\x81"  // U+F141
 #define ICON_FA_GRIP_VERTICAL       "\xef\x96\x8e"  // U+F58E
 #define ICON_FA_GRIP                "\xef\x96\x8d"  // U+F58D
 
@@ -219,7 +220,6 @@
 #define ICON_FA_ALIGN_RIGHT         "\xef\x80\xb8"  // U+F038 - align right
 #define ICON_FA_PI                  "\xef\xa1\x87"  // U+F87F - pi symbol (FA6 Pro) - approximation
 #define ICON_FA_CHECK_DOUBLE        "\xef\x95\xa0"  // U+F560 - double check mark
-#define ICON_FA_BRACKETS_CURLY      "\xef\x9f\xa6"  // U+F7A6 - curly brackets for JSON
 #define ICON_FA_CODE_COMPARE        "\xee\x84\xbf"  // U+E13F - code compare
 #define ICON_FA_INFO                "\xef\x84\xa9"  // U+F129 - info
 #define ICON_FA_LIST_OL             "\xef\x83\x8b"  // U+F0CB - ordered list

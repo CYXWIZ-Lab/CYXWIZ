@@ -1,15 +1,13 @@
 #include "annotation_editor_panel.h"
 #include "../../core/data_registry.h"
 #include "../../core/file_dialogs.h"
+#include "../ui_tokens.h"
 #include <spdlog/spdlog.h>
 #include <glad/glad.h>
 #include <algorithm>
 #include <cmath>
 
 namespace cyxwiz {
-
-// Static member initialization
-constexpr ImVec4 AnnotationEditorPanel::CLASS_COLORS[];
 
 AnnotationEditorPanel::AnnotationEditorPanel()
     : Panel("Annotation Editor", false) {
@@ -226,7 +224,7 @@ void AnnotationEditorPanel::RenderImageCanvas() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     draw_list->AddRectFilled(canvas_pos,
                              ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y),
-                             IM_COL32(30, 30, 30, 255));
+                             ui::ToU32(ui::WithAlpha(ui::CurrentTokens().bg_input, 1.0f)));
 
     // Handle input
     ImGui::InvisibleButton("canvas", canvas_size,
@@ -269,7 +267,7 @@ void AnnotationEditorPanel::RenderImageCanvas() {
         ImVec2 text_pos;
         text_pos.x = canvas_pos.x + (canvas_size.x - text_size.x) * 0.5f;
         text_pos.y = canvas_pos.y + (canvas_size.y - text_size.y) * 0.5f;
-        draw_list->AddText(text_pos, IM_COL32(128, 128, 128, 255), msg);
+        draw_list->AddText(text_pos, ui::ToU32(ui::CurrentTokens().text_faint), msg);
     }
 }
 
@@ -757,7 +755,8 @@ void AnnotationEditorPanel::AddNewClass() {
 }
 
 ImVec4 AnnotationEditorPanel::GetClassColor(int class_id) const {
-    return CLASS_COLORS[class_id % NUM_CLASS_COLORS];
+    // Class colours are categories: the theme's series colours in class order.
+    return ui::SeriesColour(ui::CurrentTokens(), static_cast<size_t>(class_id < 0 ? 0 : class_id));
 }
 
 void AnnotationEditorPanel::ExportCOCO() {

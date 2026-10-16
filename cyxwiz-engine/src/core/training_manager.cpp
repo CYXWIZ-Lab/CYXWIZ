@@ -13,7 +13,6 @@
 #include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
-#include "placement_observation_cache_session.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
@@ -331,9 +330,12 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         const auto activation =
             Device(selected->type, selected->device_id).ActivateExact(false);
         if (!activation.success) {
-            spdlog::warn("TrainingManager: could not select device type={} id={} for checkpoint loading: {}",
-                         static_cast<int>(selected->type), selected->device_id,
-                         activation.message);
+            result.error_message = fmt::format(
+                "Cannot load checkpoint on selected device (type={}, id={}): {}. "
+                "Select an available device and retry; no fallback was attempted.",
+                static_cast<int>(selected->type), selected->device_id, activation.message);
+            spdlog::error("TrainingManager: {}", result.error_message);
+            return result;
         }
     }
 
@@ -673,30 +675,26 @@ bool TrainingManager::StartTrainingImage(
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
-    // Build the ImageDatasetBatcher with the image preprocessing config
-    // extracted from the graph's Resize / Normalize / Augmentation nodes.
+    // Build the ImageDatasetBatcher from the graph's Resize size and its
+    // image transforms (run on the device, then Normalize).
     auto batcher = std::make_unique<ImageDatasetBatcher>(
         image_entry, config.image_preprocessing,
         batch_size, config.train_ratio, config.shuffle, config.num_workers,
         static_cast<uint32_t>(config.dataloader_seed));
     batcher->SetDropLast(config.drop_last);
+    batcher->SetImageTransforms(config.image_augmentation);
+    batcher->ExcludeFiles(config.image_excluded_files);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");
         return false;
     }
 
-    // Update input_size from the target dimensions. The batcher flattens
-    // images to [H*W*C] per sample by default.
-    int tw = config.image_preprocessing.target_width > 0
-        ? config.image_preprocessing.target_width : 224;
-    int th = config.image_preprocessing.target_height > 0
-        ? config.image_preprocessing.target_height : 224;
-    int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
-    config.input_size = static_cast<size_t>(tw * th * ch);
-
-    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}, seed={}",
-                 batcher->GetNumSamples(), config.input_size, tw, th, ch,
+    // The compiler set input_shape [H, W, C] from the same Resize size and
+    // transforms (ApplyImageInputShape), so the model and the batches agree.
+    spdlog::info("TrainingManager: Image dataset {} samples, input_size={}, {} image transforms, "
+                 "num_workers={}, seed={}",
+                 batcher->GetNumSamples(), config.input_size, config.image_augmentation.ops.size(),
                  config.num_workers, config.dataloader_seed);
 
     // Set up normalization / one-hot from the compiled graph config
@@ -761,6 +759,12 @@ bool TrainingManager::StartTrainingAudio(
     config.input_shape = {
         static_cast<size_t>(batcher->GetFeatureRows()),
         static_cast<size_t>(batcher->GetFeatureCols())
+    };
+    // [rows, cols] = [bins, frames] per sample, torch [N, C, L]: a Conv1D
+    // convolves over the frames with one channel per bin.
+    config.sequence_input_shape = {
+        static_cast<size_t>(batcher->GetFeatureCols()),
+        static_cast<size_t>(batcher->GetFeatureRows())
     };
 
     spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}, seed={}",
@@ -1043,6 +1047,21 @@ void TrainingManager::TrainingThreadFunc(
                     static_cast<double>(train_acc) * 100.0,
                     static_cast<double>(val_acc) * 100.0);
             }
+            // Pair / Retrieval Metrics (TOFIX140 A5), in percent like accuracy.
+            {
+                const TrainingMetrics latest = exec->GetMetrics();
+                if (latest.val_pair_metrics && val_loss >= 0.0f) {
+                    panel->AddCustomMetric("Val Pair Accuracy", epoch, latest.val_pair_metrics->accuracy * 100.0);
+                }
+                if (latest.val_retrieval_metrics && val_loss >= 0.0f) {
+                    panel->AddCustomMetric("Val Recall@" + std::to_string(latest.val_retrieval_metrics->k), epoch,
+                                           latest.val_retrieval_metrics->recall_at_k * 100.0);
+                    panel->AddCustomMetric("Val MRR", epoch,
+                                           latest.val_retrieval_metrics->mean_reciprocal_rank * 100.0);
+                    panel->AddCustomMetric("Val 1-NN Agreement", epoch,
+                                           latest.val_retrieval_metrics->nearest_neighbor_class_agreement * 100.0);
+                }
+            }
             // Update training state with timing info
             panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
             if (sequence_mode) {
@@ -1278,7 +1297,6 @@ void TrainingManager::TrainingThreadFunc(
     // fallbacks) so the next compile — including in a future session —
     // routes around the observed device/shape keys. Runs on the training
     // worker thread; the store snapshot is mutex-guarded.
-    SavePlacementObservationCache();
 
     // Preserve trained model for export before clearing executor
     {

@@ -1,6 +1,7 @@
 // Script Editor settings and tab accessors.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include <string>
 #include <vector>
@@ -8,6 +9,14 @@
 namespace cyxwiz {
 
 // ========== Settings ==========
+
+void ScriptEditorPanel::ConfigureEditor(CodeEditor& editor) const {
+    editor.SetTabSize(tab_size_);
+    editor.SetShowWhitespace(show_whitespace_);
+    editor.SetColorize(syntax_highlighting_);
+    editor.SetWordWrap(word_wrap_);
+    editor.Doc().Settings().auto_indent = auto_indent_;
+}
 
 void ScriptEditorPanel::SetTabSize(int size) {
     if (size >= 1 && size <= 8) {
@@ -18,38 +27,22 @@ void ScriptEditorPanel::SetTabSize(int size) {
 
 void ScriptEditorPanel::SetShowWhitespace(bool show) {
     show_whitespace_ = show;
-    // Apply to all tabs
-    for (auto& tab : tabs_) {
-        tab->editor.SetShowWhitespaces(show);
-    }
+    for (auto& tab : tabs_) tab->editor.SetShowWhitespace(show);
 }
 
 void ScriptEditorPanel::SetWordWrap(bool wrap) {
     word_wrap_ = wrap;
-    // Apply to all tabs
-    for (auto& tab : tabs_) {
-        tab->editor.SetWordWrap(wrap);
-    }
+    for (auto& tab : tabs_) tab->editor.SetWordWrap(wrap);
 }
 
 void ScriptEditorPanel::SetAutoIndent(bool indent) {
     auto_indent_ = indent;
-    // Apply to all tabs
-    for (auto& tab : tabs_) {
-        tab->editor.SetAutoIndent(indent);
-    }
+    for (auto& tab : tabs_) tab->editor.Doc().Settings().auto_indent = indent;
 }
 
 void ScriptEditorPanel::SetSyntaxHighlighting(bool enabled) {
     syntax_highlighting_ = enabled;
     ApplySyntaxHighlightingToAllTabs();
-}
-
-void ScriptEditorPanel::SetTheme(int theme_index) {
-    if (theme_index >= 0 && theme_index <= 6) {
-        current_theme_ = static_cast<EditorTheme>(theme_index);
-        ApplyThemeToAllTabs();
-    }
 }
 
 std::vector<std::string> ScriptEditorPanel::GetOpenFilePaths() const {
@@ -68,7 +61,7 @@ void ScriptEditorPanel::SetActiveTabIndex(int index) {
         return;
     }
     active_tab_index_ = index;
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 }
 
 } // namespace cyxwiz

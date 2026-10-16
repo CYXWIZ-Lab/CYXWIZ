@@ -1,5 +1,4 @@
 #include "cyxwiz/layers/normalization.h"
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 
 namespace cyxwiz {
@@ -50,4 +49,3 @@ Tensor LayerNormLayer::BackwardArrayFire(const Tensor& gradient, size_t norm_siz
     return result;
 }
 } // namespace cyxwiz
-#endif

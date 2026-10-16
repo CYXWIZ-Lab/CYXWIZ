@@ -1,13 +1,17 @@
 #include "graph_training_job.h"
 
 #include "arrow_dataset.h"
+#include "data_budget.h"
 #include "graph_compiler.h"
 #include "graph_compiler_dataset_hooks.h"
+#include "graph_node_factory.h"
 #include "graph_training_prep.h"
 #include "node_metadata_registry.h"
+#include "parquet_backed_dataset.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_arrow_batcher.h"
 #include "sha256_digest.h"
+#include "training_batcher_setup.h"
 #include "training_resume_checkpoint.h"
 
 #include <nlohmann/json.hpp>
@@ -37,22 +41,16 @@ std::string Parameter(const gui::MLNode& node, const char* key) {
     return it == node.parameters.end() ? std::string() : it->second;
 }
 
-gui::NodeCategory CategoryOf(const gui::MLNode& node) {
-    if (node.category != gui::NodeCategory::Unknown) return node.category;
-    auto& registry = NodeMetadataRegistry::Instance();
-    if (!registry.IsInitialized()) registry.Initialize();
-    const NodeMetadata* metadata = registry.GetMetadata(node.type);
-    return metadata ? metadata->category : gui::NodeCategory::Unknown;
-}
-
 // Data-path steps a headless run cannot perform yet: the Engine applies them
 // through its preparation pipeline (every operator-backed node) before
 // training. Inspection nodes (SampleRows, DescribeStats...) do not change the
-// training data and pass.
+// training data and pass. Image transforms (Resize, crops, flips,
+// augmentation) compile into the trainer's image batcher, which applies them
+// here too.
 bool NeedsPreparation(const gui::MLNode& node) {
-    if (node.type == gui::NodeType::Augmentation) return true;
     if (ResolvePipelineRuntimeSupport(node.type).mode == PipelineRuntimeSupportMode::OperatorBacked) return true;
-    switch (CategoryOf(node)) {
+    if (GraphCompiler::GetPreprocessingNodeDomain(node.type) == PreprocessingDomain::Image) return false;
+    switch (gui::GetNodeCategoryForType(node.type)) {
     case gui::NodeCategory::DataTransform:
     case gui::NodeCategory::Preprocessing:
     case gui::NodeCategory::TextProcessing:
@@ -86,12 +84,17 @@ std::mutex& CatalogMutex() {
 class ScopedJobCatalog {
 public:
     ScopedJobCatalog(const std::map<std::string, std::shared_ptr<ArrowDataset>>& datasets,
+                     const std::map<std::string, std::shared_ptr<ParquetBackedDataset>>& disk_datasets,
                      const std::map<std::string, std::string>& source_paths)
         : lock_(CatalogMutex()), previous_(GetGraphDatasetCatalog()) {
         GraphDatasetCatalog catalog;
         catalog.arrow_dataset = [&datasets](const std::string& name) -> std::shared_ptr<ArrowDataset> {
             const auto it = datasets.find(name);
             return it == datasets.end() ? nullptr : it->second;
+        };
+        catalog.parquet_dataset = [&disk_datasets](const std::string& name) -> std::shared_ptr<ParquetBackedDataset> {
+            const auto it = disk_datasets.find(name);
+            return it == disk_datasets.end() ? nullptr : it->second;
         };
         catalog.source_path = [&source_paths](const std::string& name) -> std::optional<std::string> {
             const auto it = source_paths.find(name);
@@ -133,8 +136,11 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     // Refuse data-path steps this runner cannot perform.
     if (FindPreparationNode(graph, error)) return Fail(TrainingFailureKind::Refused, error);
 
-    // Load every Data Input file.
+    // Load every Data Input file. A Parquet file larger than a quarter of the
+    // data budget stays on disk and is read a row group at a time (TOFIX154),
+    // as in the Engine.
     std::map<std::string, std::shared_ptr<ArrowDataset>> datasets;
+    std::map<std::string, std::shared_ptr<ParquetBackedDataset>> disk_datasets;
     std::map<std::string, std::string> source_paths;
     for (const auto& node : graph.nodes) {
         if (node.type != gui::NodeType::DataInput) continue;
@@ -152,6 +158,22 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         const std::string extension = Lower(std::filesystem::path(path).extension().string());
         std::shared_ptr<ArrowDataset> dataset;
         if (extension == ".parquet") {
+            auto file = ParquetBackedDataset::Open(path, name);
+            if (!file) return Fail(TrainingFailureKind::DataError, "Data Input '" + node.name + "': could not read " + path);
+            if (file->GetInMemoryBytesEstimate() > DataResultThresholdBytes()) {
+                if (file->GetNumRows() == 0) {
+                    return Fail(TrainingFailureKind::DataError,
+                                "Data Input '" + node.name + "': the dataset is empty (0 rows) in " + path);
+                }
+                spdlog::info("Graph training job: '{}' ({} rows, about {} in memory) stays on disk, over {} "
+                             "(a quarter of the data budget)", name, file->GetNumRows(),
+                             FormatDataBytes(file->GetInMemoryBytesEstimate()),
+                             FormatDataBytes(DataResultThresholdBytes()));
+                disk_datasets[name] = std::move(file);
+                source_paths[name] = path;
+                continue;
+            }
+            file.reset();
             dataset = ArrowDataset::FromParquet(path, name);
         } else if (extension == ".arrow" || extension == ".feather" || extension == ".ipc") {
             dataset = ArrowDataset::FromFile(path, name);
@@ -160,17 +182,26 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                         " files are not supported by this host (use Parquet or Arrow IPC)");
         }
         if (!dataset) return Fail(TrainingFailureKind::DataError, "Data Input '" + node.name + "': could not read " + path);
+        if (dataset->GetNumRows() == 0) {
+            return Fail(TrainingFailureKind::DataError,
+                        "Data Input '" + node.name + "': the dataset is empty (0 rows) in " + path);
+        }
         datasets[name] = dataset;
         source_paths[name] = path;
         spdlog::info("Graph training job: loaded '{}' ({} rows) from {}", name, dataset->GetNumRows(), path);
     }
-    if (datasets.empty()) return Fail(TrainingFailureKind::Refused, "the graph has no Data Input with a file");
+    if (datasets.empty() && disk_datasets.empty()) {
+        return Fail(TrainingFailureKind::Refused, "the graph has no Data Input with a file");
+    }
+    const auto is_input = [&](const std::string& name) {
+        return datasets.count(name) > 0 || disk_datasets.count(name) > 0;
+    };
 
     // Compile and prepare against the job's datasets (the Engine launcher's
     // steps, for inputs that are already materialized).
     TrainingConfiguration config;
     {
-        ScopedJobCatalog catalog(datasets, source_paths);
+        ScopedJobCatalog catalog(datasets, disk_datasets, source_paths);
         GraphCompiler compiler;
         config = compiler.Compile(graph.nodes, graph.links, true);
         if (!config.is_valid) {
@@ -182,7 +213,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         const std::string dataset_name =
             !config.dataset_name.empty() ? config.dataset_name : FindGraphDatasetName(graph.nodes);
         if (dataset_name.empty()) return Fail(TrainingFailureKind::Refused, "no Data Input feeds the Data Loader");
-        if (datasets.find(dataset_name) == datasets.end()) {
+        if (!is_input(dataset_name)) {
             return Fail(TrainingFailureKind::DataError, "the training dataset '" + dataset_name + "' is not a loaded input");
         }
         std::string label_column = FindGraphLabelColumn(graph.nodes, dataset_name, config.data_source_node_id);
@@ -195,7 +226,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         roles.train.label_column = label_column;
         for (auto* supplied : {&roles.dev, &roles.test}) {
             if (!supplied->IsSupplied()) continue;
-            if (datasets.find(supplied->dataset_name) == datasets.end()) {
+            if (!is_input(supplied->dataset_name)) {
                 return Fail(TrainingFailureKind::DataError, "the supplied dataset '" + supplied->dataset_name + "' is not a loaded input");
             }
             supplied->label_column =
@@ -224,10 +255,40 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         const auto it = datasets.find(source.dataset_name);
         return it == datasets.end() ? nullptr : it->second;
     };
+    const auto disk = [&disk_datasets](const std::string& name) -> std::shared_ptr<ParquetBackedDataset> {
+        const auto it = disk_datasets.find(name);
+        return it == disk_datasets.end() ? nullptr : it->second;
+    };
+    const auto roles = config.dataset_roles;
+    const bool train_on_disk = disk(config.dataset_name) != nullptr;
+    const bool role_on_disk = (roles.dev.IsSupplied() && disk(roles.dev.dataset_name)) ||
+                              (roles.test.IsSupplied() && disk(roles.test.dataset_name));
     const auto train_it = datasets.find(config.dataset_name);
 
     std::unique_ptr<TrainingExecutor> executor;
-    if (config.sequence_batch.enabled) {
+    if (config.sequence_batch.enabled && (train_on_disk || role_on_disk)) {
+        if (!train_on_disk) {
+            return Fail(TrainingFailureKind::DataError,
+                        "a supplied role is kept on disk, so the training set must be too: raise the data budget "
+                        "or keep all of them in memory");
+        }
+        // Token windows on disk stream a row group at a time (ParquetSequenceBatcher).
+        const auto source_of = [&](const DatasetSourceRef& source) {
+            SequenceWindowSource window_source;
+            if (!source.IsSupplied()) return window_source;
+            if (auto memory = role(source)) window_source.table = memory->GetArrowTable();
+            else window_source.file = disk(source.dataset_name);
+            return window_source;
+        };
+        SequenceWindowSource train_source;
+        train_source.file = disk(config.dataset_name);
+        auto sequence = BuildSequenceBatcherFromWindowSources(train_source, config, batch_size,
+                                                              source_of(roles.dev), source_of(roles.test));
+        if (!sequence.success()) return Fail(TrainingFailureKind::DataError, "sequence batcher: " + sequence.error_message);
+        ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
+        executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
+                                                      std::move(sequence.id_to_label));
+    } else if (config.sequence_batch.enabled) {
         auto dev = role(config.dataset_roles.dev);
         auto test = role(config.dataset_roles.test);
         auto sequence = BuildSequenceBatcherFromArrowDataset(train_it->second, config, batch_size, dev, test);
@@ -235,6 +296,27 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
         executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
                                                       std::move(sequence.id_to_label));
+    } else if (role_on_disk || (train_on_disk && (roles.dev.IsSupplied() || roles.test.IsSupplied()))) {
+        // Supplied roles with any of them on disk: one batcher per role, each
+        // from memory or from its file (the Engine's TabularLoader path).
+        ResolvedTabularDatasets resolved;
+        const auto pick = [&](const std::string& name, std::shared_ptr<ArrowDataset>& memory,
+                              std::shared_ptr<ParquetBackedDataset>& file) {
+            if (name.empty()) return;
+            if (const auto it = datasets.find(name); it != datasets.end()) memory = it->second;
+            file = disk(name);
+        };
+        pick(config.dataset_name, resolved.train_arrow, resolved.train_parquet);
+        if (roles.dev.IsSupplied()) pick(roles.dev.dataset_name, resolved.dev_arrow, resolved.dev_parquet);
+        if (roles.test.IsSupplied()) pick(roles.test.dataset_name, resolved.test_arrow, resolved.test_parquet);
+        auto built = BuildResolvedTabularTrainingBatchers(config, resolved, batch_size);
+        if (!built.ok()) return Fail(TrainingFailureKind::DataError, "training batchers: " + built.error_message);
+        executor = std::make_unique<TrainingExecutor>(std::move(config),
+                                                      TakeResolvedExternalBatchers(std::move(built.batchers)));
+    } else if (train_on_disk) {
+        const std::string label = config.dataset_roles.train.label_column;
+        auto file = disk(config.dataset_name);
+        executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(file), label);
     } else {
         const std::string label = config.dataset_roles.train.label_column;
         executor = std::make_unique<TrainingExecutor>(std::move(config), train_it->second, label);
@@ -290,6 +372,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     const BatchCallback on_batch = [&](int epoch, int batch, int total, float loss, float accuracy) {
         ++batches;
         if (callbacks.on_batch) callbacks.on_batch(epoch, batch, total, loss, accuracy);
+        // A pause asked for now holds the next batch: the executor waits at
+        // the top of each batch. The watcher's 200 ms poll alone let batches
+        // run on after the request.
+        if (callbacks.should_pause && !executor->IsPaused() && callbacks.should_pause()) executor->Pause();
     };
     const auto seconds_since = [](std::chrono::steady_clock::time_point start) {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -298,9 +384,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     std::thread watcher;
     if (callbacks.should_cancel || callbacks.should_pause || callbacks.should_stop_with_checkpoint) {
         // Cancel and pause reach the executor from here; it honours both
-        // between batches (Stop, and Pause/Resume via WaitWhilePaused).
+        // between batches (Stop, and Pause/Resume via WaitWhilePaused). The
+        // batch callback can pause too, so the watcher follows the
+        // executor's state rather than its own.
         watcher = std::thread([&] {
-            bool paused = false;
             while (!finished.load()) {
                 if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
@@ -313,13 +400,10 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                     return;
                 }
                 const bool pause = callbacks.should_pause && callbacks.should_pause();
-                if (pause != paused) {
-                    paused = pause;
-                    if (paused) {
-                        executor->Pause();
-                    } else {
-                        executor->Resume();
-                    }
+                if (pause && !executor->IsPaused()) {
+                    executor->Pause();
+                } else if (!pause && executor->IsPaused()) {
+                    executor->Resume();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }

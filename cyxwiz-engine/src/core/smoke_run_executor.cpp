@@ -8,8 +8,11 @@
 #include "debug_numerics.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
+#include "metric_learning_sampling.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
+#include "sparse_feature_dataset_batcher.h"
+#include "training_batcher_setup.h"
 #include "text_dataset_batcher.h"
 #include <algorithm>
 #include <chrono>
@@ -30,10 +33,25 @@ float ExtractLossScalar(const Tensor& t) {
 
 float Accuracy(const Tensor& predictions,
                const Tensor& targets,
-               ClassificationDecisionMode mode) {
+               ClassificationDecisionMode mode,
+               float pair_threshold) {
     const auto& shape = predictions.Shape();
     if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
         return 0.0f;
+    }
+
+    const bool pairs = mode == ClassificationDecisionMode::PairDistance ||
+                       mode == ClassificationDecisionMode::PairCosine;
+    const bool mined = IsMinedMetricDecision(mode);
+    if (mode == ClassificationDecisionMode::TripletOrder || pairs || mined) {
+        // Stacked [anchors; positives; negatives] or [firsts; seconds], or
+        // the unstacked batch the loss mines from.
+        const size_t units = mined ? shape[0] : shape[0] / (pairs ? 2 : 3);
+        const auto count = CountClassificationDecisionScalars(
+            predictions, targets, units, shape[1], mode, std::nullopt, pair_threshold);
+        return count.total > 0
+            ? static_cast<float>(count.correct) / static_cast<float>(count.total)
+            : 0.0f;
     }
 
     const size_t batch_size = shape[0];
@@ -125,8 +143,12 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     const std::string& run_id,
-    int max_samples) const {
+    int max_samples,
+    const SmokeRunOptions& options) const {
     SmokeRunResult result;
+    const auto stop_requested = [&options]() {
+        return options.should_stop && options.should_stop();
+    };
     result.requested_samples = max_samples;
 
     if (config.preprocessing_domain != PreprocessingDomain::Text) {
@@ -156,12 +178,23 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     auto& registry = DataRegistry::Instance();
     const int batch_size = std::max(1, std::min(config.batch_size, 32));
+    // metric_source outlives the MetricBatchSampler that wraps it (declared first, destroyed last).
+    std::unique_ptr<IBatcher> metric_source;
     std::unique_ptr<IBatcher> batcher;
     std::string batcher_source = "legacy text";
 
     if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
+        PipelineOperatorExecutionContext materialization_context;
+        materialization_context.cancellation_requested = stop_requested;
         auto materialized = PipelineMaterializer::Materialize(
-            nodes, links, registry, config.dataset_name);
+            nodes, links, registry, config.dataset_name, options.cache_config,
+            {}, std::move(materialization_context));
+        if (!materialized.success &&
+            materialized.failure_kind == MaterializationFailureKind::Cancelled) {
+            result.stopped = true;
+            result.summary = "Smoke Run stopped while preparing data.";
+            return result;
+        }
         if (!materialized.success) {
             result.summary = materialized.error_message;
             result.issues.push_back({
@@ -171,7 +204,44 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             return result;
         }
 
-        if (materialized.operators_applied > 0) {
+        if (materialized.operators_applied > 0 &&
+            materialized.effective_kind ==
+                PipelineMaterializerSourceKind::SparseFeatureDataset) {
+            auto sparse_dataset =
+                registry.GetSparseFeatureDataset(materialized.effective_dataset_name);
+            if (!sparse_dataset) {
+                result.summary = "Materialized sparse dataset is unavailable: " +
+                                 materialized.effective_dataset_name;
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+            // Same training batcher Train builds from the Data Loader and Data
+            // Split settings (seeded shuffle, stratified split, class
+            // balancing), so the bounded sample is representative instead of
+            // the first rows of a label-ordered file.
+            try {
+                auto batchers = BuildSparseTrainingBatchers(
+                    config, sparse_dataset, batch_size);
+                batcher = std::move(batchers.sparse_train);
+                // Train feeds CSR batches to a sparse-aware first layer; the
+                // Smoke model is dense, so densify each (bounded) batch.
+                batcher->SetSparseFeatureOutput(false);
+            } catch (const std::exception& e) {
+                result.summary = std::string("Smoke Run could not batch the sparse features: ") +
+                                 e.what();
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "SparseFeatureDataset", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+            batcher_source = "materialized sparse features";
+            config.input_size = static_cast<size_t>(sparse_dataset->GetNumFeatures());
+            config.input_shape = {config.input_size};
+        } else if (materialized.operators_applied > 0) {
             auto arrow_dataset =
                 registry.GetArrowDataset(materialized.effective_dataset_name);
             if (!arrow_dataset || !arrow_dataset->GetSchema()) {
@@ -197,11 +267,14 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
             const std::string label_column =
                 arrow_dataset->GetSchema()->field(label_idx)->name();
+            if (auto text = TextLabelColumn(arrow_dataset->GetArrowTable(), label_column)) {
+                arrow_dataset = WithEncodedLabels(arrow_dataset, label_column, BuildLabelVocabulary({text}));
+            }
             batcher = std::make_unique<ArrowDatasetBatcher>(
                 arrow_dataset,
                 label_column,
                 static_cast<size_t>(batch_size),
-                /*shuffle=*/false,
+                config.shuffle,
                 config.train_ratio,
                 /*is_training=*/true,
                 "",
@@ -260,7 +333,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         return result;
     }
 
-    if (UsesScalarBinaryTargets(config.loss_type)) {
+    if (config.metric_sampling != MetricSampling::None) {
+        batcher->SetClassIndexLabelMode(true);
+    } else if (UsesScalarBinaryTargets(config.loss_type)) {
         batcher->SetScalarLabelMode(true);
     } else if (config.preprocessing.has_onehot &&
                config.preprocessing.num_classes > 0) {
@@ -271,6 +346,14 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
         text_batcher->TryApplyBalancedClassWeights(config);
+    }
+    if (config.metric_sampling != MetricSampling::None) {
+        // Same stacked pair / triplet batches as Train (TOFIX140 A5).
+        auto source = std::move(batcher);
+        batcher = std::make_unique<MetricBatchSampler>(
+            *source, config.metric_sampling, config.metric_mining,
+            static_cast<std::uint64_t>(std::max(config.dataloader_seed, 0)));
+        metric_source = std::move(source);
     }
     batcher->SetBatchInspectionEnabled(true);
 
@@ -297,6 +380,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     float loss_sum = 0.0f;
 
     for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
+        if (stop_requested()) {
+            result.stopped = true;
+            break;
+        }
         const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher->GetNextBatch();
         const float fetch_ms = std::chrono::duration<float, std::milli>(
@@ -362,7 +449,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         result.last_accuracy = Accuracy(
             predictions, batch.labels,
-            ClassificationDecisionModeForLoss(config.loss_type));
+            ClassificationDecisionModeForLoss(config.loss_type, config.metric_mining),
+            config.pair_decision_threshold);
 
         const auto shape_compatibility = CheckDebugPredictionTargetShapes(
             predictions.Shape(), batch.labels.Shape(), config.loss_type);
@@ -479,10 +567,11 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     const bool has_error = std::any_of(
         result.issues.begin(), result.issues.end(),
         [](const ValidationIssue& issue) { return issue.level == IssueLevel::Error; });
-    result.success = result.batches_seen > 0 && !has_error;
+    result.success = !result.stopped && result.batches_seen > 0 && !has_error;
 
     std::ostringstream out;
-    out << "Smoke Run: " << (result.success ? "passed" : "failed")
+    out << "Smoke Run: "
+        << (result.stopped ? "stopped" : (result.success ? "passed" : "failed"))
         << ", source=" << batcher_source
         << ", samples=" << result.samples_seen
         << ", batches=" << result.batches_seen

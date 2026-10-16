@@ -1,7 +1,9 @@
 // auth_manager.cpp - Authentication manager implementation
+#include "auth/token_refresh.h"
 #include "auth/auth_manager.h"
 
-#define CPPHTTPLIB_OPENSSL_SUPPORT
+// CPPHTTPLIB_OPENSSL_SUPPORT comes from CMake for the whole target, so every
+// file that includes httplib.h sees the same class layout.
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -170,89 +172,6 @@ std::future<AuthResult> AuthManager::LoginWithEmail(const std::string& email, co
     });
 }
 
-std::future<AuthResult> AuthManager::LoginWithWallet(const std::string& wallet_address, const std::string& signature) {
-    return std::async(std::launch::async, [this, wallet_address, signature]() -> AuthResult {
-        SetState(AuthState::LoggingIn);
-
-        json body;
-        body["wallet_address"] = wallet_address;
-        body["signature"] = signature;
-
-        auto result = DoLogin("/auth/wallet/login", body.dump());
-
-        if (result.success) {
-            FetchUserProfile();
-            SetState(AuthState::Authenticated);
-            SaveSession();
-        } else {
-            SetState(AuthState::Offline);
-        }
-
-        return result;
-    });
-}
-
-std::future<std::string> AuthManager::RequestWalletNonce(const std::string& wallet_address) {
-    return std::async(std::launch::async, [this, wallet_address]() -> std::string {
-        std::string base_url;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            base_url = api_base_url_;
-        }
-
-        try {
-            // Parse URL
-            std::string host = base_url;
-            std::string port = "80";
-            bool use_ssl = false;
-
-            if (host.find("https://") == 0) {
-                host = host.substr(8);
-                port = "443";
-                use_ssl = true;
-            } else if (host.find("http://") == 0) {
-                host = host.substr(7);
-            }
-
-            // Extract port if present
-            auto colon_pos = host.find(':');
-            auto slash_pos = host.find('/');
-            if (colon_pos != std::string::npos) {
-                if (slash_pos != std::string::npos) {
-                    port = host.substr(colon_pos + 1, slash_pos - colon_pos - 1);
-                    host = host.substr(0, colon_pos);
-                } else {
-                    port = host.substr(colon_pos + 1);
-                    host = host.substr(0, colon_pos);
-                }
-            } else if (slash_pos != std::string::npos) {
-                host = host.substr(0, slash_pos);
-            }
-
-            // Create client
-            httplib::Client client(host + ":" + port);
-            client.set_connection_timeout(10);
-            client.set_read_timeout(30);
-
-            json body;
-            body["wallet_address"] = wallet_address;
-
-            auto res = client.Post("/api/auth/wallet/nonce", body.dump(), "application/json");
-
-            if (res && res->status == 200) {
-                auto j = json::parse(res->body);
-                return j.value("nonce", "");
-            } else {
-                spdlog::error("Failed to request nonce: {}", res ? res->status : 0);
-                return "";
-            }
-        } catch (const std::exception& e) {
-            spdlog::error("Exception requesting nonce: {}", e.what());
-            return "";
-        }
-    });
-}
-
 AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& json_body) {
     AuthResult result;
 
@@ -362,18 +281,6 @@ AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& 
                     user_info_.name = user.value("name", "");
                     user_info_.role = user.value("role", "user");
 
-                    // Parse CyxWallet (internal wallet)
-                    if (user.contains("cyxWallet") && !user["cyxWallet"].is_null()) {
-                        user_info_.wallet_address = user["cyxWallet"].value("publicKey", "");
-                    }
-                    // Parse external wallet if present
-                    else if (user.contains("externalWallet") && !user["externalWallet"].is_null()) {
-                        user_info_.wallet_address = user["externalWallet"].value("address", "");
-                    }
-                    // Fallback to direct wallet_address field
-                    else {
-                        user_info_.wallet_address = user.value("wallet_address", "");
-                    }
                 }
             }
 
@@ -465,7 +372,6 @@ bool AuthManager::FetchUserProfile() {
             user_info_.email = j.value("email", user_info_.email);
             user_info_.username = j.value("username", user_info_.username);
             user_info_.name = j.value("name", user_info_.name);
-            user_info_.wallet_address = j.value("wallet_address", user_info_.wallet_address);
             user_info_.role = j.value("role", user_info_.role);
 
             spdlog::info("User profile fetched: {} ({})", user_info_.username, user_info_.email);
@@ -492,15 +398,24 @@ void AuthManager::Logout() {
 }
 
 bool AuthManager::RefreshJwtToken() {
-    // TODO: Implement token refresh
-    // POST /api/auth/refresh with current token
-    return false;
-}
+    std::string jwt;
+    std::string base_url;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        jwt = jwt_token_;
+        base_url = api_base_url_;
+    }
+    if (jwt.empty()) return false;
 
-bool AuthManager::RefreshNodeToken() {
-    // TODO: Implement node token refresh
-    // POST /api/nodes/:id/token
-    return false;
+    const auto refreshed = RefreshTokenWithApi(base_url, jwt);
+    if (!refreshed) return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        jwt_token_ = *refreshed;
+    }
+    SaveSession();
+    spdlog::info("Sign-in token refreshed");
+    return true;
 }
 
 std::string AuthManager::GetTokenStoragePath() const {
@@ -544,14 +459,16 @@ std::string AuthManager::GetTokenStoragePath() const {
 bool AuthManager::LoadSavedSession() {
     try {
         std::string path = GetTokenStoragePath();
-        std::ifstream file(path);
-
-        if (!file.is_open()) {
-            return false;
-        }
-
         json j;
-        file >> j;
+        {
+            // Closed before ClearSavedSession below: Windows refuses to
+            // delete a file that is still open.
+            std::ifstream file(path);
+            if (!file.is_open()) {
+                return false;
+            }
+            file >> j;
+        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -1165,6 +1082,13 @@ bool AuthManager::SendHeartbeatToApi(bool is_online) {
             int status_code = res ? res->status : 0;
             std::string error_msg = res ? res->body : "Connection failed";
             spdlog::warn("Heartbeat failed: HTTP {} - {}", status_code, error_msg);
+            if (status_code == 401 || status_code == 404) {
+                // The web API does not know this machine (or its key): the
+                // saved registration is stale. Drop it so the GUI registers
+                // again instead of failing every heartbeat (TOFIX136 E3).
+                spdlog::warn("The web API no longer knows this machine; registering it again");
+                ClearNodeRegistration();
+            }
             return false;
         }
 
@@ -1172,6 +1096,16 @@ bool AuthManager::SendHeartbeatToApi(bool is_online) {
         spdlog::error("Heartbeat exception: {}", e.what());
         return false;
     }
+}
+
+void AuthManager::ClearNodeRegistration() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        node_registered_ = false;
+        node_api_key_.clear();
+        node_id_.clear();
+    }
+    SaveSession();
 }
 
 std::string AuthManager::GetNodeId() const {

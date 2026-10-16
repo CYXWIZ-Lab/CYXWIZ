@@ -74,10 +74,6 @@ private:
     bool show_elbow_plot_ = false;
     bool show_centroids_table_ = true;
 
-    // Cluster colors for visualization
-    static constexpr int MAX_CLUSTERS = 20;
-    static const ImU32 CLUSTER_COLORS[MAX_CLUSTERS];
-
     // Helper methods
     void RenderParametersSection();
     void RenderElbowSection();

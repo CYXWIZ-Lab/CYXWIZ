@@ -1,5 +1,6 @@
 #include "integration_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -47,6 +48,7 @@ void IntegrationPanel::Render() {
 }
 
 void IntegrationPanel::RenderToolbar() {
+    const ui::Tokens& t = ui::CurrentTokens();
     bool can_compute = !is_computing_;
 
     if (!can_compute) ImGui::BeginDisabled();
@@ -77,7 +79,7 @@ void IntegrationPanel::RenderToolbar() {
     ImGui::SameLine();
 
     if (has_result_ && result_.success) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
             ICON_FA_CHECK " Integral = %.8f", result_.value);
     }
 }
@@ -94,6 +96,7 @@ void IntegrationPanel::RenderSettings() {
 }
 
 void IntegrationPanel::RenderFunctionSelector() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Function f(x):");
     int idx = static_cast<int>(selected_function_);
     if (ImGui::Combo("##Function", &idx, function_names_, 6)) {
@@ -128,7 +131,7 @@ void IntegrationPanel::RenderFunctionSelector() {
     }
 
     // Show analytical integral if known
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     switch (selected_function_) {
         case TestFunction::Sin:
             ImGui::TextWrapped("Integral of sin(x) = -cos(x)");
@@ -172,6 +175,7 @@ void IntegrationPanel::RenderBoundsInput() {
 }
 
 void IntegrationPanel::RenderMethodSelector() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("Method:");
     int idx = static_cast<int>(method_);
     if (ImGui::Combo("##Method", &idx, method_names_, 6)) {
@@ -204,7 +208,7 @@ void IntegrationPanel::RenderMethodSelector() {
     }
 
     // Show error formula
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
     switch (method_) {
         case Method::Trapezoid:
             ImGui::TextWrapped("Error: O(h^2)");
@@ -257,14 +261,15 @@ void IntegrationPanel::RenderResults() {
 }
 
 void IntegrationPanel::RenderIntegralValue() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!has_result_) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Click 'Integrate' to compute the integral");
         return;
     }
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        ImGui::TextColored(t.error,
             "Error: %s", result_.error_message.c_str());
         return;
     }
@@ -314,13 +319,13 @@ void IntegrationPanel::RenderIntegralValue() {
     double rel_error = abs_error / std::max(std::abs(analytical_integral_), 1e-15);
 
     if (abs_error < 1e-10) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(t.success,
             "Absolute error: %.2e (excellent)", abs_error);
     } else if (abs_error < 1e-6) {
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.2f, 1.0f),
+        ImGui::TextColored(ui::Mix(t.success, t.warning, 0.5f),
             "Absolute error: %.2e (good)", abs_error);
     } else {
-        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+        ImGui::TextColored(t.warning,
             "Absolute error: %.2e", abs_error);
     }
 
@@ -328,6 +333,7 @@ void IntegrationPanel::RenderIntegralValue() {
 }
 
 void IntegrationPanel::RenderAreaPlot() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!plot_generated_) {
         GeneratePlotData();
     }
@@ -337,12 +343,12 @@ void IntegrationPanel::RenderAreaPlot() {
         ImPlot::SetupAxes("x", "f(x)");
 
         // Plot function
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
         ImPlot::PlotLine("f(x)", plot_x_.data(), plot_y_.data(), static_cast<int>(plot_x_.size()));
 
         // Shade area under curve
         if (!fill_x_.empty()) {
-            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.3f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.3f));
             ImPlot::PlotShaded("Area", fill_x_.data(), fill_y_.data(), static_cast<int>(fill_x_.size()), 0.0);
         }
 
@@ -350,9 +356,9 @@ void IntegrationPanel::RenderAreaPlot() {
         double bounds_y_range[2] = { -10, 10 };
         double a_x[2] = { lower_bound_, lower_bound_ };
         double b_x[2] = { upper_bound_, upper_bound_ };
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.3f, 0.8f), 1.5f);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[1], 0.8f), 1.5f);
         ImPlot::PlotLine("##a", a_x, bounds_y_range, 2);
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.3f, 0.3f, 0.8f), 1.5f);
+        ImPlot::SetNextLineStyle(ui::WithAlpha(t.series[1], 0.8f), 1.5f);
         ImPlot::PlotLine("##b", b_x, bounds_y_range, 2);
 
         ImPlot::EndPlot();
@@ -360,8 +366,9 @@ void IntegrationPanel::RenderAreaPlot() {
 }
 
 void IntegrationPanel::RenderComparison() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (comparison_results_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(t.text_dim,
             "Click 'Compare All' to compare integration methods");
         return;
     }
@@ -386,9 +393,9 @@ void IntegrationPanel::RenderComparison() {
             ImGui::TableNextColumn();
             double err = std::abs(res.value - analytical_integral_);
             if (err < 1e-10) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.2e", err);
+                ImGui::TextColored(t.success, "%.2e", err);
             } else if (err < 1e-6) {
-                ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.2f, 1.0f), "%.2e", err);
+                ImGui::TextColored(ui::Mix(t.success, t.warning, 0.5f), "%.2e", err);
             } else {
                 ImGui::Text("%.2e", err);
             }
@@ -405,15 +412,15 @@ void IntegrationPanel::RenderComparison() {
         // Analytical row
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Analytical");
+        ImGui::TextColored(t.success, "Analytical");
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%.10f", analytical_integral_);
+        ImGui::TextColored(t.success, "%.10f", analytical_integral_);
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "0");
+        ImGui::TextColored(t.success, "0");
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "N/A");
+        ImGui::TextColored(t.success, "N/A");
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "0");
+        ImGui::TextColored(t.success, "0");
 
         ImGui::EndTable();
     }

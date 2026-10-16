@@ -1,4 +1,4 @@
-﻿{
+{
     "id":  "sentiment_analysis_lstm_classifier",
     "name":  "Sentiment Analysis LSTM Classifier (GPU-fit baseline v13)",
     "description":  "Train a stronger supported sentiment-analysis baseline on D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv. This graph targets a safer LSTM GPU-placement attempt using TextTokenizer -\\u003e Embedding -\\u003e single-direction LSTM -\\u003e Dense classifier -\\u003e CrossEntropy -\\u003e AdamW. LSTM is preferred for this test because current CyxWiz has bounded LSTM CUDA preflight placement support. Recommended target: first confirm compile placement and learning trend; use TF-IDF + Dense MLP as the stronger accuracy baseline if recurrent training remains slow or weak.",
@@ -295,7 +295,7 @@
                                                    300
                                                ],
                                        "params":  {
-                                                      "classes":  "$num_classes"
+                                                      "num_classes":  "$num_classes"
                                                   }
                                    }
                                ],

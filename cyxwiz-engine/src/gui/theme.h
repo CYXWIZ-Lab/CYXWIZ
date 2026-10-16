@@ -62,7 +62,7 @@ struct ThemeConfig {
     float window_border_size = 1.0f;
     float frame_border_size = 0.0f;
     float popup_border_size = 1.0f;
-    float child_border_size = 1.0f;   // bordered child regions (canvas, cards)
+    float child_border_size = 0.0f;   // child regions are told apart by tone, not outlines (owner rule)
 
     // Padding and spacing
     ImVec2 window_padding = ImVec2(8.0f, 8.0f);
@@ -117,6 +117,8 @@ public:
 
     // Apply matching dock style for current theme
     void ApplyDockStyle();
+    // Scrollbar tracks, table headers and grid lines in the window tone, for every preset.
+    void HarmonizeSurfaces();
 
 private:
     // Theme application methods

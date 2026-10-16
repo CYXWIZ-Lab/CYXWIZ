@@ -1,3 +1,4 @@
+#include "core/dataset_lineage.h"
 #include "core/arrow_dataset.h"
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
@@ -124,6 +125,7 @@ void CheckOrderedTextAggregation() {
     params = base_params; params["text_separator"] = std::string(1, '\0');
     run(params, "", "cannot contain NUL");
     registry.UnloadDataset("ordered_text_fixture");
-    fs::remove(input); fs::remove(output); fs::remove(dir);
+    // The export also wrote its lineage beside it (TOFIX148 Publish).
+    fs::remove(input); fs::remove(output); fs::remove(cyxwiz::LineagePathFor(output.string())); fs::remove(dir);
     std::cout << "PASS: ordered text aggregation (4 exports, 6 rejected configurations)\n";
 }

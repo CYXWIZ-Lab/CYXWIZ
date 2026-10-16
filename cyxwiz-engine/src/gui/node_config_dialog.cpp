@@ -1,6 +1,11 @@
 #include "node_config_dialog.h"
+#include "quality_analyzer_dialog.h"
+#include "word_embeddings_dialog.h"
+#include "embedding_dialog.h"
 #include "node_editor.h"
-#include "visualization/bar_chart_dialog.h"
+#include "separate_windows.h"
+#include "sql_workbench.h"
+#include "ui_tokens.h"
 #include "../core/file_dialogs.h"
 #include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
@@ -12,7 +17,6 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
-#include <random>
 #include <set>
 #include <unordered_map>
 
@@ -103,6 +107,9 @@ NodeConfigDialog::NodeConfigDialog(const std::string& title, MLNode* node)
 void NodeConfigDialog::Open() {
     is_open_ = true;
     first_open_ = true;
+    // In front also when its window is already open behind another one (a
+    // dock tab, the canvas raised by the same double-click).
+    ::gui::BringToFront(title_);
     has_changes_ = false;
     if (node_) {
         original_params_ = node_->parameters;
@@ -111,6 +118,7 @@ void NodeConfigDialog::Open() {
 
 void NodeConfigDialog::Close() {
     is_open_ = false;
+    OnClose();
 }
 
 bool NodeConfigDialog::Render() {
@@ -131,54 +139,65 @@ bool NodeConfigDialog::Render() {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
     // Begin the dialog window
-    if (ImGui::Begin(title_.c_str(), &is_open_, flags)) {
+    const bool visible = ImGui::Begin(title_.c_str(), &is_open_, flags);
+    if (visible && !UsesStandardButtons()) {
+        RenderContent();
+    } else if (visible) {
         // Content area
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        float button_height = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
 
         // Main content (excluding button area)
-        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - button_height), false);
+        ImGui::BeginChild("DialogContent", ImVec2(0, avail.y - FooterHeight()), false);
         RenderContent();
         ImGui::EndChild();
 
-        ImGui::Separator();
-
-        // Bottom buttons (OK, Cancel, Apply)
-        float button_width = 80.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float total_width = button_width * 3 + spacing * 2;
-        ImGui::SetCursorPosX(avail.x - total_width);
-
-        // Grey out OK/Apply while a subclass reports it's busy (e.g. async
-        // data load in DataInputDialog). Cancel stays enabled so the user
-        // can always bail out.
-        bool busy = IsBusy();
-
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-            Apply();
-            should_close = true;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
-            Reset();
-            should_close = true;
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(busy);
-        if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
-            Apply();
-        }
-        ImGui::EndDisabled();
+        RenderFooter(should_close);
     }
     ImGui::End();
 
-    if (should_close) {
+    if (should_close || !is_open_) {
         Close();
     }
 
     return is_open_;
+}
+
+float NodeConfigDialog::FooterHeight() const {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2;
+}
+
+void NodeConfigDialog::RenderFooter(bool& should_close) {
+    ImGui::Separator();
+
+    // Bottom buttons (OK, Cancel, Apply)
+    const float avail = ImGui::GetContentRegionAvail().x;
+    float button_width = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float total_width = button_width * 3 + spacing * 2;
+    ImGui::SetCursorPosX(avail - total_width);
+
+    // Grey out OK/Apply while a subclass reports it's busy (e.g. async
+    // data load in DataInputDialog). Cancel stays enabled so the user
+    // can always bail out.
+    bool busy = IsBusy() || !CanApply();
+
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+        Apply();
+        should_close = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+        Reset();
+        should_close = true;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("Apply", ImVec2(button_width, 0))) {
+        Apply();
+    }
+    ImGui::EndDisabled();
 }
 
 bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const char* filter) {
@@ -208,7 +227,8 @@ bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const 
 }
 
 void NodeConfigDialog::ValidationMessage(const std::string& message, bool is_error) {
-    ImVec4 color = is_error ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    ImVec4 color = is_error ? t.error : t.success;
     ImGui::TextColored(color, "%s", message.c_str());
 }
 
@@ -364,7 +384,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
             auto size = test_file.tellg();
             test_file.close();
 
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "File found");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, "File found");
             ImGui::Text("Size: %.2f KB", static_cast<float>(size) / 1024.0f);
         } else {
             ValidationMessage("File not found or cannot be opened");
@@ -374,7 +394,7 @@ void CSVReaderDialog::RenderFileSettingsTab() {
 
 void CSVReaderDialog::RenderTransformationTab() {
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Column transformation options will be available here.");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "Column transformation options will be available here.");
     ImGui::Spacing();
 
     ImGui::Text("Available transformations:");
@@ -450,7 +470,7 @@ void CSVReaderDialog::RenderLimitRowsTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim,
         "Note: Row limits are useful for:\n"
         "- Testing pipelines with large files\n"
         "- Memory management\n"
@@ -753,84 +773,6 @@ int FindColumnIndex(const std::vector<std::string>& headers,
     return -1;
 }
 
-bool WriteEmbeddingMatrix(const std::filesystem::path& path,
-                          int rows,
-                          int cols,
-                          int padding_idx,
-                          int init_mode,
-                          std::string& error) {
-    if (rows <= 0 || cols <= 0) {
-        error = "Embedding rows and dimensions must be positive.";
-        return false;
-    }
-
-    std::ofstream out(path, std::ios::binary);
-    if (!out.is_open()) {
-        error = "Could not open output file: " + path.string();
-        return false;
-    }
-
-    std::mt19937 rng(42);
-    const float limit = std::sqrt(6.0f / static_cast<float>(rows + cols));
-    std::normal_distribution<float> normal(0.0f, 1.0f);
-    std::uniform_real_distribution<float> uniform(-limit, limit);
-
-    out << "# cyxwiz_embedding rows=" << rows << " dim=" << cols << "\n";
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            float value = 0.0f;
-            if (r == padding_idx) {
-                value = 0.0f;
-            } else if (init_mode == 2) {
-                value = (r == c) ? 1.0f : 0.0f;
-            } else if (init_mode == 1) {
-                value = uniform(rng);
-            } else {
-                value = normal(rng);
-            }
-            if (c > 0) out << ' ';
-            out << value;
-        }
-        out << '\n';
-    }
-    return true;
-}
-
-bool InspectEmbeddingMatrix(const std::filesystem::path& path,
-                            int& rows,
-                            int& cols,
-                            std::string& error) {
-    rows = 0;
-    cols = -1;
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        error = "Could not open weights file: " + path.string();
-        return false;
-    }
-
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::istringstream iss(line);
-        float value = 0.0f;
-        int count = 0;
-        while (iss >> value) ++count;
-        if (count <= 0) continue;
-        if (cols < 0) cols = count;
-        if (count != cols) {
-            error = "Inconsistent embedding row width in " + path.string();
-            return false;
-        }
-        ++rows;
-    }
-    if (rows <= 0 || cols <= 0) {
-        error = "No numeric embedding rows found in " + path.string();
-        return false;
-    }
-    return true;
-}
-
 } // namespace
 
 TokenizerDialog::TokenizerDialog(MLNode* node)
@@ -855,9 +797,12 @@ void TokenizerDialog::LoadFromNode() {
     if (!node_) return;
 
     tokenizer_type_ = 1;
+    bpe_piece_policy_.clear();
+    bpe_initial_unit_.clear();
     token_output_mode_ = 0;
     std::copy_n("document_id", sizeof("document_id"), document_id_col_);
     std::copy_n("split", sizeof("split"), split_col_);
+    target_text_col_[0] = '\0';
     std::copy_n("token_ids", sizeof("token_ids"), token_ids_col_);
     max_length_ = IsPaddingNode() ? 512 : 256;
     max_vocab_size_ = IsVocabularyNode() ? -1 : 10000;
@@ -903,8 +848,13 @@ void TokenizerDialog::LoadFromNode() {
     }
     CopyParam(node_, "document_id_col", document_id_col_, sizeof(document_id_col_));
     CopyParam(node_, "split_col", split_col_, sizeof(split_col_));
+    CopyParam(node_, "target_text_col", target_text_col_, sizeof(target_text_col_));
     CopyParam(node_, "token_ids_col", token_ids_col_, sizeof(token_ids_col_));
     ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
+    if (const auto policy = node_->parameters.find("bpe_piece_policy"); policy != node_->parameters.end())
+        bpe_piece_policy_ = policy->second;
+    if (const auto unit = node_->parameters.find("bpe_initial_unit"); unit != node_->parameters.end())
+        bpe_initial_unit_ = unit->second;
     ReadIntParam(node_, "max_length", max_length_);
     ReadIntParam(node_, "max_vocab_size", max_vocab_size_);
     ReadIntParam(node_, "min_word_freq", min_word_freq_);
@@ -931,8 +881,20 @@ void TokenizerDialog::Apply() {
         else if (token_output_mode_ == 2) output_mode = "decode";
         else if (token_output_mode_ == 3) output_mode = "roundtrip";
         node_->parameters["output_mode"] = output_mode;
+        if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty())
+            node_->parameters["bpe_piece_policy"] = bpe_piece_policy_;
+        else
+            node_->parameters.erase("bpe_piece_policy");
+        if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty())
+            node_->parameters["bpe_initial_unit"] = bpe_initial_unit_;
+        else
+            node_->parameters.erase("bpe_initial_unit");
         node_->parameters["document_id_col"] = document_id_col_;
         node_->parameters["split_col"] = split_col_;
+        if (token_output_mode_ == 1 && target_text_col_[0] != '\0')
+            node_->parameters["target_text_col"] = target_text_col_;
+        else
+            node_->parameters.erase("target_text_col");
         node_->parameters["token_ids_col"] = token_ids_col_;
         node_->parameters["text_col"] = text_col_;
         node_->parameters["label_col"] = label_col_;
@@ -1137,7 +1099,7 @@ void TokenizerDialog::RenderTokenizerTab() {
 
     ImGui::Text("Tokenizer:");
     HelpTooltip("Controls how raw text is split before vocabulary lookup: whitespace splits on spaces, word keeps words and punctuation, character emits one token per character.");
-    const char* methods[] = { "Whitespace", "Word", "Character", "Byte BPE", "WordPiece" };
+    const char* methods[] = { "Whitespace", "Word", "Character", "BPE", "WordPiece" };
     ImGui::SetNextItemWidth(200.0f);
     if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 5)) {
         if (tokenizer_type_ == 3) lowercase_ = false;
@@ -1150,7 +1112,52 @@ void TokenizerDialog::RenderTokenizerTab() {
         has_changes_ = true;
     }
     ImGui::EndDisabled();
-    if (tokenizer_type_ == 3) ImGui::TextWrapped("Byte BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
+    if (tokenizer_type_ == 3) ImGui::TextWrapped("BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
+    if (IsTokenizerNode() && tokenizer_type_ == 3) {
+        ImGui::Spacing();
+        ImGui::Text("BPE starting units:");
+        HelpTooltip("Bytes starts with all 256 byte values. Unicode characters starts with each observed code point, not grapheme clusters. Unseen characters become [UNK]; invalid UTF-8 is rejected. Neither mode normalizes text. Saved artifacts own encoding; use a new file to refit.");
+        const char* unit_values[] = {"", "byte", "unicode_character"};
+        const char* unit_labels[] = {"Follow saved vocabulary", "Bytes (256)", "Unicode characters"};
+        const char* unit_label = "Unsupported unit - select a valid option";
+        for (int i = 0; i < 3; ++i) if (bpe_initial_unit_ == unit_values[i]) unit_label = unit_labels[i];
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::BeginCombo("##bpe_initial_unit", unit_label)) {
+            for (int i = 0; i < 3; ++i) {
+                if (ImGui::Selectable(unit_labels[i], bpe_initial_unit_ == unit_values[i])) {
+                    bpe_initial_unit_ = unit_values[i];
+                    has_changes_ = true;
+                    preview_tokens_.clear();
+                    preview_token_ids_.clear();
+                    preview_decoded_text_.clear();
+                    preview_has_roundtrip_ = false;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary starts from bytes. Character mode preserves known characters; unknown characters decode as [UNK].");
+        ImGui::Spacing();
+        ImGui::Text("Space handling:");
+        HelpTooltip("Controls where BPE may learn merges. A saved vocabulary owns its policy; an explicit selection must match it. Use a new vocabulary file to refit. Changing token IDs requires new windows and a compatible model.");
+        const char* values[] = {"", "whitespace_v1", "leading_space_v2"};
+        const char* labels[] = {"Follow saved vocabulary", "Separate spaces (v1)", "Merge leading space (v2)"};
+        const char* selected = "Unsupported policy - select a valid option";
+        for (int i = 0; i < 3; ++i) if (bpe_piece_policy_ == values[i]) selected = labels[i];
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::BeginCombo("##bpe_piece_policy", selected)) {
+            for (int i = 0; i < 3; ++i) {
+                if (ImGui::Selectable(labels[i], bpe_piece_policy_ == values[i])) {
+                    bpe_piece_policy_ = values[i];
+                    has_changes_ = true;
+                    preview_tokens_.clear();
+                    preview_token_ids_.clear();
+                    preview_has_roundtrip_ = false;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextWrapped("Without a saved vocabulary, Follow saved vocabulary fits with separate spaces. Merge leading space can learn pieces such as ' word'; byte mode preserves arbitrary bytes; character mode requires known Unicode characters.");
+    }
     if (tokenizer_type_ == 4) ImGui::TextWrapped("WordPiece uses ## continuation pieces and greedy longest-match encoding. Fit and save the vocabulary before using it for training or generation.");
     if (tokenizer_type_ == 5 || tokenizer_type_ == 6) ImGui::TextWrapped("SentencePiece is reserved for the optional provider path and is not enabled in this build yet. Run Pipeline will fail clearly instead of silently falling back.");
     HelpTooltip("Lowercasing reduces duplicate vocabulary entries like 'Happy' and 'happy'. Disable it when capitalization carries meaning.");
@@ -1175,8 +1182,10 @@ void TokenizerDialog::RenderVocabularyTab() {
         ImGui::Spacing();
     }
 
-    ImGui::Text("Minimum token frequency:");
-    HelpTooltip("Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
+    ImGui::Text(tokenizer_type_ == 3 ? "Minimum pair frequency:" : "Minimum token frequency:");
+    HelpTooltip(tokenizer_type_ == 3
+        ? "Minimum occurrence count for a BPE merge. All starting bytes or observed characters are retained regardless of frequency."
+        : "Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##min_word_freq", &min_word_freq_)) {
         if (min_word_freq_ < 1) min_word_freq_ = 1;
@@ -1186,14 +1195,16 @@ void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
     ImGui::Text("Maximum vocabulary size:");
-    HelpTooltip("Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
+    HelpTooltip(tokenizer_type_ == 3
+        ? "BPE requires an explicit cap covering the starting alphabet plus 4 specials: bytes needs at least 260; characters depends on the fitting text. The cap includes learned merges."
+        : "Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_vocab", &max_vocab_size_)) {
         if (max_vocab_size_ < -1) max_vocab_size_ = -1;
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("-1 = unlimited");
+    ImGui::TextDisabled(tokenizer_type_ == 3 ? "explicit cap required" : "-1 = unlimited");
 
     if (IsTokenizerNode() || IsVocabularyNode()) {
         ImGui::Spacing();
@@ -1239,6 +1250,11 @@ void TokenizerDialog::RenderPaddingTab() {
     if (token_output_mode_ == 1) {
         if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
         if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
+        if (ImGui::InputText("Response column (optional)", target_text_col_, sizeof(target_text_col_))) has_changes_ = true;
+        ImGui::TextWrapped("Response column (supervised fine-tuning): each row becomes one window, the text (the prompt) "
+                           "then the response (the answer) + EOS, and the loss counts only the answer's tokens, so the "
+                           "model learns to answer instead of repeating the prompt. Needs an existing vocabulary file. "
+                           "Empty = ordinary windows where every token is a target.");
         ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
     } else if (token_output_mode_ == 2) {
         if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
@@ -1325,9 +1341,22 @@ void TokenizerDialog::RenderPreviewTab() {
                     throw std::runtime_error("Could not load tokenizer vocabulary: " + vocab_file);
                 }
                 tokenizer.ValidateVocabulary();
+                if (tokenizer_type_ == 3 && !bpe_initial_unit_.empty()) {
+                    const auto actual = tokenizer.GetVocabulary().GetBPEInitialUnit();
+                    if (!((bpe_initial_unit_ == "byte" && actual == cyxwiz::BPEInitialUnit::Byte) ||
+                          (bpe_initial_unit_ == "unicode_character" && actual == cyxwiz::BPEInitialUnit::UnicodeCharacter)))
+                        throw std::runtime_error("BPE starting units differ from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
+                }
+                if (tokenizer_type_ == 3 && !bpe_piece_policy_.empty()) {
+                    const auto actual = tokenizer.GetVocabulary().GetBPEPiecePolicy();
+                    const bool matches =
+                        (bpe_piece_policy_ == "whitespace_v1" && actual == cyxwiz::ByteBPEPiecePolicy::WhitespaceV1) ||
+                        (bpe_piece_policy_ == "leading_space_v2" && actual == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+                    if (!matches) throw std::runtime_error("Space handling differs from the saved vocabulary. Follow the saved vocabulary or select a new file and refit through Run Pipeline.");
+                }
             } else {
                 if (tokenizer_type_ == 3) {
-                    throw std::runtime_error("Build and select a Byte BPE vocabulary before previewing. Byte BPE preview uses the exact saved backend artifact.");
+                    throw std::runtime_error("Build and select a BPE vocabulary before previewing. BPE preview uses the exact saved backend artifact.");
                 }
                 tokenizer.Train({std::string(sample_text_)}, min_word_freq_, max_vocab_size_);
                 tokenizer.ValidateVocabulary();
@@ -1396,9 +1425,9 @@ void TokenizerDialog::RenderPreviewTab() {
 
             // Draw token chip
             ImGui::PushID(static_cast<int>(i));
-            ImVec4 bg_color = ImVec4(0.2f, 0.4f, 0.6f, 1.0f);
+            ImVec4 bg_color = cyxwiz::ui::CurrentTokens().bg_raised;
             ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
             ImGui::SmallButton(token.c_str());
             ImGui::PopStyleColor(2);
             ImGui::PopID();
@@ -1408,235 +1437,6 @@ void TokenizerDialog::RenderPreviewTab() {
         }
         ImGui::NewLine();
     }
-}
-
-// ==================== EmbeddingDialog ====================
-
-EmbeddingDialog::EmbeddingDialog(MLNode* node)
-    : NodeConfigDialog("Embedding Configuration", node) {
-    LoadFromNode();
-}
-
-void EmbeddingDialog::LoadFromNode() {
-    if (!node_) return;
-
-    num_embeddings_ = 10000;
-    embedding_dim_ = 256;
-    padding_idx_ = -1;
-    max_norm_ = 0.0f;
-    freeze_ = false;
-    init_mode_ = 0;
-    weights_file_[0] = '\0';
-    output_file_[0] = '\0';
-    status_message_.clear();
-    status_is_error_ = false;
-
-    ReadIntParam(node_, "num_embeddings", num_embeddings_);
-    ReadIntParam(node_, "embedding_dim", embedding_dim_);
-    ReadIntParam(node_, "padding_idx", padding_idx_);
-    ReadBoolParam(node_, "freeze", freeze_);
-    CopyParam(node_, "weights_file", weights_file_, sizeof(weights_file_));
-    CopyParam(node_, "embedding_weights_file", weights_file_, sizeof(weights_file_));
-    CopyParam(node_, "output_weights_file", output_file_, sizeof(output_file_));
-
-    auto max_norm_it = node_->parameters.find("max_norm");
-    if (max_norm_it != node_->parameters.end() && !max_norm_it->second.empty()) {
-        try { max_norm_ = std::stof(max_norm_it->second); } catch (...) {}
-    }
-    auto init_it = node_->parameters.find("init_mode");
-    if (init_it != node_->parameters.end()) {
-        if (init_it->second == "uniform") init_mode_ = 1;
-        else if (init_it->second == "one_hot") init_mode_ = 2;
-        else init_mode_ = 0;
-    }
-
-    if (num_embeddings_ < 2) num_embeddings_ = 2;
-    if (embedding_dim_ < 1) embedding_dim_ = 1;
-}
-
-void EmbeddingDialog::Apply() {
-    if (!node_) return;
-
-    if (num_embeddings_ < 2) num_embeddings_ = 2;
-    if (embedding_dim_ < 1) embedding_dim_ = 1;
-    if (padding_idx_ >= num_embeddings_) padding_idx_ = num_embeddings_ - 1;
-    if (max_norm_ < 0.0f) max_norm_ = 0.0f;
-
-    node_->parameters["num_embeddings"] = std::to_string(num_embeddings_);
-    node_->parameters["embedding_dim"] = std::to_string(embedding_dim_);
-    node_->parameters["padding_idx"] = std::to_string(padding_idx_);
-    node_->parameters["max_norm"] = std::to_string(max_norm_);
-    node_->parameters["freeze"] = freeze_ ? "true" : "false";
-    node_->parameters["weights_file"] = weights_file_;
-    node_->parameters.erase("embedding_weights_file");
-    node_->parameters["output_weights_file"] = output_file_;
-    switch (init_mode_) {
-        case 1: node_->parameters["init_mode"] = "uniform"; break;
-        case 2: node_->parameters["init_mode"] = "one_hot"; break;
-        default: node_->parameters["init_mode"] = "normal"; break;
-    }
-
-    has_changes_ = false;
-    spdlog::info("EmbeddingDialog: Applied embedding settings");
-}
-
-void EmbeddingDialog::Reset() {
-    if (!node_) return;
-    node_->parameters = original_params_;
-    LoadFromNode();
-    has_changes_ = false;
-}
-
-bool EmbeddingDialog::BuildAndSaveWeights() {
-    if (output_file_[0] == '\0') {
-        status_message_ = "Choose an output weights file before building.";
-        status_is_error_ = true;
-        return false;
-    }
-
-    std::string error;
-    if (!WriteEmbeddingMatrix(output_file_, num_embeddings_, embedding_dim_,
-                              padding_idx_, init_mode_, error)) {
-        status_message_ = error;
-        status_is_error_ = true;
-        return false;
-    }
-
-    std::strncpy(weights_file_, output_file_, sizeof(weights_file_) - 1);
-    weights_file_[sizeof(weights_file_) - 1] = '\0';
-    status_message_ = "Wrote embedding matrix " + std::to_string(num_embeddings_) +
-                      " x " + std::to_string(embedding_dim_) + ".";
-    status_is_error_ = false;
-    has_changes_ = true;
-    return true;
-}
-
-bool EmbeddingDialog::InspectWeightFile() {
-    if (weights_file_[0] == '\0') {
-        status_message_ = "Choose a weights file to inspect.";
-        status_is_error_ = true;
-        return false;
-    }
-    int rows = 0;
-    int cols = 0;
-    std::string error;
-    if (!InspectEmbeddingMatrix(weights_file_, rows, cols, error)) {
-        status_message_ = error;
-        status_is_error_ = true;
-        return false;
-    }
-
-    status_message_ = "Weights file shape: " + std::to_string(rows) +
-                      " x " + std::to_string(cols) + ".";
-    status_is_error_ = false;
-    if (rows != num_embeddings_ || cols != embedding_dim_) {
-        status_message_ += " This does not match the current node shape.";
-        status_is_error_ = true;
-    }
-    return !status_is_error_;
-}
-
-void EmbeddingDialog::RenderContent() {
-    if (ImGui::BeginTabBar("EmbeddingTabs")) {
-        if (ImGui::BeginTabItem("Shape")) {
-            RenderShapeTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Weights")) {
-            RenderWeightsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Advanced")) {
-            RenderAdvancedTab();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-}
-
-void EmbeddingDialog::RenderShapeTab() {
-    ImGui::Spacing();
-    ImGui::Text("Vocabulary size:");
-    HelpTooltip("Number of token ids the embedding table can look up. This must match the tokenizer/vocabulary size.");
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##num_embeddings", &num_embeddings_)) {
-        if (num_embeddings_ < 2) num_embeddings_ = 2;
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Embedding dimension:");
-    HelpTooltip("Number of float features learned for each token id. Larger values can model richer text patterns but cost more memory and compute.");
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##embedding_dim", &embedding_dim_)) {
-        if (embedding_dim_ < 1) embedding_dim_ = 1;
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Padding index:");
-    HelpTooltip("Token id treated as padding. Its vector is forced to zero so padded positions do not carry text meaning.");
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputInt("##padding_idx", &padding_idx_)) {
-        if (padding_idx_ < -1) padding_idx_ = -1;
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("-1 disables padding-zero behavior; 0 is typical for [PAD].");
-}
-
-void EmbeddingDialog::RenderWeightsTab() {
-    ImGui::Spacing();
-    ImGui::Text("Load pretrained weights:");
-    HelpTooltip("Optional text matrix file with one embedding row per token id. Its shape must be vocabulary_size x embedding_dimension.");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputText("##weights_file", weights_file_, sizeof(weights_file_))) {
-        has_changes_ = true;
-    }
-    if (ImGui::Button("Inspect Weights")) {
-        InspectWeightFile();
-    }
-    HelpTooltip("Checks that the selected weights file has a consistent matrix shape and matches this node.");
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Freeze loaded weights", &freeze_)) {
-        has_changes_ = true;
-    }
-    HelpTooltip("When enabled, pretrained vectors are used as fixed features and are not updated during training.");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Build starter weights:");
-    HelpTooltip("Creates an initial embedding matrix from this node's shape. This is useful when you want a saved matrix file before training.");
-    const char* modes[] = {"Random normal", "Random uniform", "One-hot / truncated"};
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::Combo("##init_mode", &init_mode_, modes, 3)) {
-        has_changes_ = true;
-    }
-    ImGui::Text("Output weights file:");
-    HelpTooltip("Destination path for the generated embedding matrix. The file can be loaded back through 'Load pretrained weights'.");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputText("##output_weights_file", output_file_, sizeof(output_file_))) {
-        has_changes_ = true;
-    }
-    if (ImGui::Button("Build, Save, and Use")) {
-        BuildAndSaveWeights();
-    }
-    HelpTooltip("Writes the starter matrix and immediately selects it as this node's weights file.");
-
-    if (!status_message_.empty()) {
-        ValidationMessage(status_message_, status_is_error_);
-    }
-}
-
-void EmbeddingDialog::RenderAdvancedTab() {
-    ImGui::Spacing();
-    ImGui::Text("Max norm:");
-    HelpTooltip("Optional length cap for each token vector during lookup. Use 0 to disable clipping.");
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputFloat("##max_norm", &max_norm_, 0.1f, 1.0f, "%.4f")) {
-        if (max_norm_ < 0.0f) max_norm_ = 0.0f;
-        has_changes_ = true;
-    }
-    ImGui::TextDisabled("0 disables norm clipping. Positive values clip each vector during lookup.");
 }
 
 // ==================== FilterDialog ====================
@@ -1777,12 +1577,22 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
         return std::make_unique<DataSplitDialog>(node);
     });
 
+    // SQL step: the SQL Workbench (TOFIX146), a dockable window.
+    RegisterDialog(NT::SQLQuery, [](MLNode* node) {
+        return std::make_unique<SqlWorkbenchDialog>(node);
+    });
+
+    RegisterDialog(NT::QualityAnalyzer, [](MLNode* node) {
+        return std::make_unique<QualityAnalyzerDialog>(node);
+    });
+
+    RegisterDialog(NT::WordEmbeddings, [](MLNode* node) {
+        return std::make_unique<WordEmbeddingsDialog>(node);
+    });
+
     // Visualization framework — chart nodes live in their own TU
     // under src/gui/visualization/. BarChart is the first; Histogram /
     // LinePlot / ScatterPlot / PieChart follow the same shape.
-    RegisterDialog(NT::BarChart, [](MLNode* node) {
-        return std::make_unique<visualization::BarChartDialog>(node);
-    });
 }
 
 void NodeConfigDialogFactory::RegisterDialog(NodeType type, DialogCreator creator) {

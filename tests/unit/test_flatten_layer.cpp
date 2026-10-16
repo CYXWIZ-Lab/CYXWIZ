@@ -10,9 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cstdint>
 #include <cstring>
@@ -61,17 +59,10 @@ void CheckTensor(const cyxwiz::Tensor& actual, const json& expected) {
     }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 size_t g_flatten_host_sync_count = 0;
-size_t g_flatten_fallback_count = 0;
 
 void CountFlattenHostSync(const cyxwiz::ArrayFireHostSyncEvent&) {
     ++g_flatten_host_sync_count;
-}
-
-void CountFlattenFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent&) {
-    ++g_flatten_fallback_count;
 }
 
 cyxwiz::Tensor DeviceRowMajor3D(const std::vector<float>& values) {
@@ -117,17 +108,12 @@ void CheckActiveDeviceResidency() {
     cyxwiz::FlattenModule module(1);
 
     g_flatten_host_sync_count = 0;
-    g_flatten_fallback_count = 0;
     const size_t host_bytes_before = cyxwiz::MemoryManager::GetAllocatedBytes();
     cyxwiz::Tensor output;
     cyxwiz::Tensor grad_input;
     {
-        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
-            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
             &CountFlattenHostSync);
-        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-            &CountFlattenFallback);
 
         output = module.Forward(input);
         grad_input = module.Backward(grad_output);
@@ -139,7 +125,6 @@ void CheckActiveDeviceResidency() {
     CHECK(output.Shape() == std::vector<size_t>{2, 12});
     CHECK(grad_input.Shape() == std::vector<size_t>{2, 3, 4});
     CHECK(g_flatten_host_sync_count == 0);
-    CHECK(g_flatten_fallback_count == 0);
     CHECK(cyxwiz::MemoryManager::GetAllocatedBytes() == host_bytes_before);
 
     CheckTensor(output, json{{"shape", {2, 12}}, {"values", values}});
@@ -147,7 +132,6 @@ void CheckActiveDeviceResidency() {
         grad_input,
         json{{"shape", {2, 3, 4}}, {"values", gradients}});
 }
-#endif
 
 } // namespace
 
@@ -252,7 +236,6 @@ TEST_CASE("Flatten preserves every supported tensor dtype exactly",
           cyxwiz::DataType::UInt8);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Flatten forward and backward remain ArrayFire-resident",
           "[flatten][arrayfire][residency]") {
     CheckActiveDeviceResidency();
@@ -285,4 +268,3 @@ TEST_CASE("Flatten residency passes every installed CUDA and OpenCL device",
         WARN("No CUDA or OpenCL accelerator is installed");
     }
 }
-#endif

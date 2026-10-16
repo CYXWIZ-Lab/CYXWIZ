@@ -284,9 +284,11 @@ void RenderComponents(InstallerViewState &state,
     ImGui::TextWrapped("%s", presentation.explanation.c_str());
     if (record.backend == "cuda" &&
         !catalog.cuda_prerequisite.message.empty()) {
-      ImGui::TextColored(
-          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
-          "%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PushStyleColor(
+          ImGuiCol_Text,
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning);
+      ImGui::TextWrapped("%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PopStyleColor();
     }
     if (!presentation.action.empty()) {
       ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
@@ -349,9 +351,11 @@ void RenderComponents(InstallerViewState &state,
         BackendName(backend));
     if (backend == "cuda" &&
         !catalog.cuda_prerequisite.message.empty()) {
-      ImGui::TextColored(
-          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
-          "%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PushStyleColor(
+          ImGuiCol_Text,
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning);
+      ImGui::TextWrapped("%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PopStyleColor();
     }
     ImGui::Unindent(29.0f);
     ImGui::EndChild();
@@ -658,6 +662,43 @@ void RenderSummary(InstallerViewState &state,
   const auto plan =
       BuildBackendPackInstallerPlan(selection, catalog.records, catalog.mode);
 
+  const bool has_changes = plan.install_base || plan.update_base ||
+                           !plan.pack_ids.empty() ||
+                           !plan.deactivate_backends.empty();
+  const bool can_apply = plan.valid && has_changes &&
+                         (plan.pack_ids.empty() || catalog.available) &&
+                         !state.install_location_dirty &&
+                         install_location.valid && !operation_running;
+  // Why Review is disabled, shown under the button (never a silent no-op).
+  std::string apply_block_reason;
+  if (has_changes && !can_apply && !operation_running) {
+    if (!plan.valid) {
+      apply_block_reason = plan.message.empty()
+          ? "The selected changes cannot be applied." : plan.message;
+    } else if (!plan.pack_ids.empty() && !catalog.available) {
+      apply_block_reason =
+          "The signed package catalog is not available; use Refresh catalog.";
+    } else if (state.install_location_dirty) {
+      apply_block_reason =
+          "Apply or discard the installation location change first.";
+    } else if (!install_location.valid) {
+      apply_block_reason = install_location.message.empty()
+          ? "The installation location cannot be used."
+          : install_location.message;
+    }
+  }
+  const bool maintenance =
+      catalog.mode == CyxWizInstallerMode::Maintenance;
+  const bool recovery = catalog.mode == CyxWizInstallerMode::RecoveryRequired;
+  const bool show_launch = !recovery && (maintenance || state.install_completed);
+  const float footer_height =
+      (maintenance ? (has_changes ? 246.0f : 202.0f)
+                   : (state.install_completed ? 160.0f : 116.0f)) +
+      (apply_block_reason.empty() ? 0.0f : 44.0f);
+
+  // Details scroll on their own; the footer below always stays visible.
+  ImGui::BeginChild("summary-details", ImVec2(0.0f, -footer_height),
+                    ImGuiChildFlags_None);
   ImGui::TextColored(kAccent, "%s Installation summary", ICON_FA_CUBES);
   ImGui::Spacing();
   ImGui::TextDisabled("Profile");
@@ -747,24 +788,8 @@ void RenderSummary(InstallerViewState &state,
   if (!operation_message.empty()) {
     ImGui::TextWrapped("%s", operation_message.c_str());
   }
+  ImGui::EndChild();
 
-  const bool has_changes = plan.install_base || plan.update_base ||
-                           !plan.pack_ids.empty() ||
-                           !plan.deactivate_backends.empty();
-  const bool can_apply = plan.valid && has_changes &&
-                         (plan.pack_ids.empty() || catalog.available) &&
-                         !state.install_location_dirty &&
-                         install_location.valid && !operation_running;
-  const bool maintenance =
-      catalog.mode == CyxWizInstallerMode::Maintenance;
-  const bool recovery = catalog.mode == CyxWizInstallerMode::RecoveryRequired;
-  const bool show_launch = !recovery && (maintenance || state.install_completed);
-  const float footer_height = maintenance
-                                  ? (has_changes ? 228.0f : 184.0f)
-                                  : (state.install_completed ? 160.0f
-                                                             : 116.0f);
-  ImGui::SetCursorPosY(std::max(
-      ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footer_height));
   if (state.install_completed && !recovery) {
     ImGui::TextColored(kSuccess, "%s Installation complete",
                        ICON_FA_CIRCLE_CHECK);
@@ -807,6 +832,14 @@ void RenderSummary(InstallerViewState &state,
       state.review_requested = true;
     }
     ImGui::EndDisabled();
+    if (!apply_block_reason.empty()) {
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", apply_block_reason.c_str());
+      }
+      ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
+      ImGui::TextWrapped("%s", apply_block_reason.c_str());
+      ImGui::PopStyleColor();
+    }
   }
   if (maintenance) {
     const auto removal_action = RenderInstallerRemovalControl(

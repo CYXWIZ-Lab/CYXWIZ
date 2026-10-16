@@ -1,4 +1,5 @@
 #include "model_analyzer.h"
+#include "spatial_layer_shapes.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -128,11 +129,9 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::RNN: return "RNN";
         case gui::NodeType::LSTM: return "LSTM";
         case gui::NodeType::GRU: return "GRU";
-        case gui::NodeType::Bidirectional: return "Bidirectional";
         case gui::NodeType::TimeDistributed: return "TimeDistributed";
         case gui::NodeType::Embedding: return "Embedding";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
-        case gui::NodeType::SelfAttention: return "SelfAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::TransformerEncoder: return "TransformerEncoder";
@@ -181,7 +180,6 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::Output: return "Output";
         case gui::NodeType::DatasetInput: return "DatasetInput";
         case gui::NodeType::DataLoader: return "DataLoader";
-        case gui::NodeType::Augmentation: return "Augmentation";
         case gui::NodeType::DataSplit: return "DataSplit";
         case gui::NodeType::Normalize: return "Normalize";
         case gui::NodeType::OneHotEncode: return "OneHotEncode";
@@ -270,9 +268,29 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.flops = ComputeDenseFLOPs(in_features, out_features, bias, batch_size);
                     break;
                 }
-                case gui::NodeType::Conv2D:
-                case gui::NodeType::Conv1D:
+                case gui::NodeType::Conv1D: {
+                    // [L, C] -> [L_out, filters]: filters x (C x k) weights + bias
+                    const int64_t in_channels = current_shape.size() == 2 ? current_shape[1] : 1;
+                    const int64_t filters = GetIntParam(*node, "filters", 32);
+                    const int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
+                    const int64_t out_length = output_shape.size() == 2 ? output_shape[0] : 1;
+                    layer_analysis.parameters = filters * in_channels * kernel_size + filters;
+                    layer_analysis.flops = 2 * in_channels * kernel_size * filters * out_length * batch_size;
+                    break;
+                }
                 case gui::NodeType::Conv3D: {
+                    // [D, H, W, C] -> [D', H', W', filters]: filters x (C x k^3) weights + bias
+                    const int64_t in_channels = current_shape.size() == 4 ? current_shape[3] : 1;
+                    const int64_t filters = GetIntParam(*node, "filters", 32);
+                    const int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
+                    const int64_t column = in_channels * kernel_size * kernel_size * kernel_size;
+                    const int64_t patches = output_shape.size() == 4
+                        ? static_cast<int64_t>(output_shape[0] * output_shape[1] * output_shape[2]) : 1;
+                    layer_analysis.parameters = filters * column + filters;
+                    layer_analysis.flops = 2 * column * filters * patches * batch_size;
+                    break;
+                }
+                case gui::NodeType::Conv2D: {
                     int64_t in_channels = current_shape.size() >= 3 ? current_shape[2] : 1;
                     int64_t filters = GetIntParam(*node, "filters", 32);
                     int64_t kernel_size = GetIntParam(*node, "kernel_size", 3);
@@ -311,7 +329,6 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     break;
                 }
                 case gui::NodeType::MultiHeadAttention:
-                case gui::NodeType::SelfAttention:
                 case gui::NodeType::CrossAttention: {
                     int64_t embed_dim = GetIntParam(*node, "embed_dim", 256);
                     int64_t num_heads = GetIntParam(*node, "num_heads", 8);
@@ -320,9 +337,23 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.flops = ComputeAttentionFLOPs(seq_len, embed_dim, num_heads, batch_size);
                     break;
                 }
+                case gui::NodeType::LinearAttention: {
+                    int64_t embed_dim = GetIntParam(*node, "embed_dim", 512);
+                    int64_t num_heads = std::max<int64_t>(1, GetIntParam(*node, "num_heads", 8));
+                    int64_t seq_len = current_shape.size() >= 2 ? current_shape[0] : 1;
+                    const auto causal = node->parameters.find("causal");
+                    const bool is_causal = causal != node->parameters.end() && causal->second == "true";
+                    layer_analysis.parameters = ComputeAttentionParams(embed_dim, num_heads);
+                    // Four projections, then phi(K)^T V and phi(Q) S per head
+                    // (causal: the masked length x length products).
+                    const int64_t core = is_causal ? 4 * seq_len * seq_len * embed_dim
+                                                   : 4 * seq_len * embed_dim * (embed_dim / num_heads);
+                    layer_analysis.flops = (4 * 2 * seq_len * embed_dim * embed_dim + core) * batch_size;
+                    break;
+                }
                 case gui::NodeType::Embedding: {
-                    int64_t vocab_size = GetIntParam(*node, "vocab_size", 10000);
-                    int64_t embed_dim = GetIntParam(*node, "embed_dim", 256);
+                    int64_t vocab_size = GetIntParam(*node, "num_embeddings", 10000);
+                    int64_t embed_dim = GetIntParam(*node, "embedding_dim", 256);
                     layer_analysis.parameters = vocab_size * embed_dim;
                     layer_analysis.flops = 0;  // Embedding is a lookup, no FLOPs
                     break;
@@ -532,8 +563,8 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::RNN:
         case gui::NodeType::Embedding:
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
         case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
         case gui::NodeType::TensorAbs:
@@ -763,6 +794,20 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
             int units = GetIntParam(node, "units", 128);
             return {static_cast<size_t>(units)};
         }
+        case gui::NodeType::Conv1D: {
+            try {
+                return spatial::Conv1DSampleShapeAfter(node.parameters, input_shape);
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
+        }
+        case gui::NodeType::Conv3D: {
+            try {
+                return spatial::Conv3DSampleShapeAfter(node.parameters, input_shape);
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
+        }
         case gui::NodeType::Conv2D: {
             int filters = GetIntParam(node, "filters", 32);
             int kernel_size = GetIntParam(node, "kernel_size", 3);
@@ -818,8 +863,8 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
             return {static_cast<size_t>(embed_dim)};
         }
         case gui::NodeType::MultiHeadAttention:
-        case gui::NodeType::SelfAttention:
-        case gui::NodeType::CrossAttention: {
+        case gui::NodeType::CrossAttention:
+        case gui::NodeType::LinearAttention: {
             // Output shape same as input for attention
             return input_shape;
         }

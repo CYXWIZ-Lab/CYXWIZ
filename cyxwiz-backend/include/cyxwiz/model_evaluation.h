@@ -215,11 +215,6 @@ public:
         const std::vector<int>& y_true,
         const std::vector<double>& y_scores,
         const std::string& criterion = "f1");  // "f1", "youden", "balanced"
-
-private:
-    static std::vector<size_t> ArgSort(
-        const std::vector<double>& values,
-        bool descending = true);
 };
 
 } // namespace cyxwiz

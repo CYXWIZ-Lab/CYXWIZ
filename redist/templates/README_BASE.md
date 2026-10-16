@@ -17,3 +17,6 @@ modify `PATH` directly.
 
 The bootstrapper accepts only the base and optional packs named by the active
 runtime state. Hardware drivers remain host prerequisites.
+
+Known problems in the GPU runtimes CyxWiz uses, and what to do about them, are listed in
+`KNOWN_ISSUES.md` in this package.

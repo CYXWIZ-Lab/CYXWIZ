@@ -1,5 +1,9 @@
 #include "svd_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -37,17 +41,11 @@ void SVDPanel::Render() {
         if (is_computing_.load()) {
             RenderLoadingIndicator();
         } else {
-            float panel_width = ImGui::GetContentRegionAvail().x;
-
-            ImGui::BeginChild("InputPanel", ImVec2(panel_width * 0.35f, 0), true);
+            ui::BeginSettingsColumn("svd", ImGui::GetContentRegionAvail().x * 0.35f);
             RenderMatrixInput();
-            ImGui::EndChild();
-
-            ImGui::SameLine();
-
-            ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+            ui::BeginResultsArea();
             RenderResults();
-            ImGui::EndChild();
+            ui::EndResultsArea();
         }
     }
     ImGui::End();
@@ -71,9 +69,7 @@ void SVDPanel::RenderToolbar() {
 }
 
 void SVDPanel::RenderMatrixInput() {
-    ImGui::Text(ICON_FA_TABLE_CELLS " Input Matrix");
-    ImGui::Separator();
-
+    ui::SettingsSection("Input matrix");
     ImGui::Text("Size:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(50);
@@ -126,18 +122,17 @@ void SVDPanel::RenderLoadingIndicator() {
 }
 
 void SVDPanel::RenderResults() {
-    ImGui::Text(ICON_FA_SQUARE_CHECK " Results");
-    ImGui::Separator();
-
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!error_message_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
         ImGui::PopStyleColor();
         return;
     }
 
     if (!has_result_) {
-        ImGui::TextDisabled("Click Compute to perform SVD: A = U * S * V^T");
+        ui::EmptyState(ICON_FA_CHART_PIE, "No decomposition yet",
+                       "Enter a matrix, then Compute SVD (A = U * S * V^T).");
         return;
     }
 
@@ -293,7 +288,7 @@ void SVDPanel::RenderLowRankApprox() {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Compute Approximation")) {
+    if (ui::SecondaryButton("Compute Approximation")) {
         approx_matrix_ = LinearAlgebra::LowRankApproximation(matrix_, approx_rank_);
         has_approx_ = approx_matrix_.success;
     }
@@ -361,6 +356,7 @@ void SVDPanel::ComputeAsync() {
 
     compute_thread_ = std::make_unique<std::thread>([this]() {
         std::lock_guard<std::mutex> lock(result_mutex_);
+        Device::ActivateProcessDeviceOnThisThread();
 
         try {
             result_ = LinearAlgebra::SVD(matrix_, full_matrices_);

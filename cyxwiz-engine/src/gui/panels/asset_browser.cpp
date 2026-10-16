@@ -1,6 +1,10 @@
 #include "asset_browser.h"
 #include "../icons.h"
-#include "../data_preview_table_renderer.h"
+#include "../ui_tokens.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
+#include "../ui_widgets.h"
+#include "../editor_fonts.h"
 #include "../../core/project_manager.h"
 #include <imgui.h>
 #include <filesystem>
@@ -30,6 +34,62 @@ namespace fs = std::filesystem;
 namespace cyxwiz {
 
 namespace {
+
+// Placement and sizes of the file preview pane.
+constexpr float kPreviewBesideMinWidth = 700.0f;  // narrower panels put it below the tree
+constexpr float kPreviewMinExtent = 220.0f;
+constexpr float kTreeMinExtent = 180.0f;
+constexpr float kPreviewHandle = 6.0f;
+constexpr int kPreviewRows = 12;
+
+const char* KindIcon(assets::FileKind kind, bool open) {
+    using K = assets::FileKind;
+    switch (kind) {
+        case K::Folder:      return open ? ICON_FA_FOLDER_OPEN : ICON_FA_FOLDER;
+        case K::Table:       return ICON_FA_FILE_CSV;
+        case K::Spreadsheet: return ICON_FA_FILE_EXCEL;
+        case K::Columnar:    return ICON_FA_DATABASE;
+        case K::Config:      return ICON_FA_CODE;
+        case K::Python:      return ICON_FA_FILE_CODE;
+        case K::Notebook:    return ICON_FA_BOOK;
+        case K::Graph:       return ICON_FA_DIAGRAM_PROJECT;
+        case K::Model:       return ICON_FA_BRAIN;
+        case K::Image:       return ICON_FA_IMAGE;
+        case K::Audio:       return ICON_FA_MUSIC;
+        case K::Video:       return ICON_FA_VIDEO;
+        case K::Text:        return ICON_FA_FILE_LINES;
+        case K::Plugin:      return ICON_FA_PLUG;
+        default:             return ICON_FA_FILE;
+    }
+}
+
+// One theme series colour per family (series: violet, sky, amber, green,
+// coral, pink), so both themes keep readable icons.
+ImVec4 KindColour(assets::FileKind kind) {
+    using K = assets::FileKind;
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (kind) {
+        case K::Folder:      return t.series[2];
+        case K::Table:
+        case K::Spreadsheet:
+        case K::Columnar:    return t.series[3];
+        case K::Python:
+        case K::Notebook:    return t.series[1];
+        case K::Graph:
+        case K::Model:       return t.series[0];
+        case K::Config:      return t.series[5];
+        case K::Image:
+        case K::Audio:
+        case K::Video:       return t.series[4];
+        default:             return t.text_dim;
+    }
+}
+
+bool IsNumericType(const std::string& type) {
+    for (const char* name : {"int", "float", "double", "decimal", "num"})
+        if (type.find(name) != std::string::npos) return true;
+    return false;
+}
 
 bool LaunchAssetInFileBrowser(const std::string& absolute_path, bool is_directory) {
     if (absolute_path.empty()) {
@@ -81,12 +141,10 @@ AssetBrowserPanel::AssetBrowserPanel()
     , context_menu_item_(nullptr)
     , show_rename_dialog_(false)
     , show_delete_confirm_(false)
-    , show_new_script_dialog_(false)
     , show_new_folder_dialog_(false)
 {
     std::memset(search_buffer_, 0, sizeof(search_buffer_));
     std::memset(rename_buffer_, 0, sizeof(rename_buffer_));
-    std::memset(new_script_name_, 0, sizeof(new_script_name_));
     std::memset(new_folder_name_, 0, sizeof(new_folder_name_));
 
     // Note: ProjectManager callbacks are managed by MainWindow to avoid callback conflicts
@@ -124,15 +182,22 @@ void AssetBrowserPanel::Render() {
 
     PollForExternalChanges();
 
-    ImGui::Begin(GetName(), &visible_);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(GetName(), &visible_)) {
+        ImGui::End();
+        return;
+    }
 
     // Toolbar at top
     RenderToolbar();
 
     ImGui::Separator();
 
-    // Keyboard shortcuts (when window is focused)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+    // Keyboard shortcuts: when this window has focus, not a dialog it opened
+    // (ImGui counts its popups as its children) and not while a text field
+    // takes the keys (Ctrl+A or Delete there edit the text, not the files).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_NoPopupHierarchy) &&
+        !ImGui::GetIO().WantTextInput) {
         // Get first selected item for single-item operations
         AssetItem* first_selected = selected_items_.empty() ? nullptr : *selected_items_.begin();
 
@@ -173,7 +238,7 @@ void AssetBrowserPanel::Render() {
             } else {
                 context_menu_item_ = directory_root_.get();
             }
-            show_new_script_dialog_ = true;
+            new_file_request_ = NewFileDialog::Mode::Script;
         }
         // Ctrl+A - Select all
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A) && directory_root_) {
@@ -194,23 +259,32 @@ void AssetBrowserPanel::Render() {
         }
     }
 
-    // Main content area - directory view with optional preview pane
-    float preview_width = 0.0f;
-
-    // Check if any selected item is a dataset for preview pane
-    bool has_dataset_selected = false;
+    // Main content: the tree, and the selected file's preview beside it (a
+    // wide panel) or below it (a narrow one).
+    AssetItem* preview_item = nullptr;
     for (auto* item : selected_items_) {
-        if (item && IsDatasetFile(*item)) {
-            has_dataset_selected = true;
+        if (item && !item->is_directory) {
+            preview_item = item;
             break;
         }
     }
-
-    if (show_dataset_preview_ && has_dataset_selected) {
-        preview_width = 200.0f;
+    const bool show_preview = show_dataset_preview_ && preview_item != nullptr;
+    const float footer = ImGui::GetFrameHeightWithSpacing();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const bool beside = avail.x >= kPreviewBesideMinWidth;
+    ImVec2 tree_size(0.0f, -footer);
+    if (show_preview && beside) {
+        preview_side_width_ = std::clamp(preview_side_width_, kPreviewMinExtent,
+                                         std::max(kPreviewMinExtent, avail.x - kTreeMinExtent));
+        tree_size.x = avail.x - preview_side_width_ - kPreviewHandle;
+    } else if (show_preview) {
+        const float spacing = 2.0f * ImGui::GetStyle().ItemSpacing.y;  // around the handle
+        preview_below_height_ = std::clamp(preview_below_height_, kPreviewMinExtent,
+                                           std::max(kPreviewMinExtent, avail.y - footer - spacing - kTreeMinExtent));
+        tree_size.y = std::max(kTreeMinExtent, avail.y - footer - spacing - preview_below_height_ - kPreviewHandle);
     }
 
-    ImGui::BeginChild("AssetContentRegion", ImVec2(-preview_width, -ImGui::GetFrameHeightWithSpacing()), false);
+    ImGui::BeginChild("AssetContentRegion", tree_size, false);
 
     RenderDirectoryView();
 
@@ -225,7 +299,10 @@ void AssetBrowserPanel::Render() {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -255,17 +332,18 @@ void AssetBrowserPanel::Render() {
 
     ImGui::EndChild();
 
-    // Render dataset preview pane if needed
-    if (show_dataset_preview_ && has_dataset_selected) {
-        ImGui::SameLine();
-        RenderDatasetPreview();
+    if (show_preview) {
+        if (beside) ImGui::SameLine(0.0f, 0.0f);
+        PreviewSplitter(beside);
+        if (beside) ImGui::SameLine(0.0f, 0.0f);
+        RenderFilePreview(*preview_item, beside ? ImVec2(0.0f, -footer) : ImVec2(0.0f, preview_below_height_));
     }
 
     // Status bar at bottom
     RenderStatusBar();
 
     // Dialogs (these are modal popups, render at parent level)
-    RenderNewScriptDialog();
+    RenderNewFileDialog();
     RenderNewFolderDialog();
     RenderRenameDialog();
     RenderDeleteConfirmDialog();
@@ -293,8 +371,9 @@ namespace {
 // Fingerprint of what the tree shows: every visible entry's path, size and
 // modification time, with the scanner's filters (hidden entries and .cyxwiz
 // project files skipped). Any add, delete, rename or write changes it.
-// The prepared-data cache (cache/materialized) and *.tmp files are left out:
-// training writes them while it prepares, and they are not browsed.
+// The project's cache/ folder and *.tmp files are left out: the Engine writes
+// them itself (cache/materialized while training prepares, cache/query_results
+// on each query, cache/ingestion), so they are not a change made to the project.
 std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
     std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
     const auto mix = [&hash](const void* data, size_t size) {
@@ -311,8 +390,8 @@ std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
         const fs::path& path = it->path();
         const std::string name = path.filename().string();
         std::error_code entry_ec;
-        const bool engine_cache =
-            name == "materialized" && path.parent_path().filename() == "cache";
+        std::error_code same_ec;
+        const bool engine_cache = name == "cache" && fs::equivalent(path.parent_path(), root, same_ec);
         if ((!show_hidden && !name.empty() && name[0] == '.') || path.extension() == ".cyxwiz" ||
             path.extension() == ".tmp" || engine_cache) {
             if (it->is_directory(entry_ec)) it.disable_recursion_pending();
@@ -613,6 +692,16 @@ void AssetBrowserPanel::RenderToolbar() {
 
     ImGui::SameLine();
 
+    // File preview toggle
+    if (ImGui::Button(ICON_FA_TABLE_COLUMNS)) {
+        show_dataset_preview_ = !show_dataset_preview_;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(show_dataset_preview_ ? "Hide the file preview" : "Show the file preview");
+    }
+
+    ImGui::SameLine();
+
     // Sort dropdown (on the right)
     const char* sort_names[] = {"Name", "Date", "Size", "Type"};
     ImGui::PushItemWidth(60);
@@ -646,7 +735,7 @@ void AssetBrowserPanel::RenderDirectoryView() {
     // Show the loading indicator only for the first scan; a rescan keeps the
     // existing tree on screen without shifting it.
     if (is_scanning_directory_.load() && !directory_root_) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_SPINNER " Scanning project files...");
+        ImGui::TextColored(ui::CurrentTokens().running, ICON_FA_SPINNER " Scanning project files...");
         return;
     }
 
@@ -668,6 +757,9 @@ void AssetBrowserPanel::RenderDirectoryView() {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.y > 10.0f) {  // Only if there's enough space
         ImGui::InvisibleButton("##RootDropTarget", ImVec2(-1, avail.y));
+        // The project menu (Render's BeginPopupContextWindow, same window and
+        // id) skips items, and this button is one: open it from here.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("AssetEmptyContextMenu");
 
         // Handle drop to project root
         if (ImGui::BeginDragDropTarget()) {
@@ -739,9 +831,6 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         ImGui::SetNextItemOpen(item.is_expanded, ImGuiCond_Always);
     }
 
-    // Get icon for asset type
-    const char* icon = GetAssetIcon(item.type);
-
     // For directories, show item count
     std::string label = item.name;
     if (item.is_directory && !item.children.empty()) {
@@ -752,7 +841,31 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // Render tree node with icon
     // Keyed by path, not by address: a rescan builds new items, and an address
     // key would make ImGui forget which folders were open.
-    bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s %s", icon, label.c_str());
+    // Rows in the theme's selection / hover washes: the Unreal preset's
+    // selected Header is a grey barely off the panel while its hovered row is
+    // a 50 % orange, so the clicked file glowed and the selection vanished.
+    {
+        const ui::Tokens& tokens = ui::CurrentTokens();
+        ImGui::PushStyleColor(ImGuiCol_Header, ui::WithAlpha(tokens.accent, 0.28f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tokens.hover);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.accent, 0.36f));
+    }
+    bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s", "");
+    ImGui::PopStyleColor(3);
+    {
+        // Icon in its kind's colour, then the name. Drawn, not submitted, so
+        // the tree node stays the last item for the context menu and drag.
+        const assets::FileKind kind = assets::KindOfPath(item.absolute_path, item.is_directory);
+        const char* icon = KindIcon(kind, item.is_directory && node_open);
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const float y = min.y + (ImGui::GetItemRectSize().y - ImGui::GetFontSize()) * 0.5f;
+        const float icon_width = ImGui::CalcTextSize(ICON_FA_FOLDER_OPEN).x;
+        float x = min.x + ImGui::GetTreeNodeToLabelSpacing();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddText(ImVec2(x + (icon_width - ImGui::CalcTextSize(icon).x) * 0.5f, y), ui::ToU32(KindColour(kind)), icon);
+        x += icon_width + ImGui::GetStyle().ItemInnerSpacing.x;
+        draw->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+    }
 
     // Sync our is_expanded state with ImGui's actual state (for directories)
     if (item.is_directory && !is_leaf) {
@@ -814,7 +927,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         // New submenu
         if (ImGui::BeginMenu(ICON_FA_PLUS " New")) {
             if (ImGui::MenuItem(ICON_FA_FILE_CODE " Script...")) {
-                show_new_script_dialog_ = true;
+                new_file_request_ = NewFileDialog::Mode::Script;
+            }
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES " File...")) {
+                new_file_request_ = NewFileDialog::Mode::File;
             }
             if (ImGui::MenuItem(ICON_FA_FOLDER_PLUS " Folder...")) {
                 show_new_folder_dialog_ = true;
@@ -898,7 +1014,7 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // Handle drag source - all items can be dragged
     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
         ImGui::SetDragDropPayload("ASSET_PATH", item.absolute_path.c_str(), item.absolute_path.size() + 1);
-        ImGui::Text("%s %s", item.is_directory ? ICON_FA_FOLDER : GetAssetIcon(item.type), item.name.c_str());
+        ImGui::Text("%s %s", KindIcon(assets::KindOfPath(item.absolute_path, item.is_directory), false), item.name.c_str());
         ImGui::EndDragDropSource();
     }
 
@@ -974,57 +1090,34 @@ void AssetBrowserPanel::RenderStatusBar() {
         !asset_action_message_.empty()) {
         ImGui::SameLine();
         const ImVec4 color = asset_action_status_ == AssetActionStatus::Error
-            ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
-            : ImVec4(0.5f, 0.9f, 0.5f, 1.0f);
+            ? ui::CurrentTokens().error
+            : ui::CurrentTokens().success;
         ImGui::TextColored(color, "| %s", asset_action_message_.c_str());
     }
 }
 
-void AssetBrowserPanel::RenderNewScriptDialog() {
-    if (!show_new_script_dialog_) return;
-
-    auto& pm = ProjectManager::Instance();
-
-    // Show warning if no project is open
-    if (!pm.HasActiveProject()) {
-        ImGui::OpenPopup("No Project Open");
-
-        if (ImGui::BeginPopupModal("No Project Open", &show_new_script_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Warning");
-            ImGui::Separator();
-            ImGui::Text("Cannot create a new script without an open project.");
-            ImGui::Text("Please create or open a project first.");
-            ImGui::Separator();
-
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                show_new_script_dialog_ = false;
-            }
-            ImGui::EndPopup();
-        }
-        return;
+void AssetBrowserPanel::RenderNewFileDialog() {
+    // Same dialog as File > New Script (TOFIX129 A2-4), opened in the folder
+    // that was right-clicked, else the project's scripts folder (a script) or
+    // the project folder (a file).
+    if (new_file_request_) {
+        std::string folder;
+        if (context_menu_item_ && context_menu_item_->is_directory) folder = context_menu_item_->absolute_path;
+        else if (context_menu_item_) folder = fs::path(context_menu_item_->absolute_path).parent_path().string();
+        new_file_dialog_.Open(*new_file_request_, folder);
+        new_file_request_.reset();
     }
-
-    ImGui::OpenPopup("New Script");
-
-    if (ImGui::BeginPopupModal("New Script", &show_new_script_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Create a new CyxWiz script");
-        ImGui::Separator();
-
-        ImGui::InputTextWithHint("##script_name", "script_name.cyx", new_script_name_, sizeof(new_script_name_));
-
-        ImGui::Separator();
-
-        if (ImGui::Button("Create", ImVec2(120, 0))) {
-            CreateNewScript();
-            show_new_script_dialog_ = false;
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            show_new_script_dialog_ = false;
-        }
-
-        ImGui::EndPopup();
+    if (new_file_dialog_.Render() != NewFileDialog::Result::Created) return;
+    Refresh();
+    if (on_double_click_) {
+        AssetItem new_item;
+        const fs::path created(new_file_dialog_.CreatedPath());
+        new_item.name = created.filename().string();
+        new_item.absolute_path = created.string();
+        new_item.relative_path = ProjectManager::Instance().MakeRelativePath(created.string());
+        new_item.type = DetermineAssetType(created.string());
+        new_item.is_directory = false;
+        on_double_click_(new_item);
     }
 }
 
@@ -1082,7 +1175,7 @@ void AssetBrowserPanel::RenderDeleteConfirmDialog() {
         }
 
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "This action cannot be undone");
+        ImGui::TextColored(ui::CurrentTokens().error, "This action cannot be undone");
 
         ImGui::Separator();
 
@@ -1110,7 +1203,7 @@ void AssetBrowserPanel::RenderNewFolderDialog() {
         ImGui::OpenPopup("No Project Open##Folder");
 
         if (ImGui::BeginPopupModal("No Project Open##Folder", &show_new_folder_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Warning");
+            ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION " Warning");
             ImGui::Separator();
             ImGui::Text("Cannot create a new folder without an open project.");
             ImGui::Text("Please create or open a project first.");
@@ -1234,7 +1327,7 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     std::string ext = fs::path(path).extension().string();
 
     // Scripts
-    if (ext == ".py" || ext == ".cyx") return AssetType::Script;
+    if (ext == ".py" || ext == ".pyw" || ext == ".cyx" || ext == ".ipynb") return AssetType::Script;
 
     // Models (note: .h5 can be Keras models OR HDF5 datasets - we prioritize datasets)
     if (ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
@@ -1263,21 +1356,6 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     return AssetType::Unknown;
 }
 
-const char* AssetBrowserPanel::GetAssetIcon(AssetType type) const {
-    switch (type) {
-        case AssetType::Script:      return ICON_FA_FILE_CODE;
-        case AssetType::Model:       return ICON_FA_BRAIN;
-        case AssetType::Dataset:     return ICON_FA_DATABASE;
-        case AssetType::Checkpoint:  return ICON_FA_FLOPPY_DISK;
-        case AssetType::Export:      return ICON_FA_DOWNLOAD;
-        case AssetType::Plugin:      return ICON_FA_PLUG;
-        case AssetType::Graph:       return ICON_FA_DIAGRAM_PROJECT;
-        case AssetType::Folder:      return ICON_FA_FOLDER;
-        case AssetType::Unknown:     return ICON_FA_FILE;
-        default:                     return ICON_FA_FILE;
-    }
-}
-
 int AssetBrowserPanel::CountItems() const {
     std::function<int(const AssetItem*)> count_recursive;
     count_recursive = [&](const AssetItem* item) {
@@ -1293,73 +1371,6 @@ int AssetBrowserPanel::CountItems() const {
     }
 
     return 0;
-}
-
-void AssetBrowserPanel::CreateNewScript() {
-    auto& pm = ProjectManager::Instance();
-    if (!pm.HasActiveProject()) {
-        spdlog::warn("Cannot create script: no active project");
-        return;
-    }
-
-    std::string script_name = new_script_name_;
-    if (script_name.empty()) {
-        spdlog::warn("Script name is empty");
-        return;
-    }
-
-    // Ensure .cyx extension (default script extension)
-    if (!script_name.ends_with(".py") && !script_name.ends_with(".cyx")) {
-        script_name += ".cyx";
-    }
-
-    // Determine target directory - use context_menu_item if it's a directory, otherwise use scripts path
-    fs::path target_dir;
-    if (context_menu_item_ && context_menu_item_->is_directory) {
-        target_dir = context_menu_item_->absolute_path;
-    } else if (context_menu_item_) {
-        target_dir = fs::path(context_menu_item_->absolute_path).parent_path();
-    } else {
-        target_dir = pm.GetScriptsPath();
-    }
-
-    std::string script_path = (target_dir / script_name).string();
-
-    // Create file
-    try {
-        std::ofstream file(script_path);
-        file << "# " << script_name << "\n";
-        file << "# Created with CyxWiz Engine\n\n";
-        file << "# CyxWiz Script\n";
-        file << "# Use this script to define your ML training pipeline\n\n";
-        file << "def main():\n";
-        file << "    pass\n\n";
-        file << "if __name__ == '__main__':\n";
-        file << "    main()\n";
-        file.close();
-
-        spdlog::info("Created new script: {}", script_path);
-
-        // Refresh to show new file
-        Refresh();
-
-        // Auto-open the new script in editor if callback is set
-        if (on_double_click_) {
-            AssetItem new_item;
-            new_item.name = script_name;
-            new_item.absolute_path = script_path;
-            new_item.relative_path = pm.MakeRelativePath(script_path);
-            new_item.type = AssetType::Script;
-            new_item.is_directory = false;
-            on_double_click_(new_item);
-        }
-
-        // Clear input
-        std::memset(new_script_name_, 0, sizeof(new_script_name_));
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to create script: {}", e.what());
-    }
 }
 
 void AssetBrowserPanel::CreateNewFolder() {
@@ -1761,8 +1772,8 @@ bool AssetBrowserPanel::IsDatasetFile(const AssetItem& item) const {
 bool AssetBrowserPanel::IsPreviewableFile(const AssetItem& item) const {
     if (item.is_directory) return false;
 
-    auto content_type = gui::PreviewRenderer::DetectFileType(item.absolute_path);
-    return content_type != gui::PreviewContentType::Unknown;
+    auto content_type = ::gui::PreviewRenderer::DetectFileType(item.absolute_path);
+    return content_type != ::gui::PreviewContentType::Unknown;
 }
 
 void AssetBrowserPanel::RenderQuickPreviewPopup() {
@@ -1774,20 +1785,20 @@ void AssetBrowserPanel::RenderQuickPreviewPopup() {
 
     if (ImGui::Begin(title.c_str(), &show_quick_preview_, ImGuiWindowFlags_NoDocking)) {
         // File info bar
-        auto content_type = gui::PreviewRenderer::DetectFileType(quick_preview_path_);
-        ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", quick_preview_path_.c_str());
+        auto content_type = ::gui::PreviewRenderer::DetectFileType(quick_preview_path_);
+        ImGui::TextColored(ui::CurrentTokens().accent_text, "%s", quick_preview_path_.c_str());
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80);
 
         // Type indicator
         const char* type_str = "Unknown";
         switch (content_type) {
-            case gui::PreviewContentType::Image: type_str = "Image"; break;
-            case gui::PreviewContentType::TableCSV: type_str = "CSV"; break;
-            case gui::PreviewContentType::JSONTree: type_str = "JSON"; break;
-            case gui::PreviewContentType::PlainText: type_str = "Text"; break;
-            case gui::PreviewContentType::SyntaxText: type_str = "Code"; break;
-            case gui::PreviewContentType::Markdown: type_str = "Markdown"; break;
-            case gui::PreviewContentType::HexDump: type_str = "Binary"; break;
+            case ::gui::PreviewContentType::Image: type_str = "Image"; break;
+            case ::gui::PreviewContentType::TableCSV: type_str = "CSV"; break;
+            case ::gui::PreviewContentType::JSONTree: type_str = "JSON"; break;
+            case ::gui::PreviewContentType::PlainText: type_str = "Text"; break;
+            case ::gui::PreviewContentType::SyntaxText: type_str = "Code"; break;
+            case ::gui::PreviewContentType::Markdown: type_str = "Markdown"; break;
+            case ::gui::PreviewContentType::HexDump: type_str = "Binary"; break;
             default: break;
         }
         ImGui::TextDisabled("[%s]", type_str);
@@ -1805,102 +1816,275 @@ void AssetBrowserPanel::RenderQuickPreviewPopup() {
 void AssetBrowserPanel::CreateDataInputFromItem(const AssetItem& item) {
     if (IsDatasetFile(item) && on_create_data_input_) on_create_data_input_(item.absolute_path);
 }
-void AssetBrowserPanel::RenderDatasetPreview() {
-    if (!show_dataset_preview_) return;
-
-    // Get first selected item that is a dataset
-    AssetItem* dataset_item = nullptr;
-    for (auto* item : selected_items_) {
-        if (item && IsDatasetFile(*item)) {
-            dataset_item = item;
-            break;
-        }
+void AssetBrowserPanel::PreviewSplitter(bool beside) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImVec2 size = beside ? ImVec2(kPreviewHandle, std::max(avail.y - ImGui::GetFrameHeightWithSpacing(), 1.0f))
+                               : ImVec2(std::max(avail.x, 1.0f), kPreviewHandle);
+    ImGui::InvisibleButton("##preview_handle", size);
+    const bool active = ImGui::IsItemActive();
+    const bool hot = active || ImGui::IsItemHovered();
+    if (hot) ImGui::SetMouseCursor(beside ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    if (active) {
+        if (beside) preview_side_width_ -= ImGui::GetIO().MouseDelta.x;
+        else preview_below_height_ -= ImGui::GetIO().MouseDelta.y;
     }
-
-    if (!dataset_item) return;
-
-    // Resolve filesystem selection to an already-registered tabular dataset.
-    // Raw file peeking remains the Quick Preview popup; this pane reports the
-    // registered dataset state and uses DataPreviewService for bounded data.
-    if (preview_path_ != dataset_item->absolute_path) {
-        preview_path_ = dataset_item->absolute_path;
-        preview_dataset_name_.clear();
-        current_preview_ = DataPreviewPage{};
-
-        auto& registry = DataRegistry::Instance();
-        auto dataset_name = registry.FindTabularDatasetBySourcePath(preview_path_);
-        if (dataset_name) {
-            DataPreviewRequest request;
-            request.dataset_name = *dataset_name;
-            request.offset = 0;
-            request.row_limit = 20;
-            current_preview_ = DataPreviewService::PreviewRegisteredTabular(registry, request);
-            if (current_preview_.ok) {
-                preview_dataset_name_ = *dataset_name;
-            }
-        } else {
-            current_preview_.status = DataPreviewStatus::Unsupported;
-            current_preview_.reason = "Dataset file is not registered yet. Use Create Data Input, then Apply.";
-        }
-    }
-
-    // Render preview in a side panel
-    ImGui::BeginChild("DatasetPreviewPane", ImVec2(200, 0), true);
-
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_DATABASE " Dataset Preview");
-    ImGui::Separator();
-
-    ImGui::TextWrapped("File: %s", dataset_item->name.c_str());
-    if (dataset_item->file_size > 0) {
-        ImGui::Text("Size: %s", FormatFileSize(dataset_item->file_size).c_str());
-    }
-
-    if (!current_preview_.ok) {
-        ImGui::Spacing();
-        const char* status = current_preview_.status == DataPreviewStatus::Unsupported
-            ? "Unsupported"
-            : (current_preview_.status == DataPreviewStatus::InvalidRequest
-                   ? "Invalid request"
-                   : (current_preview_.status == DataPreviewStatus::Cancelled
-                          ? "Cancelled"
-                          : "Failed"));
-        ImGui::TextDisabled("Preview status: %s", status);
-        ImGui::TextWrapped("%s", current_preview_.reason.c_str());
+    // A short grip in the surface tone, as in the analysis panels.
+    const float grip = 28.0f;
+    const ImU32 colour = ui::ToU32(hot ? t.border : t.border_soft);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (beside) {
+        const ImVec2 a(pos.x + size.x * 0.5f - 1.0f, pos.y + (size.y - grip) * 0.5f);
+        draw->AddRectFilled(a, ImVec2(a.x + 2.0f, a.y + grip), colour, 1.0f);
     } else {
-        ImGui::Spacing();
-        ImGui::TextWrapped("Dataset: %s", preview_dataset_name_.c_str());
-        ImGui::Text("Backend: %s", current_preview_.backend.c_str());
-        ImGui::Text("Rows: %lld", static_cast<long long>(current_preview_.total_rows));
-        ImGui::Text("Columns: %lld", static_cast<long long>(current_preview_.total_columns));
-        if (current_preview_.has_next) {
-            ImGui::TextDisabled("Next offset: %lld", static_cast<long long>(current_preview_.next_offset));
-        }
+        const ImVec2 a(pos.x + (size.x - grip) * 0.5f, pos.y + size.y * 0.5f - 1.0f);
+        draw->AddRectFilled(a, ImVec2(a.x + grip, a.y + 2.0f), colour, 1.0f);
+    }
+}
 
-        ImGui::Separator();
-        gui::RenderDataPreviewTable(
-            "asset_browser",
-            current_preview_.schema,
-            current_preview_.offset,
-            current_preview_.rows_returned,
-            [this](int64_t absolute_row) -> const gui::DataPreviewRow* {
-                const int64_t local_row = absolute_row - current_preview_.offset;
-                if (local_row < 0 ||
-                    local_row >= static_cast<int64_t>(current_preview_.rows.size())) {
-                    return nullptr;
+void AssetBrowserPanel::RefreshFilePreview(const AssetItem& item) {
+    preview_path_ = item.absolute_path;
+    preview_modified_ = item.modified_time;
+    preview_dataset_name_.clear();
+    preview_column_types_.clear();
+    preview_registry_name_.clear();
+    file_peek_ = assets::FilePeek{};
+
+    // A dataset a Data Input already loaded: its first rows through the data
+    // service (real types, any size, nothing read again).
+    if (IsDatasetFile(item)) {
+        auto& registry = DataRegistry::Instance();
+        if (auto name = registry.FindTabularDatasetBySourcePath(preview_path_)) {
+            preview_registry_name_ = *name;
+            DataPreviewRequest request;
+            request.dataset_name = *name;
+            request.row_limit = kPreviewRows;
+            const DataPreviewPage page = DataPreviewService::PreviewRegisteredTabular(registry, request);
+            if (page.ok) {
+                preview_dataset_name_ = *name;
+                file_peek_.ok = true;
+                file_peek_.table = true;
+                file_peek_.total_rows = page.total_rows;
+                for (const auto& column : page.schema) {
+                    file_peek_.columns.push_back(column.name);
+                    file_peek_.numeric.push_back(IsNumericType(column.type));
+                    preview_column_types_.push_back(column.type);
                 }
-                return &current_preview_.rows[static_cast<size_t>(local_row)];
-            },
-            ImVec2(0, 240.0f));
+                file_peek_.rows = page.rows;
+                return;
+            }
+        }
+    }
+    // Otherwise a bounded read of the file itself.
+    file_peek_ = assets::PeekFile(preview_path_);
+    for (const bool numeric : file_peek_.numeric) preview_column_types_.push_back(numeric ? "num" : "text");
+}
+
+void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& size) {
+    bool stale = preview_path_ != item.absolute_path || preview_modified_ != item.modified_time;
+    // A Data Input loading (or dropping) this file changes what the preview shows.
+    if (!stale && IsDatasetFile(item)) {
+        const auto loaded = DataRegistry::Instance().FindTabularDatasetBySourcePath(item.absolute_path);
+        stale = loaded.value_or(std::string()) != preview_registry_name_;
+    }
+    if (stale) RefreshFilePreview(item);
+    const ui::Tokens& t = ui::CurrentTokens();
+    const assets::FileKind kind = assets::KindOfPath(item.absolute_path, false);
+
+    // The pane sits one step above the window, like the analysis settings
+    // column; no outline (owner rule 2026-10-01).
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.bg_raised, 0.4f));
+    ImGui::BeginChild("##file_preview", size, ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
+
+    // Header: the kind's icon on a tinted tile, the name and its summary.
+    const float tile = ImGui::GetFrameHeight() * 1.3f;
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec4 colour = KindColour(kind);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), ui::ToU32(ui::WithAlpha(colour, 0.16f)), 6.0f);
+        const char* icon = KindIcon(kind, false);
+        const ImVec2 icon_size = ImGui::CalcTextSize(icon);
+        draw->AddText(ImVec2(p.x + (tile - icon_size.x) * 0.5f, p.y + (tile - icon_size.y) * 0.5f), ui::ToU32(colour), icon);
+        ImGui::Dummy(ImVec2(tile, tile));
+    }
+    ImGui::SameLine();
+    const float hide_width = ImGui::CalcTextSize("Hide").x;
+    const float text_right = ImGui::GetContentRegionMax().x - hide_width - ImGui::GetStyle().ItemSpacing.x;
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(text_right);
+    {
+        ui::FontScope font(ui::Font::Medium);
+        ImGui::TextUnformatted(item.name.c_str());
+    }
+    std::string summary = assets::SummaryLine(assets::TypeLabel(item.absolute_path, false),
+                                              item.file_size > 0 ? FormatFileSize(item.file_size) : std::string(),
+                                              file_peek_);
+    if (!item.modified_time.empty()) summary += " \xC2\xB7 modified " + item.modified_time;
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::TextUnformatted(summary.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - hide_width);
+    if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+
+    if (!preview_dataset_name_.empty()) {
+        ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK " Loaded as '%s'", preview_dataset_name_.c_str());
+    }
+    ImGui::Spacing();
+
+    // Body: rows, lines, a picture, or why there is nothing to show.
+    if (!file_peek_.ok) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.warning, "%s", file_peek_.error.empty() ? "Could not read the file." : file_peek_.error.c_str());
+        ImGui::PopTextWrapPos();
+    } else if (file_peek_.table) {
+        RenderPreviewTable();
+    } else if (!file_peek_.lines.empty()) {
+        RenderPreviewLines();
+    } else if (!file_peek_.note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", file_peek_.note.c_str());
+        ImGui::PopTextWrapPos();
+    } else if (kind == assets::FileKind::Image) {
+        const float height = std::max(120.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f);
+        ImGui::BeginChild("##image_preview", ImVec2(0.0f, height));
+        quick_preview_renderer_.RenderFilePreview(item.absolute_path);
+        ImGui::EndChild();
+    } else {
+        ImGui::TextDisabled(assets::PeeksAsText(kind) ? "The file is empty." : "No preview for this kind of file.");
     }
 
-    ImGui::Separator();
-    if (ImGui::Button("Refresh Preview", ImVec2(-1, 0))) {
-        preview_path_.clear();
-    }
-    if (ImGui::Button("Create Data Input", ImVec2(-1, 0))) {
-        CreateDataInputFromItem(*dataset_item);
-    }
+    RenderPreviewActions(item);
     ImGui::EndChild();
+    ImGui::PopStyleVar();
+}
+
+void AssetBrowserPanel::RenderPreviewTable() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const int columns = static_cast<int>(file_peek_.columns.size());
+    const int rows = static_cast<int>(file_peek_.rows.size());
+    if (columns == 0) {
+        ImGui::TextDisabled("No columns.");
+        return;
+    }
+    // Room for the note and the actions below the table.
+    const float reserve = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() * 1.5f;
+    const float row_height = ImGui::GetTextLineHeightWithSpacing() + 2.0f;
+    const float wanted = row_height * static_cast<float>(rows + 1) + ImGui::GetStyle().ScrollbarSize + 4.0f;
+    const float height = std::clamp(wanted, row_height * 3.0f, std::max(row_height * 3.0f, ImGui::GetContentRegionAvail().y - reserve));
+
+    ImGui::PushStyleColor(ImGuiCol_TableRowBg, t.bg_window);
+    ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ui::Mix(t.bg_window, t.bg_raised, 0.2f));
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody;
+    if (ImGui::BeginTable("##peek_table", columns + 1, flags, ImVec2(0.0f, height))) {
+        ImGui::TableSetupScrollFreeze(1, 1);
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed);
+        // Each column fits its header (name and type) and its cells; ImGui's
+        // auto-fit leaves the header row out and clipped the type label.
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        for (int c = 0; c < columns; ++c) {
+            const auto column = static_cast<size_t>(c);
+            float width = ImGui::CalcTextSize(file_peek_.columns[column].c_str()).x;
+            if (column < preview_column_types_.size())
+                width += gap + ImGui::CalcTextSize(preview_column_types_[column].c_str()).x;
+            for (const auto& row : file_peek_.rows)
+                if (column < row.size()) width = std::max(width, ImGui::CalcTextSize(row[column].c_str()).x);
+            ImGui::TableSetupColumn(file_peek_.columns[column].c_str(), ImGuiTableColumnFlags_WidthFixed,
+                                    std::min(width, 320.0f));
+        }
+        // Header: the name, then its type in the info tone.
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("#");
+        for (int c = 0; c < columns; ++c) {
+            ImGui::TableSetColumnIndex(c + 1);
+            ImGui::TextUnformatted(file_peek_.columns[static_cast<size_t>(c)].c_str());
+            if (static_cast<size_t>(c) < preview_column_types_.size()) {
+                ImGui::SameLine();
+                ImGui::TextColored(t.info, "%s", preview_column_types_[static_cast<size_t>(c)].c_str());
+            }
+        }
+        for (int r = 0; r < rows; ++r) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%d", r + 1);
+            const auto& row = file_peek_.rows[static_cast<size_t>(r)];
+            for (int c = 0; c < columns && static_cast<size_t>(c) < row.size(); ++c) {
+                ImGui::TableSetColumnIndex(c + 1);
+                ImGui::TextUnformatted(row[static_cast<size_t>(c)].c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleColor(2);
+
+    // Where the rows came from.
+    std::string note = "First " + std::to_string(rows);
+    if (file_peek_.total_rows >= 0)
+        note += std::string(" of ") + (file_peek_.rows_estimated ? "about " : "") + std::to_string(file_peek_.total_rows);
+    note += preview_dataset_name_.empty() ? " rows, read from the file. Nothing is loaded until a Data Input applies it."
+                                          : " rows of the loaded dataset.";
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", note.c_str());
+    ImGui::PopTextWrapPos();
+}
+
+void AssetBrowserPanel::RenderPreviewLines() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float reserve = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() * 1.5f;
+    const float line_height = ImGui::GetTextLineHeightWithSpacing();
+    const float wanted = line_height * static_cast<float>(file_peek_.lines.size()) + ImGui::GetStyle().WindowPadding.y * 2.0f +
+                         ImGui::GetStyle().ScrollbarSize;
+    const float height = std::clamp(wanted, line_height * 3.0f, std::max(line_height * 3.0f, ImGui::GetContentRegionAvail().y - reserve));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_window);
+    ImGui::BeginChild("##peek_lines", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::PopStyleColor();
+    ImFont* code = gui::GetCodeFont();
+    if (code) ImGui::PushFont(code);
+    for (const auto& line : file_peek_.lines) ImGui::TextUnformatted(line.c_str());
+    if (code) ImGui::PopFont();
+    ImGui::EndChild();
+    if (file_peek_.more_lines)
+        ImGui::TextDisabled("First %d %ss.", static_cast<int>(file_peek_.lines.size()), file_peek_.line_noun.c_str());
+}
+
+void AssetBrowserPanel::RenderPreviewActions(const AssetItem& item) {
+    const assets::FileKind kind = assets::KindOfPath(item.absolute_path, false);
+    ImGui::Spacing();
+    ui::FlowRow row(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX());
+    const auto primary = [&row](const char* label) {
+        row.Next(ui::ButtonWidth(label, ui::ButtonSize::Regular));
+        return ui::PrimaryButton(label);
+    };
+    const auto secondary = [&row](const char* label) {
+        row.Next(ui::ButtonWidth(label, ui::ButtonSize::Regular));
+        return ui::SecondaryButton(label, true, nullptr, ui::ButtonSize::Regular);
+    };
+
+    // A Data Input is how data enters the Engine; a loaded dataset opens in
+    // Data Studio, whose query and profile scale to any size.
+    if (!preview_dataset_name_.empty()) {
+        if (primary("Open in Data Studio") && on_open_in_data_studio_) on_open_in_data_studio_(preview_dataset_name_);
+        if (secondary("Create Data Input")) CreateDataInputFromItem(item);
+    } else if (IsDatasetFile(item)) {
+        if (primary("Create Data Input")) CreateDataInputFromItem(item);
+    }
+    if (kind == assets::FileKind::Graph && primary("Open in CyxWiz Studio") && on_open_in_node_editor_) {
+        on_open_in_node_editor_(item.absolute_path);
+    }
+    if (kind == assets::FileKind::Python) {
+        if (secondary("Open in Script Editor") && on_double_click_) on_double_click_(item);
+    } else if ((kind == assets::FileKind::Table || assets::PeeksAsText(kind)) && on_double_click_) {
+        row.Next(ImGui::CalcTextSize("Open as text").x);
+        if (ui::LinkButton("Open as text")) on_double_click_(item);
+    }
 }
 
 } // namespace cyxwiz

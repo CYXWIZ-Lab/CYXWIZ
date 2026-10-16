@@ -12,9 +12,7 @@
 #include <utility>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -99,7 +97,6 @@ void CheckHostOwnership() {
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 int g_ownership_host_sync_count = 0;
 uint64_t g_ownership_host_sync_bytes = 0;
 
@@ -250,7 +247,6 @@ void CheckSemanticLayoutMatrix() {
     CheckSemanticLayoutRoundTrip<T>({2, 2, 3});
     CheckSemanticLayoutRoundTrip<T>({2, 2, 2, 3});
 }
-#endif
 
 } // namespace
 
@@ -286,7 +282,6 @@ TEST_CASE("Tensor zero-size and overflow metadata follows checked semantics",
         std::runtime_error);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor copy move and clone preserve device-only dtype state",
           "[tensor][tensor_ownership][arrayfire][host_sync]") {
     const auto activation =
@@ -328,4 +323,3 @@ TEST_CASE("Tensor semantic layouts round-trip all dtypes without host sync",
     CheckSemanticLayoutMatrix<int64_t>();
     CheckSemanticLayoutMatrix<uint8_t>();
 }
-#endif

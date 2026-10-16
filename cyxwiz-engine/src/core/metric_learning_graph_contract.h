@@ -23,8 +23,6 @@ struct MetricLearningGraphContract {
 
     std::vector<int> pair_dataset_builder_node_ids;
     std::vector<int> triplet_dataset_builder_node_ids;
-    std::vector<int> shared_encoder_node_ids;
-    std::vector<int> siamese_branch_node_ids;
     std::vector<int> pair_loss_node_ids;
     std::vector<int> triplet_loss_node_ids;
     std::vector<int> pair_metric_node_ids;
@@ -32,11 +30,10 @@ struct MetricLearningGraphContract {
     std::vector<int> embedding_output_node_ids;
     std::vector<int> pair_score_output_node_ids;
 
-    std::vector<std::string> blockers;
+    // A node matched by name or legacy column parameters rather than by type.
+    bool has_sketch_nodes = false;
 
-    bool HasSharedEncoder() const {
-        return !shared_encoder_node_ids.empty();
-    }
+    std::vector<std::string> blockers;
 
     bool HasPairLoss() const {
         return !pair_loss_node_ids.empty();
@@ -94,6 +91,10 @@ inline MetricLearningGraphKind InferMetricLearningGraphKind(
         !contract.triplet_loss_node_ids.empty()) {
         return MetricLearningGraphKind::TripletTraining;
     }
+    if (!contract.pair_dataset_builder_node_ids.empty() ||
+        !contract.pair_loss_node_ids.empty()) {
+        return MetricLearningGraphKind::PairTraining;
+    }
     if (!contract.pair_score_output_node_ids.empty()) {
         return MetricLearningGraphKind::PairScoring;
     }
@@ -101,12 +102,17 @@ inline MetricLearningGraphKind InferMetricLearningGraphKind(
         !contract.retrieval_metric_node_ids.empty()) {
         return MetricLearningGraphKind::EmbeddingExport;
     }
-    if (!contract.pair_dataset_builder_node_ids.empty() ||
-        !contract.pair_loss_node_ids.empty() ||
-        !contract.pair_metric_node_ids.empty()) {
+    if (!contract.pair_metric_node_ids.empty()) {
         return MetricLearningGraphKind::PairTraining;
     }
     return MetricLearningGraphKind::None;
+}
+
+inline size_t RecordedNodeCount(const MetricLearningGraphContract& contract) {
+    return contract.pair_dataset_builder_node_ids.size() + contract.triplet_dataset_builder_node_ids.size() +
+           contract.pair_loss_node_ids.size() + contract.triplet_loss_node_ids.size() +
+           contract.pair_metric_node_ids.size() + contract.retrieval_metric_node_ids.size() +
+           contract.embedding_output_node_ids.size() + contract.pair_score_output_node_ids.size();
 }
 
 inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
@@ -120,12 +126,6 @@ inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
             return;
         case gui::NodeType::TripletDatasetBuilder:
             AddNodeId(contract.triplet_dataset_builder_node_ids, node_id);
-            return;
-        case gui::NodeType::SharedEncoder:
-            AddNodeId(contract.shared_encoder_node_ids, node_id);
-            return;
-        case gui::NodeType::SiameseBranch:
-            AddNodeId(contract.siamese_branch_node_ids, node_id);
             return;
         case gui::NodeType::ContrastiveLoss:
         case gui::NodeType::CosineEmbeddingLoss:
@@ -150,14 +150,11 @@ inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
             break;
     }
 
+    const size_t recorded_before = RecordedNodeCount(contract);
     if (name == "PairDatasetBuilder") {
         AddNodeId(contract.pair_dataset_builder_node_ids, node_id);
     } else if (name == "TripletDatasetBuilder") {
         AddNodeId(contract.triplet_dataset_builder_node_ids, node_id);
-    } else if (name == "SharedEncoder") {
-        AddNodeId(contract.shared_encoder_node_ids, node_id);
-    } else if (name == "SiameseBranch") {
-        AddNodeId(contract.siamese_branch_node_ids, node_id);
     } else if (name == "ContrastiveLoss" ||
                name == "CosineEmbeddingLoss") {
         AddNodeId(contract.pair_loss_node_ids, node_id);
@@ -185,10 +182,7 @@ inline void RecordMetricLearningNode(MetricLearningGraphContract& contract,
         parameters.count("triplet_id_column") > 0) {
         AddNodeId(contract.triplet_dataset_builder_node_ids, node_id);
     }
-    if (parameters.count("shared_encoder") > 0 ||
-        parameters.count("tied_weights") > 0) {
-        AddNodeId(contract.shared_encoder_node_ids, node_id);
-    }
+    if (RecordedNodeCount(contract) != recorded_before) contract.has_sketch_nodes = true;
 }
 
 inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
@@ -204,28 +198,31 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
     }
 
     contract.kind = InferMetricLearningGraphKind(contract);
-    contract.detected = contract.kind != MetricLearningGraphKind::None ||
-                        !contract.shared_encoder_node_ids.empty() ||
-                        !contract.siamese_branch_node_ids.empty();
+    contract.detected = contract.kind != MetricLearningGraphKind::None;
     if (!contract.detected) {
         return contract;
     }
 
-    if (contract.shared_encoder_node_ids.size() != 1) {
-        AddBlocker(contract,
-                   contract.shared_encoder_node_ids.empty()
-                       ? "missing SharedEncoder ownership node"
-                       : "metric-learning graphs must select exactly one SharedEncoder");
+    // Pair and triplet training (TOFIX140 A5): a typed builder and its loss
+    // train through MetricBatchSampler and the stacked metric losses; Pair /
+    // Retrieval Metrics measure them; the outputs export / serve them.
+    const bool triplet_training =
+        contract.kind == MetricLearningGraphKind::TripletTraining &&
+        !contract.triplet_dataset_builder_node_ids.empty() && contract.HasTripletLoss() &&
+        contract.pair_dataset_builder_node_ids.empty() && !contract.HasPairLoss();
+    const bool pair_training =
+        contract.kind == MetricLearningGraphKind::PairTraining &&
+        !contract.pair_dataset_builder_node_ids.empty() && contract.HasPairLoss() &&
+        contract.triplet_dataset_builder_node_ids.empty() && !contract.HasTripletLoss();
+    if ((triplet_training || pair_training) && !contract.has_sketch_nodes) {
+        contract.executable = true;
+        return contract;
     }
 
     if (contract.HasPairLoss()) {
         if (contract.pair_dataset_builder_node_ids.empty()) {
             AddBlocker(contract,
                        "pair losses require a PairDatasetBuilder typed batch source");
-        }
-        if (contract.siamese_branch_node_ids.size() < 2) {
-            AddBlocker(contract,
-                       "pair losses require two SiameseBranch embedding branches");
         }
     }
 
@@ -234,34 +231,14 @@ inline MetricLearningGraphContract AnalyzeMetricLearningGraphContract(
             AddBlocker(contract,
                        "TripletLoss requires a TripletDatasetBuilder typed batch source");
         }
-        if (contract.siamese_branch_node_ids.size() < 3) {
-            AddBlocker(contract,
-                       "TripletLoss requires anchor, positive, and negative SiameseBranch embeddings");
-        }
     }
 
-    if (!contract.pair_score_output_node_ids.empty() &&
-        contract.siamese_branch_node_ids.size() < 2) {
-        AddBlocker(contract,
-                   "PairScoreOutput requires two embedding branches or routed embeddings");
-    }
-
-    if (!contract.embedding_output_node_ids.empty() &&
-        contract.siamese_branch_node_ids.empty()) {
-        AddBlocker(contract,
-                   "EmbeddingOutput requires a routed embedding tensor from the shared encoder");
-    }
-
-    if (contract.HasPairLoss() || contract.HasTripletLoss()) {
-        AddBlocker(contract,
-                   "visual graph executor routing for metric-learning losses is not implemented");
-    }
     if (contract.HasInferenceOutput()) {
         AddBlocker(contract,
-                   "visual graph/runtime routing for metric-learning outputs is not implemented");
+                   "metric-learning outputs need a model trained by a Pair or Triplet Dataset Builder and its loss");
     }
     AddBlocker(contract,
-               "visual shared-encoder graph execution is not implemented");
+               "visual metric-learning graph execution is not implemented");
 
     contract.executable = false;
     return contract;

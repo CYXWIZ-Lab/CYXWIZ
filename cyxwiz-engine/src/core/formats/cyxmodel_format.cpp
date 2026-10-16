@@ -816,6 +816,7 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.model_name = manifest.model_name;
         result.model_family = manifest.model_family;
         result.supports_generation = manifest.supports_generation;
+        result.custom_metadata = manifest.custom_metadata;
         result.generation_output_contract = manifest.generation_output_contract;
         result.supports_bert_encoder = manifest.supports_bert_encoder;
         result.bert_encoder_task = manifest.bert_encoder_task;

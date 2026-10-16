@@ -1,13 +1,10 @@
 #include "layer_utils.h"
 
-#include "../arrayfire_backend_utils.h"
-#include "cyxwiz/backend_placement_observation.h"
 
 #include <limits>
 #include <stdexcept>
 #include <string>
 
-#include <spdlog/spdlog.h>
 
 namespace cyxwiz {
 
@@ -57,83 +54,6 @@ size_t CheckedLayerProduct(size_t left,
             std::string(layer_name) + " " + quantity + " overflow");
     }
     return left * right;
-}
-
-void RecordLayerArrayFireFallback(const char* operation_name,
-                                  BackendFallbackReason reason,
-                                  const char* error_message,
-                                  const Tensor& tensor,
-                                  const char* tensor_name) {
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        BuildTensorShapeContext(tensor_name, tensor.Shape()));
-    ThrowIfArrayFireNativeCpuFallbackForbidden(
-        operation_name, reason, error_message, context);
-    if (ShouldLogArrayFireBackendFallbackOnce(
-            operation_name, reason, context)) {
-        spdlog::warn(
-            "{}",
-            BuildArrayFireBackendFallbackMessage(
-                operation_name,
-                reason,
-                reason != BackendFallbackReason::CudaJitParamOverflow,
-                error_message,
-                context));
-    }
-}
-
-void RecordLayerArrayFireFallback(const char* operation_name,
-                                  const char* error_message,
-                                  const Tensor& tensor,
-                                  const char* tensor_name) {
-    RecordLayerArrayFireFallback(
-        operation_name,
-        ClassifyArrayFireBackendFallbackReason(error_message),
-        error_message,
-        tensor,
-        tensor_name);
-}
-
-void RecordLayerArrayFireFallbackObservation(
-    const char* operation_name,
-    const char* node_type_name,
-    BackendFallbackReason reason,
-    const char* error_message,
-    const Tensor& layer_input,
-    const char* tensor_name) {
-    // Evidence first, so it survives the strict-policy throw in the shared
-    // fallback handler below.
-    RecordBackendPlacementObservationForActiveDevice(
-        node_type_name,
-        CurrentArrayFireBackendName(),
-        "float32",
-        BuildTensorLayerPlacementShapeSignature(
-            StripBatchDimensionForPlacementSignature(layer_input.Shape())),
-        BackendFallbackReasonName(reason),
-        BackendPlacementObservationSource::RuntimeFallback,
-        BuildArrayFireBackendFallbackMessage(
-            operation_name,
-            reason,
-            reason != BackendFallbackReason::CudaJitParamOverflow,
-            error_message,
-            BuildArrayFireBackendFallbackContext(
-                BuildTensorShapeContext(tensor_name, layer_input.Shape()))));
-    RecordLayerArrayFireFallback(
-        operation_name, reason, error_message, layer_input, tensor_name);
-}
-
-void RecordLayerArrayFireFallbackObservation(
-    const char* operation_name,
-    const char* node_type_name,
-    const char* error_message,
-    const Tensor& layer_input,
-    const char* tensor_name) {
-    RecordLayerArrayFireFallbackObservation(
-        operation_name,
-        node_type_name,
-        ClassifyArrayFireBackendFallbackReason(error_message),
-        error_message,
-        layer_input,
-        tensor_name);
 }
 
 } // namespace cyxwiz

@@ -110,6 +110,9 @@ std::string CheckpointManager::SaveCheckpoint(
     metadata.val_accuracy_history = metrics.val_accuracy_history;
     metadata.val_mae_history = metrics.val_mae_history;
     metadata.val_rmse_history = metrics.val_rmse_history;
+    metadata.tokenizer_sha256 = provenance_.tokenizer_sha256;
+    metadata.context = provenance_.context;
+    metadata.initialized_from = provenance_.initialized_from;
 
     // Add timestamp
     auto now = std::chrono::system_clock::now();
@@ -375,6 +378,9 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         j["learning_rate"] = metadata.learning_rate;
         j["randomness"] = metadata.randomness;
         j["timestamp"] = metadata.timestamp;
+        if (!metadata.tokenizer_sha256.empty()) j["tokenizer_sha256"] = metadata.tokenizer_sha256;
+        if (metadata.context > 0) j["context"] = metadata.context;
+        if (!metadata.initialized_from.empty()) j["initialized_from"] = metadata.initialized_from;
 
         // Save history arrays
         j["loss_history"] = metadata.loss_history;
@@ -434,6 +440,9 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         metadata.learning_rate = j.value("learning_rate", 0.0f);
         if (j.contains("randomness")) metadata.randomness = j.at("randomness").get<TrainingRandomness>();
         metadata.timestamp = j.value("timestamp", "");
+        metadata.tokenizer_sha256 = j.value("tokenizer_sha256", "");
+        metadata.context = j.value("context", 0);
+        metadata.initialized_from = j.value("initialized_from", "");
 
         // Load history arrays
         if (j.contains("loss_history")) {
@@ -793,6 +802,83 @@ void CheckpointManager::CleanupOldCheckpoints() {
 
 fs::path CheckpointManager::GetCheckpointPath(const std::string& name) const {
     return checkpoint_dir_ / name;
+}
+
+namespace {
+
+// Checkpoints written before TOFIX143 carry no tokenizer identity; the same
+// run's generation previews recorded it next to them. Every preview of the
+// run must agree, otherwise the identity is unknown.
+std::string TokenizerFromRunPreviews(const fs::path& checkpoint, std::string& error) {
+    const fs::path previews = checkpoint.parent_path() / "generation_previews";
+    std::string found;
+    std::error_code ec;
+    if (!fs::is_directory(previews, ec)) return found;
+    for (const auto& entry : fs::directory_iterator(previews, ec)) {
+        if (entry.path().extension() != ".json") continue;
+        std::ifstream file(entry.path());
+        const json preview = json::parse(file, nullptr, false);
+        const std::string sha = preview.is_object() ? preview.value("tokenizer_sha256", "") : "";
+        if (sha.empty()) continue;
+        if (!found.empty() && found != sha) {
+            error = "the run's generation previews record different tokenizers";
+            return {};
+        }
+        found = sha;
+    }
+    return found;
+}
+
+} // namespace
+
+std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(
+    const fs::path& checkpoint,
+    SequentialModel& model,
+    const std::string& expected_tokenizer_sha256,
+    std::string& error) {
+    error.clear();
+    std::error_code ec;
+    if (checkpoint.empty() || !fs::is_directory(checkpoint, ec)) {
+        error = "checkpoint folder not found: " + checkpoint.string();
+        return std::nullopt;
+    }
+    const fs::path folder = checkpoint.lexically_normal();
+    const fs::path name = folder.filename().empty() ? folder.parent_path().filename() : folder.filename();
+    const fs::path source = folder.filename().empty() ? folder.parent_path() : folder;
+    CheckpointManager manager(source.parent_path().string());
+    const auto inspection = manager.InspectCheckpoint(name.string());
+    if (!inspection.valid || !inspection.can_warm_start) {
+        error = inspection.error.empty() ? "checkpoint does not support warm start" : inspection.error;
+        return std::nullopt;
+    }
+    if (!expected_tokenizer_sha256.empty()) {
+        // Peek at the metadata first so a tokenizer mismatch never touches the model.
+        std::ifstream file(source / "metadata.json");
+        const json metadata = json::parse(file, nullptr, false);
+        std::string recorded = metadata.is_object() ? metadata.value("tokenizer_sha256", "") : "";
+        std::string origin = "metadata.json";
+        if (recorded.empty()) {
+            recorded = TokenizerFromRunPreviews(source, error);
+            if (!error.empty()) return std::nullopt;
+            origin = "the run's generation previews";
+        }
+        if (recorded.empty()) {
+            error = "the checkpoint records no tokenizer identity, so its token IDs cannot be matched to this run's vocabulary";
+            return std::nullopt;
+        }
+        if (recorded != expected_tokenizer_sha256) {
+            error = "tokenizer differs: checkpoint " + recorded.substr(0, 12) + "... (" + origin +
+                    ") vs training windows " + expected_tokenizer_sha256.substr(0, 12) + "...";
+            return std::nullopt;
+        }
+    }
+    // No optimizer: the learning rate and all optimizer state start fresh.
+    auto loaded = manager.LoadCheckpoint(model, nullptr, name.string());
+    if (!loaded) {
+        error = manager.GetLastError().empty() ? "checkpoint could not be loaded" : manager.GetLastError();
+        return std::nullopt;
+    }
+    return loaded;
 }
 
 } // namespace cyxwiz

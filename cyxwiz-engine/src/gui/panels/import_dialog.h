@@ -2,23 +2,21 @@
 
 #include "../panel.h"
 #include "../../core/model_format.h"
-#include "../../core/model_importer.h"
-#include <string>
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <thread>
-#include <atomic>
-#include <mutex>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
 
-// Forward declarations
-class SequentialModel;
-
 /**
- * Import Dialog Panel
- * UI for importing trained models from various formats
+ * Open Model File (File > Open Model File..., Ctrl+I): reads a model file on a
+ * worker, shows what it holds, and opens its graph in Studio. The weights are
+ * not loaded.
  */
 class ImportDialog : public Panel {
 public:
@@ -27,87 +25,47 @@ public:
 
     void Render() override;
 
-    // Dialog control
     void Open();
     void Close();
     bool IsOpen() const { return is_open_; }
 
-    // Callbacks
-    using ImportCompleteCallback = std::function<void(
-        const ImportResult&,
-        const ImportOptions&,
-        const ProbeResult&,
+    // Called with the file's graph; returns false when Studio could not open it.
+    using OpenGraphCallback = std::function<bool(
+        const ProbeResult& probe,
         const std::string& graph_json,
         const std::string& input_path)>;
-    void SetImportCompleteCallback(ImportCompleteCallback callback) {
-        import_complete_callback_ = callback;
-    }
-
-    // Get the last imported graph JSON (for loading into NodeEditor)
-    const std::string& GetImportedGraphJson() const { return imported_graph_json_; }
-
-    // Transfer learning getters
-    bool IsTransferLearningEnabled() const { return enable_transfer_learning_; }
-    int GetFreezeMode() const { return freeze_mode_; }
-    int GetUnfreezeLastN() const { return unfreeze_last_n_; }
-    const std::vector<bool>& GetLayerTrainable() const { return layer_trainable_; }
+    void SetOpenGraphCallback(OpenGraphCallback callback) { open_graph_callback_ = std::move(callback); }
 
 private:
-    void RenderFileSelection();
-    void RenderProbeInfo();
-    void RenderOptions();
-    void RenderProgress();
+    // One read of a file on a worker: a probe, or the graph's extraction. The
+    // worker writes only into its job, so a reopened dialog never races it.
+    struct Job {
+        std::string path;
+        bool extract = false;
+        std::atomic<bool> done{false};
+        ProbeResult probe;
+        std::optional<std::string> graph_json;
+    };
+
+    void RenderFileField();
+    void RenderFile();
     void RenderButtons();
 
-    // File dialog helper
-    std::string OpenFileDialog(const char* filter, const char* title);
+    void StartJob(const std::string& path, bool extract);
+    void CollectJob();
 
-    // Probe selected file
-    void ProbeFile();
-
-    // Start import in background thread
-    void StartImport();
-
-    // State
     bool is_open_ = false;
-
-    // File selection
     char input_path_[512] = "";
-    bool file_probed_ = false;
-    ProbeResult probe_result_;
 
-    // Import options
-    ImportOptions import_options_;
-    bool load_optimizer_state_ = false;
-    bool load_training_history_ = false;
-    bool strict_mode_ = true;
-    bool allow_shape_mismatch_ = false;
+    // The probed file (probed_path_ is the file probe_ describes).
+    std::string probed_path_;
+    ProbeResult probe_;
+    std::string error_;  // a failed graph extraction or open
 
-    // Transfer learning options
-    bool enable_transfer_learning_ = false;
-    int freeze_mode_ = 0;  // 0=None, 1=All except last N, 2=Custom
-    int unfreeze_last_n_ = 2;  // Number of layers to keep trainable at the end
-    std::vector<bool> layer_trainable_;  // Per-layer trainable status for custom mode
+    std::shared_ptr<Job> job_;
+    std::vector<std::pair<std::thread, std::shared_ptr<Job>>> workers_;
 
-    // Import state
-    std::atomic<bool> is_importing_{false};
-    std::atomic<bool> is_probing_{false};
-    std::atomic<int> import_progress_{0};
-    std::atomic<int> import_total_{0};
-    std::string import_status_;
-    std::mutex status_mutex_;
-    std::unique_ptr<std::thread> import_thread_;
-
-    ImportResult last_result_;
-    std::string imported_graph_json_;
-    bool show_result_ = false;
-    std::atomic<bool> completion_pending_{false};
-    ImportOptions completed_import_options_;
-    ProbeResult completed_probe_result_;
-    std::string completed_input_path_;
-
-    // Callbacks
-    ImportCompleteCallback import_complete_callback_;
+    OpenGraphCallback open_graph_callback_;
 };
 
 } // namespace cyxwiz

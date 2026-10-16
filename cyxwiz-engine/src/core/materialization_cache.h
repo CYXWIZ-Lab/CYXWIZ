@@ -14,7 +14,8 @@ namespace cyxwiz {
 
 // 3: 128-bit keys, node display names left out of the key, content
 // fingerprint for sources without a file identity.
-inline constexpr int kMaterializationCacheSchemaVersion = 3;
+// 4: a Text Tokenizer label column carries its class names (field metadata).
+inline constexpr int kMaterializationCacheSchemaVersion = 4;
 
 enum class MaterializationCacheMode {
     Disabled,

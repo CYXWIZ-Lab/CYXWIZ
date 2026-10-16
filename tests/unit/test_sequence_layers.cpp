@@ -284,6 +284,65 @@ TEST_CASE("EmbeddingLayer - Backward pass gradient accumulation", "[embedding][b
     REQUIRE(found_grad);
 }
 
+// TOFIX140 F5: ids are converted, validated and scattered on the device.
+TEST_CASE("EmbeddingModule - device ids, scatter-add and refusals", "[embedding][backward]") {
+    EmbeddingModule embed(4, 2, /*padding_idx=*/3);
+    std::vector<float> table = {0.0f, 1.0f, 10.0f, 11.0f, 20.0f, 21.0f, 30.0f, 31.0f};
+    embed.SetParameters({{"weight", Tensor({4, 2}, table.data(), DataType::Float32)}});
+
+    // Ids [[0, 1], [0, 3]]: 0 twice (gradients add), 3 is padding (no gradient, zero row).
+    const std::vector<float> float_ids = {0.0f, 1.0f, 0.0f, 3.0f};
+    const std::vector<int32_t> int32_ids = {0, 1, 0, 3};
+    const std::vector<int64_t> int64_ids = {0, 1, 0, 3};
+    const Tensor from_float = embed.Forward(Tensor({2, 2}, float_ids.data(), DataType::Float32));
+    const Tensor from_int64 = embed.Forward(Tensor({2, 2}, int64_ids.data(), DataType::Int64));
+    const Tensor output = embed.Forward(Tensor({2, 2}, int32_ids.data(), DataType::Int32));
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 2});
+    const std::vector<float> expected = {0.0f, 1.0f, 10.0f, 11.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    for (size_t i = 0; i < expected.size(); ++i) {
+        REQUIRE(output.ReadData<float>()[i] == expected[i]);
+        REQUIRE(from_float.ReadData<float>()[i] == expected[i]);
+        REQUIRE(from_int64.ReadData<float>()[i] == expected[i]);
+    }
+
+    const std::vector<float> grad = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    embed.Backward(Tensor({2, 2, 2}, grad.data(), DataType::Float32));
+    const Tensor weight_grad = embed.GetGradients().at("weight");
+    const std::vector<float> expected_grad = {6.0f, 8.0f, 3.0f, 4.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (size_t i = 0; i < expected_grad.size(); ++i) {
+        REQUIRE(weight_grad.ReadData<float>()[i] == expected_grad[i]);
+    }
+
+    const std::vector<float> fractional = {0.0f, 1.5f};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, fractional.data(), DataType::Float32)), std::runtime_error);
+    const std::vector<int64_t> outside = {0, 4};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, outside.data(), DataType::Int64)), std::runtime_error);
+    const std::vector<int32_t> negative = {-1, 0};
+    REQUIRE_THROWS_AS(embed.Forward(Tensor({1, 2}, negative.data(), DataType::Int32)), std::runtime_error);
+}
+
+TEST_CASE("SequenceFeatureFusionModule - device concat and gradient split", "[embedding][backward]") {
+    SequenceFeatureFusionModule fusion(3, 2, 2, 1);
+    const std::vector<float> word_table = {0.0f, 1.0f, 10.0f, 11.0f, 20.0f, 21.0f};
+    const std::vector<float> pos_table = {100.0f, 200.0f};
+    fusion.SetParameters({{"word.weight", Tensor({3, 2}, word_table.data(), DataType::Float32)},
+                          {"pos.weight", Tensor({2, 1}, pos_table.data(), DataType::Float32)}});
+    // [batch 1, seq 2, (word, pos)]: tokens (2, 1) and (0, 0).
+    const std::vector<float> ids = {2.0f, 1.0f, 0.0f, 0.0f};
+    const Tensor output = fusion.Forward(Tensor({1, 2, 2}, ids.data(), DataType::Float32));
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 2, 3});
+    const std::vector<float> expected = {20.0f, 21.0f, 200.0f, 0.0f, 1.0f, 100.0f};
+    for (size_t i = 0; i < expected.size(); ++i) REQUIRE(output.ReadData<float>()[i] == expected[i]);
+
+    const std::vector<float> grad = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    fusion.Backward(Tensor({1, 2, 3}, grad.data(), DataType::Float32));
+    const auto gradients = fusion.GetGradients();
+    const std::vector<float> word_grad = {4.0f, 5.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    const std::vector<float> pos_grad = {6.0f, 3.0f};
+    for (size_t i = 0; i < word_grad.size(); ++i) REQUIRE(gradients.at("word.weight").ReadData<float>()[i] == word_grad[i]);
+    for (size_t i = 0; i < pos_grad.size(); ++i) REQUIRE(gradients.at("pos.weight").ReadData<float>()[i] == pos_grad[i]);
+}
+
 TEST_CASE("EmbeddingLayer - Frozen weights", "[embedding][backward]") {
     const int num_embeddings = 3;
     const int embedding_dim = 2;

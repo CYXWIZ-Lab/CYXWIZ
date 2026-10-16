@@ -187,6 +187,130 @@ size_t ResolveSequenceLength(const std::vector<SequenceSample>& samples,
     return max_length;
 }
 
+namespace {
+// Why a supplied role's token windows cannot join Train's (another
+// tokenizer, context or supervision), or empty.
+std::string WindowMetadataDifference(const std::shared_ptr<const arrow::KeyValueMetadata>& train,
+                                     const std::shared_ptr<const arrow::KeyValueMetadata>& other) {
+    for (const char* key : {"cyxwiz.token_windows.version", "cyxwiz.token_windows.context",
+            "cyxwiz.token_windows.vocabulary", "cyxwiz.token_windows.tokenizer_type",
+            "cyxwiz.token_windows.lowercase"}) {
+        auto expected = train ? train->Get(key) : arrow::Result<std::string>(arrow::Status::Invalid("Missing metadata"));
+        auto actual = other ? other->Get(key) : arrow::Result<std::string>(arrow::Status::Invalid("Missing metadata"));
+        if (!expected.ok() || !actual.ok() || *expected != *actual)
+            return std::string("External sequence role metadata differs from Train: ") + key;
+    }
+    // Optional key: both roles must use the same supervision (absent = every target).
+    auto supervision = [](const std::shared_ptr<const arrow::KeyValueMetadata>& m) {
+        auto value = m ? m->Get("cyxwiz.token_windows.supervision") : arrow::Result<std::string>(std::string{});
+        return value.ok() ? *value : std::string{};
+    };
+    if (supervision(train) != supervision(other))
+        return "External sequence role metadata differs from Train: cyxwiz.token_windows.supervision";
+    return {};
+}
+}  // namespace
+
+SequenceArrowBatcherBuildResult BuildSequenceBatcherFromWindowSources(
+    const SequenceWindowSource& train,
+    const TrainingConfiguration& config,
+    int batch_size,
+    const SequenceWindowSource& validation,
+    const SequenceWindowSource& test) {
+    SequenceArrowBatcherBuildResult result;
+    if (!config.sequence_batch.enabled) {
+        result.error_message = "sequence batch config is not enabled";
+        return result;
+    }
+    const std::string token_column = DefaultColumn(config.sequence_batch.token_column, "tokens");
+    const auto schema = train.Schema();
+    const int token_index = schema ? schema->GetFieldIndex(token_column) : -1;
+    if (!config.sequence_batch.create_causal_lm_targets || !config.sequence_batch.pos_column.empty() ||
+        token_index < 0 || schema->field(token_index)->type()->id() != arrow::Type::LIST) {
+        result.error_message = "A training set kept on disk streams causal-LM token windows (a list column '" +
+                               token_column + "'); other sequence data must fit in memory (raise the data budget).";
+        return result;
+    }
+    // In memory a share without an input of its own is cut from Train by
+    // document; a file on disk cannot be cut that way, so each share above 0
+    // needs its own input (else the run would quietly train on that share).
+    const bool validation_share = validation.Empty() && config.val_ratio > 0.0f;
+    const bool test_share = test.Empty() && config.test_ratio > 0.0f;
+    if (config.has_data_split && (validation_share || test_share)) {
+        const std::string role = validation_share && test_share ? "validation and test windows"
+                                 : validation_share             ? "validation windows"
+                                                                : "test windows";
+        result.error_message = "Token windows on disk need their " + role + " as a dataset of their own "
+                               "(a Data Split with named inputs), or that share set to 0; ratio splitting a file on "
+                               "disk is not supported yet.";
+        return result;
+    }
+    if (train.Units() == 0) {
+        result.error_message = "Token windows: the training set has no rows";
+        return result;
+    }
+    // The vocabulary and the context come with the first row group.
+    std::vector<SequenceSample> first_samples;
+    Vocabulary vocabulary;
+    int context = 0;
+    if (!ReadTokenWindowSamples(train.ReadUnit(0), token_index, config.sequence_batch.max_sequence_length,
+                                first_samples, vocabulary, context, result.error_message))
+        return result;
+    if (!config.sequence_batch.expected_token_vocabulary.empty() &&
+        config.sequence_batch.expected_token_vocabulary != vocabulary.GetWords()) {
+        result.error_message = "Token window vocabulary differs from the active model";
+        return result;
+    }
+    for (const auto* role : {&validation, &test}) {
+        if (role->Empty()) continue;
+        const auto role_schema = role->Schema();
+        const int column = role_schema ? role_schema->GetFieldIndex(token_column) : -1;
+        if (column < 0 || role_schema->field(column)->type()->id() != arrow::Type::LIST) {
+            result.error_message = "External sequence role requires the same token_ids list column";
+            return result;
+        }
+        if (const auto why = WindowMetadataDifference(schema->metadata(), role_schema->metadata()); !why.empty()) {
+            result.error_message = why;
+            return result;
+        }
+    }
+    const auto metadata = schema->metadata();
+    const auto stored_vocabulary = metadata->Get("cyxwiz.token_windows.vocabulary");
+    const auto strategy = metadata->Get("cyxwiz.token_windows.tokenizer_type");
+    const auto lowercase = metadata->Get("cyxwiz.token_windows.lowercase");
+    if (!stored_vocabulary.ok() || !strategy.ok() || !lowercase.ok() ||
+        (*lowercase != "true" && *lowercase != "false")) {
+        result.error_message = "Invalid token-window tokenizer metadata";
+        return result;
+    }
+    result.tokenizer_vocabulary_artifact = *stored_vocabulary;
+    result.tokenizer_config_json = nlohmann::json{{"version", "1.0"}, {"source", "training_token_windows"},
+        {"effective", {{"tokenizer_type", *strategy}, {"lowercase", *lowercase},
+            {"max_length", context}, {"vocab_file_packaged", "tokenizer/vocab.txt"}}}}.dump();
+
+    SequenceBatcherConfig batcher;
+    batcher.batch_size = static_cast<size_t>(std::max(1, batch_size));
+    batcher.max_sequence_length = static_cast<size_t>(context);
+    batcher.shuffle = config.shuffle;
+    batcher.drop_last = config.drop_last;
+    batcher.create_attention_mask = config.sequence_batch.create_attention_mask;
+    batcher.create_causal_lm_targets = true;
+    batcher.tag_ignore_index = config.sequence_batch.ignore_index;
+    batcher.target_ignore_index = config.sequence_batch.target_ignore_index;
+    batcher.seed = static_cast<uint32_t>(std::max(0, config.dataloader_seed));
+    batcher.word_pad_id = vocabulary.PadIndex();
+
+    result.id_to_label = vocabulary.GetWords();
+    result.sequence_length = static_cast<size_t>(context);
+    result.token_vocabulary_size = vocabulary.Size();
+    result.word_pad_id = vocabulary.PadIndex();
+    auto streamed = std::make_unique<ParquetSequenceBatcher>(
+        std::array<SequenceWindowSource, 3>{train, validation, test}, token_column, context, batcher);
+    result.sample_count = streamed->GetNumSamples();
+    result.batcher = std::move(streamed);
+    return result;
+}
+
 SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     const std::shared_ptr<ArrowDataset>& dataset,
     const TrainingConfiguration& config,
@@ -317,15 +441,9 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
             if (!source) continue;
             if (role > 0) {
                 const auto metadata = source->schema()->metadata();
-                for (const char* key : {"cyxwiz.token_windows.version", "cyxwiz.token_windows.context",
-                        "cyxwiz.token_windows.vocabulary", "cyxwiz.token_windows.tokenizer_type",
-                        "cyxwiz.token_windows.lowercase"}) {
-                    auto expected = train_metadata->Get(key);
-                    auto actual = metadata ? metadata->Get(key) : arrow::Result<std::string>(arrow::Status::Invalid("Missing metadata"));
-                    if (!expected.ok() || !actual.ok() || *expected != *actual) {
-                        result.error_message = std::string("External sequence role metadata differs from Train: ") + key;
-                        return result;
-                    }
+                if (const auto why = WindowMetadataDifference(train_metadata, metadata); !why.empty()) {
+                    result.error_message = why;
+                    return result;
                 }
                 const int column = source->schema()->GetFieldIndex(token_column);
                 if (column < 0 || source->field(column)->type()->id() != arrow::Type::LIST) {

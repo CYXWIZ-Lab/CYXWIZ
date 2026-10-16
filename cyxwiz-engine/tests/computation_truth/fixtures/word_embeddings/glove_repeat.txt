@@ -1,0 +1,4 @@
+apple 0.5 -1.25 2
+banana 1e-3 0 -0.75
+apple 9 9 9
+cherry -2 0.125 3.5

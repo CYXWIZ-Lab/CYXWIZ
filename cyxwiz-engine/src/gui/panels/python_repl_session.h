@@ -50,6 +50,7 @@ private:
     std::string error;      // one-line error (exception or engine message)
     std::string traceback;  // formatted traceback (errors)
     std::string hint;       // e.g. "pip install pandas"
+    std::string note;       // muted line, e.g. where a paused debug run evaluated it
     std::string source;     // Script: display name
     bool running = false;   // still executing / producing output
     bool failed = false;
@@ -140,6 +141,8 @@ private:
 
   // Running command
   std::atomic<bool> command_executing_{false};
+  // While a debug run is paused, input runs in its innermost frame (P6).
+  bool debug_console_ = false;
   std::chrono::steady_clock::time_point command_started_{};
   int running_entry_ = -1;
 

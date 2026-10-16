@@ -4,9 +4,7 @@
 #include <cstdlib>
 #include <mutex>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -45,6 +43,8 @@ const char* NeuralOpName(NeuralOp op) {
     case NeuralOp::AttentionForward: return "attention_forward";
     case NeuralOp::AttentionBackward: return "attention_backward";
     case NeuralOp::DeviceProbe: return "device_probe";
+    case NeuralOp::Conv2dForward: return "conv2d_forward";
+    case NeuralOp::Conv2dBackward: return "conv2d_backward";
     }
     return "unknown_neural_op";
 }
@@ -63,7 +63,6 @@ const char* NeuralDevicePlatformName(DeviceType platform) {
 
 NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
     NeuralDeviceTarget target;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         switch (af::getActiveBackend()) {
         case AF_BACKEND_CUDA: target.platform = DeviceType::CUDA; break;
@@ -77,7 +76,6 @@ NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
         // (no provider serves it), the portable path decides.
         target = NeuralDeviceTarget{};
     }
-#endif
     return target;
 }
 

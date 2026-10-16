@@ -22,8 +22,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_DATABASE;
             case NodeType::DataLoader:
                 return ICON_TI_LOADER;
-            case NodeType::Augmentation:
-                return ICON_TI_WAND;
             case NodeType::DataSplit:
                 return ICON_TI_SITEMAP;
             case NodeType::Normalize:
@@ -67,7 +65,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_TI_ROTATE;
             case NodeType::Embedding:
@@ -75,7 +72,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
                 return ICON_TI_FOCUS;
@@ -104,7 +100,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Shape Operations
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
                 return ICON_TI_ARROWS_MAXIMIZE;
             case NodeType::Permute:
@@ -217,6 +212,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_ARROW_UP_RIGHT;
 
             // Text Processing
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
                 return ICON_TI_TYPOGRAPHY;
             case NodeType::TextVocabulary:
@@ -321,8 +317,10 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Analytics Nodes
             case NodeType::DescribeStats:
                 return ICON_TI_REPORT_ANALYTICS;
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
                 return ICON_TI_CHART_DOTS;
+            case NodeType::Dashboard:
+                return ICON_TI_LAYOUT_COLUMNS;
             case NodeType::SampleRows:
                 return ICON_TI_DICE;
             case NodeType::CorrelationMatrix:
@@ -386,6 +384,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::GradientBoostingClassifier:
                 return ICON_TI_CHART_CANDLE;
             case NodeType::TreeModelPredictor:
+            case NodeType::ClassicModelPredictor:
                 return ICON_TI_FILE_ANALYTICS;
             case NodeType::SVMClassifier:
             case NodeType::SVMRegressor:
@@ -428,7 +427,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Advanced Preprocessing
             case NodeType::OutlierDetector:
                 return ICON_TI_BUG;
-            case NodeType::ImagePreprocessor:
             case NodeType::QualityAnalyzer:
                 return ICON_TI_PHOTO;
             case NodeType::DataValidator:
@@ -449,8 +447,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
                 return ICON_RI_DATABASE;
-            case NodeType::Augmentation:
-                return ICON_RI_SPARKLING;
             case NodeType::DataSplit:
                 return ICON_RI_NODE_TREE;
             case NodeType::Normalize:
@@ -509,17 +505,16 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_RI_REFRESH;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_RI_TEXT;
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -557,7 +552,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Shape Operations
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -587,7 +581,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesSplit:
             case NodeType::SeasonalNaive:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -743,7 +738,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ImageFolderDataset:
             case NodeType::FashionMNISTDataset:
             case NodeType::CIFAR100Dataset:
-            case NodeType::ImagePreprocessor:
             case NodeType::QualityAnalyzer:
                 return ICON_RI_IMAGE;
 
@@ -803,7 +797,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::AudioFolderDataset:
             case NodeType::ExportSQL:
                 return ICON_LU_DATABASE;
-            case NodeType::Augmentation:
             case NodeType::DNNPreprocess:
             case NodeType::FillMissingValues:
                 return ICON_LU_SPARKLES;
@@ -867,7 +860,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -883,10 +875,10 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_LU_REPEAT;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_LU_TYPE;
@@ -897,7 +889,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -951,7 +942,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1080,7 +1072,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ImageFolderDataset:
             case NodeType::FashionMNISTDataset:
             case NodeType::CIFAR100Dataset:
-            case NodeType::ImagePreprocessor:
             case NodeType::QualityAnalyzer:
                 return ICON_LU_IMAGE;
 
@@ -1124,7 +1115,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::AudioFolderDataset:
             case NodeType::ExportSQL:
                 return ICON_IO_DATABASE;
-            case NodeType::Augmentation:
             case NodeType::DNNPreprocess:
             case NodeType::FillMissingValues:
                 return ICON_IO_SPARKS;
@@ -1188,7 +1178,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -1204,10 +1193,10 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_IO_REFRESH;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_IO_TEXT;
@@ -1218,7 +1207,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -1272,7 +1260,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1401,7 +1390,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ImageFolderDataset:
             case NodeType::FashionMNISTDataset:
             case NodeType::CIFAR100Dataset:
-            case NodeType::ImagePreprocessor:
             case NodeType::QualityAnalyzer:
                 return ICON_IO_IMAGE;
 
@@ -1445,7 +1433,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::AudioFolderDataset:
             case NodeType::ExportSQL:
                 return ICON_PH_DATABASE;
-            case NodeType::Augmentation:
             case NodeType::DNNPreprocess:
             case NodeType::FillMissingValues:
                 return ICON_PH_MAGIC_WAND;
@@ -1509,7 +1496,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TSNENode:
             case NodeType::UMAPNode:
             case NodeType::Reshape:
-            case NodeType::TensorReshape:
             case NodeType::View:
             case NodeType::ConvTranspose2D:
             case NodeType::Upsample:
@@ -1525,10 +1511,10 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::RNN:
             case NodeType::LSTM:
             case NodeType::GRU:
-            case NodeType::Bidirectional:
             case NodeType::TimeDistributed:
                 return ICON_PH_REPEAT;
             case NodeType::Embedding:
+            case NodeType::WordEmbeddings:
             case NodeType::TextTokenizer:
             case NodeType::StringManipulation:
                 return ICON_PH_TEXT_T;
@@ -1539,7 +1525,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
             // Attention & Transformer
             case NodeType::MultiHeadAttention:
-            case NodeType::SelfAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
             case NodeType::GymEnvironment:
@@ -1593,7 +1578,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
             case NodeType::SignalScope:
-            case NodeType::VisualizeData:
+            case NodeType::Plot:
+            case NodeType::Dashboard:
             case NodeType::LearningCurvesNode:
             case NodeType::ROCCurveNode:
             case NodeType::PRCurveNode:
@@ -1722,7 +1708,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ImageFolderDataset:
             case NodeType::FashionMNISTDataset:
             case NodeType::CIFAR100Dataset:
-            case NodeType::ImagePreprocessor:
             case NodeType::QualityAnalyzer:
                 return ICON_PH_IMAGE;
 
@@ -1759,8 +1744,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_DATABASE;
         case NodeType::DataLoader:
             return ICON_FA_SPINNER;
-        case NodeType::Augmentation:
-            return ICON_FA_WAND_MAGIC_SPARKLES;
         case NodeType::DataSplit:
             return ICON_FA_SITEMAP;
         case NodeType::Normalize:
@@ -1804,7 +1787,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU:
-        case NodeType::Bidirectional:
         case NodeType::TimeDistributed:
             return ICON_FA_ROTATE;
         case NodeType::Embedding:
@@ -1812,7 +1794,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
         // Attention & Transformer
         case NodeType::MultiHeadAttention:
-        case NodeType::SelfAttention:
         case NodeType::CrossAttention:
         case NodeType::LinearAttention:
             return ICON_FA_BULLSEYE;
@@ -1841,7 +1822,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
 
         // Shape Operations
         case NodeType::Reshape:
-        case NodeType::TensorReshape:
         case NodeType::View:
             return ICON_FA_EXPAND;
         case NodeType::Permute:
@@ -1955,6 +1935,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_ARROW_UP;
 
         // Text Processing
+        case NodeType::WordEmbeddings:
         case NodeType::TextTokenizer:
             return ICON_FA_FONT;
         case NodeType::TextVocabulary:
@@ -1970,10 +1951,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_BOOK;
         case NodeType::PairDatasetBuilder:
         case NodeType::TripletDatasetBuilder:
-        case NodeType::SiameseBranch:
             return ICON_FA_CODE_BRANCH;
-        case NodeType::SharedEncoder:
-            return ICON_FA_SHARE_NODES;
         case NodeType::ContrastiveLoss:
         case NodeType::CosineEmbeddingLoss:
         case NodeType::TripletLoss:
@@ -2085,8 +2063,10 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         // Analytics Nodes
         case NodeType::DescribeStats:
             return ICON_FA_CHART_BAR;
-        case NodeType::VisualizeData:
+        case NodeType::Plot:
             return ICON_FA_CHART_LINE;
+        case NodeType::Dashboard:
+            return ICON_FA_TABLE_COLUMNS;
         case NodeType::SampleRows:
             return ICON_FA_DICE;
         case NodeType::CorrelationMatrix:
@@ -2150,6 +2130,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::GradientBoostingClassifier:
             return ICON_FA_CHART_LINE;
         case NodeType::TreeModelPredictor:
+        case NodeType::ClassicModelPredictor:
             return ICON_FA_FILE_IMPORT;
         case NodeType::SVMClassifier:
         case NodeType::SVMRegressor:
@@ -2192,7 +2173,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         // Advanced Preprocessing
         case NodeType::OutlierDetector:
             return ICON_FA_BUG;
-        case NodeType::ImagePreprocessor:
         case NodeType::QualityAnalyzer:
             return ICON_FA_IMAGES;
         case NodeType::DataValidator:

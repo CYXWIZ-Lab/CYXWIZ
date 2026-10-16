@@ -1,289 +1,59 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Agglomerative clustering on ArrayFire (TOFIX140). The cluster distance matrix
+// stays on the device: each step finds the closest pair, applies the Lance-Williams
+// update to the merged row and retires the other. A second matrix keeps the sum of
+// original distances between clusters, which gives the cophenetic correlation
+// without building the cophenetic matrix.
+
 #ifdef _WIN32
-#ifndef NOMINMAX
 #define NOMINMAX
-#endif
 #endif
 
 #include "cyxwiz/clustering.h"
-#include "arrayfire_backend_utils.h"
-#include "arrayfire_host_materialization.h"
-#include <spdlog/spdlog.h>
+#include "analysis_device.h"
+
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
+#include <map>
 #include <numeric>
-#include <set>
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
-// Ensure Windows min/max macros are undefined
-#ifdef _WIN32
 #ifdef min
 #undef min
 #endif
 #ifdef max
 #undef max
 #endif
-#endif
 
 namespace cyxwiz {
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
+using namespace analysis_detail;
 
-static std::string BuildClusteringContext(
-    const std::vector<std::vector<double>>& data,
-    const std::string& extra = {})
-{
-    std::string context = "samples=" + std::to_string(data.size()) +
-        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
-    if (!extra.empty()) {
-        context += "; ";
-        context += extra;
-    }
-    return context;
-}
+namespace {
 
-static void LogClusteringBackendFailureOnce(
-    const char* operation_name,
-    const char* error_message,
-    const std::string& data_context)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
-    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        return;
-    }
-
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "clustering operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); clustering operation cannot complete on the current ArrayFire backend.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
-        error_message != nullptr &&
-        error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    spdlog::error("{}", message);
-}
-
-// ==================== Hierarchical Clustering ====================
-
-HierarchicalResult Clustering::Hierarchical(
-    const std::vector<std::vector<double>>& data,
-    int n_clusters,
-    const std::string& linkage,
-    const std::string& metric
-) {
-    HierarchicalResult result;
-
-    if (data.empty()) {
-        result.error_message = "Empty data";
-        return result;
-    }
-
-    int n = static_cast<int>(data.size());
-
-    if (n_clusters <= 0 || n_clusters > n) {
-        result.error_message = "Invalid number of clusters";
-        return result;
-    }
-
-    try {
-        // Compute distance matrix on GPU
-        af::array af_data = ToAfArray(data);
-        af::array dist_matrix = ComputeDistanceMatrix(af_data, metric);
-
-        // Transfer to CPU for agglomerative clustering
-        std::vector<double> dist_flat(n * n);
-        dist_matrix.eval();
-        MaterializeArrayFireToHost(
-            dist_matrix,
-            dist_flat.data(),
-            ArrayFireHostSyncCategory::AlgorithmCpuPath,
-            "Clustering::Hierarchical::DistanceMatrix",
-            "arrayfire_column_major");
-
-        // Build distance matrix on CPU
-        std::vector<std::vector<double>> cpu_dist(n, std::vector<double>(n));
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                cpu_dist[i][j] = dist_flat[j * n + i];
-            }
-        }
-
-        // Cluster tracking
-        std::vector<std::set<int>> clusters(n);
-        for (int i = 0; i < n; ++i) {
-            clusters[i].insert(i);
-        }
-        std::vector<bool> active(n, true);
-
-        // Build linkage matrix
-        result.linkage_matrix.reserve(n - 1);
-
-        for (int step = 0; step < n - 1; ++step) {
-            // Find minimum distance pair
-            double min_dist = std::numeric_limits<double>::max();
-            int min_i = -1, min_j = -1;
-
-            for (int i = 0; i < n + step; ++i) {
-                if (!active[i]) continue;
-                for (int j = i + 1; j < n + step; ++j) {
-                    if (!active[j]) continue;
-                    if (cpu_dist[i][j] < min_dist) {
-                        min_dist = cpu_dist[i][j];
-                        min_i = i;
-                        min_j = j;
-                    }
-                }
-            }
-
-            if (min_i < 0) break;
-
-            // Merge clusters
-            int new_cluster_idx = n + step;
-            clusters.push_back(std::set<int>());
-            clusters[new_cluster_idx].insert(clusters[min_i].begin(), clusters[min_i].end());
-            clusters[new_cluster_idx].insert(clusters[min_j].begin(), clusters[min_j].end());
-
-            // Record linkage
-            result.linkage_matrix.push_back({
-                static_cast<double>(min_i),
-                static_cast<double>(min_j),
-                min_dist,
-                static_cast<double>(clusters[new_cluster_idx].size())
-            });
-
-            // Update distance matrix
-            cpu_dist.push_back(std::vector<double>(new_cluster_idx + 1, 0.0));
-            for (auto& row : cpu_dist) {
-                row.resize(new_cluster_idx + 1, 0.0);
-            }
-
-            active.push_back(true);
-            active[min_i] = false;
-            active[min_j] = false;
-
-            // Compute distances to new cluster
-            for (int k = 0; k < new_cluster_idx; ++k) {
-                if (!active[k]) continue;
-
-                double new_dist = 0.0;
-
-                if (linkage == "single") {
-                    new_dist = std::min(cpu_dist[min_i][k], cpu_dist[min_j][k]);
-                } else if (linkage == "complete") {
-                    new_dist = std::max(cpu_dist[min_i][k], cpu_dist[min_j][k]);
-                } else if (linkage == "average") {
-                    double n_i = static_cast<double>(clusters[min_i].size());
-                    double n_j = static_cast<double>(clusters[min_j].size());
-                    new_dist = (n_i * cpu_dist[min_i][k] + n_j * cpu_dist[min_j][k]) / (n_i + n_j);
-                } else {  // ward
-                    double n_i = static_cast<double>(clusters[min_i].size());
-                    double n_j = static_cast<double>(clusters[min_j].size());
-                    double n_k = static_cast<double>(clusters[k].size());
-                    double d_ik = cpu_dist[min_i][k];
-                    double d_jk = cpu_dist[min_j][k];
-                    double d_ij = cpu_dist[min_i][min_j];
-                    new_dist = std::sqrt(((n_i + n_k) * d_ik * d_ik + (n_j + n_k) * d_jk * d_jk - n_k * d_ij * d_ij) / (n_i + n_j + n_k));
-                }
-
-                cpu_dist[new_cluster_idx][k] = new_dist;
-                cpu_dist[k][new_cluster_idx] = new_dist;
-            }
-        }
-
-        // Cut dendrogram to get n_clusters
-        result.labels = CutDendrogram(result.linkage_matrix, 0.0, n);
-
-        // Adjust to get desired number of clusters
-        if (!result.linkage_matrix.empty()) {
-            // Find cut height for n_clusters
-            int target_merges = n - n_clusters;
-            if (target_merges > 0 && target_merges <= static_cast<int>(result.linkage_matrix.size())) {
-                double cut_height = result.linkage_matrix[target_merges - 1][2] + 0.001;
-                result.labels = CutDendrogram(result.linkage_matrix, cut_height, n);
-            }
-        }
-
-        result.n_clusters = n_clusters;
-        result.success = true;
-
-        spdlog::info("Hierarchical clustering completed: {} clusters", n_clusters);
-
-    } catch (const af::exception& e) {
-        result.error_message = std::string("ArrayFire error: ") + e.what();
-        LogClusteringBackendFailureOnce(
-            "Clustering::Hierarchical",
-            e.what(),
-            BuildClusteringContext(
-                data,
-                "clusters=" + std::to_string(n_clusters) +
-                "; linkage=" + linkage +
-                "; metric=" + metric));
-    }
-
-    return result;
-}
-
-std::vector<int> Clustering::CutDendrogram(
-    const std::vector<std::vector<double>>& linkage_matrix,
-    double height,
-    int n_samples
-) {
-    // Initialize each sample in its own cluster
-    std::vector<int> labels(n_samples);
-    std::iota(labels.begin(), labels.end(), 0);
-
-    // Union-find data structure
-    std::vector<int> parent(2 * n_samples);
+// Labels after the first `merges` rows of a linkage matrix, numbered in order of
+// first appearance.
+std::vector<int> LabelsAfterMerges(const std::vector<std::vector<double>>& linkage, size_t merges, int n_samples) {
+    std::vector<int> parent(2 * static_cast<size_t>(n_samples));
     std::iota(parent.begin(), parent.end(), 0);
-
-    std::function<int(int)> find = [&](int x) -> int {
-        if (parent[x] != x) parent[x] = find(parent[x]);
-        return parent[x];
-    };
-
-    // Apply merges up to cut height
-    for (size_t i = 0; i < linkage_matrix.size(); ++i) {
-        if (linkage_matrix[i][2] > height) break;
-
-        int c1 = static_cast<int>(linkage_matrix[i][0]);
-        int c2 = static_cast<int>(linkage_matrix[i][1]);
-        int new_cluster = n_samples + static_cast<int>(i);
-
-        parent[find(c1)] = new_cluster;
-        parent[find(c2)] = new_cluster;
+    const std::function<int(int)> find = [&](int x) { return parent[x] == x ? x : parent[x] = find(parent[x]); };
+    for (size_t i = 0; i < merges && i < linkage.size(); ++i) {
+        const int merged = n_samples + static_cast<int>(i);
+        parent[find(static_cast<int>(linkage[i][0]))] = merged;
+        parent[find(static_cast<int>(linkage[i][1]))] = merged;
     }
-
-    // Assign final labels
-    std::map<int, int> root_to_label;
-    int next_label = 0;
-
+    std::vector<int> labels(static_cast<size_t>(n_samples));
+    std::map<int, int> label_of_root;
     for (int i = 0; i < n_samples; ++i) {
-        int root = find(i);
-        if (root_to_label.find(root) == root_to_label.end()) {
-            root_to_label[root] = next_label++;
-        }
-        labels[i] = root_to_label[root];
+        const auto [it, inserted] = label_of_root.try_emplace(find(i), static_cast<int>(label_of_root.size()));
+        labels[static_cast<size_t>(i)] = it->second;
     }
-
     return labels;
 }
 
-
-#else  // No ArrayFire - CPU fallback stubs
+}  // namespace
 
 HierarchicalResult Clustering::Hierarchical(
     const std::vector<std::vector<double>>& data,
@@ -292,7 +62,113 @@ HierarchicalResult Clustering::Hierarchical(
     const std::string& metric
 ) {
     HierarchicalResult result;
-    result.error_message = "ArrayFire not available";
+    if (const std::string refusal = MatrixRefusal(data); !refusal.empty()) {
+        result.error_message = refusal;
+        return result;
+    }
+    const int n = static_cast<int>(data.size());
+    if (n < 2 || n_clusters < 1 || n_clusters > n) {
+        result.error_message = "Needs at least 2 samples and 1 to n clusters";
+        return result;
+    }
+    if (linkage != "ward" && linkage != "complete" && linkage != "average" && linkage != "single") {
+        result.error_message = "Unknown linkage '" + linkage + "' (ward, complete, average or single)";
+        return result;
+    }
+    if (!IsKnownMetric(metric)) {
+        result.error_message = "Unknown metric '" + metric + "' (euclidean, manhattan or cosine)";
+        return result;
+    }
+    if (linkage == "ward" && metric != "euclidean") {
+        result.error_message = "Ward linkage needs the euclidean metric";
+        return result;
+    }
+    try {
+        const af::array x = MatrixToDevice(data);
+        const double inf = std::numeric_limits<double>::infinity();
+        af::array sums = af::constant(0.0, n, n, x.type());  // original distances, summed per cluster pair
+        const dim_t block = RowBlock(n);
+        for (dim_t start = 0; start < n; start += block) {
+            const dim_t stop = std::min<dim_t>(n, start + block);
+            const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
+            sums(rows, af::span) = PairwiseDistances(x(rows, af::span), x, metric);
+        }
+        const af::array diagonal = af::identity(n, n, b8);
+        sums = af::select(diagonal, 0.0, sums);
+        af::array distance = af::select(diagonal, inf, sums);  // cluster distances; retired rows are inf
+
+        // Totals over the n(n-1)/2 sample pairs for the cophenetic correlation.
+        const double pairs = 0.5 * n * (n - 1.0);
+        const double sum_d = 0.5 * af::sum<double>(sums);
+        const double sum_d2 = 0.5 * af::sum<double>(sums * sums);
+        double sum_c = 0.0, sum_c2 = 0.0, sum_cd = 0.0;
+
+        const af::array slot = af::range(af::dim4(n), 0, s32);
+        af::array active = af::constant(1, n, b8);
+        af::array sizes = af::constant(1.0, n, x.type());
+        std::vector<double> host_sizes(static_cast<size_t>(n), 1.0);
+        std::vector<int> cluster_id(static_cast<size_t>(n));
+        std::iota(cluster_id.begin(), cluster_id.end(), 0);
+
+        result.linkage_matrix.reserve(static_cast<size_t>(n - 1));
+        for (int step = 0; step < n - 1; ++step) {
+            af::array closest, flat_index;
+            af::min(closest, flat_index, af::flat(distance));
+            const std::vector<double> picked = DeviceToHostValues(
+                af::join(0, closest, af::lookup(af::flat(sums), flat_index)), "Clustering::Hierarchical");
+            const unsigned flat = flat_index.scalar<unsigned>();
+            const int i = static_cast<int>(flat % static_cast<unsigned>(n)), j = static_cast<int>(flat / static_cast<unsigned>(n));
+            const int a = std::min(i, j), b = std::max(i, j);
+            const double height = picked[0], cross_sum = picked[1];
+            const double na = host_sizes[static_cast<size_t>(a)], nb = host_sizes[static_cast<size_t>(b)];
+
+            const af::array da = distance(af::span, a), db = distance(af::span, b);
+            af::array merged;
+            if (linkage == "single") {
+                merged = af::min(da, db);
+            } else if (linkage == "complete") {
+                merged = af::max(da, db);
+            } else if (linkage == "average") {
+                merged = (na * da + nb * db) / (na + nb);
+            } else {  // ward
+                merged = af::sqrt(((na + sizes) * da * da + (nb + sizes) * db * db - sizes * height * height) /
+                                  (na + nb + sizes));
+            }
+            merged = af::select(active && slot != a && slot != b, merged, inf);
+            distance(af::span, a) = merged;
+            distance(a, af::span) = merged.T();
+            distance(af::span, b) = inf;
+            distance(b, af::span) = inf;
+            const af::array merged_sums = sums(af::span, a) + sums(af::span, b);
+            sums(af::span, a) = merged_sums;
+            sums(a, af::span) = merged_sums.T();
+            sizes(a) = na + nb;
+            active(b) = 0;
+            distance.eval();
+            sums.eval();
+
+            const double pair_count = na * nb;
+            sum_c += pair_count * height;
+            sum_c2 += pair_count * height * height;
+            sum_cd += height * cross_sum;
+
+            const int id_a = cluster_id[static_cast<size_t>(a)], id_b = cluster_id[static_cast<size_t>(b)];
+            result.linkage_matrix.push_back({static_cast<double>(std::min(id_a, id_b)),
+                                             static_cast<double>(std::max(id_a, id_b)), height, na + nb});
+            cluster_id[static_cast<size_t>(a)] = n + step;
+            host_sizes[static_cast<size_t>(a)] = na + nb;
+        }
+
+        const double covariance = pairs * sum_cd - sum_c * sum_d;
+        const double spread = (pairs * sum_c2 - sum_c * sum_c) * (pairs * sum_d2 - sum_d * sum_d);
+        result.cophenetic_correlation = spread > 0.0 ? covariance / std::sqrt(spread) : 0.0;
+        result.labels = LabelsAfterMerges(result.linkage_matrix, static_cast<size_t>(n - n_clusters), n);
+        result.n_clusters = n_clusters;
+        result.success = true;
+    } catch (const af::exception& e) {
+        result = HierarchicalResult{};
+        result.error_message = DeviceError("Clustering::Hierarchical", e);
+    }
     return result;
 }
 
@@ -301,11 +177,9 @@ std::vector<int> Clustering::CutDendrogram(
     double height,
     int n_samples
 ) {
-    return {};
+    size_t merges = 0;
+    while (merges < linkage_matrix.size() && linkage_matrix[merges][2] <= height) ++merges;
+    return LabelsAfterMerges(linkage_matrix, merges, n_samples);
 }
 
-
-#endif  // CYXWIZ_HAS_ARRAYFIRE
-
 } // namespace cyxwiz
-

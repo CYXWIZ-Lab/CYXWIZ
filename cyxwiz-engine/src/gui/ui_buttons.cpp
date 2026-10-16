@@ -1,49 +1,40 @@
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 
 #include <imgui.h>
+#include <algorithm>
+#include <cfloat>
 #include <imgui_internal.h>
 
 namespace cyxwiz::ui {
 namespace {
 
-// Brand palette from the approved verification mockup (tofix119 C).
-constexpr ImVec4 kPrimary = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
-constexpr ImVec4 kPrimaryHover = ImVec4(0.439f, 0.333f, 0.980f, 1.0f);
-constexpr ImVec4 kPrimaryActive = ImVec4(0.290f, 0.192f, 0.820f, 1.0f);
-// Neutral and status colours: dark values from the mockup, light values
-// when the active theme has a light window background (Engine light
-// themes). Refreshed at the start of every button call.
-ImVec4 kSecondaryHover, kSecondaryActive, kBorder, kText, kLink, kLinkHover;
+// Colours come from the shared tokens (ui_tokens.h): one light/dark
+// decision, one brand purple, theme-derived neutrals. Refreshed at the
+// start of every button call.
+ImVec4 kPrimary, kPrimaryHover, kPrimaryActive;
+ImVec4 kSecondary, kSecondaryHover, kSecondaryActive, kText, kLink, kLinkHover;
 ImVec4 kDanger, kDangerHover, kChipBg, kChipText, kChipTextHover;
 
 void RefreshColors() {
-    const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-    const bool light = (0.2126f * bg.x + 0.7152f * bg.y + 0.0722f * bg.z) > 0.5f;
-    if (light) {
-        kSecondaryHover = ImVec4(0.90f, 0.91f, 0.94f, 1.0f);
-        kSecondaryActive = ImVec4(0.84f, 0.86f, 0.91f, 1.0f);
-        kBorder = ImVec4(0.74f, 0.77f, 0.84f, 1.0f);
-        kText = ImVec4(0.12f, 0.13f, 0.16f, 1.0f);
-        kLink = ImVec4(0.290f, 0.192f, 0.820f, 1.0f);
-        kLinkHover = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
-        kDanger = ImVec4(0.75f, 0.15f, 0.13f, 1.0f);
-        kDangerHover = ImVec4(0.98f, 0.88f, 0.88f, 1.0f);
-        kChipBg = ImVec4(0.95f, 0.96f, 0.98f, 1.0f);
-        kChipText = ImVec4(0.20f, 0.22f, 0.27f, 1.0f);
-        kChipTextHover = ImVec4(0.05f, 0.05f, 0.08f, 1.0f);
-    } else {
-        kSecondaryHover = ImVec4(0.094f, 0.133f, 0.231f, 1.0f);
-        kSecondaryActive = ImVec4(0.141f, 0.196f, 0.322f, 1.0f);
-        kBorder = ImVec4(0.141f, 0.196f, 0.322f, 1.0f);
-        kText = ImVec4(0.906f, 0.925f, 0.961f, 1.0f);
-        kLink = ImVec4(0.702f, 0.651f, 1.0f, 1.0f);
-        kLinkHover = ImVec4(0.812f, 0.776f, 1.0f, 1.0f);
-        kDanger = ImVec4(1.0f, 0.482f, 0.447f, 1.0f);
-        kDangerHover = ImVec4(0.302f, 0.106f, 0.114f, 1.0f);
-        kChipBg = ImVec4(0.078f, 0.102f, 0.145f, 1.0f);
-        kChipText = ImVec4(0.79f, 0.82f, 0.88f, 1.0f);
-        kChipTextHover = ImVec4(0.95f, 0.96f, 0.97f, 1.0f);
-    }
+    const Tokens& t = CurrentTokens();
+    const ImVec4 ink = t.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
+    kPrimary = t.accent;
+    kPrimaryHover = t.accent_hover;
+    kPrimaryActive = t.accent_active;
+    // No outlines on buttons (owner rule 2026-10-01): a secondary button is a
+    // fill one step off the window, stronger on hover.
+    kSecondary = Mix(t.bg_window, ink, t.light ? 0.06f : 0.07f);
+    kSecondaryHover = Mix(t.bg_window, ink, t.light ? 0.11f : 0.13f);
+    kSecondaryActive = Mix(t.bg_window, ink, t.light ? 0.16f : 0.18f);
+    kText = t.text_bright;
+    kLink = t.accent_text;
+    kLinkHover = t.light ? t.accent : Mix(t.accent_text, ink, 0.35f);
+    kDanger = t.error;
+    kDangerHover = Mix(t.bg_window, t.error, t.light ? 0.15f : 0.25f);
+    kChipBg = t.bg_raised;
+    kChipText = Mix(t.text, t.text_dim, 0.30f);
+    kChipTextHover = t.text_bright;
 }
 constexpr float kRounding = 6.0f;
 
@@ -60,19 +51,18 @@ void ReasonTooltip(bool enabled, const char* reason) {
 
 bool Styled(const char* label, bool enabled, const char* reason, ButtonSize size,
             const ImVec4& fill, const ImVec4& hover, const ImVec4& active,
-            const ImVec4& text, bool border, float width = 0.0f) {
+            const ImVec4& text, float width = 0.0f) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRounding);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, Padding(size));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, border ? 1.0f : 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, fill);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
     ImGui::PushStyleColor(ImGuiCol_Text, text);
-    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
     if (!enabled) ImGui::BeginDisabled();
     const bool clicked = ImGui::Button(label, ImVec2(width, 0.0f));
     if (!enabled) ImGui::EndDisabled();
-    ImGui::PopStyleColor(5);
+    ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(3);
     ReasonTooltip(enabled, reason);
     return clicked && enabled;
@@ -84,21 +74,48 @@ bool PrimaryButton(const char* label, bool enabled, const char* disabled_reason,
                    ButtonSize size, float width) {
     RefreshColors();
     return Styled(label, enabled, disabled_reason, size, kPrimary, kPrimaryHover,
-                  kPrimaryActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), false, width);
+                  kPrimaryActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), width);
 }
 
 bool SecondaryButton(const char* label, bool enabled, const char* disabled_reason,
                      ButtonSize size, float width) {
     RefreshColors();
-    return Styled(label, enabled, disabled_reason, size, ImVec4(0, 0, 0, 0),
-                  kSecondaryHover, kSecondaryActive, kText, true, width);
+    return Styled(label, enabled, disabled_reason, size, kSecondary, kSecondaryHover, kSecondaryActive, kText, width);
 }
 
 bool DangerButton(const char* label, bool enabled, const char* disabled_reason,
                   ButtonSize size) {
     RefreshColors();
-    return Styled(label, enabled, disabled_reason, size, ImVec4(0, 0, 0, 0),
-                  kDangerHover, kDangerHover, kDanger, true);
+    // Red text, a red tint on hover; no outline.
+    return Styled(label, enabled, disabled_reason, size, ImVec4(0, 0, 0, 0), kDangerHover, kDangerHover, kDanger);
+}
+
+bool GhostButton(const char* label, bool enabled, const char* disabled_reason, bool on, ButtonSize size,
+                 const ImVec4* text) {
+    RefreshColors();
+    return Styled(label, enabled, disabled_reason, size, on ? kSecondary : ImVec4(0, 0, 0, 0), kSecondaryHover,
+                  kSecondaryActive, text ? *text : kText);
+}
+
+float StatusPillWidth(const char* text) {
+    return ImGui::CalcTextSize(text, nullptr, true).x + 12.0f + 8.0f + 8.0f + 12.0f;
+}
+
+bool StatusPill(const char* id, const char* text, const ImVec4& dot) {
+    RefreshColors();
+    const float height = ImGui::GetFrameHeight();
+    const float width = StatusPillWidth(text);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(hovered ? kSecondaryHover : kChipBg),
+                      height * 0.5f);
+    dl->AddCircleFilled(ImVec2(pos.x + 16.0f, pos.y + height * 0.5f), 4.0f, ImGui::GetColorU32(dot));
+    dl->AddText(ImVec2(pos.x + 28.0f, pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
+                ImGui::GetColorU32(hovered ? kChipTextHover : kChipText), text, ImGui::FindRenderedTextEnd(text));
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
 }
 
 bool LinkButton(const char* label, bool enabled) {
@@ -148,17 +165,71 @@ bool ToggleChip(const char* id, const char* label, const char* count, bool on,
         return ImGui::GetColorU32(color);
     };
     dl->AddRectFilled(pos, max, faded(fill), height * 0.5f);
-    const ImVec4 border = emphasise && on ? ImVec4(0.42f, 0.16f, 0.16f, 1.0f) : kBorder;
-    dl->AddRect(pos, max, faded(border), height * 0.5f);
+    // Emphasis is a red tint, not an outline (no outlines on buttons).
+    if (emphasise && on) dl->AddRectFilled(pos, max, ImGui::GetColorU32(WithAlpha(Mix(CurrentTokens().bg_window, kDanger, 0.45f), 0.55f)), height * 0.5f);
     ImVec4 accent = ImGui::ColorConvertU32ToFloat4(accent_rgba);
     accent.w *= alpha;
     const float text_y = pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
     const ImVec2 label_size = ImGui::CalcTextSize(label, nullptr, true);
     const char* label_end = ImGui::FindRenderedTextEnd(label);
     dl->AddText(ImVec2(pos.x + 9.0f, text_y), ImGui::GetColorU32(accent), label, label_end);
-    const ImVec4 count_color = emphasise && on ? accent : ImVec4(0.55f, 0.58f, 0.65f, alpha);
+    const ImVec4 count_color = emphasise && on ? accent : WithAlpha(CurrentTokens().text_dim, alpha);
     dl->AddText(ImVec2(pos.x + 9.0f + label_size.x + 5.0f, text_y),
                 ImGui::GetColorU32(count_color), count);
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
+float FilterChipWidth(const char* label, const char* count) {
+    return ImGui::CalcTextSize(label, nullptr, true).x + 5.0f + ImGui::CalcTextSize(count).x + 20.0f;
+}
+
+bool FilterChip(const char* id, const char* label, const char* count, bool chosen) {
+    RefreshColors();
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float height = ImGui::GetFrameHeight() - 2.0f;
+    const float width = FilterChipWidth(label, count);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec4 fill = chosen ? ui::WithAlpha(t.accent, 0.35f) : (hovered ? kSecondaryHover : ui::WithAlpha(t.text, 0.05f));
+    dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(fill), height * 0.5f);
+    const float text_y = pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    const char* label_end = ImGui::FindRenderedTextEnd(label);
+    dl->AddText(ImVec2(pos.x + 10.0f, text_y), ImGui::GetColorU32(chosen ? t.text_bright : t.text), label, label_end);
+    dl->AddText(ImVec2(pos.x + 10.0f + ImGui::CalcTextSize(label, nullptr, true).x + 5.0f, text_y),
+                ImGui::GetColorU32(t.text_dim), count);
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
+float JobTabWidth(const char* label, const char* caption) {
+    const float small = ImGui::GetFontSize() * 0.85f;
+    return std::max(ImGui::CalcTextSize(label, nullptr, true).x, ImGui::GetFont()->CalcTextSizeA(small, FLT_MAX, 0.0f, caption).x) +
+           24.0f;
+}
+
+bool JobTab(const char* id, const char* label, const char* caption, bool chosen) {
+    RefreshColors();
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImFont* font = ImGui::GetFont();
+    const float small = ImGui::GetFontSize() * 0.85f;
+    const ImVec2 name = ImGui::CalcTextSize(label, nullptr, true);
+    const ImVec2 sub = font->CalcTextSizeA(small, FLT_MAX, 0.0f, caption);
+    const float width = JobTabWidth(label, caption);
+    const float height = name.y + sub.y + 14.0f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hovered && !chosen) dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(ui::WithAlpha(t.text, 0.04f)), 4.0f);
+    dl->AddText(ImVec2(pos.x + 12.0f, pos.y + 5.0f), ImGui::GetColorU32(chosen ? t.text_bright : t.text_dim), label,
+                ImGui::FindRenderedTextEnd(label));
+    dl->AddText(font, small, ImVec2(pos.x + 12.0f, pos.y + 6.0f + name.y), ImGui::GetColorU32(t.text_faint), caption);
+    // The one line that means something: which job is open.
+    if (chosen) dl->AddRectFilled(ImVec2(pos.x + 6.0f, pos.y + height - 2.0f), ImVec2(pos.x + width - 6.0f, pos.y + height),
+                                  ImGui::GetColorU32(t.accent));
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     return clicked;
 }
@@ -179,7 +250,6 @@ bool ChipButton(const char* label) {
     dl->AddRectFilled(pos, max,
                       ImGui::GetColorU32(hovered ? kSecondaryHover : kChipBg),
                       height * 0.5f);
-    dl->AddRect(pos, max, ImGui::GetColorU32(hovered ? kPrimary : kBorder), height * 0.5f);
     const char* end = ImGui::FindRenderedTextEnd(label);
     dl->AddText(ImVec2(pos.x + 11.0f, pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
                 ImGui::GetColorU32(hovered ? kChipTextHover : kChipText),
@@ -195,6 +265,10 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
     const ImVec2 start = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool changed = false;
+    // One tinted track; the chosen segment is filled. No outlines or dividers.
+    float total = 0.0f;
+    for (int i = 0; i < count; ++i) total += ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
+    dl->AddRectFilled(start, ImVec2(start.x + total, start.y + height), ImGui::GetColorU32(kSecondary), kRounding);
     float x = start.x;
     for (int i = 0; i < count; ++i) {
         const float width = ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
@@ -220,13 +294,9 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
         dl->AddText(ImVec2(x + (width - text.x) * 0.5f, start.y + (height - text.y) * 0.5f),
                     ImGui::GetColorU32(on ? ImVec4(1, 1, 1, 1) : kText), labels[i],
                     ImGui::FindRenderedTextEnd(labels[i]));
-        if (i > 0 && !on && *selected != i - 1)
-            dl->AddLine(ImVec2(x, start.y + 4.0f), ImVec2(x, start.y + height - 4.0f),
-                        ImGui::GetColorU32(kBorder));
         if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         x += width;
     }
-    dl->AddRect(start, ImVec2(x, start.y + height), ImGui::GetColorU32(kBorder), kRounding);
     ImGui::SetCursorScreenPos(start);
     ImGui::Dummy(ImVec2(x - start.x, height));
     ImGui::PopID();
@@ -235,6 +305,10 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
 
 float ButtonWidth(const char* label, ButtonSize size) {
     return ImGui::CalcTextSize(label, nullptr, true).x + Padding(size).x * 2.0f + 2.0f;
+}
+
+float ButtonHeight(ButtonSize size) {
+    return ImGui::GetTextLineHeight() + Padding(size).y * 2.0f;
 }
 
 }  // namespace cyxwiz::ui

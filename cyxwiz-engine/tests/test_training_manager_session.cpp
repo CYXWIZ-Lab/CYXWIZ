@@ -148,8 +148,6 @@ void CheckTerminalTrace(const cyxwiz::TrainingMetrics& metrics,
         Check(trace.effective_backend == expected_backend && trace.requested_backend == expected_backend,
               "worker must use the requested test backend");
     }
-    Check(trace.native_cpu_fallback_count == 0,
-          "supported manager session should not use native CPU fallback");
 
     const std::string expected_terminal_stage =
         expected_status == "early_stopped"
@@ -517,6 +515,36 @@ int main(int argc, char** argv) {
                   early_stop_metrics.checkpoint_used,
           "active model should identify the restored checkpoint path");
     CheckTerminalTrace(early_stop_metrics, "early_stopped");
+
+    // Checkpoint admission must fail closed on device activation failure,
+    // leaving the previously trained model available to the user.
+    Check(early_stop_model.model_device.has_value(), "trained model records its device owner");
+    const auto owner = *early_stop_model.model_device;
+    const auto selected = cyxwiz::Device::GetProcessDevice().value_or(owner);
+    const auto preserved_model = manager.GetActiveModel();
+    cyxwiz::Device::RecordProcessDevice(owner.type, 1000000);
+    const auto rejected_load = manager.LoadCheckpointForEvaluation(
+        early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+    Check(!rejected_load.success &&
+              rejected_load.error_message.find("no fallback was attempted") != std::string::npos,
+          "checkpoint load rejects unavailable selected device before model construction");
+    Check(manager.GetActiveModel() == preserved_model,
+          "device failure preserves the existing active model");
+    cyxwiz::Device::RecordProcessDevice(owner.type, owner.device_id);
+    cyxwiz::CheckpointEvaluationLoadResult loaded;
+    std::thread checkpoint_worker([&] {
+        loaded = manager.LoadCheckpointForEvaluation(
+            early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+    });
+    checkpoint_worker.join();
+    Check(loaded.success, "checkpoint loads on selected device from a separate worker: " + loaded.error_message);
+    const auto reloaded = manager.GetActiveModelInfo();
+    Check(reloaded.model_device && reloaded.model_device->type == owner.type &&
+              reloaded.model_device->device_id == owner.device_id,
+          "checkpoint load publishes the actual weight owner for later testing");
+    cyxwiz::Device::RecordProcessDevice(selected.type, selected.device_id);
+    std::cout << "PASS: checkpoint device rejection preserves model; worker reload publishes owner\n";
+
 
     manager.ClearTrainedModel();
     start_callbacks.store(0);

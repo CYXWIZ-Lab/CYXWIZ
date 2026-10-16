@@ -1,9 +1,12 @@
+#include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/patterns/pattern_library.h"
 #include "../src/gui/node_import_guardrails.h"
+#include "../src/gui/node_type_import_registry.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cctype>
 #include <filesystem>
@@ -167,6 +170,42 @@ void CheckNoLocalAbsolutePaths(const nlohmann::json& value, const std::string& c
             CheckNoLocalAbsolutePaths(it.value(), context + "." + it.key());
         }
     }
+}
+
+// Every parameter a shipped pattern sets on a node is one that node defines:
+// an unknown key (the Embedding's "vocab_size" for num_embeddings) is silently
+// ignored, and the node falls back to its default.
+void CheckShippedPatternParameterNames() {
+    const auto dir = FindRepoRoot() / "cyxwiz-engine" / "resources" / "patterns";
+    Check(std::filesystem::is_directory(dir), "shipped pattern folder not found: " + dir.string());
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    std::string unknown;
+    size_t checked = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() != ".cyxgraph") continue;
+        const auto pattern = nlohmann::json::parse(ReadFile(entry.path()));
+        if (!pattern.contains("template") || !pattern["template"].contains("nodes")) continue;
+        for (const auto& node : pattern["template"]["nodes"]) {
+            if (!node.contains("params") || !node["params"].is_object()) continue;
+            const auto type = gui::ResolveNodeTypeImportName(node.value("type", ""));
+            if (!type) {
+                unknown += "\n  " + entry.path().filename().string() + ": unknown node type " + node.value("type", "");
+                continue;
+            }
+            const auto* metadata = registry.GetMetadata(*type);
+            if (metadata == nullptr) continue;
+            for (const auto& [key, value] : node["params"].items()) {
+                (void)value;
+                ++checked;
+                const bool defined = std::any_of(metadata->parameters.begin(), metadata->parameters.end(),
+                                                 [&](const auto& p) { return p.name == key; });
+                if (!defined)
+                    unknown += "\n  " + entry.path().filename().string() + ": " + node.value("type", "") + "." + key;
+            }
+        }
+    }
+    Check(checked > 0, "no shipped pattern parameters were checked");
+    Check(unknown.empty(), "shipped patterns set parameters their nodes do not define:" + unknown);
 }
 
 void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
@@ -508,12 +547,12 @@ int main() {
           "failed to load deferred merge pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_tensor_dot", "TensorDot").string()),
           "failed to load graph-runtime dot pattern");
-    Check(library.LoadPatternFromFile(WritePattern("guard_batch_matmul", "TensorBatchMatMul").string()),
+    Check(library.LoadPatternFromFile(WritePattern("guard_lambda", "Lambda").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
           "failed to load implemented attention-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_cosine_scheduler", "CosineAnnealing").string()),
-          "failed to load scheduler template-node pattern");
+          "failed to load implemented scheduler-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
     Check(library.LoadPatternFromFile(
@@ -575,8 +614,8 @@ int main() {
     nodes.clear();
     links.clear();
     Check(!library.InstantiatePatternWithCreator(
-              "guard_batch_matmul", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template TensorBatchMatMul pattern should be rejected");
+              "guard_lambda", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "template Lambda pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
     Check(creator_calls == 4, "template rejection should not call node creator");
 
@@ -591,11 +630,13 @@ int main() {
 
     nodes.clear();
     links.clear();
-    Check(!library.InstantiatePatternWithCreator(
+    // Learning-rate schedulers are implemented since TOFIX140 A3 (db4ebe36).
+    Check(library.InstantiatePatternWithCreator(
               "guard_cosine_scheduler", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template CosineAnnealing pattern should be rejected");
-    Check(nodes.empty() && links.empty(), "scheduler template rejection should leave no partial graph");
-    Check(creator_calls == 5, "scheduler template rejection should not call node creator");
+          "implemented CosineAnnealing pattern should instantiate");
+    Check(creator_calls == 6, "CosineAnnealing pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::CosineAnnealing,
+          "CosineAnnealing pattern created wrong node type");
 
     nodes.clear();
     links.clear();
@@ -603,7 +644,7 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 5, "unknown rejection should not call node creator");
+    Check(creator_calls == 6, "unknown rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -611,7 +652,7 @@ int main() {
               "guard_data_boundary", {}, nodes, links, next_node_id,
               next_link_id, ImVec2(0, 0), creator),
           "creator data-boundary pattern should instantiate");
-    Check(creator_calls == 8,
+    Check(creator_calls == 9,
           "data-boundary pattern should call node creator for each node");
     Check(nodes.size() == 3 && links.size() == 2,
           "creator data-boundary pattern should skip stale legacy pin links");
@@ -661,7 +702,7 @@ int main() {
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 8, "Dense-encoded NER name rejection should not call node creator");
+    Check(creator_calls == 9, "Dense-encoded NER name rejection should not call node creator");
 
     Check(!library.InstantiatePattern(
               "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
@@ -674,7 +715,7 @@ int main() {
     Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER parameter rejection should leave no partial graph");
 
     Check(!library.InstantiatePattern(
-              "guard_batch_matmul", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+              "guard_lambda", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
 
     Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
@@ -699,6 +740,7 @@ int main() {
           "Dense-encoded NER parameter marker should report the matching parameter");
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
+    CheckShippedPatternParameterNames();
     CheckExampleDataBoundaryPins();
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();

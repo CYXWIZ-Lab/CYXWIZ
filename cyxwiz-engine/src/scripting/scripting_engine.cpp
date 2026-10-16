@@ -1,9 +1,13 @@
 #include "scripting_engine.h"
-#include "../gui/panels/training_plot_panel.h"
 #include "../core/project_manager.h"
+#include "../core/engine_config.h"
+#include "../data/data_table.h"
 #include <Python.h>  // For PyThreadState_SetAsyncExc, PyThread_get_thread_ident
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
+#include <arrow/api.h>
+#include <cmath>
 #include <fstream>
 #include <optional>
 #include <filesystem>
@@ -28,6 +32,15 @@ ScriptingEngine::ScriptingEngine()
 
 ScriptingEngine::~ScriptingEngine() {
     spdlog::info("~ScriptingEngine: starting destruction");
+    // The language worker uses Python: it ends first.
+    if (language_) {
+        language_->Stop();
+        language_.reset();
+    }
+    if (variables_) {
+        variables_->Stop();
+        variables_.reset();
+    }
 
     // Stop any running script before destruction
     if (script_running_) {
@@ -151,6 +164,7 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
         std::lock_guard<std::mutex> lock(init_error_mutex_);
         last_init_error_.clear();
     }
+    InstallFigureCapture();
     return true;
 }
 
@@ -168,7 +182,8 @@ ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() {
     if (info.initialized) {
         info.interpreter_path = python_engine_->ActiveInterpreterPath();
         info.source = python_engine_->ActiveSource();
-        python_engine_->HasInterpreterMismatch(&info.mismatch);
+        if (python_engine_->HasInterpreterMismatch(&info.mismatch))
+            info.wanted_path = python_engine_->PreviewInterpreterPath();
         if (cached_python_version_.empty() && !python_busy_ &&
             !command_running_ && !script_running_) {
             try {
@@ -243,7 +258,6 @@ bool ScriptingEngine::ResetSession(std::string* error_out) {
         return false;
     }
     matlab_aliases_initialized_ = false;
-    training_dashboard_registered_ = false;
     return true;
 }
 
@@ -344,10 +358,6 @@ bool ScriptingEngine::ReloadPythonForProject() {
     }
 
     return true;
-}
-
-void ScriptingEngine::SetOutputCallback(OutputCallback callback) {
-    output_callback_ = callback;
 }
 
 ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
@@ -463,10 +473,7 @@ ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command
             result.success = false; // Mark as failure if there's stderr output
         }
 
-        // Call output callback if set (skip for internal commands)
-        if (!suppress_output_callback && output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
+        (void)suppress_output_callback;  // synchronous commands return their output
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -571,10 +578,6 @@ if _cmd_thread.is_alive():
             spdlog::warn("Command timed out after {} seconds", console_timeout_seconds_);
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -703,10 +706,6 @@ void ScriptingEngine::ExecuteCommandWorker(const std::string& command) {
             result.success = false;
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         // Check for KeyboardInterrupt
@@ -921,10 +920,6 @@ while _cmd_thread.is_alive():
             spdlog::warn("Async command timed out after {} seconds", timeout_secs);
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -996,9 +991,6 @@ ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
         return result;
     }
 
-    // Lazily register training dashboard on first script execution
-    EnsureTrainingDashboardRegistered();
-
     // If sandbox is enabled, use it
     if (sandbox_enabled_ && sandbox_) {
         auto sandbox_result = sandbox_->Execute(script);
@@ -1043,44 +1035,13 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string& filepath) {
     return result;
 }
 
-void ScriptingEngine::RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel) {
-    // Defer Python module import - importing cyxwiz_plotting at startup can segfault
-    // when stdin is not a terminal. The panel pointer is stored and registration
-    // happens lazily on first script execution that needs it.
-    training_plot_panel_ = panel;
-    spdlog::info("Training Dashboard panel stored for deferred registration");
-}
-
-void ScriptingEngine::EnsureTrainingDashboardRegistered() {
-    if (!training_plot_panel_ || training_dashboard_registered_) return;
-
-    try {
-        py::gil_scoped_acquire acquire;
-        py::module_ plotting_module = py::module_::import("cyxwiz_plotting");
-        py::object set_func = plotting_module.attr("set_training_plot_panel");
-        set_func(py::cast(training_plot_panel_, py::return_value_policy::reference));
-        training_dashboard_registered_ = true;
-        spdlog::info("Training Dashboard registered with Python successfully");
-    } catch (const py::error_already_set& e) {
-        spdlog::warn("Failed to register Training Dashboard with Python: {}", e.what());
-    } catch (const std::exception& e) {
-        spdlog::warn("Exception while registering Training Dashboard: {}", e.what());
-    } catch (...) {
-        spdlog::warn("Unknown error registering Training Dashboard with Python");
-    }
-}
-
 // ========== Async Execution Implementation ==========
 
-void ScriptingEngine::SetCompletionCallback(CompletionCallback callback) {
-    completion_callback_ = callback;
-}
-
-void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
+bool ScriptingEngine::ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks) {
     // Don't start if already running
     if (script_running_) {
         spdlog::warn("Script already running, ignoring new execution request");
-        return;
+        return false;
     }
 
     std::string init_error;
@@ -1092,10 +1053,10 @@ void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
             std::lock_guard<std::mutex> lock(result_mutex_);
             async_result_ = result;
         }
-        if (completion_callback_) {
-            completion_callback_(result);
+        if (callbacks.on_complete) {
+            callbacks.on_complete(result);
         }
-        return;
+        return true;
     }
 
     // Wait for previous thread to finish if it exists
@@ -1121,9 +1082,10 @@ void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
     script_running_ = true;
 
     // Start worker thread
-    script_thread_ = std::make_unique<std::thread>(&ScriptingEngine::ScriptWorker, this, script);
+    script_thread_ = std::make_unique<std::thread>(&ScriptingEngine::ScriptWorker, this, script, std::move(callbacks));
 
     spdlog::info("Script execution started in background thread");
+    return true;
 }
 
 void ScriptingEngine::StopScript() {
@@ -1183,17 +1145,10 @@ void ScriptingEngine::QueuePlot(const CapturedPlot& plot) {
     plot_queue_.push_back(plot);
 }
 
-std::vector<CapturedPlot> ScriptingEngine::GetPendingPlots() {
-    std::lock_guard<std::mutex> lock(plot_mutex_);
-    std::vector<CapturedPlot> plots;
-    std::swap(plots, plot_queue_);
-    return plots;
-}
-
-void ScriptingEngine::ScriptWorker(const std::string& script) {
+void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callbacks) {
     spdlog::debug("Script worker thread started");
 
-    ExecutionResult result = ExecuteWithStreaming(script);
+    ExecutionResult result = ExecuteWithStreaming(script, callbacks);
 
     // Check if cancelled
     if (cancel_requested_) {
@@ -1206,14 +1161,15 @@ void ScriptingEngine::ScriptWorker(const std::string& script) {
         std::lock_guard<std::mutex> lock(result_mutex_);
         async_result_ = result;
     }
+    if (callbacks.notebook_namespace.empty()) published_plots_.Publish(result.plots);
 
     // Mark as not running
     script_running_ = false;
 
-    // Call completion callback if set
-    if (completion_callback_) {
+    // This run's completion callback, if any
+    if (callbacks.on_complete) {
         try {
-            completion_callback_(result);
+            callbacks.on_complete(result);
         } catch (const std::exception& e) {
             spdlog::error("Exception in completion callback: {}", e.what());
         }
@@ -1222,13 +1178,456 @@ void ScriptingEngine::ScriptWorker(const std::string& script) {
     spdlog::debug("Script worker thread finished");
 }
 
-ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script) {
+LanguageService& ScriptingEngine::Language() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!language_) language_ = std::make_unique<LanguageService>(this);
+    return *language_;
+}
+
+VariablesService& ScriptingEngine::Variables() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!variables_) variables_ = std::make_unique<VariablesService>(this);
+    return *variables_;
+}
+
+// A paused debug run leaves the interpreter free: the views may read it.
+bool ScriptingEngine::RunActive() const {
+    return (script_running_ && !debug_paused_) || command_running_ || python_busy_;
+}
+
+namespace {
+void DropFromPath(py::list& path, const std::string& dir) {
+    for (size_t i = 0; i < py::len(path); ++i) {
+        if (py::str(path[i]).cast<std::string>() == dir) {
+            path.attr("pop")(i);
+            return;
+        }
+    }
+}
+
+// A module of <exe dir>/python_tools, imported once and kept by sys.modules;
+// the folder is on sys.path only while importing. Needs the GIL.
+py::object BundledTool(const char* name) {
+    py::module_ sys_module = py::module_::import("sys");
+    if (sys_module.attr("modules").attr("__contains__")(name).cast<bool>()) return sys_module.attr("modules")[name];
+    const std::string dir = (cyxwiz::core::ExecutableDirectory() / "python_tools").string();
+    py::list path = sys_module.attr("path");
+    path.insert(0, dir);
+    py::object module;
+    try {
+        module = py::module_::import(name);
+    } catch (...) {
+        DropFromPath(path, dir);
+        throw;
+    }
+    DropFromPath(path, dir);
+    return module;
+}
+
+// The namespace of a scope: the session's __main__, a notebook's own (an
+// empty dict when that notebook has not run yet), or a paused debug frame
+// ("debug:<frame>:locals" or "debug:<frame>:globals", a copy).
+py::dict ScopeNamespace(const std::string& scope) {
+    auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+    if (scope.empty()) return main;
+    if (scope.rfind("debug:", 0) == 0) {
+        const size_t colon = scope.find(':', 6);
+        const int index = std::atoi(scope.substr(6, colon == std::string::npos ? std::string::npos : colon - 6).c_str());
+        const std::string which = colon == std::string::npos ? std::string("locals") : scope.substr(colon + 1);
+        py::object ns = BundledTool("cyxwiz_debug").attr("session").attr("frame_namespace")(index, which);
+        return py::dict(ns);
+    }
+    if (main.contains("_cyxwiz_notebook_ns")) {
+        auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+        if (all.contains(scope)) return all[py::str(scope)].cast<py::dict>();
+    }
+    return py::dict();
+}
+
+cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
+    if (v.is_none()) return std::monostate{};
+    if (py::isinstance<py::bool_>(v)) return std::string(v.cast<bool>() ? "True" : "False");
+    if (py::isinstance<py::int_>(v)) {
+        try {
+            return static_cast<int64_t>(v.cast<long long>());
+        } catch (const py::cast_error&) {
+            return py::str(v).cast<std::string>();  // beyond 64 bits
+        }
+    }
+    if (py::isinstance<py::float_>(v)) return v.cast<double>();
+    return py::str(v).cast<std::string>();
+}
+}  // namespace
+
+namespace {
+// The columns the cyxwiz module sends ([(name, 'num' | 'text', values)]) as
+// an Arrow table: numbers from a buffer of doubles (NaN as missing), text as
+// strings. Needs the GIL.
+std::shared_ptr<arrow::Table> PythonColumnsTable(const py::list& columns, std::string* error) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    for (const auto& item : columns) {
+        const py::tuple column = py::reinterpret_borrow<py::tuple>(item);
+        const std::string name = column[0].cast<std::string>();
+        const std::string kind = column[1].cast<std::string>();
+        std::shared_ptr<arrow::Array> array;
+        arrow::Status status;
+        if (kind == "num") {
+            const py::buffer_info buffer = py::buffer(column[2]).request();
+            if (buffer.itemsize != sizeof(double) || buffer.ndim != 1) {
+                *error = "column '" + name + "' is not a column of numbers";
+                return nullptr;
+            }
+            const double* values = static_cast<const double*>(buffer.ptr);
+            arrow::DoubleBuilder builder;
+            status = builder.Reserve(buffer.shape[0]);
+            for (py::ssize_t i = 0; status.ok() && i < buffer.shape[0]; ++i)
+                status = std::isnan(values[i]) ? builder.AppendNull() : builder.Append(values[i]);
+            if (status.ok()) status = builder.Finish(&array);
+        } else {
+            arrow::StringBuilder builder;
+            for (const auto& v : py::reinterpret_borrow<py::list>(column[2])) {
+                status = builder.Append(v.cast<std::string>());
+                if (!status.ok()) break;
+            }
+            if (status.ok()) status = builder.Finish(&array);
+        }
+        if (!status.ok()) {
+            *error = "column '" + name + "': " + status.ToString();
+            return nullptr;
+        }
+        fields.push_back(arrow::field(name, array->type()));
+        arrays.push_back(std::move(array));
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays);
+}
+}  // namespace
+
+// plt.show() anywhere (script, notebook cell, Console) sends the open figures
+// here through the bundled matplotlib backend (python_tools/cyxwiz_capture.py,
+// TOFIX134 P5.2): queued for the running script (its result, or the cell's
+// outputs), straight to Plot Output otherwise. cyxwiz module plots (P5) are
+// checked here on the script thread, so a mistake is raised in Python, and
+// go to Plot Output.
+void ScriptingEngine::InstallFigureCapture() {
+    try {
+        py::gil_scoped_acquire acquire;
+        auto figure_sink = py::cpp_function([this](py::bytes png_data, int width, int height, const std::string& label) {
+            CapturedPlot plot;
+            const std::string data = png_data;
+            plot.png_data.assign(data.begin(), data.end());
+            plot.width = width;
+            plot.height = height;
+            plot.label = label;
+            if (script_running_) QueuePlot(plot);
+            else published_plots_.Publish({plot});
+        });
+        auto plot_sink = py::cpp_function([this](const std::string& request_json, const py::list& columns) -> std::string {
+            PythonPlot plot;
+            std::string error;
+            if (!cyxwiz::plot::ParsePythonPlotRequest(request_json, plot.request, &error)) return error;
+            plot.table = PythonColumnsTable(columns, &error);
+            if (!plot.table) return error;
+            python_plots_.Publish({std::move(plot)});
+            return std::string();
+        });
+        auto close_sink = py::cpp_function([this](const std::string& title) {
+            PythonPlot plot;
+            plot.close = title;
+            python_plots_.Publish({std::move(plot)});
+        });
+        BundledTool("cyxwiz_capture").attr("install")(figure_sink, plot_sink, close_sink);
+    } catch (const std::exception& e) {
+        spdlog::warn("Figures from matplotlib will not reach the Engine: {}", e.what());
+    }
+}
+
+ScriptingEngine::DebugSnapshot ScriptingEngine::GetDebugSnapshot() const {
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    return debug_snapshot_;
+}
+
+// Called on the run's worker thread (GIL held) at every debugger state change.
+void ScriptingEngine::OnDebugState(const std::string& state, const std::string& reason, const std::string& info_json) {
+    DebugSnapshot snap;
+    snap.state = state;
+    snap.reason = reason;
+    const auto info = nlohmann::json::parse(info_json, nullptr, false);
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    snap.file = debug_file_;
+    if (!info.is_discarded()) {
+        snap.error = info.value("error", "");
+        if (info.contains("stack") && info["stack"].is_array())
+            for (const auto& f : info["stack"])
+                snap.stack.push_back({f.value("name", ""), f.value("file", ""), f.value("line", 0)});
+        if (info.contains("hits") && info["hits"].is_object() && info["hits"].contains(debug_file_))
+            for (const auto& [line, n] : info["hits"][debug_file_].items())
+                if (n.is_number_integer()) snap.hits[std::atoi(line.c_str())] = n.get<int>();
+    }
+    snap.version = debug_snapshot_.version + 1;
+    debug_snapshot_ = std::move(snap);
+    debug_paused_ = state == "paused";
+}
+
+namespace {
+py::list BreakpointList(const std::vector<ScriptingEngine::DebugBreakpoint>& breakpoints) {
+    py::list items;
+    for (const auto& bp : breakpoints) {
+        py::dict d;
+        d["line"] = bp.line;
+        d["condition"] = bp.condition;
+        d["hit"] = bp.hit;
+        d["enabled"] = bp.enabled;
+        items.append(d);
+    }
+    return items;
+}
+}  // namespace
+
+bool ScriptingEngine::DebugCommand(const std::string& command) {
+    if (!debug_paused_ || !IsInitialized()) return false;
+    try {
+        py::gil_scoped_acquire acquire;
+        return BundledTool("cyxwiz_debug").attr("session").attr("command")(command).cast<bool>();
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: {} failed: {}", command, e.what());
+        return false;
+    }
+}
+
+bool ScriptingEngine::DebugPause() {
+    if (!script_running_ || debug_paused_ || !IsInitialized()) return false;
+    try {
+        py::gil_scoped_acquire acquire;  // the run gives the GIL up every few milliseconds
+        BundledTool("cyxwiz_debug").attr("session").attr("request_pause")();
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: pause failed: {}", e.what());
+        return false;
+    }
+}
+
+void ScriptingEngine::DebugSetBreakpoints(const std::vector<DebugBreakpoint>& breakpoints) {
+    std::string file;
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        file = debug_file_;
+    }
+    if (file.empty() || !script_running_ || !IsInitialized()) return;  // the next debug run takes them
+    try {
+        py::gil_scoped_acquire acquire;
+        BundledTool("cyxwiz_debug").attr("session").attr("set_breakpoints")(file, BreakpointList(breakpoints));
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: breakpoints not updated: {}", e.what());
+    }
+}
+
+std::string ScriptingEngine::CallDebugTool(const std::string& function, const std::string& args_json, bool* busy) {
+    if (busy) *busy = false;
+    if (!debug_paused_ || !IsInitialized()) {
+        if (busy) *busy = true;
+        return {};
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        py::object result = BundledTool("cyxwiz_debug").attr("session").attr(function.c_str())(**kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: {} failed: {}", function, e.what());
+        return {};
+    }
+}
+
+std::string ScriptingEngine::CallVariablesTool(const std::string& function, const std::string& args_json,
+                                               const std::string& scope, bool* busy) {
+    if (busy) *busy = false;
+    if (!IsInitialized()) return {};
+    if (RunActive()) {
+        if (busy) *busy = true;
+        return {};
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::object tool = BundledTool("cyxwiz_vars");
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        py::object result = tool.attr(function.c_str())(ScopeNamespace(scope), **kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const py::error_already_set& e) {
+        spdlog::warn("Variables: {} failed: {}", function, e.what());
+        return {};
+    } catch (const std::exception& e) {
+        spdlog::warn("Variables: {} failed: {}", function, e.what());
+        return {};
+    }
+}
+
+bool ScriptingEngine::ReadVariableTable(const std::string& scope, const std::string& path_json, long long max_rows,
+                                        const std::vector<int>& index, VariableTable* out, bool* busy) {
+    if (busy) *busy = false;
+    if (!out) return false;
+    if (!IsInitialized()) {
+        out->error = "Python is not running";
+        return false;
+    }
+    if (RunActive()) {
+        if (busy) *busy = true;
+        return false;
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::object tool = BundledTool("cyxwiz_vars");
+        py::module_ json = py::module_::import("json");
+        py::list idx;
+        for (int i : index) idx.append(i);
+        py::object rows_arg = max_rows > 0 ? py::object(py::int_(max_rows)) : py::object(py::none());
+        py::dict data = tool.attr("table")(ScopeNamespace(scope), json.attr("loads")(path_json), rows_arg, idx);
+        if (data.contains("error")) {
+            out->error = data["error"].cast<std::string>();
+            return false;
+        }
+        out->kind = data["kind"].cast<std::string>();
+        for (auto n : data["shape"].cast<py::list>()) out->shape.push_back(n.cast<long long>());
+        out->rows = data["rows"].cast<long long>();
+        out->shown = data["shown"].cast<long long>();
+        for (auto n : data["slice"].cast<py::list>()) out->slice.push_back(n.cast<int>());
+        py::list columns = data["columns"].cast<py::list>();
+        const bool has_index = !data["index"].is_none();
+        std::vector<std::string> headers;
+        if (has_index) {
+            headers.push_back(data["index_name"].cast<std::string>());
+            out->dtypes.push_back("index");
+        }
+        std::vector<py::list> cols;
+        for (auto c : columns) {
+            headers.push_back(c["name"].cast<std::string>());
+            out->dtypes.push_back(c["dtype"].cast<std::string>());
+            cols.push_back(c["values"].cast<py::list>());
+        }
+        auto table = std::make_shared<cyxwiz::DataTable>();
+        table->SetHeaders(headers);
+        py::list index_values = has_index ? data["index"].cast<py::list>() : py::list();
+        const size_t n = static_cast<size_t>(out->shown);
+        for (size_t r = 0; r < n; ++r) {
+            cyxwiz::DataTable::Row row;
+            row.reserve(headers.size());
+            if (has_index) row.push_back(CellFrom(index_values[r]));
+            for (auto& col : cols) row.push_back(r < py::len(col) ? CellFrom(col[r]) : cyxwiz::DataTable::CellValue{});
+            table->AddRow(std::move(row));
+        }
+        out->table = std::move(table);
+        return true;
+    } catch (const py::error_already_set& e) {
+        out->error = e.what();
+        return false;
+    } catch (const std::exception& e) {
+        out->error = e.what();
+        return false;
+    }
+}
+
+std::string ScriptingEngine::LanguageToolsError() const {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    return language_error_;
+}
+
+std::string ScriptingEngine::CallLanguageTool(const std::string& function, const std::string& args_json,
+                                              const std::string& notebook_namespace) {
+    if (!IsInitialized()) return {};
+    try {
+        py::gil_scoped_acquire acquire;
+        // The module is imported once per interpreter and kept by sys.modules
+        // (a C++ static would outlive Python and release it after shutdown).
+        py::module_ sys_module = py::module_::import("sys");
+        py::object intel;
+        if (sys_module.attr("modules").attr("__contains__")("cyxwiz_intel").cast<bool>()) {
+            intel = sys_module.attr("modules")["cyxwiz_intel"];
+        } else {
+            const auto tools = cyxwiz::core::ExecutableDirectory() / "python_tools";
+            py::list path = sys_module.attr("path");
+            const std::string dir = tools.string();
+            path.insert(0, dir);
+            try {
+                intel = py::module_::import("cyxwiz_intel");
+            } catch (const py::error_already_set& e) {
+                std::lock_guard<std::mutex> lock(language_mutex_);
+                language_error_ = std::string("The Script Editor's language tools are missing: ") + e.what();
+            }
+            // Only cyxwiz_intel came from there; it loads jedi/pyflakes itself.
+            for (size_t i = 0; i < py::len(path); ++i) {
+                if (py::str(path[i]).cast<std::string>() == dir) {
+                    path.attr("pop")(i);
+                    break;
+                }
+            }
+            if (!intel) return {};
+            const py::dict status = intel.attr("status")();
+            std::lock_guard<std::mutex> lock(language_mutex_);
+            language_error_ = status["ok"].cast<bool>() ? std::string() : status["error"].cast<std::string>();
+            spdlog::info("Script Editor language tools: {}", language_error_.empty()
+                                                                 ? "jedi " + status["jedi"].cast<std::string>()
+                                                                 : language_error_);
+        }
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        if (!notebook_namespace.empty()) {
+            auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+            if (main.contains("_cyxwiz_notebook_ns")) {
+                auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+                if (all.contains(notebook_namespace)) kwargs["namespace"] = all[py::str(notebook_namespace)];
+            }
+        }
+        py::object result = intel.attr(function.c_str())(**kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const py::error_already_set& e) {
+        spdlog::debug("Language tool {} failed: {}", function, e.what());
+        return {};
+    } catch (const std::exception& e) {
+        spdlog::debug("Language tool {} failed: {}", function, e.what());
+        return {};
+    }
+}
+
+bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
+    // Freeing the notebook's objects runs their finalizers here: not while a
+    // script, a Console command or other Python work runs (the caller retries).
+    if (script_running_ || command_running_ || python_busy_) return false;
+    if (!IsInitialized()) return true;  // nothing ran yet
+    try {
+        py::gil_scoped_acquire acquire;
+        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+        if (main.contains("_cyxwiz_notebook_ns")) {
+            auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+            if (all.contains(key)) {
+                auto ns = all[py::str(key)].cast<py::dict>();
+                ns.clear();  // break cycles through the namespace before it goes
+                all.attr("pop")(key);
+            }
+        }
+        py::module_::import("gc").attr("collect")();
+    } catch (const py::error_already_set& e) {
+        spdlog::warn("Could not reset notebook namespace: {}", e.what());
+    }
+    return true;
+}
+
+ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
+    const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
     result.success = false;
 
     if (!IsInitialized()) {
         result.error_message = "Scripting engine not initialized";
         return result;
+    }
+
+    // MATLAB-style names are installed once per interpreter, like the
+    // console does; re-running them before every script overwrote the
+    // user's own svd/norm/zeros... (TOFIX133 P0 item 11).
+    if (!matlab_aliases_initialized_) {
+        InitializeMatlabAliases();
     }
 
     // Reset the cancellation flag at start
@@ -1305,23 +1704,16 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
         }
 
         // Create output callback wrapper
-        auto queue_func = [this](const std::string& text) {
+        auto queue_func = [this, on_output](const std::string& text) {
             QueueOutput(text);
-            if (output_callback_) {
-                output_callback_(text);
+            if (on_output) {
+                on_output(text);
             }
         };
 
-        // Create plot capture callback wrapper
-        auto plot_capture_func = [this](py::bytes png_data, int width, int height, const std::string& label) {
-            CapturedPlot plot;
-            std::string data_str = png_data;  // Convert py::bytes to std::string
-            plot.png_data = std::vector<unsigned char>(data_str.begin(), data_str.end());
-            plot.width = width;
-            plot.height = height;
-            plot.label = label;
-            QueuePlot(plot);
-            spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
+        auto queue_stderr = [this, callbacks](const std::string& text) {
+            QueueOutput(text);
+            if (callbacks.on_stderr) callbacks.on_stderr(text);
         };
 
         // Register cancellation through a C++ callback instead of ctypes.
@@ -1370,166 +1762,98 @@ def _cyxwiz_trace(frame, event, arg):
         raise KeyboardInterrupt("Script cancelled by user")
     return _cyxwiz_trace
 
-# Matplotlib capture setup
-_cyxwiz_plot_capture_callback = None
-_cyxwiz_captured_plots = []
-
-def _cyxwiz_setup_matplotlib_capture(capture_callback):
-    """Setup matplotlib to capture plots instead of showing windows"""
-    global _cyxwiz_plot_capture_callback
-    _cyxwiz_plot_capture_callback = capture_callback
-
-    try:
-        import matplotlib
-        # Use non-interactive backend
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
-        # Store original show function
-        _original_show = plt.show
-
-        def _cyxwiz_show(*args, **kwargs):
-            """Capture all figures and send to C++"""
-            global _cyxwiz_plot_capture_callback, _cyxwiz_captured_plots
-            import io
-
-            # Get all figure numbers
-            fig_nums = plt.get_fignums()
-
-            for fig_num in fig_nums:
-                fig = plt.figure(fig_num)
-
-                # Get figure size in pixels
-                dpi = fig.dpi
-                width = int(fig.get_figwidth() * dpi)
-                height = int(fig.get_figheight() * dpi)
-
-                # Get title if available
-                title = ""
-                if fig._suptitle:
-                    title = fig._suptitle.get_text()
-                elif len(fig.axes) > 0 and fig.axes[0].get_title():
-                    title = fig.axes[0].get_title()
-
-                # Render to PNG bytes
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-                buf.seek(0)
-                png_data = buf.read()
-                buf.close()
-
-                # Send to C++ callback
-                if _cyxwiz_plot_capture_callback is not None:
-                    _cyxwiz_plot_capture_callback(png_data, width, height, title)
-                else:
-                    # Store locally if no callback
-                    _cyxwiz_captured_plots.append({
-                        'data': png_data,
-                        'width': width,
-                        'height': height,
-                        'label': title
-                    })
-
-            # Close all figures after capturing
-            plt.close('all')
-
-        # Replace plt.show with our capture function
-        plt.show = _cyxwiz_show
-
-    except ImportError:
-        # matplotlib not installed, silently skip
-        pass
-
-# ============================================================================
-# MATLAB-style Console functions (flat namespace)
-# ============================================================================
-# Import pycyxwiz and create convenient aliases
-import importlib.util as _cyxwiz_importlib
-_pycyxwiz_spec = _cyxwiz_importlib.find_spec("pycyxwiz")
+# Notebook cells (TOFIX133 P4): one namespace per notebook, kept between
+# runs until Restart; the last expression's value is echoed as in Jupyter.
 try:
-    import pycyxwiz
-    cyx = pycyxwiz  # Short alias for grouped namespace
+    _cyxwiz_notebook_ns
+except NameError:
+    _cyxwiz_notebook_ns = {}
 
-    # Linear Algebra - Flat namespace aliases
-    svd = pycyxwiz.linalg.svd
-    eig = pycyxwiz.linalg.eig
-    qr = pycyxwiz.linalg.qr
-    chol = pycyxwiz.linalg.chol
-    lu = pycyxwiz.linalg.lu
-    det = pycyxwiz.linalg.det
-    rank = pycyxwiz.linalg.rank
-    trace = pycyxwiz.linalg.trace
-    norm = pycyxwiz.linalg.norm
-    cond = pycyxwiz.linalg.cond
-    inv = pycyxwiz.linalg.inv
-    transpose = pycyxwiz.linalg.transpose
-    solve = pycyxwiz.linalg.solve
-    lstsq = pycyxwiz.linalg.lstsq
-    matmul = pycyxwiz.linalg.matmul
-    eye = pycyxwiz.linalg.eye
-    zeros = pycyxwiz.linalg.zeros
-    ones = pycyxwiz.linalg.ones
+def _cyxwiz_frames(tb, skip):
+    import traceback
+    return [(f.filename, f.lineno or 0, f.name, f.line or '', '') for f in traceback.extract_tb(tb)[skip:]]
 
-    # Signal Processing - Flat namespace aliases
-    fft = pycyxwiz.signal.fft
-    ifft = pycyxwiz.signal.ifft
-    conv = pycyxwiz.signal.conv
-    conv2 = pycyxwiz.signal.conv2
-    spectrogram = pycyxwiz.signal.spectrogram
-    lowpass = pycyxwiz.signal.lowpass
-    highpass = pycyxwiz.signal.highpass
-    bandpass = pycyxwiz.signal.bandpass
-    filter = pycyxwiz.signal.filter
-    findpeaks = pycyxwiz.signal.findpeaks
-    sine = pycyxwiz.signal.sine
-    square = pycyxwiz.signal.square
-    noise = pycyxwiz.signal.noise
+def _cyxwiz_matplotlib_magic():
+    capture = sys.modules.get('cyxwiz_capture')
+    if capture is not None:
+        capture.inline()
 
-    # Statistics/Clustering - Flat namespace aliases
-    kmeans = pycyxwiz.stats.kmeans
-    dbscan = pycyxwiz.stats.dbscan
-    gmm = pycyxwiz.stats.gmm
-    pca = pycyxwiz.stats.pca
-    tsne = pycyxwiz.stats.tsne
-    silhouette = pycyxwiz.stats.silhouette
-    confusion_matrix = pycyxwiz.stats.confusion_matrix
-    roc = pycyxwiz.stats.roc
+# Jupyter's %matplotlib line (inline, agg, ...): figures go to the cell from
+# that line on, as Jupyter's inline backend does. Other magics stay errors.
+def _cyxwiz_line_magics(src):
+    lines = src.split('\n')
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith('%matplotlib'):
+            lines[i] = line[:len(line) - len(stripped)] + '__cyxwiz_matplotlib__()'
+    return '\n'.join(lines)
 
-    # Time Series - Flat namespace aliases
-    acf = pycyxwiz.timeseries.acf
-    pacf = pycyxwiz.timeseries.pacf
-    decompose = pycyxwiz.timeseries.decompose
-    stationarity = pycyxwiz.timeseries.stationarity
-    arima = pycyxwiz.timeseries.arima
-    diff = pycyxwiz.timeseries.diff
-    rolling_mean = pycyxwiz.timeseries.rolling_mean
-    rolling_std = pycyxwiz.timeseries.rolling_std
+def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
+    import ast, builtins, linecache, traceback
+    ns = _cyxwiz_notebook_ns.get(key)
+    if ns is None:
+        ns = {'__name__': '__main__', '__builtins__': builtins, 'Out': {}}
+        _cyxwiz_notebook_ns[key] = ns
+    ns['__cyxwiz_matplotlib__'] = _cyxwiz_matplotlib_magic
+    linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)
+    out = {'ok': False, 'repr': None, 'html': None, 'ename': '', 'evalue': '', 'frames': [], 'traceback': ''}
+    try:
+        tree = ast.parse(_cyxwiz_line_magics(src), filename, 'exec')
+        last = None
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = tree.body.pop()
+        exec(compile(tree, filename, 'exec'), ns)
+        if last is not None:
+            value = eval(compile(ast.Expression(last.value), filename, 'eval'), ns)
+            if value is not None:
+                ns['_'] = value
+                if count:
+                    ns.setdefault('Out', {})[count] = value
+                out['repr'] = repr(value)
+                html = getattr(value, '_repr_html_', None)
+                if callable(html):
+                    try:
+                        h = html()
+                        if isinstance(h, str) and len(h) < 2_000_000:
+                            out['html'] = h
+                    except Exception:
+                        pass
+        out['ok'] = True
+    except KeyboardInterrupt:
+        raise
+    except BaseException as e:
+        if on_error is not None:
+            on_error(e)  # the debugger stops at the error's line first
+        out['ename'] = type(e).__name__
+        out['evalue'] = str(e)
+        frames = traceback.extract_tb(e.__traceback__)[1:]  # not this helper
+        out['frames'] = _cyxwiz_frames(e.__traceback__, 1)
+        if isinstance(e, SyntaxError) and e.filename == filename:
+            out['frames'].append((filename, e.lineno or 0, '<module>', (e.text or '').strip(), ''))
+            out['evalue'] = e.msg
+        # "Caused by": the exception this one was raised from (or during).
+        cause = e.__cause__ or (None if e.__suppress_context__ else e.__context__)
+        depth = 0
+        while cause is not None and depth < 5:
+            chained = _cyxwiz_frames(cause.__traceback__, 0)
+            label = type(cause).__name__ + (': ' + str(cause) if str(cause) else '')
+            if chained:
+                f = chained[0]
+                chained[0] = (f[0], f[1], f[2], f[3], label)
+            else:
+                chained = [('', 0, '', '', label)]
+            out['frames'].extend(chained)
+            cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+            depth += 1
+        out['traceback'] = ''.join(traceback.format_list(frames)) + ''.join(traceback.format_exception_only(type(e), e))
+    return out
 
-except ImportError as e:
-    # pycyxwiz not available, skip MATLAB-style functions
-    if _pycyxwiz_spec is None:
-        print("[CyxWiz] pycyxwiz not found on sys.path")
-    else:
-        origin = getattr(_pycyxwiz_spec, "origin", None)
-        print(f"[CyxWiz] pycyxwiz found at {origin} but failed to load: {e}")
-        print("[CyxWiz] Likely ABI mismatch or missing DLL dependencies.")
-        print(f"[CyxWiz] Python: {sys.version}")
-except AttributeError as e:
-    # submodule not found (linalg, signal, etc.)
-    print(f"[CyxWiz] MATLAB functions error: {e}")
-except Exception as e:
-    # Any other error
-    print(f"[CyxWiz] Error loading MATLAB functions: {e}")
 )";
         py::exec(setup_code);
         py::globals()["_cyxwiz_is_cancelled"] = py::cpp_function([this]() {
             return shared_cancel_flag_.load() != 0;
         });
 
-
-        // Setup matplotlib capture with our callback
-        py::object setup_matplotlib = py::eval("_cyxwiz_setup_matplotlib_capture");
-        setup_matplotlib(py::cpp_function(plot_capture_func));
 
         // Create output object
         py::object output_class = py::eval("_CyxWizOutput");
@@ -1539,18 +1863,74 @@ except Exception as e:
         py::object original_stdout = sys.attr("stdout");
         py::object original_stderr = sys.attr("stderr");
 
+        // stderr apart when the caller asks for it (notebook cells)
+        py::object error_obj = callbacks.on_stderr ? output_class(py::cpp_function(queue_stderr)) : output_obj;
+
         // Redirect
         sys.attr("stdout") = output_obj;
-        sys.attr("stderr") = output_obj;
+        sys.attr("stderr") = error_obj;
 
         // Set the trace function
         py::exec("sys.settrace(_cyxwiz_trace)");
 
+        // Debug (TOFIX133 P6): the run goes through cyxwiz_debug, which
+        // replaces the trace with its own (it checks the cancel flag too).
+        py::object debugger;
+        std::string debug_run_file;
+        const std::string cell_file = callbacks.cell_filename.empty() ? "<cell>" : callbacks.cell_filename;
+        if (callbacks.debug) {
+            debugger = BundledTool("cyxwiz_debug").attr("session");
+            debugger.attr("is_cancelled") = py::globals()["_cyxwiz_is_cancelled"];
+            debugger.attr("on_state") = py::cpp_function(
+                [this](const std::string& state, const std::string& reason, const std::string& info) {
+                    OnDebugState(state, reason, info);
+                });
+            debugger.attr("stop_on_error") = callbacks.stop_on_error;
+            const std::string file = callbacks.notebook_namespace.empty()
+                                         ? (callbacks.script_filename.empty() ? std::string("<script>") : callbacks.script_filename)
+                                         : cell_file;
+            {
+                std::lock_guard<std::mutex> lock(debug_mutex_);
+                debug_file_ = file;
+            }
+            debug_run_file = file;
+            debugger.attr("set_breakpoints")(file, BreakpointList(callbacks.breakpoints));
+        }
+
         try {
             // Execute the user script
-            py::exec(script);
+            if (callbacks.notebook_namespace.empty()) {
+                if (debugger)
+                    debugger.attr("run_script")(script, debug_run_file, py::module_::import("__main__").attr("__dict__"));
+                else
+                    py::exec(script);
+                result.success = true;
+            } else {
+                const std::string filename = cell_file;
+                py::object run_cell = py::eval("_cyxwiz_run_cell");
+                auto out = (debugger ? debugger.attr("run_cell")(run_cell, script, callbacks.notebook_namespace, filename,
+                                                                 callbacks.execution_count)
+                                     : run_cell(script, callbacks.notebook_namespace, filename, callbacks.execution_count))
+                               .cast<py::dict>();
+                result.success = out["ok"].cast<bool>();
+                if (!out["repr"].is_none()) result.result_repr = out["repr"].cast<std::string>();
+                if (!out["html"].is_none()) result.result_html = out["html"].cast<std::string>();
+                if (!result.success) {
+                    result.exception_type = out["ename"].cast<std::string>();
+                    result.exception_value = out["evalue"].cast<std::string>();
+                    result.traceback = out["traceback"].cast<std::string>();
+                    result.error_message = result.exception_value.empty()
+                                               ? result.exception_type
+                                               : result.exception_type + ": " + result.exception_value;
+                    for (auto item : out["frames"].cast<py::list>()) {
+                        auto t = item.cast<py::tuple>();
+                        result.frames.push_back({t[0].cast<std::string>(), t[1].cast<int>(), t[2].cast<std::string>(),
+                                                 t[3].cast<std::string>(), t[4].cast<std::string>()});
+                    }
+                }
+            }
             output_obj.attr("flush")();
-            result.success = true;
+            if (callbacks.on_stderr) error_obj.attr("flush")();
         } catch (const py::error_already_set& e) {
             if (e.matches(PyExc_KeyboardInterrupt)) {
                 result.success = false;
@@ -1568,6 +1948,8 @@ except Exception as e:
         try {
             output_obj.attr("_callback") = py::none();
             output_obj.attr("_buffer") = "";
+            error_obj.attr("_callback") = py::none();
+            error_obj.attr("_buffer") = "";
         } catch (...) {
             spdlog::warn("Error clearing output callback, ignoring");
         }
@@ -1658,7 +2040,7 @@ try:
     lowpass = pycyxwiz.signal.lowpass
     highpass = pycyxwiz.signal.highpass
     bandpass = pycyxwiz.signal.bandpass
-    filter = pycyxwiz.signal.filter
+    # No flat "filter": it would hide Python's builtin. Use cyx.signal.filter.
     findpeaks = pycyxwiz.signal.findpeaks
     sine = pycyxwiz.signal.sine
     square = pycyxwiz.signal.square
@@ -1735,7 +2117,18 @@ try:
 
 except ImportError as e:
     # pycyxwiz not available, skip MATLAB-style functions
-    print(f"[CyxWiz] pycyxwiz not found: {e}")
+    def _cyxwiz_report_pycyxwiz(error):
+        import importlib.util
+        import sys
+        spec = importlib.util.find_spec("pycyxwiz")
+        if spec is None:
+            print("[CyxWiz] pycyxwiz not found on sys.path")
+        else:
+            print(f"[CyxWiz] pycyxwiz found at {getattr(spec, 'origin', None)} but failed to load: {error}")
+            print("[CyxWiz] Likely ABI mismatch or missing DLL dependencies.")
+            print(f"[CyxWiz] Python: {sys.version}")
+    _cyxwiz_report_pycyxwiz(e)
+    del _cyxwiz_report_pycyxwiz
 except AttributeError as e:
     # submodule not found (linalg, signal, etc.)
     print(f"[CyxWiz] MATLAB functions error: {e}")
@@ -1854,6 +2247,16 @@ except Exception as e:
         py::exec(matlab_setup);
         matlab_aliases_initialized_ = true;
         spdlog::info("MATLAB-style aliases initialized");
+
+        // RL metrics reach the dashboard (TOFIX134 P0 item 7): scripts call
+        // pycyxwiz.rl_update_metric, which dropped every value because no
+        // callback was ever set. The callback only queues; the UI takes.
+        if (py::module_::import("sys").attr("modules").contains("pycyxwiz")) {
+            py::module_::import("pycyxwiz").attr("rl_set_metric_callback")(
+                py::cpp_function([this](const std::string& name, float value) {
+                    rl_metrics_.Publish({RLMetricSample{name, value}});
+                }));
+        }
 
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());

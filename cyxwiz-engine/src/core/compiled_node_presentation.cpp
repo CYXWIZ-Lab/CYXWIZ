@@ -127,6 +127,13 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
                                        const CompiledNodeInputs& inputs) {
     CompiledNodeCard card;
     const gui::MLNode* node = NodeById(nodes, node_id);
+    if (inputs.data_pipeline) {
+        card.status = "Not compiled for training";
+        card.kind = CompiledStatusKind::None;
+        card.status_note = "Data Pipeline mode: the graph runs with Execute Pipeline or a Plot node; the training compile does not apply.";
+        card.no_shapes_text = node ? "Shapes and parameters belong to training graphs." : "This node no longer exists.";
+        return card;
+    }
     switch (inputs.state) {
         case LiveCompileState::NotCompiled:
             card.status = "Not compiled yet";
@@ -158,6 +165,12 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         card.status_note = inputs.data_loaded
             ? "Recompiled after your last edit. Data loaded."
             : "Data not loaded: shapes come from the saved data contract.";
+        // Compile (F7) reports unloaded data as an error: the chip says it
+        // too instead of a plain green "Compiled".
+        if (inputs.state == LiveCompileState::Compiled && !inputs.data_loaded) {
+            card.status = "Compiled, data not loaded";
+            card.kind = CompiledStatusKind::Pending;
+        }
     }
 
     size_t errors = 0;
@@ -167,9 +180,21 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         errors += error ? 1 : 0;
         card.issues.push_back({error, issue.message});
     }
-    // A failed compile keeps its status on every node; a node without its own
-    // error still shows the shapes that compile gave it.
-    if (!config->is_valid) {
+    // A data-only graph (a data recipe: no model layers, loss or optimizer)
+    // has nothing to train; the training compile rejecting it is not a fault.
+    const bool no_model = config->layers.empty() && config->loss_node_id < 0 && config->optimizer_node_id < 0;
+    if (!config->is_valid && no_model) {
+        // Its training-graph complaints (an output nothing consumes, ...)
+        // stay in the Compile popup; they are not faults of a data step.
+        card.status = "No model to compile";
+        card.kind = CompiledStatusKind::None;
+        card.status_note = "This graph has no model layers, so there is nothing to train. Data steps run "
+                           "with Run step; the Compile popup lists what a training graph would still need.";
+        card.issues.clear();
+        errors = 0;
+    } else if (!config->is_valid) {
+        // A failed compile keeps its status on every node; a node without its
+        // own error still shows the shapes that compile gave it.
         card.status = "Compile failed";
         card.kind = CompiledStatusKind::Failed;
         card.status_note = errors > 0

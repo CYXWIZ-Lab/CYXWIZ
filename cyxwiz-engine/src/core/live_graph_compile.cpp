@@ -100,7 +100,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
 
     requested_revision_ = revision;
     pending_ = std::async(std::launch::async,
-        [nodes, links, revision, count_parameters]() {
+        [nodes, links, revision, count_parameters, root = project_root]() {
             auto result = std::make_shared<Result>();
             result->revision = revision;
             // allow_unloaded_data: the canvas view compiles from the saved
@@ -109,12 +109,12 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
             result->config = GraphCompiler{}.Compile(nodes, links, true);
             if (!count_parameters || result->config.layers.empty()) return result;
             try {
+                TrainingConfiguration buildable = result->config;
+                ResolveProjectRelativePaths(buildable, root);
                 // Build where training would: the worker otherwise starts on
                 // ArrayFire's default backend, not the selected route.
-                if (const auto selected = Device::GetProcessDevice()) {
-                    Device(selected->type, selected->device_id).ActivateExact(false);
-                }
-                auto built = BuildExecutableFromConfig(result->config);
+                Device::ActivateProcessDeviceOnThisThread();
+                auto built = BuildExecutableFromConfig(buildable);
                 if (built.ok()) {
                     std::vector<std::pair<std::string, long long>> named;
                     for (const auto& [name, tensor] : built.model->GetParameters()) {

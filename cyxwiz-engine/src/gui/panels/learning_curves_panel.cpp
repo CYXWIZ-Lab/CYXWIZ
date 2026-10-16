@@ -1,5 +1,9 @@
 #include "learning_curves_panel.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../../core/data_registry.h"
 #include "../../data/data_table.h"
 #include "../../core/data_analyzer.h"
@@ -20,17 +24,18 @@ void LearningCurvesPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin((std::string(ICON_FA_GRADUATION_CAP) + " Learning Curves###LearningCurvesPanel").c_str(), &visible_)) {
-        if (data_registry_) available_tables_ = data_registry_->GetTableNames();
-
-        ImGui::BeginChild("ConfigPanel", ImVec2(250, 0), true);
+        ui::BeginSettingsColumn("learning_curves", 300.0f);
         RenderDataSelector();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("ResultsPanel", ImVec2(0, 0), true);
+        ui::BeginResultsArea();
         bool has_data = !result_.train_sizes.empty() || !manual_train_sizes_.empty();
         if (has_data) {
+            size_t total_points = result_.train_sizes.empty() ? manual_train_sizes_.size() : result_.train_sizes.size();
+            {
+                ui::FontScope heading(ui::Font::Heading);
+                ImGui::Text("%d", static_cast<int>(total_points));
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ui::CurrentTokens().text_dim, "data points");
             if (ImGui::BeginTabBar("LearningCurveTabs")) {
                 if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Learning Curve")) {
                     RenderLearningCurve();
@@ -47,69 +52,46 @@ void LearningCurvesPanel::Render() {
                 ImGui::EndTabBar();
             }
         } else {
-            ImGui::Text("No learning curve data available.");
-            ImGui::Text("Learning curves are populated during training.");
-            ImGui::Spacing();
-            ImGui::Text("Or load data from a CSV with columns:");
-            ImGui::BulletText("train_size");
-            ImGui::BulletText("train_score");
-            ImGui::BulletText("val_score");
+            ui::EmptyState(ICON_FA_GRADUATION_CAP, "No learning curve data yet",
+                           "Learning curves are populated during training. Or load a CSV with the columns "
+                           "train_size, train_score and val_score, or add points by hand.");
         }
-        ImGui::EndChild();
+        ui::EndResultsArea();
     }
     ImGui::End();
 }
 
 void LearningCurvesPanel::RenderDataSelector() {
-    ImGui::Text(ICON_FA_TABLE " Data Source");
-    ImGui::Spacing();
-
-    if (ImGui::BeginCombo("Dataset", selected_table_idx_ >= 0 && selected_table_idx_ < static_cast<int>(available_tables_.size())
-                                     ? available_tables_[selected_table_idx_].c_str() : "Select...")) {
-        for (int i = 0; i < static_cast<int>(available_tables_.size()); ++i) {
-            if (ImGui::Selectable(available_tables_[i].c_str(), i == selected_table_idx_)) {
-                selected_table_idx_ = i;
-                LoadSelectedData();
-            }
-        }
-        ImGui::EndCombo();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ui::SettingsSection("Data source");
+    source_.Render("learning_curves_dataset", [this](std::shared_ptr<DataTable> table) { UseTable(std::move(table)); });
 
     // Manual data entry
-    ImGui::Text(ICON_FA_KEYBOARD " Manual Entry");
-    ImGui::Spacing();
+    ui::SettingsSection("Manual entry");
 
     static int new_train_size = 100;
     static float new_train_score = 0.9f;
     static float new_val_score = 0.8f;
 
-    ImGui::InputInt("Train Size", &new_train_size);
-    ImGui::SliderFloat("Train Score", &new_train_score, 0.0f, 1.0f);
-    ImGui::SliderFloat("Val Score", &new_val_score, 0.0f, 1.0f);
+    ui::FieldLabel("Train size");
+    ImGui::InputInt("##train_size", &new_train_size);
+    ui::FieldLabel("Train score");
+    ImGui::SliderFloat("##train_score", &new_train_score, 0.0f, 1.0f);
+    ui::FieldLabel("Val score");
+    ImGui::SliderFloat("##val_score", &new_val_score, 0.0f, 1.0f);
 
-    if (ImGui::Button(ICON_FA_PLUS " Add Point", ImVec2(-1, 25))) {
+    ImGui::Spacing();
+    if (ui::PrimaryButton("Add Point", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         AddDataPoint(new_train_size, new_train_score, new_val_score);
     }
 
-    if (ImGui::Button(ICON_FA_TRASH " Clear Data", ImVec2(-1, 25))) {
+    if (ui::SecondaryButton("Clear Data", true, nullptr, ui::ButtonSize::Regular, -FLT_MIN)) {
         ClearData();
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Show data summary
-    size_t total_points = result_.train_sizes.empty() ? manual_train_sizes_.size() : result_.train_sizes.size();
-    ImGui::Text("Data Points: %d", static_cast<int>(total_points));
-
     if (!status_message_.empty()) {
-        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", status_message_.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
@@ -121,6 +103,8 @@ void LearningCurvesPanel::RenderLearningCurve() {
 
     if (train_sizes.empty()) return;
 
+    const ui::Tokens& t = ui::CurrentTokens();
+
     ImGui::Text("Learning Curve");
     ImGui::Text("Shows model performance vs training set size");
     ImGui::Spacing();
@@ -129,17 +113,18 @@ void LearningCurvesPanel::RenderLearningCurve() {
     std::vector<double> sizes_d(train_sizes.begin(), train_sizes.end());
 
     if (ImPlot::BeginPlot("##LearningCurve", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("Training Set Size", "Score");
+        // Refit x as points are added or loaded; it kept the first point's range.
+        ImPlot::SetupAxes("Training Set Size", "Score", ImPlotAxisFlags_AutoFit);
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1.1);
 
         // Training score curve
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 1);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5, t.series[1], 1, t.series[1]);
         ImPlot::PlotLine("Training Score", sizes_d.data(), train_scores.data(), static_cast<int>(train_scores.size()));
 
         // Validation score curve
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 2.0f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, ImVec4(1.0f, 0.4f, 0.2f, 1.0f), 1);
+        ImPlot::SetNextLineStyle(t.series[4], 2.0f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 5, t.series[4], 1, t.series[4]);
         ImPlot::PlotLine("Validation Score", sizes_d.data(), val_scores.data(), static_cast<int>(val_scores.size()));
 
         // Plot error bands if std available
@@ -156,10 +141,10 @@ void LearningCurvesPanel::RenderLearningCurve() {
                 val_lower[i] = val_scores[i] - result_.val_scores_std[i];
             }
 
-            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.6f, 1.0f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.2f));
             ImPlot::PlotShaded("Train +/- std", sizes_d.data(), train_lower.data(), train_upper.data(), static_cast<int>(sizes_d.size()));
 
-            ImPlot::SetNextFillStyle(ImVec4(1.0f, 0.4f, 0.2f, 0.2f));
+            ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[4], 0.2f));
             ImPlot::PlotShaded("Val +/- std", sizes_d.data(), val_lower.data(), val_upper.data(), static_cast<int>(sizes_d.size()));
         }
 
@@ -172,6 +157,8 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
     const std::vector<double>& val_scores = result_.train_sizes.empty() ? manual_val_scores_ : result_.val_scores_mean;
 
     if (train_scores.empty() || val_scores.empty()) return;
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text(ICON_FA_SCALE_BALANCED " Bias-Variance Analysis");
     ImGui::Separator();
@@ -200,7 +187,7 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
         double values[] = {bias_estimate, variance_estimate};
         const char* labels[] = {"Bias", "Variance"};
 
-        ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.3f, 0.2f, 0.8f));
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[1], 0.8f));
         ImPlot::PlotBars("##bars", positions, values, 2, 0.6);
 
         // Add custom tick labels
@@ -217,18 +204,18 @@ void LearningCurvesPanel::RenderBiasVarianceAnalysis() {
     ImGui::Spacing();
 
     if (bias_estimate > 0.2 && variance_estimate < 0.1) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "High Bias (Underfitting)");
+        ImGui::TextColored(t.caution, "High Bias (Underfitting)");
         ImGui::BulletText("Model is too simple");
         ImGui::BulletText("Consider: more features, complex model");
     } else if (bias_estimate < 0.1 && variance_estimate > 0.15) {
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "High Variance (Overfitting)");
+        ImGui::TextColored(t.error, "High Variance (Overfitting)");
         ImGui::BulletText("Model is memorizing training data");
         ImGui::BulletText("Consider: more data, regularization, simpler model");
     } else if (bias_estimate < 0.1 && variance_estimate < 0.1) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Good Fit");
+        ImGui::TextColored(t.success, "Good Fit");
         ImGui::BulletText("Model has good balance");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Mixed");
+        ImGui::TextColored(t.warning, "Mixed");
         ImGui::BulletText("Model may benefit from tuning");
     }
 }
@@ -242,6 +229,8 @@ void LearningCurvesPanel::RenderRecommendations() {
         ImGui::Text("Need at least 2 data points for recommendations.");
         return;
     }
+
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text(ICON_FA_LIGHTBULB " Recommendations");
     ImGui::Separator();
@@ -262,10 +251,10 @@ void LearningCurvesPanel::RenderRecommendations() {
     ImGui::Spacing();
 
     if (converging) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Curves are converging");
+        ImGui::TextColored(t.success, "Curves are converging");
         ImGui::BulletText("More data may continue to help");
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Curves are not converging");
+        ImGui::TextColored(t.caution, "Curves are not converging");
         ImGui::BulletText("Model changes may be more effective than more data");
     }
 
@@ -297,7 +286,7 @@ void LearningCurvesPanel::RenderRecommendations() {
 
     // Good fit
     if (final_val > 0.85 && gap < 0.1) {
-        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Model appears well-tuned!");
+        ImGui::TextColored(t.success, "Model appears well-tuned!");
         ImGui::BulletText("Consider ensembling for marginal gains");
         ImGui::BulletText("Focus on feature engineering");
     }
@@ -311,19 +300,15 @@ void LearningCurvesPanel::RenderRecommendations() {
         // Extrapolate how much more data might help
         double recent_improvement = val_scores.back() - val_scores[val_scores.size() - 2];
         if (recent_improvement > 0.01) {
-            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "More data is still helping");
+            ImGui::TextColored(t.success, "More data is still helping");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Diminishing returns from more data");
+            ImGui::TextColored(t.warning, "Diminishing returns from more data");
         }
     }
 }
 
-void LearningCurvesPanel::LoadSelectedData() {
-    if (selected_table_idx_ < 0 || !data_registry_) return;
-
-    current_table_ = data_registry_->GetTable(available_tables_[selected_table_idx_]);
-    if (!current_table_) return;
-
+void LearningCurvesPanel::UseTable(std::shared_ptr<DataTable> table) {
+    current_table_ = std::move(table);
     // Try to load learning curve data from table
     auto headers = current_table_->GetHeaders();
 

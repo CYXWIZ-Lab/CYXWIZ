@@ -141,9 +141,9 @@ gui::MLNode MakeCustomPaddingNode() {
 gui::MLNode MakeFactoryOnlyUnsupportedNode() {
     gui::MLNode node;
     node.id = 6;
-    node.type = gui::NodeType::SVMClassifier;
+    node.type = gui::NodeType::UMAPNode;
     node.category = gui::NodeCategory::Analytics;
-    node.name = "Factory-only SVM";
+    node.name = "Factory-only UMAP";
     return node;
 }
 
@@ -279,6 +279,39 @@ int main() {
                   "branched operator paths") != std::string::npos,
                   "branched materializer failure should explain graph shape: " +
                   branched.error_message);
+    }
+
+    {
+        // A side branch (here a second tokenizer that leads nowhere, like a
+        // Word Embeddings node saving its vectors) is not part of the training
+        // table: only the branch reaching Data Split / Data Loader is applied.
+        auto side_tokenizer = MakeTokenizerNode();
+        side_tokenizer.id = 5;
+        side_tokenizer.name = "Side branch";
+        gui::MLNode split;
+        split.id = 6;
+        split.type = gui::NodeType::DataSplit;
+        split.name = "Split";
+        gui::MLNode loader;
+        loader.id = 7;
+        loader.type = gui::NodeType::DataLoader;
+        loader.name = "Loader";
+        std::vector<gui::MLNode> side_nodes = {MakeDataInputNode(), MakeTokenizerNode(), side_tokenizer, split, loader};
+        std::vector<gui::NodeLink> side_links = {
+            {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
+            {2, 1, 0, 5, 0, gui::LinkType::TensorFlow},
+            {3, 2, 0, 6, 0, gui::LinkType::TensorFlow},
+            {4, 6, 0, 7, 0, gui::LinkType::TensorFlow},
+        };
+        auto side = cyxwiz::PipelineMaterializer::MaterializeTable(side_nodes, side_links, MakeTextTable());
+        Check(side.success, "a side branch should not block training: " + side.error_message);
+        Check(side.operators_applied == 1, "only the training branch's tokenizer is applied");
+
+        // Both branches feeding training is still a fork the table cannot hold.
+        side_links.push_back({5, 5, 0, 6, 1, gui::LinkType::TensorFlow});
+        auto fork = cyxwiz::PipelineMaterializer::MaterializeTable(side_nodes, side_links, MakeTextTable());
+        Check(!fork.success && fork.error_message.find("branched operator paths") != std::string::npos,
+              "two branches into training should still fail closed: " + fork.error_message);
     }
 
     {

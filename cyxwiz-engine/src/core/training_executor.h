@@ -2,6 +2,7 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
 #include "parquet_backed_dataset.h"
@@ -69,6 +70,16 @@ struct TrainingMetrics {
     float test_rmse = 0.0f;
     bool has_test_metrics = false;
 
+    // Pair / Retrieval Metrics nodes (TOFIX140 A5): the latest validated
+    // epoch's, and the held-out test rows' after training.
+    std::optional<PairMetricResult> val_pair_metrics;
+    std::optional<RetrievalMetricResult> val_retrieval_metrics;
+    std::optional<PairMetricResult> test_pair_metrics;
+    std::optional<RetrievalMetricResult> test_retrieval_metrics;
+    // Embedding Output: the file written after training and its row count.
+    std::string embedding_output_file;
+    size_t embedding_output_rows = 0;
+
     // Active-model provenance after training. Run-history fields above remain
     // about executed work; restored checkpoint state is reported separately.
     std::string checkpoint_used;
@@ -116,6 +127,7 @@ struct TrainingMetrics {
 
     // Resume checkpoints (TOFIX118 P4e).
     std::string last_resume_checkpoint;  // newest complete one written by this run
+    std::string initialized_from;        // warm-start checkpoint (model weights only)
     int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
     bool resume_exact = false;           // seeds and data order replay exactly
 };

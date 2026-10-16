@@ -17,6 +17,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace cyxwiz {
@@ -43,6 +44,9 @@ public:
     bool ParametersCounting() const { return pending_.valid(); }
     // Increments each time a compile finishes (for callers that mirror it).
     uint64_t ResultSerial() const { return result_serial_; }
+    // The hash of the graph seen by the last Update (a cache key for views
+    // derived from the canvas, e.g. the Properties panel).
+    uint64_t GraphRevision() const { return seen_revision_; }
 
     // Error-level issues of the latest compile on this node.
     bool NodeHasError(int node_id) const;
@@ -53,6 +57,9 @@ public:
                               const std::vector<gui::NodeLink>& links);
 
     std::chrono::milliseconds debounce{400};
+    // The open project's folder: the parameter count builds the model, which
+    // reads project-relative files (an Embedding's saved vectors).
+    std::string project_root;
 
 private:
     struct Result {

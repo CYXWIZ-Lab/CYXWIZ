@@ -49,12 +49,12 @@ struct StageTimingAggregate {
 
 constexpr size_t kPreprocessing = 0;
 constexpr size_t kBatchFetch = 1;
-constexpr size_t kForward = 5;
-constexpr size_t kBackward = 6;
-constexpr size_t kOptimizer = 7;
-constexpr size_t kExportImport = 8;
+constexpr size_t kForward = 4;
+constexpr size_t kBackward = 5;
+constexpr size_t kOptimizer = 6;
+constexpr size_t kExportImport = 7;
 
-std::array<StageTimingAggregate, 9> MakeAggregates() {
+std::array<StageTimingAggregate, 8> MakeAggregates() {
     return {{
         {"preprocessing_operator", "Preprocessing operators",
          "No timed operator-backed preprocessing trace was captured."},
@@ -64,8 +64,6 @@ std::array<StageTimingAggregate, 9> MakeAggregates() {
          "Current GetNextBatch timing combines batch construction and source wait."},
         {"data_wait", "Data wait",
          "Current GetNextBatch timing combines source wait and batch construction."},
-        {"native_cpu_fallback", "Native CPU fallback",
-         "Fallback events record occurrence and reason, not elapsed duration."},
         {"forward", "Model forward",
          "No timed forward event was captured."},
         {"backward", "Model backward",
@@ -100,7 +98,7 @@ std::string PayloadString(const nlohmann::json& payload,
 }
 
 void AddCurrentTraceTimings(
-    std::array<StageTimingAggregate, 9>& stages,
+    std::array<StageTimingAggregate, 8>& stages,
     const std::vector<DebugTraceRecord>& traces) {
     for (const auto& trace : traces) {
         const std::string producer =
@@ -148,7 +146,7 @@ void AddCurrentTraceTimings(
 }
 
 void AddLocalTimings(
-    std::array<StageTimingAggregate, 9>& stages,
+    std::array<StageTimingAggregate, 8>& stages,
     const DebugSlowPathLocalTimings& timings) {
     if (timings.forward_available) {
         stages[kForward].Add(
@@ -183,7 +181,7 @@ void AddTrainingTiming(
 }
 
 void AddTrainingTimings(
-    std::array<StageTimingAggregate, 9>& stages,
+    std::array<StageTimingAggregate, 8>& stages,
     const TrainingTraceSummary& trace) {
     if (!trace.available) {
         return;
@@ -209,8 +207,7 @@ void AddTrainingTimings(
     }
 }
 
-nlohmann::json StageJson(const StageTimingAggregate& stage,
-                         uint64_t fallback_count) {
+nlohmann::json StageJson(const StageTimingAggregate& stage) {
     nlohmann::json value = {
         {"category", stage.category},
         {"label", stage.label},
@@ -226,10 +223,6 @@ nlohmann::json StageJson(const StageTimingAggregate& stage,
         value["evidence_scope"] = stage.evidence_scope;
     } else {
         value["unavailable_reason"] = stage.unavailable_reason;
-    }
-    if (std::string_view(stage.category) == "native_cpu_fallback") {
-        value["occurrence_count"] = fallback_count;
-        value["occurrence_evidence_available"] = true;
     }
     return value;
 }
@@ -275,15 +268,12 @@ DebugTraceRecord DebugSlowPathDetector::BuildTrace(
     payload["training_event_count_scanned"] =
         training_trace.recent_events.size();
     payload["source_training_run_id"] = training_trace.run_id;
-    payload["native_cpu_fallback_count"] =
-        training_trace.native_cpu_fallback_count;
 
     nlohmann::json stage_json = nlohmann::json::array();
     const StageTimingAggregate* candidate = nullptr;
     size_t available_count = 0;
     for (const auto& stage : stages) {
-        stage_json.push_back(StageJson(
-            stage, training_trace.native_cpu_fallback_count));
+        stage_json.push_back(StageJson(stage));
         if (!stage.Available()) {
             continue;
         }

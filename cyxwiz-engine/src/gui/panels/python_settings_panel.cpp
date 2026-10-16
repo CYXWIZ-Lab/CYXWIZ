@@ -3,6 +3,7 @@
 #include "../../core/python_detector.h"
 #include "../../core/file_dialogs.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -124,7 +125,7 @@ void PythonSettingsPanel::Render() {
     ImGui::Spacing();
 
     // ========== System Python Path ==========
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_CODE " System Python");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CODE " System Python");
     ImGui::Spacing();
 
     ImGui::Text("Python Executable:");
@@ -153,11 +154,11 @@ void PythonSettingsPanel::Render() {
     // Python status
     if (!std::string(system_python_path_).empty()) {
         if (python_valid_) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CHECK " Python %s", python_version_.c_str());
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, ICON_FA_CHECK " Python %s", python_version_.c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("(Valid)");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK " %s", python_error_.c_str());
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, ICON_FA_XMARK " %s", python_error_.c_str());
         }
     } else {
         ImGui::TextDisabled("No Python configured");
@@ -166,7 +167,7 @@ void PythonSettingsPanel::Render() {
     // Auto-detection results
     if (show_detection_results_ && !detected_pythons_.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Detected Python Installations:");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, "Detected Python Installations:");
         ImGui::Spacing();
 
         if (ImGui::BeginChild("DetectedPythons", ImVec2(0, 150), true)) {
@@ -212,7 +213,7 @@ void PythonSettingsPanel::Render() {
     ImGui::Spacing();
 
     // ========== Virtual Environment Settings ==========
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_CUBE " Virtual Environment");
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CUBE " Virtual Environment");
     ImGui::Spacing();
 
     if (ImGui::Checkbox("Auto-create virtual environment for new projects", &auto_create_venv_)) {
@@ -255,7 +256,7 @@ void PythonSettingsPanel::Render() {
 
     if (is_modified_) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Unsaved changes");
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION " Unsaved changes");
     }
 }
 

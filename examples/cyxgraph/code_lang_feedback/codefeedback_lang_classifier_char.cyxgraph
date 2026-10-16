@@ -3,7 +3,14 @@
   "name": "CodeFeedback Lang Classifier - Small Text Demo",
   "description": "Supported CyxWiz text demo for the CodeFeedback blobs. This is not a transformer LLM. It is the smallest reproducible text model path the engine supports today: whitespace tokenizer, fixed vocab file, Embedding -> GRU -> Dense classifier. The point is to show how to train and test a real text model on the dataset while the true LLM/transformer path is still missing in the backend. The demo is intended to be rebuilt as a binary python-vs-cpp classifier.",
   "category": "Training Pipeline",
-  "tags": ["text", "nlp", "code", "classification", "demo", "gru"],
+  "tags": [
+    "text",
+    "nlp",
+    "code",
+    "classification",
+    "demo",
+    "gru"
+  ],
   "parameters": [
     {
       "name": "batch_size",
@@ -76,7 +83,10 @@
         "id": "data_input",
         "type": "DataInput",
         "name": "Data Input",
-        "pos": [0, 300],
+        "pos": [
+          0,
+          300
+        ],
         "params": {
           "source_type": "file",
           "file_category": "text",
@@ -94,41 +104,30 @@
         "id": "text_tokenizer",
         "type": "TextTokenizer",
         "name": "Tokenizer (whitespace)",
-        "pos": [250, 300],
+        "pos": [
+          250,
+          300
+        ],
         "params": {
           "tokenizer_type": "0",
           "max_length": "$max_length",
           "lowercase": "true",
-          "min_freq": "1",
-          "max_vocab_size": "$vocab_size"
-        }
-      },
-      {
-        "id": "text_vocab",
-        "type": "TextVocabulary",
-        "name": "Vocabulary",
-        "pos": [500, 300],
-        "params": {
-          "min_freq": "1",
           "max_vocab_size": "$vocab_size",
-          "vocab_file": "D:/Dev/DataSet_List/datasets--m-a-p--CodeFeedback-Filtered-Instruction/data/codefeedback_vocab.txt"
-        }
-      },
-      {
-        "id": "text_padding",
-        "type": "TextPadding",
-        "name": "Padding",
-        "pos": [750, 300],
-        "params": {
-          "max_length": "$max_length",
-          "pad_value": "0"
+          "min_word_freq": "1",
+          "vocab_file": "D:/Dev/DataSet_List/datasets--m-a-p--CodeFeedback-Filtered-Instruction/data/codefeedback_vocab.txt",
+          "pad_value": "0",
+          "text_col": "text",
+          "label_col": "label"
         }
       },
       {
         "id": "data_split",
         "type": "DataSplit",
         "name": "Split 80/10/10",
-        "pos": [1000, 300],
+        "pos": [
+          1000,
+          300
+        ],
         "params": {
           "train_ratio": "0.8",
           "val_ratio": "0.1",
@@ -141,7 +140,10 @@
         "id": "data_loader",
         "type": "DataLoader",
         "name": "DataLoader",
-        "pos": [1250, 300],
+        "pos": [
+          1250,
+          300
+        ],
         "params": {
           "batch_size": "$batch_size",
           "epochs": "$epochs",
@@ -154,7 +156,10 @@
         "id": "embedding",
         "type": "Embedding",
         "name": "Embedding",
-        "pos": [1500, 300],
+        "pos": [
+          1500,
+          300
+        ],
         "params": {
           "num_embeddings": "$vocab_size",
           "embedding_dim": "$embedding_dim",
@@ -165,7 +170,10 @@
         "id": "gru",
         "type": "GRU",
         "name": "GRU",
-        "pos": [1750, 300],
+        "pos": [
+          1750,
+          300
+        ],
         "params": {
           "hidden_size": "$hidden_size",
           "num_layers": "1",
@@ -177,7 +185,10 @@
         "id": "fc1",
         "type": "Dense",
         "name": "Dense 64",
-        "pos": [2000, 300],
+        "pos": [
+          2000,
+          300
+        ],
         "params": {
           "units": "64"
         }
@@ -186,13 +197,19 @@
         "id": "relu1",
         "type": "ReLU",
         "name": "ReLU",
-        "pos": [2250, 300]
+        "pos": [
+          2250,
+          300
+        ]
       },
       {
         "id": "drop1",
         "type": "Dropout",
         "name": "Dropout",
-        "pos": [2500, 300],
+        "pos": [
+          2500,
+          300
+        ],
         "params": {
           "rate": "$dropout_rate"
         }
@@ -201,7 +218,10 @@
         "id": "fc_out",
         "type": "Dense",
         "name": "Dense 2",
-        "pos": [2750, 300],
+        "pos": [
+          2750,
+          300
+        ],
         "params": {
           "units": "2"
         }
@@ -210,13 +230,19 @@
         "id": "loss",
         "type": "CrossEntropyLoss",
         "name": "CrossEntropy",
-        "pos": [3000, 300]
+        "pos": [
+          3000,
+          300
+        ]
       },
       {
         "id": "optimizer",
         "type": "Adam",
         "name": "Adam",
-        "pos": [3250, 300],
+        "pos": [
+          3250,
+          300
+        ],
         "params": {
           "learning_rate": "$learning_rate"
         }
@@ -225,27 +251,71 @@
         "id": "output",
         "type": "Output",
         "name": "Output",
-        "pos": [3500, 300],
+        "pos": [
+          3500,
+          300
+        ],
         "params": {
-          "classes": "2"
+          "num_classes": "2"
         }
       }
     ],
     "links": [
-      {"from": "data_input", "to": "text_tokenizer"},
-      {"from": "text_tokenizer", "to": "text_vocab"},
-      {"from": "text_vocab", "to": "text_padding"},
-      {"from": "text_padding", "to": "data_split"},
-      {"from": "data_split", "to": "data_loader"},
-      {"from": "data_loader", "to": "embedding"},
-      {"from": "embedding", "to": "gru"},
-      {"from": "gru", "to": "fc1"},
-      {"from": "fc1", "to": "relu1"},
-      {"from": "relu1", "to": "drop1"},
-      {"from": "drop1", "to": "fc_out"},
-      {"from": "fc_out", "to": "loss"},
-      {"from": "loss", "to": "optimizer"},
-      {"from": "optimizer", "to": "output"}
+      {
+        "from": "data_input",
+        "to": "text_tokenizer"
+      },
+      {
+        "from": "text_tokenizer",
+        "to": "data_split",
+        "from_pin": 0
+      },
+      {
+        "from": "data_split",
+        "to": "data_loader"
+      },
+      {
+        "from": "data_loader",
+        "to": "embedding"
+      },
+      {
+        "from": "embedding",
+        "to": "gru"
+      },
+      {
+        "from": "gru",
+        "to": "fc1"
+      },
+      {
+        "from": "fc1",
+        "to": "relu1"
+      },
+      {
+        "from": "relu1",
+        "to": "drop1"
+      },
+      {
+        "from": "drop1",
+        "to": "fc_out"
+      },
+      {
+        "from": "fc_out",
+        "to": "loss"
+      },
+      {
+        "from": "loss",
+        "to": "optimizer"
+      },
+      {
+        "from": "optimizer",
+        "to": "output"
+      },
+      {
+        "from": "data_loader",
+        "to": "loss",
+        "from_pin": 1,
+        "to_pin": 1
+      }
     ]
   }
 }

@@ -2959,6 +2959,14 @@ Example queries:
         .value("SentencePieceUnigram", cyxwiz::TokenizerType::SentencePieceUnigram)
         .export_values();
 
+    py::enum_<cyxwiz::BPEInitialUnit>(m, "BPEInitialUnit")
+        .value("Byte", cyxwiz::BPEInitialUnit::Byte)
+        .value("UnicodeCharacter", cyxwiz::BPEInitialUnit::UnicodeCharacter);
+
+    py::enum_<cyxwiz::ByteBPEPiecePolicy>(m, "ByteBPEPiecePolicy")
+        .value("WhitespaceV1", cyxwiz::ByteBPEPiecePolicy::WhitespaceV1)
+        .value("LeadingSpaceV2", cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+
     py::class_<cyxwiz::Vocabulary>(m, "Vocabulary")
         .def(py::init<>())
         .def("build_from_documents", &cyxwiz::Vocabulary::BuildFromDocuments,
@@ -2978,6 +2986,9 @@ Example queries:
         .def("has_word", &cyxwiz::Vocabulary::HasWord,
             py::arg("word"), "Check if word is in vocabulary")
         .def("size", &cyxwiz::Vocabulary::Size, "Get vocabulary size")
+        .def_property_readonly("bpe_initial_unit", &cyxwiz::Vocabulary::GetBPEInitialUnit)
+        .def_property_readonly("bpe_alphabet_size", &cyxwiz::Vocabulary::GetBPEAlphabetSize)
+        .def_property_readonly("bpe_piece_policy", &cyxwiz::Vocabulary::GetBPEPiecePolicy)
         .def("save_to_file", &cyxwiz::Vocabulary::SaveToFile,
             py::arg("filepath"), "Save vocabulary to file")
         .def("load_from_file", &cyxwiz::Vocabulary::LoadFromFile,
@@ -3017,6 +3028,10 @@ Example queries:
         .def("get_vocabulary", static_cast<cyxwiz::Vocabulary& (cyxwiz::Tokenizer::*)()>(&cyxwiz::Tokenizer::GetVocabulary),
             py::return_value_policy::reference_internal,
             "Get the vocabulary")
+        .def("set_bpe_fit_initial_unit", &cyxwiz::Tokenizer::SetBPEFitInitialUnit,
+            py::arg("unit"), "Select BPE fit starting units; encoding follows the saved vocabulary")
+        .def("set_bpe_fit_piece_policy", &cyxwiz::Tokenizer::SetBPEFitPiecePolicy,
+            py::arg("policy"), "Select ByteBPE fitting policy; encoding follows the saved vocabulary")
         .def("set_lowercase", &cyxwiz::Tokenizer::SetLowercase,
             py::arg("value"), "Enable/disable lowercase normalization")
         .def("set_max_length", &cyxwiz::Tokenizer::SetMaxLength,
@@ -3110,15 +3125,21 @@ Example queries:
     // These functions allow Python RL training scripts (SB3) to stream metrics
     // back to the C++ TrainingDashboardPanel and check pause/stop state.
 
-    static std::function<void(const std::string&, float)> s_rl_metric_callback;
+    // The callback holds a Python object, so it is never destroyed by a static
+    // destructor: at process exit the module's statics go after the embedding
+    // Engine's thread state, and releasing a Python object then crashed the
+    // Engine on close (access violation in python312.dll). Read and written
+    // under the GIL; a call works on its own copy.
+    using RLMetricCallback = std::function<void(const std::string&, float)>;
+    static auto* s_rl_metric_callback = new RLMetricCallback();
     static std::atomic<bool> s_rl_stop_requested{false};
     static std::atomic<bool> s_rl_paused{false};
 
     m.def("rl_set_metric_callback", [](py::object callback) {
         if (callback.is_none()) {
-            s_rl_metric_callback = nullptr;
+            *s_rl_metric_callback = nullptr;
         } else {
-            s_rl_metric_callback = [callback](const std::string& name, float value) {
+            *s_rl_metric_callback = [callback](const std::string& name, float value) {
                 py::gil_scoped_acquire acquire;
                 callback(name, value);
             };
@@ -3127,9 +3148,10 @@ Example queries:
        "Set a callback function(name: str, value: float) for RL metric updates");
 
     m.def("rl_update_metric", [](const std::string& name, float value) {
-        if (s_rl_metric_callback) {
+        const RLMetricCallback callback = *s_rl_metric_callback;
+        if (callback) {
             py::gil_scoped_release release;
-            s_rl_metric_callback(name, value);
+            callback(name, value);
         }
     }, py::arg("name"), py::arg("value"),
        "Update an RL metric on the dashboard (thread-safe)");

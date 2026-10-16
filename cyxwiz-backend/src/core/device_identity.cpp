@@ -9,7 +9,6 @@
 #include <sstream>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 
 #ifdef _WIN32
@@ -17,7 +16,6 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
-#endif
 #endif
 
 namespace cyxwiz::detail {
@@ -51,7 +49,6 @@ std::string PciFingerprint(const DeviceInfo& info) {
     return LowerAscii(out.str());
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 class DynamicLibrary {
 public:
 #ifdef _WIN32
@@ -397,7 +394,6 @@ void EnrichCudaIdentity(DeviceInfo& info) {
         }
     }
 }
-#endif
 
 } // namespace
 
@@ -458,7 +454,6 @@ DeviceRouteResolution ResolvePhysicalDeviceRouteInternal(
 }
 
 void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         if (info.type == DeviceType::CUDA) {
             EnrichCudaIdentity(info);
@@ -471,7 +466,6 @@ void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
     } catch (const std::exception&) {
         // Optional identity telemetry remains explicitly unknown.
     }
-#endif
     FinalizeDeviceIdentity(info);
 }
 

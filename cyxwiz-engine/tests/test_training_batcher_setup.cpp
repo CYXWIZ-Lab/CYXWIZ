@@ -1,5 +1,6 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/classification_decision.h"
+#include "../src/core/label_vocabulary.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sparse_feature_dataset.h"
@@ -571,6 +572,166 @@ void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
 
 } // namespace
 
+// Text class labels (TOFIX145): one sorted vocabulary, encoded before the
+// batchers; Arrow and Parquet paths agree; unencoded text is refused.
+// A table on disk splits by row (TOFIX154): 1,000 rows sorted by class
+// (700 of class 0, then 300 of class 1) in 10 row groups. Row-group slicing
+// put only class 1 in validation and test; the row split gives the in-memory
+// split: the same rows unshuffled, the same sizes per class shuffled.
+void TestParquetRowSplit(const std::filesystem::path& work_dir) {
+    constexpr int kRows = 1000;
+    std::vector<float> ids, noise;
+    std::vector<int32_t> labels;
+    for (int i = 0; i < kRows; ++i) {
+        ids.push_back(static_cast<float>(i));
+        noise.push_back(static_cast<float>(i % 7));
+        labels.push_back(i < 700 ? 0 : 1);
+    }
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int32())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray(ids), FinishFloatArray(noise), FinishIntArray(labels)},
+                                    kRows);
+    cyxwiz::ArrowDataset source(table, "row_split_source");
+    const auto path = work_dir / "cyxwiz_parquet_row_split.parquet";
+    WriteParquetWithRowGroupSize(source, path.string(), 100);
+    auto dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), "row_split");
+    Check(dataset && dataset->GetNumRowGroups() == 10, "row split fixture has 10 row groups");
+
+    std::string error;
+    // Stratified, unshuffled: each class in file order (the in-memory rows).
+    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, 17, error);
+    Check(split != nullptr, "row split builds: " + error);
+    bool ordered = true;
+    for (int i = 0; i < kRows; ++i) {
+        const int within = i < 700 ? i : i - 700;
+        const int train = i < 700 ? 560 : 240, val = i < 700 ? 70 : 30;
+        ordered = ordered && split->bucket[i] == (within < train ? 0 : within < train + val ? 1 : 2);
+    }
+    Check(ordered, "unshuffled, each class fills train, validation, test in file order");
+    // Shuffled: CountsFor's sizes per class (floor train, floor val, the
+    // rest test), drawn by the seed.
+    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    Check(shuffled != nullptr, "shuffled row split builds: " + error);
+    std::array<std::array<int, 3>, 2> per_class{};
+    for (int i = 0; i < kRows; ++i) ++per_class[labels[i]][shuffled->bucket[i]];
+    Check(per_class[0] == std::array<int, 3>{560, 70, 70}, "class 0 splits 560 / 70 / 70");
+    Check(per_class[1] == std::array<int, 3>{240, 30, 30}, "class 1 splits 240 / 30 / 30");
+    Check(shuffled->counts == std::array<size_t, 3>{800, 100, 100}, "split totals 800 / 100 / 100");
+    Check(shuffled->bucket != split->bucket, "a shuffled split draws other rows than file order");
+    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    Check(again && again->bucket == shuffled->bucket, "the same seed draws the same rows");
+    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 18, error);
+    Check(other && other->bucket != shuffled->bucket, "another seed draws other rows");
+    // Unstratified: ArrowDatasetBatcher's contiguous slices.
+    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, true, 17, error);
+    bool contiguous = plain != nullptr;
+    for (int i = 0; contiguous && i < kRows; ++i) contiguous = plain->bucket[i] == (i < 800 ? 0 : i < 900 ? 1 : 2);
+    Check(contiguous, "unstratified: rows 0-799 train, 800-899 validation, 900-999 test");
+    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, 17, error) &&
+              error.find("missing") != std::string::npos,
+          "a missing column is refused with its name");
+
+    // Through the training builder: each phase serves exactly its rows.
+    auto config = MakeConfig();
+    config.has_data_split = true;
+    config.stratified = true;
+    config.train_ratio = 0.8f;
+    config.val_ratio = 0.1f;
+    config.test_ratio = 0.1f;
+    config.split_seed = 17;  // MakeConfig leaves shuffle off: the file-order split above
+    auto batchers = cyxwiz::BuildParquetTrainingBatchers(config, dataset, "label", /*batch_size=*/64);
+    Check(batchers.num_train_samples == 800 && batchers.num_val_samples == 100 && batchers.num_test_samples == 100,
+          "the batchers report the row split's sizes");
+    std::vector<int> seen(kRows, -1);
+    bool overlap = false;
+    int class1_held_out = 0;
+    const std::array<cyxwiz::IBatcher*, 3> phases{batchers.train, batchers.val, batchers.test};
+    for (int phase = 0; phase < 3; ++phase) {
+        auto* batcher = phases[phase];
+        batcher->Reset();
+        while (!batcher->IsEpochComplete()) {
+            auto batch = batcher->GetNextBatch();
+            if (!batch.IsValid()) break;
+            const auto rows = batch.data.Shape()[0];
+            const auto* features = batch.data.Data<float>();
+            for (size_t r = 0; r < rows; ++r) {
+                const int id = static_cast<int>(features[r * 2]);
+                Check(id >= 0 && id < kRows, "a served row id is in range");
+                overlap = overlap || seen[id] >= 0;
+                seen[id] = phase;
+                if (phase > 0 && id >= 700) ++class1_held_out;
+                Check(static_cast<int>(split->bucket[id]) == phase, "a row is served by its own split");
+            }
+        }
+    }
+    Check(!overlap, "no row is served twice");
+    Check(std::count(seen.begin(), seen.end(), -1) == 0, "every row is served once");
+    Check(class1_held_out == 60, "validation and test hold 60 rows of class 1");
+    std::error_code ignored;  // the batchers above still map the file
+    std::filesystem::remove(path, ignored);
+}
+
+void TestTextLabels(const std::filesystem::path& work_dir) {
+    arrow::StringBuilder labels;
+    for (const char* v : {"north", "east", "north", "delta", "east", "delta", "north", "east"})
+        Check(labels.Append(v).ok(), "label append");
+    std::shared_ptr<arrow::Array> label_array;
+    Check(labels.Finish(&label_array).ok(), "label finish");
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("segment", arrow::utf8())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray({1, 2, 3, 4, 5, 6, 7, 8}), label_array}, 8);
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "text_labels");
+    const cyxwiz::LabelVocabulary full = cyxwiz::BuildLabelVocabulary({table->GetColumnByName("segment")});
+    Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
+              full.names,
+          "plain values give the same sorted vocabulary (empty = missing)");
+
+    auto config = MakeConfig();
+    config.output_size = 3;
+    config.train_ratio = 1.0f;
+    const std::vector<size_t> expected = {2, 3, 3};  // delta, east, north
+
+    auto arrow_set = cyxwiz::BuildArrowTrainingBatchers(config, dataset, "segment", /*batch_size=*/3);
+    Check(arrow_set.label_classes == std::vector<std::string>({"delta", "east", "north"}),
+          "Arrow text labels: sorted class names");
+    Check(CountOneHotLabels(*arrow_set.train, 3, "Arrow text labels") == expected,
+          "Arrow text labels: each row keeps its class");
+
+    const std::filesystem::path parquet_path = work_dir / "cyxwiz_text_labels.parquet";
+    Check(dataset->ExportParquet(parquet_path.string()), "text labels export to Parquet");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "text_labels_parquet");
+    Check(parquet_dataset != nullptr, "text label Parquet opens");
+    {
+        auto parquet_set = cyxwiz::BuildParquetTrainingBatchers(config, parquet_dataset, "segment", /*batch_size=*/3);
+        Check(parquet_set.label_classes == arrow_set.label_classes, "Parquet text labels: same class names");
+        Check(CountOneHotLabels(*parquet_set.train, 3, "Parquet text labels") == expected,
+              "Parquet text labels: each row keeps its class");
+    }
+
+    bool refused = false;
+    try {
+        cyxwiz::ArrowDatasetBatcher unencoded(dataset, "segment", 3);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Check(refused, "an unencoded text label column is refused, not read as class 0");
+
+    cyxwiz::LabelVocabulary partial = full;
+    partial.names.pop_back();
+    partial.index.erase("north");
+    Check(!cyxwiz::EncodeLabelColumn(table, "segment", partial).ok(), "a value outside the vocabulary is an error");
+
+    arrow::StringBuilder with_null;
+    Check(with_null.Append("east").ok() && with_null.AppendNull().ok(), "null append");
+    std::shared_ptr<arrow::Array> null_array;
+    Check(with_null.Finish(&null_array).ok(), "null finish");
+    auto encoded = cyxwiz::EncodeLabels(arrow::ChunkedArray(null_array), full);
+    Check(encoded.ok() && (*encoded)->null_count() == 1 &&
+              std::static_pointer_cast<arrow::Int32Array>((*encoded)->chunk(0))->Value(0) == 1,
+          "east encodes to 1 and nulls stay null");
+    parquet_dataset.reset();
+    std::filesystem::remove(parquet_path);
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
@@ -923,13 +1084,14 @@ int main(int argc, char** argv) {
           "Parquet train pointer should target prefetch wrapper");
     Check(parquet_prefetch_batchers.train != parquet_prefetch_batchers.parquet_train.get(),
           "Parquet prefetch wrapper should sit in front of train batcher");
-    Check(parquet_prefetch_batchers.num_train_samples == 4,
+    // The disk split is row-level (TOFIX154): 75% of 4 rows is 3, as in memory.
+    Check(parquet_prefetch_batchers.num_train_samples == 3,
           "Parquet prefetch train split should preserve sample count");
     auto parquet_prefetch_first = parquet_prefetch_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_prefetch_first, 2, 2, 2,
                                "prefetch Parquet first");
     auto parquet_prefetch_second = parquet_prefetch_batchers.train->GetNextBatch();
-    CheckFeatureAndLabelShapes(parquet_prefetch_second, 2, 2, 2,
+    CheckFeatureAndLabelShapes(parquet_prefetch_second, 1, 2, 2,
                                "prefetch Parquet second");
     auto parquet_prefetch_end = parquet_prefetch_batchers.train->GetNextBatch();
     Check(!parquet_prefetch_end.IsValid(),
@@ -1290,6 +1452,28 @@ int main(int argc, char** argv) {
           "class-index accuracy must exclude ignored targets from both "
           "the numerator and denominator");
 
+    // TOFIX140 F6: the device count takes any layout with batch x width
+    // values ([batch, 1, width] here), breaks argmax ties at the first class
+    // like std::max_element, and refuses a mismatched element count.
+    const float tied_scores[] = {0.5f, 0.5f, 0.1f, 0.2f, 0.9f, 0.9f};
+    const int32_t tied_targets[] = {0, 1};
+    const auto tied_accuracy = cyxwiz::CountClassificationDecisionScalars(
+        cyxwiz::Tensor({2, 1, 3}, tied_scores, cyxwiz::DataType::Float32),
+        cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+        2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(tied_accuracy.correct == 2 && tied_accuracy.total == 2,
+          "argmax ties must resolve to the first class on the device");
+    bool mismatch_refused = false;
+    try {
+        (void)cyxwiz::CountClassificationDecisionScalars(
+            cyxwiz::Tensor({2, 2}, tied_scores, cyxwiz::DataType::Float32),
+            cyxwiz::Tensor({2}, tied_targets, cyxwiz::DataType::Int32),
+            2, 3, cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    } catch (const std::invalid_argument&) {
+        mismatch_refused = true;
+    }
+    Check(mismatch_refused, "a prediction element count that is not batch x width must be refused");
+
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeTimeSeriesConfig(),
@@ -1507,6 +1691,8 @@ int main(int argc, char** argv) {
     fs::remove(multi_parquet_path);
     fs::remove(multi_ts_parquet_path);
     fs::remove(multi_step_ts_parquet_path);
+    TestTextLabels(fs::temp_directory_path());
+    TestParquetRowSplit(fs::temp_directory_path());
     fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";

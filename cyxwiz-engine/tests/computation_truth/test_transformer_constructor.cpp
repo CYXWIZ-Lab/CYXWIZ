@@ -11,16 +11,20 @@
 #include <stdexcept>
 
 namespace {
+// Seed the way training does: SeedCurrentArrayFireRandomEngine also resets the
+// fused-attention dropout stream counter, which a bare af::setSeed leaves running
+// (on GPUs with a fused attention provider the replay then draws other masks).
+void Reseed(unsigned long long seed) { cyxwiz::SeedCurrentArrayFireRandomEngine(seed); }
 void Check(bool ok,const std::string& message) {if(!ok) throw std::runtime_error(message);}
 int rejected=0;
 void Reject(const std::function<void()>& construct,const std::string& label) {
-    af::setSeed(67);
+    Reseed(67);
     bool invalid=false;
     try {construct();}
     catch(const std::invalid_argument& e) {invalid=std::string(e.what()).size()>0;}
     Check(invalid,label+" must throw invalid_argument");
     const af::array after=af::randu(16);after.eval();
-    af::setSeed(67);const af::array untouched=af::randu(16);untouched.eval();
+    Reseed(67);const af::array untouched=af::randu(16);untouched.eval();
     Check(af::allTrue<bool>(after==untouched),label+" must reject before weight RNG");
     ++rejected;
 }
@@ -56,21 +60,28 @@ cyxwiz::Tensor Sample() {
     for(size_t i=0;i<x.NumElements();++i)x.MutableData<float>()[i]=std::sin(static_cast<float>(i));
     x.GetSemanticArray().eval();return x;
 }
-void Equal(const cyxwiz::Tensor& actual,const cyxwiz::Tensor& expected) {
-    Check(actual.Shape()==expected.Shape(),"valid configuration shape");
+std::string label;  // the case being compared, named in failures
+void Equal(const cyxwiz::Tensor& actual,const cyxwiz::Tensor& expected,const char* what) {
+    Check(actual.Shape()==expected.Shape(),label+" "+what+": valid configuration shape");
     const auto* a=actual.ReadData<float>();const auto* b=expected.ReadData<float>();
-    for(size_t i=0;i<actual.NumElements();++i)
-        Check(std::isfinite(a[i]) && std::isfinite(b[i]) && std::abs(a[i]-b[i])<1e-6f,"valid configuration numerical parity");
+    float worst=0.0f;size_t at=0;
+    for(size_t i=0;i<actual.NumElements();++i) {
+        Check(std::isfinite(a[i]) && std::isfinite(b[i]),label+" "+what+": non-finite value");
+        if(std::abs(a[i]-b[i])>worst){worst=std::abs(a[i]-b[i]);at=i;}
+    }
+    Check(worst<1e-6f,label+" "+what+": valid configuration numerical parity (max |diff| "+std::to_string(worst)+
+          " at "+std::to_string(at)+": "+std::to_string(a[at])+" vs "+std::to_string(b[at])+")");
 }
 template<class Module,class Layer>
 void ValidBlocks() {
     for(bool pre:{false,true}) for(float p:{0.0f,0.25f}) {
         Module module(4,2,7,p,pre,p);Layer layer(4,2,7,p,pre,p);
         module.SetParameters(layer.GetParameters());module.SetTraining(true);layer.SetTraining(true);
+        label=module.GetName()+(pre?" pre-norm":" post-norm")+" p="+std::to_string(p);
         auto x=Sample();
-        af::setSeed(52);const auto reference=layer.Forward(x);
-        af::setSeed(52);Equal(module.Forward(x),reference);
-        Equal(module.Backward(x),layer.Backward(x));
+        Reseed(52);const auto reference=layer.Forward(x);
+        Reseed(52);Equal(module.Forward(x),reference,"forward");
+        Equal(module.Backward(x),layer.Backward(x),"backward");
         Check(module.GetName().find("heads=2")!=std::string::npos,"valid requested head count");
     }
 }
@@ -83,7 +94,6 @@ int main(int argc,char**argv) {
         auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:
             backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
         Check(activation.success && activation.execution_validated,activation.message);
-        cyxwiz::ScopedArrayFireFallbackPolicy strict(cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
         InvalidModule<cyxwiz::TransformerEncoderModule>("encoder module");
         InvalidModule<cyxwiz::TransformerDecoderModule>("decoder module");
         InvalidLayer<cyxwiz::TransformerEncoderLayer>("encoder layer");
@@ -100,9 +110,14 @@ int main(int argc,char**argv) {
         ValidBlocks<cyxwiz::TransformerDecoderModule,cyxwiz::TransformerDecoderLayer>();
         for(float p:{0.0f,0.25f}) {
             cyxwiz::MultiHeadAttentionModule module(4,2,p);cyxwiz::MultiHeadAttentionLayer layer(4,2,p);
+            // The module declares its standard (non-causal) mask, which lets a fused
+            // attention provider serve it; declare the same on the layer so both take
+            // one path (the fused kernel draws its own dropout masks).
+            layer.DeclareStandardMask(false,0);
             module.SetParameters(layer.GetParameters());module.SetTraining(true);layer.SetTraining(true);
-            auto x=Sample();af::setSeed(52);const auto reference=layer.Forward(x);
-            af::setSeed(52);Equal(module.Forward(x),reference);Equal(module.Backward(x),layer.Backward(x));
+            label=module.GetName()+" p="+std::to_string(p);
+            auto x=Sample();Reseed(52);const auto reference=layer.Forward(x);
+            Reseed(52);Equal(module.Forward(x),reference,"forward");Equal(module.Backward(x),layer.Backward(x),"backward");
         }
         std::cout<<"PASS "<<backend<<": "<<rejected<<" invalid constructors rejected before RNG; 10 valid module/layer forward/backward cases\n";
     }catch(const std::exception&e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

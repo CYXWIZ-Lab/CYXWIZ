@@ -1,4 +1,5 @@
 #include "dataset_batcher.h"
+#include "label_vocabulary.h"
 #include "label_column_resolver.h"
 #include "split_partitioning.h"
 
@@ -388,6 +389,17 @@ void ArrowDatasetBatcher::InitializeColumns() {
 
     if (label_col_idx_ >= 0) {
         label_col_indices_.push_back(label_col_idx_);
+        // Labels are read as numbers; any other column type used to train
+        // every row as class 0 (TOFIX145). Training encodes text labels
+        // (EncodeLabelColumn) before it builds a batcher.
+        const auto& label_type = *schema->field(label_col_idx_)->type();
+        if (!arrow::is_integer(label_type.id()) && !arrow::is_floating(label_type.id()) &&
+            label_type.id() != arrow::Type::BOOL) {
+            throw std::invalid_argument("ArrowDatasetBatcher: label column '" + label_column_ + "' holds " +
+                                        label_type.ToString() +
+                                        (IsTextLabelType(label_type) ? "; encode it with EncodeLabelColumn first"
+                                                                     : "; labels must be numbers"));
+        }
     }
 
     // Second pass: collect feature columns (all numeric except labels)
@@ -766,31 +778,16 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                                 case arrow::Type::FLOAT:
                                     return static_cast<int>(
                                         std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx));
+                                case arrow::Type::BOOL:
+                                    return std::static_pointer_cast<arrow::BooleanArray>(chk)->Value(local_idx) ? 1 : 0;
                                 default:
-                                    return 0;
+                                    return 0;  // refused at construction
                             }
                         }
                         offset += chk_len;
                     }
                     return 0;  // row not found across any chunk
                 };
-
-                // Warn once per batcher if the label type isn't something we recognise
-                if (column->num_chunks() > 0) {
-                    auto first_type = column->chunk(0)->type_id();
-                    if (first_type != arrow::Type::INT64 &&
-                        first_type != arrow::Type::INT32 &&
-                        first_type != arrow::Type::INT16 &&
-                        first_type != arrow::Type::INT8 &&
-                        first_type != arrow::Type::UINT8 &&
-                        first_type != arrow::Type::UINT16 &&
-                        first_type != arrow::Type::UINT32 &&
-                        first_type != arrow::Type::DOUBLE &&
-                        first_type != arrow::Type::FLOAT) {
-                        spdlog::warn("ArrowDatasetBatcher: Unsupported label type: {}",
-                                     column->chunk(0)->type()->ToString());
-                    }
-                }
 
                 // Scalar-label mode preserves both fractional regression
                 // targets and binary 0/1 targets. The int-cast path above

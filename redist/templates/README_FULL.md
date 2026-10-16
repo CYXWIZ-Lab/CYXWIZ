@@ -107,6 +107,9 @@ offline workflow. Redirects are disabled on all platforms.
 
 ## Troubleshooting
 
+Known problems in the GPU runtimes CyxWiz uses, and what to do about them, are listed in
+`KNOWN_ISSUES.md` in this package.
+
 ### Missing backend pack
 
 Check the backend list above and the manifest. Install a CyxWiz artifact that

@@ -1,4 +1,5 @@
 #include "parquet_backed_dataset.h"
+#include "data_budget.h"
 
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <thread>
 #include <vector>
 
 namespace cyxwiz {
@@ -93,11 +95,14 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     std::vector<int64_t> row_group_sizes;
     row_group_sizes.reserve(num_row_groups);
     int64_t total_rows = 0;
+    uint64_t uncompressed_bytes = 0;
     for (int i = 0; i < num_row_groups; ++i) {
         auto rg_metadata = metadata->RowGroup(i);
         int64_t rg_rows = rg_metadata ? rg_metadata->num_rows() : 0;
         row_group_sizes.push_back(rg_rows);
         total_rows += rg_rows;
+        if (rg_metadata && rg_metadata->total_byte_size() > 0)
+            uncompressed_bytes += static_cast<uint64_t>(rg_metadata->total_byte_size());
     }
 
     size_t file_size = 0;
@@ -117,6 +122,7 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     ds->num_columns_ = metadata->num_columns();
     ds->row_group_sizes_ = std::move(row_group_sizes);
     ds->file_size_ = file_size;
+    ds->uncompressed_bytes_ = uncompressed_bytes;
 
     spdlog::info("ParquetBackedDataset: opened '{}' ({} rows, {} cols, {} row groups, {:.1f} MB on disk)",
                  path, ds->num_rows_, ds->num_columns_,
@@ -154,6 +160,129 @@ std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadRowGroups(
         return nullptr;
     }
     return table;
+}
+
+std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadAll() const {
+    std::vector<int> all(row_group_sizes_.size());
+    for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<int>(i);
+    if (all.empty()) return arrow::Table::MakeEmpty(schema_).ValueOr(nullptr);
+    return ReadRowGroups(all);
+}
+
+std::shared_ptr<arrow::Table> ParquetBackedDataset::ReadSpreadRowGroups(int64_t max_rows) const {
+    const int groups = GetNumRowGroups();
+    if (groups == 0 || num_rows_ <= max_rows) return ReadAll();
+    const int64_t average = std::max<int64_t>(1, num_rows_ / groups);
+    const int wanted = static_cast<int>(std::clamp<int64_t>((max_rows + average - 1) / average, 1, groups));
+    std::vector<int> indices;
+    for (int i = 0; i < wanted; ++i) {
+        const int index = static_cast<int>(static_cast<int64_t>(i) * groups / wanted);
+        if (indices.empty() || indices.back() != index) indices.push_back(index);
+    }
+    return ReadRowGroups(indices);
+}
+
+bool ParquetBackedDataset::WriteColumnProjection(const std::string& source_path,
+                                                 const std::string& output_path,
+                                                 const std::vector<std::string>& columns,
+                                                 std::string& error) {
+    // One row group at a time, only the selected columns read: memory stays at
+    // one group whatever the file size.
+    auto source = Open(source_path, "projection_source");
+    if (!source) {
+        error = "cannot open '" + source_path + "'";
+        return false;
+    }
+    std::vector<int> indices;
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    for (const auto& column : columns) {
+        const int index = source->schema_->GetFieldIndex(column);
+        if (index < 0) {
+            error = "column '" + column + "' is not in '" + source_path + "'";
+            return false;
+        }
+        indices.push_back(index);
+        fields.push_back(source->schema_->field(index));
+    }
+    const std::string tmp_path = output_path + ".tmp";
+    std::error_code ignored;
+    fs::create_directories(fs::path(output_path).parent_path(), ignored);
+    auto out = arrow::io::FileOutputStream::Open(tmp_path);
+    if (!out.ok()) {
+        error = out.status().ToString();
+        return false;
+    }
+    auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::SNAPPY)->build();
+    auto writer = parquet::arrow::FileWriter::Open(*arrow::schema(fields), arrow::default_memory_pool(),
+                                                   *out, props);
+    auto fail = [&](const std::string& message) {
+        error = message;
+        (void)(*out)->Close();
+        fs::remove(tmp_path, ignored);
+        return false;
+    };
+    if (!writer.ok()) return fail(writer.status().ToString());
+    for (int group = 0; group < source->GetNumRowGroups(); ++group) {
+        std::shared_ptr<arrow::Table> table;
+        auto status = source->reader_->ReadRowGroup(group, indices, &table);
+        if (status.ok()) status = (*writer)->WriteTable(*table, std::max<int64_t>(1, table->num_rows()));
+        if (!status.ok()) return fail(status.ToString());
+    }
+    auto status = (*writer)->Close();
+    if (status.ok()) status = (*out)->Close();
+    if (!status.ok()) return fail(status.ToString());
+    source.reset();
+    std::error_code moved;
+    fs::rename(tmp_path, output_path, moved);
+    if (moved) return fail("cannot move '" + tmp_path + "' into place: " + moved.message());
+    return true;
+}
+
+std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadColumn(const std::string& name) const {
+    if (!reader_ || !schema_) return nullptr;
+    const int index = schema_->GetFieldIndex(name);
+    if (index < 0) return nullptr;
+    std::shared_ptr<arrow::ChunkedArray> column;
+    auto status = reader_->ReadColumn(index, &column);
+    if (!status.ok()) {
+        spdlog::error("ParquetBackedDataset::ReadColumn({}): {}", name, status.ToString());
+        return nullptr;
+    }
+    return column;
+}
+
+std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadRowGroupColumn(int row_group_idx,
+                                                                             const std::string& name) const {
+    if (!reader_ || !schema_) return nullptr;
+    if (row_group_idx < 0 || row_group_idx >= static_cast<int>(row_group_sizes_.size())) return nullptr;
+    const int index = schema_->GetFieldIndex(name);
+    if (index < 0) return nullptr;
+    std::shared_ptr<arrow::ChunkedArray> column;
+    auto status = reader_->RowGroup(row_group_idx)->Column(index)->Read(&column);
+    if (!status.ok()) {
+        spdlog::error("ParquetBackedDataset::ReadRowGroupColumn({}, {}): {}", row_group_idx, name, status.ToString());
+        return nullptr;
+    }
+    return column;
+}
+
+void AppendDistinctValues(const arrow::ChunkedArray& column, std::vector<std::string>& seen, size_t max_values) {
+    for (int64_t row = 0; row < column.length() && seen.size() < max_values; ++row) {
+        auto scalar = column.GetScalar(row);
+        if (!scalar.ok() || !(*scalar)->is_valid) continue;
+        std::string value = (*scalar)->ToString();
+        if (std::find(seen.begin(), seen.end(), value) == seen.end()) seen.push_back(std::move(value));
+    }
+}
+
+std::vector<std::string> ParquetBackedDataset::FirstDistinctValues(const std::string& name, size_t max_values) const {
+    std::vector<std::string> seen;
+    for (int group = 0; group < GetNumRowGroups() && seen.size() < max_values; ++group) {
+        const auto column = ReadRowGroupColumn(group, name);
+        if (!column) break;
+        AppendDistinctValues(*column, seen, max_values);
+    }
+    return seen;
 }
 
 std::vector<std::string> ParquetBackedDataset::GetColumnNames() const {
@@ -411,11 +540,17 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         if (!has_header) {
             read_options.autogenerate_column_names = true;
         }
-        // Bound per-batch memory — 64 MB block is more than enough headroom
-        // for streaming conversion without blowing out RAM on large CSVs.
-        read_options.block_size = 64 * 1024 * 1024;
+        // Peak memory is about 30 read blocks per thread whatever the file
+        // size (measured on 1 GB: 4 MB -> 225 MB, 16 -> 660, 64 -> 1940; the
+        // time is the same), so the block follows the data budget (TOFIX154):
+        // the conversion stays under half of it. 64 MB at most, 1 MB at least.
+        const uint64_t threads = use_threads ? std::max(1u, std::thread::hardware_concurrency()) : 1u;
+        read_options.block_size = static_cast<int32_t>(std::clamp<uint64_t>(
+            DataBudgetBytes() / (64 * threads), 1ULL << 20, 64ULL << 20));
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
+        // Quoted values may span lines (free text, reviews): read them as one value.
+        parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(
@@ -493,8 +628,11 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
 
           // Snappy compression: fast encode/decode, good ratio on numeric data
           // (typically 3-5x smaller than raw CSV for ML datasets).
+          // Row groups of 128K rows (like SessionQueryEngine) whatever the
+          // read block size: WriteRecordBatch buffers batches into them.
           auto writer_props = parquet::WriterProperties::Builder()
                                   .compression(parquet::Compression::SNAPPY)
+                                  ->max_row_group_length(128 * 1024)
                                   ->build();
           auto arrow_props = parquet::ArrowWriterProperties::Builder().build();
 
@@ -542,23 +680,10 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
               }
             }
 
-            // WriteRecordBatch would be nicer but requires wrapping in a Table
-            // because FileWriter's direct batch API varies across Arrow
-            // versions. Table::Make is cheap — it's just a metadata wrapper, no
-            // data copy.
-            auto table = arrow::Table::FromRecordBatches(schema, {batch});
-            if (!table.ok()) {
-              spdlog::error(
-                  "ConvertCsvToParquet: Table::FromRecordBatches failed: {}",
-                  table.status().ToString());
-              cleanup_tmp();
-              return false;
-            }
-            auto write_status =
-                writer->WriteTable(*table.ValueOrDie(), batch->num_rows());
+            auto write_status = writer->WriteRecordBatch(*batch);
             if (!write_status.ok()) {
               spdlog::error(
-                  "ConvertCsvToParquet: WriteTable failed at batch {}: {}",
+                  "ConvertCsvToParquet: WriteRecordBatch failed at batch {}: {}",
                   batches_written, write_status.ToString());
               cleanup_tmp();
               return false;

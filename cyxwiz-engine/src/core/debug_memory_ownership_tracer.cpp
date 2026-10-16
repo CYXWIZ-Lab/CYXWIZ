@@ -322,9 +322,6 @@ DebugTraceRecord DebugMemoryOwnershipTracer::BuildTensorLifecycleTrace(
     payload["execution_context_id"] = backend_observed
         ? execution.execution_context_id
         : std::string{};
-    payload["native_cpu_fallback_count"] = backend_observed
-        ? execution.native_cpu_fallback_count
-        : 0;
     payload["host_reads_added"] = false;
     payload["raw_tensor_values_included"] = false;
     payload["entry_limit"] = kMaxLifecycleEntries;

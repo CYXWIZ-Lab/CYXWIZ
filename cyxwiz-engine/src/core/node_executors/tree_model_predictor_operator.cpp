@@ -150,6 +150,16 @@ bool TreeModelPredictorOperator::Configure(
     return true;
 }
 
+bool TreeModelPredictorOperator::CollectCacheDependencies(
+    std::vector<PipelineOperatorCacheDependency>& dependencies,
+    std::string& error) const {
+    if (ReadTreeModelArtifactType(model_path_, &error).empty()) {
+        return false;
+    }
+    dependencies.push_back({"tree_model", model_path_});
+    return true;
+}
+
 arrow::Result<std::shared_ptr<arrow::Table>>
 TreeModelPredictorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz TreeModelPredictor Materializer");

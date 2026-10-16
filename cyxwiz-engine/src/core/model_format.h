@@ -259,6 +259,9 @@ struct ProbeResult {
     std::string sequence_pos_vocabulary_path;
     std::string sequence_tag_vocabulary_path;
 
+    // manifest metadata.custom (free-form key/value pairs).
+    std::map<std::string, std::string> custom_metadata;
+
     std::string error_message;
 };
 

@@ -250,6 +250,355 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_appearance_options
     )
 
+    # Menu bar presentation model (TOFIX129): menus, palette, shortcuts.
+    add_executable(test_menu_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_menu_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/menu_presentation.cpp"
+    )
+    target_include_directories(test_menu_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_menu_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME menu_presentation_contract
+        COMMAND test_menu_presentation
+    )
+
+    # Design tokens (TOFIX129): status vocabulary, light and dark sets.
+    add_executable(test_ui_tokens
+        "${_cyxwiz_installer_engine_dir}/tests/test_ui_tokens.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/gui/ui_tokens.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/appearance_options.cpp"
+    )
+    target_include_directories(test_ui_tokens PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    target_link_libraries(test_ui_tokens PRIVATE imgui::imgui)
+    set_target_properties(test_ui_tokens PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME ui_tokens_contract
+        COMMAND test_ui_tokens
+    )
+
+    # Start page and Create Project model (TOFIX129 piece A2).
+    add_executable(test_start_page_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_start_page_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/start_page_presentation.cpp"
+    )
+    target_include_directories(test_start_page_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_start_page_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME start_page_presentation_contract
+        COMMAND test_start_page_presentation
+    )
+
+    # Python for scripting: start page chip and Python dialog (TOFIX129 A2-3).
+    add_executable(test_python_setup_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_setup_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_setup_presentation.cpp"
+    )
+    set_target_properties(test_python_setup_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME python_setup_presentation_contract
+        COMMAND test_python_setup_presentation
+    )
+
+    # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_dashboard_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/dashboard_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/stop_words.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+    )
+    target_link_libraries(test_dashboard_model PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dashboard_model PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dashboard_model_contract
+        COMMAND test_dashboard_model
+    )
+
+    add_executable(test_dataset_contract
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_contract.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/column_role_store.cpp"
+    )
+    target_link_libraries(test_dataset_contract PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_dataset_contract PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_contract_contract
+        COMMAND test_dataset_contract
+    )
+
+    add_executable(test_dataset_catalog
+        "${_cyxwiz_installer_engine_dir}/tests/test_dataset_catalog.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dataset_catalog.cpp"
+    )
+    set_target_properties(test_dataset_catalog PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME dataset_catalog_contract
+        COMMAND test_dataset_catalog
+    )
+
+    add_executable(test_python_scan_cache
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_scan_cache.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_scan_cache.cpp"
+    )
+    target_link_libraries(test_python_scan_cache PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_python_scan_cache PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME python_scan_cache_contract
+        COMMAND test_python_scan_cache
+    )
+
+    # Script Editor file rules (TOFIX133 P0 items 1-3).
+    add_executable(test_script_text_file
+        "${_cyxwiz_installer_engine_dir}/tests/test_script_text_file.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/script_text_file.cpp"
+    )
+    set_target_properties(test_script_text_file PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME script_text_file_contract
+        COMMAND test_script_text_file
+    )
+
+    # Script Editor Python colouring and palette byte order (TOFIX133 P0 items 4-5).
+    add_executable(test_python_tokenizer
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_tokenizer.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_tokenizer.cpp"
+    )
+    add_executable(test_argb_colour
+        "${_cyxwiz_installer_engine_dir}/tests/test_argb_colour.cpp"
+    )
+    # Find/Replace and editor columns (TOFIX133 P0 item 13).
+    add_executable(test_text_search
+        "${_cyxwiz_installer_engine_dir}/tests/test_text_search.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/text_search.cpp"
+    )
+    # .cyx notebook format and Python literals for the debugger (TOFIX133 P0 items 15-16).
+    add_executable(test_cyx_format
+        "${_cyxwiz_installer_engine_dir}/tests/test_cyx_format.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/cyx_format.cpp"
+    )
+    add_executable(test_python_literal
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_literal.cpp"
+    )
+    # Script Editor run/debug keys (TOFIX133 P0 item 7).
+    add_executable(test_script_keys
+        "${_cyxwiz_installer_engine_dir}/tests/test_script_keys.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/script_keys.cpp"
+    )
+    # Script Editor text model (TOFIX133 P1, decision D1).
+    add_executable(test_text_document
+        "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
+    )
+    # Plot model: kinds, spec JSON, data labels, stats (TOFIX134 P1).
+    add_executable(test_plot_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+    )
+    target_link_libraries(test_plot_model PRIVATE nlohmann_json::nlohmann_json)
+    # Plot data preparation for every P1 kind (TOFIX134 P1).
+    add_executable(test_plot_prepare
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_presets.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+    )
+    target_link_libraries(test_plot_prepare PRIVATE nlohmann_json::nlohmann_json)
+    # Graph and mesh algorithms (TOFIX134 P4 group 2).
+    add_executable(test_plot_graph
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+    )
+    # Sparse features in the Dashboard (TOFIX134 P3).
+    add_executable(test_sparse_summary
+        "${_cyxwiz_installer_engine_dir}/tests/test_sparse_summary.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/dashboard/sparse_summary.cpp"
+    )
+    # A plot asked for from Python (TOFIX134 P5).
+    add_executable(test_python_plot_request
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_plot_request.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/python_plot_request.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+    )
+    target_link_libraries(test_python_plot_request PRIVATE nlohmann_json::nlohmann_json)
+    # A trained tree model as Tree rows (TOFIX134 P4.7).
+    add_executable(test_plot_tree_model
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_tree_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_tree_model.cpp"
+    )
+    target_link_libraries(test_plot_tree_model PRIVATE nlohmann_json::nlohmann_json)
+    # Plot exports: CSV and SVG (TOFIX134 P1).
+    add_executable(test_plot_export
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_export.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_export.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+    )
+    target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
+    # Plot source from a DataTable: numeric columns, aligned rows (TOFIX134 P1).
+    add_executable(test_plot_table_source
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_table_source.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_graph.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_image.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/world_map.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_layout.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_scales.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
+    )
+    target_link_libraries(test_plot_table_source PRIVATE nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+    if(MSVC)
+        target_compile_options(test_plot_table_source PRIVATE /utf-8)
+        target_compile_definitions(test_plot_table_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
+    # Plot node result lane plan: closure only, staleness, unavailable (TOFIX134 P2).
+    add_executable(test_node_result_plan
+        "${_cyxwiz_installer_engine_dir}/tests/test_node_result_plan.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/node_result_plan.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/pipeline_type_names.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/pipeline_runtime_capabilities.cpp"
+    )
+    target_link_libraries(test_node_result_plan PRIVATE nlohmann_json::nlohmann_json)
+    # Training Dashboard draws reduced series (TOFIX134 P0 item 8).
+    add_executable(test_series_decimation
+        "${_cyxwiz_installer_engine_dir}/tests/test_series_decimation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+    )
+    # Plot Output takes every published figure once (TOFIX134 P0 item 6).
+    add_executable(test_plot_inbox
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_inbox.cpp"
+    )
+    # "Plot with Python" writes valid Python (TOFIX134 P0 item 4).
+    add_executable(test_plot_script
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_script.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot_script.cpp"
+    )
+    # Scatter/correlation pairs from one row (TOFIX134 P0 item 3).
+    add_executable(test_paired_columns
+        "${_cyxwiz_installer_engine_dir}/tests/test_paired_columns.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/paired_columns.cpp"
+    )
+    # Breakpoints follow their lines (TOFIX133 P6).
+    add_executable(test_breakpoint_lines
+        "${_cyxwiz_installer_engine_dir}/tests/test_breakpoint_lines.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/breakpoint_lines.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
+    )
+    add_executable(test_editor_highlight_folding
+        "${_cyxwiz_installer_engine_dir}/tests/test_editor_highlight_folding.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/python_highlight.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/sql_highlight.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/folding.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/outline.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_tokenizer.cpp"
+    )
+    # Jupyter .ipynb read/write (TOFIX133 P4, decision D3).
+    add_executable(test_notebook_format
+        "${_cyxwiz_installer_engine_dir}/tests/test_notebook_format.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/notebook_format.cpp"
+    )
+    target_link_libraries(test_notebook_format PRIVATE nlohmann_json::nlohmann_json)
+    add_executable(test_notebook_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_notebook_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/notebook_presentation.cpp"
+    )
+    add_executable(test_markdown_blocks
+        "${_cyxwiz_installer_engine_dir}/tests/test_markdown_blocks.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/markdown_blocks.cpp"
+    )
+    add_executable(test_html_table
+        "${_cyxwiz_installer_engine_dir}/tests/test_html_table.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/html_table.cpp"
+    )
+    # CSV records for the Table Viewer (quoted commas, line breaks).
+    add_executable(test_csv_records
+        "${_cyxwiz_installer_engine_dir}/tests/test_csv_records.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
+    )
+    # Script Editor language tool results (TOFIX133 P3).
+    add_executable(test_language_results
+        "${_cyxwiz_installer_engine_dir}/tests/test_language_results.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/language_results.cpp"
+    )
+    target_link_libraries(test_language_results PRIVATE nlohmann_json::nlohmann_json)
+    # Variable Explorer presentation (TOFIX133 P5).
+    add_executable(test_variables_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_variables_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/variables_presentation.cpp"
+    )
+    target_link_libraries(test_variables_presentation PRIVATE nlohmann_json::nlohmann_json)
+    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
+            test_python_literal test_script_keys test_text_document test_editor_highlight_folding
+            test_notebook_format test_notebook_presentation
+            test_markdown_blocks test_html_table test_csv_records
+            test_language_results test_variables_presentation test_breakpoint_lines
+            test_paired_columns test_plot_script test_plot_inbox test_series_decimation
+            test_plot_model test_plot_prepare test_plot_export test_plot_graph test_plot_tree_model test_python_plot_request test_sparse_summary
+            test_plot_table_source test_node_result_plan)
+        set_target_properties(${_cyxwiz_p0_test} PROPERTIES
+            CXX_STANDARD 20
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        )
+        add_test(NAME ${_cyxwiz_p0_test}_contract COMMAND ${_cyxwiz_p0_test})
+    endforeach()
+    if(Python3_EXECUTABLE)
+        # The generated plot scripts are compiled by Python too.
+        set_tests_properties(test_plot_script_contract PROPERTIES ENVIRONMENT "CYXWIZ_TEST_PYTHON=${Python3_EXECUTABLE}")
+        set_tests_properties(test_plot_export_contract PROPERTIES ENVIRONMENT "CYXWIZ_TEST_PYTHON=${Python3_EXECUTABLE}")
+    endif()
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
@@ -452,6 +801,9 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/gui/ui_buttons.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/gui/ui_tokens.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/gui/ui_widgets.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/appearance_options.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"

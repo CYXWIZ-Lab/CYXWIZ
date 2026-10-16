@@ -98,13 +98,17 @@ enum class NodeType {
     RNN,
     LSTM,
     GRU,
-    Bidirectional,
+    Bidirectional,      // Retired (LSTM/GRU/RNN's bidirectional setting
+                        // replaced it): the slot stays so later ids do not
+                        // move; a saved graph with one fails to load.
     TimeDistributed,
     Embedding,
 
     // ===== Attention & Transformer =====
     MultiHeadAttention,
-    SelfAttention,
+    SelfAttention,      // Retired (Multi-Head Attention replaced it): the slot
+                        // stays so later ids do not move; a saved graph with
+                        // one fails to load.
     CrossAttention,
     LinearAttention,      // O(n) linear attention (Performer/Linear Transformer)
     TransformerEncoder,
@@ -214,9 +218,12 @@ enum class NodeType {
     // ===== Data Pipeline Nodes =====
     DatasetInput,       // Load dataset from DataRegistry
     DataLoader,         // Batch iterator with shuffle/drop_last
-    Augmentation,       // Transform pipeline for data augmentation
+    Augmentation,  // Retired (the image transform nodes and Augmentation Preset replaced it): the slot stays so later ids
+                   // do not move; a saved graph with one fails to load.
     DataSplit,          // Train/val/test splitter
-    TensorReshape,      // Reshape tensor dimensions (legacy, use Reshape)
+    TensorReshape,      // Retired (the Reshape node replaced it): the slot stays
+                        // so later ids do not move; a saved graph with one
+                        // fails to load with a message naming Reshape.
     Normalize,          // Normalize values (mean/std, domain-aware)
     OneHotEncode,       // Label encoding
 
@@ -410,7 +417,8 @@ enum class NodeType {
 
     // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
     OutlierDetector,    // Detect/remove outliers (IQR, Z-score, Isolation Forest)
-    ImagePreprocessor,  // Image resize, crop, normalize pipeline
+    ImagePreprocessor,  // Retired (Resize and Normalize replaced it): the slot stays so later ids
+                        // do not move; a saved graph with one fails to load.
     QualityAnalyzer,    // Image quality filtering (blur, brightness, contrast)
     DataValidator,      // Schema validation and data quality checks
 
@@ -423,8 +431,10 @@ enum class NodeType {
 
     // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
     AugmentationPreset, // Predefined augmentation pipelines (ImageNet, CIFAR, Medical, Self-Supervised)
-    GeometricTransform, // Geometric transforms (rotate, flip, crop, perspective, affine)
-    ColorTransform,     // Color transforms (brightness, contrast, saturation, hue, gamma)
+    GeometricTransform,  // Retired (Random Crop, Image Rotate and the flips replaced it): the slot stays so later ids
+                         // do not move; a saved graph with one fails to load.
+    ColorTransform,  // Retired (Color Jitter replaced it): the slot stays so later ids
+                     // do not move; a saved graph with one fails to load.
     MorphologyTransform,// Morphological operations (dilate, erode, blur, sharpen, edge)
     AdvancedAugment,    // Advanced augmentation (Cutout, MixUp, CutMix, RandAugment, AutoAugment)
 
@@ -486,7 +496,11 @@ enum class NodeType {
     WordFrequencyNode,  // Word frequency analysis
     TokenizerNode,      // Text tokenization
 
-    // ===== Visualization Nodes (Phase 8 - Plot Types) =====
+    // ===== Retired plot node types (TOFIX134 P2) =====
+    // Replaced by the single Plot node (appended below): its window picks the
+    // plot type. The slots stay so the numeric ids of the types after them
+    // do not move; nothing registers or creates these, and a saved graph
+    // that has one fails to load with a message naming the Plot node.
     // Basic 2D Plots
     LinePlot,           // Line plot (plot())
     ScatterPlot,        // Scatter plot (scatter())
@@ -531,12 +545,17 @@ enum class NodeType {
     NERTagVocabulary,   // BIO tag vocabulary for sequence tagging
     SequenceTagOutput,  // Decode/export token-level tag predictions
 
-    // ===== Metric Learning / Siamese Contract Nodes =====
+    // ===== Metric Learning Contract Nodes =====
     // Appended to preserve existing serialized numeric NodeType ids.
     PairDatasetBuilder,     // Build aligned pair samples for metric learning
     TripletDatasetBuilder,  // Build anchor/positive/negative samples
-    SharedEncoder,          // Declare one shared encoder parameter set
-    SiameseBranch,          // Reference a shared encoder branch
+    SharedEncoder,          // Retired (metric-learning losses run the model
+                            // once over the stacked batch): the slot stays
+                            // so later ids do not move; a saved graph with
+                            // one fails to load.
+    SiameseBranch,          // Retired with Shared Encoder: the slot stays so
+                            // later ids do not move; a saved graph with one
+                            // fails to load.
     ContrastiveLoss,        // Contrastive pair loss contract
     CosineEmbeddingLoss,    // Cosine embedding pair loss contract
     TripletLoss,            // Triplet loss contract
@@ -567,6 +586,16 @@ enum class NodeType {
     // ===== Appended Data Studio Check step (TOFIX101 package E) =====
     // Appended to preserve existing serialized numeric NodeType ids.
     RowCountCheck,      // Pass through; stop the run when a row count is wrong
+
+    // ===== Appended Plot node (TOFIX134 P2) =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    Plot,               // Chart of the data at this point (one input, no output)
+
+    // ===== Appended Dashboard node (TOFIX134 P3) =====
+    Dashboard,          // Dashboard of the data at this point (one input, no output)
+
+    // ===== Appended Classic Model Predictor (TOFIX145) =====
+    ClassicModelPredictor, // Apply a fitted classic ML model (Model input or saved file)
 
     // Special sentinel value
     Unknown
@@ -610,10 +639,6 @@ struct NodePin {
 
     // Visual indicators
     bool is_required = true;         // Visual indicator for required pins
-
-    // Shape information (for smart validation and inference)
-    std::vector<size_t> shape;       // Tensor shape flowing through pin
-    bool shape_valid = false;        // Whether shape has been computed
 };
 
 // Visual node structure

@@ -1,0 +1,494 @@
+# Plotting in the Engine
+
+What draws plots in the CyxWiz Engine today, and how to use each part. A
+new plot system (one Plot window with a plot-type picker, shared with the
+Plot node and, later, the Dashboard) is being built in TOFIX134; this page
+describes what works now.
+
+## Figures from Python (matplotlib)
+
+`plt.show()` in a script, a notebook cell or the Console puts the figure in
+the Engine instead of opening a separate window.
+
+```python
+import matplotlib.pyplot as plt
+
+plt.plot([1, 3, 2, 4], label="loss")
+plt.title("My figure")
+plt.legend()
+plt.show()
+```
+
+- **Script (Script Editor, F5):** the figure opens in the **Plot Output**
+  window. Plot Output opens by itself if it was closed; it keeps every
+  figure of the session (arrows or thumbnails to move between them).
+- **Notebook cell:** the figure shows under the cell, in the notebook.
+  **Open in window** under it shows the image in Plot Output (zoom, pan,
+  save).
+- **Console (Python REPL):** the figure goes to Plot Output as well, also
+  before any script has run.
+
+The Engine sets matplotlib's backend for you (`module://cyxwiz_mpl_backend`,
+drawn with Agg); `matplotlib.use(...)` with another backend opens that
+backend's own windows instead. In a notebook cell, `%matplotlib inline` (or
+any `%matplotlib` line, as notebooks made in Jupyter have) sets the Engine's
+backend again from that line on, so a notebook that first called
+`matplotlib.use('Agg')` still shows its figures. Other `%` magics are not
+supported and stop the cell with a syntax error.
+
+Plot Output toolbar: previous / next, zoom (or mouse wheel, drag to pan),
+Fit, 100%, copy to the clipboard, save as PNG, close, clear all, and **All /
+Figures / Python plots** to choose what the list shows. Right-click a figure
+for Copy, Save as PNG and Close.
+
+## Plots from Python (`import cyxwiz`)
+
+The `cyxwiz` module opens real Engine Plot windows from a script, a
+notebook cell or the Console, with one function per plot kind, like pyplot.
+It comes with the Engine; nothing to install.
+
+```python
+import cyxwiz as cx
+import pandas as pd
+
+df = pd.read_csv("spotify_data clean.csv")
+cx.scatter("artist_popularity", "track_popularity", data=df,
+           color="album_type", title="Popularity")
+cx.hist(df.track_duration_min, bins=40)   # arrays and Series work too
+cx.bar("album_type", data=df)             # counts per category
+```
+
+- Each call opens a **Plot window**, the same window as a Plot node's: change
+  the type, columns, rows, colours and labels there, and Export. Its source
+  line says where the data came from ("from Python · df · 8,582 rows ·
+  line 7").
+- **The same title again updates that window** instead of opening another,
+  so running a script twice does not pile up windows. Without `title=`, the
+  title is the function and its columns (`bar: album_type`).
+- The plots are listed in **Plot Output** with the matplotlib figures
+  ("Python plot · Scatter · live"). Select one for **Show window** / **Open
+  window** and **Close plot**.
+- Columns: names with `data=` (a pandas or Polars DataFrame, or a dict), or
+  arrays, lists and Series (a Series keeps its name).
+- Options: `title`, `xlabel`, `ylabel`, `color` (a column), `bins`,
+  `logx`, `logy`, `legend`, `density`, `smooth`, `rows` (the first N rows),
+  and any Plot window setting by its saved name (`bar_layout="stacked"`,
+  `scale="viridis"`, `graph_layout="layered"`, ...).
+- Each call returns a handle: `p.update(...)` plots again into the same
+  window (new data, other options), `p.close()` or `cx.close(title)` closes it.
+- A mistake is raised in Python with the Plot window's words, for example
+  `ValueError: column 'nope' is not in the data (columns: a, b)` or
+  `scatter needs y values`.
+
+| Group | Functions |
+| --- | --- |
+| Basic | `plot` / `line`, `scatter`, `bar`, `hist`, `area`, `step`, `stem`, `pie`, `polar`, `errorbar` |
+| Distribution | `box` / `boxplot`, `violin` / `violinplot`, `kde`, `parallel`, `pairplot` |
+| Grid and density | `heatmap(x, y, value)`, `matshow(*columns)`, `hist2d`, `hexbin`, `contour`, `contourf` |
+| Vector fields, images | `quiver(x, y, u, v)`, `streamplot(x, y, u, v)`, `imshow(array)` |
+| Model results | `confusion_matrix(actual, predicted)`, `roc_curve(actual, score)`, `pr_curve`, `calibration`, `residuals`, `learning_curve(x, *ys)`, `importance(feature, value)` |
+| Flows, maps | `sankey(*steps, value=)`, `treemap(*levels, value=)`, `map_points(lon, lat)`, `map_regions(country, value)` |
+| 3D | `scatter3d(x, y, z)`, `plot3d(x, y, z)`, `plot_surface(Z)` (a 2D array) or `plot_surface(x, y, z)`, `plot_trisurf(x, y, z)` |
+| Graphs | `network(source, target, weight=)`, `tree(node, parent, value=)` |
+
+Example: `p5_api.py` in the test project opens the three plots above and a
+matplotlib histogram; Plot Output lists all four.
+
+## The Plot window (Table Viewer)
+
+Open a table in the Table Viewer (a dataset, a CSV, or a variable from the
+Variable Explorer), then either right-click a column and choose **Plot**
+(Histogram, Line Chart, Bar Chart, Box Plot, or Use as X-axis for Scatter)
+or press **Plot** under the column's statistics. The Plot window opens:
+
+- **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
+  stem, pie, polar), Distribution (box, violin, KDE, parallel coordinates,
+  error bars), Grid and density
+  (heatmap, matrix, pair plot, 2D histogram, hexbin, contour, filled
+  contour), Images (image), Vector
+  fields (quiver, stream). Pick
+  one; the columns that still fit are kept.
+- **Rows** (top of the right panel): **All**, **First** N rows, a **Range**
+  of rows (numbered from 1, as in the Table Viewer) or **Filter**:
+  conditions *column = != < <= > >= contains value*, all of which must
+  match ("class = 7" keeps 7,293 of MNIST's 70,000 rows). The label above
+  the plot says which rows are drawn; exports and the Python script use the
+  same rows. To filter for the whole graph, use a Filter Rows node.
+- **Data**: the X column (or the row number for lines), one or more Y
+  columns (one series each), **Colour by** a column, bins, median and mean
+  lines, density, smoothing (moving average), the title. **Values** lists
+  count, missing, min, max, mean and median of the plotted column.
+- **Choosing columns in a wide table**: every column field opens a list
+  with a search box. Each column shows its type (# number, Aa text), its
+  range and how often it is not 0 ("0 to 255 · 66.3% not 0"); columns with
+  one value (65 of MNIST's pixels) are hidden unless you untick that.
+  Up / Down move, Enter picks, Esc closes. Y values: **Add all N matches**
+  of the search, or a **Range** of columns ("pixel400" to "pixel409");
+  the chosen columns show as chips (click one to remove it). The legend
+  lists 12 series; hover shows all.
+- **Colour by a number column**: on a scatter, a column with more than 12
+  values colours each point on the theme's scale, with a colour bar named
+  after the column (values on both sides of 0 use the two-sided scale);
+  **Groups / Scale** switches. Other plot types split such a column into
+  six equal ranges. A column with up to 12 values (class 0-9) gives one
+  series per value.
+- **Heatmap**: **Cell values** sums a column per cell; without it, rows are
+  counted. Labels that are all numbers read in numeric order.
+- **Matrix** (Grid and density): choose two or more number columns. Values:
+  **Correlation (Pearson)**, **Correlation (Spearman, ranks)** (on a -1 to
+  +1 two-sided scale, the value in each cell) or **The values** (the
+  columns as a grid, one row per table row, up to 500 rows).
+- **Contour** and **Filled contour**: X and Y numbers; **Z** is the density
+  of rows (lightly smoothed) or the mean of a column per cell. **Grid cells
+  across** and **Levels**. Hover gives the value at the mouse.
+- **Hexbin**: like the 2D histogram with hexagons. **Hexagons across**;
+  colour by the count (optionally its log) or the mean of a column. Hover
+  gives the rows in the hexagon and their share.
+- **KDE** (Distribution): a smooth histogram, one curve per Y column or per
+  **Colour by** group. **Bandwidth** multiplies Silverman's rule (1.00).
+- **Bar** with **Colour by**: one bar per group, **Grouped**, **Stacked** or
+  **100%** (each category's shares). Hover lists every group.
+- **Pie**: **Donut** shows the total in the middle.
+- **Polar** (Basic): an **Angle** column and a **Radius** column, one line
+  (or, with **Points instead of lines**, one set of points) per **Colour
+  by** group. **Angle in**: Auto (text columns are categories, number
+  columns degrees), Degrees, Radians, or Categories, which share the turn
+  (in numeric order when they are numbers) and close each line. 0 is at
+  the top, angles go clockwise. Example: months as the angle, passengers as
+  the radius, colour by year draws one turn per year.
+- **Quiver** (Vector fields): an arrow per row from **X**, **Y**. **Arrows
+  from**: **u, v** (the arrow's x and y parts), or **Direction + length**
+  (degrees clockwise from north and a length); tick **Wind** when the
+  direction says where the wind comes from (weather data), so the arrows
+  point where it blows. Arrows are coloured by length (colour bar) and
+  scaled to fit their spacing. A dense grid shows **every Nth arrow** (0:
+  about 600 at most); the label says so, and hover and exports use every
+  row. Hover: the length, the direction it points to and u, v.
+- **Image** (Images): any table whose number columns make a picture. Choose
+  the **Pixel columns** (search "pixel" and **Add all matches**, or a
+  range), and optionally a **Label** column. The shape is square when the
+  count is a square (784 columns: 28 x 28), 3 channels when the count / 3 is
+  a square (3,072: 32 x 32 RGB, as CIFAR-10; tick **Three planes** when the
+  columns are all red, then green, then blue), else set **Width**.
+  **Show**: **One row** (Previous / Next), a **Gallery** of the chosen rows
+  (the Rows section picks them, e.g. class = 7; **Pictures at most**), or the
+  **Mean per class** (the average picture of each label, with its count).
+  **Values**: Auto (lowest to highest), 0 to 255 or 0 to 1; **Grey** or the
+  theme scale; **Invert**. Hover gives the row, the label, the pixel and its
+  value. Only the rows shown are read, so wide tables stay quick.
+- **Pair plot** (Grid and density): 2 to 6 number columns; every pair as a
+  scatter (sampled to 2,000 rows) and each column alone on the diagonal (a
+  KDE per **Colour by** group, or **Histograms on the diagonal**).
+- **Parallel coordinates** (Distribution): two or more number columns, each
+  on its own vertical axis (its lowest and highest value at the ends), one
+  line per row (1,000 at most) coloured by group. Hover highlights the
+  nearest line and lists its values.
+- **Stream**: the same columns as Quiver; lines that follow the field
+  (rows of a grid are used as they are, other tables are averaged onto a
+  40 x 40 grid), coloured by speed, with an arrowhead on each line.
+  **Density** spaces the lines. Hover gives the speed and direction at the
+  mouse.
+- **Model results**: plots of a trained model's results, read from plain
+  columns of any table (a predictions file, an evaluation node's output, a
+  training history). Each shows its figures in the plot corner and under
+  **RESULTS** in the Data panel.
+  - **Confusion matrix**: **Actual** and **Predicted** label columns (text
+    or numbers). Each cell shows the count and its share; **Colour and share
+    by**: counts, share of actual (each row adds to 100%, the default),
+    share of predicted, or share of all rows. Accuracy and rows in RESULTS.
+    Hover: "Actual tested_positive · Predicted tested_negative", the rows,
+    the share, right or wrong.
+  - **ROC curve**: **Actual** and the **Score** of the positive class
+    (a probability or any score; higher means positive). AUC in the corner,
+    the chance line. **Positive class**: auto picks 1, true, yes or a label
+    with "positive", else the last label; type another to change it.
+    Hover gives the threshold and both rates.
+  - **Precision-recall curve**: the same columns; precision by recall as a
+    step, the average precision (AP, as scikit-learn) and the positive
+    share as a dashed baseline.
+  - **Calibration**: **Actual** and a **Probability** (0 to 1). The share
+    of positives in each of the **Bins** by the mean predicted probability,
+    the perfectly calibrated diagonal, rows per bin as bars along the
+    bottom (right axis); Brier score and ECE.
+  - **Residuals**: number **Actual** and **Predicted**; actual minus
+    predicted by predicted, a line at 0; RMSE, MAE and R² (large tables are
+    sampled like a scatter; the figures and exports use every row).
+  - **Learning curve**: **X** (training rows or epoch) and one or more
+    curves (train, validation); a **Spread** column per curve draws a band
+    (± that value). The last curve's best point is ringed: **Auto** takes
+    the lowest for a name with loss or error, else the highest.
+  - **Feature importance**: a **Feature** column and its **Importance**,
+    as horizontal bars, largest on top; **Show the top** N (20), an
+    optional **Spread** for error bars. Hover gives the value and the rank.
+
+  Example (diabetes classifier): Confusion matrix of actual by predicted
+  shows 134, 16 / 36, 45 (accuracy 77.5%); ROC of actual by probability
+  gives AUC 0.871; PR gives AP 0.767; Calibration gives Brier 0.143. A
+  Spotify popularity regression gives RMSE 20.76 and R² 0.265 over 2,575
+  rows.
+- **Flows and hierarchies**:
+  - **Sankey**: two or more **Steps** columns, left to right (text or
+    numbers as categories). Each band joins a category of one step to one
+    of the next; its width is the rows, or the sum of a **Value** column. A
+    ready flow table works the same way: Steps = source, target and Value =
+    the flow. **Largest per step** (8) keeps the biggest categories and
+    joins the rest as *other*. Hover a node for its total and share, a band
+    for its value and share of where it starts.
+  - **Treemap**: one to four **Groups** columns (outer to inner) and a
+    **Size** (summed; empty: rows). The rectangles' areas follow the size.
+    **Colour** takes a number column (the mean per rectangle on the theme
+    scale), or leave it empty to colour by the top group. Click a group to
+    zoom into it; right-click, or click the path at the top ("All > Asia"),
+    to go back. The 3,000 largest groups are drawn (the label says when
+    there are more).
+- **Maps** (built-in world map: Natural Earth 1:110m country outlines,
+  public domain, shipped with the Engine, works offline):
+  - **Map: points**: **Longitude** and **Latitude** columns (degrees), an
+    optional **Size** column and **Colour by** (a number makes a scale, text
+    makes groups). The map frames the points; pan and zoom like any plot.
+    Hover gives the row's values and the country under it. A longitude
+    outside -180..180 or a latitude outside -90..90 is refused with a hint
+    (columns swapped?).
+  - **Map: regions**: a **Country** column (names such as "France" or
+    "United States", ISO codes FRA / FR, and common names like UK or Viet
+    Nam) and a **Value**. Several rows for one country: **Sum** or **Mean**.
+    **Colour by the log of the value** for values across orders of
+    magnitude. Names that match no country are listed under the controls
+    (and in the CSV export); countries with no rows stay grey. Hover gives
+    the country, its ISO code, the value and the rows.
+
+  Example: `world_countries.csv` (Natural Earth population and GDP)
+  as a Treemap of continent > country sized by population and coloured by
+  GDP per person, and as Map: regions of gdp_per_person (log); the USGS
+  earthquake feed (`earthquakes_month.csv`) as Map: points sized by
+  magnitude and coloured by depth.
+- **3D**:
+  - **Scatter 3D**: **X**, **Y** and **Z** number columns, **Colour by**
+    (a number column with many values makes a scale with a colour bar; text
+    makes groups) and an optional **Size** column. Above 100,000 points it
+    draws a reproducible sample (the label says so; exports use all rows).
+  - **Line 3D**: X, Y and Z in row order (a path, a trajectory, a gradient
+    descent), one line per Colour-by group.
+  - **Surface**, from either:
+    - **Grid columns**: a table of numbers, such as `volcano.csv` (87 rows
+      by 61 columns). Its columns are X, its rows Y (row 1 at the front),
+      and each cell is a height.
+    - **X, Y, Z columns**: one point per row. Rows on a regular grid keep
+      their own cells. Scattered rows go on a grid (**Grid cells across**)
+      with the mean Z per cell, and **Leave cells with fewer rows open** (5)
+      leaves thin cells open. The panel says how many are open.
+
+    **Draw**: **Fill**, **Lines** (wireframe) or **Both**. **Shade** lights
+    the fill from the upper left so slopes show. **Contours on the floor**
+    draws the level lines under the surface.
+  - **Mesh**: X, Y and Z rows that are not on a grid (survey points, sensor
+    readings) joined into triangles (Delaunay on X and Y). **Draw** and
+    **Shade** work as on a surface, and the colour follows Z on the scale.
+    Above 5,000 points it joins a reproducible sample. The panel says how
+    many triangles it made (800 volcano points make 1,574).
+  - Drag the plot to turn it, right-drag to move it, and use the wheel to
+    zoom; double-click to fit. **Turn** (the
+    default turned view), **Top**, **Front** and **Side** are in the
+    toolbar, and **Fit** frames the data. The view you leave is saved with
+    the plot (and in the Plot node). Hover shows the nearest point's or
+    grid point's X, Y and Z.
+  - Export: PNG of the view or CSV of the points or cells; SVG is 2D only.
+
+  Example: `p4_3d.cyxgraph` (test project), with the Maunga Whau volcano
+  grid as a shaded surface (94 to 195 m) and Spotify as a Scatter 3D of
+  artist_popularity, duration and album tracks, coloured by
+  track_popularity.
+- **Graphs**:
+  - **Network**: one row per link, with **Source** and **Target** columns
+    (names or numbers) and an optional **Weight**. Links between the same
+    pair are added up; a node linked to itself is left out. Up to 5,000
+    nodes.
+    - **Layout**: **Force** (linked nodes pull together; the same picture
+      every time), **Layered** (left to right along the links, for
+      pipelines and model graphs; **Directed** draws arrows) or **Circle**
+      (by group).
+    - **Colour nodes by**: **Groups found** (nodes that link more to each
+      other than to the rest), **A column** (pick it as **Node column**) or
+      **One colour**. **Node size**: by **Links**, by **Weight** or the
+      **Same**. **Labels**: the **Top** N nodes (12), **All** or **None**;
+      labels that would cover each other are left out.
+    - Drag to pan, wheel to zoom. Drag a node to move it; **Re-layout**
+      puts every node back. Hover a node for its group and its links.
+  - **Tree**: one row per node, with **Node** and **Parent** columns (a
+    parent that is not a node, or an empty one, makes a root), an optional
+    **Value** (shown under the name) and **Label** (colours the boxes).
+    - **Direction**: **Top-down** or **Left-right**.
+    - A box is as wide as the room to its neighbours, so a long name ends
+      in "..."; hover shows it in full.
+    - Click a box to fold its branch ("+N" shows how many are hidden);
+      click again to unfold. Folds stay when you turn the tree.
+    - **A trained model**: link the **Model** pin of a **Decision Tree**,
+      **Random Forest** or **Gradient Boosting** node (the second pin on its
+      right) to a Plot node. Opening the plot trains the model in the
+      background and draws its splits: each box is a rule such as
+      `0: album_total_tracks <= 1.5`, or a leaf with its class, sized by
+      the training rows that reach it and coloured by class (Gradient
+      Boosting: each leaf's value). The trainer saves the model in the
+      project's `artifacts/tree_model/` unless **Save model path** names a
+      file.
+    - A forest or a boosted model opens on its first tree. **Tree in the
+      model** steps through them (`<` and `>`, or type a number); it sets
+      the `tree = N` row filter, so **Rows** shows it, and it is saved with
+      the plot. Gradient Boosting has one tree per class each round
+      ("Round 2 · single").
+    - When a box is too narrow, its label drops the number before the
+      colon (`single` instead of `leaf 1.3: single`); hover shows it all.
+  - Export: PNG, SVG, or CSV (Network: the nodes with their group and
+    links, then the links; Tree: the rows; Mesh: the triangle corners).
+
+  Example: `p4_graphs.cyxgraph` (test project): `les_miserables.csv`
+  (77 characters, 254 links, 6 groups found) as a Network,
+  `spotify_tree.csv` (a depth-3 tree for track_popularity >= 60) as a Tree,
+  and `volcano_points.csv` as a Mesh. `p4_tree_model.cyxgraph`: a Decision
+  Tree and a 5-tree Random Forest (depth 3) on the Spotify data predicting
+  `album_type`, each Model pin linked to a Plot (13 nodes; album / single).
+- **Colour** (every plot):
+  - **The scale** (when the plot colours by values: heatmaps, contours,
+    surfaces, maps, scatter colour scales): **Theme** (the default),
+    **Viridis**, **Plasma**, **Magma**, **Cividis**, **Turbo**, **Greys**,
+    or **Cool-warm** for values around 0. The menu shows each gradient.
+  - **Reverse** runs the scale the other way. Untick **Range: data** to set
+    the scale's ends yourself.
+  - **Series colours**: a swatch per series (pie: per slice). Click it for
+    the theme's colours, or **Custom** for any colour; **Theme colour** goes
+    back to the default.
+  - The choices are saved with the plot, and SVG export uses them too. New
+    plots start from the theme.
+- **Line and scatter**: **Show the y = x line** draws a reference line
+  (chance on a ROC curve).
+- **The plot**: hover for values (the nearest x of every series, the
+  scatter point, the histogram bin and its share, the category, the pie
+  slice, the box statistics, the heatmap cell). Drag to pan, wheel to zoom,
+  double-click or **Fit** to fit. **Log Y**, **Legend**.
+- The label next to the toolbar says what is drawn: *exact* (all values),
+  *reduced* (long lines drawn with the lowest and highest value of each
+  step; hover and exports use all points), *sampled* (an even sample of a
+  large scatter; exports use all rows), or *first N rows* (a variable read
+  with a row limit).
+- **Export**: save image as PNG or SVG, copy image, save data as CSV, copy
+  data, Plot with Python (copies a matplotlib script; paste it in the
+  Script Editor and run it to get the figure in Plot Output).
+- The window icon opens the plot in its own window. To keep plots of a
+  dataset or turn one into a Plot node, use Data Studio > Explore > Visualize.
+
+Plot colours come from the theme (Preferences > Theme): the series
+colours, the plot area (a shade of the window colour) and the text.
+
+## The Plot node (CyxWiz Studio canvas)
+
+Search **plot** on the canvas (or open Visualization in the node list) and
+add a **Plot** node. Connect the table you want to look at to its **Data**
+input, at any point of the graph:
+
+```
+Data Input (mnist_784.csv) --> Plot
+```
+
+- Under the node, two lines say what it shows: *Not connected*, *Not
+  available yet* (with the reason), *Not read yet*, *Reading N%*, the plot
+  and its column ("Bar · class") with the rows and the read time, *Out of
+  date*, or *Could not read the data*.
+- Double-click the node (or right-click > Configure, or **Open Plot window**
+  in Properties) to open its Plot window. The window is the same Plot window
+  as above, with a header: *Data at &lt;node&gt;*, rows × columns, the read
+  time, and **Refresh** (**Cancel** while it runs).
+- A loaded Data Input is read as it is. A node after it (a filter, a
+  transform) is run on its own with only the nodes above it; progress and
+  Cancel are in Task View. A Preparation Recipe runs as its steps, as the
+  Data Pipeline runs it: the plot reads the recipe's result (the header names
+  its last step, *Data at Check: nothing admitted*). The first plot is picked for you: the counts of
+  a label column (class, label, target or y), otherwise of a text column,
+  otherwise a histogram of the first number column. The plot type, the
+  columns and the labels you choose are saved in the node.
+- When a node above changes, the plot keeps its data and says *Out of
+  date*; press **Refresh** to read again. Changes beside the plot (for
+  example a Dense layer) do not make it out of date.
+- Nodes that run only inside training (Train/Val/Test Split, DataLoader,
+  Normalize, layers) cannot be plotted yet: the window says so and offers
+  **Plot its input (&lt;node&gt;)**, which connects the Plot node to the node
+  before it.
+- A Data Input without a file says "has no data yet: open it, choose a
+  file and Apply".
+- **Properties** shows the node's saved settings in words: the plot type,
+  the data (for example "grid columns V1 .. V61 (61)"), the rows, the colour
+  and the 3D view. **Details** shows the saved text (`plot_spec`) read-only,
+  with **Copy**. The data itself is never saved in the graph; it is read
+  when the plot opens. The settings are changed in the Plot window; an open
+  Plot window follows Undo and Redo. A Dashboard node shows its widgets and
+  filters the same way (`dashboard_spec`).
+
+### Model evaluation
+
+A Plot node after an evaluation node opens on the fitting plot:
+
+```
+Data Input (actual, predicted, score) --> Confusion Matrix --> Plot
+                                      \-> ROC Curve        --> Plot
+```
+
+- **Confusion Matrix** (actual_col, predicted_col): a heatmap of *Actual*
+  by *Predicted* with the counts in the cells (or the shares, when the node
+  normalizes); hover says "Actual 0 · Predicted 1 · value 38".
+- **ROC Curve** (actual_col, score_col, positive_label): the true positive
+  rate by the false positive rate, the AUC in the title ("ROC curve · AUC
+  0.931") and the y = x chance line.
+- **PR Curve**: precision by recall, the average precision in the title.
+
+The same tables read from a file get the same first plot. The type and
+columns can be changed like any plot.
+
+The old per-type plot entries (Bar Chart, Line Plot, Box Plot and the other
+"Coming Soon" plot nodes) are gone: the Plot window picks the type. A saved
+graph that still has one of them does not load; the message names the node
+so you can remove it and add a Plot node.
+
+## Training Dashboard
+
+Opens with **Train** on the CyxWiz Studio canvas; in the window list it is
+**Training** (Training group), docked at the bottom right by default. It shows the run status, KPI cards (loss, accuracy, time
+remaining), live loss and accuracy charts, custom metrics, data
+preparation progress, execution truth and run comparison. Long runs stay
+smooth: charts draw a reduced copy of each series (up to 4000 points, with
+every spike and dip kept). Each chart uses the same plot view as the Plot
+window: hover for the values of every curve at that epoch (from all
+points), the data label, **Legend** and **Export** (PNG, SVG, copy image,
+CSV with every point, copy data). Use the window icon on a chart to open it
+in its own window; **Auto scale**, **Follow current epoch**, the epoch
+window, **Log loss axis** and **Smooth** are in the chart window's toolbar
+and the dashboard's controls.
+
+Canvas training reports to this window, and so does word-vector training
+(word2vec, GloVe) of a Word Embeddings node: it gets its own run behind the
+**Run** switcher and leaves the model run's view alone (see
+[word_embeddings.md](word_embeddings.md#on-the-training-dashboard)).
+
+## RL Training Dashboard
+
+A separate window for reinforcement learning (episode reward and length,
+policy loss, value loss, explained variance). It opens with **Train RL** on
+the canvas (graphs with RL nodes), or when a script reports RL metrics:
+
+```python
+import pycyxwiz
+
+for episode in range(100):
+    reward = run_episode()          # your code
+    pycyxwiz.rl_update_metric("episode_reward", reward)
+    pycyxwiz.rl_update_metric("episode_length", 200)
+```
+
+Metric names the window shows: `episode_reward`, `episode_length`,
+`policy_loss`, `value_loss`, `explained_variance`.
+
+## Not available yet
+
+- The plot entries in the canvas node search (Line Plot, Box Plot, Quiver
+  Plot, ...) are placeholders; they are replaced by one Plot node whose
+  window picks the plot type (TOFIX134 P2).
+- Bar Chart node: plots the raw file of the first Data Input upstream, not
+  the data at its position in the graph.

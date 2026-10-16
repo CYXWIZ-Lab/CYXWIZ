@@ -1,5 +1,6 @@
 #include "../../core/graph_compiler_dataset_hooks.h"
 #include "../../core/graph_compiler.h"
+#include "../../core/dataset_catalog.h"
 #include "data_loader.h"
 #include "audio_loader.h"
 #include "image_loader.h"
@@ -101,27 +102,23 @@ DataLoader* GetByCategory(FileCategory cat) {
 }
 
 DataLoader* GetByRegisteredDataset(const std::string& name) {
-    // Linear scan across 4 loaders, each checking a hashmap via
-    // IsRegistered — effectively O(1) for practical loader counts. A
-    // name → loader sidecar inside DataRegistry would shave one hash
-    // lookup but requires DataRegistry to know the FileCategory enum
-    // (currently owned by the loaders module); deferred as future work
-    // since the performance delta is negligible.
-    // Text CSVs also register their raw Arrow table for Cat-1 text
-    // operators. Prefer explicit domain loaders over the generic
-    // TabularLoader when both maps contain the same original dataset
-    // name. Materialized outputs have only Arrow backing, so they still
+    // The dataset catalog says what the dataset is. Text CSVs also register
+    // their raw Arrow table for Cat-1 text operators: the catalog's modality
+    // prefers the image / audio / text entry over that table, so the domain
+    // loader owns them. Materialized outputs have only Arrow backing and
     // route through TabularLoader.
-    for (auto* l : GetRegistry().list) {
-        if (l->Category() != FileCategory::Tabular && l->IsRegistered(name)) {
-            return l;
-        }
+    const auto entry = cyxwiz::DatasetCatalog::Instance().Resolve(name);
+    if (!entry) return nullptr;
+    FileCategory category = FileCategory::Tabular;
+    switch (entry->modality) {
+        case cyxwiz::DatasetModality::Image: category = FileCategory::Image; break;
+        case cyxwiz::DatasetModality::Audio: category = FileCategory::Audio; break;
+        case cyxwiz::DatasetModality::Text: category = FileCategory::Text; break;
+        case cyxwiz::DatasetModality::Tabular: break;
+        default: return nullptr;  // only the old map: no loader owns it
     }
-    for (auto* l : GetRegistry().list) {
-        if (l->Category() == FileCategory::Tabular && l->IsRegistered(name)) {
-            return l;
-        }
-    }
+    for (auto* l : GetRegistry().list)
+        if (l->Category() == category && l->IsRegistered(name)) return l;
     return nullptr;
 }
 

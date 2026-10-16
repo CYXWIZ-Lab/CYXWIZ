@@ -90,7 +90,18 @@ JobFitCard BuildJobFitCard(const JobFitInputs& inputs) {
             }
             break;
         case JobEstimateState::Failed:
-            if (card.status.empty()) {
+            if (card.status.empty() && inputs.estimate_data_error) {
+                // The node reads the same data the same way; sending would fail there.
+                card.status = "Data problem";
+                card.kind = RemoteStatusKind::Failed;
+                card.note = "This machine could not read the job's data. The node would fail the same way, so "
+                            "nothing is sent.";
+                card.has_reason = true;
+                card.reason = inputs.estimate_error;
+                card.next = "Apply the Data Input again (check its file), then start.";
+                card.start_enabled = false;
+                card.start_note = "Start Training is off until the job's data loads.";
+            } else if (card.status.empty()) {
                 card.status = "Not estimated";
                 card.note = "The job could not be measured here (" + inputs.estimate_error +
                             "). The node still checks before it starts.";

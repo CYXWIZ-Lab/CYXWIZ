@@ -1,5 +1,6 @@
 #include "crash_run_recorder.h"
 #include "debug_run_paths.h"
+#include "atomic_json_file.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -386,9 +387,11 @@ std::optional<CrashRunSummary> CrashRunRecorder::LoadLastRun() {
     }
 
     try {
-        std::ifstream file(path);
-        nlohmann::json j;
-        file >> j;
+        auto document = ReadJsonFileWithRetry(path);
+        if (!document) {
+            return std::nullopt;
+        }
+        const nlohmann::json& j = *document;
 
         CrashRunSummary summary;
         summary.available = true;
@@ -469,8 +472,13 @@ void CrashRunRecorder::WriteLocked() {
             {"panel_events", panel_events_}
         };
 
-        std::ofstream file(CurrentRunPath(), std::ios::trunc);
-        file << std::setw(2) << j << '\n';
+        // Atomic replace: LoadLastRun() may read concurrently and must
+        // never see a truncated document (tofix94). If the replace fails
+        // (for example a reader holds the file), the previous heartbeat
+        // stays valid and the next one retries.
+        if (!WriteJsonFileAtomically(CurrentRunPath(), j)) {
+            spdlog::debug("CrashRunRecorder: heartbeat not replaced this time");
+        }
     } catch (const std::exception& e) {
         spdlog::warn("CrashRunRecorder: failed to write heartbeat: {}", e.what());
     }

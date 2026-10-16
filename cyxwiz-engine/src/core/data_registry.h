@@ -34,6 +34,7 @@ namespace cyxwiz {
 
 // Forward declarations
 class DatasetHandle;
+struct DatasetCatalogItem;
 
 /** Immutable snapshot used by debugger and Properties-panel consumers. */
 struct SparseFeatureDatasetInfo {
@@ -56,6 +57,20 @@ struct SparseFeatureDatasetInfo {
 /**
  * Memory statistics for monitoring
  */
+// One tabular dataset, wherever it lives (TOFIX154): an in-memory Arrow table
+// or a Parquet file read row group by row group. bytes is the table's size in
+// memory (for a file, the estimate from its metadata).
+struct TableRef {
+    enum class Kind { Memory, Parquet };
+    std::string name;
+    Kind kind = Kind::Memory;
+    int64_t rows = 0;
+    int64_t columns = 0;
+    uint64_t bytes = 0;
+    std::string path;     // the Parquet file ("" in memory)
+    int row_groups = 0;
+};
+
 struct MemoryStats {
     size_t total_allocated = 0;          // Total bytes allocated by all datasets
     size_t total_cached = 0;             // Bytes currently in cache
@@ -295,6 +310,63 @@ public:
     // Apache Arrow columnar data support (Data Studio foundation)
     std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    // A reservation for the current registration (including absence). Copies
+    // share validity; any writer of this name invalidates all outstanding copies.
+    class TabularPublicationToken {
+    public:
+        TabularPublicationToken() = default;
+
+    private:
+        friend class DataRegistry;
+        std::string name_;
+        std::shared_ptr<const void> token_;
+    };
+    // Empty names throw std::invalid_argument; default tokens are invalid.
+    TabularPublicationToken CaptureTabularPublication(const std::string& name);
+    // Exclusively owned worker-to-UI handoff. Dropping it before commit leaves
+    // the registry unchanged. After commit it retains displaced backing until
+    // destruction; release it on a thread suitable for reclaiming that backing.
+    class PreparedArrowPublication {
+    public:
+        PreparedArrowPublication();
+        ~PreparedArrowPublication();
+        PreparedArrowPublication(PreparedArrowPublication&&) noexcept;
+        PreparedArrowPublication& operator=(PreparedArrowPublication&&) noexcept;
+        PreparedArrowPublication(const PreparedArrowPublication&) = delete;
+        PreparedArrowPublication& operator=(const PreparedArrowPublication&) = delete;
+        // Explicit, at most once, outside the registry mutex. Call after node
+        // state is committed. Destruction never invokes callbacks.
+        void Notify() noexcept;
+
+    private:
+        friend class DataRegistry;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+    // Worker-side validation, path normalization, metadata and node allocation.
+    // No registry mutation or token consumption. Candidate name, table pointer
+    // and buffers must stay immutable through publication and while registered.
+    // Audit remains caller-owned.
+    static std::unique_ptr<PreparedArrowPublication> PrepareArrowTablePublication(
+        const TabularPublicationToken& token,
+        std::shared_ptr<class ArrowDataset> candidate,
+        const std::string& source_path, std::string& error);
+    // Commit without table scans, filesystem I/O or notification. Rechecks
+    // ownership/category under the mutex; callback copying precedes mutation.
+    // Caller checks node/project/selection ownership, commits here, swaps its
+    // prebuilt node state without throwing, then calls prepared.Notify().
+    bool TryPublishPreparedArrowTable(PreparedArrowPublication& prepared,
+                                      std::string& error);
+    // Prepare and audit the ArrowDataset privately before calling. The caller
+    // must keep its name, table pointer and buffers immutable during publication
+    // and while registered. ValidateFull and path normalization run outside the
+    // mutex; this is a worker-side boundary, not a render-frame operation.
+    // Only absent/Arrow/Parquet slots can be replaced. Source paths are recorded
+    // by name only: selection-based sources must not reuse filename-only lookup.
+    // A successful commit consumes the token, even if its callback throws.
+    bool TryPublishArrowTable(const TabularPublicationToken& token,
+                              std::shared_ptr<class ArrowDataset> candidate,
+                              const std::string& source_path, std::string& error);
     // Provenance only: no additional ownership of the potentially large table.
     // Reuse requires the exact source/output snapshots and disk artifact stamp.
     struct MaterializationProvenance {
@@ -471,11 +543,11 @@ public:
     /**
      * High-level CSV loader with automatic in-memory vs disk-backed dispatch.
      *
-     * Compares the source file size to the available RAM. If the file comfortably
-     * fits (file_size < 0.75 * available RAM) or force_disk_backed is false and
-     * the file is under a safety threshold, uses LoadCSVToArrow (in-memory Arrow
-     * table). Otherwise converts the CSV to a Snappy Parquet cache in the system
-     * temp dir and opens that via memory-mapped reads.
+     * Compares the source file size to the data budget's result threshold
+     * (TOFIX154 D1/D2: a quarter of the budget). Up to it, uses LoadCSVToArrow
+     * (in-memory Arrow table); above it (or with force_disk_backed) converts
+     * the CSV to a Snappy Parquet ingestion cache and opens that via
+     * memory-mapped reads.
      *
      * The force_disk_backed flag is the Advanced-tab escape hatch: users can
      * force the disk-backed path even for small datasets (for testing, or to
@@ -500,6 +572,28 @@ public:
                                        const CsvProgressCallback& progress_callback = {},
                                        std::string* load_status = nullptr,
                                        const std::string& cache_directory = {});
+
+    /**
+     * Parquet loader with the same dispatch as LoadTabularCSV (TOFIX154): a
+     * table up to the data budget's result threshold is read into memory; a
+     * larger one (or force_disk_backed) is opened in place, never converted.
+     * With selected columns, a large file's projection is written once to
+     * the ingestion cache, one row group at a time.
+     */
+    TabularLoadBackend LoadTabularParquet(const std::string& path,
+                                          const std::string& name,
+                                          bool force_disk_backed = false,
+                                          const std::vector<std::string>& selected_columns = {},
+                                          std::string* load_status = nullptr,
+                                          const std::string& cache_directory = {});
+
+    // The dataset under this name, in memory or on disk (nullopt if neither).
+    std::optional<TableRef> GetTableRef(const std::string& name) const;
+
+    // Its first max_rows rows (a grid, a preview), in memory or on disk: a
+    // table on disk reads only the row groups it needs; 0 rows gives just the
+    // columns. Null when the name is not a table.
+    std::shared_ptr<arrow::Table> ReadTablePreview(const std::string& name, int64_t max_rows);
 
     // Arrow format-specific loaders (for DataInput node)
     //
@@ -556,6 +650,10 @@ public:
     bool HasDataset(const std::string& name) const;
     std::vector<DatasetInfo> ListDatasets() const;
     std::vector<std::string> GetDatasetNames() const;
+    // Every entry of every map, read under the registry lock (cheap: names,
+    // sizes, identities). The dataset catalog (dataset_catalog.h) builds its
+    // list and change events from this; other code should ask the catalog.
+    std::vector<DatasetCatalogItem> CatalogItems() const;
 
     // Type detection
     static DatasetType DetectType(const std::string& path);
@@ -577,16 +675,28 @@ public:
 
     // Memory pressure callback (called when over limit)
     using MemoryPressureCallback = std::function<void(size_t current, size_t limit)>;
-    void SetOnMemoryPressure(MemoryPressureCallback callback) { on_memory_pressure_ = std::move(callback); }
+    void SetOnMemoryPressure(MemoryPressureCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_memory_pressure_.swap(callback);
+    }
 
     // Callbacks
     using DatasetLoadedCallback = std::function<void(const std::string& name, const DatasetInfo& info)>;
     using DatasetUnloadedCallback = std::function<void(const std::string& name)>;
     using LoadProgressCallback = std::function<void(float progress, const std::string& status)>;
 
-    void SetOnDatasetLoaded(DatasetLoadedCallback callback) { on_loaded_ = std::move(callback); }
-    void SetOnDatasetUnloaded(DatasetUnloadedCallback callback) { on_unloaded_ = std::move(callback); }
-    void SetOnLoadProgress(LoadProgressCallback callback) { on_progress_ = std::move(callback); }
+    void SetOnDatasetLoaded(DatasetLoadedCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_loaded_.swap(callback);
+    }
+    void SetOnDatasetUnloaded(DatasetUnloadedCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_unloaded_.swap(callback);
+    }
+    void SetOnLoadProgress(LoadProgressCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        on_progress_.swap(callback);
+    }
 
     // Dataset configuration export/import
     bool ExportConfig(const std::string& name, const std::string& filepath) const;
@@ -634,8 +744,20 @@ public:
 private:
     DataRegistry() = default;
 
+    void InvalidateTabularPublicationUnlocked(const std::string& name) {
+        tabular_publication_tokens_.erase(name);
+    }
+    static std::string NormalizeTabularSourcePath(const std::string& path);
     void RememberTabularSourcePathUnlocked(const std::string& name, const std::string& path);
     void ForgetTabularSourcePathUnlocked(const std::string& name);
+    DatasetLoadedCallback GetDatasetLoadedCallback() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return on_loaded_;
+    }
+    LoadProgressCallback GetLoadProgressCallback() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return on_progress_;
+    }
 
     // Generate unique name if not provided
     std::string GenerateUniqueName(const std::string& base_name);
@@ -646,6 +768,8 @@ private:
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
     std::map<std::string, MaterializationProvenance> materialization_provenance_;
+    // Weak reservations avoid revisions/tombstones and cannot retain datasets.
+    std::map<std::string, std::weak_ptr<const void>> tabular_publication_tokens_;
 
     // Disk-backed Parquet datasets — populated by LoadTabularCSV when a file
     // is too large to fit comfortably in RAM. Lookups by name fall through

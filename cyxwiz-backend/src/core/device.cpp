@@ -9,9 +9,7 @@
 #include <set>
 #include <tuple>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz {
 
@@ -34,7 +32,6 @@ std::string FallbackDeviceName(DeviceType type, int device_id) {
            std::to_string(device_id);
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 bool TryGetArrayFireBackend(DeviceType type, af::Backend& backend) {
     switch (type) {
         case DeviceType::CPU:
@@ -377,7 +374,6 @@ void LogDeviceProbeFailureOnce(const detail::DeviceProbeFailure& failure) {
         failure.message,
         DeviceProbeFailureRemediation(failure));
 }
-#endif
 
 } // namespace
 
@@ -455,7 +451,6 @@ DeviceInfo Device::GetInfo() const {
     info.name = FallbackDeviceName(type_, device_id_);
     info.name_is_fallback = true;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::Backend backend = AF_BACKEND_DEFAULT;
     if (TryGetArrayFireBackend(type_, backend) &&
         IsArrayFireBackendBuilt(type_)) {
@@ -475,7 +470,6 @@ DeviceInfo Device::GetInfo() const {
 
         info = QuerySelectedArrayFireDeviceInfo(type_, device_id_);
     } else
-#endif
     {
         info.backend_available = type_ == DeviceType::CPU;
         info.device_selectable = type_ == DeviceType::CPU;
@@ -494,7 +488,6 @@ DeviceActivationResult Device::ActivateExact(bool validate_execution) const {
     result.requested_type = type_;
     result.requested_device_id = device_id_;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     af::Backend backend = AF_BACKEND_DEFAULT;
     if (!TryGetArrayFireBackend(type_, backend) ||
         !IsArrayFireBackendBuilt(type_)) {
@@ -552,16 +545,6 @@ DeviceActivationResult Device::ActivateExact(bool validate_execution) const {
             // The failed stage and error remain authoritative.
         }
     }
-#else
-    result.stage = DeviceActivationStage::Complete;
-    result.success = type_ == DeviceType::CPU && device_id_ == 0;
-    result.execution_validated = result.success && validate_execution;
-    result.effective_type = DeviceType::CPU;
-    result.effective_device_id = 0;
-    result.message = result.success
-        ? "Native development CPU device selected"
-        : "ArrayFire backend is unavailable in this reduced build";
-#endif
 
     return result;
 }
@@ -607,7 +590,6 @@ bool Device::IsActive() const {
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
     std::vector<DeviceInfo> devices;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     ScopedArrayFireDeviceState restore_state;
     ProductionArrayFireProbeAdapter adapter;
     std::vector<DeviceType> backend_types = {DeviceType::CPU};
@@ -626,12 +608,6 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
         }
         LogDeviceProbeFailureOnce(failure);
     }
-#else
-    DeviceInfo cpu = Device(DeviceType::CPU, 0).GetInfo();
-    cpu.backend_available = true;
-    cpu.device_selectable = true;
-    devices.push_back(std::move(cpu));
-#endif
 
     spdlog::info("Total devices found: {}", devices.size());
     return devices;
@@ -658,8 +634,13 @@ void Device::RecordProcessDevice(DeviceType type, int device_id) {
     ProcessDeviceSlot() = ProcessDeviceSelection{type, device_id};
 }
 
+void Device::ActivateProcessDeviceOnThisThread() {
+    if (const auto selected = GetProcessDevice()) {
+        Device(selected->type, selected->device_id).ActivateExact(false);
+    }
+}
+
 Device* Device::GetCurrentDevice() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     // Query ArrayFire directly. The previous implementation retained a pointer
     // to the Device object passed to SetActive(); GUI callers use temporary
     // Device values, so that pointer became null/dangling as soon as the caller
@@ -686,10 +667,6 @@ Device* Device::GetCurrentDevice() {
     } catch (const af::exception&) {
         return nullptr;
     }
-#else
-    static Device cpu_device(DeviceType::CPU, 0);
-    return &cpu_device;
-#endif
 }
 
 } // namespace cyxwiz

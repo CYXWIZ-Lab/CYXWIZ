@@ -32,7 +32,11 @@ std::string DataRegistry::GenerateUniqueName(const std::string& base_name) {
 void DataRegistry::ForgetTabularSourcePathUnlocked(const std::string& name) {
     auto it = tabular_source_paths_by_name_.find(name);
     if (it == tabular_source_paths_by_name_.end()) return;
-    tabular_dataset_by_source_path_.erase(it->second);
+    InvalidateTabularPublicationUnlocked(name);
+    auto reverse = tabular_dataset_by_source_path_.find(it->second);
+    if (reverse != tabular_dataset_by_source_path_.end() && reverse->second == name) {
+        tabular_dataset_by_source_path_.erase(reverse);
+    }
     tabular_source_paths_by_name_.erase(it);
 }
 
@@ -47,6 +51,7 @@ void DataRegistry::UnloadDataset(const std::string& name) {
 
     auto it = datasets_.find(name);
     if (it != datasets_.end()) {
+        InvalidateTabularPublicationUnlocked(name);
         datasets_.erase(it);
         spdlog::info("Unloaded dataset: {}", name);
 
@@ -65,6 +70,7 @@ void DataRegistry::UnloadAll() {
         names.push_back(name);
     }
 
+    tabular_publication_tokens_.clear();
     datasets_.clear();
 
     for (const auto& name : names) {

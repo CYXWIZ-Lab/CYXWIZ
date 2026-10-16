@@ -77,8 +77,6 @@ inline std::string FingerprintPlacementEntries(
         HashExecutionPlacementField(hash, placement.observation_device);
         HashExecutionPlacementField(hash, placement.observation_dtype);
         HashExecutionPlacementField(
-            hash, placement.observation_shape_signature);
-        HashExecutionPlacementField(
             hash, placement.observation_probe_outcome);
         HashExecutionPlacementField(hash, placement.observation_probe_scope);
     }
@@ -212,20 +210,21 @@ inline bool IsArrayFireTrainingLoss(gui::NodeType type) {
         case gui::NodeType::SmoothL1Loss:
         case gui::NodeType::HuberLoss:
         case gui::NodeType::NLLLoss:
+        case gui::NodeType::TripletLoss:
+        case gui::NodeType::ContrastiveLoss:
+        case gui::NodeType::CosineEmbeddingLoss:
+        case gui::NodeType::SoftDiceLoss:
+        case gui::NodeType::TverskyLoss:
+        case gui::NodeType::JaccardLoss:
             return true;
         default:
             return false;
     }
 }
 
-inline bool IsNativeCpuTrainingLoss(gui::NodeType type) {
-    return type == gui::NodeType::SoftDiceLoss ||
-           type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss;
-}
-
+// Every training loss runs on ArrayFire (TOFIX140, 58a94b3c): no native CPU loss.
 inline bool IsSupportedTrainingLoss(gui::NodeType type) {
-    return IsArrayFireTrainingLoss(type) || IsNativeCpuTrainingLoss(type);
+    return IsArrayFireTrainingLoss(type);
 }
 
 inline bool IsSupportedTrainingOptimizer(gui::NodeType type) {
@@ -351,40 +350,23 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
     }
 
     const bool supported_loss = IsSupportedTrainingLoss(config.loss_type);
-    const bool arrayfire_loss = IsArrayFireTrainingLoss(config.loss_type);
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
         config.loss_node_id >= 0 ? config.loss_node_id : -3001,
         "loss",
         "Loss." + TrainingLossPlacementName(config),
         context,
-        !supported_loss
-            ? BackendPlacementStatus::Unsupported
-            : (arrayfire_loss
-                   ? ExecutionPlacementStatus::ArrayFire
-                   : BackendPlacementStatus::Cpu),
-        !supported_loss
-            ? "loss_unsupported"
-            : (arrayfire_loss
-                   ? "loss_arrayfire"
-                   : "loss_native_cpu_compatibility"),
-        !supported_loss
-            ? "unavailable"
-            : (arrayfire_loss ? backend : "native_cpu"),
-        !supported_loss
-            ? "TrainingExecutor has no configured loss implementation for "
-              "this node type."
-            : (arrayfire_loss
-                   ? "Loss computation is assigned to the selected ArrayFire "
-                     "backend."
-                   : "This loss currently executes through its declared "
-                     "native CPU compatibility implementation.")));
+        supported_loss ? ExecutionPlacementStatus::ArrayFire : BackendPlacementStatus::Unsupported,
+        supported_loss ? "loss_arrayfire" : "loss_unsupported",
+        supported_loss ? backend : "unavailable",
+        supported_loss
+            ? "Loss computation is assigned to the selected ArrayFire backend."
+            : "TrainingExecutor has no configured loss implementation for "
+              "this node type."));
 
     const bool supported_metrics =
         IsSupportedTrainingMetricContract(config);
     const bool sequence_metrics =
         supported_metrics && config.sequence_batch.enabled;
-    const bool native_sequence_metrics = sequence_metrics &&
-        !config.sequence_batch.create_causal_lm_targets;
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
         -3002,
         "metrics",
@@ -396,26 +378,18 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
                           ? "Metrics.Regression"
                           : "Metrics.Classification")),
         context,
-        !supported_metrics
-            ? BackendPlacementStatus::Unsupported
-            : (native_sequence_metrics
-                   ? BackendPlacementStatus::Cpu
-                   : ExecutionPlacementStatus::ArrayFire),
-        supported_metrics
-            ? (native_sequence_metrics
-                   ? "metrics_sequence_native_cpu_compatibility"
-                   : "metrics_arrayfire_scalar_reduction")
-            : "metrics_loss_target_contract_unsupported",
-        !supported_metrics
-            ? "unavailable"
-            : (native_sequence_metrics ? "native_cpu" : backend),
+        supported_metrics ? ExecutionPlacementStatus::ArrayFire
+                          : BackendPlacementStatus::Unsupported,
+        supported_metrics ? "metrics_arrayfire_scalar_reduction"
+                          : "metrics_loss_target_contract_unsupported",
+        supported_metrics ? backend : "unavailable",
         !supported_metrics
             ? "The configured loss and target value kind do not select a "
               "supported training metric contract."
-            : (native_sequence_metrics
-                   ? "Sequence tagging metrics currently materializes logits "
-                     "and targets for its declared native CPU compatibility "
-                     "implementation."
+            : (sequence_metrics
+                   ? "Sequence metrics take the argmax and token counts on "
+                     "the ArrayFire device; sequence tagging downloads only "
+                     "the predicted id matrix for span matching."
                    : "Metrics use ArrayFire reductions with bounded scalar "
                      "reporting.")));
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
@@ -483,9 +457,7 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
             : "optimizer_unsupported",
         supported_optimizer ? backend : "unavailable",
         supported_optimizer
-            ? "Parameter updates are assigned to the selected ArrayFire "
-              "backend; any runtime native CPU fallback is recorded as an "
-              "event."
+            ? "Parameter updates run on the selected ArrayFire backend."
             : "TrainingExecutor has no optimizer implementation for this "
               "node type."));
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(

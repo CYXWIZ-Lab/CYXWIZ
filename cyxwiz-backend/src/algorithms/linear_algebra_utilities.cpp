@@ -18,7 +18,7 @@
 namespace cyxwiz {
 
 // ============================================================================
-// Utility Functions
+// Utility Functions (host matrix constructors; no compute)
 // ============================================================================
 
 MatrixResult LinearAlgebra::Identity(int n) {
@@ -120,48 +120,5 @@ std::vector<double> LinearAlgebra::GetDiagonal(const std::vector<std::vector<dou
     }
     return diag;
 }
-
-MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<double>>& A, int k) {
-    MatrixResult result;
-
-    SVDResult svd = SVD(A, false);
-    if (!svd.success) {
-        result.error_message = "SVD failed: " + svd.error_message;
-        return result;
-    }
-
-    if (k <= 0 || k > svd.k) {
-        result.error_message = "k must be between 1 and min(m,n)";
-        return result;
-    }
-
-    // Truncate to k components: A_k = U_k * S_k * V_k^T
-    int m = svd.m;
-    int n = svd.n;
-
-    // Compute U_k * S_k
-    std::vector<std::vector<double>> US(m, std::vector<double>(k));
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < k; ++j) {
-            US[i][j] = svd.U[i][j] * svd.S[j];
-        }
-    }
-
-    // Compute (U_k * S_k) * V_k^T
-    result.matrix.resize(m, std::vector<double>(n, 0.0));
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
-            for (int l = 0; l < k; ++l) {
-                result.matrix[i][j] += US[i][l] * svd.Vt[l][j];
-            }
-        }
-    }
-
-    result.rows = m;
-    result.cols = n;
-    result.success = true;
-    return result;
-}
-
 
 } // namespace cyxwiz

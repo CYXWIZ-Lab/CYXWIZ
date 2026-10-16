@@ -8,6 +8,7 @@ struct GraphReplacementActivity {
     bool training = false;
     bool testing = false;
     bool preparing_test = false;
+    bool loading_training_data = false;  // Train loads the Data Inputs first
     bool simulation = false;
     bool pipeline = false;
     bool reinforcement_learning = false;
@@ -16,6 +17,7 @@ inline std::string_view GraphReplacementBlockReason(const GraphReplacementActivi
     if (state.training) return "training is active (including pause or cleanup)";
     if (state.testing) return "testing is active";
     if (state.preparing_test) return "Run Test preparation is active";
+    if (state.loading_training_data) return "the graph's data is loading before training";
     if (state.simulation) return "simulation is active";
     if (state.pipeline) return "a data pipeline is active";
     if (state.reinforcement_learning) return "reinforcement learning is active";

@@ -1,177 +1,144 @@
-﻿#include "table_viewer.h"
-#include "../icons.h"
+// Table Viewer: Export (a menu: CSV, TSV, JSON, Parquet to a file, or CSV to
+// the clipboard) and Find (a window over the grid's filter and its options).
 
+#include "table_viewer.h"
+#include "../../core/file_dialogs.h"
+#include "../../data/arrow_data_table.h"
+#include "../../data/table_text_export.h"
+#include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+
+#include <arrow/io/file.h>
 #include <imgui.h>
+#include <parquet/arrow/writer.h>
 #include <spdlog/spdlog.h>
 
 #include <cstring>
-#include <sstream>
+#include <fstream>
+#include <numeric>
 #include <string>
 
 namespace cyxwiz {
-// ============================================================================
-// Export Dialog
-// ============================================================================
 
-void TableViewerPanel::RenderExportDialog() {
-    if (!show_export_dialog_) return;
-
-    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin(ICON_FA_FILE_EXPORT " Export Table", &show_export_dialog_)) {
-        TableTab* tab = GetActiveTab();
-        if (!tab || !tab->table) {
-            ImGui::TextDisabled("No table to export");
-            ImGui::End();
-            return;
-        }
-
-        static int export_format = 0;  // 0=CSV, 1=TSV, 2=JSON
-        static bool include_headers = true;
-        static bool filtered_only = false;
-        static char export_path[512] = "";
-
-        ImGui::Text("Format:");
-        ImGui::RadioButton("CSV (Comma-separated)", &export_format, 0);
-        ImGui::RadioButton("TSV (Tab-separated)", &export_format, 1);
-        ImGui::RadioButton("JSON", &export_format, 2);
-
-        ImGui::Separator();
-        ImGui::Text("Options:");
-        ImGui::Checkbox("Include headers", &include_headers);
-        ImGui::Checkbox("Export filtered rows only", &filtered_only);
-
-        ImGui::Separator();
-        ImGui::Text("Output Path:");
-        ImGui::InputText("##ExportPath", export_path, sizeof(export_path));
-        ImGui::SameLine();
-        if (ImGui::Button("Browse...")) {
-            // TODO: Open file dialog
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_FILE_EXPORT " Export", ImVec2(120, 0))) {
-            // Build export content
-            std::ostringstream ss;
-            char delimiter = (export_format == 0) ? ',' : '\t';
-
-            if (export_format < 2) {  // CSV/TSV
-                // Headers
-                if (include_headers) {
-                    const auto& headers = tab->table->GetHeaders();
-                    for (size_t i = 0; i < headers.size(); i++) {
-                        if (i > 0) ss << delimiter;
-                        ss << headers[i];
-                    }
-                    ss << "\n";
-                }
-
-                // Data
-                const auto& indices = (filtered_only && tab->filter_mode_hide && !tab->filtered_indices.empty()) ?
-                    tab->filtered_indices : tab->sorted_indices;
-
-                for (size_t idx : indices) {
-                    for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
-                        if (c > 0) ss << delimiter;
-                        ss << tab->table->GetCellAsString(idx, c);
-                    }
-                    ss << "\n";
-                }
-            } else {  // JSON
-                ss << "[\n";
-                const auto& headers = tab->table->GetHeaders();
-                const auto& indices = (filtered_only && tab->filter_mode_hide && !tab->filtered_indices.empty()) ?
-                    tab->filtered_indices : tab->sorted_indices;
-
-                for (size_t i = 0; i < indices.size(); i++) {
-                    size_t idx = indices[i];
-                    ss << "  {";
-                    for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
-                        if (c > 0) ss << ", ";
-                        ss << "\"" << headers[c] << "\": \"" << tab->table->GetCellAsString(idx, c) << "\"";
-                    }
-                    ss << "}";
-                    if (i < indices.size() - 1) ss << ",";
-                    ss << "\n";
-                }
-                ss << "]\n";
-            }
-
-            // Copy to clipboard for now (file saving needs platform dialog)
-            ImGui::SetClipboardText(ss.str().c_str());
-            spdlog::info("Exported table to clipboard ({} bytes)", ss.str().length());
-            show_export_dialog_ = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            show_export_dialog_ = false;
-        }
-    }
-    ImGui::End();
+void TableViewerPanel::RenderExportMenu(TableTab* tab) {
+    if (!ImGui::BeginPopup("##export")) return;
+    const size_t all = tab->GetRowCount();
+    const size_t shown = tab->grid.DisplayIndices().size();
+    ImGui::MenuItem("Only the shown rows", nullptr, &export_shown_rows_only_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%zu of %zu rows, in the grid's order (sorted, filtered)", shown, all);
+    ImGui::MenuItem("Column names first (CSV, TSV)", nullptr, &export_headers_);
+    ImGui::Separator();
+    if (ImGui::MenuItem("CSV...")) ExportTable(tab, 0);
+    if (ImGui::MenuItem("TSV...")) ExportTable(tab, 1);
+    if (ImGui::MenuItem("JSON...")) ExportTable(tab, 2);
+    if (ImGui::MenuItem("Parquet...")) ExportTable(tab, 3);
+    ImGui::Separator();
+    if (ImGui::MenuItem(ICON_FA_COPY " Copy as CSV")) ExportTable(tab, 4);
+    ImGui::EndPopup();
 }
 
-// ============================================================================
-// Find/Replace Dialog
-// ============================================================================
+void TableViewerPanel::ExportTable(TableTab* tab, int format) {
+    if (!tab || !tab->grid.table) return;
+    const DataTable& table = *tab->grid.table;
+    std::vector<size_t> rows;
+    if (export_shown_rows_only_) {
+        rows = tab->grid.DisplayIndices();
+    } else {
+        rows.resize(table.GetRowCount());
+        std::iota(rows.begin(), rows.end(), size_t(0));
+    }
+    const std::string count = std::to_string(rows.size()) + " rows";
+    status_note_error_ = false;
+    if (format == 4) {
+        ImGui::SetClipboardText(TableText(table, rows, TableTextFormat::Csv, export_headers_).c_str());
+        status_note_ = "Copied " + count + " as CSV";
+        return;
+    }
+    static const char* kExt[] = {"csv", "tsv", "json", "parquet"};
+    static const char* kName[] = {"CSV", "TSV", "JSON", "Parquet"};
+    const FileDialogs::FilterList filters = {FileDialogs::Filter{kName[format], kExt[format]}};
+    const std::string suggested = (tab->filename.empty() ? std::string("table") : tab->filename) + "." + kExt[format];
+    const auto path = FileDialogs::SaveFile("Export table", filters, nullptr, suggested.c_str());
+    if (!path) return;
+    bool ok = false;
+    if (format == 3) {
+        const auto arrow_table = ArrowFromDataTable(*TableRows(table, rows));
+        auto out = arrow::io::FileOutputStream::Open(*path);
+        ok = arrow_table && out.ok() &&
+             parquet::arrow::WriteTable(*arrow_table, arrow::default_memory_pool(), *out, 64 * 1024).ok() &&
+             (*out)->Close().ok();
+    } else {
+        const auto kind = format == 0 ? TableTextFormat::Csv : format == 1 ? TableTextFormat::Tsv : TableTextFormat::Json;
+        std::ofstream file(*path, std::ios::binary);
+        file << TableText(table, rows, kind, export_headers_);
+        ok = static_cast<bool>(file);
+    }
+    status_note_error_ = !ok;
+    status_note_ = ok ? "Exported " + count + " to " + *path : "Could not write " + *path;
+    if (ok) spdlog::info("Table Viewer: exported {} to {}", count, *path);
+    else spdlog::error("Table Viewer: could not write {}", *path);
+}
 
 void TableViewerPanel::RenderFindDialog() {
     if (!show_find_dialog_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 170), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(ICON_FA_MAGNIFYING_GLASS " Find in Table", &show_find_dialog_)) {
         TableTab* tab = GetActiveTab();
-        if (!tab || !tab->table) {
+        if (!tab || !tab->grid.table) {
             ImGui::TextDisabled("No table loaded");
             ImGui::End();
             return;
         }
+        TableGrid& grid = tab->grid;
+        const ui::Tokens& t = ui::CurrentTokens();
 
-        static bool case_sensitive = false;
-        static bool whole_cell = false;
-        static int found_count = -1;
-
-        ImGui::Text("Find:");
-        ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
-        bool search_changed = ImGui::InputText("##FindInput", find_buffer_, sizeof(find_buffer_));
-
-        ImGui::Checkbox("Case sensitive", &case_sensitive);
+        bool changed = ImGui::InputTextWithHint("##FindInput", "Text to find", find_buffer_, sizeof(find_buffer_));
+        changed |= ImGui::Checkbox("Case sensitive", &grid.filter_case_sensitive);
         ImGui::SameLine();
-        ImGui::Checkbox("Whole cell match", &whole_cell);
+        changed |= ImGui::Checkbox("Whole cell", &grid.filter_whole_cell);
 
-        ImGui::Separator();
-
-        if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find All", ImVec2(120, 0)) || search_changed) {
-            // Use filter functionality
-            tab->filter_text = find_buffer_;
-            std::strncpy(tab->filter_buffer, find_buffer_, sizeof(tab->filter_buffer) - 1);
-
-            // Count matches
-            found_count = 0;
-            std::string search_term = find_buffer_;
-            for (size_t r = 0; r < tab->table->GetRowCount(); r++) {
-                for (size_t c = 0; c < tab->table->GetColumnCount(); c++) {
-                    std::string cell = tab->table->GetCellAsString(r, c);
-                    if (cell.find(search_term) != std::string::npos) {
-                        found_count++;
+        // The grid's filter: matches are highlighted (Hide in the toolbar
+        // shows only their rows); the count is of every cell.
+        if (changed) {
+            grid.SetFilter(find_buffer_);
+            find_cells_ = -1;
+            find_rows_ = 0;
+            if (find_buffer_[0] != '\0') {
+                find_cells_ = 0;
+                for (size_t r = 0; r < grid.table->GetRowCount(); r++) {
+                    bool row_hit = false;
+                    for (size_t c = 0; c < grid.table->GetColumnCount(); c++) {
+                        if (grid.Matches(grid.CellText(r, c))) {
+                            ++find_cells_;
+                            row_hit = true;
+                        }
                     }
+                    if (row_hit) ++find_rows_;
                 }
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_XMARK " Clear", ImVec2(120, 0))) {
-            std::memset(find_buffer_, 0, sizeof(find_buffer_));
-            tab->filter_text.clear();
-            std::memset(tab->filter_buffer, 0, sizeof(tab->filter_buffer));
-            found_count = -1;
-        }
 
-        if (found_count >= 0) {
-            ImGui::Text("Found: %d matches", found_count);
+        ImGui::Spacing();
+        if (ui::SecondaryButton(ICON_FA_XMARK " Clear", find_buffer_[0] != '\0', "Nothing to clear")) {
+            std::memset(find_buffer_, 0, sizeof(find_buffer_));
+            grid.SetFilter("");
+            find_cells_ = -1;
         }
+        if (find_cells_ >= 0) {
+            ImGui::SameLine(0.0f, 14.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(find_cells_ ? t.text : t.text_dim, "%d %s in %zu %s match", find_cells_,
+                               find_cells_ == 1 ? "cell" : "cells", find_rows_, find_rows_ == 1 ? "row" : "rows");
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Matches are highlighted; tick Hide in the toolbar to show only their rows.");
+        ImGui::PopTextWrapPos();
     }
     ImGui::End();
 }
 
 }  // namespace cyxwiz
-

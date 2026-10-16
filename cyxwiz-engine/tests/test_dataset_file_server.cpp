@@ -13,11 +13,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include <arrow/table.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -145,6 +148,21 @@ int main() {
         std::string error;
         Check(!server.RegisterJob("job_x", other.dump(), cache, error) && Contains(error, "not loaded"),
               "missing dataset refused: " + error);
+    }
+
+    std::cout << "refuses a job whose dataset is empty\n";
+    {
+        // What an Apply that read nothing used to leave in the registry (E3 2026-10-08).
+        auto empty_table = arrow::Table::MakeEmpty(loaded[kTrain]->GetArrowTable()->schema()).ValueOrDie();
+        loaded["empty_tokens"] = std::make_shared<cyxwiz::ArrowDataset>(empty_table, "empty_tokens");
+        nlohmann::json other = GraphWithTestInput(root);
+        for (auto& node : other["nodes"]) {
+            if (node.value("id", 0) == 1) node["parameters"]["dataset_name"] = "empty_tokens";
+        }
+        std::string error;
+        const bool registered = server.RegisterJob("job_e", other.dump(), cache, error);
+        Check(!registered && Contains(error, "empty (0 rows)"), "empty dataset refused: " + error);
+        loaded.erase("empty_tokens");
     }
 
     std::string error;

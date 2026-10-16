@@ -43,14 +43,14 @@
       {"id": "bottleneck_conv2", "type": "Conv2D", "name": "Bottleneck Conv2", "pos": [450, 600], "params": {"filters": "256", "kernel_size": "3", "padding": "same"}},
       {"id": "bottleneck_act2", "type": "ReLU", "name": "ReLU", "pos": [600, 600]},
 
-      {"id": "up1", "type": "Conv2D", "name": "UpConv1", "pos": [750, 600], "params": {"filters": "128", "kernel_size": "2", "stride": "2", "transposed": "true"}},
+      {"id": "up1", "type": "ConvTranspose2D", "name": "UpConv1", "pos": [750, 600], "params": {"out_channels": "128", "kernel_size": "2", "stride": "2", "padding": "0", "output_padding": "0"}},
       {"id": "concat1", "type": "Concatenate", "name": "Skip Concat 1", "pos": [900, 450]},
       {"id": "dec1_conv1", "type": "Conv2D", "name": "Dec1 Conv1", "pos": [1050, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
       {"id": "dec1_act1", "type": "ReLU", "name": "ReLU", "pos": [1200, 450]},
       {"id": "dec1_conv2", "type": "Conv2D", "name": "Dec1 Conv2", "pos": [1350, 450], "params": {"filters": "128", "kernel_size": "3", "padding": "same"}},
       {"id": "dec1_act2", "type": "ReLU", "name": "ReLU", "pos": [1500, 450]},
 
-      {"id": "up2", "type": "Conv2D", "name": "UpConv2", "pos": [1650, 450], "params": {"filters": "$base_filters", "kernel_size": "2", "stride": "2", "transposed": "true"}},
+      {"id": "up2", "type": "ConvTranspose2D", "name": "UpConv2", "pos": [1650, 450], "params": {"out_channels": "$base_filters", "kernel_size": "2", "stride": "2", "padding": "0", "output_padding": "0"}},
       {"id": "concat2", "type": "Concatenate", "name": "Skip Concat 2", "pos": [1800, 300]},
       {"id": "dec2_conv1", "type": "Conv2D", "name": "Dec2 Conv1", "pos": [1950, 300], "params": {"filters": "$base_filters", "kernel_size": "3", "padding": "same"}},
       {"id": "dec2_act1", "type": "ReLU", "name": "ReLU", "pos": [2100, 300]},

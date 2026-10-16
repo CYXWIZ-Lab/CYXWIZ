@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dataset_batcher.h"
+#include "label_vocabulary.h"
 #include "graph_compiler.h"
 #include "parquet_arrow_batcher.h"
 #include "sparse_feature_dataset_batcher.h"
@@ -47,6 +48,9 @@ struct TrainingBatcherSet {
     std::unique_ptr<IBatcher> prefetch_train;
     std::unique_ptr<IBatcher> prefetch_val;
     std::unique_ptr<IBatcher> prefetch_test;
+    // Class names of a text label column, in index order (TOFIX145); empty
+    // for numeric labels.
+    std::vector<std::string> label_classes;
     IBatcher* train = nullptr;
     IBatcher* val = nullptr;
     IBatcher* test = nullptr;
@@ -74,6 +78,7 @@ struct TrainingBatcherSet {
         swap(num_train_samples, other.num_train_samples);
         swap(num_val_samples, other.num_val_samples);
         swap(num_test_samples, other.num_test_samples);
+        swap(label_classes, other.label_classes);
     }
 };
 
@@ -115,17 +120,28 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
     const std::string& partition_column,
     const std::string& context);
 
+// A text label column is encoded to class indices first, over `vocabulary`
+// when given (shared by separately supplied partitions), else over the
+// dataset's own column; throws std::runtime_error when that fails.
 TrainingBatcherSet BuildArrowTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ArrowDataset> dataset,
     const std::string& label_column,
-    int batch_size);
+    int batch_size,
+    std::shared_ptr<const LabelVocabulary> vocabulary = nullptr);
 
 TrainingBatcherSet BuildParquetTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ParquetBackedDataset> dataset,
     const std::string& label_column,
-    int batch_size);
+    int batch_size,
+    std::shared_ptr<const LabelVocabulary> vocabulary = nullptr);
+
+// The dataset with its text label column as int32 class indices over
+// `vocabulary`; the dataset itself when the label is not text.
+std::shared_ptr<ArrowDataset> WithEncodedLabels(const std::shared_ptr<ArrowDataset>& dataset,
+                                                const std::string& label_column,
+                                                const LabelVocabulary& vocabulary);
 
 TrainingBatcherSet BuildSparseTrainingBatchers(
     const TrainingConfiguration& config,

@@ -494,7 +494,7 @@ inline RequestedRouteTrainingReadiness PreviewRequestedRouteTrainingReadiness() 
 }
 
 inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
-    ArrayFireFallbackPolicy fallback_policy) {
+    ExecutionPolicy execution_policy) {
     const auto pending = GetPendingExecutionDeviceSelection();
     const auto inventory = Device::GetAvailableDevices();
     DeviceType requested_type = DeviceType::CPU;
@@ -551,8 +551,8 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
     bool selection_fallback_applied = false;
 
     if (!requested_activation.success) {
-        if (fallback_policy ==
-            ArrayFireFallbackPolicy::ForbidNativeCpuFallback) {
+        if (execution_policy ==
+            ExecutionPolicy::Strict) {
             throw std::runtime_error(
                 "Requested ArrayFire device preflight failed: " +
                 FormatActivationFailure(requested_activation));
@@ -595,7 +595,7 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
     }
 
     ExecutionDeviceContext context =
-        CaptureCurrentExecutionDeviceContext(fallback_policy);
+        CaptureCurrentExecutionDeviceContext(execution_policy);
     context.requested_backend =
         ExecutionDeviceSelectionBackendName(requested_type);
     context.requested_device_id = requested_device_id;
@@ -640,18 +640,18 @@ inline std::mutex& NextRunExecutionPolicyMutex() {
     return mutex;
 }
 
-inline std::optional<ArrayFireFallbackPolicy>&
+inline std::optional<ExecutionPolicy>&
 NextRunExecutionPolicySlot() {
-    static std::optional<ArrayFireFallbackPolicy> policy;
+    static std::optional<ExecutionPolicy> policy;
     return policy;
 }
 
-inline void SetNextRunExecutionPolicy(ArrayFireFallbackPolicy policy) {
+inline void SetNextRunExecutionPolicy(ExecutionPolicy policy) {
     std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
     NextRunExecutionPolicySlot() = policy;
 }
 
-inline std::optional<ArrayFireFallbackPolicy> GetNextRunExecutionPolicy() {
+inline std::optional<ExecutionPolicy> GetNextRunExecutionPolicy() {
     std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
     return NextRunExecutionPolicySlot();
 }
@@ -659,13 +659,6 @@ inline std::optional<ArrayFireFallbackPolicy> GetNextRunExecutionPolicy() {
 inline void ClearNextRunExecutionPolicy() {
     std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
     NextRunExecutionPolicySlot().reset();
-}
-
-inline const char* ExecutionPolicyDisplayName(
-    ArrayFireFallbackPolicy policy) {
-    return policy == ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-        ? "Strict ArrayFire residency"
-        : "Compatibility with recorded fallback";
 }
 
 } // namespace cyxwiz

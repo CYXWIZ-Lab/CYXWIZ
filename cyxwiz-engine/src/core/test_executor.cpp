@@ -1,7 +1,11 @@
 #include "test_executor.h"
+#include "execution_device_context.h"
+#include "metric_learning_evaluation.h"
+#include "metric_learning_sampling.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "classification_decision.h"
+#include "one_vs_rest_curves.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
 
@@ -98,8 +102,15 @@ TestExecutor::~TestExecutor() {
     Stop();
 }
 
-void TestExecutor::SetModel(std::shared_ptr<SequentialModel> model) {
-    model_ = model;
+void TestExecutor::SetModel(std::shared_ptr<SequentialModel> model,
+                            std::optional<ProcessDeviceSelection> model_device) {
+    model_ = std::move(model);
+    model_device_ = model_device;
+    if (model_ && !model_device_) {
+        if (const auto* current = Device::GetCurrentDevice()) {
+            model_device_ = ProcessDeviceSelection{current->GetType(), current->GetDeviceId()};
+        }
+    }
     spdlog::info("TestExecutor: External model set");
 }
 
@@ -208,25 +219,73 @@ void TestExecutor::Test(
     TestBatchCallback batch_cb,
     TestCompleteCallback complete_cb)
 {
-    if (is_testing_.load()) {
+    if (is_testing_.exchange(true)) {
         spdlog::warn("TestExecutor: Already testing");
         return;
     }
-
-    is_testing_.store(true);
     stop_requested_.store(false);
-
-    if (config_.sequence_batch.enabled) {
-        try {
-            TestCausalSequence(batch_size, batch_cb, complete_cb);
-        } catch (const std::exception& e) {
-            is_testing_.store(false);
-            UpdateMetrics([&](TestingMetrics& m) {
-                m.is_testing = false; m.is_complete = false;
-                m.status_message = std::string("Testing failed: ") + e.what();
-            });
-            throw;
+    UpdateMetrics([](TestingMetrics& m) {
+        m = TestingMetrics{};
+        m.is_testing = true;
+        m.status_message = "Activating model device for testing";
+    });
+    try {
+        // All test modalities share this boundary. Activate the recorded owner
+        // BEFORE batch tensors, loss construction or the first model forward.
+        // Binding execution metadata alone does not switch ArrayFire's backend.
+        ScopedActiveExecutionDeviceContext active;
+        auto owner = model_device_;
+        if (!model_) owner = Device::GetProcessDevice();
+        if (model_ && !owner) {
+            throw std::runtime_error(
+                "Run Test has no model device ownership. Reload the checkpoint "
+                "through Train > Test > Load Checkpoint for Testing.");
         }
+        if (owner) {
+            const auto activation = Device(owner->type, owner->device_id).ActivateExact(false);
+            if (!activation.success) {
+                throw std::runtime_error(fmt::format(
+                    "Run Test could not activate the model device (type={}, id={}): {}. "
+                    "No fallback was attempted. Make that device available or reload "
+                    "the checkpoint on an available device before testing.",
+                    static_cast<int>(owner->type), owner->device_id, activation.message));
+            }
+        }
+        const auto policy = config_.strict_execution
+            ? ExecutionPolicy::Strict
+            : ExecutionPolicy::Compatibility;
+        const auto context = CaptureCurrentExecutionDeviceContext(policy);
+        if (!context.valid) {
+            throw std::runtime_error("Run Test execution context is invalid: " + context.error);
+        }
+        if (!model_) {
+            if (const auto* current = Device::GetCurrentDevice()) {
+                model_device_ = ProcessDeviceSelection{current->GetType(), current->GetDeviceId()};
+            }
+        }
+        ScopedExecutionDeviceContext binding(context);
+        spdlog::info(
+            "TestExecutor: model device activated; owner={}:{} effective={}:{} "
+            "device='{}' execution_policy={} selection_fallback=false",
+            context.requested_backend, context.requested_device_id,
+            context.effective_backend, context.effective_device_id,
+            context.device_name, context.ExecutionPolicyName());
+        TestImpl(batch_size, batch_cb, complete_cb);
+    } catch (const std::exception& e) {
+        is_testing_.store(false);
+        UpdateMetrics([&](TestingMetrics& m) {
+            m.is_testing = false;
+            m.is_complete = false;
+            m.status_message = std::string("Testing failed: ") + e.what();
+        });
+        throw;
+    }
+}
+
+void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
+                            TestCompleteCallback complete_cb) {
+    if (config_.sequence_batch.enabled) {
+        TestCausalSequence(batch_size, batch_cb, complete_cb);
         return;
     }
 
@@ -265,6 +324,11 @@ void TestExecutor::Test(
         m.predictions.clear();
         m.ground_truth.clear();
         m.confidences.clear();
+        m.class_probabilities.clear();
+        m.probability_classes = 0;
+        m.roc.reset();
+        m.pr.reset();
+        m.curves_note.clear();
     });
 
     // Create the test batcher using the dataset type that was trained.
@@ -277,6 +341,7 @@ void TestExecutor::Test(
             ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildArrowTrainingBatchers(
             test_config, arrow_dataset_, arrow_label_column_, batch_size);
+        ApplyLabelClassNames(batchers.label_classes);
         arrow_test_batcher =
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.arrow_train)
@@ -286,6 +351,7 @@ void TestExecutor::Test(
             ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildParquetTrainingBatchers(
             test_config, parquet_dataset_, parquet_label_column_, batch_size);
+        ApplyLabelClassNames(batchers.label_classes);
         parquet_test_batcher =
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.parquet_train)
@@ -307,8 +373,9 @@ void TestExecutor::Test(
     } else {
         total_batches = external_test_batcher ? external_test_batcher->GetNumBatches() : 0;
     }
-    UpdateMetrics([total_batches](TestingMetrics& m) {
+    UpdateMetrics([total_batches, this](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
+        m.batch_limit = batch_limit_;
     });
 
     spdlog::info(
@@ -323,7 +390,7 @@ void TestExecutor::Test(
     if (total_batches == 0) {
         const std::string message =
             "Testing has no test batches. Check that the trained dataset has a "
-            "non-empty test split and that Tools > Test uses the same effective "
+            "non-empty test split and that Train > Test uses the same effective "
             "dataset/materialized dataset that training used.";
         UpdateMetrics([&message](TestingMetrics& m) {
             m.is_testing = false;
@@ -344,7 +411,13 @@ void TestExecutor::Test(
     float total_loss = 0.0f;
     int batch_num = 0;
 
-    while (true) {
+    if (config_.metric_sampling != MetricSampling::None) {
+        IBatcher* rows = use_arrow_dataset_ ? static_cast<IBatcher*>(arrow_test_batcher.get())
+                         : use_parquet_dataset_ ? static_cast<IBatcher*>(parquet_test_batcher.get())
+                                                : external_test_batcher.get();
+        TestMetricLearning(*rows, batch_size);
+    }
+    while (config_.metric_sampling == MetricSampling::None) {
         if (ShouldStop()) break;
 
         Batch batch;
@@ -357,6 +430,12 @@ void TestExecutor::Test(
         }
 
         if (!batch.IsValid()) break;
+
+        if (batch_limit_ > 0 && batch_num >= batch_limit_) {
+            UpdateMetrics([](TestingMetrics& m) { m.partial = true; });
+            spdlog::info("TestExecutor: quick test stopped after {} batches", batch_num);
+            break;
+        }
 
         batch_num++;
 
@@ -393,6 +472,7 @@ void TestExecutor::Test(
     if (!regression_mode) {
         ComputePerClassMetrics();
         ComputeAggregateMetrics();
+        ComputeCurves();
     }
 
     TestingMetrics final_metrics = GetMetrics();
@@ -469,8 +549,26 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
         float confidence = ClassificationConfidence(
             sample_pred, output_width, pred_class, decision_mode);
 
+        // Class probabilities for the ROC / PR curves
+        std::vector<float> probabilities;
+        const size_t classes = ClassificationClassProbabilities(
+            sample_pred, output_width, decision_mode, probabilities);
+
         // Update metrics
-        UpdateMetrics([pred_class, true_class, confidence](TestingMetrics& m) {
+        UpdateMetrics([pred_class, true_class, confidence, classes, &probabilities](TestingMetrics& m) {
+            // Kept up to kMaxCurveValues (about 80 MB); past that the curves
+            // are skipped rather than the test running out of memory.
+            constexpr size_t kMaxCurveValues = 20'000'000;
+            if (m.curves_note.empty()) {
+                if (m.class_probabilities.size() + classes > kMaxCurveValues) {
+                    m.class_probabilities.clear();
+                    m.curves_note = "ROC / PR skipped: the test set has too many scores to keep";
+                } else {
+                    m.probability_classes = static_cast<int>(classes);
+                    m.class_probabilities.insert(m.class_probabilities.end(), probabilities.begin(),
+                                                 probabilities.end());
+                }
+            }
             m.total_samples++;
             if (pred_class == true_class) {
                 m.correct_predictions++;
@@ -481,6 +579,65 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
             m.confusion_matrix.Add(true_class, pred_class);
         });
     }
+}
+
+void TestExecutor::TestMetricLearning(IBatcher& rows, int batch_size) {
+    // The loss over the builder's pairs / triplets, as in training.
+    MetricBatchSampler sampler(rows, config_.metric_sampling, config_.metric_mining,
+                               static_cast<uint64_t>(std::max(config_.dataloader_seed, 0)));
+    double loss_sum = 0.0;
+    int loss_batches = 0;
+    sampler.Reset();
+    while (!ShouldStop() && !sampler.IsEpochComplete()) {
+        if (batch_limit_ > 0 && loss_batches >= batch_limit_) break;
+        Batch batch = sampler.GetNextBatch();
+        if (!batch.IsValid()) break;
+        const Tensor embeddings = Forward(batch.data);
+        loss_sum += ComputeLoss(embeddings, batch.labels);
+        ++loss_batches;
+    }
+
+    // 1-NN classification + the Pair / Retrieval Metrics over the plain rows.
+    MetricEvaluationSpec spec = MetricEvaluationSpecFor(config_);
+    spec.nearest_neighbours = true;
+    if (batch_limit_ > 0) {
+        spec.max_rows = std::min(spec.max_rows, static_cast<size_t>(batch_limit_) * static_cast<size_t>(batch_size));
+    }
+    const MetricEvaluation evaluation =
+        EvaluateMetricLearning(rows, [this](const Batch& batch) { return Forward(batch.data); }, spec);
+    int64_t max_class = 0;
+    for (int64_t id : evaluation.class_ids) max_class = std::max(max_class, id);
+    const int num_classes = static_cast<int>(max_class) + 1;
+
+    UpdateMetrics([&](TestingMetrics& m) {
+        m.metric_learning_mode = true;
+        m.pair_metrics = evaluation.pair;
+        m.retrieval_metrics = evaluation.retrieval;
+        m.partial = evaluation.truncated;
+        m.test_loss = loss_batches > 0 ? static_cast<float>(loss_sum / loss_batches) : 0.0f;
+        m.current_batch = loss_batches;
+        m.confusion_matrix.Resize(num_classes);
+        m.per_class_metrics.assign(static_cast<size_t>(num_classes), ClassMetrics{});
+        for (int i = 0; i < num_classes; ++i) {
+            m.per_class_metrics[static_cast<size_t>(i)].class_id = i;
+            m.per_class_metrics[static_cast<size_t>(i)].class_name =
+                static_cast<size_t>(i) < external_source_.class_names.size()
+                    ? external_source_.class_names[static_cast<size_t>(i)]
+                    : "Class " + std::to_string(i);
+        }
+        for (size_t i = 0; i < evaluation.nearest_classes.size(); ++i) {
+            const int truth = static_cast<int>(evaluation.class_ids[i]);
+            const int predicted = static_cast<int>(evaluation.nearest_classes[i]);
+            m.total_samples++;
+            if (predicted == truth) m.correct_predictions++;
+            m.predictions.push_back(predicted);
+            m.ground_truth.push_back(truth);
+            m.confidences.push_back(1.0f);
+            m.confusion_matrix.Add(truth, predicted);
+        }
+    });
+    spdlog::info("TestExecutor: metric-learning test: 1-NN accuracy over {} rows; {}",
+                 evaluation.nearest_classes.size(), DescribeMetricEvaluation(evaluation));
 }
 
 void TestExecutor::ComputePerClassMetrics() {
@@ -531,6 +688,52 @@ void TestExecutor::ComputePerClassMetrics() {
         float pr_sum = cm.precision + cm.recall;
         cm.f1_score = pr_sum > 0 ? 2.0f * cm.precision * cm.recall / pr_sum : 0.0f;
     }
+}
+
+void TestExecutor::ApplyLabelClassNames(const std::vector<std::string>& names) {
+    // A text label column's classes name the results (TOFIX145); an external
+    // test source's own names win.
+    if (names.empty() || !external_source_.class_names.empty()) return;
+    UpdateMetrics([&names](TestingMetrics& m) {
+        m.confusion_matrix.class_names = names;
+        for (size_t i = 0; i < m.per_class_metrics.size() && i < names.size(); ++i)
+            m.per_class_metrics[i].class_name = names[i];
+    });
+}
+
+void TestExecutor::ComputeCurves() {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    TestingMetrics& m = metrics_;
+    if (m.metric_learning_mode || !m.curves_note.empty()) return;
+    const size_t classes = static_cast<size_t>(std::max(m.probability_classes, 0));
+    const size_t samples = m.ground_truth.size();
+    if (classes < 2 || samples == 0 || m.class_probabilities.size() != samples * classes) {
+        m.curves_note = "ROC / PR need class scores for every test sample";
+        return;
+    }
+    if (classes == 2) {
+        // Binary: the positive class's probability against truth == 1.
+        std::vector<double> positive(samples);
+        for (size_t i = 0; i < samples; ++i) positive[i] = m.class_probabilities[i * 2 + 1];
+        m.roc = ModelEvaluation::ComputeROC(m.ground_truth, positive);
+        m.pr = ModelEvaluation::ComputePRCurve(m.ground_truth, positive);
+    } else {
+        // One-vs-rest; a class the test set has no sample of is skipped, not fatal.
+        std::vector<std::string> names;
+        for (const auto& c : m.per_class_metrics) names.push_back(c.class_name);
+        OneVsRestCurves curves = ComputeOneVsRestCurves(m.ground_truth, m.class_probabilities, classes, names);
+        m.roc = std::move(curves.roc);
+        m.pr = std::move(curves.pr);
+        m.curves_note = std::move(curves.note);
+    }
+    // Say which curves failed unless the message already does ("ROC / PR
+    // need ...", "Precision-recall requires ..."); a successful multi-class
+    // run may carry a note on skipped classes.
+    const auto why = [](const std::string& error) {
+        return error.rfind("ROC", 0) == 0 || error.rfind("Precision", 0) == 0 ? error : "ROC / PR: " + error;
+    };
+    if (!m.roc->success) m.curves_note = why(m.roc->error_message);
+    else if (!m.pr->success) m.curves_note = why(m.pr->error_message);
 }
 
 void TestExecutor::ComputeAggregateMetrics() {

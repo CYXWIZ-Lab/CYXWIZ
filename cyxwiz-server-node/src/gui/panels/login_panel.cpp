@@ -266,22 +266,7 @@ void LoginPanel::Update() {
                 // After successful login, check if node needs to be registered
                 if (!auth.IsNodeRegistered()) {
                     success_message_ = "Login successful! Registering node...";
-                    is_registering_node_ = true;
-
-                    // Generate node name from hostname or username
-                    std::string node_name = "CyxWiz-Node";
-                    char hostname[256];
-#ifdef _WIN32
-                    DWORD size = sizeof(hostname);
-                    if (GetComputerNameA(hostname, &size)) {
-                        node_name = std::string("CyxWiz-") + hostname;
-                    }
-#else
-                    if (gethostname(hostname, sizeof(hostname)) == 0) {
-                        node_name = std::string("CyxWiz-") + hostname;
-                    }
-#endif
-                    node_registration_future_ = auth.RegisterNodeWithApi(node_name, "server");
+                    StartNodeRegistration();
                 } else {
                     success_message_ = "Login successful! Node already registered.";
                     spdlog::info("Node already registered: {}", auth.GetNodeId());
@@ -337,7 +322,6 @@ void LoginPanel::Update() {
                     spdlog::warn("Auth required detected - prompting user to re-login");
 
                     // Force logout to show login screen
-                    auto& auth = auth::AuthManager::Instance();
                     auth.Logout();
                 } else if (!status.auth_required) {
                     cached_auth_required_ = false;
@@ -360,6 +344,13 @@ void LoginPanel::Update() {
         spdlog::info("Heartbeat check: node_registered={}, offline={}, central={}",
                      node_registered, offline_mode_, cached_connected_to_central_);
         last_debug_time = now;
+    }
+
+    // A signed-in node the web API no longer knows registers again (the
+    // heartbeat cleared the stale registration), at most once a minute.
+    if (!node_registered && !offline_mode_ && auth.IsAuthenticated() && !node_registration_future_.valid() &&
+        std::chrono::duration_cast<std::chrono::seconds>(now - last_register_attempt_).count() >= kRegisterRetrySeconds) {
+        StartNodeRegistration();
     }
 
     // Send periodic heartbeats while node is registered AND connected to Central Server
@@ -684,19 +675,8 @@ void LoginPanel::RenderRegisterSection() {
 }
 
 void LoginPanel::RenderAlternativeOptions() {
-    float content_width = kCardWidth - kCardPadding * 2;
-    float button_width = (content_width - kSpacingMedium) / 2.0f;
-
-    // Wallet login button
-    if (StyledButton(ICON_FA_WALLET " Wallet", ImVec2(button_width, 36),
-                     kSecondaryColor, kSecondaryHover, ImVec4(0.45f, 0.25f, 0.65f, 1.0f))) {
-        error_message_ = "Wallet login coming soon";
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Connect with Solana wallet");
-    }
-
-    ImGui::SameLine(0, kSpacingMedium);
+    // Sign-in is with the CyxWiz account only (TOFIX136: wallets removed).
+    float button_width = kCardWidth - kCardPadding * 2;
 
     // Offline mode button - use amber/orange color to stand out
     ImVec4 offline_color = ImVec4(0.85f, 0.55f, 0.15f, 1.0f);  // Amber/orange
@@ -724,14 +704,6 @@ void LoginPanel::RenderLoggedInState() {
     ImGui::SameLine();
     ImGui::TextColored(kSuccessColor, "%s", GetUserDisplayName().c_str());
 
-    if (!user.wallet_address.empty()) {
-        ImGui::Text("%s Wallet:", ICON_FA_WALLET);
-        ImGui::SameLine();
-        std::string short_addr = user.wallet_address.substr(0, 6) + "..." +
-                                 user.wallet_address.substr(user.wallet_address.length() - 4);
-        ImGui::TextColored(kTextMuted, "%s", short_addr.c_str());
-    }
-
     ImGui::Spacing();
 
     if (StyledButton("Logout", ImVec2(100, 32), kErrorColor,
@@ -746,6 +718,28 @@ void LoginPanel::RenderWalletLoginSection() {
 
 void LoginPanel::RenderOfflineModeSection() {
     // Handled in RenderAlternativeOptions now
+}
+
+void LoginPanel::StartNodeRegistration() {
+    if (node_registration_future_.valid()) return;
+    is_registering_node_ = true;
+    last_register_attempt_ = std::chrono::steady_clock::now();
+
+    // The machine is named after this computer.
+    std::string node_name = "CyxWiz-Node";
+    char hostname[256];
+#ifdef _WIN32
+    DWORD size = sizeof(hostname);
+    if (GetComputerNameA(hostname, &size)) {
+        node_name = std::string("CyxWiz-") + hostname;
+    }
+#else
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        node_name = std::string("CyxWiz-") + hostname;
+    }
+#endif
+    spdlog::info("Registering this machine with the web API as {}", node_name);
+    node_registration_future_ = auth::AuthManager::Instance().RegisterNodeWithApi(node_name, "server");
 }
 
 void LoginPanel::DoLogin() {

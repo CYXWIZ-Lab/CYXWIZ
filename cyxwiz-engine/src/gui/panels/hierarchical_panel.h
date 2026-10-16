@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../dataset_source.h"
 #include <cyxwiz/clustering.h>
 #include "../../data/data_table.h"
 #include <imgui.h>
@@ -11,8 +12,6 @@
 #include <atomic>
 
 namespace cyxwiz {
-
-class DataTableRegistry;
 
 /**
  * HierarchicalPanel - Hierarchical clustering UI panel
@@ -28,10 +27,9 @@ public:
     ~HierarchicalPanel() override;
 
     void Render() override;
-    void SetDataTableRegistry(DataTableRegistry* registry) { data_registry_ = registry; }
 
-    bool IsOpen() const { return is_open_; }
-    void SetOpen(bool open) { is_open_ = open; }
+    bool IsOpen() const { return visible_; }
+    void SetOpen(bool open) { visible_ = open; }
 
 private:
     void RenderDataSelector();
@@ -40,16 +38,13 @@ private:
     void RenderDendrogram();
     void RenderScatterPlot();
 
-    void LoadSelectedData();
+    void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
     void RunClustering();
 
-    bool is_open_ = false;
-    DataTableRegistry* data_registry_ = nullptr;
     std::shared_ptr<DataTable> current_table_;
 
     // Data selection
-    std::vector<std::string> available_tables_;
-    int selected_table_idx_ = -1;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
     std::vector<std::string> column_names_;
     std::vector<bool> selected_columns_;
     int x_axis_column_ = 0;
@@ -69,10 +64,8 @@ private:
     // Async
     std::thread compute_thread_;
     std::atomic<bool> is_computing_{false};
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // results posted to the UI thread stop once the panel is gone
     std::string status_message_;
-
-    static constexpr int MAX_CLUSTERS = 20;
-    static const ImU32 CLUSTER_COLORS[MAX_CLUSTERS];
 };
 
 } // namespace cyxwiz

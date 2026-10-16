@@ -1,6 +1,7 @@
 // Script Editor file workflow orchestration.
 
 #include "script_editor.h"
+#include "../separate_windows.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -21,23 +22,7 @@ void ScriptEditorPanel::NewFile() {
     tab->is_new = true;
     tab->is_modified = false;
 
-    auto lang = CreatePythonLanguage();
-    tab->editor.SetLanguageDefinition(lang);
-    // Apply current theme
-    switch (current_theme_) {
-        case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-        case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-        case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-    }
-    tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetColorizerEnable(syntax_highlighting_);
-    tab->editor.SetTabSize(tab_size_);
-    tab->editor.SetImGuiChildIgnored(false);
-    tab->editor.SetReadOnly(false);
+    ConfigureEditor(tab->editor);
 
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
@@ -59,8 +44,9 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
         if (tabs_[i]->filepath == path) {
             active_tab_index_ = i;
+            if (tabs_[i]->load_failed) RetryLoad(i);
             request_focus_ = true;
-            request_window_focus_ = true;  // Focus the Script Editor window
+            ::gui::BringToFront(GetName());  // Focus the Script Editor window
             spdlog::info("File already open: {}", path);
             return;
         }
@@ -97,9 +83,12 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
+        tab->load_failed = false;
+        tab->format = {};
         tab->load_progress = 0.0f;
         tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
         tab->is_large_file = use_large_file_view;
@@ -109,9 +98,12 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
+        tab->load_failed = false;
+        tab->format = {};
         tab->load_progress = 0.0f;
         tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
         tab->is_large_file = use_large_file_view;
@@ -121,7 +113,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
 
     active_tab_index_ = tab_index;
     request_focus_ = true;
-    request_window_focus_ = true;
+    ::gui::BringToFront(GetName());
 
     const auto document_id = tabs_[tab_index]->document_id;
     if (use_large_file_view) {
@@ -131,6 +123,21 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     } else {
         OpenFileAsync(document_id, path);
     }
+}
+
+void ScriptEditorPanel::OpenFileAtLine(const std::string& path, int line) {
+    for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
+        if (tabs_[i]->filepath == path && !tabs_[i]->is_loading) {
+            active_tab_index_ = i;
+            request_focus_ = true;
+            ::gui::BringToFront(GetName());
+            if (!tabs_[i]->cell_mode) tabs_[i]->editor.GoToLine(std::max(0, line - 1));
+            return;
+        }
+    }
+    pending_goto_path_ = path;
+    pending_goto_line_ = line;
+    OpenFile(path);
 }
 
 void ScriptEditorPanel::OpenFileAsync(
@@ -207,7 +214,8 @@ void ScriptEditorPanel::OpenFileAsync(
             } else {
                 auto& tab = tabs_[current_index];
                 tab->is_loading = false;
-                tab->load_status = error.empty() ? "Cancelled" : "Failed: " + error;
+                tab->load_failed = true;  // the editor is empty: Save must not write it (P0 item 1)
+                tab->load_status = error.empty() ? "Opening was cancelled." : error;
                 spdlog::warn("Async script load stopped: {} - {}", path, tab->load_status);
             }
         }
@@ -225,34 +233,39 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     auto& tab = tabs_[tab_index];
     if (!tab->is_loading) return;
 
-    auto lang = CreatePythonLanguage();
-    tab->editor.SetLanguageDefinition(lang);
+    scriptfile::Decoded decoded = scriptfile::Decode(content);
+    tab->format = decoded.format;
+    content = std::move(decoded.text);
+    tab->load_failed = false;
 
-    // Apply current theme
-    switch (current_theme_) {
-        case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-        case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-        case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-    }
-
-    tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetColorizerEnable(syntax_highlighting_);
-    tab->editor.SetTabSize(tab_size_);
-    tab->editor.SetImGuiChildIgnored(false);
-    tab->editor.SetReadOnly(false);
+    ConfigureEditor(tab->editor);
     tab->editor.SetText(content);
 
     const std::filesystem::path loaded_path(tab->filepath);
-    if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(content)) {
+    if (scriptfile::IsNotebookJson(tab->filepath)) {
+        std::string error;
+        tab->cell_manager.SetScriptingEngine(scripting_engine_);
+        if (!tab->cell_manager.ParseFromIpynb(content, &error)) {
+            // Nothing to edit: Save must not overwrite the file (P0 item 1).
+            tab->is_loading = false;
+            tab->load_failed = true;
+            tab->load_status = "Could not open this notebook. " + error;
+            tab->load_task_id = 0;
+            spdlog::error("Could not open {}: {}", tab->filepath, error);
+            return;
+        }
+        tab->cell_mode = true;
+        tab->cell_manager.ApplyTabSize(tab_size_);
+        tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
+        tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
+        tab->editing_cell = -1;
+        tab->last_editing_cell = -1;
+        spdlog::info("Opened Jupyter notebook: {}", tab->filename);
+    } else if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(content)) {
         tab->cell_mode = true;
         tab->cell_manager.SetScriptingEngine(scripting_engine_);
         tab->cell_manager.ParseFromCyx(content);
         tab->cell_manager.ApplyTabSize(tab_size_);
-        tab->cell_manager.ApplyEditorPalette(tab->editor.GetPalette());
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
         tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
         tab->editing_cell = -1;
@@ -265,6 +278,12 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
         tab->last_editing_cell = -1;
     }
 
+    NoteDiskTime(*tab);
+    if (!pending_goto_path_.empty() && pending_goto_path_ == tab->filepath) {
+        if (!tab->cell_mode) tab->editor.GoToLine(std::max(0, pending_goto_line_ - 1));
+        pending_goto_path_.clear();
+    }
+
     // Clear loading state
     tab->is_loading = false;
     tab->load_progress = 1.0f;
@@ -272,6 +291,22 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     tab->load_task_id = 0;
 
     request_focus_ = true;
+}
+
+void ScriptEditorPanel::RetryLoad(int tab_index) {
+    if (tab_index < 0 || tab_index >= static_cast<int>(tabs_.size())) return;
+    auto& tab = tabs_[tab_index];
+    tab->is_loading = true;
+    tab->load_failed = false;
+    tab->load_progress = 0.0f;
+    tab->load_status = "Loading...";
+    OpenFileAsync(tab->document_id, tab->filepath);
+}
+
+bool ScriptEditorPanel::IsActiveTabTextMode() const {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) return false;
+    const auto& tab = tabs_[active_tab_index_];
+    return tab && scriptfile::UsesTextBuffer(tab->is_loading, tab->load_failed, tab->is_large_file, tab->cell_mode);
 }
 
 int ScriptEditorPanel::FindTabIndex(std::uint64_t document_id) const {
@@ -288,7 +323,7 @@ bool ScriptEditorPanel::IsActiveTabEditable() const {
         return false;
     }
     const auto& tab = tabs_[active_tab_index_];
-    return tab && !tab->is_loading && !tab->is_large_file;
+    return tab && scriptfile::CanWriteTab(tab->is_loading, tab->load_failed, tab->is_large_file);
 }
 
 void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
@@ -306,11 +341,11 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
     if (existing_tab_index >= 0) {
         // Update existing tab
         auto& tab = tabs_[existing_tab_index];
-        tab->editor.SetText(code);
-        tab->is_modified = true;
+        tab->editor.Doc().SelectAll();
+        tab->editor.Doc().Paste(code);  // undoable, marks the tab modified
         active_tab_index_ = existing_tab_index;
         request_focus_ = true;
-        request_window_focus_ = true;
+        ::gui::BringToFront(GetName());
         spdlog::info("Updated existing {} code tab", framework_name);
     } else {
         // Create new tab with generated code
@@ -321,29 +356,13 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tab->is_new = true;
         tab->is_modified = true;  // Has content, mark as modified
 
-        auto lang = CreatePythonLanguage();
-        tab->editor.SetLanguageDefinition(lang);
-        // Apply current theme
-        switch (current_theme_) {
-            case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-            case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-            case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-            case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-            case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-            case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-            case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-        }
-        tab->editor.SetShowWhitespaces(show_whitespace_);
-        tab->editor.SetColorizerEnable(syntax_highlighting_);
-        tab->editor.SetTabSize(tab_size_);
-        tab->editor.SetImGuiChildIgnored(false);
-        tab->editor.SetReadOnly(false);
+        ConfigureEditor(tab->editor);
         tab->editor.SetText(code);
 
         tabs_.push_back(std::move(tab));
         active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
         request_focus_ = true;
-        request_window_focus_ = true;
+        ::gui::BringToFront(GetName());
 
         spdlog::info("Loaded generated {} code into new tab", framework_name);
     }
@@ -364,12 +383,16 @@ void ScriptEditorPanel::SaveFile() {
     }
 
     // Save to existing path
-    std::string content = GetTabContentForPersistence(*tab);
-    if (SaveFileContent(tab->filepath, content)) {
+    std::string content = GetTabContentForPersistence(*tab, tab->filepath);
+    std::string error;
+    if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
         tab->is_modified = false;
+        tab->editor.Doc().MarkSaved();
+        tab->format_changed = false;
+        NoteDiskTime(*tab);
         spdlog::info("Saved file: {}", tab->filepath);
     } else {
-        spdlog::error("Failed to save file: {}", tab->filepath);
+        spdlog::error("Could not save {}: {}", tab->filepath, error);
     }
 }
 
@@ -382,7 +405,6 @@ void ScriptEditorPanel::SaveFileAs() {
     auto& tab = tabs_[active_tab_index_];
 
     // Check if script is empty before showing save dialog
-    std::string content = GetTabContentForPersistence(*tab);
     bool is_empty = IsTabContentBlank(*tab);
     if (is_empty) {
         show_empty_script_warning_ = true;
@@ -394,21 +416,23 @@ void ScriptEditorPanel::SaveFileAs() {
     std::string path = SaveFileDialog();
     if (path.empty()) return;  // User cancelled
 
-    // Ensure .cyx extension
-    std::filesystem::path fspath(path);
-    if (fspath.extension() != ".cyx") {
-        path += ".cyx";
-    }
+    // Keep the extension the user typed (x.py stays x.py; P0 item 2).
+    path = scriptfile::SaveAsPath(path, tab->filename);
 
-    // Save content (already have content from empty check above)
-    if (SaveFileContent(path, content)) {
+    const std::string content = GetTabContentForPersistence(*tab, path);
+    std::string error;
+    if (SaveFileContent(path, content, tab->format, &error)) {
         tab->filepath = path;
         tab->filename = std::filesystem::path(path).filename().string();
+        tab->editor.SetLanguage(scriptfile::IsPythonSource(path) ? editor::Language::Python : editor::Language::Plain);
         tab->is_new = false;
         tab->is_modified = false;
+        tab->editor.Doc().MarkSaved();
+        tab->format_changed = false;
+        NoteDiskTime(*tab);
         spdlog::info("Saved file as: {}", path);
     } else {
-        spdlog::error("Failed to save file: {}", path);
+        spdlog::error("Could not save {}: {}", path, error);
     }
 }
 
@@ -433,6 +457,7 @@ void ScriptEditorPanel::DoCloseFile(int tab_index) {
 
     spdlog::info("Closing file: {}", tabs_[tab_index]->filename);
     CancelTabTasks(*tabs_[tab_index]);
+    tabs_[tab_index]->cell_manager.ReleaseNamespace();  // its variables go with it
     tabs_.erase(tabs_.begin() + tab_index);
 
     // Adjust active tab index
@@ -445,6 +470,31 @@ void ScriptEditorPanel::DoCloseFile(int tab_index) {
 
     // Reset pending close state
     pending_close_tab_index_ = -1;
+}
+
+bool ScriptEditorPanel::HasUnsavedChangesFor(const std::string& filepath) const {
+    for (const auto& tab : tabs_) {
+        if (tab->filepath == filepath) return tab->is_modified;
+    }
+    return false;
+}
+
+bool ScriptEditorPanel::ReloadOpenFile(const std::string& filepath) {
+    for (auto& tab : tabs_) {
+        if (tab->filepath != filepath) continue;
+        if (tab->is_modified || tab->is_large_file || tab->is_loading) return false;
+        std::ifstream file(filepath, std::ios::binary);
+        if (!file.is_open()) return false;
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        scriptfile::Decoded decoded = scriptfile::Decode(content);
+        tab->format = decoded.format;
+        tab->editor.SetText(decoded.text);
+        NoteDiskTime(*tab);
+        tab->is_modified = false;
+        spdlog::info("Reloaded {} after Replace in Files", filepath);
+        return true;
+    }
+    return false;
 }
 
 } // namespace cyxwiz

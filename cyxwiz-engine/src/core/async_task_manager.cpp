@@ -152,7 +152,12 @@ void AsyncTask::MarkCancelled(const std::string& message) {
         progress_.load(),
         message,
         "cancelled");
-    spdlog::info("Task '{}' (ID: {}) cancelled: {}", name_, id_, message);
+    // A task cancelled before it ran did no work (a dashboard's superseded
+    // query, a filter changed again): not worth a line in the Console.
+    if (message.rfind("Cancelled before execution", 0) == 0 && message.find("shutting down") == std::string::npos)
+        spdlog::debug("Task '{}' (ID: {}) cancelled: {}", name_, id_, message);
+    else
+        spdlog::info("Task '{}' (ID: {}) cancelled: {}", name_, id_, message);
 }
 
 void AsyncTask::MarkFailed(const std::string& error) {

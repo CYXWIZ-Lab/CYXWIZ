@@ -353,7 +353,7 @@ void TestSegmentationUtils(const std::string& output_dir) {
     }
 }
 
-void TestShapeUtils(const std::string& output_dir) {
+void TestShapeUtils([[maybe_unused]] const std::string& output_dir) {
     // Test ConvexHull
     {
         std::vector<cyxwiz::Point2D> contour = {

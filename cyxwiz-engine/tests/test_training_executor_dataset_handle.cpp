@@ -97,7 +97,7 @@ cyxwiz::TrainingConfiguration MakeConfig(
     config.log_interval = 0;
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
-    config.forbid_native_cpu_fallback = true;
+    config.strict_execution = true;
     config.checkpoint_dir = checkpoint_dir.string();
 
     cyxwiz::CompiledLayer dense;
@@ -246,9 +246,8 @@ void CheckPausedLifecycle(
               trace.preflight_stage == "complete",
           "legacy lifecycle must retain certified exact-route preflight "
           "truth without selection fallback");
-    Check(trace.native_cpu_fallback_count == 0 &&
-              trace.fallback_policy == "forbid_native_cpu_fallback",
-          "legacy lifecycle must retain strict zero-fallback truth");
+    Check(trace.execution_policy == "strict",
+          "legacy lifecycle must retain the strict execution policy");
 }
 
 void CheckRuntimeFailureLifecycle(

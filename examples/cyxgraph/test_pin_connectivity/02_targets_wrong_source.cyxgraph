@@ -34,7 +34,7 @@
       {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [2200, 320],
        "params": {"learning_rate": "0.001", "epochs": "10"}},
       {"id": "output", "type": "Output", "name": "Output", "pos": [2400, 320],
-       "params": {"classes": "10"}}
+       "params": {"num_classes": "10"}}
     ],
     "links": [
       {"from": "data_input",  "to": "data_split",  "from_pin": 0, "to_pin": 0},

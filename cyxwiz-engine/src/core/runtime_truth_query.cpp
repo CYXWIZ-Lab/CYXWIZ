@@ -37,10 +37,7 @@ RuntimeTrainingEventTruth MakeEventTruth(const TrainingTraceEvent& event) {
     truth.epoch = event.epoch;
     truth.batch = event.batch;
     truth.total_batches = event.total_batches;
-    truth.native_cpu_fallback = event.native_cpu_fallback;
-    truth.fallback_operation = event.fallback_operation;
-    truth.fallback_reason = event.fallback_reason;
-    truth.fallback_policy = event.fallback_policy;
+    truth.execution_policy = event.execution_policy;
     truth.host_sync_bytes = event.arrayfire_host_sync_bytes;
     truth.host_sync_reason = event.arrayfire_host_sync_reason;
     truth.host_sync_category = event.arrayfire_host_sync_category;
@@ -110,8 +107,7 @@ RuntimeTrainingTruth MakeTrainingTruth(
         trace.selection_fallback_applied;
     truth.preflight_stage = trace.preflight_stage;
     truth.preflight_error_code = trace.preflight_error_code;
-    truth.fallback_policy = trace.fallback_policy;
-    truth.native_cpu_fallback_count = trace.native_cpu_fallback_count;
+    truth.execution_policy = trace.execution_policy;
     truth.transfer_event_count = trace.transfer_event_count;
     truth.transfer_known_bytes = trace.transfer_known_bytes;
     truth.synchronization_event_count = trace.synchronization_event_count;
@@ -152,7 +148,6 @@ void ApplyTrainingTruth(RuntimeRunTruth& run,
     run.preflight_stage = training.preflight_stage;
     run.placement_fingerprint = training.placement_fingerprint;
     run.residency_verdict = training.residency_verdict;
-    run.native_cpu_fallback_count = training.native_cpu_fallback_count;
     run.transfer_event_count = training.transfer_event_count;
     run.transfer_known_bytes = training.transfer_known_bytes;
     run.synchronization_event_count = training.synchronization_event_count;
@@ -234,7 +229,6 @@ RuntimeRunTruth MakeDebugRunTruth(const DebugRunStoreRecord& record,
     run.execution_context_id = execution.execution_context_id;
     run.placement_fingerprint = execution.placement_fingerprint;
     run.residency_verdict = execution.residency_verdict;
-    run.native_cpu_fallback_count = execution.native_cpu_fallback_count;
     run.transfer_event_count = execution.transfer_event_count;
     run.transfer_known_bytes = execution.transfer_known_bytes;
     run.synchronization_event_count = execution.synchronization_event_count;
@@ -592,10 +586,10 @@ public:
         }
         const auto policy = GetNextRunExecutionPolicy();
         truth.next_run_policy = policy.has_value()
-            ? (*policy == ArrayFireFallbackPolicy::ForbidNativeCpuFallback
-                   ? "forbid_native_cpu_fallback"
-                   : "allow_native_cpu_fallback")
-            : "allow_native_cpu_fallback";
+            ? (*policy == ExecutionPolicy::Strict
+                   ? "strict"
+                   : "compatibility")
+            : "compatibility";
         truth.next_run_policy_source = policy.has_value() ? "queued"
                                                           : "default";
 

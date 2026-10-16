@@ -1,7 +1,14 @@
+#include "../ui_tokens.h"
+#include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
-#ifndef CYXWIZ_PLOTTING_MODULE
+#include "training_dashboard_look.h"
+#include "../separate_windows.h"
+// Test builds that draw the dashboard without the training system define
+// CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 #include "../../core/async_task_manager.h"
 #include "../../core/crash_run_recorder.h"
+#include "../../core/execution_policy.h"
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #endif
@@ -40,6 +47,8 @@
 
 namespace cyxwiz {
 
+using namespace dash;
+
 namespace {
 
 bool IsSequenceMetricName(const std::string& name) {
@@ -63,256 +72,6 @@ constexpr float kTrainingPlotMinHeight = 320.0f;
 constexpr float kTrainingPlotMaxHeight = 480.0f;
 // Loss and accuracy go side by side from this content width.
 constexpr float kTrainingPlotSideBySideWidth = 860.0f;
-// ---- Dashboard look ----------------------------------------------------
-// This file is also compiled into test targets and the Python plotting
-// module, so the dashboard styles itself from the active ImGui theme here
-// instead of depending on the engine's shared button and palette helpers.
-
-struct DashColors {
-    ImVec4 text;
-    ImVec4 muted;
-    ImVec4 faint;
-    ImVec4 window;
-    ImVec4 card;
-    ImVec4 track;
-    ImVec4 border;
-    ImVec4 accent;
-    ImVec4 accent_text;
-    ImVec4 success;
-    ImVec4 warning;
-    ImVec4 caution;
-    ImVec4 error;
-    ImVec4 info;
-    bool light = false;
-};
-
-ImVec4 MixColor(const ImVec4& a, const ImVec4& b, float t) {
-    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-}
-
-ImVec4 WithAlpha(ImVec4 color, float alpha) {
-    color.w = alpha;
-    return color;
-}
-
-DashColors CurrentDashColors() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    DashColors c;
-    c.window = WithAlpha(style.Colors[ImGuiCol_WindowBg], 1.0f);
-    const float luminance =
-        0.299f * c.window.x + 0.587f * c.window.y + 0.114f * c.window.z;
-    c.light = luminance > 0.5f;
-    const ImVec4 lift = c.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
-    c.text = style.Colors[ImGuiCol_Text];
-    c.muted = style.Colors[ImGuiCol_TextDisabled];
-    c.faint = MixColor(c.muted, c.window, 0.35f);
-    c.card = WithAlpha(MixColor(c.window, lift, c.light ? 0.035f : 0.03f), 1.0f);
-    c.track = WithAlpha(MixColor(c.window, lift, c.light ? 0.09f : 0.08f), 1.0f);
-    c.border = WithAlpha(style.Colors[ImGuiCol_Border], 1.0f);
-    c.accent = WithAlpha(style.Colors[ImGuiCol_SliderGrab], 1.0f);
-    c.accent_text = WithAlpha(style.Colors[ImGuiCol_CheckMark], 1.0f);
-    if (c.light) {
-        c.success = ImVec4(0.10f, 0.55f, 0.32f, 1.0f);
-        c.warning = ImVec4(0.70f, 0.47f, 0.02f, 1.0f);
-        c.caution = ImVec4(0.80f, 0.38f, 0.10f, 1.0f);
-        c.error = ImVec4(0.80f, 0.22f, 0.20f, 1.0f);
-        c.info = ImVec4(0.15f, 0.45f, 0.80f, 1.0f);
-    } else {
-        c.success = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);
-        c.warning = ImVec4(0.89f, 0.70f, 0.25f, 1.0f);
-        c.caution = ImVec4(0.96f, 0.60f, 0.35f, 1.0f);
-        c.error = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);
-        c.info = ImVec4(0.45f, 0.72f, 1.0f, 1.0f);
-    }
-    return c;
-}
-
-// Card: a filled, rounded, borderless group sized to its content.
-bool BeginDashCard(const char* id, const DashColors& c, float width = 0.0f) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, c.card);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 10.0f));
-    const bool open = ImGui::BeginChild(
-        id, ImVec2(width, 0.0f),
-        ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor();
-    return open;
-}
-
-void EndDashCard() {
-    ImGui::EndChild();
-}
-
-void DashCardTitle(const char* title, const char* subtitle, const DashColors& c) {
-    ImGui::TextColored(c.text, "%s", title);
-    if (subtitle && *subtitle) {
-        ImGui::SameLine(0.0f, 8.0f);
-        ImGui::TextColored(c.muted, "%s", subtitle);
-    }
-}
-
-// Status pill: tinted background, a dot and the label in the status colour.
-void DashPill(const char* label, const ImVec4& color, bool dot = true) {
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 text = ImGui::CalcTextSize(label);
-    const float pad_x = 9.0f;
-    const float pad_y = 3.0f;
-    const float dot_space = dot ? 12.0f : 0.0f;
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const ImVec2 size(text.x + pad_x * 2.0f + dot_space, text.y + pad_y * 2.0f);
-    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                        ImGui::GetColorU32(WithAlpha(color, 0.16f)), size.y * 0.5f);
-    if (dot) {
-        draw->AddCircleFilled(ImVec2(pos.x + pad_x + 3.5f, pos.y + size.y * 0.5f), 3.5f,
-                              ImGui::GetColorU32(color));
-    }
-    draw->AddText(ImVec2(pos.x + pad_x + dot_space, pos.y + pad_y),
-                  ImGui::GetColorU32(color), label);
-    ImGui::Dummy(size);
-}
-
-// Thin rounded progress bar.
-void DashProgress(float fraction, const ImVec4& color, const DashColors& c,
-                  float width = -1.0f, float height = 6.0f) {
-    fraction = std::clamp(fraction, 0.0f, 1.0f);
-    if (width <= 0.0f) {
-        width = ImGui::GetContentRegionAvail().x;
-    }
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float line_h = ImGui::GetTextLineHeight();
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float y = pos.y + (line_h - height) * 0.5f;
-    draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + width, y + height),
-                        ImGui::GetColorU32(c.track), height * 0.5f);
-    if (fraction > 0.0f) {
-        draw->AddRectFilled(ImVec2(pos.x, y),
-                            ImVec2(pos.x + std::max(height, width * fraction), y + height),
-                            ImGui::GetColorU32(color), height * 0.5f);
-    }
-    ImGui::Dummy(ImVec2(width, line_h));
-}
-
-enum class DashButtonKind { Secondary, Danger };
-
-bool DashButton(const char* label, DashButtonKind kind, const DashColors& c) {
-    const ImVec4 fg = kind == DashButtonKind::Danger ? c.error : c.text;
-    const ImVec4 hover = kind == DashButtonKind::Danger
-        ? WithAlpha(c.error, 0.14f)
-        : WithAlpha(c.text, 0.07f);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(hover, hover.w * 1.8f));
-    ImGui::PushStyleColor(ImGuiCol_Border,
-                          kind == DashButtonKind::Danger ? WithAlpha(c.error, 0.45f) : c.border);
-    ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 4.0f));
-    const bool pressed = ImGui::Button(label);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(5);
-    return pressed;
-}
-
-float DashButtonWidth(const char* label) {
-    return ImGui::CalcTextSize(label, nullptr, true).x + 20.0f;
-}
-
-// Toggle chip: filled with the accent tint while on.
-bool DashChip(const char* label, bool* value, const DashColors& c) {
-    const bool on = *value;
-    ImGui::PushStyleColor(ImGuiCol_Button, on ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                          on ? WithAlpha(c.accent, 0.34f) : WithAlpha(c.text, 0.07f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.45f));
-    ImGui::PushStyleColor(ImGuiCol_Border, on ? WithAlpha(c.accent, 0.55f) : c.border);
-    ImGui::PushStyleColor(ImGuiCol_Text, on ? c.accent_text : c.muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
-    const bool pressed = ImGui::Button(label);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(5);
-    if (pressed) {
-        *value = !*value;
-    }
-    return pressed;
-}
-
-// Bold UI font for metric values (falls back to the current font).
-ImFont* DashValueFont() {
-    ImGuiIO& io = ImGui::GetIO();
-    for (ImFont* font : io.Fonts->Fonts) {
-        if (!font || !font->Sources || font->SourcesCount <= 0) {
-            continue;
-        }
-        const char* name = font->Sources[0].Name;
-        if (std::strstr(name, "Bold") && !std::strstr(name, "Mono")) {
-            return font;
-        }
-    }
-    return ImGui::GetFont();
-}
-
-void DashBigValue(const char* text, const ImVec4& color) {
-    ImFont* font = DashValueFont();
-    const float size = ImGui::GetFontSize() * 1.45f;
-    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-    ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
-                                        ImGui::GetColorU32(color), text);
-    ImGui::Dummy(extent);
-}
-
-std::string FormatEpochValue(double epoch) {
-    char buffer[32];
-    if (std::abs(epoch - std::round(epoch)) < 1e-6) {
-        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(std::round(epoch)));
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "%.2f", epoch);
-    }
-    return buffer;
-}
-
-// Plot styling: transparent frame and plot area (the card is the frame),
-// soft grid, muted axes, a translucent legend inside the plot.
-void PushDashPlotStyle(const DashColors& c) {
-    ImPlot::PushStyleColor(ImPlotCol_FrameBg, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_PlotBorder, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_LegendBg, WithAlpha(c.window, 0.82f));
-    ImPlot::PushStyleColor(ImPlotCol_LegendBorder, WithAlpha(c.border, 0.8f));
-    ImPlot::PushStyleColor(ImPlotCol_LegendText, c.text);
-    ImPlot::PushStyleColor(ImPlotCol_AxisText, c.muted);
-    ImPlot::PushStyleColor(ImPlotCol_AxisGrid, WithAlpha(c.muted, c.light ? 0.18f : 0.13f));
-    ImPlot::PushStyleColor(ImPlotCol_AxisTick, WithAlpha(c.muted, 0.35f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(2.0f, 6.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(10.0f, 10.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendInnerPadding, ImVec2(8.0f, 5.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendSpacing, ImVec2(6.0f, 3.0f));
-}
-
-void PopDashPlotStyle() {
-    ImPlot::PopStyleVar(4);
-    ImPlot::PopStyleColor(9);
-}
-
-// Small borderless icon button, tinted with the accent while active.
-bool DashIconButton(const char* id_label, bool active, const DashColors& c) {
-    ImGui::PushStyleColor(ImGuiCol_Button, active ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, WithAlpha(c.text, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.40f));
-    ImGui::PushStyleColor(ImGuiCol_Text, active ? c.accent_text : c.muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-    const bool pressed = ImGui::Button(id_label);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
-    return pressed;
-}
 
 // Title and y-axis label of the custom metrics chart from the metric names.
 template <typename Series>
@@ -470,25 +229,13 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();
          it != trace.recent_events.rend();
          ++it) {
         if (it->pin_memory_requested || !it->transfer_mode.empty()) {
-            return &(*it);
-        }
-    }
-    return nullptr;
-}
-
-const TrainingTraceEvent* FindLatestNativeCpuFallbackEvent(
-    const TrainingTraceSummary& trace) {
-    for (auto it = trace.recent_events.rbegin();
-         it != trace.recent_events.rend();
-         ++it) {
-        if (it->native_cpu_fallback) {
             return &(*it);
         }
     }
@@ -509,11 +256,8 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
     if (verdict == "strict_arrayfire_declared_boundaries") {
         return "Strict ArrayFire residency";
     }
-    if (verdict == "native_cpu_fallback_observed") {
-        return "Native CPU fallback observed";
-    }
-    if (verdict == "compatibility_no_observed_fallback") {
-        return "ArrayFire-first; no fallback observed";
+    if (verdict == "compatibility_completed") {
+        return "Compatibility; completed";
     }
     if (verdict == "terminal_without_residency_pass") {
         return "Residency not proven";
@@ -527,14 +271,14 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
 }
 
 ImVec4 ResidencyVerdictColor(const std::string& verdict) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (verdict == "strict_arrayfire_declared_boundaries") {
-        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        return t.success;
     }
-    if (verdict == "native_cpu_fallback_observed" ||
-        verdict == "terminal_without_residency_pass") {
-        return ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
+    if (verdict == "terminal_without_residency_pass") {
+        return t.error;
     }
-    return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+    return t.warning;
 }
 
 void RenderExecutionTruthRow(const char* label, const std::string& value) {
@@ -567,21 +311,40 @@ std::string FormatRouteQualification(
 
 } // namespace
 
+namespace {
+// The curves keep their roles in theme colours (series index): training
+// loss coral, validation loss blue, training accuracy green, validation
+// accuracy amber.
+constexpr int kTrainLossColour = 4;
+constexpr int kValLossColour = 1;
+constexpr int kTrainAccuracyColour = 3;
+constexpr int kValAccuracyColour = 2;
+
+// The series dots (metric cards, stats table) use the same theme colours as
+// the curves. Set every frame: the theme can change at any time.
+template <typename Series>
+void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accuracy,
+                        Series& val_accuracy, std::vector<Series>& custom) {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    train_loss.color = cyxwiz::ui::SeriesColour(t, kTrainLossColour);
+    val_loss.color = cyxwiz::ui::SeriesColour(t, kValLossColour);
+    train_accuracy.color = cyxwiz::ui::SeriesColour(t, kTrainAccuracyColour);
+    val_accuracy.color = cyxwiz::ui::SeriesColour(t, kValAccuracyColour);
+    for (size_t i = 0; i < custom.size(); ++i) {
+        custom[i].color = cyxwiz::ui::SeriesColour(t, i % 6);
+    }
+}
+}  // namespace
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 
     // Initialize metric series
+    // Colours come from the theme each frame (ApplySeriesColours).
     train_loss_.name = "Training Loss";
-    train_loss_.color = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);  // Coral
-
     val_loss_.name = "Validation Loss";
-    val_loss_.color = ImVec4(0.42f, 0.66f, 1.0f, 1.0f);  // Blue
-
     train_accuracy_.name = "Training Accuracy";
-    train_accuracy_.color = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);  // Green
-
     val_accuracy_.name = "Validation Accuracy";
-    val_accuracy_.color = ImVec4(0.95f, 0.76f, 0.30f, 1.0f);  // Amber
 
     visible_ = true;
     RecordPanelEvent("TrainingPlotPanel.Created");
@@ -598,6 +361,7 @@ void TrainingPlotPanel::Render() {
             last_render_visible_ = false;
         }
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
@@ -609,15 +373,37 @@ void TrainingPlotPanel::Render() {
     // Larger default size for better visibility
     ImGui::SetNextWindowSize(ImVec2(1000, 800), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin(name_.c_str(), &visible_)) {
+    if (focus_requested_) {
+        // A node dialog's "Show in Training Dashboard".
+        ImGui::SetNextWindowFocus();
+        focus_requested_ = false;
+    }
+    ::gui::NextWindowMayLeave(name_.c_str());
+    const bool expanded = ImGui::Begin(name_.c_str(), &visible_);
+    ::gui::TabMenu(name_.c_str(), &visible_);
+    if (!expanded) {
         ImGui::End();
         std::lock_guard<std::mutex> lock(data_mutex_);
+        ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
         RenderChartWindows();
         return;
     }
 
     // Lock data for reading
     std::lock_guard<std::mutex> lock(data_mutex_);
+    ApplySeriesColours(train_loss_, val_loss_, train_accuracy_, val_accuracy_, custom_metrics_);
+
+    // The Run switcher once a word-vector run exists; such a run has its own
+    // view (training_word_vector_runs.cpp) and the model run's stays as it is.
+    if (!word_vector_runs_.Runs().empty()) {
+        RenderRunSwitcher();
+        if (const WordVectorRun* run = word_vector_runs_.Find(shown_run_)) {
+            RenderWordVectorRun(*run);
+            ImGui::End();
+            RenderChartWindows();
+            return;
+        }
+    }
 
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
@@ -738,9 +524,9 @@ void TrainingPlotPanel::RenderEmptyState() {
         }
         ImGui::Spacing();
         centered("No training data yet", c.text);
-        centered("Press Train on the canvas, or run a training script, to see real-time metrics", c.muted);
-        ImGui::Spacing();
-        centered("Try: scripts/train_xor_simple.py", c.accent_text);
+        // Only canvas training reports here; the script hint named a file
+        // that does not exist and scripts cannot feed this panel.
+        centered("Press Train on the canvas to see real-time metrics", c.muted);
         ImGui::Spacing();
         centered("Loss and accuracy charts will appear here", c.faint);
         ImGui::Dummy(ImVec2(0.0f, 48.0f));
@@ -943,23 +729,8 @@ void TrainingPlotPanel::RenderKpiCards() {
                           ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
         for (const auto& card : cards) {
             ImGui::TableNextColumn();
-            if (BeginDashCard(card.id.c_str(), c)) {
-                const float line = ImGui::GetTextLineHeight();
-                const ImVec2 pos = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(pos.x + 4.0f, pos.y + line * 0.5f), 4.0f,
-                    ImGui::GetColorU32(card.dot));
-                ImGui::Dummy(ImVec2(8.0f, line));
-                ImGui::SameLine(0.0f, 6.0f);
-                ImGui::TextColored(c.muted, "%s", card.label.c_str());
-                DashBigValue(card.value.c_str(), c.text);
-                if (!card.tooltip.empty() && ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", card.tooltip.c_str());
-                }
-                ImGui::TextColored(card.sub1_color, "%s", card.sub1.c_str());
-                ImGui::TextColored(card.sub2_color, "%s", card.sub2.c_str());
-            }
-            EndDashCard();
+            DashKpiCard(card.id.c_str(), card.label.c_str(), card.dot, card.value.c_str(), card.tooltip.c_str(),
+                        card.sub1.c_str(), card.sub1_color, card.sub2.c_str(), card.sub2_color, c);
         }
         ImGui::EndTable();
     }
@@ -972,6 +743,7 @@ void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val
                      "epoch=" + std::to_string(epoch) +
                      " train_loss=" + std::to_string(train_loss));
 
+    ++data_version_;
     train_loss_.epochs.push_back(epoch);
     train_loss_.values.push_back(train_loss);
     TrimDataIfNeeded(train_loss_);
@@ -989,6 +761,7 @@ void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double 
                      "epoch=" + std::to_string(epoch) +
                      " train_acc=" + std::to_string(train_acc));
 
+    ++data_version_;
     train_accuracy_.epochs.push_back(epoch);
     train_accuracy_.values.push_back(train_acc);
     TrimDataIfNeeded(train_accuracy_);
@@ -1013,18 +786,12 @@ void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoc
         // Create new metric series
         MetricSeries new_series;
         new_series.name = metric_name;
-        // Generate a unique color based on index
-        float hue = (custom_metrics_.size() * 0.618034f);  // Golden ratio
-        hue = hue - std::floor(hue);  // Wrap to [0, 1]
-        ImGui::ColorConvertHSVtoRGB(hue, 0.7f, 1.0f,
-                                    new_series.color.x,
-                                    new_series.color.y,
-                                    new_series.color.z);
-        new_series.color.w = 1.0f;
+        // Its colour comes from the theme each frame (ApplySeriesColours).
         custom_metrics_.push_back(new_series);
         it = custom_metrics_.end() - 1;
     }
 
+    ++data_version_;
     it->epochs.push_back(epoch);
     it->values.push_back(value);
     TrimDataIfNeeded(*it);
@@ -1049,6 +816,7 @@ void TrainingPlotPanel::Clear() {
 }
 
 void TrainingPlotPanel::ClearLocked() {
+    ++data_version_;
     train_loss_.epochs.clear();
     train_loss_.values.clear();
     val_loss_.epochs.clear();
@@ -1339,6 +1107,10 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         checkpoint_step_ = 0;
         active_model_provenance_.clear();
         active_checkpoint_loaded_ = false;
+    } else {
+        // Preparation over: a word-vector run it trained that never finished
+        // was stopped with it.
+        word_vector_runs_.EndAllLive(true, "");
     }
 }
 
@@ -1359,6 +1131,7 @@ void TrainingPlotPanel::SetPreparationFailed(
     total_training_time_ = 0.0f;
     terminal_status_ = "failed";
     terminal_reason_ = error_message;
+    word_vector_runs_.EndAllLive(false, error_message);
 }
 
 void TrainingPlotPanel::RecordMaterializationProgress(
@@ -1550,109 +1323,10 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
-    const DashColors c = CurrentDashColors();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot("Loss", size, ImPlotFlags_NoTitle)) {
-        ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
-        if (log_loss_scale_) {
-            ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-        }
-
-        if (auto_scale_ && !train_loss_.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_loss_);
-            ImPlot::SetupAxisLimits(
-                ImAxis_X1, min_epoch, max_epoch,
-                follow_current_epoch_ ? ImGuiCond_Always : ImGuiCond_Once);
-
-            ValueRange range = CalculateVisibleRange(train_loss_, val_loss_, min_epoch, max_epoch);
-            if (log_loss_scale_) {
-                double min_positive = std::numeric_limits<double>::max();
-                const auto include_positive = [&](const MetricSeries& series) {
-                    const size_t count =
-                        std::min(series.epochs.size(), series.values.size());
-                    for (size_t i = 0; i < count; ++i) {
-                        if (series.epochs[i] < min_epoch ||
-                            series.epochs[i] > max_epoch ||
-                            series.values[i] <= 0.0) {
-                            continue;
-                        }
-                        min_positive = std::min(min_positive, series.values[i]);
-                    }
-                };
-                include_positive(train_loss_);
-                include_positive(val_loss_);
-                if (min_positive == std::numeric_limits<double>::max()) {
-                    min_positive = 1.0e-6;
-                }
-                const double lower = std::max(1.0e-12, min_positive / 1.25);
-                const double upper = std::max(lower * 10.0, range.max * 1.25);
-                ImPlot::SetupAxisLimits(
-                    ImAxis_Y1, lower, upper, ImGuiCond_Always);
-            } else {
-                double padding = (range.max - range.min) * 0.1;
-                if (padding < 0.01) padding = 0.1;
-                ImPlot::SetupAxisLimits(
-                    ImAxis_Y1,
-                    std::max(0.0, range.min - padding),
-                    range.max + padding,
-                    ImGuiCond_Always);
-            }
-        }
-
-        // Plot training loss
-        if (!train_loss_.values.empty()) {
-            ImPlot::SetNextLineStyle(train_loss_.color, 2.0f);
-            ImPlot::PlotLine(train_loss_.name.c_str(),
-                           train_loss_.epochs.data(),
-                           train_loss_.values.data(),
-                           static_cast<int>(train_loss_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(train_loss_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(train_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(train_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Training Loss (smoothed)",
-                                 train_loss_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
-            }
-        }
-
-        // Plot validation loss
-        if (!val_loss_.values.empty()) {
-            ImPlot::SetNextLineStyle(val_loss_.color, 2.0f);
-            ImPlot::PlotLine(val_loss_.name.c_str(),
-                           val_loss_.epochs.data(),
-                           val_loss_.values.data(),
-                           static_cast<int>(val_loss_.values.size()));
-            ImPlot::SetNextMarkerStyle(
-                ImPlotMarker_Circle, 5.0f, val_loss_.color,
-                1.5f, val_loss_.color);
-            ImPlot::PlotScatter("##Validation Loss Points",
-                                val_loss_.epochs.data(),
-                                val_loss_.values.data(),
-                                static_cast<int>(val_loss_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(val_loss_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(val_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(val_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Validation Loss (smoothed)",
-                                 val_loss_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
-            }
-        }
-
-        ImPlot::EndPlot();
-    }
-    PopDashPlotStyle();
+void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(0, size, fit, in_window);
 }
+
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
     const DashColors c = CurrentDashColors();
@@ -1677,75 +1351,10 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit) {
-    const DashColors c = CurrentDashColors();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot("Accuracy", size, ImPlotFlags_NoTitle)) {
-        ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_SouthEast);
-
-        if (auto_scale_ && follow_current_epoch_ && !train_accuracy_.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_accuracy_);
-            ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
-
-            ValueRange range = CalculateVisibleRange(train_accuracy_, val_accuracy_, min_epoch, max_epoch);
-            double padding = (range.max - range.min) * 0.1;
-            if (padding < 1.0) padding = 5.0;
-            ImPlot::SetupAxisLimits(ImAxis_Y1,
-                std::max(0.0, range.min - padding),
-                std::min(100.0, range.max + padding),
-                ImGuiCond_Always);
-        } else if (auto_scale_ && !train_accuracy_.epochs.empty()) {
-            const double max_epoch = std::max(1.0, train_accuracy_.epochs.back());
-            ImPlot::SetupAxisLimits(
-                ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
-        }
-
-        // Plot training accuracy
-        if (!train_accuracy_.values.empty()) {
-            ImPlot::SetNextLineStyle(train_accuracy_.color, 2.0f);
-            ImPlot::PlotLine(train_accuracy_.name.c_str(),
-                           train_accuracy_.epochs.data(),
-                           train_accuracy_.values.data(),
-                           static_cast<int>(train_accuracy_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(train_accuracy_.values.size()) >= smoothing_window_) {
-                auto smoothed = CalculateMovingAverage(
-                    train_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(train_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Training Accuracy (smoothed)",
-                                 train_accuracy_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
-            }
-        }
-
-        // Plot validation accuracy
-        if (!val_accuracy_.values.empty()) {
-            ImPlot::SetNextLineStyle(val_accuracy_.color, 2.0f);
-            ImPlot::PlotLine(val_accuracy_.name.c_str(),
-                           val_accuracy_.epochs.data(),
-                           val_accuracy_.values.data(),
-                           static_cast<int>(val_accuracy_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(val_accuracy_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(val_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(val_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Validation Accuracy (smoothed)",
-                                 val_accuracy_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
-            }
-        }
-
-        ImPlot::EndPlot();
-    }
-    PopDashPlotStyle();
+void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(1, size, fit, in_window);
 }
+
 
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* plot_title = nullptr;
@@ -1774,45 +1383,144 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit) {
-    const char* plot_title = nullptr;
-    const char* y_label = nullptr;
-    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
-    const DashColors c = CurrentDashColors();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot(plot_title, size, ImPlotFlags_NoTitle)) {
-        // Enable zoom and pan on both axes
-        ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(2, size, fit, in_window);
+}
 
-        for (const auto& metric : custom_metrics_) {
-            if (!metric.values.empty()) {
-                ImPlot::SetNextLineStyle(metric.color, 2.0f);
-                ImPlot::PlotLine(metric.name.c_str(),
-                               metric.epochs.data(),
-                               metric.values.data(),
-                               static_cast<int>(metric.values.size()));
-                if (IsValidationMetricName(metric.name)) {
-                    ImPlot::SetNextMarkerStyle(
-                        ImPlotMarker_Circle, 5.0f, metric.color,
-                        1.5f, metric.color);
-                    const std::string point_id =
-                        "##" + metric.name + " Points";
-                    ImPlot::PlotScatter(
-                        point_id.c_str(), metric.epochs.data(),
-                        metric.values.data(),
-                        static_cast<int>(metric.values.size()));
+plot::Series TrainingPlotPanel::ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn,
+                                             const std::vector<double>& smooth_x, const std::vector<double>& smooth_y,
+                                             int colour, bool markers) const {
+    plot::Series s;
+    s.label = full.name;
+    s.x = drawn.epochs;
+    s.y = drawn.values;
+    s.smooth_x = smooth_x;
+    s.smooth_y = smooth_y;
+    // Hover values and exports use every point of a reduced curve.
+    if (drawn.epochs.size() < full.epochs.size()) {
+        s.all_x = full.epochs;
+        s.all_y = full.values;
+    }
+    s.x_sorted = true;  // epochs ascend
+    s.colour = colour;
+    s.markers = markers;
+    return s;
+}
+
+plot::Prepared TrainingPlotPanel::ChartData(int chart) const {
+    const DrawnCache& d = drawn_;
+    plot::Prepared p;
+    p.spec.kind = plot::Kind::Line;
+    p.spec.x_label = "Epoch";
+    p.spec.legend = true;
+    p.spec.smooth = smoothing_window_;
+    size_t shown = 0, total = 0;
+    const auto add = [&](const MetricSeries& full, const DrawnSeries& drawn, int colour, bool markers) {
+        if (full.values.empty()) return;
+        p.series.push_back(ToPlotSeries(full, drawn.line, drawn.smooth_x, drawn.smooth_y, colour, markers));
+        shown += drawn.line.values.size();
+        total += full.values.size();
+    };
+    if (chart == 0) {
+        p.spec.title = "Loss";
+        p.spec.y_label = "Loss";
+        p.spec.log_y = log_loss_scale_;
+        add(train_loss_, d.train_loss, kTrainLossColour, false);
+        add(val_loss_, d.val_loss, kValLossColour, true);
+    } else if (chart == 1) {
+        p.spec.title = "Accuracy";
+        p.spec.y_label = "Accuracy (%)";
+        add(train_accuracy_, d.train_accuracy, kTrainAccuracyColour, false);
+        add(val_accuracy_, d.val_accuracy, kValAccuracyColour, true);
+    } else {
+        const char* title = nullptr;
+        const char* y_label = nullptr;
+        ClassifyCustomMetrics(custom_metrics_, &title, &y_label);
+        p.spec.title = title ? title : "Metrics";
+        p.spec.y_label = y_label ? y_label : "";
+        for (size_t i = 0; i < custom_metrics_.size() && i < d.custom.size(); ++i) {
+            const MetricSeries& full = custom_metrics_[i];
+            if (full.values.empty()) continue;
+            p.series.push_back(ToPlotSeries(full, d.custom[i], {}, {}, static_cast<int>(i % 6),
+                                            IsValidationMetricName(full.name)));
+            shown += d.custom[i].values.size();
+            total += full.values.size();
+        }
+    }
+    p.label = shown < total ? plot::DataLabel{plot::DataLabel::State::Reduced, shown, total}
+                            : plot::DataLabel{plot::DataLabel::State::Exact, total, total};
+    if (p.series.empty()) p.problem = "No values yet.";
+    return p;
+}
+
+void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool in_window) {
+    const DrawnCache& d = Drawn();
+    ChartSlot& slot = chart_slots_[chart][in_window ? 1 : 0];
+    if (!slot.view) {
+        static const char* ids[3] = {"training_loss", "training_accuracy", "training_metrics"};
+        slot.view = std::make_unique<plot::PlotView>(std::string(ids[chart]) + (in_window ? "_window" : "_card"));
+    }
+    if (slot.build != d.build || slot.log != log_loss_scale_) {
+        slot.view->SetData(ChartData(chart));
+        slot.build = d.build;
+        slot.log = log_loss_scale_;
+    }
+    if (fit) slot.view->RequestFit();
+
+    plot::PlotView::Options o;
+    static const char* names[3] = {"training_loss", "training_accuracy", "training_metrics"};
+    o.export_name = names[chart];
+    // The dashboard has its own Log loss axis, Fit (chart window) and
+    // pop-out icon.
+    o.tool_fit = false;
+    o.tool_log = false;
+    o.own_window_button = false;
+    // Auto scale and Follow current epoch, as before: the epoch window and
+    // the value range of what is visible.
+    if (chart == 0 && auto_scale_ && !d.train_loss.line.epochs.empty()) {
+        const auto [min_epoch, max_epoch] = CalculateEpochWindow(d.train_loss.line);
+        // Following: the window moves with training; otherwise the planned
+        // epochs are set once and the user may pan (as before the port).
+        o.x_range = {true, min_epoch, max_epoch, !follow_current_epoch_};
+        const ValueRange range = CalculateVisibleRange(d.train_loss.line, d.val_loss.line, min_epoch, max_epoch);
+        if (log_loss_scale_) {
+            double min_positive = std::numeric_limits<double>::max();
+            for (const MetricSeries* series : {&d.train_loss.line, &d.val_loss.line}) {
+                const size_t count = std::min(series->epochs.size(), series->values.size());
+                for (size_t i = 0; i < count; ++i) {
+                    if (series->epochs[i] < min_epoch || series->epochs[i] > max_epoch || series->values[i] <= 0.0) continue;
+                    min_positive = std::min(min_positive, series->values[i]);
                 }
             }
+            if (min_positive == std::numeric_limits<double>::max()) min_positive = 1.0e-6;
+            const double lower = std::max(1.0e-12, min_positive / 1.25);
+            o.y_range = {true, lower, std::max(lower * 10.0, range.max * 1.25)};
+        } else {
+            double padding = (range.max - range.min) * 0.1;
+            if (padding < 0.01) padding = 0.1;
+            o.y_range = {true, std::max(0.0, range.min - padding), range.max + padding};
         }
-
-        ImPlot::EndPlot();
+    } else if (chart == 1 && auto_scale_ && follow_current_epoch_ && !d.train_accuracy.line.epochs.empty()) {
+        const auto [min_epoch, max_epoch] = CalculateEpochWindow(d.train_accuracy.line);
+        o.x_range = {true, min_epoch, max_epoch};
+        const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, min_epoch, max_epoch);
+        double padding = (range.max - range.min) * 0.1;
+        if (padding < 1.0) padding = 5.0;
+        o.y_range = {true, std::max(0.0, range.min - padding), std::min(100.0, range.max + padding)};
+    } else if (chart == 1 && auto_scale_ && !d.train_accuracy.line.epochs.empty()) {
+        // Not following: all epochs so far, set once (as before the port);
+        // with Auto scale the value range follows the data, like the loss
+        // chart (it used to stay at the first fit, so the curve left the top).
+        const double max_epoch = std::max(1.0, d.train_accuracy.line.epochs.back()) + 1.0;
+        o.x_range = {true, 0.0, max_epoch, true};
+        const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, 0.0, max_epoch);
+        double padding = (range.max - range.min) * 0.1;
+        if (padding < 1.0) padding = 5.0;
+        o.y_range = {true, std::max(0.0, range.min - padding), std::min(100.0, range.max + padding)};
     }
-    PopDashPlotStyle();
+    slot.view->Draw(size, o);
 }
+
 
 void TrainingPlotPanel::RenderChartWindows() {
     const DashColors c = CurrentDashColors();
@@ -1885,11 +1593,11 @@ void TrainingPlotPanel::RenderChartWindows() {
                                    : kind == 1 ? "No accuracy data yet. Start training to see the curve."
                                                : "No custom metrics yet.");
             } else if (kind == 0) {
-                DrawLossPlot(ImVec2(-1, -1), fit);
+                DrawLossPlot(ImVec2(-1, -1), fit, true);
             } else if (kind == 1) {
-                DrawAccuracyPlot(ImVec2(-1, -1), fit);
+                DrawAccuracyPlot(ImVec2(-1, -1), fit, true);
             } else {
-                DrawCustomMetricsPlot(ImVec2(-1, -1), fit);
+                DrawCustomMetricsPlot(ImVec2(-1, -1), fit, true);
             }
         }
         ImGui::End();
@@ -2314,7 +2022,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
     if (tasks.empty()) {
         return;
@@ -2763,27 +2471,35 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 }
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
-#ifndef CYXWIZ_PLOTTING_MODULE
-    const auto trace = TrainingTraceCollector::LatestTrace();
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
+    // LatestTrace copies the whole trace (events, timings) and may read the
+    // saved one from disk; it ran every frame with data_mutex_ held
+    // (TOFIX134 P0 item 8). UI thread only.
+    static TrainingTraceSummary cached_trace;
+    static std::chrono::steady_clock::time_point trace_read_at{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - trace_read_at > std::chrono::milliseconds(500)) {
+        cached_trace = TrainingTraceCollector::LatestTrace();
+        trace_read_at = now;
+    }
+    const auto& trace = cached_trace;
     if (!trace.available && trace.run_id.empty()) {
         return;
     }
 
     const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    const TrainingTraceEvent* fallback =
-        FindLatestNativeCpuFallbackEvent(trace);
     const bool has_execution_truth =
         !trace.requested_backend.empty() ||
         !trace.effective_backend.empty() ||
         !trace.placement_fingerprint.empty();
-    if (!transfer && !fallback && trace.warnings.empty() &&
+    if (!transfer && trace.warnings.empty() &&
         !HasResidencyVerdict(trace) && !has_execution_truth) {
         return;
     }
 
     ImGui::Spacing();
     bool truth_open = false;
-    if (has_execution_truth || !trace.residency_verdict.empty() || transfer || fallback) {
+    if (has_execution_truth || !trace.residency_verdict.empty() || transfer) {
         std::string header = "Execution Truth";
         std::string summary = trace.effective_backend;
         if (!trace.residency_verdict.empty()) {
@@ -2867,8 +2583,9 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                     "Selection fallback",
                     "Applied to ArrayFire CPU");
             }
-            RenderExecutionTruthRow("Fallback policy",
-                                    trace.fallback_policy);
+            RenderExecutionTruthRow(
+                "Execution policy",
+                RecordedExecutionPolicyDisplayName(trace.execution_policy));
 
             std::string placement = trace.placement_fingerprint;
             if (!placement.empty()) {
@@ -2899,21 +2616,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 trace.synchronization_summary.empty()
                     ? "None recorded"
                     : trace.synchronization_summary);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("Native CPU fallback");
-            ImGui::TableNextColumn();
-            const ImVec4 fallback_count_color =
-                trace.native_cpu_fallback_count == 0
-                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                    : ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
-            ImGui::TextColored(
-                fallback_count_color,
-                "%llu event%s",
-                static_cast<unsigned long long>(
-                    trace.native_cpu_fallback_count),
-                trace.native_cpu_fallback_count == 1 ? "" : "s");
             ImGui::EndTable();
         }
 
@@ -2931,8 +2633,8 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     if (truth_open && transfer) {
         ImGui::SeparatorText("Transfer Detail");
         const ImVec4 color = transfer->status == "warning"
-            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-            : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            ? cyxwiz::ui::CurrentTokens().warning
+            : cyxwiz::ui::CurrentTokens().success;
         ImGui::TextColored(color, "Pin-memory transfer");
         if (ImGui::BeginTable(
                 "##pin_memory_transfer_detail",
@@ -2953,34 +2655,6 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
         }
     }
 
-    if (truth_open && fallback) {
-        ImGui::SeparatorText("Fallback Detail");
-        const ImVec4 color = fallback->status == "error"
-            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        ImGui::TextColored(color, "Native CPU fallback");
-        if (ImGui::BeginTable(
-                "##native_cpu_fallback_detail",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-            RenderExecutionTruthRow(
-                "Count",
-                std::to_string(trace.native_cpu_fallback_count));
-            RenderExecutionTruthRow("Selected backend",
-                                    fallback->compute_backend);
-            RenderExecutionTruthRow("Operation",
-                                    fallback->fallback_operation);
-            RenderExecutionTruthRow("Reason", fallback->fallback_reason);
-            RenderExecutionTruthRow("Policy", fallback->fallback_policy);
-            ImGui::EndTable();
-        }
-    }
-
     bool rendered_warning_header = false;
     if (!trace.warnings.empty()) {
         const int start =
@@ -2994,7 +2668,7 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 ImGui::SeparatorText("Warnings");
                 rendered_warning_header = true;
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
                                "%s", ClassifyTrainingWarning(warning));
             ImGui::SameLine(155.0f);
             ImGui::TextWrapped("%s", warning.c_str());
@@ -3023,18 +2697,25 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         return;
     }
 
-    if (ImGui::Button("Export Run CSV")) {
-        std::string error;
-        if (!WriteTrainingRunComparisonCsv(
-                "training_run_comparison.csv",
-                run_comparison_records_,
-                &error)) {
-            RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed",
-                             error);
+    const DashColors c = CurrentDashColors();
+    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c) && save_path_callback_) {
+        // The Engine's save dialog (project exports folder); it wrote
+        // training_run_comparison.csv into the working directory unasked.
+        const auto path = save_path_callback_("Export Run CSV", "training_run_comparison.csv");
+        if (path) {
+            std::string error;
+            if (WriteTrainingRunComparisonCsv(*path, run_comparison_records_, &error)) {
+                run_export_note_ = "Saved " + *path;
+                run_export_failed_ = false;
+            } else {
+                run_export_note_ = "Could not save the runs: " + error;
+                run_export_failed_ = true;
+                RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
+            }
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear Runs")) {
+    if (DashButton("Clear Runs", DashButtonKind::Danger, c)) {
         run_comparison_records_.clear();
     }
     ImGui::SameLine();
@@ -3043,6 +2724,12 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     ImGui::TextDisabled(
         "Partition Match is relative to the top-ranked run; different manifests "
         "are not directly comparable.");
+    if (!run_export_note_.empty()) {
+        const auto& tokens = cyxwiz::ui::CurrentTokens();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(run_export_failed_ ? tokens.error : tokens.success, "%s", run_export_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
     if (active_checkpoint_loaded_) {
         ImGui::TextDisabled(
             "A checkpoint loaded for testing is shown under Active model state; "
@@ -3257,7 +2944,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     const DashColors c = CurrentDashColors();
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
     const bool training_paused = tm.IsPaused();
@@ -3346,7 +3033,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     const float right_edge = ImGui::GetWindowContentRegionMax().x;
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
                                row_top));
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     if (training_active) {
         if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
             if (training_paused) {
@@ -3582,7 +3269,9 @@ void TrainingPlotPanel::RenderStatistics() {
 }
 
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
-    if (series.epochs.size() > max_points_) {
+    // Trimmed in chunks of a tenth: erasing the front for every new point
+    // moved the whole series each time once it was full (TOFIX134 P0 item 8).
+    if (series.epochs.size() > max_points_ + max_points_ / 10) {
         size_t to_remove = series.epochs.size() - max_points_;
         RecordPanelEvent("TrainingPlotPanel.TrimData",
                          series.name + " remove=" + std::to_string(to_remove));
@@ -3593,7 +3282,7 @@ void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
 
 void TrainingPlotPanel::RecordPanelEvent(const std::string& action,
                                          const std::string& detail) const {
-#ifndef CYXWIZ_PLOTTING_MODULE
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     CrashRunRecorder::Instance().MarkPanelEvent(action, detail);
 #else
     (void)action;
@@ -3664,21 +3353,50 @@ TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
 std::vector<double> TrainingPlotPanel::CalculateMovingAverage(
     const std::vector<double>& values,
     int window) const {
-    std::vector<double> smoothed;
-    smoothed.reserve(values.size());
-    const int safe_window = std::max(1, window);
-    double running_sum = 0.0;
-    for (size_t i = 0; i < values.size(); ++i) {
-        running_sum += values[i];
-        if (i >= static_cast<size_t>(safe_window)) {
-            running_sum -= values[i - static_cast<size_t>(safe_window)];
-        }
-        const size_t denom = std::min(
-            i + 1,
-            static_cast<size_t>(safe_window));
-        smoothed.push_back(running_sum / static_cast<double>(denom));
+    return series::MovingAverage(values, window);
+}
+
+namespace {
+// Enough for a full-screen chart; min/max per bucket keeps spikes.
+constexpr size_t kDrawnPoints = 4000;
+}
+
+const TrainingPlotPanel::DrawnCache& TrainingPlotPanel::Drawn() {
+    if (drawn_.version == data_version_ && drawn_.smoothing == smoothing_window_ &&
+        drawn_.smoothed == show_smoothed_curves_) {
+        return drawn_;
     }
-    return smoothed;
+    const auto reduce = [](const MetricSeries& from) {
+        MetricSeries line;
+        line.name = from.name;
+        line.color = from.color;
+        auto d = series::MinMaxDecimate(from.epochs, from.values, kDrawnPoints);
+        line.epochs = std::move(d.x);
+        line.values = std::move(d.y);
+        return line;
+    };
+    const auto build = [&](const MetricSeries& from, DrawnSeries& to) {
+        to.line = reduce(from);
+        to.smooth_x.clear();
+        to.smooth_y.clear();
+        if (show_smoothed_curves_ && static_cast<int>(from.values.size()) >= smoothing_window_) {
+            const auto avg = series::MovingAverage(from.values, smoothing_window_);
+            auto d = series::MinMaxDecimate(from.epochs, avg, kDrawnPoints);
+            to.smooth_x = std::move(d.x);
+            to.smooth_y = std::move(d.y);
+        }
+    };
+    build(train_loss_, drawn_.train_loss);
+    build(val_loss_, drawn_.val_loss);
+    build(train_accuracy_, drawn_.train_accuracy);
+    build(val_accuracy_, drawn_.val_accuracy);
+    drawn_.custom.clear();
+    for (const auto& metric : custom_metrics_) drawn_.custom.push_back(reduce(metric));
+    drawn_.version = data_version_;
+    ++drawn_.build;
+    drawn_.smoothing = smoothing_window_;
+    drawn_.smoothed = show_smoothed_curves_;
+    return drawn_;
 }
 
 bool TrainingPlotPanel::HasData() const {

@@ -1,4 +1,5 @@
 #include "hex_preview.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <fstream>
 #include <spdlog/spdlog.h>
@@ -34,13 +35,14 @@ void HexPreviewRenderer::SetData(const std::vector<uint8_t>& data) {
 }
 
 void HexPreviewRenderer::Render() {
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (data_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No data.");
+        ImGui::TextColored(t.text_dim, "No data.");
         return;
     }
 
     // Info bar
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+    ImGui::TextColored(t.text_dim,
         "Showing %zu / %zu bytes", data_.size(), file_size_);
     ImGui::Separator();
 
@@ -59,7 +61,7 @@ void HexPreviewRenderer::Render() {
             size_t offset = static_cast<size_t>(row) * bytes_per_row_;
 
             // Offset column
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.7f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
             ImGui::Text("%08zX  ", offset);
             ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -90,19 +92,19 @@ void HexPreviewRenderer::Render() {
             }
 
             // Hex column
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text);
             ImGui::Text("%s", hex_part.c_str());
             ImGui::PopStyleColor();
             ImGui::SameLine();
 
             // Separator
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_faint);
             ImGui::Text(" | ");
             ImGui::PopStyleColor();
             ImGui::SameLine();
 
             // ASCII column
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.9f, 0.7f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::Text("%s", ascii_part.c_str());
             ImGui::PopStyleColor();
         }

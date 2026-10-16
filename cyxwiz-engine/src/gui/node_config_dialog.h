@@ -25,12 +25,18 @@
 #include "data_input_capabilities.h"
 #include "data_preview_page_cache.h"
 #include "data_preview_table_renderer.h"
+#include "hdf5_source_inspector.h"
+#include "hdf5_loaded_source_verifier.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
 #include "../core/data_preview_service.h"
 #include "../core/dataset_partitions.h"
 #include "../core/training_parameter_contract.h"
+
+namespace cyxwiz {
+class ProfileView;
+}
 
 namespace gui {
 
@@ -56,6 +62,11 @@ public:
     // and Apply while busy so the user can't fire two concurrent loads.
     // Cancel stays enabled regardless.
     virtual bool IsBusy() const { return false; }
+    virtual bool CanApply() const { return true; }
+    // False for dialogs that draw their own actions (the SQL Workbench):
+    // the base then gives RenderContent the whole window, with no OK /
+    // Cancel / Apply row.
+    virtual bool UsesStandardButtons() const { return true; }
 
     // Optional graph context. Properties.cpp sets this right after
     // constructing a dialog so visualization / inspection dialogs can
@@ -63,9 +74,16 @@ public:
     // ignore it. Stored as a raw pointer — the NodeEditor outlives the
     // Properties panel.
     void SetNodeEditor(NodeEditor* editor) { node_editor_ = editor; }
+    // The node moved (the editor's node list grew) or is gone (nullptr).
+    void RebindNode(MLNode* node) { node_ = node; }
 
 protected:
     virtual void RenderContent() = 0;
+    // The row under the content: OK / Cancel / Apply by default. A dialog
+    // with its own footer overrides both; should_close asks Render to close.
+    virtual float FooterHeight() const;
+    virtual void RenderFooter(bool& should_close);
+    virtual void OnClose() {}
     void RenderSettingsTab();
     void RenderAdvancedTab();
     void RenderPreviewTab();
@@ -143,8 +161,11 @@ private:
 
     int tokenizer_type_ = 1;
     int token_output_mode_ = 0;
+    std::string bpe_initial_unit_;
+    std::string bpe_piece_policy_;
     char document_id_col_[128] = "document_id";
     char split_col_[128] = "split";
+    char target_text_col_[128] = "";
     char token_ids_col_[128] = "token_ids";
     int max_length_ = 256;
     int max_vocab_size_ = 10000;
@@ -164,43 +185,6 @@ private:
     std::string preview_decoded_text_;
     bool preview_roundtrip_ok_ = false;
     bool preview_has_roundtrip_ = false;
-    std::string status_message_;
-    bool status_is_error_ = false;
-};
-
-/**
- * EmbeddingDialog - Configuration dialog for token embedding lookup layers.
- *
- * The Embedding node is trainable by default. This dialog can also attach
- * a prebuilt text matrix file or create a deterministic starter matrix
- * from the configured vocabulary size/dimension.
- */
-class EmbeddingDialog : public NodeConfigDialog {
-public:
-    EmbeddingDialog(MLNode* node);
-    void Apply() override;
-    void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(760, 560); }
-
-protected:
-    void RenderContent() override;
-
-private:
-    void LoadFromNode();
-    void RenderShapeTab();
-    void RenderWeightsTab();
-    void RenderAdvancedTab();
-    bool BuildAndSaveWeights();
-    bool InspectWeightFile();
-
-    int num_embeddings_ = 10000;
-    int embedding_dim_ = 256;
-    int padding_idx_ = -1;
-    float max_norm_ = 0.0f;
-    bool freeze_ = false;
-    int init_mode_ = 0;  // 0=random normal, 1=random uniform, 2=one-hot/truncated
-    char weights_file_[512] = "";
-    char output_file_[512] = "";
     std::string status_message_;
     bool status_is_error_ = false;
 };
@@ -242,13 +226,21 @@ private:
 class DataInputDialog : public NodeConfigDialog {
 public:
     DataInputDialog(MLNode* node);
+    ~DataInputDialog() override;  // profile_view_ is complete in data_input_dialog_profile.cpp
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
-    bool IsBusy() const override { return is_loading_async_; }
+    bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
+    bool CanApply() const override { return !IsHdf5Source(); }
+    // Train loads a Data Input a reopened project has not loaded through a
+    // dialog it never shows (the same Apply as OK): the load's result is
+    // taken here each frame, as RenderContent does for a shown dialog.
+    void PollLoad() { PollAsyncLoadResult(); }
+    const std::string& LoadMessage() const { return apply_status_message_; }
 
 protected:
     void RenderContent() override;
+    void OnClose() override;
 
 private:
     // Data source types
@@ -277,6 +269,21 @@ private:
 
     // File source sub-renderers
     void RenderTabularOptions();
+    bool IsHdf5Source() const;
+    void SyncHdf5InspectorSource();
+    void RestoreOriginalHdf5Source();
+    Hdf5SourceInspector hdf5_inspector_;
+    Hdf5LoadedSourceVerifier hdf5_loaded_source_;
+    std::map<std::string, std::string> hdf5_restore_parameters_;
+    void BeginHdf5LoadedSourceVerification();
+    void PollHdf5LoadedSourceVerification();
+    bool BuildHdf5RestoreRequest(cyxwiz::Hdf5RegisteredSourceRequest& request,
+                               std::string& error) const;
+    std::string hdf5_source_path_;
+    std::string hdf5_source_project_root_;
+    std::string hdf5_source_graph_directory_;
+    std::string hdf5_source_launch_directory_;
+    std::string hdf5_source_resolved_path_;
     // Sequence (token tagging): a tabular file carrying the tagging contract
     // (data_input_dialog_sequence.cpp, TOFIX112).
     void LoadSequenceSettings();
@@ -542,23 +549,10 @@ private:
     std::string loaded_dataset_name_;
     std::vector<std::string> audit_issue_lines_;
 
-    // STATE: Data profiling
-    struct ColumnStats {
-        std::string name;
-        std::string dtype;      // "integer", "numeric", "string", "boolean"
-        size_t count = 0;
-        size_t unique_count = 0;
-        size_t null_count = 0;
-        float null_percentage = 0.0f;
-        double min_val = 0.0;
-        double max_val = 0.0;
-        double mean = 0.0;
-        double std_dev = 0.0;
-    };
-    bool profile_computed_ = false;
-    bool profile_in_progress_ = false;
-    std::vector<ColumnStats> column_stats_;
-    float data_quality_score_ = 0.0f;
+    // STATE: Data profiling: Data Studio's profile view of the loaded dataset
+    // (TOFIX148 D2), roles read-only here.
+    std::unique_ptr<cyxwiz::ProfileView> profile_view_;
+    std::string profile_dataset_;  // the dataset profile_view_ shows
 
     // STATE: Memory management
     enum class DataLoadState { NotLoaded, OnDisk, InMemory };
@@ -568,7 +562,6 @@ private:
     void UpdateTextLabelDistribution();
     void RenderTextLabelDistribution();
     void RenderDataProfilingTab();
-    void ComputeDataProfile();
     void UnloadDataset();
     std::string GenerateDatasetName() const;
     static std::string FormatBytes(size_t bytes);
@@ -691,6 +684,7 @@ private:
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
+    char initialize_from_checkpoint_[512] = "";
     bool generation_preview_enabled_ = false;
     int generation_preview_every_epochs_ = 20;
     int generation_preview_max_new_tokens_ = 32;

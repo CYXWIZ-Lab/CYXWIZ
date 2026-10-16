@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../materialization_memory_types.h"
+#include "../operator_figures.h"
 #include "../process_memory_snapshot.h"
 
 #include <arrow/result.h>
@@ -55,6 +56,22 @@ struct PipelineOperatorProgress {
     std::string process_memory_source;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
+    // Named figures and facts of the step's own run (OperatorFigures); most
+    // steps leave them empty.
+    std::vector<std::pair<std::string, double>> figures;
+    std::vector<std::pair<std::string, std::string>> notes;
+
+    OperatorFigures Figures() const {
+        OperatorFigures out;
+        out.node_id = node_id;
+        out.node_name = node_name;
+        out.stage = stage;
+        out.message = message;
+        out.progress = progress;
+        out.figures = figures;
+        out.notes = notes;
+        return out;
+    }
 };
 
 using PipelineOperatorProgressCallback =
@@ -151,6 +168,45 @@ public:
     virtual void SetProgressCallback(PipelineOperatorProgressCallback callback) {
         (void)callback;
     }
+
+    // === Streaming (TOFIX154 step 4) ===
+    // An operator that runs on one batch (a row group) at a time, so data
+    // bigger than memory flows through it. A fit-then-transform operator
+    // (NeedsFitPass) sees every batch twice: FitBatch for each, EndFit, then
+    // ApplyBatch for each. EndStream finishes (saves a fitted state). Batches
+    // are tables with the stream's schema.
+    virtual bool SupportsStreaming() const { return false; }
+    virtual bool NeedsFitPass() const { return false; }
+    virtual arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>&) {
+        return arrow::Status::NotImplemented(GetName(), " does not stream");
+    }
+    virtual arrow::Status FitBatch(const std::shared_ptr<arrow::Table>&) { return arrow::Status::OK(); }
+    virtual arrow::Status EndFit() { return arrow::Status::OK(); }
+    virtual arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>&) {
+        return arrow::Status::NotImplemented(GetName(), " does not stream");
+    }
+    virtual arrow::Status EndStream() { return arrow::Status::OK(); }
+    // A check: it reads every batch (FitBatch) and its output is its input,
+    // so the stream writes nothing.
+    virtual bool PassesInputThrough() const { return false; }
+    // A check that needs every row at once can judge a table on disk from
+    // one SQL query over it instead (TOFIX154): the query, its input named
+    // `input`; empty when it has none. JudgeSql decides from the result as
+    // Apply would (its outcome, or the failure).
+    virtual std::string CheckSql() const { return {}; }
+    virtual arrow::Status JudgeSql(const std::shared_ptr<arrow::Table>& /*result*/) {
+        return arrow::Status::NotImplemented(GetName(), " has no SQL check");
+    }
+
+    // Tables for output pins 1, 2, ... from the last successful Apply (pin 0 is
+    // Apply's result). Empty for single-output operators; an empty table
+    // pointer leaves that pin without a result.
+    virtual std::vector<std::shared_ptr<arrow::Table>> ExtraOutputs() const { return {}; }
+
+    // A short result statement from the last successful Apply, shown with the
+    // node's run facts (for example a Check's "passed: 3712 rows ...").
+    // Empty when the operator has nothing to add beyond its output table.
+    virtual std::string OutcomeSummary() const { return {}; }
 
     void SetMaterializationMemoryContext(MaterializationMemoryContext context) {
         execution_context_.memory = std::move(context);

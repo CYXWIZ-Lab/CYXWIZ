@@ -2,10 +2,12 @@
 #include "training_executor.h"
 
 #include "arrow_dataset.h"
+#include "data_budget.h"
 #include "classification_decision.h"
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
 #include "worker_defaults.h"
+#include "node_executors/text_column_utils.h"
 
 #include <spdlog/spdlog.h>
 
@@ -88,6 +90,8 @@ bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
 }
 
 bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
+    // The Pair / Triplet Dataset Builder groups rows by their class id.
+    if (config.metric_sampling != MetricSampling::None) return true;
     if (!UsesClassIndexTargets(config.loss_type) ||
         config.preprocessing.has_onehot) {
         return false;
@@ -318,13 +322,43 @@ bool TryApplyBalancedClassWeightsFromArrowTable(
     return true;
 }
 
+std::shared_ptr<ArrowDataset> WithEncodedLabels(const std::shared_ptr<ArrowDataset>& dataset,
+                                                const std::string& label_column,
+                                                const LabelVocabulary& vocabulary) {
+    if (!dataset || !TextLabelColumn(dataset->GetArrowTable(), label_column)) return dataset;
+    auto encoded = EncodeLabelColumn(dataset->GetArrowTable(), label_column, vocabulary);
+    if (!encoded.ok()) {
+        throw std::runtime_error("label column '" + label_column + "': " + encoded.status().message());
+    }
+    return std::make_shared<ArrowDataset>(encoded.ValueOrDie(), dataset->GetName());
+}
+
 TrainingBatcherSet BuildArrowTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ArrowDataset> dataset,
     const std::string& label_column,
-    int batch_size) {
+    int batch_size,
+    std::shared_ptr<const LabelVocabulary> vocabulary) {
 
     TrainingBatcherSet result;
+
+    // Text class labels become int32 indices before anything reads them, so
+    // the stratified split, class weights and batchers all see numbers.
+    const std::string class_label =
+        !config.target.primary_column.empty() ? config.target.primary_column : label_column;
+    if (dataset && !config.is_time_series && !UsesContinuousTargetMetrics(config)) {
+        if (auto text = TextLabelColumn(dataset->GetArrowTable(), class_label)) {
+            if (!vocabulary) vocabulary = std::make_shared<const LabelVocabulary>(BuildLabelVocabulary({text}));
+            dataset = WithEncodedLabels(dataset, class_label, *vocabulary);
+            result.label_classes = vocabulary->names;
+            spdlog::info("TrainingExecutor: label column '{}' holds text; {} classes encoded in sorted order",
+                         class_label, vocabulary->names.size());
+        } else if (const auto table = dataset->GetArrowTable()) {
+            // Class numbers from a Text Tokenizer carry their names.
+            if (const auto field = table->schema()->GetFieldByName(class_label))
+                result.label_classes = ClassNamesOfField(*field);
+        }
+    }
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
     if (num_workers != config.num_workers) {
         spdlog::warn("TrainingExecutor: clamping Arrow num_workers from {} to {} based on platform",
@@ -458,9 +492,32 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ParquetBackedDataset> dataset,
     const std::string& label_column,
-    int batch_size) {
+    int batch_size,
+    std::shared_ptr<const LabelVocabulary> vocabulary) {
 
     TrainingBatcherSet result;
+
+    // Text class labels: the batchers map them through one vocabulary read
+    // from the label column (the data stays on disk).
+    const std::string class_label =
+        !config.target.primary_column.empty() ? config.target.primary_column : label_column;
+    if (dataset && !config.is_time_series && !UsesContinuousTargetMetrics(config)) {
+        const auto schema = dataset->GetSchema();
+        const int position = schema ? schema->GetFieldIndex(class_label) : -1;
+        if (position >= 0 && IsTextLabelType(*schema->field(position)->type())) {
+            if (!vocabulary) {
+                auto column = dataset->ReadColumn(class_label);
+                if (!column) throw std::runtime_error("label column '" + class_label + "' could not be read");
+                vocabulary = std::make_shared<const LabelVocabulary>(BuildLabelVocabulary({column}));
+            }
+            result.label_classes = vocabulary->names;
+            spdlog::info("TrainingExecutor: label column '{}' holds text; {} classes in sorted order",
+                         class_label, vocabulary->names.size());
+        } else if (position >= 0) {
+            // Class numbers from a Text Tokenizer carry their names.
+            result.label_classes = ClassNamesOfField(*schema->field(position));
+        }
+    }
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
     if (num_workers != config.num_workers) {
         spdlog::warn("TrainingExecutor: clamping Parquet num_workers from {} to {} based on platform",
@@ -475,11 +532,6 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
 
     const std::string partition_col = config.is_time_series
         ? kSplitPartitionColumn : "";
-    if (config.stratified && !config.is_time_series) {
-        spdlog::warn("TrainingExecutor: stratified DataSplit is not available "
-                     "for disk-backed Parquet datasets yet; falling back to "
-                     "row-group train/validation/test slicing");
-    }
     const bool continuous_target = UsesContinuousTargetMetrics(config);
     if (config.balance_classes && !continuous_target) {
         spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
@@ -498,19 +550,43 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         config.shuffle, config.train_ratio, true,
         partition_col, /*partition_value=*/0, num_workers,
         BatcherPhase::Train, effective_val_ratio,
-        static_cast<uint32_t>(config.dataloader_seed));
+        static_cast<uint32_t>(config.dataloader_seed), vocabulary);
     result.parquet_val = std::make_unique<ParquetArrowBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/1, num_workers,
         BatcherPhase::Val, effective_val_ratio,
-        static_cast<uint32_t>(config.dataloader_seed));
+        static_cast<uint32_t>(config.dataloader_seed), vocabulary);
     result.parquet_test = std::make_unique<ParquetArrowBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
-        static_cast<uint32_t>(config.dataloader_seed));
+        static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+
+    // A row-level split (TOFIX154), by the in-memory path's rules: its
+    // contiguous slices, or with a stratified Data Split each class's share
+    // (ratios and seed as BuildArrowTrainingBatchers passes them). One byte
+    // per row. Time series keep their partition column; all-Train needs none.
+    if (partition_col.empty() && dataset && config.train_ratio < 1.0f) {
+        const bool stratified = config.stratified && !continuous_target;
+        const std::string stratify = stratified ? class_label : std::string();
+        const std::array<double, 3> shares = stratified
+            ? std::array<double, 3>{config.train_ratio, config.val_ratio, config.test_ratio}
+            : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
+        {
+            std::string split_error;
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle,
+                                              static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
+            if (!split) throw std::runtime_error("Parquet split: " + split_error);
+            spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",
+                         stratify.empty() ? "" : " stratified by '" + stratify + "'", split->counts[0],
+                         split->counts[1], split->counts[2], FormatDataBytes(split->bucket.size()));
+            result.parquet_train->SetRowSplit(split);
+            result.parquet_val->SetRowSplit(split);
+            result.parquet_test->SetRowSplit(split);
+        }
+    }
 
     if (continuous_target) {
         const size_t target_width =
@@ -630,17 +706,43 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         assembly_config.val_ratio = partitions.policy.test_ratio;
         assembly_config.test_ratio = 0.0f;
     }
+    // Text labels: one vocabulary over every supplied partition, so Train,
+    // Dev and Test number the classes alike (TOFIX145).
+    std::shared_ptr<const LabelVocabulary> vocabulary;
+    {
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> columns;
+        const auto add_arrow = [&](const std::shared_ptr<ArrowDataset>& dataset, const std::string& label) {
+            if (dataset)
+                if (auto column = TextLabelColumn(dataset->GetArrowTable(), label)) columns.push_back(column);
+        };
+        const auto add_parquet = [&](const std::shared_ptr<ParquetBackedDataset>& dataset, const std::string& label) {
+            if (!dataset) return;
+            const auto schema = dataset->GetSchema();
+            const int position = schema ? schema->GetFieldIndex(label) : -1;
+            if (position >= 0 && IsTextLabelType(*schema->field(position)->type()))
+                if (auto column = dataset->ReadColumn(label)) columns.push_back(column);
+        };
+        add_arrow(datasets.train_arrow, partitions.train.label_column);
+        add_parquet(datasets.train_parquet, partitions.train.label_column);
+        add_arrow(datasets.dev_arrow, partitions.dev.label_column);
+        add_parquet(datasets.dev_parquet, partitions.dev.label_column);
+        add_arrow(datasets.test_arrow, partitions.test.label_column);
+        add_parquet(datasets.test_parquet, partitions.test.label_column);
+        if (!columns.empty()) vocabulary = std::make_shared<const LabelVocabulary>(BuildLabelVocabulary(columns));
+    }
     result.batchers = datasets.train_arrow
         ? BuildArrowTrainingBatchers(
               assembly_config,
               datasets.train_arrow,
               partitions.train.label_column,
-              batch_size)
+              batch_size,
+              vocabulary)
         : BuildParquetTrainingBatchers(
               assembly_config,
               datasets.train_parquet,
               partitions.train.label_column,
-              batch_size);
+              batch_size,
+              vocabulary);
 
     if (external_dev && !external_test) {
         result.batchers.arrow_test = std::move(result.batchers.arrow_val);
@@ -655,7 +757,8 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
     const auto make_arrow_role = [&](const std::shared_ptr<ArrowDataset>& dataset,
                                      const std::string& label_column) {
         return std::make_unique<ArrowDatasetBatcher>(
-            dataset, label_column, batch_size, false, 1.0f, true, "", 0,
+            vocabulary ? WithEncodedLabels(dataset, label_column, *vocabulary) : dataset,
+            label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
             static_cast<uint32_t>(config.dataloader_seed));
     };
@@ -665,7 +768,7 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         return std::make_unique<ParquetArrowBatcher>(
             dataset, label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
-            static_cast<uint32_t>(config.dataloader_seed));
+            static_cast<uint32_t>(config.dataloader_seed), vocabulary);
     };
 
     if (datasets.dev_arrow) {

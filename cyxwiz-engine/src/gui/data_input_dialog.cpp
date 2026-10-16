@@ -13,7 +13,9 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "data_studio/profile_view.h"
 #include "node_editor.h"
+#include "ui_tokens.h"
 #include "loaders/audio_loader.h"
 #include "loaders/data_loader.h"
 #include "loaders/image_loader.h"
@@ -25,6 +27,8 @@
 #include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <cctype>
@@ -58,8 +62,14 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["source_type"],
                 source_type_);
         }
+        // Apply stores sources inside the project project-relative; the
+        // dialog works on the resolved path, as the loaders do, so Preview
+        // and the registry lookup open the same file after a reopen.
+        const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
         if (node_->parameters.count("file_path")) {
-            strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
+            const std::string resolved =
+                cyxwiz::ResolveProjectDataPath(node_->parameters["file_path"], project_root);
+            strncpy(file_path_, resolved.c_str(), sizeof(file_path_) - 1);
             DetectFileType();
             DetectFileCategory();
         }
@@ -126,7 +136,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
             }
         }
         if (node_->parameters.count("folder_path")) {
-            strncpy(folder_path_, node_->parameters["folder_path"].c_str(), sizeof(folder_path_) - 1);
+            const std::string resolved =
+                cyxwiz::ResolveProjectDataPath(node_->parameters["folder_path"], project_root);
+            strncpy(folder_path_, resolved.c_str(), sizeof(folder_path_) - 1);
         }
         if (node_->parameters.count("dataset_name")) {
             strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
@@ -171,6 +183,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
         LoadSequenceSettings();
         if (strlen(file_path_) > 0) {
             RefreshColumnList();
+        }
+        if (IsHdf5Source()) {
+            SyncHdf5InspectorSource();
+            hdf5_inspector_.RestoreSettings(node_->parameters);
         }
         if (node_->parameters.count("selected_columns") &&
             !available_columns_.empty()) {
@@ -306,7 +322,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
         // to the loader that owns it, then RestoreFromRegistry reads
         // the entry. This collapses the pre-refactor 5-branch inline
         // probe into one dispatch.
-        if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
+        if (IsHdf5Source()) {
+            BeginHdf5LoadedSourceVerification();
+        } else if (node_->parameters.count("dataset_name") && !node_->parameters["dataset_name"].empty()) {
             loaded_dataset_name_ = node_->parameters["dataset_name"];
             loaded_memory_is_estimate_ = false;
 
@@ -347,14 +365,22 @@ DataInputDialog::DataInputDialog(MLNode* node)
 }
 
 void DataInputDialog::Reset() {
+    hdf5_loaded_source_.Cancel();
+    hdf5_inspector_.Reset();
+    hdf5_source_path_.clear();
     if (!node_) return;
     node_->parameters = original_params_;
+    RestoreOriginalHdf5Source();
+    if (IsHdf5Source()) BeginHdf5LoadedSourceVerification();
     ResetPreviewPaging();
     preview_loaded_ = false;
     has_changes_ = false;
 }
 
 void DataInputDialog::RenderContent() {
+    SyncHdf5InspectorSource();
+    hdf5_inspector_.Poll();
+    PollHdf5LoadedSourceVerification();
     // Pick up the async load result, if the worker has finished, and apply
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();
@@ -372,6 +398,7 @@ void DataInputDialog::RenderContent() {
         "Choose a source, inspect the contract, then apply it to this DataInput node.");
     ImGui::Spacing();
     RenderSourceSelector();
+    SyncHdf5InspectorSource();
     ImGui::Spacing();
 
     // KNIME-style tab bar at TOP based on source type
@@ -481,9 +508,10 @@ void DataInputDialog::RenderContent() {
 
         // Fade out effect
         float alpha = std::min(1.0f, apply_status_timer_);
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
         ImVec4 color = apply_success_
-            ? ImVec4(0.2f, 0.8f, 0.2f, alpha)  // Green for success
-            : ImVec4(0.9f, 0.3f, 0.3f, alpha); // Red for error
+            ? cyxwiz::ui::WithAlpha(t.success, alpha)
+            : cyxwiz::ui::WithAlpha(t.error, alpha);
 
         ImGui::PushStyleColor(ImGuiCol_Text, color);
 
@@ -523,8 +551,8 @@ void DataInputDialog::UnloadDataset() {
     loaded_rows_ = 0;
     loaded_cols_ = 0;
     loaded_memory_bytes_ = 0;
-    profile_computed_ = false;
-    column_stats_.clear();
+    profile_view_.reset();
+    profile_dataset_.clear();
 
     if (node_) {
         node_->parameters["data_loaded"] = "false";

@@ -1,13 +1,16 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "metric_learning_metrics.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
 #include "text_dataset_batcher.h"
 #include <cyxwiz/tensor.h>
+#include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/model_evaluation.h>
 #include <functional>
 #include <atomic>
 #include <cmath>
@@ -16,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -59,6 +63,8 @@ struct TestingMetrics {
     int current_batch = 0;
     int total_batches = 0;
     int total_samples = 0;
+    int batch_limit = 0;      // > 0: a quick test that stops after this many batches
+    bool partial = false;     // true when the quick test stopped before the end
     int correct_predictions = 0;
 
     // Overall metrics
@@ -73,6 +79,13 @@ struct TestingMetrics {
     float test_mae = 0.0f;
     float test_rmse = 0.0f;
     size_t total_target_values = 0;
+    // Metric-learning model (TOFIX140 A5): accuracy, confusion matrix and
+    // per-class metrics are those of a 1-NN classifier over the test rows
+    // (each row takes the class of its nearest other row); the Pair /
+    // Retrieval Metrics nodes add their results.
+    bool metric_learning_mode = false;
+    std::optional<PairMetricResult> pair_metrics;
+    std::optional<RetrievalMetricResult> retrieval_metrics;
 
     // Detailed results
     ConfusionMatrix confusion_matrix;
@@ -82,6 +95,19 @@ struct TestingMetrics {
     std::vector<int> predictions;
     std::vector<int> ground_truth;
     std::vector<float> confidences;
+
+    // Per-sample class probabilities, row-major [total_samples][probability_classes]
+    // (binary: P(class 0), P(class 1)), kept for the ROC / PR curves. Empty when
+    // the test set is too large to keep them; curves_note then says so.
+    std::vector<float> class_probabilities;
+    int probability_classes = 0;
+    // ROC and precision-recall over the test set, on the device at the end:
+    // binary - the positive class (1); multi-class - one-vs-rest per class,
+    // skipping a class the test set has no sample of. curves_note says why
+    // there are no curves, or which classes were skipped.
+    std::optional<ROCCurveData> roc;
+    std::optional<PRCurveData> pr;
+    std::string curves_note;
 
     // Timing
     float total_time_seconds = 0.0f;
@@ -149,6 +175,8 @@ public:
      * Stop testing (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // Quick test (TOFIX129 G3): stop after this many batches, 0 = all.
+    void SetBatchLimit(int batches) { batch_limit_ = batches; }
 
     /**
      * Check if testing is currently running
@@ -164,7 +192,10 @@ public:
      * Set a pre-trained model for testing
      * If not set, will build model from config
      */
-    void SetModel(std::shared_ptr<SequentialModel> model);
+    // Pass the recorded owner when handing off from a different thread.
+    // Omitting it means the calling thread owns the supplied model's tensors.
+    void SetModel(std::shared_ptr<SequentialModel> model,
+                  std::optional<ProcessDeviceSelection> model_device = std::nullopt);
 
     /**
      * Get the testing configuration
@@ -186,12 +217,14 @@ private:
     // Thread safety
     std::atomic<bool> is_testing_{false};
     std::atomic<bool> stop_requested_{false};
+    int batch_limit_ = 0;
 
     mutable std::mutex metrics_mutex_;
     TestingMetrics metrics_;
 
     // Model and loss (no optimizer needed for testing)
     std::shared_ptr<SequentialModel> model_;
+    std::optional<ProcessDeviceSelection> model_device_;
     std::unique_ptr<Loss> loss_;
     RegressionMetricAccumulator regression_metrics_;
 
@@ -201,6 +234,7 @@ private:
      * Initialize testing components
      */
     bool Initialize(int batch_size);
+    void TestImpl(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
     void TestCausalSequence(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
 
     /**
@@ -212,6 +246,9 @@ private:
      * Process a single batch
      */
     void ProcessBatch(const Batch& batch);
+    // Metric-learning models: the loss over the builder's pairs / triplets and
+    // the 1-NN / Pair / Retrieval evaluation of the test rows.
+    void TestMetricLearning(IBatcher& rows, int batch_size);
 
     /**
      * Compute per-class metrics from confusion matrix
@@ -222,6 +259,9 @@ private:
      * Compute macro and weighted averages
      */
     void ComputeAggregateMetrics();
+    // ROC / precision-recall from the kept class probabilities (TOFIX140).
+    void ComputeCurves();
+    void ApplyLabelClassNames(const std::vector<std::string>& names);
 
     /**
      * Update metrics (thread-safe)

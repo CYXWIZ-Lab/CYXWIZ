@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../dataset_source.h"
 #include <cyxwiz/model_evaluation.h>
 #include <imgui.h>
 #include <vector>
@@ -9,7 +10,6 @@
 
 namespace cyxwiz {
 
-class DataTableRegistry;
 class DataTable;
 
 class LearningCurvesPanel : public Panel {
@@ -18,10 +18,6 @@ public:
     ~LearningCurvesPanel() override = default;
 
     void Render() override;
-
-    void SetDataRegistry(std::shared_ptr<DataTableRegistry> registry) {
-        data_registry_ = registry;
-    }
 
     // Allow setting learning curve data from training
     void SetLearningCurveData(const LearningCurveData& data) {
@@ -39,13 +35,11 @@ private:
     void RenderLearningCurve();
     void RenderBiasVarianceAnalysis();
     void RenderRecommendations();
-    void LoadSelectedData();
+    void UseTable(std::shared_ptr<DataTable> table);  // a picked dataset was read
 
-    std::shared_ptr<DataTableRegistry> data_registry_;
     std::shared_ptr<DataTable> current_table_;
 
-    std::vector<std::string> available_tables_;
-    int selected_table_idx_ = -1;
+    ui::DatasetSource source_;  // the picked dataset (Data Input or a node result)
 
     // Learning curve data
     LearningCurveData result_;

@@ -39,8 +39,13 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFile(const std::string& path,
 
     switch (format) {
         case arrow_utils::FileFormat::CSV:
-        case arrow_utils::FileFormat::TSV:
-            return FromCSV(path, name);
+        case arrow_utils::FileFormat::TSV: {
+            // Quoted values may span lines (free text, reviews); a TSV is tab-separated.
+            auto parse_options = arrow::csv::ParseOptions::Defaults();
+            parse_options.newlines_in_values = true;
+            if (format == arrow_utils::FileFormat::TSV) parse_options.delimiter = '\t';
+            return FromCSV(path, name, arrow::csv::ReadOptions::Defaults(), parse_options);
+        }
         case arrow_utils::FileFormat::Parquet:
             return FromParquet(path, name);
         case arrow_utils::FileFormat::Feather:
@@ -165,7 +170,9 @@ std::shared_ptr<ArrowDataset> ArrowDataset::FromFeather(const std::string& path,
         batches.push_back(maybe_batch.ValueOrDie());
     }
 
-    auto maybe_table = arrow::Table::FromRecordBatches(batches);
+    // With the file's schema a file holding no batches is a 0-row table, not
+    // an error; the caller decides what an empty dataset means.
+    auto maybe_table = arrow::Table::FromRecordBatches(reader->schema(), batches);
     if (!maybe_table.ok()) {
         spdlog::error("Failed to create table from record batches: {}", maybe_table.status().ToString());
         return nullptr;

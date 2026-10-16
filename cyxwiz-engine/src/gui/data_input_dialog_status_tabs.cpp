@@ -1,6 +1,7 @@
 // DataInputDialog memory and audit tabs.
 
 #include "node_config_dialog.h"
+#include "ui_tokens.h"
 
 #include <algorithm>
 #include <cctype>
@@ -14,6 +15,7 @@ namespace gui {
 void DataInputDialog::RenderMemoryTab() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Memory Management");
@@ -27,17 +29,17 @@ void DataInputDialog::RenderMemoryTab() {
         case DataLoadState::InMemory: {
             const bool disk_backed = (loaded_backend_ == 2);
             if (disk_backed) {
-                ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded via Parquet cache");
+                ImGui::TextColored(t.info, "On disk (Parquet)");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
             } else if (loaded_memory_is_estimate_) {
-                ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.4f, 1.0f), "Lazy-loaded");
+                ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- ~%s if fully cached (estimated)",
                                     FormatBytes(loaded_memory_bytes_).c_str());
                 ImGui::TextDisabled("  Current RAM is loader cache plus active batches; this is not reserved RAM.");
             } else {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "In Memory");
+                ImGui::TextColored(t.success, "In Memory");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s", FormatBytes(loaded_memory_bytes_).c_str());
             }
@@ -57,8 +59,8 @@ void DataInputDialog::RenderMemoryTab() {
 
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, t.error);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, cyxwiz::ui::Mix(t.error, t.text_bright, 0.15f));
             if (ImGui::Button("Unload from Memory", ImVec2(180, 0))) {
                 UnloadDataset();
             }
@@ -68,11 +70,11 @@ void DataInputDialog::RenderMemoryTab() {
             break;
         }
         case DataLoadState::OnDisk:
-            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.0f, 1.0f), "On Disk (streaming)");
+            ImGui::TextColored(t.info, "On Disk (streaming)");
             break;
         case DataLoadState::NotLoaded:
         default:
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Not Loaded");
+            ImGui::TextColored(t.pending, "Not Loaded");
             ImGui::TextDisabled("Click Apply to load data");
             break;
     }
@@ -82,7 +84,7 @@ void DataInputDialog::RenderMemoryTab() {
         ImGui::Separator();
         ImGui::Spacing();
         UpdateRAMEstimate();
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
+        ImGui::TextColored(t.info,
                            "File size on disk: %.1f MB", estimated_ram_mb_);
         ImGui::TextDisabled("   This is file size, not a RAM reservation. Actual RAM depends on loader mode.");
         ImGui::TextDisabled("   In-memory tabular loads may shrink after integer compaction; lazy loaders decode batches on demand.");

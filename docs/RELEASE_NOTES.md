@@ -22,6 +22,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- `KNOWN_ISSUES.md` ships in every release package, next to `LICENSE`. It lists known problems
+  in the GPU runtimes and what to do about them. The first entry is an ArrayFire oneAPI bug in
+  indexed min / max along rows (arrayfire/arrayfire#3732), which CyxWiz already works around.
 - Environment switch `CYXWIZ_DISABLE_NEURAL_PROVIDERS=1` forces every
   recurrent layer onto the portable path for the process, as an escape
   hatch when diagnosing a GPU provider.

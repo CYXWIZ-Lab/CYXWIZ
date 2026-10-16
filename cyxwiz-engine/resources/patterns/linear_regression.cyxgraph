@@ -21,10 +21,10 @@
       {"id": "linear", "type": "Dense", "name": "Linear Output", "pos": [220, 200],
        "params": {"units": "$output_size"}},
       {"id": "output", "type": "Output", "name": "Output", "pos": [440, 200],
-       "params": {"classes": "$output_size"}},
+       "params": {"num_classes": "$output_size"}},
       {"id": "loss", "type": "MSELoss", "name": "MSE Loss", "pos": [660, 200]},
       {"id": "opt", "type": "SGD", "name": "SGD Optimizer", "pos": [880, 200],
-       "params": {"learning_rate": "0.01", "momentum": "0.0", "weight_decay": "0.0"}}
+       "params": {"learning_rate": "0.01", "momentum": "0.0"}}
     ],
     "links": [
       {"from": "input", "to": "linear"},

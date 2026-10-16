@@ -19,7 +19,7 @@ struct Fixture {
     std::vector<SubgraphData> groups{{5,{nodes[1],nodes[2]},{{2,2,22,3,31}},{21},{32},true}};
 };
 ImVec2 button_center;
-int Frame(Fixture& f, bool busy, float zoom=1.0f) {
+SubgraphFrameActions Frame(Fixture& f, bool busy, float zoom=1.0f, int selected=-1) {
     auto& io=ImGui::GetIO(); io.DisplaySize=ImVec2(1000,700); io.DeltaTime=1.0f/60.0f;
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0,0)); ImGui::SetNextWindowSize(io.DisplaySize);
@@ -32,7 +32,7 @@ int Frame(Fixture& f, bool busy, float zoom=1.0f) {
     }
     const auto cursor=ImGui::GetCursorScreenPos();
     const int channel=ImGui::GetWindowDrawList()->_Splitter._Current;
-    const int result=DrawExpandedSubgraphFrames(f.nodes,f.groups,zoom,busy ? "Training is active" : "");
+    const auto result=DrawExpandedSubgraphFrames(f.nodes,f.groups,zoom,busy ? "Training is active" : "",selected);
     const auto a=ImGui::GetItemRectMin(), b=ImGui::GetItemRectMax();
     button_center=ImVec2((a.x+b.x)*0.5f,(a.y+b.y)*0.5f);
     Check(ImGui::GetWindowDrawList()->_Splitter._Current==channel,"draw channel restored");
@@ -70,19 +70,40 @@ int main() {
         auto cross=DisplaySubgraphLink({20,5,52,6,61},f.nodes,f.groups);
         Check(cross && cross->from_pin==32 && cross->to_pin==71,"two expanded groups project both endpoints");
         Check(CrossesExpandedSubgraphBoundary(3,7,f.groups),"cross-group edits blocked");
+        // Expanding makes room (TOFIX148): the tier1 recipe expanding over the
+        // Export beside it and a Data Validator below it.
+        { const ImVec4 frame=EstimateExpandedFrame({ImVec2(640,430),ImVec2(800,430),ImVec2(1280,430)});
+          Check(frame.x<640 && frame.z>1280+64 && frame.y<430-30 && frame.w>430+64,"frame covers the steps and their labels");
+          std::vector<PlacedNode> outside{{157,ImVec2(320,190),ImVec2(64,80)},   // the Data Input, up-left: stays
+                                          {198,ImVec2(900,330),ImVec2(64,80)},   // the Export, inside the frame
+                                          {300,ImVec2(1700,420),ImVec2(64,80)},  // right, in the band: keeps its place after the Export
+                                          {301,ImVec2(1700,900),ImVec2(64,80)}}; // far below: stays
+          auto moved=MakeRoomForFrame(frame,outside);
+          Check(!moved.count(157) && !moved.count(301),"nodes outside the frame and its band stay");
+          Check(moved.count(198) && moved[198].x>=frame.z+60 && moved[198].y==330,"a covered node moves right of the frame");
+          Check(moved.count(300) && moved[300].x-moved[198].x==800,"nodes right of it keep their spacing");
+          Check(MakeRoomForFrame(frame,{{157,ImVec2(320,190),ImVec2(64,80)}}).empty(),"nothing covered, nothing moves"); }
         f=Fixture{};
         ImGui::CreateContext(); ImNodes::CreateContext();
         auto& io=ImGui::GetIO(); io.IniFilename=nullptr;
         unsigned char* pixels; int width,height; io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
-        Check(Frame(f,false)==-1,"no action without click");
+        Check(Frame(f,false).collapse==-1,"no action without click");
         const ImVec2 button=button_center;
         io.AddMousePosEvent(button.x,button.y); Frame(f,false);
-        io.AddMouseButtonEvent(0,true); Check(Frame(f,false)==-1,"button press defers mutation");
-        io.AddMouseButtonEvent(0,false); Check(Frame(f,false)==5,"button release requests collapse for correct wrapper");
+        io.AddMouseButtonEvent(0,true); Check(Frame(f,false).collapse==-1,"button press defers mutation");
+        { const auto released=Frame((io.AddMouseButtonEvent(0,false),f),false);
+          Check(released.collapse==5 && released.select==-1,"button release requests collapse for correct wrapper, not select"); }
         io.AddMouseButtonEvent(0,true); Frame(f,true);
-        io.AddMouseButtonEvent(0,false); Check(Frame(f,true)==-1,"busy frame cannot request collapse");
-        Check(Frame(f,false,0.5f)==-1,"zoomed frame renders");
-        Check(Frame(f,false,1.5f)==-1,"larger frame renders");
+        io.AddMouseButtonEvent(0,false); Check(Frame(f,true).collapse==-1,"busy frame cannot request collapse");
+        // The header left of the button selects the subgraph (TOFIX147).
+        const ImVec2 header(button.x-200.0f,button.y);
+        io.AddMousePosEvent(header.x,header.y); Check(Frame(f,false).header_hovered,"header is hoverable");
+        io.AddMouseButtonEvent(0,true); Frame(f,false);
+        { io.AddMouseButtonEvent(0,false); const auto picked=Frame(f,false);
+          Check(picked.select==5 && picked.collapse==-1,"header click selects the wrapper, does not collapse"); }
+        Check(Frame(f,false,1.0f,5).select==-1,"a selected frame renders and asks nothing without a click");
+        Check(Frame(f,false,0.5f).collapse==-1,"zoomed frame renders");
+        Check(Frame(f,false,1.5f).collapse==-1,"larger frame renders");
         ImNodes::DestroyContext(); ImGui::DestroyContext();
         std::cout<<"PASS: "<<checks<<" subgraph presentation checks\n";
     } catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

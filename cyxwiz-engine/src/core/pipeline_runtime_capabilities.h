@@ -126,8 +126,6 @@ struct PipelineSupportedTrainingRoleCapability {
 enum class PipelineTrainingBackendSupportMode {
     Allowed,
     UnsupportedSequentialModelLayer,
-    UnsupportedTrainingControl,
-    UnsupportedTrainingWorkflow,
 };
 
 struct PipelineTrainingBackendSupport {
@@ -175,6 +173,7 @@ enum class PipelineRuntimeImplementationOwner {
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
+    StreamingOperatorsOnly,  // a table on disk: operators that stream (TOFIX154)
 };
 
 struct PipelineMaterializerStorageBackendCapability {
@@ -184,14 +183,6 @@ struct PipelineMaterializerStorageBackendCapability {
     bool materializer_supported = false;
     const char* reason = nullptr;
 };
-
-// Qualified input storage for PipelineExecutor, distinct from materializer support.
-struct PipelineExecutorInputStorageSupport {
-    bool supported = false;
-    const char* reason = nullptr;
-};
-PipelineExecutorInputStorageSupport ResolvePipelineExecutorInputStorageSupport(
-    gui::NodeType node_type, PipelineStorageBackend backend);
 
 struct PipelineRuntimeSupport {
     PipelineRuntimeSupport() = default;
@@ -278,12 +269,6 @@ GetPipelineFloatParameterRuntimeCapabilities();
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities();
-
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingControlCapabilities();
-
-const std::vector<PipelineUnsupportedTrainingNodeCapability>&
-GetPipelineUnsupportedTrainingWorkflowCapabilities();
 
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities();
@@ -373,15 +358,7 @@ bool ValidatePipelineRuntimeParameterCapabilities(
 
 const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type);
 
-const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type);
-
-const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type);
-
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
-
-bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type);
-
-bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
 

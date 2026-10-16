@@ -38,6 +38,8 @@ struct TextFeatureMatrix {
     std::vector<std::string> feature_names;
     std::vector<int32_t> labels;
     std::string label_name;
+    // The label codes' names (code i is class_names[i]; empty: unknown).
+    std::vector<std::string> class_names;
 };
 
 struct TextVectorizerMaterialization {

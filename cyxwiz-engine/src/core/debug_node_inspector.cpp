@@ -346,9 +346,7 @@ DebugTraceRecord DebugNodeInspector::BuildExplanationTrace(
             "backend_reason_code",
             "backend_explanation",
             "backend_suggested_action",
-            "backend_fallback",
-            "backend_prior_runtime_fallback_observed",
-            "backend_fallback_observed_this_run"
+            "backend_fallback"
         };
         for (const char* key : placement_keys) {
             CopyPayloadValue(

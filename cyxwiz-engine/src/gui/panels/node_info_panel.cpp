@@ -1,5 +1,7 @@
 #include "node_info_panel.h"
 #include "../icons.h"
+#include "../node_editor.h"
+#include "../ui_tokens.h"
 #include "../../core/node_metadata_registry.h"
 #include "../../core/extension_node_registry.h"
 #include "../../plugin/plugin_manager.h"
@@ -34,10 +36,11 @@ const SupportAxisDefinition* FindSupportAxis(const NodeMetadata* metadata,
 }
 
 ImVec4 SupportStateColor(const std::string& state) {
-    if (state == "real") return ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
-    if (state == "partial") return ImVec4(1.0f, 0.72f, 0.32f, 1.0f);
-    if (state == "blocked") return ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
-    return ImVec4(0.65f, 0.68f, 0.75f, 1.0f);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (state == "real") return t.success;
+    if (state == "partial") return t.warning;
+    if (state == "blocked") return t.error;
+    return t.pending;
 }
 
 std::string SupportStateLabel(const std::string& state) {
@@ -231,12 +234,13 @@ void NodeInfoPanel::ClearSelection() {
 
 void NodeInfoPanel::RenderHeader() {
     if (!metadata_) return;
+    const ui::Tokens& t = ui::CurrentTokens();
 
     // Icon and name
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font (with icons)
 
     // Large icon
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
     ImGui::SetWindowFontScale(1.5f);
     ImGui::TextUnformatted(metadata_->icon.c_str());
     ImGui::SetWindowFontScale(1.0f);
@@ -246,7 +250,7 @@ void NodeInfoPanel::RenderHeader() {
 
     // Name
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_bright);
     ImGui::Text("%s", metadata_->name.c_str());
     ImGui::PopStyleColor();
 
@@ -261,7 +265,7 @@ void NodeInfoPanel::RenderHeader() {
             if (!chips.empty()) chips += "  |  ";
             chips += chip;
         }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.81f, 0.78f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.accent_text);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextUnformatted(chips.c_str());
         ImGui::PopTextWrapPos();
@@ -272,7 +276,7 @@ void NodeInfoPanel::RenderHeader() {
 
     if (const auto* workflow_lane = FindSupportAxis(metadata_, "Workflow Lane")) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.62f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[0]);
         const std::string label = SupportAxisValueLabel(workflow_lane->value);
         ImGui::Text("%s %s", ICON_FA_ROUTE, label.c_str());
         ImGui::PopStyleColor();
@@ -283,7 +287,7 @@ void NodeInfoPanel::RenderHeader() {
 
     if (const auto* training_role = FindSupportAxis(metadata_, "Training Role")) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.48f, 0.82f, 0.72f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]);
         const std::string label = SupportAxisValueLabel(training_role->value);
         ImGui::Text("%s %s", ICON_FA_MICROCHIP, label.c_str());
         ImGui::PopStyleColor();
@@ -294,7 +298,7 @@ void NodeInfoPanel::RenderHeader() {
 
     if (const auto* task_type = FindSupportAxis(metadata_, "Task Type")) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.series[1]);
         const std::string label = SupportAxisValueLabel(task_type->value);
         ImGui::Text("%s %s", ICON_FA_BULLSEYE, label.c_str());
         ImGui::PopStyleColor();
@@ -305,7 +309,7 @@ void NodeInfoPanel::RenderHeader() {
 
     if (const auto* owner = FindSupportAxis(metadata_, "Implementation Owner")) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.68f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         const std::string label = SupportAxisValueLabel(owner->value);
         ImGui::Text("%s %s", ICON_FA_CODE_BRANCH, label.c_str());
         ImGui::PopStyleColor();
@@ -333,12 +337,12 @@ void NodeInfoPanel::RenderHeader() {
     // Status badge (if template or deprecated)
     if (metadata_->IsTemplate()) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.pending);
         ImGui::Text("%s Coming Soon", ICON_FA_CLOCK);
         ImGui::PopStyleColor();
     } else if (metadata_->IsDeprecated()) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
         ImGui::Text("%s Deprecated", ICON_FA_TRIANGLE_EXCLAMATION);
         ImGui::PopStyleColor();
     }
@@ -357,7 +361,7 @@ void NodeInfoPanel::RenderDescription() {
 
     // Detailed help text
     if (!metadata_->help_text.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
         ImGui::TextWrapped("%s", metadata_->help_text.c_str());
         ImGui::PopStyleColor();
     }
@@ -367,14 +371,15 @@ void NodeInfoPanel::RenderDescription() {
 
 void NodeInfoPanel::RenderSupport() {
     if (!metadata_ || metadata_->support_axes.empty()) return;
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ImGui::Text("%s Support", ICON_FA_CIRCLE_INFO);
     ImGui::Indent(16.0f);
 
     for (const auto& axis : metadata_->support_axes) {
         const ImVec4 color = axis.supported
-            ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-            : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+            ? t.success
+            : t.error;
         const char* icon = axis.supported
             ? ICON_FA_CIRCLE_CHECK
             : ICON_FA_TRIANGLE_EXCLAMATION;
@@ -391,7 +396,7 @@ void NodeInfoPanel::RenderSupport() {
 
         if (ShouldShowSupportReason(axis)) {
             ImGui::Indent(18.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.68f, 0.68f, 0.68f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
             ImGui::TextWrapped("%s", axis.reason.c_str());
             ImGui::PopStyleColor();
             ImGui::Unindent(18.0f);
@@ -429,7 +434,7 @@ void NodeInfoPanel::RenderPorts() {
 
             if (!port.description.empty()) {
                 ImGui::Indent(16.0f);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
                 ImGui::TextWrapped("%s", port.description.c_str());
                 ImGui::PopStyleColor();
                 ImGui::Unindent(16.0f);
@@ -459,7 +464,7 @@ void NodeInfoPanel::RenderPorts() {
 
             if (!port.description.empty()) {
                 ImGui::Indent(16.0f);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
                 ImGui::TextWrapped("%s", port.description.c_str());
                 ImGui::PopStyleColor();
                 ImGui::Unindent(16.0f);
@@ -486,7 +491,7 @@ void NodeInfoPanel::RenderParameters() {
         // Default value
         if (!param.default_value.empty()) {
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().accent_text);
             ImGui::Text("= %s", param.default_value.c_str());
             ImGui::PopStyleColor();
         }
@@ -494,7 +499,7 @@ void NodeInfoPanel::RenderParameters() {
         // Description
         if (!param.description.empty()) {
             ImGui::Indent(16.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
             ImGui::TextWrapped("%s", param.description.c_str());
             ImGui::PopStyleColor();
             ImGui::Unindent(16.0f);
@@ -523,10 +528,10 @@ void NodeInfoPanel::RenderExamples() {
     ImGui::Indent(16.0f);
 
     // Code block styling
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::CurrentTokens().bg_input);
     ImGui::BeginChild("ExampleCode", ImVec2(0, 80), true);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.9f, 0.8f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text);
     ImGui::TextWrapped("%s", metadata_->example_usage.c_str());
     ImGui::PopStyleColor();
 
@@ -546,7 +551,7 @@ void NodeInfoPanel::RenderPlaceholder() {
 
     // Center icon
     ImGui::SetCursorPosX((window_size.x - icon_size) * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_faint);
     ImGui::SetWindowFontScale(2.0f);
     ImGui::TextUnformatted(ICON_FA_CIRCLE_INFO);
     ImGui::SetWindowFontScale(1.0f);
@@ -564,7 +569,7 @@ void NodeInfoPanel::RenderPlaceholder() {
     ImGui::Spacing();
 
     const char* hint = "Click a node in the Nodes panel to keep\nits details here; hover to preview";
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_faint);
     // Center multi-line hint
     ImVec2 hint_size = ImGui::CalcTextSize(hint);
     ImGui::SetCursorPosX((window_size.x - hint_size.x) * 0.5f);
@@ -573,15 +578,8 @@ void NodeInfoPanel::RenderPlaceholder() {
 }
 
 ImU32 NodeInfoPanel::GetPinTypeColor(PinType type) const {
-    switch (type) {
-        case PinType::Tensor:      return IM_COL32(100, 200, 255, 255);  // Blue
-        case PinType::Labels:      return IM_COL32(255, 200, 100, 255);  // Orange
-        case PinType::Parameters:  return IM_COL32(200, 100, 255, 255);  // Purple
-        case PinType::Loss:        return IM_COL32(255, 100, 100, 255);  // Red
-        case PinType::Optimizer:   return IM_COL32(100, 255, 200, 255);  // Cyan
-        case PinType::Dataset:     return IM_COL32(100, 255, 100, 255);  // Green
-        default:                   return IM_COL32(180, 180, 180, 255);  // Gray
-    }
+    // The shared pin data-type colour (theme series colours)
+    return ui::ToU32(gui::PinTypeColour(type));
 }
 
 const char* NodeInfoPanel::GetPinTypeName(PinType type) const {

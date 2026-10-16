@@ -199,7 +199,7 @@ void TestBertSequenceClassificationGraphContract() {
                        "Class Output",
                        {Pin(801, gui::PinType::Tensor, "Input", true)},
                        {});
-    output.parameters["classes"] = "2";
+    output.parameters["num_classes"] = "2";
 
     auto loss = CrossEntropyNode();
     auto optimizer = AdamNode();

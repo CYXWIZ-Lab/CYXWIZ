@@ -111,6 +111,50 @@ std::map<std::string, Tensor> Conv2DModule::GetGradients() {
     return gradients;
 }
 
+DepthwiseConv2DModule::DepthwiseConv2DModule(int channels, int depth_multiplier, int kernel_size,
+                                             int stride, int padding, bool use_bias)
+    : layer_(std::make_unique<DepthwiseConv2DLayer>(channels, depth_multiplier, kernel_size,
+                                                    stride, padding, use_bias)),
+      channels_(channels),
+      multiplier_(depth_multiplier),
+      kernel_size_(kernel_size),
+      stride_(stride),
+      padding_(padding) {}
+
+Tensor DepthwiseConv2DModule::Forward(const Tensor& input) {
+    return layer_->Forward(input);
+}
+
+Tensor DepthwiseConv2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output);
+}
+
+std::map<std::string, Tensor> DepthwiseConv2DModule::GetParameters() {
+    const auto legacy = layer_->GetParameters();
+    std::map<std::string, Tensor> parameters;
+    CopyIfPresent(parameters, legacy, "weights", "weights");
+    CopyIfPresent(parameters, legacy, "bias", "bias");
+    return parameters;
+}
+
+void DepthwiseConv2DModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> DepthwiseConv2DModule::GetGradients() {
+    const auto legacy = layer_->GetParameters();
+    std::map<std::string, Tensor> gradients;
+    CopyIfPresent(gradients, legacy, "grad_weights", "weights");
+    CopyIfPresent(gradients, legacy, "grad_bias", "bias");
+    return gradients;
+}
+
+std::string DepthwiseConv2DModule::GetName() const {
+    return "DepthwiseConv2D(" + std::to_string(channels_) + " x " + std::to_string(multiplier_) +
+        ", kernel=" + std::to_string(kernel_size_) + ", stride=" + std::to_string(stride_) +
+        ", padding=" + std::to_string(padding_) + ")";
+}
+
 std::string Conv2DModule::GetName() const {
     return "Conv2D(" + std::to_string(in_channels_) + " -> " +
         std::to_string(out_channels_) + ", kernel=" +
@@ -251,16 +295,51 @@ std::string AvgPool2DModule::GetName() const {
 GlobalAvgPool2DModule::GlobalAvgPool2DModule()
     : layer_(std::make_unique<GlobalAvgPool2DLayer>()) {}
 
+// The layer gives [C,N]; the model's next layer (Dense) takes [N,C] rows, as
+// torch's adaptive_avg_pool2d(x, 1).flatten(1).
 Tensor GlobalAvgPool2DModule::Forward(const Tensor& input) {
-    return layer_->Forward(input);
+    return layer_->Forward(input).Transpose();
 }
 
 Tensor GlobalAvgPool2DModule::Backward(const Tensor& grad_output) {
-    return layer_->Backward(grad_output);
+    return layer_->Backward(grad_output.Transpose());
 }
 
 std::string GlobalAvgPool2DModule::GetName() const {
     return "GlobalAvgPool2D";
+}
+
+GlobalMaxPool2DModule::GlobalMaxPool2DModule()
+    : layer_(std::make_unique<GlobalMaxPool2DLayer>()) {}
+
+// As GlobalAvgPool2DModule: [C,N] from the layer, [N,C] rows for Dense.
+Tensor GlobalMaxPool2DModule::Forward(const Tensor& input) {
+    return layer_->Forward(input).Transpose();
+}
+
+Tensor GlobalMaxPool2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output.Transpose());
+}
+
+std::string GlobalMaxPool2DModule::GetName() const {
+    return "GlobalMaxPool2D";
+}
+
+AdaptiveAvgPool2DModule::AdaptiveAvgPool2DModule(int out_h, int out_w)
+    : layer_(std::make_unique<AdaptiveAvgPool2DLayer>(out_h, out_w)),
+      out_h_(out_h),
+      out_w_(out_w) {}
+
+Tensor AdaptiveAvgPool2DModule::Forward(const Tensor& input) {
+    return layer_->Forward(input);
+}
+
+Tensor AdaptiveAvgPool2DModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output);
+}
+
+std::string AdaptiveAvgPool2DModule::GetName() const {
+    return "AdaptiveAvgPool2D(" + std::to_string(out_h_) + "x" + std::to_string(out_w_) + ")";
 }
 
 } // namespace cyxwiz

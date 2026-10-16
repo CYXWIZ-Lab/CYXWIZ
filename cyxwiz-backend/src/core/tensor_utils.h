@@ -17,6 +17,4 @@ size_t CheckedProduct(const std::vector<size_t>& values,
 std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape,
                                     const char* overflow_message,
                                     bool broadcast_zero_stride = false);
-void CopyElement(const Tensor& src_tensor, Tensor& dst_tensor, size_t src_linear, size_t dst_linear);
-
 } // namespace cyxwiz::tensor_utils

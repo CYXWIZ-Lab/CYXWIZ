@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
 find_package(Catch2 CONFIG REQUIRED)
+# Defines catch_discover_tests (used by the ONNX export tests below).
+include(Catch)
 
 # Unit tests
 add_executable(cyxwiz-tests
@@ -17,15 +19,13 @@ add_executable(cyxwiz-tests
     unit/test_tensor_broadcast_contract.cpp
     unit/test_tensor_factory_contract.cpp
     unit/test_tensor_linalg_contract.cpp
+    unit/test_linear_algebra_tensor.cpp
     unit/test_engine.cpp
     unit/test_c_api.cpp
     unit/test_activations.cpp
     unit/test_arrayfire_fallback_source_scan.cpp
     unit/test_backend_fallback_reason_taxonomy_scan.cpp
-    unit/test_gpu_execution_contracts.cpp
     unit/test_gpu_execution_modes.cpp
-    unit/test_recurrent_staged_plan_parity.cpp
-    unit/test_placement_observation_key_alignment.cpp
     unit/test_neural_provider_registry.cpp
     unit/test_nvidia_provider_rnn_parity.cpp
     unit/test_opencl_provider_parity.cpp
@@ -63,6 +63,7 @@ add_executable(cyxwiz-tests
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
     unit/test_byte_bpe.cpp
+    unit/test_bpe_piece_policy.cpp
     unit/test_language_model_training.cpp
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
@@ -71,15 +72,13 @@ add_executable(cyxwiz-tests
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_archive.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
-    ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
     ../cyxwiz-engine/src/core/nas_evaluator.cpp
-    ../cyxwiz-engine/src/core/compute_runtime_config.cpp
-    ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
     ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
+target_link_libraries(cyxwiz-tests PRIVATE cyxwiz-training-core)
 
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2
@@ -177,14 +176,9 @@ add_executable(test_model_builder_upsampling
     unit/test_model_builder_upsampling.cpp
     unit/test_spatial_batch_layout.cpp
     unit/test_spatial_head.cpp
-    ../cyxwiz-engine/src/core/spatial_batch_layout.cpp
     ../cyxwiz-engine/src/core/synthetic_batch.cpp
-    ../cyxwiz-engine/src/core/model_builder.cpp
-    ../cyxwiz-engine/src/core/guarded_extension_module.cpp
-    ../cyxwiz-engine/src/core/extension_node_registry.cpp
-    ../cyxwiz-engine/src/core/executable_model.cpp
-    ../cyxwiz-engine/src/core/graph_executable_model.cpp
 )
+target_link_libraries(test_model_builder_upsampling PRIVATE cyxwiz-training-core)
 target_include_directories(test_model_builder_upsampling PRIVATE
     ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src
@@ -250,8 +244,8 @@ if(CYXWIZ_BUILD_ENGINE)
     add_executable(test_route_qualification_process
         ../cyxwiz-engine/tests/test_route_qualification_process.cpp
         ../cyxwiz-engine/src/core/route_qualification_service.cpp
-        ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     )
+target_link_libraries(test_route_qualification_process PRIVATE cyxwiz-training-core)
     add_executable(test_route_probe_environment_child
         ../cyxwiz-engine/tests/test_route_probe_environment_child.cpp
     )

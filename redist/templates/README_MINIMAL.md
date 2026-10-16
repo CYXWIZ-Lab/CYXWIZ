@@ -114,6 +114,9 @@ that computation ran on the selected backend.
 
 ## Troubleshooting
 
+Known problems in the GPU runtimes CyxWiz uses, and what to do about them, are listed in
+`KNOWN_ISSUES.md` in this package.
+
 ### `af.dll` or `libaf` is missing
 
 ArrayFire is absent from the loader path. Install it and configure the path

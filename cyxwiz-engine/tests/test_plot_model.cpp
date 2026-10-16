@@ -1,0 +1,250 @@
+// Plot model (TOFIX134 P1 step 1.2): kind registry, spec JSON round trip,
+// missing-encoding messages, data label wording, column statistics.
+#include "../src/core/plot/plot_model.h"
+#include "../src/core/plot/plot_scales.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <set>
+#include <string>
+
+using namespace cyxwiz::plot;
+
+namespace {
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << '\n';
+        std::exit(1);
+    }
+}
+}  // namespace
+
+int main() {
+    // Registry: unique ids, every kind reachable by its id, groups in order.
+    std::set<std::string> ids;
+    for (const auto& k : Kinds()) {
+        Check(ids.insert(k.id).second, std::string("unique id ") + k.id);
+        Check(FindKind(k.id) && FindKind(k.id)->kind == k.kind, std::string("find by id ") + k.id);
+        // A surface's columns depend on its source (X, Y, Z or grid columns): MissingEncoding.
+        Check(k.required != 0 || k.kind == Kind::Surface, std::string("kind needs at least one column: ") + k.id);
+    }
+    Check(Kinds().size() == 41, "41 kinds (P1 13 + P2b groups 1 to 5 + P4 groups 1 and 2)");
+    {
+        PlotSpec g;
+        g.kind = Kind::Network;
+        g.x_column = "s";
+        g.y_columns = {"t"};
+        g.graph_layout = PlotSpec::GraphLayout::Layered;
+        g.node_colour = PlotSpec::NodeColour::Column;
+        g.node_size = PlotSpec::NodeSize::Weight;
+        g.node_labels = PlotSpec::NodeLabels::None;
+        g.label_top = 5;
+        g.directed = true;
+        PlotSpec gb;
+        Check(SpecFromJson(SpecToJson(g), gb) && gb.graph_layout == PlotSpec::GraphLayout::Layered && gb.node_colour == PlotSpec::NodeColour::Column &&
+                  gb.node_size == PlotSpec::NodeSize::Weight && gb.node_labels == PlotSpec::NodeLabels::None && gb.label_top == 5 && gb.directed,
+              "graph options round trip");
+        Check(!SpecFromJson("{\"version\":1,\"kind\":\"network\",\"graph_layout\":\"spiral\"}", gb), "unknown layout refused");
+        Check(std::string(GroupLabel(Info(Kind::Tree).group)) == "Graphs" && Info(Kind::Mesh).group == Group::ThreeD, "groups");
+    }
+    {
+        // 3D: the spec round trip and what is missing.
+        PlotSpec t;
+        t.kind = Kind::Surface;
+        t.surface_from = PlotSpec::SurfaceFrom::Grid;
+        t.y_columns = {"V1"};
+        Check(MissingEncoding(t) == "Choose the grid columns (two or more).", "grid surface needs two columns");
+        t.y_columns = {"V1", "V2"};
+        t.surface_draw = PlotSpec::SurfaceDraw::Both;
+        t.shade = false;
+        t.min_cell_rows = 3;
+        t.view_elevation = 30;
+        t.view_azimuth = -50;
+        PlotSpec tb;
+        Check(MissingEncoding(t).empty() && SpecFromJson(SpecToJson(t), tb) && tb.surface_from == PlotSpec::SurfaceFrom::Grid &&
+                  tb.surface_draw == PlotSpec::SurfaceDraw::Both && !tb.shade && tb.floor_contours && tb.min_cell_rows == 3 &&
+                  tb.view_elevation == 30 && tb.view_azimuth == -50, "surface options round trip");
+        t.surface_from = PlotSpec::SurfaceFrom::XYZ;
+        t.x_column = "x";
+        Check(MissingEncoding(t) == "Choose Z.", "an X, Y, Z surface needs Z");
+        PlotSpec sc;
+        sc.kind = Kind::Scatter3D;
+        sc.x_column = "a";
+        sc.y_columns = {"b"};
+        Check(MissingEncoding(sc) == "Choose Z.", "scatter 3D needs Z");
+        sc.z_column = "c";
+        Check(SpecFromJson(SpecToJson(sc), tb) && tb.z_column == "c" && !std::isfinite(tb.view_elevation), "z kept; no view saved");
+        Check(std::string(GroupLabel(Info(Kind::Line3D).group)) == "3D", "3D group");
+    }
+    {
+        // Colour picker (P4.4): scale, reverse, range and series colours round trip; unknown scale refused.
+        PlotSpec c;
+        c.kind = Kind::Heatmap;
+        c.colour_scale = "viridis";
+        c.colour_reverse = true;
+        c.scale_lo = 0;
+        c.scale_hi = 50;
+        c.series_colours = {"", "#5ec8b8"};
+        PlotSpec cb;
+        Check(SpecFromJson(SpecToJson(c), cb) && cb.colour_scale == "viridis" && cb.colour_reverse && cb.scale_lo == 0 && cb.scale_hi == 50 &&
+                  cb.series_colours == std::vector<std::string>({"", "#5ec8b8"}), "colour picker round trip");
+        Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"scale\":\"rainbow\"}", cb) , "unknown scale refused");
+        PlotSpec plain;
+        Check(SpecToJson(plain).find("scale") == std::string::npos && !std::isfinite(plain.scale_lo), "theme scale by default, nothing saved");
+        // The scale table: 7 scales, Viridis starts at matplotlib's #440154, Cool-warm is two-sided.
+        Check(Scales().size() == 7 && FindScale("viridis") && !FindScale("") && FindScale("coolwarm")->two_sided, "scales");
+        const auto lo = SampleScale(*FindScale("viridis"), 0.0), hi_rev = SampleScale(*FindScale("viridis"), 1.0, true);
+        Check(std::lround(lo[0] * 255) == 68 && std::lround(lo[1] * 255) == 1 && std::lround(lo[2] * 255) == 84 && lo == hi_rev,
+              "viridis low end and reverse");
+    }
+    Check(!FindKind("sunburst"), "unknown kind not found");
+    Check(std::string(Info(Kind::Histogram).label) == "Histogram" && Info(Kind::Histogram).group == Group::Basic,
+          "histogram is a basic kind");
+    Check(std::string(GroupLabel(Group::GridDensity)) == "Grid and density", "group label");
+
+    // Spec JSON round trip, including every field.
+    PlotSpec s;
+    s.kind = Kind::Histogram;
+    s.x_column = "loss";
+    s.y_columns = {"a", "b"};
+    s.color_column = "label";
+    s.title = "Histogram of \"loss\"";
+    s.bins = 40;
+    s.smooth = 7;
+    s.density = true;
+    s.show_mean = s.show_median = s.log_y = true;
+    s.legend = false;
+    PlotSpec back;
+    Check(SpecFromJson(SpecToJson(s), back), "round trip parses");
+    Check(back.kind == Kind::Histogram && back.x_column == "loss" && back.y_columns.size() == 2 &&
+              back.color_column == "label" && back.title == s.title && back.bins == 40 && back.smooth == 7 &&
+              back.density && back.show_mean && back.show_median && back.log_y && !back.log_x && !back.legend,
+          "round trip keeps every field");
+    // Model results fields (P2b group 4).
+    PlotSpec m;
+    m.kind = Kind::LearningCurve;
+    m.confusion_show = PlotSpec::ConfusionShow::All;
+    m.positive_class = "tested_positive";
+    m.calibration_bins = 15;
+    m.spread_columns = {"train_sd", ""};
+    m.best = PlotSpec::Best::Lowest;
+    m.top_n = 7;
+    m.sankey_top = 5;
+    m.region_agg = PlotSpec::RegionAgg::Mean;
+    Check(SpecFromJson(SpecToJson(m), back) && back.kind == Kind::LearningCurve && back.confusion_show == PlotSpec::ConfusionShow::All &&
+              back.positive_class == "tested_positive" && back.calibration_bins == 15 && back.spread_columns.size() == 2 &&
+              back.spread_columns[0] == "train_sd" && back.best == PlotSpec::Best::Lowest && back.top_n == 7 &&
+              back.sankey_top == 5 && back.region_agg == PlotSpec::RegionAgg::Mean,
+          "model results fields round trip");
+    std::string problem;
+    PlotSpec untouched;
+    Check(!SpecFromJson("{\"version\":2,\"kind\":\"line\"}", untouched, &problem) && problem.find("version 2") != std::string::npos,
+          "a newer version is refused with a reason");
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"sunburst\"}", untouched, &problem) && problem.find("sunburst") != std::string::npos,
+          "an unknown kind is refused with its name");
+    Check(!SpecFromJson("not json", untouched, &problem), "text that is not JSON is refused");
+    Check(SpecFromJson("{\"version\":1,\"kind\":\"scatter\",\"bins\":0,\"extra\":1}", back) && back.bins == 1 &&
+              back.legend,
+          "out-of-range values clamped, missing keys default, unknown keys ignored");
+    Check(back.rows == RowMode::All && back.conditions.empty() && back.color_mode == ColourMode::Auto,
+          "a spec without rows plots all rows, colour mode auto");
+
+    // Rows and colour mode (P2 board 6) round trip; bad values are refused.
+    PlotSpec r;
+    r.kind = Kind::Scatter;
+    r.rows = RowMode::Filter;
+    r.conditions = {{"class", "=", "7"}, {"pixel407", ">", "0"}};
+    r.first_rows = 250;
+    r.row_from = 10000;
+    r.row_to = 10999;
+    r.color_mode = ColourMode::Scale;
+    Check(SpecFromJson(SpecToJson(r), back), "rows round trip parses");
+    Check(back.rows == RowMode::Filter && back.conditions.size() == 2 && back.conditions[1].column == "pixel407" &&
+              back.conditions[1].op == ">" && back.conditions[1].value == "0" && back.first_rows == 250 &&
+              back.row_from == 10000 && back.row_to == 10999 && back.color_mode == ColourMode::Scale,
+          "rows, conditions and colour mode kept");
+    Check(ConditionsText(r.conditions) == "class = 7 and pixel407 > 0", "conditions in words");
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"filter\",\"conditions\":[{\"column\":\"a\",\"op\":\"~\"}]}}",
+                        untouched, &problem) &&
+              problem.find("'~'") != std::string::npos,
+          "an unknown condition is refused");
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"some\"}}", untouched, &problem) &&
+              problem.find("'some'") != std::string::npos,
+          "an unknown row selection is refused");
+    Check(SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"range\",\"from\":0,\"to\":0}}", back) &&
+              back.row_from == 1 && back.row_to == 1,
+          "a range starts at row 1 and never ends before it starts");
+
+    // What is missing.
+    PlotSpec scatter;
+    scatter.kind = Kind::Scatter;
+    Check(MissingEncoding(scatter) == "Choose X values.", "scatter asks for X first");
+    scatter.x_column = "epoch";
+    Check(MissingEncoding(scatter) == "Choose Y values.", "then Y");
+    scatter.y_columns = {"loss"};
+    Check(MissingEncoding(scatter).empty(), "complete");
+    PlotSpec line;
+    line.kind = Kind::Line;
+    line.y_columns = {"loss"};
+    Check(MissingEncoding(line).empty(), "a line needs no X (row number)");
+
+    // Data label wording (the mockup's four states).
+    DataLabel label;
+    label.shown = label.total = 2000;
+    Check(label.Text() == "exact \xC2\xB7 all 2,000 values", "exact: " + label.Text());
+    label = {DataLabel::State::Reduced, 4000, 120000};
+    Check(label.Text() == "reduced \xC2\xB7 4,000 of 120,000 points", "reduced: " + label.Text());
+    label = {DataLabel::State::Sampled, 50000, 1200000};
+    Check(label.Text() == "sampled \xC2\xB7 50,000 of 1,200,000 rows", "sampled: " + label.Text());
+    label = {DataLabel::State::Truncated, 100000, 0};
+    Check(label.Text() == "first 100,000 rows", "truncated, total unknown: " + label.Text());
+    label.total = 250000;
+    Check(label.Text() == "first 100,000 of 250,000 rows", "truncated, total known: " + label.Text());
+    label = {DataLabel::State::Exact, 7293, 7293, "filtered \xC2\xB7 7,293 of 70,000 rows"};
+    Check(label.Text() == "filtered \xC2\xB7 7,293 of 70,000 rows", "a selection says it alone when exact: " + label.Text());
+    label.state = DataLabel::State::Sampled;
+    label.shown = 5000;
+    Check(label.Text() == "filtered \xC2\xB7 7,293 of 70,000 rows \xC2\xB7 sampled \xC2\xB7 5,000 of 7,293 rows",
+          "then the sampling: " + label.Text());
+    Check(Thousands(-1234567) == "-1,234,567" && Thousands(999) == "999", "thousands");
+
+    // Statistics skip NaN and infinity and count them as missing.
+    const ColumnStats st = Summarize({4, 1, NAN, 3, 2, INFINITY});
+    Check(st.count == 4 && st.missing == 2, "count and missing");
+    Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
+    Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
+    Check(Summarize({}).count == 0, "empty column");
+    {
+        // The settings in words (node Properties): a grid surface, then rows and colours.
+        PlotSpec v;
+        v.kind = Kind::Surface;
+        v.surface_from = PlotSpec::SurfaceFrom::Grid;
+        for (int i = 1; i <= 61; ++i) v.y_columns.push_back("V" + std::to_string(i));
+        auto rows = SpecSummary(v);
+        Check(rows.size() == 2 && rows[0].second == "Surface (3D)" && rows[1].second == "grid columns V1 .. V61 (61)", "surface summary: " + rows[1].second);
+        v.colour_scale = "viridis";
+        v.colour_reverse = true;
+        v.view_elevation = -47.5;
+        v.view_azimuth = 105;
+        v.title = "Maunga Whau";
+        rows = SpecSummary(v);
+        Check(rows.size() == 5 && rows[2].first == "Colour" && rows[2].second == "Viridis, reversed" && rows[3].first == "View" &&
+                  rows[3].second.find("elevation -48") != std::string::npos && rows[4].second == "Maunga Whau", "colour, view, title rows");
+        PlotSpec sc;
+        sc.kind = Kind::Scatter;
+        sc.x_column = "a";
+        sc.y_columns = {"b"};
+        sc.color_column = "label";
+        sc.rows = RowMode::Filter;
+        sc.conditions = {{"class", "=", "7"}};
+        sc.series_colours = {"", "#5ec8b8"};
+        rows = SpecSummary(sc);
+        Check(rows[1].second == "X a \xC2\xB7 Y b \xC2\xB7 colour by label" && rows[2].second == "class = 7" && rows[3].second == "1 series colour",
+              "scatter summary: " + rows[1].second);
+        Check(SpecSummary(PlotSpec{})[1].second == "no columns chosen yet", "a new plot says so");
+    }
+    std::cout << "plot model: 38 kinds, colour scales, settings in words, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+                 "stats. OK\n";
+    return 0;
+}

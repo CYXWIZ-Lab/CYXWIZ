@@ -1,5 +1,6 @@
 #include "memory_monitor.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include "../../core/training_manager.h"
 #include "../../core/execution_device_context.h"
 #include "../../core/training_trace_collector.h"
@@ -290,10 +291,11 @@ void MemoryMonitor::ShiftHistory() {
 }
 
 ImU32 MemoryMonitor::ColorFromPercent(float percent) const {
-    if (percent < 50.0f) return IM_COL32(76, 175, 80, 255);   // Green
-    if (percent < 75.0f) return IM_COL32(255, 193, 7, 255);   // Yellow/Amber
-    if (percent < 90.0f) return IM_COL32(255, 152, 0, 255);   // Orange
-    return IM_COL32(244, 67, 54, 255);                         // Red
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (percent < 50.0f) return ui::ToU32(t.success);
+    if (percent < 75.0f) return ui::ToU32(t.warning);
+    if (percent < 90.0f) return ui::ToU32(t.caution);
+    return ui::ToU32(t.error);
 }
 
 std::string MemoryMonitor::FormatBytes(size_t bytes) const {
@@ -370,7 +372,7 @@ void MemoryMonitor::Render() {
     if (ImGui::Begin(ICON_FA_CHART_LINE " System Monitor", &visible_)) {
 
         // ============ CPU SECTION ============
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().accent_text,
                           ICON_FA_MICROCHIP " CPU");
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
         ImGui::TextDisabled("%d cores", metrics_.cpu_core_count);
@@ -383,7 +385,7 @@ void MemoryMonitor::Render() {
         ImGui::Spacing();
 
         // ============ RAM SECTION ============
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().accent_text,
                           ICON_FA_MEMORY " Memory");
         ImGui::SameLine(ImGui::GetWindowWidth() - 150);
         ImGui::TextDisabled("%s / %s",
@@ -402,7 +404,7 @@ void MemoryMonitor::Render() {
 
         // ============ GPU SECTION ============
         if (metrics_.gpu_available) {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().accent_text,
                               ICON_FA_DESKTOP " GPU");
             ImGui::SameLine(ImGui::GetWindowWidth() - 200);
             ImGui::TextDisabled("%s", metrics_.gpu_name.c_str());
@@ -435,7 +437,7 @@ void MemoryMonitor::Render() {
         ImGui::Spacing();
 
         // ============ PROCESS SECTION ============
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().accent_text,
                           ICON_FA_TERMINAL " CyxWiz Process");
 
         ImGui::Separator();
@@ -462,8 +464,8 @@ void MemoryMonitor::Render() {
             ImPlot::SetupAxisLimits(ImAxis_Y1, 0, maxProcessMem, ImGuiCond_Always);
 
             ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-            ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.5f, 0.5f, 1.0f, 1.0f));
-            ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(0.5f, 0.5f, 1.0f, 0.3f));
+            ImPlot::PushStyleColor(ImPlotCol_Line, ui::SeriesColour(ui::CurrentTokens(), 0));
+            ImPlot::PushStyleColor(ImPlotCol_Fill, ui::WithAlpha(ui::SeriesColour(ui::CurrentTokens(), 0), 0.3f));
             ImPlot::PlotShaded("##fill", process_mem_history_.data(),
                               static_cast<int>(process_mem_history_.size()));
             ImPlot::PlotLine("##line", process_mem_history_.data(),

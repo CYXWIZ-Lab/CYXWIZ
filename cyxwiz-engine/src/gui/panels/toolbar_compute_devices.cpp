@@ -9,6 +9,7 @@
 #include "../../core/compute_device_presentation.h"
 #include "../../core/route_qualification_service.h"
 #include "../../core/route_recommendation.h"
+#include "../ui_tokens.h"
 
 #include <algorithm>
 #include <string>
@@ -25,21 +26,22 @@ struct StatusStyle {
 };
 
 StatusStyle StyleFor(ComputeRouteStatus status) {
+    const ui::Tokens& t = ui::CurrentTokens();
     switch (status) {
         case ComputeRouteStatus::Verified:
-            return {ImVec4(0.24f, 0.84f, 0.55f, 1.0f), ICON_FA_CIRCLE_CHECK};
+            return {t.success, ICON_FA_CIRCLE_CHECK};
         case ComputeRouteStatus::Failed:
-            return {ImVec4(0.96f, 0.63f, 0.29f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION};
+            return {t.caution, ICON_FA_TRIANGLE_EXCLAMATION};
         case ComputeRouteStatus::NotSupported:
-            return {ImVec4(1.0f, 0.48f, 0.45f, 1.0f), ICON_FA_CIRCLE_XMARK};
+            return {t.error, ICON_FA_CIRCLE_XMARK};
         case ComputeRouteStatus::NeedsDriverUpdate:
-            return {ImVec4(0.90f, 0.75f, 0.29f, 1.0f), ICON_FA_WRENCH};
+            return {t.warning, ICON_FA_WRENCH};
         case ComputeRouteStatus::Verifying:
-            return {ImVec4(0.70f, 0.65f, 1.0f, 1.0f), ICON_FA_SPINNER};
+            return {t.running, ICON_FA_SPINNER};
         case ComputeRouteStatus::NotVerifiedYet:
             break;
     }
-    return {ImVec4(0.64f, 0.69f, 0.78f, 1.0f), ICON_FA_CLOCK};
+    return {t.pending, ICON_FA_CLOCK};
 }
 
 const char* BackendKey(DeviceType type) {
@@ -62,6 +64,7 @@ void RenderStatus(ComputeRouteStatus status) {
 
 void ToolbarPanel::RenderComputeDeviceCards(
     const ComputeDeviceCardsContext& context) {
+    const ui::Tokens& t = ui::CurrentTokens();
     const auto snapshot = GetRouteQualificationSnapshot();
     std::string verifying_backend;
     int verifying_device = -1;
@@ -202,13 +205,13 @@ void ToolbarPanel::RenderComputeDeviceCards(
         ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
                               ImGuiChildFlags_AlwaysUseWindowPadding);
-        ImGui::TextColored(ImVec4(0.64f, 0.69f, 0.78f, 1.0f), "%s", ICON_FA_MICROCHIP);
+        ImGui::TextColored(t.text_dim, "%s", ICON_FA_MICROCHIP);
         ImGui::SameLine();
         ImGui::Text("%s", card.title.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled("%s", card.subtitle.c_str());
         if (!card.recommended_route.empty()) {
-            ImGui::TextColored(ImVec4(0.81f, 0.78f, 1.0f, 1.0f),
+            ImGui::TextColored(t.accent_text,
                                "%s Recommended for training: %s", ICON_FA_STAR,
                                card.recommended_route.c_str());
         } else {
@@ -264,7 +267,7 @@ void ToolbarPanel::RenderComputeDeviceCards(
                     for (const auto& badge : route.badges) {
                         badges += (badges.empty() ? "" : "  ·  ") + badge;
                     }
-                    ImGui::TextColored(ImVec4(0.70f, 0.65f, 1.0f, 1.0f), "%s",
+                    ImGui::TextColored(t.accent_text, "%s",
                                        badges.c_str());
                 }
                 ImGui::PopTextWrapPos();

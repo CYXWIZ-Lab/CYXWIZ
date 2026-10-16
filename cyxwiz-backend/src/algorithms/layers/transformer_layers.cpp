@@ -2,9 +2,7 @@
 #include "cyxwiz/activations/relu.h"
 #include "../arrayfire_backend_utils.h"
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 #include <cmath>
 #include <map>
@@ -862,7 +860,6 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size, int window) {
     if (window <= 0 || window >= size) {
         return GenerateCausalMask(size);
     }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dim4 dims(size, size);
         const af::array query = af::range(dims, 0, s32);
@@ -872,21 +869,8 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size, int window) {
         mask.eval();
         return Tensor::FromSemanticArray(mask, {static_cast<size_t>(size), static_cast<size_t>(size)});
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "TransformerDecoderLayer::GenerateCausalMask", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext("size=" + std::to_string(size)));
+        throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
     }
-#endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "TransformerDecoderLayer::GenerateCausalMask");
-    Tensor mask({static_cast<size_t>(size), static_cast<size_t>(size)}, DataType::Float32);
-    float* data = mask.MutableData<float>();
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            data[i * size + j] = (j > i || i - j >= window) ? -1e9f : 0.0f;
-        }
-    }
-    return mask;
 }
 
 Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
@@ -894,37 +878,14 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
         throw std::invalid_argument("TransformerDecoderLayer causal mask size must be positive");
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::dim4 dims(size, size);
         const af::array mask = (af::range(dims, 1, u32) > af::range(dims, 0, u32)).as(f32) * -1e9f;
         mask.eval(); // Complete mask generation inside its fallback boundary.
         return Tensor::FromSemanticArray(mask, {static_cast<size_t>(size), static_cast<size_t>(size)});
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden(
-            "TransformerDecoderLayer::GenerateCausalMask",
-            ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildArrayFireBackendFallbackContext("size=" + std::to_string(size)));
+        throw std::runtime_error(std::string("TransformerDecoderLayer::GenerateCausalMask failed on the ArrayFire device: ") + e.what());
     }
-#endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::LayerCpuPath, "TransformerDecoderLayer::GenerateCausalMask");
-    // Preserve the existing finite additive mask contract above the diagonal.
-    std::vector<size_t> shape = {static_cast<size_t>(size), static_cast<size_t>(size)};
-    Tensor mask(shape, DataType::Float32);
-    float* data = mask.MutableData<float>();
-
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            if (j > i) {
-                data[i * size + j] = -1e9f;  // Large negative for softmax
-            } else {
-                data[i * size + j] = 0.0f;
-            }
-        }
-    }
-
-    return mask;
 }
 
 } // namespace cyxwiz

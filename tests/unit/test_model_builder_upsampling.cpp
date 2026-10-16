@@ -119,7 +119,6 @@ TEST_CASE("Upsampling sample inference validates metadata without allocation",
   }
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
           "[upsampling_builder][residency]") {
   BackendLane lane;
@@ -175,10 +174,7 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
         Tensor y, dx;
         ResetConvObservations();
         {
-          ScopedArrayFireFallbackPolicy strict(
-              ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
           ScopedArrayFireHostSyncObserver host(&CountConvHostSync);
-          ScopedArrayFireNativeCpuFallbackObserver fallback(&CountConvFallback);
           y = built.model->Forward(input);
           dx = built.model->Backward(dy);
           dx.GetSemanticArray().eval();
@@ -186,7 +182,6 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
         }
         CHECK(conv_host_sync_count == 0);
         CHECK(conv_host_sync_bytes == 0);
-        CHECK(conv_fallback_count == 0);
         CheckValues(y, high, expected);
         UpsamplingConfiguration resolved;
         REQUIRE_FALSE(ResolveUpsamplingConfiguration(
@@ -208,4 +203,3 @@ TEST_CASE("ModelBuilder preserves upsampling modes layout and node provenance",
     }
   }
 }
-#endif

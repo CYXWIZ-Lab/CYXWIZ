@@ -3,7 +3,6 @@
 #include "graph_compiler.h"
 #include "dense_activation_configuration_policy.h"
 #include "pipeline_runtime_capabilities.h"
-#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/gpu_execution_modes.h"
 #include "cyxwiz/neural_provider.h"
 
@@ -15,7 +14,6 @@ namespace cyxwiz::backend_placement {
 
 enum class LayerCapabilityKind {
     ArrayFireTensor,
-    CpuBackedModelLayer,
     Recurrent,
     TimeDistributedSequenceWrapper,
     UnsupportedSequentialModelLayer,
@@ -70,7 +68,6 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
-        case gui::NodeType::SelfAttention: return "SelfAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::ConvTranspose2D: return "ConvTranspose2D";
@@ -85,11 +82,12 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::LSTM: return "LSTM";
         case gui::NodeType::GRU: return "GRU";
         case gui::NodeType::RNN: return "RNN";
-        case gui::NodeType::Bidirectional: return "Bidirectional";
         case gui::NodeType::TimeDistributed: return "TimeDistributed";
         case gui::NodeType::ReLU: return "ReLU";
         case gui::NodeType::LeakyReLU: return "LeakyReLU";
         case gui::NodeType::ELU: return "ELU";
+        case gui::NodeType::SELU: return "SELU";
+        case gui::NodeType::PReLU: return "PReLU";
         case gui::NodeType::GELU: return "GELU";
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
@@ -101,13 +99,15 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::Average: return "Average";
         case gui::NodeType::Concatenate: return "Concatenate";
         case gui::NodeType::TensorDot: return "TensorDot";
+        case gui::NodeType::TensorBatchMatMul: return "TensorBatchMatMul";
         default: return "Layer";
     }
 }
 
 inline bool IsRecurrentLayer(gui::NodeType type) {
     return type == gui::NodeType::GRU ||
-           type == gui::NodeType::LSTM;
+           type == gui::NodeType::LSTM ||
+           type == gui::NodeType::RNN;
 }
 
 inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
@@ -117,11 +117,16 @@ inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
 inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::LinearAttention:  // Tensor ops (BatchMatMul, Clip, Exp) only
+        case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
+        case gui::NodeType::Conv3D:  // sparse gather + matmul
+        case gui::NodeType::DepthwiseConv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
         case gui::NodeType::GlobalMaxPool:
         case gui::NodeType::GlobalAvgPool:
+        case gui::NodeType::AdaptiveAvgPool:
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
@@ -149,13 +154,23 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::TensorStd:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
+        case gui::NodeType::GroupNorm:
+        case gui::NodeType::InstanceNorm:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
         case gui::NodeType::Embedding:
+        case gui::NodeType::LayerNorm:
+        case gui::NodeType::MultiHeadAttention:
+        case gui::NodeType::CrossAttention:
+        case gui::NodeType::TransformerEncoder:
+        case gui::NodeType::TransformerDecoder:
+        case gui::NodeType::PositionalEncoding:
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:
         case gui::NodeType::ELU:
+        case gui::NodeType::SELU:
+        case gui::NodeType::PReLU:
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
@@ -168,22 +183,11 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     }
 }
 
-inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
-    return type == gui::NodeType::RNN ||
-           type == gui::NodeType::LayerNorm ||
-           type == gui::NodeType::MultiHeadAttention ||
-           type == gui::NodeType::TransformerEncoder ||
-           type == gui::NodeType::TransformerDecoder ||
-           type == gui::NodeType::PositionalEncoding;
-}
-
 inline LayerCapability ClassifyLayer(gui::NodeType type) {
     LayerCapability capability;
     capability.type_name = LayerTypeName(type);
     if (IsPipelineUnsupportedSequentialModelLayer(type)) {
         capability.kind = LayerCapabilityKind::UnsupportedSequentialModelLayer;
-    } else if (IsKnownCpuBackedModelLayer(type)) {
-        capability.kind = LayerCapabilityKind::CpuBackedModelLayer;
     } else if (IsKnownArrayFireTensorLayer(type)) {
         capability.kind = LayerCapabilityKind::ArrayFireTensor;
     } else if (IsRecurrentLayer(type)) {
@@ -196,97 +200,22 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
     return capability;
 }
 
-// Compiler shapes exclude the batch dimension. Leave unproven variants on
-// their conservative compatibility path; runtime still validates dimensions.
+// Compiler shapes exclude the batch dimension. A TimeDistributed wrapper over a
+// [sequence, features] input runs as a tensor layer.
 inline LayerCapability ClassifyLayer(const CompiledLayer& layer) {
     auto result = ClassifyLayer(layer.type);
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    const auto rank = layer.input_shape.size();
     const bool nonempty = !layer.input_shape.empty() &&
         std::all_of(layer.input_shape.begin(), layer.input_shape.end(), [](size_t d) { return d > 0; });
-    const auto parse_probability = [&layer](const char* key, bool required) -> bool {
-        const auto value = layer.parameters.find(key);
-        if (value == layer.parameters.end()) {
-            return !required;
-        }
-        try {
-            size_t consumed = 0;
-            const float probability = std::stof(value->second, &consumed);
-            return consumed == value->second.size() && std::isfinite(probability) &&
-                   probability >= 0.0f && probability < 1.0f;
-        } catch (const std::exception&) {
-            return false;
-        }
-    };
-    const bool is_transformer_sequence_layer =
-        layer.type == gui::NodeType::MultiHeadAttention ||
-        layer.type == gui::NodeType::TransformerEncoder ||
-        layer.type == gui::NodeType::TransformerDecoder;
-    bool supported = nonempty && layer.type == gui::NodeType::LayerNorm && rank <= 3;
-    if (nonempty && rank == 2) {
-        supported = supported || layer.type == gui::NodeType::PositionalEncoding ||
-            layer.type == gui::NodeType::TimeDistributed;
-        if (is_transformer_sequence_layer) {
-            supported = parse_probability("dropout", true) &&
-                        parse_probability("ffn_dropout", false);
-        }
+    if (layer.type == gui::NodeType::TimeDistributed && nonempty && layer.input_shape.size() == 2) {
+        result.kind = LayerCapabilityKind::ArrayFireTensor;
     }
-    if (supported) result.kind = LayerCapabilityKind::ArrayFireTensor;
-#endif
     return result;
-}
-
-inline std::string BuildTransformerPlacementCompatibilityNote(
-    const CompiledLayer& layer) {
-    if (layer.type != gui::NodeType::TransformerDecoder &&
-        layer.type != gui::NodeType::TransformerEncoder &&
-        layer.type != gui::NodeType::MultiHeadAttention) {
-        return "";
-    }
-    const auto describe_probability_issue = [&layer](const char* key, bool required) -> std::string {
-        const auto value = layer.parameters.find(key);
-        if (value == layer.parameters.end()) {
-            return required
-                ? std::string(" Missing ") + key +
-                      " parameter; strict ArrayFire transformer placement requires an explicit probability in [0,1)."
-                : std::string();
-        }
-        try {
-            size_t consumed = 0;
-            const float probability = std::stof(value->second, &consumed);
-            if (consumed == value->second.size() && std::isfinite(probability) &&
-                probability >= 0.0f && probability < 1.0f) {
-                return "";
-            }
-        } catch (const std::exception&) {
-        }
-        return std::string(" ") + key + " value '" + value->second +
-               "' is invalid; strict ArrayFire transformer placement requires a finite probability in [0,1).";
-    };
-    if (const std::string issue = describe_probability_issue("dropout", true);
-        !issue.empty()) {
-        return issue;
-    }
-    if (const std::string issue = describe_probability_issue("ffn_dropout", false);
-        !issue.empty()) {
-        return issue;
-    }
-    if (layer.input_shape.size() != 2) {
-        return " This transformer layer compiled with non-sequence feature shape rank " +
-               std::to_string(layer.input_shape.size()) +
-               "; strict ArrayFire classification expects [sequence, features] "
-               "after excluding the batch dimension.";
-    }
-    return "";
 }
 
 // tofix67 slice 4: the declared execution mode a placement builder stamps on
 // its entries is the owning strategy from cyxwiz/gpu_execution_modes.h. The
-// CPU-backed builder serves exactly the attention/normalization family; the
-// ArrayFire-tensor and graph-runtime builders serve families that all
-// declare direct ArrayFire (cross-checked by the [gpu_execution] unit
-// tests). Evidence may still route an exact key to CPU — the mode records
-// the family's declared strategy, the status records the decision.
+// ArrayFire-tensor and graph-runtime builders serve families that all declare
+// direct ArrayFire (cross-checked by the [gpu_execution] unit tests).
 inline void StampDeclaredExecutionMode(BackendPlacementEntry& placement,
                                        cyxwiz::GpuExecutionMode mode) {
     placement.declared_execution_mode = cyxwiz::GpuExecutionModeName(mode);
@@ -295,178 +224,24 @@ inline void StampDeclaredExecutionMode(BackendPlacementEntry& placement,
         placement.declared_execution_mode + ".";
 }
 
-inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
+inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     const CompiledLayer& layer) {
     BackendPlacementEntry placement;
     placement.node_id = layer.node_id;
     placement.node_name = layer.name;
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
-    placement.expected_backend = "CPU";
-    placement.fallback_backend = "CPU";
-    placement.status = BackendPlacementStatus::Cpu;
-    placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
-    if (layer.type == gui::NodeType::RNN) {
-        // tofix68 Studio RNN wiring: the simple RNN's portable path is the
-        // native CPU reference layer (phase 3); there is no ArrayFire RNN
-        // path. The graph compiler upgrades this entry to a native-provider
-        // placement when a provider serves the run's device and the exact
-        // training tuple (provider 0.7.0 serves rnn_forward/rnn_backward).
-        placement.explanation =
-            "RNN is supported by ModelBuilder/SequentialModel through the "
-            "native CPU simple-RNN reference layer. There is no ArrayFire "
-            "RNN path; GPU training happens only through the native neural "
-            "provider on a CUDA/OpenCL-targeted run, otherwise training runs "
-            "on the CPU reference and this layer is not GPU-resident.";
-        placement.suggested_action =
-            "No correctness action needed. Select a CUDA or OpenCL device "
-            "served by the native neural provider for GPU recurrent training.";
-        StampDeclaredExecutionMode(
-            placement,
-            cyxwiz::DeclaredGpuExecutionMode(
-                cyxwiz::GpuOperationFamily::Recurrent));
-        return placement;
-    }
+    placement.expected_backend = "ArrayFire active backend";
+    placement.status = BackendPlacementStatus::Gpu;
+    placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
+    // Model layers and the Tensor* primitives run on ArrayFire only (TOFIX140).
+    placement.fallback_backend = "none";
     placement.explanation =
         std::string(placement.node_type) +
-        " is supported by ModelBuilder/SequentialModel, but the current "
-        "module implementation is CPU-backed. Training is correct, but this "
-        "layer should not be counted as GPU-resident until a focused ArrayFire "
-        "implementation and residency/parity test are added.";
-    placement.explanation += BuildTransformerPlacementCompatibilityNote(layer);
-    StampDeclaredExecutionMode(
-        placement,
-        cyxwiz::DeclaredGpuExecutionMode(
-            cyxwiz::GpuOperationFamily::AttentionNormalization));
-    if (layer.type == gui::NodeType::MultiHeadAttention) {
-        placement.suggested_action =
-            "No correctness action needed for single-input self-attention. "
-            "For performance-sensitive transformer graphs, add and test a "
-            "focused ArrayFire MultiHeadAttention path before claiming GPU "
-            "support. Keep connected Key/Value/Context cross-attention "
-            "blocked until its graph/runtime/export contract is proven.";
-    } else if (layer.type == gui::NodeType::LayerNorm) {
-        placement.suggested_action =
-            "No correctness action needed. For performance-sensitive "
-            "transformer graphs, add and test an ArrayFire LayerNorm path "
-            "before claiming GPU support.";
-    } else {
-        placement.suggested_action =
-            "No correctness action needed. For performance-sensitive "
-            "transformer graphs, add and test a focused ArrayFire "
-            "implementation plus residency/parity coverage for this layer "
-            "before claiming GPU support.";
-    }
-    return placement;
-}
-
-inline size_t PlacementSizeParam(const CompiledLayer& layer,
-                                 const char* key,
-                                 size_t fallback) {
-    const auto it = layer.parameters.find(key);
-    if (it == layer.parameters.end()) {
-        return fallback;
-    }
-    try {
-        return static_cast<size_t>(std::stoull(it->second));
-    } catch (...) {
-        return fallback;
-    }
-}
-
-inline bool IsActivationPlacementLayer(gui::NodeType type) {
-    return IsExecutableActivationNode(type);
-}
-
-inline std::string BuildArrayFireTensorPlacementShapeSignature(
-    const CompiledLayer& layer) {
-    if (layer.type == gui::NodeType::Dense) {
-        return BuildDensePlacementShapeSignature(
-            layer.input_shape,
-            static_cast<size_t>(layer.units));
-    }
-    if (layer.type == gui::NodeType::Embedding) {
-        return BuildEmbeddingPlacementShapeSignature(
-            PlacementSizeParam(layer, "num_embeddings", 0),
-            PlacementSizeParam(layer, "embedding_dim", 0),
-            layer.input_shape,
-            "int32");
-    }
-    if (IsActivationPlacementLayer(layer.type)) {
-        return BuildActivationPlacementShapeSignature(
-            layer.input_shape,
-            "float32");
-    }
-    return BuildTensorLayerPlacementShapeSignature(layer.input_shape);
-}
-
-inline const char* BuildArrayFireTensorPlacementObservationDtype(
-    const CompiledLayer& layer) {
-    return layer.type == gui::NodeType::Embedding ? "int32" : "float32";
-}
-
-inline BackendPlacementEntry BuildArrayFireTensorPlacement(
-    const CompiledLayer& layer) {
-    const std::string layer_type_name = LayerTypeName(layer.type);
-    const std::string shape_signature =
-        BuildArrayFireTensorPlacementShapeSignature(layer);
-    const std::string observation_dtype =
-        BuildArrayFireTensorPlacementObservationDtype(layer);
-    BackendPlacementObservation cached_observation;
-    const bool cached_fallback =
-        TryGetBackendPlacementObservationForActiveDevice(
-            layer_type_name,
-            "cuda",
-            observation_dtype,
-            shape_signature,
-            cached_observation);
-    BackendPlacementEntry placement;
-    placement.node_id = layer.node_id;
-    placement.node_name = layer.name;
-    placement.node_type = layer_type_name;
-    placement.requested_backend = "auto";
-    placement.expected_backend = cached_fallback
-        ? "CPU"
-        : "ArrayFire active backend";
-    placement.fallback_backend = "CPU";
-    placement.status = cached_fallback
-        ? BackendPlacementStatus::Cpu
-        : BackendPlacementStatus::Gpu;
-    placement.reason_code = cached_fallback
-        ? cached_observation.reason_code
-        : BackendPlacementReason::ArrayFireTensorOpCapable;
-    if (cached_fallback) {
-        placement.observation_source = cached_observation.source;
-        placement.observation_device = cached_observation.device;
-        placement.observation_dtype = cached_observation.dtype;
-        placement.observation_shape_signature =
-            cached_observation.shape_signature;
-        placement.observation_detail = cached_observation.detail;
-        placement.observation_timestamp = cached_observation.timestamp;
-        placement.observation_probe_outcome =
-            cached_observation.probe_outcome;
-        placement.observation_probe_scope = cached_observation.probe_scope;
-        placement.explanation =
-            std::string(placement.node_type) +
-            " is expected to run on native CPU because a previous runtime fallback "
-            "observation for this exact backend/device/dtype/shape reported "
-            "a backend failure (reason=" + cached_observation.reason_code +
-            ", source=" + cached_observation.source + "). Device: " +
-            cached_observation.device + ". Shape signature: " +
-            cached_observation.shape_signature + ".";
-        placement.suggested_action =
-            "Training can continue. Inspect the fallback reason and reduce "
-            "batch size/features or use the ArrayFire CPU backend for this "
-            "tensor-layer shape until the backend path is fixed.";
-    } else {
-        placement.explanation =
-            std::string(placement.node_type) +
-            " is compiled as a standard tensor/model layer. The runtime can "
-            "execute supported dtype/shape paths on the active ArrayFire backend "
-            "and may use a recorded native CPU fallback when the dtype or shape "
-            "is unsupported, or a backend operation fails.";
-        placement.suggested_action = "No action needed.";
-    }
+        " runs on the active ArrayFire backend (the selected device; ArrayFire's "
+        "CPU backend when the CPU is selected). There is no native CPU fallback: "
+        "a backend failure stops the run with the device error.";
+    placement.suggested_action = "No action needed.";
     StampDeclaredExecutionMode(placement,
                                cyxwiz::GpuExecutionMode::DirectArrayFire);
     return placement;
@@ -525,15 +300,14 @@ inline BackendPlacementEntry BuildUnclassifiedPlacement(
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
     placement.expected_backend = BackendPlacementStatus::Unknown;
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::BackendCapabilityUnclassified;
     placement.explanation =
         std::string(placement.node_type) +
         " is compiled, but the compiler does not yet have a precise backend "
         "capability rule for this node type. Runtime will execute through the "
-        "existing model path and may use the active backend or a recorded "
-        "native CPU fallback.";
+        "existing model path on the active ArrayFire backend.";
     placement.suggested_action =
         "No action needed unless training is slow; this node type should be "
         "classified in the backend capability registry.";
@@ -548,18 +322,16 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
     placement.expected_backend = BackendPlacementStatus::Unknown;
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::TimeDistributedSequenceWrapper;
     placement.explanation =
-        "TimeDistributed Dense is a concrete shared linear projection across "
-        "time steps, not a generic inner-layer wrapper. Placement remains "
-        "unknown because its rank-3 to rank-2 reshape boundary and inner "
-        "Linear execution are not yet proven as one device-resident contract.";
+        "TimeDistributed Dense is a shared linear projection across time "
+        "steps (Linear's sequence path on ArrayFire). Its input shape is not "
+        "known at compile time, so the placement cannot be stated yet; with a "
+        "[sequence, features] input it is placed on the ArrayFire backend.";
     placement.suggested_action =
-        "No action needed for compile support. For performance-sensitive "
-        "sequence models, validate the reshape and Linear runtime placement "
-        "before relying on GPU residency.";
+        "Connect an input whose [sequence, features] shape is known.";
     return placement;
 }
 
@@ -606,7 +378,8 @@ inline void ApplyNativeProviderPlacement(
     if (const auto provider = registry.FindSupporting(request)) {
         placement.expected_backend =
             std::string("native provider ") + provider->ProviderId();
-        placement.fallback_backend = "CPU";
+        // A provider failure runs the layer's ArrayFire path instead.
+        placement.fallback_backend = "ArrayFire";
         placement.status = BackendPlacementStatus::Gpu;
         placement.reason_code = BackendPlacementReason::NativeProviderSelected;
         placement.explanation +=
@@ -621,23 +394,21 @@ inline void ApplyNativeProviderPlacement(
         ") declined this contract: " + capability.detail + ".";
 }
 
-inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
+inline bool IsArrayFireGraphRuntimeOp(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Add:
         case gui::NodeType::Multiply:
         case gui::NodeType::Average:
         case gui::NodeType::Concatenate:
+        case gui::NodeType::Split:
         case gui::NodeType::TensorDot:
+        case gui::NodeType::TensorBatchMatMul:
         case gui::NodeType::TensorCompare:
         case gui::NodeType::TensorLogicalMask:
             return true;
         default:
             return false;
     }
-}
-
-inline bool IsCpuBackedGraphRuntimeOp(gui::NodeType) {
-    return false;
 }
 
 inline BackendPlacementEntry BuildGraphRuntimePlacement(
@@ -647,52 +418,24 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
     placement.node_name = node.name;
     placement.node_type = LayerTypeName(node.type);
     placement.requested_backend = "auto";
-    placement.fallback_backend = "CPU";
+    placement.fallback_backend = "none";
 
-    if (IsMixedArrayFireGraphRuntimeOp(node.type)) {
-        placement.expected_backend = "ArrayFire tensor primitive when supported";
-        placement.status = BackendPlacementStatus::Mixed;
-        placement.reason_code = BackendPlacementReason::GraphRuntimeArrayFireMixed;
+    if (IsArrayFireGraphRuntimeOp(node.type)) {
+        // Core Tensor operations run on ArrayFire for every dtype and rank
+        // (TOFIX140 F4), forward and graph backward alike.
+        placement.expected_backend = "ArrayFire active backend";
+        placement.status = BackendPlacementStatus::Gpu;
+        placement.reason_code = BackendPlacementReason::GraphRuntimeArrayFire;
         placement.explanation =
             std::string(placement.node_type) +
-            " is a graph-runtime tensor op. It can use ArrayFire-backed "
-            "Tensor primitives for supported dtypes/shapes, but it keeps CPU "
-            "fallback for unsupported dtypes, CPU-only builds, or backend "
-            "failures.";
-        if (node.type == gui::NodeType::TensorDot) {
+            " is a graph-runtime tensor op on the active ArrayFire backend (the "
+            "selected device; ArrayFire's CPU backend when the CPU is selected), "
+            "forward and graph backward. There is no native CPU fallback: a "
+            "backend failure stops the run with the device error.";
+        if (node.type == gui::NodeType::Split) {
             placement.explanation +=
-                " Current TensorDot ArrayFire coverage is Float32/Float64 "
-                "forward for 1D vector dot and 2D row-wise dot; graph backward "
-                "still uses the graph-executable gradient path.";
-        } else if (node.type == gui::NodeType::Add) {
-            placement.explanation +=
-                " Current Add ArrayFire coverage includes Float32/Float64 "
-                "row-major 2D elementwise addition, including shared-input "
-                "and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::Multiply) {
-            placement.explanation +=
-                " Current Multiply ArrayFire coverage includes Float32/Float64 "
-                "row-major 2D elementwise multiplication, including shared-input "
-                "and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::Average) {
-            placement.explanation +=
-                " Current Average ArrayFire coverage reuses Float32/Float64 "
-                "row-major 2D addition and scalar scaling, including "
-                "shared-input and independent graph fan-in residency coverage.";
-        } else if (node.type == gui::NodeType::TensorCompare) {
-            placement.explanation +=
-                " Current TensorCompare ArrayFire coverage is Float32/Float64 "
-                "forward for tensor and scalar comparisons with matching "
-                "tensor dtypes.";
-        } else if (node.type == gui::NodeType::Concatenate) {
-            placement.explanation +=
-                " Current Concatenate ArrayFire coverage is Float32/Float64 "
-                "2D concatenation through the row-major tensor bridge.";
-        } else if (node.type == gui::NodeType::TensorLogicalMask) {
-            placement.explanation +=
-                " Current TensorLogicalMask ArrayFire coverage is "
-                "Float32/Float64 matching-dtype tensor logical operations and "
-                "unary logical not.";
+                " Split slices its input into two tensors with Tensor::Split "
+                "and concatenates the branch gradients back in backward.";
         }
         placement.suggested_action =
             "No correctness action needed. Treat performance as workload-specific "
@@ -704,20 +447,6 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
         return placement;
     }
 
-    if (IsCpuBackedGraphRuntimeOp(node.type)) {
-        placement.expected_backend = "CPU";
-        placement.status = BackendPlacementStatus::Cpu;
-        placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
-        placement.explanation =
-            std::string(placement.node_type) +
-            " is executable as a graph-runtime op, but the current primitive "
-            "path is CPU-backed and may materialize host data.";
-        placement.suggested_action =
-            "No correctness action needed. Add a focused ArrayFire primitive "
-            "and residency test before claiming GPU support for this graph op.";
-        return placement;
-    }
-
     placement.expected_backend = BackendPlacementStatus::Unknown;
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::BackendCapabilityUnclassified;
@@ -726,7 +455,7 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
         " is recorded as a graph-runtime op, but no backend placement rule "
         "exists for it yet.";
     placement.suggested_action =
-        "Classify this graph op before relying on any GPU/fallback claim.";
+        "Classify this graph op before relying on any GPU claim.";
     return placement;
 }
 

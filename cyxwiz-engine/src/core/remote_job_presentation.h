@@ -25,6 +25,7 @@ struct JobFitInputs {
     std::string estimate_backend;        // e.g. arrayfire_cuda
     std::string estimate_device;         // e.g. GTX 1050 Ti
     std::string estimate_error;          // why the estimate could not run
+    bool estimate_data_error = false;    // the probe failed on the job's data (missing, empty, unreadable)
     std::string node_device;             // e.g. GTX 1050 Ti ("" when unknown)
     std::uint64_t node_device_bytes = 0; // total device memory; 0 = not reported
     std::string rejection_reason;        // the node's words when it refused ("" none)

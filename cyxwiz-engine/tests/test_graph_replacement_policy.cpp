@@ -23,6 +23,10 @@ int main() {
         Check(!allowed(), "preparation handoff must retain evaluation protection");
         state.testing = false;
         Check(allowed(), "completed test releases replacement");
+        state.loading_training_data = true;
+        Check(gui::GraphReplacementBlockReason(state) == "the graph's data is loading before training",
+              "Train's data load owns the graph it will train");
+        state.loading_training_data = false;
         state.simulation = state.pipeline = state.reinforcement_learning = true;
         state.simulation = false;
         Check(!allowed(), "pipeline remains active after simulation stops");

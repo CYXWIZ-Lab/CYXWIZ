@@ -24,15 +24,11 @@ bool ScriptEditorPanel::LoadFileContent(const std::string& filepath, std::string
     return true;
 }
 
-bool ScriptEditorPanel::SaveFileContent(const std::string& filepath, const std::string& content) {
-    std::ofstream file(filepath, std::ios::binary);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    file << content;
-    file.close();
-    return true;
+bool ScriptEditorPanel::SaveFileContent(const std::string& filepath, const std::string& content,
+                                        const scriptfile::TextFormat& format, std::string* error) {
+    // Same BOM and line endings as the file had; a failed write leaves the
+    // old file in place (TOFIX133 P0 item 3).
+    return scriptfile::WriteAtomically(filepath, scriptfile::Encode(content, format), error);
 }
 
 std::string ScriptEditorPanel::OpenFileDialog() {

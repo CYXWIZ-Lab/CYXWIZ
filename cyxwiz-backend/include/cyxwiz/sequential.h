@@ -181,6 +181,13 @@ public:
     virtual Tensor ForwardIncremental(const Tensor& input, size_t /*position_offset*/) { return Forward(input); }
     virtual void ResetIncrementalState() {}
 
+    // Modules with several inputs (Cross Attention). The graph runtime passes
+    // one tensor per input pin, in pin order, and gets one gradient per input
+    // pin back. A single-input module keeps the defaults.
+    virtual size_t InputCount() const { return 1; }
+    virtual Tensor ForwardInputs(const std::vector<Tensor>& inputs) { return Forward(inputs.at(0)); }
+    virtual std::vector<Tensor> BackwardInputs(const Tensor& grad_output) { return {Backward(grad_output)}; }
+
 protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
@@ -250,6 +257,32 @@ private:
 };
 
 /**
+ * @brief SequentialModel adapter for DepthwiseConv2DLayer ([H,W,C,N] ->
+ * [out_h,out_w,C*M,N], torch Conv2d groups=C).
+ */
+class CYXWIZ_API DepthwiseConv2DModule : public Module {
+public:
+    DepthwiseConv2DModule(int channels, int depth_multiplier, int kernel_size,
+                          int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<DepthwiseConv2DLayer> layer_;
+    int channels_;
+    int multiplier_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+};
+
+/**
  * @brief SequentialModel ownership adapter for ConvTranspose2DLayer.
  *
  * Preserves the existing `[H,W,C,N]` Tensor contract and native formulas.
@@ -279,6 +312,49 @@ private:
     int padding_;
     int output_padding_;
     bool use_bias_;
+};
+
+/**
+ * @brief 3-D convolution on rows (TOFIX140 Group C), torch.nn.Conv3d.
+ *
+ * Rows [N, C*D*H*W] in torch's channel-major order (x.view(N, C, D, H, W))
+ * -> rows [N, F*D'*H'*W'] (torch Conv3d(...)(x).flatten(1)), with
+ * D' = (D + 2p - k) / s + 1 (and H', W' alike). `weight` is [F, C*k*k*k],
+ * torch's weight.flatten(1); `bias` is [F]. ArrayFire path: the column
+ * matrix is one sparse gather (built once for the sample shape) times the
+ * input, the convolution one matmul; backward is the transposed gather, so
+ * nothing leaves the device. There is no second CPU implementation: the CPU
+ * is ArrayFire's CPU backend.
+ */
+class CYXWIZ_API Conv3DModule : public Module {
+public:
+    Conv3DModule(size_t depth, size_t height, size_t width, size_t in_channels, size_t filters,
+                 int kernel_size, int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+    // The [D', H', W', F] sample each output row holds.
+    std::vector<size_t> OutputSample() const { return {out_depth_, out_height_, out_width_, filters_}; }
+
+private:
+    struct DeviceGather;
+
+    size_t depth_, height_, width_, in_channels_, filters_;
+    int kernel_size_, stride_, padding_;
+    bool use_bias_;
+    size_t out_depth_ = 0, out_height_ = 0, out_width_ = 0;
+    size_t column_size_ = 0;  // C*k^3: one patch
+    size_t patches_ = 0;      // D'*H'*W'
+    std::shared_ptr<DeviceGather> device_;
+    Tensor weight_, bias_, grad_weight_, grad_bias_;
+    Tensor input_;
+    bool has_forward_ = false;
 };
 
 /**
@@ -365,10 +441,9 @@ private:
 };
 
 /**
- * @brief Parameter-free SequentialModel adapter for GlobalAvgPool2DLayer.
- *
- * Studio remains blocked while the primitive is native CPU-only and lacks the
- * complete Part F numerical, residency, and training evidence.
+ * @brief Parameter-free SequentialModel adapter for GlobalAvgPool2DLayer:
+ * [H,W,C,N] in, [N,C] rows out (torch adaptive_avg_pool2d(x, 1).flatten(1)),
+ * so it ends a spatial section the way Flatten does.
  */
 class CYXWIZ_API GlobalAvgPool2DModule : public Module {
 public:
@@ -380,6 +455,40 @@ public:
 
 private:
     std::unique_ptr<GlobalAvgPool2DLayer> layer_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for GlobalMaxPool2DLayer:
+ * [H,W,C,N] in, [N,C] rows out (torch adaptive_max_pool2d(x, 1).flatten(1)).
+ */
+class CYXWIZ_API GlobalMaxPool2DModule : public Module {
+public:
+    GlobalMaxPool2DModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<GlobalMaxPool2DLayer> layer_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for AdaptiveAvgPool2DLayer:
+ * [H,W,C,N] -> [out_h,out_w,C,N] (torch AdaptiveAvgPool2d).
+ */
+class CYXWIZ_API AdaptiveAvgPool2DModule : public Module {
+public:
+    AdaptiveAvgPool2DModule(int out_h, int out_w);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<AdaptiveAvgPool2DLayer> layer_;
+    int out_h_;
+    int out_w_;
 };
 
 /**
@@ -618,18 +727,13 @@ public:
     std::string GetName() const override;
 
 private:
+    // Batch-first LSTMLayer; a bidirectional one builds its forward and
+    // reverse directions on the device. Its layer{L}_X / layer{L}_X_reverse
+    // keys appear here as layer{L}.forward.X / layer{L}.reverse.X (saved
+    // models depend on these names); unidirectional keys pass through.
     std::unique_ptr<LSTMLayer> layer_;
-    // Split bidirectional path (2026-09-23, mirror of GRUModule): each level
-    // runs an independent forward and a time-reversed LSTMLayer whose
-    // outputs are concatenated, so bidirectional training uses the proven
-    // single-direction backward on both branches and each branch routes to
-    // the native neural provider on its own.
-    std::vector<std::unique_ptr<LSTMLayer>> forward_layers_;
-    std::vector<std::unique_ptr<LSTMLayer>> reverse_layers_;
-    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool bidirectional_;
     bool return_sequences_;
     // Cached full LSTM output shape [batch, seq_len, hidden*dirs] so
@@ -667,15 +771,12 @@ public:
     std::string GetName() const override;
 
 private:
+    // Same layout and key translation as LSTMModule.
     std::unique_ptr<GRULayer> layer_;
-    std::vector<std::unique_ptr<GRULayer>> forward_layers_;
-    std::vector<std::unique_ptr<GRULayer>> reverse_layers_;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool bidirectional_;
     bool return_sequences_;
-    bool split_bidirectional_path_ = false;
     std::vector<size_t> last_full_output_shape_;
 };
 
@@ -684,9 +785,7 @@ private:
  *
  * Mirrors LSTMModule: Keras-style `return_sequences=false` reduction to
  * the last timestep with symmetric gradient re-expansion in Backward.
- * Batch-first only. bidirectional=true uses the same split
- * forward/reverse path as LSTMModule/GRUModule (each branch a
- * single-direction RNNLayer, provider-routed on its own).
+ * Batch-first only; bidirectional runs inside the layer, on the device.
  */
 class CYXWIZ_API RNNModule : public Module {
 public:
@@ -705,13 +804,10 @@ public:
     std::string GetName() const override;
 
 private:
+    // Same layout and key translation as LSTMModule.
     std::unique_ptr<RNNLayer> layer_;
-    std::vector<std::unique_ptr<RNNLayer>> forward_layers_;
-    std::vector<std::unique_ptr<RNNLayer>> reverse_layers_;
-    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
-    size_t num_layers_;
     bool return_sequences_;
     std::string nonlinearity_;
     bool bidirectional_;
@@ -800,9 +896,8 @@ private:
 /**
  * @brief Wrapper around MultiHeadAttentionLayer for self-attention.
  *
- * Consumes and returns `[batch, seq_len, embed_dim]` tensors. Multi-input
- * cross-attention is intentionally not exposed through SequentialModel yet;
- * graph/compiler support must define that contract first.
+ * Consumes and returns `[batch, seq_len, embed_dim]` tensors. Cross attention
+ * (separate query and key/value inputs) is CrossAttentionModule.
  */
 // Attention-level choices for the standalone MultiHeadAttention node
 // (tofix112): the same options the decoder block uses, so research blocks can
@@ -850,6 +945,82 @@ private:
     float dropout_;
     bool use_bias_;
     MultiHeadAttentionOptions options_;
+};
+
+/**
+ * @brief Cross attention over MultiHeadAttentionLayer (TOFIX140 Group C).
+ *
+ * Three inputs, in pin order: query [batch, tq, embed_dim], key and value
+ * [batch, tk, embed_dim] (torch nn.MultiheadAttention(q, k, v), batch_first).
+ * Returns [batch, tq, embed_dim]; BackwardInputs returns {dQ, dK, dV}. Only
+ * the graph runtime drives it (Forward with one tensor is refused).
+ */
+class CYXWIZ_API CrossAttentionModule : public Module {
+public:
+    CrossAttentionModule(size_t embed_dim, size_t num_heads, float dropout = 0.0f, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    size_t InputCount() const override { return 3; }
+    Tensor ForwardInputs(const std::vector<Tensor>& inputs) override;
+    std::vector<Tensor> BackwardInputs(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<MultiHeadAttentionLayer> layer_;
+    size_t embed_dim_;
+    size_t num_heads_;
+};
+
+/**
+ * @brief Linear (kernel) self-attention (Katharopoulos et al. 2020, TOFIX140 Group C).
+ *
+ * Input and output [batch, seq_len, embed_dim]. Per head, with learned
+ * projections Q, K, V and feature map phi (elu(x) + 1 or relu(x)):
+ *   out_i = phi(q_i) . sum_j phi(k_j) v_j^T / (phi(q_i) . sum_j phi(k_j) + eps)
+ * No softmax and no 1/sqrt(d) scale. Non-causal attention costs O(T d^2)
+ * (the key/value summary is built once); causal attention (j <= i) uses the
+ * masked T x T form, O(T^2 d), the same result. Parameters W_q, b_q, ..., W_o,
+ * b_o with weights [out, in] as torch.nn.Linear.
+ */
+class CYXWIZ_API LinearAttentionModule : public Module {
+public:
+    enum class FeatureMap { EluPlusOne, Relu };
+
+    LinearAttentionModule(size_t embed_dim, size_t num_heads, FeatureMap feature_map = FeatureMap::EluPlusOne,
+                          float eps = 1e-6f, bool causal = false, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    Tensor Project(const Tensor& rows, const std::string& name) const;
+    Tensor SplitHeads(const Tensor& rows) const;
+    Tensor JoinHeads(const Tensor& heads) const;
+
+    size_t embed_dim_;
+    size_t num_heads_;
+    size_t head_dim_;
+    FeatureMap feature_map_;
+    float eps_;
+    bool causal_;
+    bool use_bias_;
+    std::map<std::string, Tensor> params_;
+    std::map<std::string, Tensor> grads_;
+    // Forward cache (rows are [batch * seq_len, embed_dim]; heads [batch * heads, seq_len, head_dim]).
+    std::vector<size_t> input_shape_;
+    Tensor rows_, q_pre_, k_pre_, phi_q_, phi_k_, v_, summary_, key_sum_, weights_, mask_, out_heads_, den_,
+        context_;
 };
 
 /**
@@ -1138,6 +1309,22 @@ private:
 };
 
 /**
+ * @brief Wrapper for SELU activation (TOFIX140 A2)
+ */
+class CYXWIZ_API SELUModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    SELUModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "SELU"; }
+
+private:
+    std::unique_ptr<SELUActivation> activation_;
+};
+
+/**
  * @brief Wrapper for GELU activation
  */
 class CYXWIZ_API GELUModule : public Module {
@@ -1217,7 +1404,6 @@ private:
     // Cached for backward pass
     Tensor normalized_;
     Tensor std_inv_;
-    Tensor batch_mean_;
 
     // Gradients
     Tensor grad_gamma_;

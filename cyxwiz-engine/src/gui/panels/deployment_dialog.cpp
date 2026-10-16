@@ -4,6 +4,7 @@
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
 #include "../../core/file_dialogs.h"
+#include "../ui_tokens.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -153,6 +154,7 @@ void DeploymentDialog::RenderModeSelector() {
 }
 
 void DeploymentDialog::RenderModelSection() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("%s Model", ICON_FA_CUBE);
     ImGui::Spacing();
 
@@ -189,7 +191,7 @@ void DeploymentDialog::RenderModelSection() {
         is_gguf_model_ = (ext == ".gguf");
 
         if (fs::is_directory(model_path_)) {
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Directory format", ICON_FA_CHECK);
+            ImGui::TextColored(t.success, "%s Directory format", ICON_FA_CHECK);
             // Count files in directory
             size_t file_count = 0;
             for (const auto& entry : fs::directory_iterator(model_path_)) {
@@ -198,18 +200,18 @@ void DeploymentDialog::RenderModelSection() {
             ImGui::SameLine();
             ImGui::TextDisabled("(%zu files)", file_count);
         } else if (is_gguf_model_) {
-            ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "%s GGUF/LLM Model", ICON_FA_BRAIN);
+            ImGui::TextColored(t.info, "%s GGUF/LLM Model", ICON_FA_BRAIN);
             auto file_size = fs::file_size(model_path_);
             ImGui::SameLine();
             ImGui::TextDisabled("(%.2f GB)", file_size / (1024.0 * 1024.0 * 1024.0));
         } else {
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Binary format", ICON_FA_CHECK);
+            ImGui::TextColored(t.success, "%s Binary format", ICON_FA_CHECK);
             auto file_size = fs::file_size(model_path_);
             ImGui::SameLine();
             ImGui::TextDisabled("(%.2f MB)", file_size / (1024.0 * 1024.0));
         }
     } else if (strlen(model_path_) > 0) {
-        ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%s Path not found", ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::TextColored(t.error, "%s Path not found", ICON_FA_TRIANGLE_EXCLAMATION);
         is_gguf_model_ = false;
     } else {
         is_gguf_model_ = false;
@@ -233,6 +235,7 @@ void DeploymentDialog::RenderEmbeddedConfig() {
 }
 
 void DeploymentDialog::RenderServerNodeConfig() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("%s Server Node Configuration", ICON_FA_GEAR);
     ImGui::Spacing();
 
@@ -271,11 +274,11 @@ void DeploymentDialog::RenderServerNodeConfig() {
 
     // Central Server connection status
     if (central_connected) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Connected to Central Server", ICON_FA_CIRCLE_CHECK);
+        ImGui::TextColored(t.success, "%s Connected to Central Server", ICON_FA_CIRCLE_CHECK);
     } else if (!is_authenticated) {
-        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "%s Login required", ICON_FA_LOCK);
+        ImGui::TextColored(t.warning, "%s Login required", ICON_FA_LOCK);
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s Not connected", ICON_FA_CIRCLE_XMARK);
+        ImGui::TextColored(t.pending, "%s Not connected", ICON_FA_CIRCLE_XMARK);
     }
 
     ImGui::Spacing();
@@ -314,7 +317,7 @@ void DeploymentDialog::RenderServerNodeConfig() {
 
         // Node connection status
         if (node_connected) {
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Connected to Node", ICON_FA_CIRCLE_CHECK);
+            ImGui::TextColored(t.success, "%s Connected to Node", ICON_FA_CIRCLE_CHECK);
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -343,10 +346,10 @@ void DeploymentDialog::RenderServerNodeConfig() {
 
             ImGui::Checkbox("Enable Terminal Access", &enable_terminal_);
         } else {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s Not connected to node", ICON_FA_CIRCLE_XMARK);
+            ImGui::TextColored(t.pending, "%s Not connected to node", ICON_FA_CIRCLE_XMARK);
         }
     } else if (central_connected) {
-        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+        ImGui::TextColored(t.warning,
             "%s Select a node from the list above to continue", ICON_FA_ARROW_UP);
     }
 
@@ -490,6 +493,7 @@ void DeploymentDialog::RenderDeployButton() {
 }
 
 void DeploymentDialog::RenderActiveDeployments() {
+    const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Text("%s Active Deployments", ICON_FA_SERVER);
     ImGui::Spacing();
 
@@ -499,7 +503,7 @@ void DeploymentDialog::RenderActiveDeployments() {
     if (embedded_server_ && embedded_server_->IsRunning()) {
         has_deployments = true;
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.2f, 0.1f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.running, 0.12f));
         ImGui::BeginChild("EmbeddedDeployment", ImVec2(0, 80), true);
 
         ImGui::Text("%s %s", ICON_FA_MICROCHIP, embedded_server_->GetModelName().c_str());
@@ -508,7 +512,7 @@ void DeploymentDialog::RenderActiveDeployments() {
             StopEmbeddedDeployment();
         }
 
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s Running", ICON_FA_CIRCLE);
+        ImGui::TextColored(t.running, "%s Running", ICON_FA_CIRCLE);
         ImGui::SameLine();
         ImGui::TextDisabled("| Port: %d", embedded_server_->GetPort());
         ImGui::SameLine();
@@ -538,7 +542,7 @@ void DeploymentDialog::RenderActiveDeployments() {
             has_deployments = true;
 
             ImGui::PushID(deploy.id.c_str());
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.2f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.info, 0.12f));
             ImGui::BeginChild("ServerDeployment", ImVec2(0, 80), true);
 
             ImGui::Text("%s %s", ICON_FA_SERVER, deploy.model_name.c_str());
@@ -549,7 +553,7 @@ void DeploymentDialog::RenderActiveDeployments() {
 
             if (is_stopped) {
                 ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, t.error);
                 if (ImGui::SmallButton(ICON_FA_TRASH " Delete")) {
                     DeleteServerNodeDeployment(deploy.id);
                 }
@@ -567,27 +571,27 @@ void DeploymentDialog::RenderActiveDeployments() {
             switch (deploy.status) {
                 case 4:  // READY
                 case 5:  // RUNNING
-                    status_color = ImVec4(0.3f, 0.8f, 0.3f, 1.0f);
+                    status_color = t.running;
                     status_text = "Running";
                     break;
                 case 3:  // LOADING
-                    status_color = ImVec4(1.0f, 0.8f, 0.3f, 1.0f);
+                    status_color = t.running;
                     status_text = "Loading";
                     break;
                 case 6:  // STOPPED
-                    status_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                    status_color = t.pending;
                     status_text = "Stopped";
                     break;
                 case 7:  // FAILED
-                    status_color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+                    status_color = t.error;
                     status_text = "Failed";
                     break;
                 case 8:  // TERMINATED
-                    status_color = ImVec4(0.6f, 0.4f, 0.4f, 1.0f);
+                    status_color = ui::Mix(t.error, t.pending, 0.5f);
                     status_text = "Terminated";
                     break;
                 default:
-                    status_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                    status_color = t.pending;
                     status_text = "Unknown";
                     break;
             }
@@ -616,12 +620,13 @@ void DeploymentDialog::RenderActiveDeployments() {
 }
 
 void DeploymentDialog::RenderStatusMessages() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (!status_message_.empty()) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s %s", ICON_FA_CIRCLE_CHECK, status_message_.c_str());
+        ImGui::TextColored(t.success, "%s %s", ICON_FA_CIRCLE_CHECK, status_message_.c_str());
     }
 
     if (!error_message_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
+        ImGui::TextColored(t.error, "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, error_message_.c_str());
     }
 }
 
@@ -940,6 +945,7 @@ void DeploymentDialog::RenderNodeSearchFilters() {
 }
 
 void DeploymentDialog::RenderNodeTable() {
+    const ui::Tokens& t = ui::CurrentTokens();
     // Table with scrolling
     ImGui::BeginChild("NodeTableChild", ImVec2(0, 200), true);
 
@@ -993,9 +999,9 @@ void DeploymentDialog::RenderNodeTable() {
             // Device
             ImGui::TableNextColumn();
             if (node.device_type == "CUDA") {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%s", node.device_type.c_str());
+                ImGui::TextColored(t.series[1], "%s", node.device_type.c_str());
             } else if (node.device_type == "OpenCL") {
-                ImGui::TextColored(ImVec4(0.3f, 0.6f, 0.9f, 1.0f), "%s", node.device_type.c_str());
+                ImGui::TextColored(t.series[2], "%s", node.device_type.c_str());
             } else {
                 ImGui::Text("%s", node.device_type.c_str());
             }
@@ -1011,7 +1017,7 @@ void DeploymentDialog::RenderNodeTable() {
             // Price
             ImGui::TableNextColumn();
             if (node.free_tier_available) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_GIFT " Free");
+                ImGui::TextColored(t.success, ICON_FA_GIFT " Free");
             } else if (node.price_per_hour > 0) {
                 ImGui::Text("%.4f", node.price_per_hour);
                 if (ImGui::IsItemHovered() && node.price_usd_equivalent > 0) {
@@ -1024,19 +1030,19 @@ void DeploymentDialog::RenderNodeTable() {
             // Reputation
             ImGui::TableNextColumn();
             if (node.reputation_score >= 0.8) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "%.0f%%", node.reputation_score * 100);
+                ImGui::TextColored(t.success, "%.0f%%", node.reputation_score * 100);
             } else if (node.reputation_score >= 0.5) {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "%.0f%%", node.reputation_score * 100);
+                ImGui::TextColored(t.warning, "%.0f%%", node.reputation_score * 100);
             } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.3f, 0.3f, 1.0f), "%.0f%%", node.reputation_score * 100);
+                ImGui::TextColored(t.error, "%.0f%%", node.reputation_score * 100);
             }
 
             // Status
             ImGui::TableNextColumn();
             if (node.is_online) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_CIRCLE " Online");
+                ImGui::TextColored(t.success, ICON_FA_CIRCLE " Online");
             } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), ICON_FA_CIRCLE " Offline");
+                ImGui::TextColored(t.pending, ICON_FA_CIRCLE " Offline");
             }
 
             ImGui::PopID();
@@ -1053,13 +1059,14 @@ void DeploymentDialog::RenderNodeTable() {
 }
 
 void DeploymentDialog::RenderSelectedNodeInfo() {
+    const ui::Tokens& t = ui::CurrentTokens();
     if (selected_node_index_ < 0 || selected_node_index_ >= static_cast<int>(discovered_nodes_.size())) {
         return;
     }
 
     const auto& node = discovered_nodes_[selected_node_index_];
 
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.15f, 0.2f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.accent, 0.10f));
     ImGui::BeginChild("SelectedNodeInfo", ImVec2(0, 80), true);
 
     ImGui::Text("%s Selected: %s", ICON_FA_CIRCLE_CHECK, node.name.c_str());
@@ -1080,7 +1087,7 @@ void DeploymentDialog::RenderSelectedNodeInfo() {
     ImGui::Text("%s Billing: %s", ICON_FA_DOLLAR_SIGN, node.billing_model.c_str());
     ImGui::Text("Price: %.4f CYXWIZ/hr", node.price_per_hour);
     if (node.free_tier_available) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ICON_FA_GIFT " Free tier available");
+        ImGui::TextColored(t.success, ICON_FA_GIFT " Free tier available");
     }
 
     ImGui::NextColumn();

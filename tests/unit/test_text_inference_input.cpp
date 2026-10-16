@@ -191,3 +191,55 @@ TEST_CASE("Byte BPE package preserves merges and strategy", "[inference][text][b
     REQUIRE_FALSE(cyxwiz::LoadTextTokenizerPackage(R"({"method":"byte_bpe"})", "", package, error));
     REQUIRE_FALSE(cyxwiz::LoadTextTokenizerPackage(R"({"method":"byte_bpe"})", "[PAD]\n[UNK]\n[BOS]\n[EOS]\nab\n", package, error));
 }
+
+
+TEST_CASE("ByteBPE v2 package retains leading-space policy and rejects config mismatch", "[inference][text][bpe]") {
+    cyxwiz::Tokenizer source(cyxwiz::TokenizerType::ByteBPE);
+    source.SetBPEFitPiecePolicy(cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+    source.SetPadding(false); source.SetTruncation(false);
+    source.Train({" word word word"}, 1, 300);
+    std::ostringstream saved;
+    REQUIRE(source.GetVocabulary().SaveToStream(saved));
+    cyxwiz::TextTokenizerPackage package;
+    std::string error;
+    const std::string prefix = R"({"effective":{"tokenizer_type":"3","lowercase":"false","max_length":"32")";
+    for (const std::string config : {prefix + "}}", prefix + R"(,"bpe_piece_policy":"leading_space_v2"}})"}) {
+        REQUIRE(cyxwiz::LoadTextTokenizerPackage(config, saved.str(), package, error));
+        REQUIRE(package.tokenizer->GetVocabulary().GetBPEPiecePolicy() == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+        const auto ids = cyxwiz::EncodeTextTokenIdsForGeneration(*package.tokenizer, " word");
+        REQUIRE(ids.size() == 1);
+        REQUIRE(cyxwiz::DecodeGeneratedTokenIds(*package.tokenizer, ids) == " word");
+    }
+    for (const auto value : {R"("whitespace_v1")", R"("unknown")", "2"}) {
+        REQUIRE_FALSE(cyxwiz::LoadTextTokenizerPackage(prefix + ",\"bpe_piece_policy\":" + value + "}}",
+            saved.str(), package, error));
+        REQUIRE_FALSE(package.has_vocabulary);
+        REQUIRE_FALSE(package.tokenizer);
+        REQUIRE(!error.empty());
+    }
+}
+
+TEST_CASE("Character BPE package follows artifact units and rejects config mismatch", "[inference][text][bpe]") {
+    cyxwiz::Tokenizer source(cyxwiz::TokenizerType::ByteBPE);
+    source.SetBPEFitInitialUnit(cyxwiz::BPEInitialUnit::UnicodeCharacter);
+    source.SetBPEFitPiecePolicy(cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
+    source.SetPadding(false); source.SetTruncation(false);
+    source.Train({" caf\xc3\xa9 caf\xc3\xa9"},1,40);
+    std::ostringstream saved;
+    REQUIRE(source.GetVocabulary().SaveToStream(saved));
+    cyxwiz::TextTokenizerPackage package;
+    std::string error;
+    const std::string prefix=R"({"effective":{"tokenizer_type":"3","lowercase":"false","max_length":"32")";
+    for (const auto config : {prefix+"}}",prefix+R"(,"bpe_initial_unit":"unicode_character"}})"}) {
+        REQUIRE(cyxwiz::LoadTextTokenizerPackage(config,saved.str(),package,error));
+        REQUIRE(package.tokenizer->GetVocabulary().GetBPEInitialUnit()==cyxwiz::BPEInitialUnit::UnicodeCharacter);
+        const auto ids=cyxwiz::EncodeTextTokenIdsForGeneration(*package.tokenizer," caf\xc3\xa9");
+        REQUIRE(cyxwiz::DecodeGeneratedTokenIds(*package.tokenizer,ids)==" caf\xc3\xa9");
+    }
+    for (const auto value : {R"("byte")",R"("unknown")","2"}) {
+        REQUIRE_FALSE(cyxwiz::LoadTextTokenizerPackage(prefix+",\"bpe_initial_unit\":"+value+"}}",saved.str(),package,error));
+        REQUIRE_FALSE(package.has_vocabulary);
+        REQUIRE_FALSE(package.tokenizer);
+        REQUIRE(!error.empty());
+    }
+}

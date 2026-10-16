@@ -479,7 +479,7 @@ void NodeEditor::HandleKeyboardShortcuts() {
     }
 
     // Ctrl+G - Create group from selection
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_G) && !selected_node_ids_.empty()) {
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_G) && !selected_node_ids_.empty()) {
         CreateGroupFromSelection("");  // Creates with default name
     }
 
@@ -488,8 +488,17 @@ void NodeEditor::HandleKeyboardShortcuts() {
         UngroupSelection();
     }
 
-    // Ctrl+Shift+S - Create subgraph from selection
-    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S) && selected_node_ids_.size() >= 2) {
+    // Ctrl+S - Save the graph to its file (a name is asked the first time);
+    // Ctrl+Shift+S - Save As a new file (the open one stays as it was).
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveCurrentGraph();
+    }
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        ShowSaveDialog();
+    }
+
+    // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
     }
 
@@ -509,64 +518,56 @@ void NodeEditor::HandleKeyboardShortcuts() {
     }
 }
 
+void NodeEditor::CenterViewOn(ImVec2 grid_point) {
+    // screen = grid * zoom + panning (relative to the canvas origin)
+    ImNodes::EditorContextResetPanning(ImVec2(canvas_size_.x * 0.5f - grid_point.x * zoom_,
+                                              canvas_size_.y * 0.5f - grid_point.y * zoom_));
+}
+
+void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {
+    if (node_ids.empty()) {
+        return;
+    }
+    // Bounding box in grid space; node dimensions are on screen, at this zoom.
+    float min_x = FLT_MAX, min_y = FLT_MAX;
+    float max_x = -FLT_MAX, max_y = -FLT_MAX;
+    for (int node_id : node_ids) {
+        auto it = cached_node_positions_.find(node_id);
+        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0, 0);
+        ImVec2 dims = ImNodes::GetNodeDimensions(node_id);
+        min_x = std::min(min_x, pos.x);
+        min_y = std::min(min_y, pos.y);
+        max_x = std::max(max_x, pos.x + dims.x / zoom_);
+        max_y = std::max(max_y, pos.y + dims.y / zoom_);
+    }
+    // Zoom out until the box fits with a margin (never in past 100%, never
+    // below the wheel's minimum), then center it.
+    constexpr float kMargin = 48.0f;
+    const float fit_x = (canvas_size_.x - 2.0f * kMargin) / std::max(1.0f, max_x - min_x);
+    const float fit_y = (canvas_size_.y - 2.0f * kMargin) / std::max(1.0f, max_y - min_y);
+    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), ZOOM_MIN, ZOOM_MAX);
+    CenterViewOn(ImVec2((min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f));
+}
+
 void NodeEditor::FrameSelected() {
-    // Get bounding box of selected nodes and center view on them
     const int num_selected = ImNodes::NumSelectedNodes();
     if (num_selected == 0) {
         return;
     }
-
     std::vector<int> selected_ids(num_selected);
     ImNodes::GetSelectedNodes(selected_ids.data());
-
-    // Calculate bounding box
-    float min_x = FLT_MAX, min_y = FLT_MAX;
-    float max_x = -FLT_MAX, max_y = -FLT_MAX;
-
-    for (int node_id : selected_ids) {
-        auto it = cached_node_positions_.find(node_id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        ImVec2 dims = ImNodes::GetNodeDimensions(node_id);
-
-        min_x = std::min(min_x, pos.x);
-        min_y = std::min(min_y, pos.y);
-        max_x = std::max(max_x, pos.x + dims.x);
-        max_y = std::max(max_y, pos.y + dims.y);
-    }
-
-    // Calculate center and pan to it
-    ImVec2 center((min_x + max_x) / 2.0f, (min_y + max_y) / 2.0f);
-    ImNodes::EditorContextResetPanning(ImVec2(-center.x + 400.0f, -center.y + 300.0f));
-
+    FrameNodes(selected_ids);
     spdlog::debug("Framed {} selected nodes", num_selected);
 }
 
 void NodeEditor::FrameAll() {
-    if (nodes_.empty()) {
-        return;
-    }
-
-    // Calculate bounding box of all nodes
-    float min_x = FLT_MAX, min_y = FLT_MAX;
-    float max_x = -FLT_MAX, max_y = -FLT_MAX;
-
+    std::vector<int> ids;
     for (const auto& node : nodes_) {
         if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
-        auto it = cached_node_positions_.find(node.id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        ImVec2 dims = ImNodes::GetNodeDimensions(node.id);
-
-        min_x = std::min(min_x, pos.x);
-        min_y = std::min(min_y, pos.y);
-        max_x = std::max(max_x, pos.x + dims.x);
-        max_y = std::max(max_y, pos.y + dims.y);
+        ids.push_back(node.id);
     }
-
-    // Calculate center and pan to it
-    ImVec2 center((min_x + max_x) / 2.0f, (min_y + max_y) / 2.0f);
-    ImNodes::EditorContextResetPanning(ImVec2(-center.x + 400.0f, -center.y + 300.0f));
-
-    spdlog::debug("Framed all {} nodes", nodes_.size());
+    FrameNodes(ids);
+    spdlog::debug("Framed all {} nodes", ids.size());
 }
 
 void NodeEditor::CreateLink(int from_pin, int to_pin, int from_node, int to_node, LinkType type) {

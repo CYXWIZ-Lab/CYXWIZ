@@ -1,5 +1,6 @@
 #include "gradient_descent_panel.h"
 #include "../icons.h"
+#include "../ui_tokens.h"
 #include <implot.h>
 #include <algorithm>
 #include <cmath>
@@ -79,10 +80,10 @@ void GradientDescentPanel::RenderToolbar() {
 
     if (has_result_) {
         if (result_.converged) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().success,
                 ICON_FA_CHECK " Converged in %d iterations", result_.iterations);
         } else {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+            ImGui::TextColored(ui::CurrentTokens().warning,
                 ICON_FA_HOURGLASS " Stopped at %d iterations", result_.iterations);
         }
     }
@@ -151,7 +152,7 @@ void GradientDescentPanel::RenderFunctionSelector() {
     }
 
     // Show function formula
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_dim);
     switch (selected_function_) {
         case TestFunction::Rosenbrock:
             ImGui::TextWrapped("f(x,y) = (1-x)^2 + 100(y-x^2)^2");
@@ -316,17 +317,17 @@ void GradientDescentPanel::RenderContourPlot() {
                 }
             }
 
-            ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), 2.0f);
+            ImPlot::SetNextLineStyle(ui::CurrentTokens().accent, 2.0f);
             ImPlot::PlotLine("Path", path_x.data(), path_y.data(), static_cast<int>(path_x.size()));
 
             // Mark start point
             double sx = path_x.front(), sy = path_y.front();
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ImVec4(0.2f, 0.8f, 0.2f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8, ui::SeriesColour(ui::CurrentTokens(), 1), 2.0f);
             ImPlot::PlotScatter("Start", &sx, &sy, 1);
 
             // Mark end point
             double ex = path_x.back(), ey = path_y.back();
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ImVec4(1.0f, 0.8f, 0.0f, 1.0f), 2.0f);
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 10, ui::SeriesColour(ui::CurrentTokens(), 2), 2.0f);
             ImPlot::PlotScatter("End", &ex, &ey, 1);
         }
 
@@ -336,7 +337,7 @@ void GradientDescentPanel::RenderContourPlot() {
 
 void GradientDescentPanel::RenderConvergencePlot() {
     if (!has_result_ || result_.objective_history.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Run optimization to see convergence plot");
         return;
     }
@@ -359,7 +360,7 @@ void GradientDescentPanel::RenderConvergencePlot() {
             ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 0), 2.0f);
         ImPlot::PlotLine("f(x)", iterations.data(), result_.objective_history.data(),
             static_cast<int>(result_.objective_history.size()));
 
@@ -369,7 +370,7 @@ void GradientDescentPanel::RenderConvergencePlot() {
 
 void GradientDescentPanel::RenderGradientPlot() {
     if (!has_result_ || gradient_norms_.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+        ImGui::TextColored(ui::CurrentTokens().text_dim,
             "Run optimization to see gradient plot");
         return;
     }
@@ -384,14 +385,14 @@ void GradientDescentPanel::RenderGradientPlot() {
             iterations.push_back(static_cast<double>(i));
         }
 
-        ImPlot::SetNextLineStyle(ImVec4(0.8f, 0.4f, 0.2f, 1.0f), 2.0f);
+        ImPlot::SetNextLineStyle(ui::SeriesColour(ui::CurrentTokens(), 1), 2.0f);
         ImPlot::PlotLine("||grad||", iterations.data(), gradient_norms_.data(),
             static_cast<int>(gradient_norms_.size()));
 
         // Draw tolerance line
         double tol_x[2] = { 0, static_cast<double>(gradient_norms_.size()) };
         double tol_y[2] = { tolerance_, tolerance_ };
-        ImPlot::SetNextLineStyle(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 1.0f);
+        ImPlot::SetNextLineStyle(ui::CurrentTokens().text_faint, 1.0f);
         ImPlot::PlotLine("Tolerance", tol_x, tol_y, 2);
 
         ImPlot::EndPlot();
@@ -402,7 +403,7 @@ void GradientDescentPanel::RenderStats() {
     ImGui::Text(ICON_FA_CHART_PIE " Results:");
 
     if (!result_.success) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error: %s", result_.error_message.c_str());
+        ImGui::TextColored(ui::CurrentTokens().error, "Error: %s", result_.error_message.c_str());
         return;
     }
 
@@ -415,9 +416,9 @@ void GradientDescentPanel::RenderStats() {
     }
 
     if (result_.converged) {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), ICON_FA_CHECK " Converged");
+        ImGui::TextColored(ui::CurrentTokens().success, ICON_FA_CHECK " Converged");
     } else {
-        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), ICON_FA_CLOCK " Max iterations reached");
+        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_CLOCK " Max iterations reached");
     }
 }
 

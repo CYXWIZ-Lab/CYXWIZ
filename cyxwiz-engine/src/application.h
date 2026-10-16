@@ -2,13 +2,15 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
+struct ImPlotContext;
 struct ImGuiIO;
 struct ImFont;
 
 namespace cyxwiz {
-    class PythonSetupWizard;
+    class PythonSetupDialog;
     class StartPage;
 }
 
@@ -35,7 +37,7 @@ private:
     void OpenStartupProjectIfRequested();
     void OpenStartupGraphIfRequested();
     void UpdateWindowTitle();
-    void ScanForPython();  // Scan for Python on startup (no initialization)
+    void RenderPythonWait();
     void MainLoop();
     void HandleInput();
     void Update(float delta_time);
@@ -46,6 +48,9 @@ private:
     void RebuildFontAtlas();
 
     GLFWwindow* window_;
+    // The Engine's one ImPlot context (TOFIX134 P0 item 1): every chart
+    // draws in it; it is the one destroyed at shutdown.
+    ImPlotContext* implot_context_ = nullptr;
     std::unique_ptr<gui::MainWindow> main_window_;
     std::unique_ptr<network::GRPCClient> grpc_client_;
     std::unique_ptr<network::JobManager> job_manager_;
@@ -55,36 +60,21 @@ private:
     std::string resolved_font_base_path_;  // absolute, found on first load
     std::string imgui_ini_path_;  // Store ini file path
 
-    // Python setup wizard (shown on first launch if no Python configured)
-    std::unique_ptr<cyxwiz::PythonSetupWizard> python_wizard_;
+    // Python scan on a worker plus the Python dialog (TOFIX129 A2-3).
+    std::unique_ptr<cyxwiz::PythonSetupDialog> python_setup_;
     bool python_configured_ = false;
 
-    // Python detection (scanned on startup, not initialized)
-    struct {
-        bool scanned = false;
-        bool found = false;
-        bool compatible = false;
-        std::string version;
-        int major = 0;
-        int minor = 0;
-        std::string path;
-        std::string warning;  // Version warning message
-    } python_scan_;
-
-    // Start page (shown after Python wizard if no project specified)
+    // Start page (shown when no project was specified)
     std::unique_ptr<cyxwiz::StartPage> start_page_;
     bool project_selected_ = false;
 
     // Close confirmation state
-    bool show_close_confirmation_ = false;
-    bool show_unsaved_confirmation_ = false;
-    bool show_data_loaded_confirmation_ = false;
+    bool show_close_dialog_ = false;  // the one close dialog (TOFIX129 A2-2)
+    std::string close_error_;
     bool force_close_ = false;
 
     // Close confirmation handling
-    void HandleCloseConfirmation();
-    void HandleUnsavedConfirmation();
-    void HandleDataLoadedConfirmation();
+    void HandleCloseRequest();
     bool ShouldPreventClose();
     bool HasUnsavedWork();
     bool HasLoadedData();
@@ -102,6 +92,8 @@ private:
     bool is_idle_ = false;
     static constexpr double IDLE_TIMEOUT = 1.0;  // Seconds before entering idle mode
     static constexpr double IDLE_FRAME_TIME = 0.1;  // 10 FPS when idle
+    static constexpr double UNFOCUSED_FRAME_TIME = 1.0 / 30.0;  // 30 FPS when another window has focus
+    static constexpr double MINIMISED_WAIT_TIME = 0.25;  // no frames while minimised; wake 4x a second
 
     // Debug logging flags (can be toggled via console commands)
     bool log_idle_transitions_ = false;  // Log idle mode enter/exit
@@ -109,4 +101,8 @@ private:
     // Startup project path (from command line)
     std::string startup_project_path_;
     std::string startup_graph_path_;
+    std::vector<std::string> startup_scripts_;  // .py / .cyx files named on the command line
+    // A .cyxgraph named on the command line opens attached to its file (Save
+    // writes it); a start-page starter opens detached.
+    bool startup_graph_from_command_line_ = false;
 };

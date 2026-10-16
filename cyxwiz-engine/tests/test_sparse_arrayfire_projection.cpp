@@ -15,9 +15,7 @@
 #include <string>
 #include <vector>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace {
 
@@ -27,8 +25,6 @@ void Check(bool condition, const std::string& message) {
         std::exit(1);
     }
 }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 
 struct SparseLinearFixture {
     std::vector<size_t> input_shape;
@@ -206,8 +202,6 @@ void TestLinearAndSequentialSparseParity(
         fixture.grad_output.data(),
         cyxwiz::DataType::Float32);
 
-    const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
-        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
 
     cyxwiz::LinearLayer layer(in_features, out_features, true);
     layer.SetParameters({{"weight", weight}, {"bias", bias}});
@@ -293,12 +287,9 @@ void TestLinearAndSequentialSparseParity(
           "Linear sparse projection must reject malformed CSR offsets");
 }
 
-#endif
-
 } // namespace
 
 int main(int argc, char** argv) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     const std::string backend_name = argc == 2 ? argv[1] : "cpu";
     const auto request = ParseBackend(backend_name);
     if (!request || argc > 2) {
@@ -328,8 +319,5 @@ int main(int argc, char** argv) {
     }
     std::cout << "ArrayFire " << request->name
               << " sparse projection contract tests passed\n";
-#else
-    std::cout << "SKIP: ArrayFire is not available in this build\n";
-#endif
     return 0;
 }

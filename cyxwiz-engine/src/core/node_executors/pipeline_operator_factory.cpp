@@ -9,11 +9,17 @@
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"
+#include "naive_bayes_operator.h"
+#include "knn_operator.h"
+#include "logistic_regression_operator.h"
+#include "svm_operators.h"
+#include "classic_model_predictor_operator.h"
 #include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
+#include "word_embeddings_operator.h"
 #include "tfidf_vectorizer_operator.h"
 #include "tree_model_predictor_operator.h"
 #include "time_series_analysis_operators.h"
@@ -64,6 +70,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Inert for legacy text graphs that go through RegisterTextDataset
     // (PipelineMaterializer skips non-Arrow datasets); active when
     // DataInput is wired to register text CSVs as Arrow tables.
+    RegisterCreator(gui::NodeType::WordEmbeddings, []() {
+        return std::make_unique<WordEmbeddingsOperator>();
+    });
     RegisterCreator(gui::NodeType::TextTokenizer, []() {
         return std::make_unique<TextTokenizerOperator>();
     });
@@ -112,9 +121,8 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::FilterDesigner, []() {
         return std::make_unique<FilterDesignerOperator>();
     });
-    // Tool-to-Node classical regression (Linear + Polynomial only;
-    // tree/forest/SVM/KNN/NaiveBayes/Logistic deferred — no backend
-    // implementation or different API shape).
+    // Tool-to-Node classical models: regression, the tree family, and the
+    // classic ML classifiers on the device (TOFIX145 Group C).
     RegisterCreator(gui::NodeType::LinearRegressionNode, []() {
         return std::make_unique<LinearRegressionOperator>();
     });
@@ -133,8 +141,26 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::GradientBoostingClassifier, []() {
         return std::make_unique<GradientBoostingClassifierOperator>();
     });
+    RegisterCreator(gui::NodeType::ClassicModelPredictor, []() {
+        return std::make_unique<ClassicModelPredictorOperator>();
+    });
     RegisterCreator(gui::NodeType::TreeModelPredictor, []() {
         return std::make_unique<TreeModelPredictorOperator>();
+    });
+    RegisterCreator(gui::NodeType::NaiveBayesClassifier, []() {
+        return std::make_unique<NaiveBayesClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::KNNClassifier, []() {
+        return std::make_unique<KNNClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::LogisticRegressionNode, []() {
+        return std::make_unique<LogisticRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMClassifier, []() {
+        return std::make_unique<SVMClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::SVMRegressor, []() {
+        return std::make_unique<SVMRegressorOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

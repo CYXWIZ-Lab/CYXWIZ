@@ -71,6 +71,7 @@ struct ResolvedLossConfiguration {
     std::optional<float> beta;
     std::optional<float> gamma;
     std::optional<float> smooth;
+    std::optional<float> margin;
 };
 
 // Effective optimizer settings resolved by the same path that constructs the
@@ -93,6 +94,11 @@ struct ResolvedOptimizerConfiguration {
 // TrainingExecutor (real training) and DebugExecutor (one-step local
 // debug sanity check).
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
+
+// The shape (rows x values per row) of an Embedding layer's weights file, as
+// the layer reads it: a matrix of numbers, or word vectors as text (a word
+// and its values per line; word2vec .vec with its header, GloVe .txt).
+bool InspectEmbeddingWeightsFile(const std::string& path, size_t& rows, size_t& cols, std::string& error);
 
 // Build only the configured loss. Test and training execution share this so
 // reduction, class weights, label smoothing, and BCE pos_weight cannot drift.

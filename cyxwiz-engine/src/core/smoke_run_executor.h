@@ -3,6 +3,8 @@
 #include "debug_session.h"
 #include "graph_compiler.h"
 #include "graph_model.h"
+#include "materialization_cache.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,16 @@ struct SmokeRunResult {
     float last_accuracy = 0.0f;
     std::vector<ValidationIssue> issues;
     std::vector<DebugTraceRecord> traces;
+    // The run was stopped by the caller before it finished.
+    bool stopped = false;
+};
+
+struct SmokeRunOptions {
+    // Same prepared-data cache as Train, so a Smoke Run reuses (or seeds)
+    // the cached materialization instead of rebuilding it every time.
+    MaterializationCacheConfig cache_config;
+    // Checked during materialization and between batches.
+    std::function<bool()> should_stop;
 };
 
 class SmokeRunExecutor {
@@ -28,7 +40,8 @@ public:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         const std::string& run_id,
-        int max_samples = 100) const;
+        int max_samples = 100,
+        const SmokeRunOptions& options = {}) const;
 };
 
 } // namespace cyxwiz

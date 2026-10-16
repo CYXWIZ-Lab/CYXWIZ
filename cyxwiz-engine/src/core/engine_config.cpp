@@ -119,6 +119,8 @@ std::filesystem::path GetExecutableDir() {
 
 }  // namespace
 
+std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
+
 EngineConfig& EngineConfig::Instance() {
     static EngineConfig instance;
     return instance;
@@ -403,10 +405,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             appearance_ = loaded;
         }
 
+        data_budget_bytes_ = 0;
+        if (config.contains("data") && config["data"].is_object())
+            data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
+
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
             config["observability"].is_object()) {
             const auto& observability = config["observability"];
+            record_debug_logs_ = observability.value("record_debug_logs", true);
             const int version = observability.value("saved_filters_version", 1);
             if (version == 1 && observability.contains("saved_filters") &&
                 observability["saved_filters"].is_array()) {
@@ -507,7 +514,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             saved_runtime_filters.push_back({
                 {"name", filter.name}, {"expression", filter.expression}});
         }
+        config["data"] = {{"budget_bytes", data_budget_bytes_}};
         config["observability"] = {
+            {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
         };
@@ -789,6 +798,32 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(appearance_ == appearance)) {
         appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::RecordDebugLogs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return record_debug_logs_;
+}
+
+void EngineConfig::SetRecordDebugLogs(bool record) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (record_debug_logs_ != record) {
+        record_debug_logs_ = record;
+        modified_ = true;
+    }
+}
+
+uint64_t EngineConfig::DataBudgetBytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return data_budget_bytes_;
+}
+
+void EngineConfig::SetDataBudgetBytes(uint64_t bytes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (data_budget_bytes_ != bytes) {
+        data_budget_bytes_ = bytes;
         modified_ = true;
     }
 }

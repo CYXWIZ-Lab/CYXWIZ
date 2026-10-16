@@ -1,38 +1,48 @@
 #include <catch2/catch_test_macros.hpp>
 #include <string>
+#include <set>
 
 #include "../../cyxwiz-engine/src/core/pipeline_runtime_capabilities.h"
+#include "../../cyxwiz-engine/src/core/data_input_formats.h"
 
-TEST_CASE("Upsample mode-specific backend evidence does not promote Studio training support",
-          "[pipeline][capabilities][upsample]") {
-    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::Upsample);
-    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-    REQUIRE_FALSE(support.compile_supported);
-    REQUIRE_FALSE(support.training_supported);
-    REQUIRE(support.reason != nullptr);
-    const std::string reason(support.reason);
-    CHECK(reason.find("ArrayFire-first nearest") != std::string::npos);
-    CHECK(reason.find("nearest/bilinear") != std::string::npos);
-    CHECK(reason.find("exact ModelBuilder construction") != std::string::npos);
-    CHECK(reason.find("spatial batch-layout") != std::string::npos);
-    CHECK(reason.find("observed native fallback") != std::string::npos);
-    CHECK(reason.find("ModelBuilder") != std::string::npos);
-    CHECK(reason.find("Studio training workflow") != std::string::npos);
+TEST_CASE("Data Input runtime formats follow the production source catalog",
+          "[pipeline][capabilities][data_input]") {
+    const std::set<std::string> expected{
+        "auto", "csv", "tsv", "json", "jsonl", "parquet", "feather", "arrow", "ipc", "zip_text"};
+    int checked = 0;
+    for (const auto& capability : cyxwiz::ResolvePipelineAllowedParameterValues("DataInput")) {
+        if (std::string(capability.parameter_name) != "type" &&
+            std::string(capability.parameter_name) != "file_type") continue;
+        const std::set<std::string> actual(capability.allowed_values.begin(), capability.allowed_values.end());
+        CHECK(actual == expected);
+        for (const char* name : capability.allowed_values)
+            CHECK(cyxwiz::data_input::IsExecutable(name));
+        ++checked;
+    }
+    CHECK(checked == 2);
+    CHECK_FALSE(cyxwiz::data_input::IsExecutable("hdf5"));
+    CHECK_FALSE(cyxwiz::data_input::IsExecutable("h5"));
 }
 
-TEST_CASE("PixelShuffle backend evidence does not promote Studio training support",
-          "[pipeline][capabilities][pixelshuffle]") {
-    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::PixelShuffle);
-    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-    REQUIRE_FALSE(support.compile_supported);
-    REQUIRE_FALSE(support.training_supported);
-    REQUIRE(support.reason != nullptr);
-    const std::string reason(support.reason);
-    CHECK(reason.find("ArrayFire-first") != std::string::npos);
-    CHECK(reason.find("exact ModelBuilder construction") != std::string::npos);
-    CHECK(reason.find("spatial batch-layout") != std::string::npos);
-    CHECK(reason.find("ModelBuilder") != std::string::npos);
-    CHECK(reason.find("Studio training workflow") != std::string::npos);
+TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
+          "[pipeline][capabilities][spatial]") {
+    using cyxwiz::PipelineTrainingBackendSupportMode;
+    using gui::NodeType;
+    // Compiled, built and trained on [H,W,C,N]; PyTorch parity in
+    // cyxwiz-engine/tests/computation_truth (spatial_layers_pytorch_parity).
+    for (const NodeType type : {NodeType::Conv2D, NodeType::MaxPool2D, NodeType::AvgPool2D,
+                                NodeType::ConvTranspose2D, NodeType::Upsample,
+                                NodeType::PixelShuffle, NodeType::GroupNorm,
+                                NodeType::InstanceNorm, NodeType::GlobalAvgPool, NodeType::Conv1D,
+                                NodeType::GlobalMaxPool, NodeType::AdaptiveAvgPool,
+                                NodeType::DepthwiseConv2D, NodeType::Conv3D}) {
+        CAPTURE(static_cast<int>(type));
+        const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+        REQUIRE(support.mode == PipelineTrainingBackendSupportMode::Allowed);
+        CHECK(support.compile_supported);
+        CHECK(support.training_supported);
+        REQUIRE(support.reason != nullptr);
+    }
 }
 
 TEST_CASE("Training capability registry exposes tested causal LM building blocks",
@@ -62,26 +72,22 @@ TEST_CASE("Training capability registry exposes tested causal LM building blocks
         NodeType::CrossEntropyLoss));
 }
 
-TEST_CASE("Training capability registry keeps unsupported attention variants blocked",
-          "[pipeline][capabilities][language_model]") {
-    using cyxwiz::PipelineTrainingBackendSupportMode;
-    using cyxwiz::ResolvePipelineTrainingBackendSupport;
-    using gui::NodeType;
+TEST_CASE("Linear Attention is a supported trainable model layer (TOFIX140 Group C)",
+          "[pipeline_runtime_capabilities][attention]") {
+    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::LinearAttention);
+    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
+    REQUIRE(support.compile_supported);
+    REQUIRE(support.training_supported);
+    REQUIRE_FALSE(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(gui::NodeType::LinearAttention));
+}
 
-    const NodeType unsupported_nodes[] = {
-        NodeType::SelfAttention,
-        NodeType::CrossAttention,
-        NodeType::LinearAttention
-    };
-
-    for (NodeType node_type : unsupported_nodes) {
-        const auto support = ResolvePipelineTrainingBackendSupport(node_type);
-        REQUIRE(support.mode ==
-                PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
-        REQUIRE_FALSE(support.compile_supported);
-        REQUIRE_FALSE(support.training_supported);
-        REQUIRE(support.reason != nullptr);
-    }
+TEST_CASE("Cross Attention is a supported trainable model layer (TOFIX140 Group C)",
+          "[pipeline_runtime_capabilities][attention]") {
+    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::CrossAttention);
+    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
+    REQUIRE(support.compile_supported);
+    REQUIRE(support.training_supported);
+    REQUIRE_FALSE(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(gui::NodeType::CrossAttention));
 }
 
 TEST_CASE("Simple RNN is a supported trainable model layer after the Studio wiring",

@@ -135,19 +135,51 @@ void TestPreviewSourceContract() {
         restored["file_type"] = "unknown";
         Check(!MatchesAppliedTabularPreview(restored, source), "unknown format must fail closed");
     }
+    {
+        // Apply stores a source inside the project project-relative; the
+        // reopened dialog holds the resolved path. They are the same source.
+        const fs::path project_root = fs::temp_directory_path() / "cyxwiz_preview_project";
+        const TabularPreviewSource source{
+            (project_root / "data" / "preview.csv").lexically_normal().string(),
+            1, true, ",", '.', "", 0, 0};
+        const std::map<std::string, std::string> applied{
+            {"file_path", "data/preview.csv"}, {"file_type", "csv"},
+            {"has_header", "true"}, {"delimiter", ","},
+            {"decimal_point", "."}, {"missing_value_tokens", ""},
+            {"skip_rows", "0"}, {"max_rows", "0"}};
+        Check(MatchesAppliedTabularPreview(applied, source, project_root.string()),
+              "project-relative applied path must match the resolved dialog path");
+        Check(!MatchesAppliedTabularPreview(applied, source,
+                  (project_root / "other").string()),
+              "a different project root must not match");
+    }
     const TabularPreviewSource parquet{"preview.parquet", 4, true, ",", '.', "", 0, 0};
     Check(!MatchesAppliedTabularPreview({}, parquet), "unapplied source cannot reuse registered preview");
     for (const auto& [extension, type] :
          std::vector<std::pair<std::string, int>>{
              {"parquet", 4}, {"feather", 7}, {"arrow", 8}, {"ipc", 8},
-             {"xlsx", 5}, {"json", 3}, {"hdf5", 6}, {"unknown", 0}}) {
+             {"xlsx", 5}, {"json", 3}, {"hdf5", 6}, {"h5", 6}, {"HDF", 6}, {"unknown", 0}}) {
         for (int selected_type : {0, type}) {
             const auto rejected = gui::data_input::LoadDelimitedPreview(
                 "not-opened." + extension, true, ',', selected_type);
-            Check(rejected.error.find("Apply this source first") != std::string::npos &&
+            // JSON Lines loads (TOFIX143) and previews once applied, like Parquet.
+            const auto* expected_reason = (type == 5 || type == 6)
+                ? "loading is not supported" : "Apply this source first";
+            Check(rejected.error.find(expected_reason) != std::string::npos &&
                       rejected.columns.empty() && rejected.rows.empty(),
-                  extension + ": explicit/auto non-delimited preview must reject before file I/O");
+                  extension + " (type " + std::to_string(selected_type) +
+                      "): non-delimited preview must reject before file I/O; got: " + rejected.error);
         }
+    }
+    for (const auto* format : {"auto", "hdf5", "h5"}) {
+        const TabularPreviewSource source{"not-opened.h5", 0, true, ",", '.', "", 0, 0};
+        const std::map<std::string, std::string> applied{
+            {"file_path", source.path}, {"file_type", format},
+            {"has_header", "true"}, {"delimiter", ","},
+            {"decimal_point", "."}, {"missing_value_tokens", ""},
+            {"skip_rows", "0"}, {"max_rows", "0"}};
+        Check(!MatchesAppliedTabularPreview(applied, source),
+              "Matching saved HDF5 settings must not advertise registered preview support");
     }
 }
 

@@ -326,7 +326,6 @@ namespace cyxwiz {
 EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     EditorSettings settings;
     // Script Editor settings
-    settings.theme = j.value("theme", 3);
     settings.font_scale = j.value("font_scale", 1.3f);
     settings.tab_size = j.value("tab_size", 4);
     settings.show_whitespace = j.value("show_whitespace", true);
@@ -337,15 +336,12 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     // Application-wide settings
     settings.app_theme = j.value("app_theme", 0);
     settings.ui_scale = j.value("ui_scale", 1.0f);
-    settings.materialization_memory_limit_bytes =
-        j.value("materialization_memory_limit_bytes", uint64_t{0});
     return settings;
 }
 
 nlohmann::json EditorSettings::ToJson() const {
     nlohmann::json j;
     // Script Editor settings
-    j["theme"] = theme;
     j["font_scale"] = font_scale;
     j["tab_size"] = tab_size;
     j["show_whitespace"] = show_whitespace;
@@ -356,8 +352,6 @@ nlohmann::json EditorSettings::ToJson() const {
     // Application-wide settings
     j["app_theme"] = app_theme;
     j["ui_scale"] = ui_scale;
-    j["materialization_memory_limit_bytes"] =
-        materialization_memory_limit_bytes;
     return j;
 }
 
@@ -515,6 +509,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
     try {
         // Close any existing project
         if (HasActiveProject()) {
+            if (!MayCloseProject("create another project")) return false;
             CloseProject();
         }
 
@@ -596,6 +591,7 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
                     project_file_path_);
                 return true;
             }
+            if (!MayCloseProject("open another project")) return false;
             CloseProject();
         }
 
@@ -652,26 +648,11 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         if (!fs::exists(python_env_file) && !fs::exists(python_dir)) {
             spdlog::warn("Legacy project detected (no python_env.json) - creating virtual environment");
 
-            // Create venv for legacy project
+            // As for a new project: Python waits for the environment (setup
+            // pending), then starts in it.
             auto& config = cyxwiz::core::EngineConfig::Instance();
             if (config.HasSystemPython()) {
-                // Use the async task manager to create venv in the background
-                spdlog::info("Creating venv for legacy project: {}", project_name_);
-                auto& task_mgr = cyxwiz::AsyncTaskManager::Instance();
-                task_mgr.RunAsync(
-                    "Create venv for legacy project",
-                    [project_root = project_root_](cyxwiz::LambdaTask& task) {
-                        task.ReportProgress(0.05f, "Creating virtual environment for legacy project...");
-                        std::string error;
-                        if (!CreateProjectVenv(fs::path(project_root), &error)) {
-                            spdlog::error("Failed to create venv for legacy project: {}", error);
-                            task.MarkFailed(error);
-                        } else {
-                            spdlog::info("Virtual environment created for legacy project");
-                            task.ReportProgress(1.0f, "Virtual environment ready");
-                        }
-                    },
-                    nullptr, nullptr, GetSessionToken());
+                QueueProjectVenvCreation(fs::path(project_root_), project_name_, GetSessionToken());
             } else {
                 spdlog::error("Cannot create venv for legacy project: no system Python configured");
             }
@@ -938,6 +919,13 @@ void ProjectManager::AddToRecentProjects(const std::string& name, const std::str
     }
 
     // Save to disk
+    SaveRecentProjects();
+}
+
+void ProjectManager::RemoveRecentProject(const std::string& path) {
+    recent_projects_.erase(std::remove_if(recent_projects_.begin(), recent_projects_.end(),
+                                          [&path](const RecentProject& p) { return p.path == path; }),
+                           recent_projects_.end());
     SaveRecentProjects();
 }
 

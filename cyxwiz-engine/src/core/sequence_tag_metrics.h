@@ -1,12 +1,10 @@
 #pragma once
 
 #include <cyxwiz/tensor.h>
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <af/array.h>
 #include <af/arith.h>
 #include <af/algorithm.h>
 #include <af/data.h>
-#endif
 #include "algorithms/arrayfire_backend_utils.h"
 #include <cmath>
 #include <limits>
@@ -63,36 +61,33 @@ inline int64_t SequenceTagIdAt(const Tensor& tensor, size_t index) {
     throw std::runtime_error("sequence tag ids must be Int32 or Int64");
 }
 
+// Argmax over the last axis of semantic [batch, seq, classes] logits. Ties go
+// to the first class; a row without a maximum (all NaN) gives class 0, as a
+// strict ">" scan from class 0 does.
+inline af::array SequenceTagArgmaxDevice(const af::array& values, size_t classes) {
+    const af::array maximum = af::tile((af::max)(values, 2), af::dim4(1, 1, static_cast<unsigned>(classes)));
+    const af::array indices = af::range(values.dims(), 2, u32);
+    const af::array first = (af::min)(af::select(values == maximum, indices, static_cast<double>(classes)), 2).as(s64);
+    return af::select(first >= static_cast<double>(classes), 0.0, first);
+}
+
 inline Tensor ArgmaxSequenceTagLogits(const Tensor& logits) {
     if (logits.GetDataType() != DataType::Float32) {
         throw std::runtime_error("sequence tag logits must be Float32");
     }
     const auto& shape = logits.Shape();
-    if (shape.size() != 3 || shape[2] == 0) {
+    if (shape.size() != 3 || shape[2] == 0 || shape[2] > (std::numeric_limits<unsigned>::max)()) {
         throw std::runtime_error(
             "sequence tag logits must be shaped [batch, seq, tags]");
     }
-
-    const size_t batch = shape[0];
-    const size_t seq = shape[1];
-    const size_t classes = shape[2];
-    const float* data = logits.Data<float>();
-    std::vector<int64_t> ids(batch * seq, 0);
-
-    for (size_t i = 0; i < batch * seq; ++i) {
-        const size_t base = i * classes;
-        size_t best = 0;
-        float best_value = data[base];
-        for (size_t c = 1; c < classes; ++c) {
-            if (data[base + c] > best_value) {
-                best = c;
-                best_value = data[base + c];
-            }
-        }
-        ids[i] = static_cast<int64_t>(best);
+    try {
+        const af::array ids = af::moddims(SequenceTagArgmaxDevice(logits.GetSemanticArray(), shape[2]),
+                                          static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]));
+        ids.eval();
+        return Tensor::FromSemanticArray(ids, {shape[0], shape[1]});
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("ArgmaxSequenceTagLogits failed on the ArrayFire device: ") + e.what());
     }
-
-    return Tensor({batch, seq}, ids.data(), DataType::Int64);
 }
 
 inline void ValidateSequenceTagIdShapes(const Tensor& predicted_ids,
@@ -207,16 +202,25 @@ inline SequenceTagMetrics ComputeSequenceTagMetrics(
     ValidateSequenceTagIdShapes(predicted_ids, gold_ids);
 
     SequenceTagMetrics metrics;
-    for (size_t i = 0; i < gold_ids.NumElements(); ++i) {
-        const int64_t gold = SequenceTagIdAt(gold_ids, i);
-        if (gold == ignore_index) {
-            continue;
-        }
-        const int64_t pred = SequenceTagIdAt(predicted_ids, i);
-        ++metrics.total_tokens;
-        if (pred == gold) {
-            ++metrics.correct_tokens;
-        }
+    Tensor masked_predicted_ids;
+    try {
+        const af::array gold = gold_ids.GetSemanticArray().as(s64);
+        const af::array predicted = predicted_ids.GetSemanticArray().as(s64);
+        const af::array valid = gold != af::constant(static_cast<long long>(ignore_index), gold.dims(), s64);
+        // Ignored positions break predicted spans exactly where they break gold ones.
+        const af::array masked = af::select(valid, predicted, static_cast<double>(ignore_index)).as(s64);
+        const auto count = [](const af::array& mask) { return af::sum(af::flat(mask).as(s64), 0).as(s64); };
+        const af::array counts = af::join(0, count(valid), count(valid && (predicted == gold)));
+        masked.eval();
+        masked_predicted_ids = Tensor::FromSemanticArray(masked, predicted_ids.Shape());
+        const Tensor counts_tensor = Tensor::FromSemanticArray(counts, {2});
+        const ScopedArrayFireHostSyncAttribution attribution(
+            ArrayFireHostSyncCategory::MetricScalarReadback, "ComputeSequenceTagMetrics");
+        const auto* host = counts_tensor.ReadData<int64_t>();
+        metrics.total_tokens = static_cast<size_t>(host[0]);
+        metrics.correct_tokens = static_cast<size_t>(host[1]);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("ComputeSequenceTagMetrics failed on the ArrayFire device: ") + e.what());
     }
     if (metrics.total_tokens > 0) {
         metrics.token_accuracy =
@@ -224,16 +228,8 @@ inline SequenceTagMetrics ComputeSequenceTagMetrics(
             static_cast<double>(metrics.total_tokens);
     }
 
-    std::vector<int64_t> masked_predicted_data(predicted_ids.NumElements(), 0);
-    for (size_t i = 0; i < gold_ids.NumElements(); ++i) {
-        const int64_t gold = SequenceTagIdAt(gold_ids, i);
-        masked_predicted_data[i] =
-            gold == ignore_index ? ignore_index : SequenceTagIdAt(predicted_ids, i);
-    }
-    Tensor masked_predicted_ids(predicted_ids.Shape(),
-                                masked_predicted_data.data(),
-                                DataType::Int64);
-
+    // BIO span matching is the declared host boundary: it reads the [batch, seq]
+    // id matrices, never the logits.
     auto predicted_entities =
         ExtractBioEntities(masked_predicted_ids, id_to_label, ignore_index);
     auto gold_entities = ExtractBioEntities(gold_ids, id_to_label, ignore_index);
@@ -301,7 +297,7 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
     const auto& target_shape = target_ids.Shape();
     if (logits.GetDataType() != DataType::Float32 ||
         logit_shape.size() != 3 || logit_shape[0] == 0 || logit_shape[1] == 0 ||
-        logit_shape[2] == 0 || logit_shape[2] > std::numeric_limits<unsigned>::max() ||
+        logit_shape[2] == 0 || logit_shape[2] > (std::numeric_limits<unsigned>::max)() ||
         (target_ids.GetDataType() != DataType::Int64 && target_ids.GetDataType() != DataType::Int32) ||
         target_shape.size() != 2 ||
         target_shape[0] != logit_shape[0] ||
@@ -311,21 +307,14 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
             "and target_ids [batch, seq]");
     }
 
-    const size_t batch_size = logit_shape[0];
-    const size_t sequence_length = logit_shape[1];
     const size_t vocab_size = logit_shape[2];
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         const af::array values = logits.GetSemanticArray();
         const af::array targets = target_ids.GetSemanticArray().as(s64);
         const af::array ignored = af::constant(static_cast<long long>(ignore_index), targets.dims(), s64);
         const af::array valid = targets != ignored;
         const af::array invalid = valid && ((targets < 0) || (targets >= static_cast<double>(vocab_size)));
-        // Resolve ties to the first vocabulary entry, matching the native loop.
-        const af::array maximum = af::tile(af::max(values, 2), af::dim4(1, 1, vocab_size));
-        const af::array indices = af::range(values.dims(), 2, u32);
-        const af::array predicted = af::min(af::select(values == maximum, indices,
-            static_cast<double>(vocab_size)), 2).as(s64);
+        const af::array predicted = SequenceTagArgmaxDevice(values, vocab_size);
         const auto count = [](const af::array& mask) {
             return af::sum(af::flat(mask).as(s64), 0).as(s64);
         };
@@ -339,52 +328,8 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
         if (host[3] != 0) throw std::runtime_error("language-model accuracy requires finite logits");
         return {static_cast<size_t>(host[1]), static_cast<size_t>(host[0])};
     } catch (const af::exception& e) {
-        ThrowIfArrayFireNativeCpuFallbackForbidden("CountNextTokenAccuracyFromLogits",
-            ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
-            BuildTensorShapeContext("logits", logit_shape));
+        throw std::runtime_error(std::string("CountNextTokenAccuracyFromLogits failed on the ArrayFire device: ") + e.what());
     }
-#else
-    ThrowIfArrayFireNativeCpuFallbackForbidden("CountNextTokenAccuracyFromLogits",
-        BackendFallbackReason::UnsupportedOperation, "ArrayFire is not compiled into this backend",
-        BuildTensorShapeContext("logits", logit_shape));
-#endif
-    const ScopedArrayFireHostSyncAttribution attribution(
-        ArrayFireHostSyncCategory::MetricCpuPath, "CountNextTokenAccuracyFromLogits");
-    const float* data = logits.ReadData<float>();
-    for (size_t i = 0; i < logits.NumElements(); ++i)
-        if (!std::isfinite(data[i])) throw std::runtime_error("language-model accuracy requires finite logits");
-
-    NextTokenAccuracyCount result;
-    for (size_t row = 0; row < batch_size; ++row) {
-        for (size_t col = 0; col < sequence_length; ++col) {
-            const size_t target_offset = row * sequence_length + col;
-            const int64_t target = SequenceTagIdAt(target_ids, target_offset);
-            if (target == ignore_index) {
-                continue;
-            }
-            if (target < 0 || static_cast<size_t>(target) >= vocab_size) {
-                throw std::runtime_error(
-                    "language-model target id is outside the vocabulary range");
-            }
-
-            const size_t logit_offset = target_offset * vocab_size;
-            size_t predicted = 0;
-            float best = data[logit_offset];
-            for (size_t vocab = 1; vocab < vocab_size; ++vocab) {
-                const float value = data[logit_offset + vocab];
-                if (value > best) {
-                    best = value;
-                    predicted = vocab;
-                }
-            }
-            if (predicted == static_cast<size_t>(target)) {
-                ++result.correct;
-            }
-            ++result.valid;
-        }
-    }
-
-    return result;
 }
 
 } // namespace cyxwiz

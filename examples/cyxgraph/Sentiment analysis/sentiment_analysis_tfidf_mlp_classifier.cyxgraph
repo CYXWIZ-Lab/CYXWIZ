@@ -2,6 +2,9 @@
     "annotations":  [
 
                     ],
+    "data_boundary_version":  2,
+    "data_validator_contract_version":  2,
+    "evaluation_table_contract_version":  2,
     "execution_mode":  0,
     "framework":  0,
     "groups":  [

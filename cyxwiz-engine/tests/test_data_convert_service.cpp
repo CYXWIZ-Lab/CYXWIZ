@@ -429,6 +429,13 @@ int main() {
         auto dataset = file.createDataSet<double>(
             "data", HighFive::DataSpace::From(values));
         dataset.write(values);
+        auto nested = file.createGroup("nested");
+        const std::vector<std::vector<int32_t>> selected{{10, 20}, {30, 40}};
+        nested.createDataSet<int32_t>("data", HighFive::DataSpace::From(selected)).write(selected);
+        const std::vector<uint8_t> labels{1, 0};
+        nested.createDataSet<uint8_t>("labels", HighFive::DataSpace::From(labels)).write(labels);
+        const std::vector<float> alternate{1.25f, 2.5f};
+        nested.createDataSet<float>("alternate", HighFive::DataSpace::From(alternate)).write(alternate);
     }
 
     cyxwiz::DataConvertOptions hdf5_to_parquet;
@@ -437,6 +444,11 @@ int main() {
     hdf5_to_parquet.output_path = hdf5_parquet_path.string();
     hdf5_to_parquet.output_format = "parquet";
     hdf5_to_parquet.overwrite = true;
+    Check(hdf5_to_parquet.hdf5_selection.data_path.empty() &&
+              hdf5_to_parquet.hdf5_selection.label_path.empty(),
+          "service defaults to conventional HDF5 discovery without labels");
+    Check(hdf5_to_parquet.hdf5_max_materialized_bytes == 256ULL * 1024 * 1024,
+          "service defaults to a 256 MiB HDF5 materialization budget");
     auto hdf5_result =
         cyxwiz::DataConvertService::Convert(hdf5_to_parquet);
     Check(hdf5_result.ok,
@@ -448,6 +460,118 @@ int main() {
           "converted HDF5 row count should match");
     Check(hdf5_parquet->GetNumColumns() == 2,
           "converted HDF5 column count should match");
+
+    const auto check_hdf5_value = [](const std::shared_ptr<arrow::Table>& table,
+                                     int column, int64_t row, double expected) {
+        auto scalar = table->column(column)->GetScalar(row);
+        Check(scalar.ok(), "HDF5 converted cell should be readable");
+        auto value = std::dynamic_pointer_cast<arrow::DoubleScalar>(scalar.ValueOrDie());
+        Check(value && value->is_valid && value->value == expected,
+              "service should preserve HDF5 values using float64 compatibility");
+    };
+    check_hdf5_value(hdf5_parquet->GetArrowTable(), 1, 2, 6.0);
+
+    const fs::path features_path = work_dir / "features.h5";
+    {
+        HighFive::File file(features_path.string(), HighFive::File::Overwrite);
+        const std::vector<std::vector<int16_t>> values{{7, -8}, {9, -10}};
+        file.createDataSet<int16_t>("features", HighFive::DataSpace::From(values)).write(values);
+    }
+    cyxwiz::DataConvertOptions features_options;
+    features_options.input_path = features_path.string();
+    features_options.input_format = "hdf5";
+    std::string hdf5_error;
+    auto features_table = cyxwiz::DataConvertService::LoadTable(features_options, hdf5_error);
+    Check(features_table && features_table->num_rows() == 2 && features_table->num_columns() == 2,
+          "legacy conventional /features fallback should load: " + hdf5_error);
+    check_hdf5_value(features_table, 0, 0, 7.0);
+    check_hdf5_value(features_table, 1, 1, -10.0);
+
+    cyxwiz::DataConvertOptions selected_hdf5;
+    selected_hdf5.input_path = hdf5_path.string();
+    selected_hdf5.input_format = "hdf5";
+    selected_hdf5.output_path = (work_dir / "selected_hdf5.parquet").string();
+    selected_hdf5.hdf5_selection = {"/nested/data", "/nested/labels"};
+    auto selected_preview = cyxwiz::DataConvertService::Preview(selected_hdf5);
+    Check(selected_preview.ok && selected_preview.rows == 2 && selected_preview.columns == 3,
+          "explicit nested HDF5 preview should include labels: " + selected_preview.error);
+    Check(selected_preview.schema.size() == 3 && selected_preview.schema.back().name == "label",
+          "explicit HDF5 preview appends the label column");
+    auto selected_result = cyxwiz::DataConvertService::Convert(selected_hdf5);
+    Check(selected_result.ok && !selected_result.skipped_fresh_output &&
+              selected_result.rows_written == 2 && selected_result.columns == 3,
+          "explicit nested HDF5 conversion should succeed: " + selected_result.error);
+    auto selected_parquet = cyxwiz::ArrowDataset::FromParquet(selected_hdf5.output_path, "selected_hdf5");
+    Check(selected_parquet != nullptr, "explicit HDF5 output should reload");
+    auto selected_table = selected_parquet->GetArrowTable();
+    Check(selected_table->num_rows() == 2 && selected_table->num_columns() == 3 &&
+              selected_table->field(2)->name() == "label", "persisted HDF5 selection and appended label shape");
+    for (int column = 0; column < 3; ++column) {
+        Check(selected_table->field(column)->type()->id() == arrow::Type::DOUBLE,
+              "service converts native integer data and labels to float64");
+    }
+    check_hdf5_value(selected_table, 0, 0, 10.0);
+    check_hdf5_value(selected_table, 1, 1, 40.0);
+    check_hdf5_value(selected_table, 2, 0, 1.0);
+    check_hdf5_value(selected_table, 2, 1, 0.0);
+    auto selected_cached = cyxwiz::DataConvertService::Convert(selected_hdf5);
+    Check(selected_cached.ok && selected_cached.skipped_fresh_output,
+          "unchanged HDF5 selection and budget should reuse the conversion manifest");
+
+    const auto check_stale_hdf5 = [](const cyxwiz::DataConvertOptions& changed,
+                                    const std::string& context) {
+        auto stale = cyxwiz::DataConvertService::Convert(changed);
+        Check(!stale.ok && !stale.skipped_fresh_output,
+              context + " must reject the old manifest with overwrite=false");
+    };
+    auto changed_hdf5 = selected_hdf5;
+    changed_hdf5.hdf5_selection.data_path = "/nested/alternate";
+    check_stale_hdf5(changed_hdf5, "changed HDF5 data selection");
+    changed_hdf5 = selected_hdf5;
+    changed_hdf5.hdf5_selection.label_path.clear();
+    check_stale_hdf5(changed_hdf5, "changed HDF5 label selection");
+    changed_hdf5 = selected_hdf5;
+    --changed_hdf5.hdf5_max_materialized_bytes;
+    check_stale_hdf5(changed_hdf5, "changed valid HDF5 budget");
+    changed_hdf5.hdf5_max_materialized_bytes = 0;
+    check_stale_hdf5(changed_hdf5, "zero HDF5 budget");
+    selected_cached = cyxwiz::DataConvertService::Convert(selected_hdf5);
+    Check(selected_cached.ok && selected_cached.skipped_fresh_output,
+          "rejected changed settings should leave the original HDF5 cache reusable");
+
+    changed_hdf5 = selected_hdf5;
+    changed_hdf5.hdf5_selection.data_path = "/nested/missing";
+    changed_hdf5.output_path = (work_dir / "missing_hdf5.parquet").string();
+    Check(!cyxwiz::DataConvertService::LoadTable(changed_hdf5, hdf5_error) && !hdf5_error.empty(),
+          "missing explicit HDF5 path must not fall back to the existing /data");
+    Check(!cyxwiz::DataConvertService::Preview(changed_hdf5).ok,
+          "preview must reject a missing explicit HDF5 path");
+    auto missing_hdf5 = cyxwiz::DataConvertService::Convert(changed_hdf5);
+    Check(!missing_hdf5.ok && !missing_hdf5.skipped_fresh_output &&
+              !fs::exists(changed_hdf5.output_path), "missing explicit HDF5 selection cannot publish output");
+
+    changed_hdf5 = selected_hdf5;
+    changed_hdf5.output_path = (work_dir / "limited_hdf5.parquet").string();
+    for (uint64_t budget : {uint64_t{0}, uint64_t{1}}) {
+        changed_hdf5.hdf5_max_materialized_bytes = budget;
+        Check(!cyxwiz::DataConvertService::LoadTable(changed_hdf5, hdf5_error) && !hdf5_error.empty(),
+              "service must forward the HDF5 materialization budget");
+        auto limited = cyxwiz::DataConvertService::Convert(changed_hdf5);
+        Check(!limited.ok && !limited.skipped_fresh_output && !fs::exists(changed_hdf5.output_path),
+              "insufficient HDF5 budget cannot publish output");
+    }
+
+    changed_hdf5 = selected_hdf5;
+    changed_hdf5.hdf5_selection.data_path = "/nested/alternate";
+    changed_hdf5.overwrite = true;
+    auto regenerated_hdf5 = cyxwiz::DataConvertService::Convert(changed_hdf5);
+    Check(regenerated_hdf5.ok && !regenerated_hdf5.skipped_fresh_output &&
+              regenerated_hdf5.rows_written == 2 && regenerated_hdf5.columns == 2,
+          "overwrite should regenerate the changed HDF5 selection: " + regenerated_hdf5.error);
+    auto regenerated_parquet = cyxwiz::ArrowDataset::FromParquet(changed_hdf5.output_path, "regenerated_hdf5");
+    Check(regenerated_parquet != nullptr, "regenerated HDF5 conversion should reload");
+    check_hdf5_value(regenerated_parquet->GetArrowTable(), 0, 1, 2.5);
+    check_hdf5_value(regenerated_parquet->GetArrowTable(), 1, 0, 1.0);
 
     const fs::path parquet_to_hdf5_path = work_dir / "roundtrip.h5";
     cyxwiz::DataConvertOptions parquet_to_hdf5;
@@ -473,6 +597,24 @@ int main() {
           "written HDF5 reload should preserve row count");
     Check(hdf5_reload_table->num_columns() == 2,
           "written HDF5 reload should preserve column count");
+
+    auto retained_hdf5 = parquet_to_hdf5;
+    retained_hdf5.output_path = (work_dir / "retained_budget.h5").string();
+    retained_hdf5.retain_output_table = true;
+    retained_hdf5.hdf5_max_materialized_bytes = 1;
+    auto retained_hdf5_result = cyxwiz::DataConvertService::Convert(retained_hdf5);
+    Check(!retained_hdf5_result.ok && !retained_hdf5_result.output_table &&
+              retained_hdf5_result.error.find("Output was written but could not be reloaded") !=
+                  std::string::npos,
+          "HDF5 output retention must honor the configured materialization budget");
+    retained_hdf5.hdf5_max_materialized_bytes = 4096;
+    retained_hdf5.hdf5_selection = {"/source_only/data", "/source_only/labels"};
+    retained_hdf5_result = cyxwiz::DataConvertService::Convert(retained_hdf5);
+    Check(retained_hdf5_result.ok && retained_hdf5_result.output_table &&
+              retained_hdf5_result.output_table->num_rows() == 2 &&
+              retained_hdf5_result.output_table->num_columns() == 2,
+          "HDF5 output retention must reload /data with the caller's sufficient budget: " +
+              retained_hdf5_result.error);
 #endif
 
     auto skipped = cyxwiz::DataConvertService::ConvertCsvToParquet(options);

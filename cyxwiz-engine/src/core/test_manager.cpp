@@ -1,9 +1,6 @@
 #include "test_manager.h"
 #include <spdlog/spdlog.h>
-#include <fstream>
-#include <iomanip>
 #include <exception>
-#include <nlohmann/json.hpp>
 
 namespace cyxwiz {
 
@@ -55,7 +52,8 @@ bool TestManager::StartTesting(
     ExternalTestSource source,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     // Check if already testing
     if (is_testing_.load()) {
@@ -75,7 +73,7 @@ bool TestManager::StartTesting(
 
     // Set model if provided
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     // Set state
@@ -136,7 +134,8 @@ bool TestManager::StartTestingArrow(
     TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     // Check if already testing
     if (is_testing_.load()) {
@@ -158,7 +157,7 @@ bool TestManager::StartTestingArrow(
 
     // Set model if provided
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     // Set state
@@ -219,7 +218,8 @@ bool TestManager::StartTestingParquet(
     TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
-    TestCompleteCallback on_complete)
+    TestCompleteCallback on_complete,
+    std::optional<ProcessDeviceSelection> model_device)
 {
     if (is_testing_.load()) {
         spdlog::warn("TestManager: Cannot start Parquet testing - already testing");
@@ -235,7 +235,7 @@ bool TestManager::StartTestingParquet(
         std::move(config), std::move(dataset), std::move(label_column),
         dataset_scope);
     if (model) {
-        executor->SetModel(model);
+        executor->SetModel(model, model_device);
     }
 
     is_testing_.store(true);
@@ -312,9 +312,11 @@ void TestManager::TestingThreadFunc(
 {
     spdlog::info("TestManager: Testing thread started");
 
-    // Store executor reference
+    // Store executor reference; apply and clear the one-shot quick-test limit
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        executor->SetBatchLimit(next_run_batch_limit_);
+        next_run_batch_limit_ = 0;
         current_executor_ = std::move(executor);
     }
 
@@ -424,144 +426,6 @@ void TestManager::TestingThreadFunc(
             if (on_complete && success) on_complete(final_metrics);
         });
 
-}
-
-bool TestManager::ExportResultsToCSV(const std::string& filepath) {
-    if (!has_results_) {
-        spdlog::warn("TestManager: No results to export");
-        return false;
-    }
-
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("TestManager: Failed to open file for export: {}", filepath);
-        return false;
-    }
-
-    // Write overview
-    file << "Test Results Summary\n";
-    file << "Metric,Value\n";
-    file << "Objective," <<
-        (last_results_.causal_lm_mode ? "causal_lm" : (last_results_.regression_mode ? "regression" : "classification")) <<
-        "\n";
-    file << "Loss," << last_results_.test_loss << "\n";
-    file << "Total Samples," << last_results_.total_samples << "\n";
-    if (last_results_.causal_lm_mode) {
-        file << "Valid Target Tokens," << last_results_.total_target_values << "\n";
-        file << "Token Accuracy," << last_results_.test_accuracy << "\n";
-    } else if (last_results_.regression_mode) {
-        file << "Target Values," << last_results_.total_target_values << "\n";
-        file << "MAE," << last_results_.test_mae << "\n";
-        file << "RMSE," << last_results_.test_rmse << "\n";
-    } else {
-        file << "Accuracy," << std::fixed << std::setprecision(4)
-             << last_results_.test_accuracy << "\n";
-        file << "Macro Precision," << last_results_.macro_precision << "\n";
-        file << "Macro Recall," << last_results_.macro_recall << "\n";
-        file << "Macro F1," << last_results_.macro_f1 << "\n";
-        file << "Weighted F1," << last_results_.weighted_f1 << "\n";
-    }
-    file << "Time (seconds)," << last_results_.total_time_seconds << "\n";
-    file << "Samples/sec," << last_results_.samples_per_second << "\n";
-
-    if (!last_results_.regression_mode && !last_results_.causal_lm_mode) {
-        file << "\nPer-Class Metrics\n";
-        file << "Class,Precision,Recall,F1,Support\n";
-        for (const auto& cm : last_results_.per_class_metrics) {
-            file << cm.class_name << ","
-                 << cm.precision << ","
-                 << cm.recall << ","
-                 << cm.f1_score << ","
-                 << cm.support << "\n";
-        }
-
-        file << "\nConfusion Matrix\n";
-        const auto& conf = last_results_.confusion_matrix;
-        file << ",";
-        for (int j = 0; j < conf.num_classes; ++j) {
-            file << "Pred_" << j;
-            if (j < conf.num_classes - 1) file << ",";
-        }
-        file << "\n";
-        for (int i = 0; i < conf.num_classes; ++i) {
-            file << "Actual_" << i << ",";
-            for (int j = 0; j < conf.num_classes; ++j) {
-                file << conf.matrix[i][j];
-                if (j < conf.num_classes - 1) file << ",";
-            }
-            file << "\n";
-        }
-    }
-
-    file.close();
-    spdlog::info("TestManager: Exported results to CSV: {}", filepath);
-    return true;
-}
-
-bool TestManager::ExportResultsToJSON(const std::string& filepath) {
-    if (!has_results_) {
-        spdlog::warn("TestManager: No results to export");
-        return false;
-    }
-
-    nlohmann::json j;
-
-    // Overview
-    j["objective"] =
-        last_results_.causal_lm_mode ? "causal_lm" : (last_results_.regression_mode ? "regression" : "classification");
-    j["loss"] = last_results_.test_loss;
-    j["total_samples"] = last_results_.total_samples;
-    if (last_results_.causal_lm_mode) {
-        j["valid_target_tokens"] = last_results_.total_target_values;
-        j["token_accuracy"] = last_results_.test_accuracy;
-    } else if (last_results_.regression_mode) {
-        j["total_target_values"] = last_results_.total_target_values;
-        j["mae"] = last_results_.test_mae;
-        j["rmse"] = last_results_.test_rmse;
-    } else {
-        j["accuracy"] = last_results_.test_accuracy;
-        j["macro_precision"] = last_results_.macro_precision;
-        j["macro_recall"] = last_results_.macro_recall;
-        j["macro_f1"] = last_results_.macro_f1;
-        j["weighted_f1"] = last_results_.weighted_f1;
-    }
-    j["time_seconds"] = last_results_.total_time_seconds;
-    j["samples_per_second"] = last_results_.samples_per_second;
-
-    // Per-class metrics
-    nlohmann::json per_class = nlohmann::json::array();
-    for (const auto& cm : last_results_.per_class_metrics) {
-        nlohmann::json c;
-        c["class_id"] = cm.class_id;
-        c["class_name"] = cm.class_name;
-        c["precision"] = cm.precision;
-        c["recall"] = cm.recall;
-        c["f1_score"] = cm.f1_score;
-        c["support"] = cm.support;
-        c["true_positives"] = cm.true_positives;
-        c["false_positives"] = cm.false_positives;
-        c["false_negatives"] = cm.false_negatives;
-        per_class.push_back(c);
-    }
-    j["per_class_metrics"] = per_class;
-
-    // Confusion matrix
-    nlohmann::json conf = nlohmann::json::array();
-    for (const auto& row : last_results_.confusion_matrix.matrix) {
-        conf.push_back(row);
-    }
-    j["confusion_matrix"] = conf;
-
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("TestManager: Failed to open file for export: {}", filepath);
-        return false;
-    }
-
-    file << j.dump(2);
-    file.close();
-    spdlog::info("TestManager: Exported results to JSON: {}", filepath);
-    return true;
 }
 
 } // namespace cyxwiz

@@ -4,9 +4,7 @@
 #include <chrono>
 #include <algorithm>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-#endif
 
 namespace cyxwiz::servernode::core {
 
@@ -266,7 +264,6 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
     // Note: This requires backend-level access to device metrics
     // For now, we'll use ArrayFire directly if available
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Temporarily switch to this device to get metrics
         int current_device = af::getDevice();
@@ -296,7 +293,6 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
     } catch (const af::exception& e) {
         spdlog::warn("Failed to update metrics for device {}: {}", device_id, e.what());
     }
-#endif
 }
 
 DevicePool::PoolStats DevicePool::GetStats() const {
@@ -441,7 +437,6 @@ ScopedDeviceContext::ScopedDeviceContext(int device_id)
     : device_id_(device_id)
     , previous_device_id_(-1)
     , valid_(false) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         // Save current device
         previous_device_id_ = af::getDevice();
@@ -457,15 +452,9 @@ ScopedDeviceContext::ScopedDeviceContext(int device_id)
     } catch (const af::exception& e) {
         spdlog::error("ScopedDeviceContext: failed to set device {}: {}", device_id_, e.what());
     }
-#else
-    // Without ArrayFire, just mark as valid (CPU-only mode)
-    valid_ = true;
-    previous_device_id_ = 0;
-#endif
 }
 
 ScopedDeviceContext::~ScopedDeviceContext() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
     if (valid_ && previous_device_id_ >= 0) {
         try {
             af::setDevice(previous_device_id_);
@@ -475,7 +464,6 @@ ScopedDeviceContext::~ScopedDeviceContext() {
                           previous_device_id_, e.what());
         }
     }
-#endif
 }
 
 } // namespace cyxwiz::servernode::core
