@@ -123,6 +123,17 @@ public:
     // nullptr when missing or unreadable.
     std::shared_ptr<arrow::ChunkedArray> ReadColumn(const std::string& name) const;
 
+    // The whole table (an admitted step's input, TOFIX154).
+    std::shared_ptr<arrow::Table> ReadAll() const;
+
+    // Write the selected columns of a Parquet file to another Parquet file,
+    // one row group at a time (Data Input's column selection on a file that
+    // stays on disk). Writes to <output>.tmp and renames on success.
+    static bool WriteColumnProjection(const std::string& source_path,
+                                      const std::string& output_path,
+                                      const std::vector<std::string>& columns,
+                                      std::string& error);
+
     // Metadata accessors - mirror ArrowDataset's shape where it makes sense,
     // so call sites that only need row/col/schema info can treat the two
     // types interchangeably via templates or small wrappers.
@@ -143,6 +154,10 @@ public:
     size_t GetMemoryUsage() const { return file_size_; }
     size_t GetFileSizeBytes() const { return file_size_; }
 
+    // About the size of the table in memory (TOFIX154): the row groups'
+    // uncompressed sizes from the file metadata.
+    uint64_t GetInMemoryBytesEstimate() const { return uncompressed_bytes_; }
+
 private:
     ParquetBackedDataset(const std::string& name, const std::string& path);
 
@@ -158,6 +173,7 @@ private:
     int64_t num_rows_ = 0;
     int64_t num_columns_ = 0;
     size_t file_size_ = 0;
+    uint64_t uncompressed_bytes_ = 0;
 
     // Row count per row group, pre-computed in Open() so the batcher can
     // partition work without re-reading metadata every epoch.

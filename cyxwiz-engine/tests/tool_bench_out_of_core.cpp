@@ -8,7 +8,7 @@
 //       Writes bench.csv and bench.parquet (tier1-like rows: id, split,
 //       category, value, score, text), streamed in 128K-row groups so the
 //       generator itself stays small.
-//   cyxwiz-bench-out-of-core run --pipeline P --file F [--disk]
+//   cyxwiz-bench-out-of-core run --pipeline P --file F [--disk] [--budget-mb B]
 //       Runs one pipeline (load, filter_select, groupby, sort, scaler) through
 //       PipelineExecutor and prints one JSON line. --disk sets Data Input's
 //       force_disk_backed (the Memory tab's "Force disk-backed cache").
@@ -22,6 +22,7 @@
 //       Job Object memory limit (the budget), and records time, peak memory
 //       and the outcome.
 
+#include "core/data_budget.h"
 #include "core/pipeline_executor.h"
 #include "core/pipeline_node_run_facts.h"
 
@@ -64,7 +65,7 @@ std::string Arg(int argc, char** argv, const std::string& name, const std::strin
 
 int Usage() {
     std::cerr << "usage: cyxwiz-bench-out-of-core generate --dir D --gb N\n"
-                 "       cyxwiz-bench-out-of-core run --pipeline P --file F [--disk]\n"
+                 "       cyxwiz-bench-out-of-core run --pipeline P --file F [--disk] [--budget-mb B]\n"
                  "       cyxwiz-bench-out-of-core probe --file F\n"
                  "       cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P]\n";
     return 2;
@@ -227,7 +228,8 @@ int Run(const std::string& pipeline, const fs::path& file, bool disk) {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(ReportCrash);
 #endif
-    json report = {{"pipeline", pipeline}, {"file", file.filename().string()}, {"disk", disk}};
+    json report = {{"pipeline", pipeline}, {"file", file.filename().string()}, {"disk", disk},
+                   {"data_budget_mb", cyxwiz::DataBudgetBytes() >> 20}};
     const auto start = std::chrono::steady_clock::now();
     bool ok = false;
     try {
@@ -302,7 +304,8 @@ json RunChild(const std::string& self, const std::string& pipeline, const fs::pa
     HANDLE out = CreateFileW(log.wstring().c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     std::wstring command = L"\"" + fs::path(self).wstring() + L"\" run --pipeline " + fs::path(pipeline).wstring() +
-                           L" --file \"" + file.wstring() + L"\"" + (disk ? L" --disk" : L"");
+                           L" --file \"" + file.wstring() + L"\"" + (disk ? L" --disk" : L"") +
+                           L" --budget-mb " + std::to_wstring((budget >> 20) / 2);
     STARTUPINFOW startup{sizeof(startup)};
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdOutput = out;
@@ -391,6 +394,10 @@ int main(int argc, char** argv) {
         if (pipeline.empty() || file.empty()) return Usage();
         bool disk = false;
         for (int i = 2; i < argc; ++i) disk = disk || std::string(argv[i]) == "--disk";
+        // The suite passes half its memory cap: the D2 rule (half of RAM) with
+        // the cap standing in for the machine.
+        const std::string budget = Arg(argc, argv, "--budget-mb");
+        if (!budget.empty()) cyxwiz::SetDataBudgetBytes(std::stoull(budget) << 20);
         return Run(pipeline, file, disk);
     }
     if (command == "probe") {

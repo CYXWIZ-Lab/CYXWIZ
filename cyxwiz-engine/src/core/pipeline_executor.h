@@ -229,6 +229,8 @@ private:
     std::string artifact_root_;           // Project artifacts directory
     std::string project_root_;            // Project root for relative source paths
     std::string graph_path_;              // the graph file the run came from (lineage)
+    // In-memory copies of disk inputs (AdmitInputTable), kept until the next run.
+    std::vector<std::string> admitted_inputs_;
     const std::vector<Node>* run_nodes_ = nullptr;  // the run's nodes while ExecuteParallel runs (lineage)
     // Writes <output>.lineage.json for an export node that wrote `output_path`
     // (TOFIX148 Publish); a failure is logged, the export stands.
@@ -373,6 +375,11 @@ private:
     void MarkDirtyNodes(std::vector<Node>& nodes);
     std::vector<int> FindReadyNodes(const std::vector<Node>& nodes, const std::set<int>& completed) const;
     bool ExecuteParallel(std::vector<Node>& nodes);
+    // The input table a step reads in memory: name itself, or an in-memory
+    // copy of a disk table that fits the data budget; "" after ReportError.
+    std::string AdmitInputTable(const Node& node, const std::string& name);
+    // A step without its input table: keeps the lookup's own reason.
+    void ReportMissingInput(const std::string& step);
     Node* FindNodeById(std::vector<Node>& nodes, int node_id);
     const Node* FindNodeById(const std::vector<Node>& nodes, int node_id) const;
 

@@ -1,0 +1,81 @@
+#pragma once
+
+// The data budget (TOFIX154): one number for how much memory data may use.
+// It decides when a table is opened from disk instead of loaded, when a step
+// may read a disk table whole, and DuckDB's memory_limit / temp_directory.
+// Default: half of physical RAM (owner decision D2). Preferences, tests and
+// the benchmark set it with SetDataBudgetBytes; 0 restores the default.
+
+#include "materialization_memory_guard.h"
+
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <mutex>
+#include <string>
+
+namespace cyxwiz {
+
+namespace data_budget_detail {
+inline std::atomic<uint64_t>& Override() {
+    static std::atomic<uint64_t> bytes{0};
+    return bytes;
+}
+inline std::mutex& SpillMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+inline std::string& SpillDirectory() {
+    static std::string directory;
+    return directory;
+}
+}  // namespace data_budget_detail
+
+inline uint64_t PhysicalMemoryBytes() {
+    static const uint64_t total = [] {
+        const auto snapshot = DetectMaterializationMemorySnapshot();
+        return snapshot.total_bytes > 0 ? snapshot.total_bytes : 8ULL * 1024 * 1024 * 1024;
+    }();
+    return total;
+}
+
+inline uint64_t DefaultDataBudgetBytes() { return PhysicalMemoryBytes() / 2; }
+
+inline uint64_t DataBudgetBytes() {
+    const uint64_t set = data_budget_detail::Override().load();
+    return set > 0 ? set : DefaultDataBudgetBytes();
+}
+
+inline void SetDataBudgetBytes(uint64_t bytes) { data_budget_detail::Override().store(bytes); }
+
+inline bool DataBudgetIsDefault() { return data_budget_detail::Override().load() == 0; }
+
+// A table or result larger than this is kept on disk, not in memory (D1).
+inline uint64_t DataResultThresholdBytes() { return DataBudgetBytes() / 4; }
+
+// Where DuckDB spills sorts, joins and group-bys. The project sets
+// <project>/cache/duckdb_tmp; outside a project, <temp>/cyxwiz/duckdb_tmp.
+inline std::string DataSpillDirectory() {
+    std::lock_guard<std::mutex> lock(data_budget_detail::SpillMutex());
+    if (!data_budget_detail::SpillDirectory().empty()) return data_budget_detail::SpillDirectory();
+    std::error_code error;
+    const auto temp = std::filesystem::temp_directory_path(error);
+    return error ? std::string() : (temp / "cyxwiz" / "duckdb_tmp").string();
+}
+
+inline void SetDataSpillDirectory(std::string directory) {
+    std::lock_guard<std::mutex> lock(data_budget_detail::SpillMutex());
+    data_budget_detail::SpillDirectory() = std::move(directory);
+}
+
+// "1.5 GB", "512 MB": the unit people see in messages and Preferences.
+inline std::string FormatDataBytes(uint64_t bytes) {
+    char text[32];
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mb >= 1024.0) std::snprintf(text, sizeof(text), "%.1f GB", mb / 1024.0);
+    else std::snprintf(text, sizeof(text), "%.0f MB", mb);
+    return text;
+}
+
+}  // namespace cyxwiz

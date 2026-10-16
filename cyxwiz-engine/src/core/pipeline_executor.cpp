@@ -10,6 +10,8 @@
 #include "error_codes.h"
 #include "duckdb_connector.h"
 #include "data_registry.h"
+#include "data_budget.h"
+#include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
 #include "data_convert_service.h"
 #include "data_input_parameters.h"
@@ -3238,6 +3240,8 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     current_status_ = "Starting pipeline execution...";
     deployment_ready_ = false;
     deployment_dataset_.clear();
+    for (const auto& name : admitted_inputs_) DataRegistry::Instance().UnregisterTabularDataset(name);
+    admitted_inputs_.clear();
 
     spdlog::info("[Data Studio] Starting pipeline execution");
 
@@ -3361,9 +3365,9 @@ void PipelineExecutor::RecordNodeRunFacts(const Node& node,
         node_started_seconds_.erase(started);
     }
     if (!output_dataset.empty()) {
-        if (const auto dataset = DataRegistry::Instance().GetArrowDataset(output_dataset)) {
-            facts.rows = dataset->GetNumRows();
-            facts.columns = dataset->GetNumColumns();
+        if (const auto table = DataRegistry::Instance().GetTableRef(output_dataset)) {
+            facts.rows = table->rows;
+            facts.columns = table->columns;
         }
     }
     const std::time_t wall = std::time(nullptr);
@@ -4290,6 +4294,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
     try {
         auto& registry = DataRegistry::Instance();
         std::shared_ptr<ArrowDataset> arrow_dataset;
+        // A table above the data budget's threshold stays a Parquet file;
+        // each step admits it (AdmitInputTable) or stops with the numbers.
+        bool disk_backed = false;
 
         if (source_type == "file") {
             // File input mode
@@ -4387,14 +4394,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 } else if (
                     backend ==
                     DataRegistry::TabularLoadBackend::DiskBacked) {
-                    ReportError(
-                        "DataInput: source opened as disk-backed Parquet, "
-                        "but Data Studio transformation operators currently "
-                        "require an in-memory Arrow table. Reduce the row or "
-                        "column selection, or use the disk-backed source for "
-                        "training until streaming pipeline operators are "
-                        "implemented.");
-                    return false;
+                    disk_backed = true;
+                    spdlog::info("[Pipeline] DataInput CSV backend: {}",
+                                 load_status.empty() ? "on disk" : load_status);
                 }
             } else if (file_type == "zip_text") {
                 const auto member = node.parameters.find("archive_member");
@@ -4412,7 +4414,17 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     arrow_dataset = registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
                 }
             } else if (file_type == "parquet") {
-                arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+                std::string load_status;
+                const auto backend = registry.LoadTabularParquet(
+                    file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_);
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                }
+                spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
@@ -4450,7 +4462,8 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             return false;
         }
 
-        if (!arrow_dataset) {
+        const auto table = registry.GetTableRef(dataset_name);
+        if ((!arrow_dataset && !disk_backed) || !table) {
             ReportError("DataInput: Failed to load dataset");
             return false;
         }
@@ -4461,8 +4474,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             ctx.input_dataset = dataset_name;
         }
 
-        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns",
-                    arrow_dataset->GetNumRows(), arrow_dataset->GetNumColumns());
+        spdlog::info("[Pipeline] DataInput loaded {} rows, {} columns{}",
+                    table->rows, table->columns,
+                    table->kind == TableRef::Kind::Parquet ? " (on disk)" : "");
         return true;
 
     } catch (const std::exception& e) {
@@ -4476,7 +4490,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
 
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("DataOutput: No input connection or dataset not found");
+        ReportMissingInput("DataOutput");
         return false;
     }
 
@@ -5628,6 +5642,13 @@ void PipelineExecutor::ReportError(const std::string& error) {
     spdlog::error("[Data Studio] Pipeline execution error: {}", error);
 }
 
+void PipelineExecutor::ReportMissingInput(const std::string& step) {
+    // The input lookups (GetInputDatasetName, AdmitInputTable) report why they
+    // failed, e.g. an input over the data budget; keep that reason and add the
+    // generic one only when none was given.
+    if (last_error_.empty()) ReportError(step + ": No input connection or dataset not found");
+}
+
 void PipelineExecutor::NotifyNodeExecution(
     const Node& node,
     PipelineNodeExecutionEvent event,
@@ -5760,6 +5781,41 @@ std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionCon
     return input_dataset_names.front();
 }
 
+std::string PipelineExecutor::AdmitInputTable(const Node& node, const std::string& name) {
+    // Steps read their input as an in-memory table (TOFIX154 step 2). An input
+    // kept on disk is read whole when that fits the data budget (reading needs
+    // about twice the table); otherwise the run stops here, before loading.
+    auto& registry = DataRegistry::Instance();
+    if (registry.GetArrowDataset(name)) return name;
+    const auto disk = registry.GetParquetBackedDataset(name);
+    if (!disk) return name;  // not a table (images, text): the step reports it
+    // One copy per run, shared by the steps that read it; a copy from another
+    // run or executor may be stale and is replaced.
+    const std::string admitted = name + "_in_memory";
+    if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), admitted) != admitted_inputs_.end() &&
+        registry.GetArrowDataset(admitted))
+        return admitted;
+    registry.UnregisterTabularDataset(admitted);
+    const uint64_t table_bytes = disk->GetInMemoryBytesEstimate();
+    const uint64_t budget = DataBudgetBytes();
+    if (table_bytes * 2 > budget) {
+        ReportError(node.name + ": its input (" + std::to_string(disk->GetNumRows()) + " rows) is on disk and needs about " +
+                    FormatDataBytes(table_bytes * 2) + " of memory to read, over the data budget of " +
+                    FormatDataBytes(budget) + ". Select fewer columns in Data Input, or raise the data budget "
+                    "in Preferences > Data.");
+        return "";
+    }
+    spdlog::info("[Pipeline] {}: reading its input from disk ({} rows, about {})", node.name,
+                 disk->GetNumRows(), FormatDataBytes(table_bytes));
+    auto table = disk->ReadAll();
+    if (!table || !registry.RegisterArrowTable(table, admitted)) {
+        ReportError(node.name + ": could not read its input from '" + disk->GetFilePath() + "'");
+        return "";
+    }
+    admitted_inputs_.push_back(admitted);
+    return admitted;
+}
+
 std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
     const Node& node,
     ExecutionContext& ctx,
@@ -5784,7 +5840,9 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
                         std::to_string(input_node_id) + " not found");
             return {};
         }
-        dataset_names.push_back(*name);
+        const std::string admitted = AdmitInputTable(node, *name);
+        if (admitted.empty()) return {};
+        dataset_names.push_back(admitted);
     }
     return dataset_names;
 }
@@ -5805,7 +5863,7 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        return *result;
+        return AdmitInputTable(node, *result);
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -5895,7 +5953,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         input_dataset_name = GetInputDatasetName(node, ctx);
     }
     if (input_dataset_name.empty()) {
-        ReportError(node.type + ": No input connection or dataset not found");
+        ReportMissingInput(node.type);
         return false;
     }
 
@@ -6029,8 +6087,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         node.type == "TextCleanNode" ? "TextCleanNode" : "TextClean";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6134,7 +6191,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextTokenize: No input connection or dataset not found");
+        ReportMissingInput("TextTokenize");
         return false;
     }
 
@@ -6218,7 +6275,7 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
 bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextVectorize: No input connection or dataset not found");
+        ReportMissingInput("TextVectorize");
         return false;
     }
 
@@ -6376,7 +6433,7 @@ bool PipelineExecutor::ExecuteNERSequenceBuilder(const Node& node,
 bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx) {
     const std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(node.type + ": No input connection or dataset not found");
+        ReportMissingInput(node.type);
         return false;
     }
 
@@ -6443,7 +6500,7 @@ bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionCont
 bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSWindow: No input connection or dataset not found");
+        ReportMissingInput("TSWindow");
         return false;
     }
 
@@ -6525,7 +6582,7 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
 bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSFeatures: No input connection or dataset not found");
+        ReportMissingInput("TSFeatures");
         return false;
     }
 
@@ -6618,8 +6675,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         node.type == "TimeSeriesLag" ? "TimeSeriesLag" : "TSLag";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6699,7 +6755,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSDiff: No input connection or dataset not found");
+        ReportMissingInput("TSDiff");
         return false;
     }
 
@@ -6779,8 +6835,7 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
                                                : "PolynomialFeatures";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name +
-                    ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 
@@ -6870,7 +6925,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         node.type == "BinningNode" ? "BinningNode" : "Binning";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError(diagnostic_name + ": No input connection or dataset not found");
+        ReportMissingInput(diagnostic_name);
         return false;
     }
 

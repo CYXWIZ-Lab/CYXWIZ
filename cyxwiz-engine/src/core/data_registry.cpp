@@ -3,34 +3,10 @@
 #include "dataset_base.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "data_budget.h"
 #include <arrow/compute/api.h>  // for arrow::compute::Cast (integer column compaction)
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
 
-// Cross-platform headers for GetAvailableMemoryBytes(). Each branch is gated
-// by the platform preprocessor so only one is ever compiled, and the fallback
-// path uses a safe conservative default so builds without an implementation
-// still work.
-#ifdef _WIN32
-// <windows.h> defines LoadImage as a preprocessor macro (LoadImageA or
-// LoadImageW depending on UNICODE). That collides with
-// cyxwiz::ImageUtils::LoadImage - under unity builds the ImageFolderDataset
-// code compiled into this TU gets its LoadImage call rewritten to
-// LoadImageA, which then fails at link time. NOGDI / WIN32_LEAN_AND_MEAN
-// don't exclude it because LoadImage lives in <winuser.h>, not GDI.
-// The surgical fix is to #undef it right after the include.
-#define WIN32_LEAN_AND_MEAN
-#define NOGDI
-#include <windows.h>
-#ifdef LoadImage
-#undef LoadImage
-#endif
-#elif defined(__linux__)
-#include <sys/sysinfo.h>
-#elif defined(__APPLE__)
-#include <sys/sysctl.h>
-#include <mach/mach.h>
-#include <mach/vm_statistics.h>
-#endif
 #include "annotation_manager.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -1446,58 +1422,6 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     }
 }
 
-// -----------------------------------------------------------------------------
-// GetAvailableMemoryBytes - cross-platform available RAM detection
-//
-// Returns the amount of physical memory the OS says is currently available for
-// allocation (not the total RAM, which doesn't account for what other processes
-// are using). Used by LoadTabularCSV to decide whether a dataset will fit in
-// memory or needs the disk-backed Parquet path.
-//
-// Conservative fallback: if detection fails, returns 2 GB. That's enough to
-// comfortably load MNIST-scale datasets in memory, and anything larger will
-// take the disk-backed path as a safe default.
-// -----------------------------------------------------------------------------
-static size_t GetAvailableMemoryBytes() {
-#ifdef _WIN32
-    MEMORYSTATUSEX memInfo;
-    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
-    if (GlobalMemoryStatusEx(&memInfo)) {
-        return static_cast<size_t>(memInfo.ullAvailPhys);
-    }
-    return 2ULL * 1024 * 1024 * 1024;  // 2 GB fallback
-#elif defined(__linux__)
-    // Linux: sysinfo() gives us freeram in units of si.mem_unit bytes.
-    // freeram is approximate (doesn't count page cache as "free"), but
-    // that's fine for our 75%-threshold decision — we'd rather err toward
-    // disk-backed mode than OOM during load.
-    struct sysinfo si;
-    if (sysinfo(&si) == 0) {
-        return static_cast<size_t>(si.freeram) * static_cast<size_t>(si.mem_unit);
-    }
-    return 2ULL * 1024 * 1024 * 1024;
-#elif defined(__APPLE__)
-    // macOS: host_statistics64() gives us free + inactive pages, which is
-    // the closest analog to Windows' AvailPhys. pagesize is queried via
-    // sysctl.
-    vm_size_t page_size = 0;
-    host_page_size(mach_host_self(), &page_size);
-    vm_statistics64_data_t vmstat;
-    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
-                          reinterpret_cast<host_info64_t>(&vmstat), &count) == KERN_SUCCESS) {
-        const uint64_t free_bytes = (static_cast<uint64_t>(vmstat.free_count) +
-                                     static_cast<uint64_t>(vmstat.inactive_count)) *
-                                    static_cast<uint64_t>(page_size);
-        return static_cast<size_t>(free_bytes);
-    }
-    return 2ULL * 1024 * 1024 * 1024;
-#else
-    // Unknown platform — conservative fallback. Small datasets still take
-    // the in-memory path; anything larger goes disk-backed.
-    return 2ULL * 1024 * 1024 * 1024;
-#endif
-}
 
 static bool PersistArrowCacheAtomically(
     const std::shared_ptr<ArrowDataset>& dataset,
@@ -1574,17 +1498,15 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         return TabularLoadBackend::Failed;
     }
 
-    const size_t available_ram = GetAvailableMemoryBytes();
-    const size_t memory_threshold = static_cast<size_t>(available_ram * 0.75);
-    const bool file_fits_in_ram = static_cast<size_t>(file_size_bytes) < memory_threshold;
-    const bool use_disk_backed = force_disk_backed || !file_fits_in_ram;
+    // The table is about the size of the CSV; above the data budget's result
+    // threshold it stays on disk (TOFIX154 D1/D2).
+    const uint64_t memory_threshold = DataResultThresholdBytes();
+    const bool use_disk_backed =
+        force_disk_backed || static_cast<uint64_t>(file_size_bytes) > memory_threshold;
 
-    spdlog::info("LoadTabularCSV: '{}' file={:.1f} MB, available RAM={:.1f} MB, "
-                 "threshold={:.1f} MB, force_disk={}, decision={}",
-                 path,
-                 file_size_bytes / (1024.0 * 1024.0),
-                 available_ram / (1024.0 * 1024.0),
-                 memory_threshold / (1024.0 * 1024.0),
+    spdlog::info("LoadTabularCSV: '{}' file={}, data budget={}, threshold={}, force_disk={}, decision={}",
+                 path, FormatDataBytes(static_cast<uint64_t>(file_size_bytes)),
+                 FormatDataBytes(DataBudgetBytes()), FormatDataBytes(memory_threshold),
                  force_disk_backed ? "true" : "false",
                  use_disk_backed ? "disk-backed" : "in-memory");
 
@@ -1731,6 +1653,96 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     }
 
     return TabularLoadBackend::DiskBacked;
+}
+
+DataRegistry::TabularLoadBackend DataRegistry::LoadTabularParquet(
+    const std::string& path, const std::string& name, bool force_disk_backed,
+    const std::vector<std::string>& selected_columns, std::string* load_status,
+    const std::string& cache_directory) {
+    if (load_status) load_status->clear();
+    // Opening reads only the metadata; the decision needs nothing more.
+    auto source = ParquetBackedDataset::Open(path, name);
+    if (!source) return TabularLoadBackend::Failed;
+    const uint64_t threshold = DataResultThresholdBytes();
+    uint64_t bytes = source->GetInMemoryBytesEstimate();
+    if (!selected_columns.empty() && source->GetNumColumns() > 0) {
+        bytes = bytes * selected_columns.size() / static_cast<uint64_t>(source->GetNumColumns());
+    }
+    const bool use_disk_backed = force_disk_backed || bytes > threshold;
+    spdlog::info("LoadTabularParquet: '{}' table~{}, data budget={}, threshold={}, force_disk={}, decision={}",
+                 path, FormatDataBytes(bytes), FormatDataBytes(DataBudgetBytes()), FormatDataBytes(threshold),
+                 force_disk_backed ? "true" : "false", use_disk_backed ? "disk-backed" : "in-memory");
+
+    if (!use_disk_backed) {
+        source.reset();
+        auto dataset = LoadParquetToArrow(path, name);
+        if (!dataset) return TabularLoadBackend::Failed;
+        if (!selected_columns.empty()) {
+            auto projected = dataset->SelectColumns(selected_columns);
+            if (!projected || projected->GetNumColumns() != static_cast<int64_t>(selected_columns.size())) {
+                UnregisterTabularDataset(dataset->GetName());
+                spdlog::error("LoadTabularParquet: selected columns do not match '{}'", path);
+                return TabularLoadBackend::Failed;
+            }
+            RegisterArrowTable(projected->GetArrowTable(), dataset->GetName());
+        }
+        if (load_status) *load_status = "Loaded in memory";
+        return TabularLoadBackend::InMemory;
+    }
+
+    std::string open_path = path;
+    if (!selected_columns.empty()) {
+        std::string signature = "parquet_columns=";
+        for (const auto& column : selected_columns) signature += std::to_string(column.size()) + ":" + column + ";";
+        open_path = ParquetBackedDataset::GetCacheFilePath(path, signature, cache_directory);
+        if (!ParquetBackedDataset::IsCacheFresh(path, open_path)) {
+            source.reset();
+            std::string error;
+            if (!ParquetBackedDataset::WriteColumnProjection(path, open_path, selected_columns, error)) {
+                spdlog::error("LoadTabularParquet: column selection of '{}' failed: {}", path, error);
+                return TabularLoadBackend::Failed;
+            }
+        }
+        if (load_status) *load_status = "Selected columns kept on disk";
+    } else if (load_status) {
+        *load_status = "Opened in place";
+    }
+    const std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
+    auto dataset = open_path == path && source ? source : ParquetBackedDataset::Open(open_path, unique_name);
+    if (!dataset) return TabularLoadBackend::Failed;
+    RegisterParquetBacked(unique_name, dataset);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        InvalidateTabularPublicationUnlocked(unique_name);
+        arrow_datasets_.erase(unique_name);
+        RememberTabularSourcePathUnlocked(unique_name, path);
+    }
+    return TabularLoadBackend::DiskBacked;
+}
+
+std::optional<TableRef> DataRegistry::GetTableRef(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto it = arrow_datasets_.find(name); it != arrow_datasets_.end() && it->second) {
+        TableRef ref;
+        ref.name = name;
+        ref.kind = TableRef::Kind::Memory;
+        ref.rows = it->second->GetNumRows();
+        ref.columns = it->second->GetNumColumns();
+        ref.bytes = it->second->GetMemoryUsage();
+        return ref;
+    }
+    if (const auto it = parquet_backed_datasets_.find(name); it != parquet_backed_datasets_.end() && it->second) {
+        TableRef ref;
+        ref.name = name;
+        ref.kind = TableRef::Kind::Parquet;
+        ref.rows = it->second->GetNumRows();
+        ref.columns = it->second->GetNumColumns();
+        ref.bytes = it->second->GetInMemoryBytesEstimate();
+        ref.path = it->second->GetFilePath();
+        ref.row_groups = it->second->GetNumRowGroups();
+        return ref;
+    }
+    return std::nullopt;
 }
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(

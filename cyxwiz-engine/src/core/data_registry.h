@@ -57,6 +57,20 @@ struct SparseFeatureDatasetInfo {
 /**
  * Memory statistics for monitoring
  */
+// One tabular dataset, wherever it lives (TOFIX154): an in-memory Arrow table
+// or a Parquet file read row group by row group. bytes is the table's size in
+// memory (for a file, the estimate from its metadata).
+struct TableRef {
+    enum class Kind { Memory, Parquet };
+    std::string name;
+    Kind kind = Kind::Memory;
+    int64_t rows = 0;
+    int64_t columns = 0;
+    uint64_t bytes = 0;
+    std::string path;     // the Parquet file ("" in memory)
+    int row_groups = 0;
+};
+
 struct MemoryStats {
     size_t total_allocated = 0;          // Total bytes allocated by all datasets
     size_t total_cached = 0;             // Bytes currently in cache
@@ -529,11 +543,11 @@ public:
     /**
      * High-level CSV loader with automatic in-memory vs disk-backed dispatch.
      *
-     * Compares the source file size to the available RAM. If the file comfortably
-     * fits (file_size < 0.75 * available RAM) or force_disk_backed is false and
-     * the file is under a safety threshold, uses LoadCSVToArrow (in-memory Arrow
-     * table). Otherwise converts the CSV to a Snappy Parquet cache in the system
-     * temp dir and opens that via memory-mapped reads.
+     * Compares the source file size to the data budget's result threshold
+     * (TOFIX154 D1/D2: a quarter of the budget). Up to it, uses LoadCSVToArrow
+     * (in-memory Arrow table); above it (or with force_disk_backed) converts
+     * the CSV to a Snappy Parquet ingestion cache and opens that via
+     * memory-mapped reads.
      *
      * The force_disk_backed flag is the Advanced-tab escape hatch: users can
      * force the disk-backed path even for small datasets (for testing, or to
@@ -558,6 +572,23 @@ public:
                                        const CsvProgressCallback& progress_callback = {},
                                        std::string* load_status = nullptr,
                                        const std::string& cache_directory = {});
+
+    /**
+     * Parquet loader with the same dispatch as LoadTabularCSV (TOFIX154): a
+     * table up to the data budget's result threshold is read into memory; a
+     * larger one (or force_disk_backed) is opened in place, never converted.
+     * With selected columns, a large file's projection is written once to
+     * the ingestion cache, one row group at a time.
+     */
+    TabularLoadBackend LoadTabularParquet(const std::string& path,
+                                          const std::string& name,
+                                          bool force_disk_backed = false,
+                                          const std::vector<std::string>& selected_columns = {},
+                                          std::string* load_status = nullptr,
+                                          const std::string& cache_directory = {});
+
+    // The dataset under this name, in memory or on disk (nullopt if neither).
+    std::optional<TableRef> GetTableRef(const std::string& name) const;
 
     // Arrow format-specific loaders (for DataInput node)
     //

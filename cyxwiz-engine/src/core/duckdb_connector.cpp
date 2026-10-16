@@ -1,10 +1,12 @@
 #include "duckdb_connector.h"
+#include "data_budget.h"
 #include <arrow/c/bridge.h>
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <unordered_map>
 #include <chrono>
+#include <filesystem>
 #include <sstream>
 
 namespace cyxwiz {
@@ -295,6 +297,15 @@ arrow::Status AppendDuckDBValueToArrowBuilder(const duckdb::Value& value, arrow:
 DuckDBConnector::DuckDBConnector(std::vector<std::string> allowed_directories) {
     try {
         duckdb::DBConfig config;
+        // The data budget bounds DuckDB too; over it, sorts, joins and
+        // group-bys spill to the spill directory instead of failing. Set
+        // before external access is switched off, which locks temp_directory.
+        config.SetOptionByName("memory_limit",
+                               duckdb::Value(std::to_string(std::max<uint64_t>(64, DataBudgetBytes() >> 20)) + "MB"));
+        const std::string spill = DataSpillDirectory();
+        std::error_code spill_error;
+        if (!spill.empty() && (std::filesystem::create_directories(spill, spill_error), !spill_error))
+            config.SetOptionByName("temp_directory", duckdb::Value(spill));
         config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
         config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));

@@ -1,4 +1,5 @@
 #include "core/arrow_dataset.h"
+#include "core/data_budget.h"
 #include "core/data_registry.h"
 #include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
@@ -770,18 +771,33 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
         R"("source_type":"file","file_path":")" +
         JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true","delimiter":",",)"
-        R"("force_disk_backed":"true"}})"
-        R"(],"links":[]})";
+        R"("force_disk_backed":"true"}},)"
+        R"({"id":91003,"type":"SortRows","name":"Rows","parameters":{"columns":"value","order":"DESC"}})"
+        R"(],"links":[{"start_node":91002,"end_node":91003}]})";
+    // TOFIX154: a disk-backed Data Input feeds the next step, which reads it
+    // whole when that fits the data budget, and stops before loading if not.
     cyxwiz::PipelineExecutor disk_backed;
     disk_backed.SetIngestionCacheRoot(cache_root.string());
-    Check(!disk_backed.ExecutePipeline(disk_backed_json) &&
-              disk_backed.GetLastError().find(
-                  "currently require an in-memory Arrow table") !=
-                  std::string::npos,
-          "Pipeline DataInput should fail explicitly when the selected "
-          "disk-backed backend cannot feed transformation operators");
+    Check(disk_backed.ExecutePipeline(disk_backed_json),
+          "a disk-backed Data Input should feed the next step: " + disk_backed.GetLastError());
+    Check(registry.IsParquetBackedDataset("ds_datainput_91002"),
+          "the disk-backed Data Input stays a Parquet file");
+    const auto disk_facts = disk_backed.GetNodeRunFacts();
+    Check(disk_facts.count(91002) && disk_facts.at(91002).rows == 2,
+          "the disk-backed Data Input reports its rows");
+    Check(disk_facts.count(91003) && disk_facts.at(91003).rows == 2,
+          "the step after it reads every row");
+    cyxwiz::SetDataBudgetBytes(1);
+    cyxwiz::PipelineExecutor over_budget;
+    over_budget.SetIngestionCacheRoot(cache_root.string());
+    Check(!over_budget.ExecutePipeline(disk_backed_json) &&
+              over_budget.GetLastError().find("over the data budget") != std::string::npos,
+          "a disk input over the data budget stops the step before loading: " +
+              over_budget.GetLastError());
+    cyxwiz::SetDataBudgetBytes(0);
 
     registry.UnregisterTabularDataset("ds_datainput_91002");
+    registry.UnregisterTabularDataset("ds_datainput_91002_in_memory");
     fs::remove(csv_path, error);
     fs::remove_all(cache_root, error);
 }
