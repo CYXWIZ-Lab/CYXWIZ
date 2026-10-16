@@ -58,3 +58,13 @@ Tokenizer takes its text and label columns from the Data Input before it.
 Apply reads the texts (an empty text is not a sample) and builds no
 vocabulary: the sentiment CSV loads in about 3 s (52,681 samples, 7
 classes, 30.4 MB).
+
+### Images need a Resize, audio a feature node
+
+Data Input only loads images and audio. A **Resize** after the Data Loader
+sets the size every image is decoded at; Compile refuses an image graph
+without one (*CW-C-0204*) and offers **Add a Resize**. Audio features come
+from a **Mel Spectrogram**, **Spectrogram** or **MFCC** node after the Data
+Loader; Compile refuses an audio graph without one (*CW-C-0205*) and offers
+the three. The added node goes after the Data Loader's data output (the
+labels keep their link) and opens its settings.

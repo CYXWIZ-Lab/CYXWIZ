@@ -242,6 +242,14 @@ void CheckTextNotTokenized() {
               r.findings[0].code == "CW-C-0203" && !r.findings[0].open_dialog,
           "text not tokenized: the fix adds a Text Tokenizer after the Data Input");
     Check(BuildReport(SentimentNotLoaded()).findings[0].add_node == AddNodeFix::None, "other findings add nothing");
+    in.issues = {{IssueLevel::Error, 1, "Cats", "'Cats' gives images, and no Resize sets their size",
+                  errors::Compiler::ImageNotResized},
+                 {IssueLevel::Error, 2, "Speech", "'Speech' gives audio, and no node turns it into features",
+                  errors::Compiler::AudioFeaturesMissing}};
+    const Report media = BuildReport(in);
+    Check(media.findings.size() == 2 && media.findings[0].add_node == AddNodeFix::Resize &&
+              media.findings[1].add_node == AddNodeFix::AudioFeatures,
+          "images without Resize offer Add a Resize; audio without features offers the feature nodes");
 }
 
 int main() {

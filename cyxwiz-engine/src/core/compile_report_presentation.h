@@ -82,7 +82,8 @@ struct Chip {
 };
 
 // A node the finding's fix adds after its node (the renderer creates it).
-enum class AddNodeFix { None, TextTokenizer };
+// AudioFeatures offers Mel Spectrogram, Spectrogram and MFCC.
+enum class AddNodeFix { None, TextTokenizer, Resize, AudioFeatures };
 
 struct Finding {
     IssueLevel level = IssueLevel::Info;

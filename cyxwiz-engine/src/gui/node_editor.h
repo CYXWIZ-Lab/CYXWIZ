@@ -653,6 +653,11 @@ public:
     // canvas (Compile's and Data Input's "Add a Text Tokenizer", TOFIX129 B-8).
     void AddTextTokenizerAfter(int input_id, const std::string& text_column = {},
                                const std::string& label_column = {});
+    // A node of `type` where the data of the Data Input `input_id` enters the
+    // model: after the Data Loader reading it (its data output; the labels
+    // keep their link), else after the input; opened once added (Resize and
+    // audio feature nodes, TOFIX129 B-9).
+    void AddModelInputStepAfter(int input_id, NodeType type);
     // Opens the node's dialog at the start of the next canvas frame. A node
     // dialog uses this to open another node's: opening it at once replaces
     // the dialog that is still drawing (Properties keeps one).
