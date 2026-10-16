@@ -497,36 +497,19 @@ public:
     void UnregisterAudioDataset(const std::string& name);
 
     // --- Text dataset registry (Phase 3) ---
-    // Same lightweight-metadata pattern as images/audio. The actual
-    // TextDataset (which owns the tokenizer + vocabulary) is constructed
-    // at training start by TextDatasetBatcher using the tokenizer config
-    // from this entry. For sources that build a vocab from the corpus,
-    // the DataInputDialog's Apply path runs a probe TextDataset once so
-    // we can store num_samples / num_classes / vocab_size without having
-    // to re-tokenize on every dialog reopen.
+    // Metadata for a raw text dataset. The texts and labels themselves are
+    // registered as an Arrow table under the same name; tokenizing happens
+    // only in the Text Tokenizer node, which materializes its own table.
     struct TextDatasetEntry {
         std::string source_path;         // CSV / JSON / TXT / folder
         std::string text_column;         // CSV column holding the text
         std::string label_column;        // CSV column holding the label (empty = no labels)
         bool has_labels = true;
 
-        // Dialog-baked defaults — overridable by graph preprocessing
-        // nodes (TextTokenizer / TextVocabulary / TextPadding).
-        // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
-        int tokenizer_type = 1;
-        int max_length = 512;
-        bool lowercase = true;
-        bool do_padding = true;
-        bool do_truncation = true;
-        int min_word_freq = 1;
-        int max_vocab_size = -1;         // -1 = unlimited
-        std::string vocab_file;          // optional pre-built vocab path
-
-        // Populated by a probe pass inside DataInputDialog::Apply
+        // Filled when the Data Input loads the dataset
         size_t num_samples = 0;
         size_t num_classes = 0;
         std::vector<std::string> class_names;
-        size_t vocab_size = 0;           // after building vocabulary from corpus
     };
     void RegisterTextDataset(const std::string& name, const TextDatasetEntry& entry);
     bool IsTextDataset(const std::string& name) const;
@@ -571,7 +554,8 @@ public:
                                        bool use_threads = true,
                                        const CsvProgressCallback& progress_callback = {},
                                        std::string* load_status = nullptr,
-                                       const std::string& cache_directory = {});
+                                       const std::string& cache_directory = {},
+                                       char quote_char = '"');
 
     /**
      * Parquet loader with the same dispatch as LoadTabularCSV (TOFIX154): a
@@ -614,7 +598,8 @@ public:
                                                         const std::vector<std::string>& selected_columns = {},
                                                         char decimal_point = '.',
                                                         bool use_threads = true,
-                                                        const CsvProgressCallback& progress_callback = {});
+                                                        const CsvProgressCallback& progress_callback = {},
+                                                        char quote_char = '"');
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);
@@ -798,9 +783,7 @@ private:
     // training start by AudioDatasetBatcher.
     std::map<std::string, AudioDatasetEntry> audio_dataset_entries_;
 
-    // Text dataset entries (Phase 3) — same pattern as audio/images.
-    // The actual tokenizing TextDataset is constructed at training
-    // start by TextDatasetBatcher.
+    // Text dataset entries (Phase 3) — metadata beside the raw Arrow table.
     std::map<std::string, TextDatasetEntry> text_dataset_entries_;
 
     mutable std::mutex mutex_;

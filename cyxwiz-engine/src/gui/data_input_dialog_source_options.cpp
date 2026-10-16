@@ -2,12 +2,15 @@
 
 #include "node_config_dialog.h"
 #include "../core/file_dialogs.h"
+#include "node_editor.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "../core/data_input_formats.h"
 
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <string>
 
 #include <spdlog/spdlog.h>
@@ -15,43 +18,6 @@
 namespace fs = std::filesystem;
 
 namespace gui {
-
-void DataInputDialog::RenderSourceSelector() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::TextColored(accent, "Data source");
-    ImGui::Spacing();
-
-    // Source type radio buttons in a row
-    int source_idx = static_cast<int>(source_type_);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(20, 4));
-    if (ImGui::RadioButton("File", &source_idx, 0)) {
-        source_type_ = SourceType::File;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("ML Dataset (planned)", &source_idx, 1)) {
-        source_type_ = SourceType::MLDataset;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Database (planned)", &source_idx, 2)) {
-        source_type_ = SourceType::Database;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Cloud (planned)", &source_idx, 3)) {
-        source_type_ = SourceType::Cloud;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::PopStyleVar();
-}
 
 void DataInputDialog::RenderFileSource() {
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -66,7 +32,7 @@ void DataInputDialog::RenderFileSource() {
 
     // Sequence (token tagging) loads as a tabular file and adds the tagging
     // contract, so it is its own radio index rather than a loader category.
-    constexpr int kSequenceIndex = 6;
+    constexpr int kSequenceIndex = 5;
     int cat_idx = sequence_tagging_ ? kSequenceIndex : static_cast<int>(file_category_);
     const auto pick = [this](FileCategory category, bool sequence) {
         file_category_ = category;
@@ -80,15 +46,13 @@ void DataInputDialog::RenderFileSource() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Audio", &cat_idx, 2)) pick(FileCategory::Audio, false);
     ImGui::SameLine();
-    if (ImGui::RadioButton("Video (planned)", &cat_idx, 3)) pick(FileCategory::Video, false);
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Text", &cat_idx, 4)) pick(FileCategory::Text, false);
+    if (ImGui::RadioButton("Text", &cat_idx, 3)) pick(FileCategory::Text, false);
     ImGui::SameLine();
     if (ImGui::RadioButton("Sequence (token tagging)", &cat_idx, kSequenceIndex)) {
         pick(FileCategory::Tabular, true);
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Time Series", &cat_idx, 5)) pick(FileCategory::TimeSeries, false);
+    if (ImGui::RadioButton("Time Series", &cat_idx, 4)) pick(FileCategory::TimeSeries, false);
 
     ImGui::Spacing();
 
@@ -96,7 +60,6 @@ void DataInputDialog::RenderFileSource() {
     // SingleFile layout mode. In CorpusSubdirs mode Text uses a folder
     // picker inside RenderTextOptions instead (mirroring image/audio).
     // Image uses its own folder/CSV inputs in RenderImageOptions.
-    // Audio/Video are not yet supported and show their own messages.
     // Hiding this for other categories prevents the user from picking
     // a .jpg in a file dialog that's meant for CSVs.
     const bool show_file_picker =
@@ -159,7 +122,6 @@ void DataInputDialog::RenderFileSource() {
         case FileCategory::Tabular:    RenderTabularOptions(); break;
         case FileCategory::Image:      RenderImageOptions(); break;
         case FileCategory::Audio:      RenderAudioOptions(); break;
-        case FileCategory::Video:      RenderVideoOptions(); break;
         case FileCategory::Text:       RenderTextOptions(); break;
         // Phase 4: Time Series shares the Tabular loader entirely — the
         // only semantic difference is the file_category="timeseries" stamp
@@ -248,7 +210,15 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::Text("Quote char:");
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(30);
-            ImGui::InputText("##quote", quote_char_, sizeof(quote_char_));
+            // One character; empty reads quotes as ordinary text.
+            if (ImGui::InputText("##quote", quote_char_, 2)) {
+                has_changes_ = true;
+                preview_loaded_ = false;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Values in this character may hold the delimiter and line breaks. "
+                                  "Leave it empty to read quotes as ordinary text.");
+            }
 
             ImGui::Text("Missing tokens:");
             ImGui::SameLine(100);
@@ -262,6 +232,7 @@ void DataInputDialog::RenderTabularOptions() {
                     "Comma-separated values treated as null before type inference.\n"
                     "Example: na,?,missing. Arrow standard null spellings remain enabled.");
             }
+            ImGui::TextDisabled("Reads UTF-8 (a byte order mark is skipped).");
         }
     }
 
@@ -686,17 +657,6 @@ void DataInputDialog::RenderAudioOptions() {
     ImGui::TextDisabled("Supported: WAV, FLAC, OGG, AIFF");
 }
 
-void DataInputDialog::RenderVideoOptions() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::TextColored(accent, "Video Loading");
-    ImGui::Spacing();
-    ImGui::TextWrapped("%s", UnsupportedApplyMessage());
-    ImGui::Spacing();
-    ImGui::TextDisabled("Use tabular, image, audio, text, or time series data for now.");
-}
-
 void DataInputDialog::RenderTextOptions() {
     // Phase 3 text options. Two layouts:
     //   1. SingleFile    — CSV / JSON / TXT picked via shared file picker
@@ -709,10 +669,8 @@ void DataInputDialog::RenderTextOptions() {
     // columns. We hide the column inputs when CorpusSubdirs is picked
     // so the user can't fill in fields that get ignored at load time.
     //
-    // Graph preprocessing nodes (TextTokenizer / TextVocabulary /
-    // TextPadding) override the tokenizer defaults at compile time if
-    // present, so these are just sensible fallbacks for the common
-    // case of "drop a DataInput, point at a CSV, run".
+    // Tokenizing is the Text Tokenizer node's (TOFIX129 B-8): this dialog
+    // names the node that does it, or adds one.
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
@@ -828,65 +786,86 @@ void DataInputDialog::RenderTextOptions() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::TextColored(accent, "Tokenizer Defaults");
-    ImGui::Spacing();
-    ImGui::TextDisabled("Overridden by a TextTokenizer node in the graph, if present.");
-    ImGui::Spacing();
-
-    static const char* kTokenizerNames[] = {
-        "Whitespace (split on spaces)",
-        "Word (splits on punctuation too)",
-        "Character (one token per char)"
-    };
-    ImGui::Text("Tokenizer:");
-    ImGui::SameLine(140);
-    ImGui::SetNextItemWidth(260);
-    if (ImGui::Combo("##texttok", &text_tokenizer_type_, kTokenizerNames, IM_ARRAYSIZE(kTokenizerNames))) {
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Max length:");
-    ImGui::SameLine(140);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##textmaxlen", &text_max_length_)) {
-        if (text_max_length_ < 1) text_max_length_ = 1;
-        if (text_max_length_ > 8192) text_max_length_ = 8192;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("tokens (pad/truncate)");
-
-    if (ImGui::Checkbox("Lowercase text", &text_lowercase_)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Vocabulary");
-    ImGui::Spacing();
-
-    ImGui::Text("Min freq:");
-    ImGui::SameLine(140);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##textminfreq", &text_min_freq_)) {
-        if (text_min_freq_ < 1) text_min_freq_ = 1;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(drop words occurring fewer times)");
-
-    ImGui::Text("Max vocab:");
-    ImGui::SameLine(140);
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputInt("##textmaxvocab", &text_max_vocab_size_)) {
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(-1 = unlimited)");
+    RenderTextTurnedIntoNumbersBy();
 
     ImGui::Spacing();
     ImGui::TextDisabled("Supported: CSV, TSV, JSON, TXT (one line per sample), folder of text files");
+}
+
+void DataInputDialog::RenderTextTurnedIntoNumbersBy() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_HeaderActive], "Preprocessing (done by nodes)");
+    ImGui::Spacing();
+    if (!node_editor_ || !node_) {
+        ImGui::TextDisabled("A Text Tokenizer node after this input tokenizes the text.");
+        return;
+    }
+    // The nodes after this input that turn its text into numbers; each
+    // branch stops at the first one.
+    const auto& nodes = node_editor_->GetNodes();
+    const auto& links = node_editor_->GetLinks();
+    const auto find = [&](int id) {
+        const auto it = std::find_if(nodes.begin(), nodes.end(), [id](const MLNode& n) { return n.id == id; });
+        return it == nodes.end() ? nullptr : &*it;
+    };
+    std::vector<const MLNode*> found;
+    std::set<int> seen{node_->id};
+    std::vector<int> frontier{node_->id};
+    while (!frontier.empty()) {
+        const int from = frontier.back();
+        frontier.pop_back();
+        for (const auto& link : links) {
+            if (link.from_node != from || !seen.insert(link.to_node).second) continue;
+            const MLNode* next = find(link.to_node);
+            if (!next) continue;
+            if (next->type == NodeType::TextTokenizer || next->type == NodeType::TFIDFVectorizer ||
+                next->type == NodeType::CountVectorizer || next->type == NodeType::WordEmbeddings) {
+                found.push_back(next);
+            } else {
+                frontier.push_back(next->id);
+            }
+        }
+    }
+    const auto param = [](const MLNode& n, const char* key) {
+        const auto it = n.parameters.find(key);
+        return it == n.parameters.end() ? std::string() : it->second;
+    };
+    int open_id = -1, focus_id = -1;
+    for (const MLNode* n : found) {
+        ImGui::PushID(n->id);
+        const char* role = n->type == NodeType::TextTokenizer ? "Tokenized by"
+                           : n->type == NodeType::WordEmbeddings ? "Word vectors by"
+                                                                  : "Vectorized by";
+        ImGui::TextColored(t.text_dim, "%s", role);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(n->name.c_str());
+        std::string facts;
+        if (n->type == NodeType::TextTokenizer) {
+            const auto vocab = param(*n, "vocab_file");
+            if (!vocab.empty()) facts = "vocabulary " + fs::path(vocab).filename().string();
+            if (const auto length = param(*n, "max_length"); !length.empty())
+                facts += (facts.empty() ? "" : ", ") + length + " ids per row";
+        }
+        if (!facts.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "%s", facts.c_str());
+        }
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Open it")) open_id = n->id;
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Show on canvas")) focus_id = n->id;
+        ImGui::PopID();
+    }
+    if (found.empty()) {
+        ImGui::TextColored(t.warning, "Nothing after this input tokenizes the text yet.");
+        if (cyxwiz::ui::LinkButton("Add a Text Tokenizer"))
+            node_editor_->AddTextTokenizerAfter(node_->id, text_column_, text_label_column_);
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("The tokenizer's settings live in its node only.");
+    ImGui::PopTextWrapPos();
+    if (open_id >= 0) node_editor_->RequestOpenNode(open_id);
+    if (focus_id >= 0) node_editor_->FocusNode(focus_id);
 }
 
 } // namespace gui

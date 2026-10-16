@@ -159,15 +159,6 @@ public:
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
-    bool StartTrainingText(
-        TrainingConfiguration config,
-        const DataRegistry::TextDatasetEntry& text_entry,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
     /**
      * Stop the current training session
      */

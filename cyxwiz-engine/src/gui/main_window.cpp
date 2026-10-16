@@ -174,7 +174,6 @@
 #include "../core/debug_executor.h"
 #include "../core/debug_session_manager.h"
 #include "../core/preflight_validator.h"
-#include "../core/text_preprocessing_tracer.h"
 #include "../core/smoke_run_executor.h"
 #include "../core/debug_recommendation_engine.h"
 #include "../core/debug_gradient_health_analyzer.h"
@@ -4831,27 +4830,6 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         });
     } else if (run_smoke) {
         begin_step("smoke");
-        // The tokenizer/vocabulary/padding trace describes the plain text
-        // dataset path. A graph with table operators (for example TF-IDF)
-        // never pads, so its operators are traced by the operator trace above.
-        std::vector<cyxwiz::DebugTraceRecord> preprocessing_traces;
-        if (cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes) == 0) {
-            cyxwiz::TextPreprocessingTracer text_tracer;
-            preprocessing_traces = text_tracer.TraceSample(
-                config, nodes, run_id, selected_sample_index);
-        }
-        session.traces.insert(session.traces.end(),
-                              std::make_move_iterator(preprocessing_traces.begin()),
-                              std::make_move_iterator(preprocessing_traces.end()));
-        if (!preprocessing_traces.empty()) {
-            session.studio_events.push_back({
-                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
-                "TextPreprocessingTrace", "captured",
-                "Captured text preprocessing trace for sample " +
-                    std::to_string(selected_sample_index) + "."
-            });
-        }
-
         cyxwiz::SmokeRunExecutor smoke_executor;
         cyxwiz::SmokeRunOptions smoke_options;
         smoke_options.cache_config = GraphMaterializationCacheConfig(
@@ -5717,15 +5695,6 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
             test_selection.scope, test_batch_size, model, nullptr, active_model_info.model_device);
-    } else if (registry.IsTextDataset(dataset_name)) {
-        const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
-        if (!text_entry) {
-            spdlog::error("StartTestingFromGraph: text dataset '{}' is registered but entry retrieval failed", dataset_name);
-            return;
-        }
-
-        started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr, active_model_info.model_device);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {

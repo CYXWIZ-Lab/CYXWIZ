@@ -73,16 +73,12 @@ void DataInputDialog::RenderPreviewPanel() {
     } else if (preview_is_paged_ && preview_columns_.empty()) {
         ImGui::TextDisabled("Loading the first preview page...");
     } else {
-        if (source_type_ == SourceType::File) {
-            switch (file_category_) {
-                case FileCategory::Tabular: RenderTabularPreview(); break;
-                case FileCategory::Image:   RenderImagePreview(); break;
-                case FileCategory::Audio:   RenderAudioPreview(); break;
-                case FileCategory::Text:    RenderTextPreview(); break;
-                default: RenderTabularPreview(); break;
-            }
-        } else {
-            RenderTabularPreview();
+        switch (file_category_) {
+            case FileCategory::Tabular: RenderTabularPreview(); break;
+            case FileCategory::Image:   RenderImagePreview(); break;
+            case FileCategory::Audio:   RenderAudioPreview(); break;
+            case FileCategory::Text:    RenderTextPreview(); break;
+            default: RenderTabularPreview(); break;
         }
     }
 
@@ -278,7 +274,7 @@ void DataInputDialog::RenderTextPreview() {
         ImGui::Text("Samples: %d text files", file_count);
         ImGui::Spacing();
         ImGui::TextDisabled("Each subdirectory name becomes a class label. "
-                            "Apply to tokenize + build vocab (runs on a worker thread).");
+                            "Apply reads the texts (runs on a worker thread).");
         return;
     }
 

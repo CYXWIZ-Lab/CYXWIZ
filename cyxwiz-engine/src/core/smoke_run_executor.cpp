@@ -13,7 +13,6 @@
 #include "pipeline_materializer.h"
 #include "sparse_feature_dataset_batcher.h"
 #include "training_batcher_setup.h"
-#include "text_dataset_batcher.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -181,7 +180,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     // metric_source outlives the MetricBatchSampler that wraps it (declared first, destroyed last).
     std::unique_ptr<IBatcher> metric_source;
     std::unique_ptr<IBatcher> batcher;
-    std::string batcher_source = "legacy text";
+    std::string batcher_source;
 
     if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
         PipelineOperatorExecutionContext materialization_context;
@@ -294,35 +293,12 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     }
 
     if (!batcher) {
-        const auto* entry = registry.GetTextDatasetEntry(config.dataset_name);
-        if (!entry) {
-            result.summary = "Text dataset is not registered: " + config.dataset_name;
-            result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
-                                     result.summary,
-                                     errors::Runtime::InputDatasetMissing});
-            return result;
-        }
-
-        auto text_batcher = std::make_unique<TextDatasetBatcher>(
-            *entry,
-            config.text_preprocessing,
-            batch_size,
-            config.train_ratio,
-            0.0f,
-            0.0f,
-            config.shuffle,
-            config.num_workers,
-            static_cast<uint32_t>(config.dataloader_seed),
-            config.stratified,
-            static_cast<uint32_t>(std::max(0, config.split_seed)),
-            config.balance_classes,
-            config.balance_mode,
-            config.balance_target,
-            static_cast<uint32_t>(std::max(0, config.balance_seed)));
-
-        config.input_size = static_cast<size_t>(text_batcher->GetMaxLength());
-        config.input_shape = {static_cast<size_t>(text_batcher->GetMaxLength())};
-        batcher = std::move(text_batcher);
+        result.summary = "Text reaches the model untokenized: add a Text Tokenizer (or TF-IDF / Count "
+                         "Vectorizer) node after the Data Input of " + config.dataset_name + ".";
+        result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
+                                 result.summary,
+                                 errors::Compiler::TextNotTokenized});
+        return result;
     }
 
     if (batcher->GetNumSamples() == 0) {
@@ -344,9 +320,6 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         batcher->SetOneHotEncoding(config.output_size);
     }
 
-    if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
-        text_batcher->TryApplyBalancedClassWeights(config);
-    }
     if (config.metric_sampling != MetricSampling::None) {
         // Same stacked pair / triplet batches as Train (TOFIX140 A5).
         auto source = std::move(batcher);

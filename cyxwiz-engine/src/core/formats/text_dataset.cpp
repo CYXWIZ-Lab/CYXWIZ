@@ -76,10 +76,8 @@ bool ReadCSVRow(std::istream& in, char delimiter,
 
 } // namespace
 
-TextDataset::TextDataset(const std::string& path,
-                         const TextDatasetConfig& config,
-                         TextDatasetLoadMode mode)
-    : config_(config), tokenizer_(config.tokenizer_type), source_path_(path) {
+TextDataset::TextDataset(const std::string& path, const TextDatasetConfig& config)
+    : config_(config), source_path_(path) {
 
     // Detect format and load
     fs::path p(path);
@@ -101,56 +99,14 @@ TextDataset::TextDataset(const std::string& path,
         spdlog::warn("TextDataset: No text samples loaded from {}", path);
         return;
     }
-
-    if (mode == TextDatasetLoadMode::RawOnly) {
-        spdlog::info("TextDataset raw-loaded: {} samples, max_length={}",
-                     texts_.size(), config_.max_length);
-        return;
-    }
-
-    InitTokenizer();
-
-    spdlog::info("TextDataset loaded: {} samples, vocab_size={}, max_length={}",
-                 texts_.size(), tokenizer_.GetVocabulary().Size(), config_.max_length);
-}
-
-void TextDataset::InitTokenizer() {
-    tokenizer_.SetLowercase(config_.lowercase);
-    tokenizer_.SetMaxLength(config_.max_length);
-    tokenizer_.SetPadding(config_.do_padding);
-    tokenizer_.SetTruncation(config_.do_truncation);
-
-    if (!config_.vocab_file.empty()) {
-        if (!tokenizer_.GetVocabulary().LoadFromFile(config_.vocab_file)) {
-            throw std::runtime_error("TextDataset: invalid or missing vocabulary file: " + config_.vocab_file);
-        }
-    } else {
-        tokenizer_.Train(texts_, config_.min_word_freq, config_.max_vocab_size);
-    }
-    tokenizer_.ValidateVocabulary();
-    tokenizer_initialized_ = true;
+    spdlog::info("TextDataset loaded: {} samples", texts_.size());
 }
 
 std::pair<std::vector<float>, int> TextDataset::GetItem(size_t index) const {
     if (index >= texts_.size()) {
         return {{}, -1};
     }
-
-    int label = config_.has_labels && index < labels_.size() ? labels_[index] : -1;
-    if (!tokenizer_initialized_) {
-        return {{}, label};
-    }
-
-    auto token_ids = tokenizer_.Encode(texts_[index]);
-
-    // Convert int ids to float for Dataset interface compatibility.
-    std::vector<float> data;
-    data.reserve(token_ids.size());
-    for (int id : token_ids) {
-        data.push_back(static_cast<float>(id));
-    }
-
-    return {data, label};
+    return {{}, config_.has_labels && index < labels_.size() ? labels_[index] : -1};
 }
 
 DatasetInfo TextDataset::GetInfo() const {
@@ -159,7 +115,7 @@ DatasetInfo TextDataset::GetInfo() const {
     info.path = source_path_;
     info.type = DatasetType::TXT;
     info.num_samples = texts_.size();
-    info.shape = {static_cast<size_t>(config_.max_length)};
+    info.shape = {1};  // one text column
     info.is_loaded = true;
 
     // Prefer the class name cache populated by LoadCSV/LoadCorpus — it
@@ -175,12 +131,10 @@ DatasetInfo TextDataset::GetInfo() const {
         }
     }
 
-    // Estimate memory: texts + token cache
     size_t mem = 0;
     for (const auto& t : texts_) {
         mem += t.size();
     }
-    mem += texts_.size() * config_.max_length * sizeof(int); // tokenized cache estimate
     info.memory_usage = mem;
 
     return info;
@@ -193,11 +147,6 @@ const std::string& TextDataset::GetText(size_t index) const {
 
 int TextDataset::GetLabel(size_t index) const {
     return (index < labels_.size()) ? labels_[index] : -1;
-}
-
-std::vector<int> TextDataset::GetTokenIds(size_t index) const {
-    if (index >= texts_.size() || !tokenizer_initialized_) return {};
-    return tokenizer_.Encode(texts_[index]);
 }
 
 // ============================================================================

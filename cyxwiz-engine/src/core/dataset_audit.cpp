@@ -1401,7 +1401,7 @@ DatasetAuditResult DatasetAudit::AuditText(
     result.domain = "text";
     result.sample_count = static_cast<int64_t>(entry.num_samples);
     result.class_count = static_cast<int64_t>(entry.num_classes);
-    result.feature_count = entry.max_length;
+    result.feature_count = 1;  // the text column; the Text Tokenizer makes the features
     AuditBasicCounts(result, entry.has_labels, true);
     AuditClassNameList(result, entry.num_classes, entry.class_names);
     if (entry.source_path.empty()) {
@@ -1413,11 +1413,6 @@ DatasetAuditResult DatasetAudit::AuditText(
         result.Add(DatasetAuditSeverity::Warning,
                    "missing_label_column",
                    "Text dataset is marked labeled but has no label column.");
-    }
-    if (entry.vocab_size == 0) {
-        result.Add(DatasetAuditSeverity::Warning,
-                   "empty_vocabulary",
-                   "Text vocabulary is empty.");
     }
     if (!IsArrowNativeTableExtension(entry.source_path)) {
         AuditTextSourceSample(result, entry);

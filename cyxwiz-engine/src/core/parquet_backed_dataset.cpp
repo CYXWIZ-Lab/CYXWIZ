@@ -488,7 +488,8 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                                                  const std::vector<std::string>& selected_columns,
                                                  char decimal_point,
                                                  bool use_threads,
-                                                 const CsvProgressCallback& progress_callback) {
+                                                 const CsvProgressCallback& progress_callback,
+                                                 char quote_char) {
     spdlog::info(
         "ParquetBackedDataset::ConvertCsvToParquet: {} -> {} (max_rows={})",
         csv_path,
@@ -552,6 +553,7 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         // Quoted values may span lines (free text, reviews): read them as one value.
         parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
+        ApplyCsvQuoteChar(parse_options, quote_char);
 
         auto convert_options = MakeTabularCsvConvertOptions(
             missing_value_tokens, decimal_point);

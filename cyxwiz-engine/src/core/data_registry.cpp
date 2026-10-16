@@ -1189,7 +1189,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::vector<std::string>& selected_columns,
     char decimal_point,
     bool use_threads,
-    const CsvProgressCallback& progress_callback) {
+    const CsvProgressCallback& progress_callback,
+    char quote_char) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1249,6 +1250,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // Quoted values may span lines (free text, reviews): read them as one value.
         parse_options.newlines_in_values = true;
         parse_options.delimiter = delimiter;
+        ApplyCsvQuoteChar(parse_options, quote_char);
 
         auto convert_options = MakeTabularCsvConvertOptions(
             missing_value_tokens, decimal_point);
@@ -1487,7 +1489,8 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     bool use_threads,
     const CsvProgressCallback& progress_callback,
     std::string* load_status,
-    const std::string& cache_directory) {
+    const std::string& cache_directory,
+    char quote_char) {
 
     if (load_status) load_status->clear();
 
@@ -1516,6 +1519,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         std::string(has_header ? "header=1" : "header=0") +
         "|delimiter=" + std::to_string(static_cast<unsigned char>(delimiter)) +
         "|decimal=" + std::to_string(static_cast<unsigned char>(decimal_point)) +
+        "|quote=" + std::to_string(static_cast<unsigned char>(quote_char)) +
         "|skip=" + std::to_string(skip_rows) +
         "|max_rows=" + std::to_string(std::max<int64_t>(0, max_rows)) +
         "|source_size=" + std::to_string(file_size_bytes) +
@@ -1573,7 +1577,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         auto dataset = LoadCSVToArrow(path, name, has_header, delimiter,
                                       skip_rows, max_rows, missing_value_tokens,
                                       selected_columns, decimal_point,
-                                      use_threads, progress_callback);
+                                      use_threads, progress_callback, quote_char);
         if (!dataset) {
             // LoadCSVToArrow only publishes after parsing succeeds, so an
             // earlier valid registration remains available on failure.
@@ -1626,7 +1630,8 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                                                        selected_columns,
                                                        decimal_point,
                                                        use_threads,
-                                                       progress_callback)) {
+                                                       progress_callback,
+                                                       quote_char)) {
             spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
             return TabularLoadBackend::Failed;
         }

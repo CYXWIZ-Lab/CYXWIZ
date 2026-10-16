@@ -52,7 +52,7 @@ Assert these when saving or replaying:
 
 1. `tests/test_debug_executor.cpp`
 2. `tests/test_hdf5_loading.cpp`
-3. text preprocessing paths in `src/core/text_dataset_batcher.cpp`
+3. text preprocessing paths in `src/core/node_executors/text_tokenizer_operator.cpp`
 4. shape inference in `src/core/graph_compiler.cpp`
 
 ### Second priority

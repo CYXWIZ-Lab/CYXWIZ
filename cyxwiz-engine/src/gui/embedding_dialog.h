@@ -20,8 +20,7 @@ public:
 
 protected:
     void RenderContent() override;
-    float FooterHeight() const override;
-    void RenderFooter(bool& should_close) override;
+    bool TracksChanges() const override { return true; }
 
 private:
     enum class Source { Random = 0, Node = 1, File = 2 };

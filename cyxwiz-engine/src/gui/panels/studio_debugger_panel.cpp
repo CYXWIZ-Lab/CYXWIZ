@@ -291,7 +291,7 @@ std::string TraceSourceLabel(const DebugTraceRecord& trace) {
     }
     if (trace.phase.find("Text") != std::string::npos ||
         diagnostic_phase.find("text") != std::string::npos) {
-        return "legacy text sample trace";
+        return "text preprocessing trace";
     }
     if (trace.phase.find("Backend") != std::string::npos ||
         diagnostic_phase.find("backend") != std::string::npos) {

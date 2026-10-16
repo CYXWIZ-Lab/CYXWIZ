@@ -4366,6 +4366,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     !decimal_it->second.empty()) {
                     decimal_point = decimal_it->second[0];
                 }
+                const auto quote_it = node.parameters.find("quote_char");
+                const char quote_char = QuoteCharFromParameter(
+                    quote_it == node.parameters.end() ? nullptr : &quote_it->second);
 
                 const bool force_disk_backed =
                     OptionalBooleanParameterIsTrue(
@@ -4379,7 +4382,7 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     [this](float, const std::string&) {
                         return !cancel_requested_.load();
                     },
-                    &load_status, ingestion_cache_root_);
+                    &load_status, ingestion_cache_root_, quote_char);
                 if (backend ==
                     DataRegistry::TabularLoadBackend::InMemory) {
                     arrow_dataset =

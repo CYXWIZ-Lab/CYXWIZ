@@ -66,7 +66,9 @@ void DataInputDialog::Apply() {
         }
     }
 
-    node_->parameters["source_type"] = data_input::SourceTypeParam(source_type_);
+    // Data Input reads files and folders; the pipeline executor refuses any
+    // other source type.
+    node_->parameters["source_type"] = "file";
     node_->parameters["file_category"] = data_input::FileCategoryParam(file_category_);
 
     // Prune stale per-category params when the user switched category
@@ -126,7 +128,7 @@ void DataInputDialog::Apply() {
     node_->parameters["audio_label_col"] = audio_label_col_;
 
     // Source-specific parameters
-    if (source_type_ == SourceType::File) {
+    {
         node_->parameters["file_type"] =
             data_input::FileTypeParam(detected_type_);
         node_->parameters.erase("type");
@@ -134,10 +136,12 @@ void DataInputDialog::Apply() {
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
         node_->parameters["decimal_point"] = std::string(1, decimal_point_);
+        node_->parameters["quote_char"] = std::string(quote_char_, quote_char_[0] ? 1 : 0);
         node_->parameters["missing_value_tokens"] = missing_value_tokens_;
         node_->parameters["skip_rows"] = std::to_string(skip_rows_);
         node_->parameters["max_rows"] = std::to_string(max_rows_);
-        node_->parameters["encoding"] = std::to_string(encoding_idx_);
+        // Files are read as UTF-8; the encoding choice it saved was never read.
+        node_->parameters.erase("encoding");
 
         if (file_category_ == FileCategory::Image) {
             node_->parameters["target_width"] = std::to_string(target_width_);
@@ -151,16 +155,16 @@ void DataInputDialog::Apply() {
             node_->parameters["mono"] = mono_ ? "true" : "false";
         } else if (file_category_ == FileCategory::Text) {
             // Persist text dialog state so reopening the dialog restores
-            // the layout choice, column mapping, and tokenizer defaults.
+            // the layout choice and column mapping. Tokenizing is the Text
+            // Tokenizer node's (TOFIX129 B-8): the settings Data Input kept
+            // for it are dropped.
             node_->parameters["text_layout"] =
                 std::to_string(static_cast<int>(text_layout_));
             node_->parameters["text_column"] = text_column_;
             node_->parameters["text_label_column"] = text_label_column_;
-            node_->parameters["text_tokenizer_type"] = std::to_string(text_tokenizer_type_);
-            node_->parameters["text_max_length"] = std::to_string(text_max_length_);
-            node_->parameters["text_lowercase"] = text_lowercase_ ? "true" : "false";
-            node_->parameters["text_min_freq"] = std::to_string(text_min_freq_);
-            node_->parameters["text_max_vocab_size"] = std::to_string(text_max_vocab_size_);
+            for (const char* key : {"text_tokenizer_type", "text_max_length", "text_lowercase", "text_min_freq",
+                                    "text_max_vocab_size"})
+                node_->parameters.erase(key);
         }
 
         // Excel specific
@@ -209,38 +213,6 @@ void DataInputDialog::Apply() {
             node_->description = p.filename().string() + "/";
         }
     }
-    else if (source_type_ == SourceType::MLDataset) {
-        node_->parameters["ml_dataset_type"] = data_input::MLDatasetTypeParam(ml_dataset_type_);
-        node_->parameters["dataset_name"] = dataset_name_;
-        node_->parameters["dataset_subset"] = dataset_subset_;
-        node_->parameters["cache_dir"] = cache_dir_;
-
-        if (ml_dataset_type_ == MLDatasetType::HuggingFace) {
-            node_->parameters["hf_token"] = hf_token_;
-        } else if (ml_dataset_type_ == MLDatasetType::Kaggle) {
-            node_->parameters["kaggle_slug"] = kaggle_slug_;
-        }
-
-        node_->description = dataset_name_;
-    }
-    else if (source_type_ == SourceType::Database) {
-        node_->parameters["database_type"] = data_input::DatabaseTypeParam(database_type_);
-        node_->parameters["db_host"] = db_host_;
-        node_->parameters["db_port"] = std::to_string(db_port_);
-        node_->parameters["db_name"] = db_name_;
-        node_->parameters["db_user"] = db_user_;
-        node_->parameters["db_file"] = db_file_;
-        node_->parameters["sql_query"] = sql_query_;
-
-        node_->description = std::string(db_name_) + " \xC2\xB7 SQL query";
-    }
-    else if (source_type_ == SourceType::Cloud) {
-        node_->parameters["cloud_bucket"] = cloud_bucket_;
-        node_->parameters["cloud_path"] = cloud_path_;
-        node_->parameters["cloud_credentials"] = cloud_credentials_;
-
-        node_->description = std::string(cloud_bucket_) + " \xC2\xB7 cloud";
-    }
 
     // === NEW: Actually load data and provide feedback ===
     apply_in_progress_ = true;
@@ -249,16 +221,10 @@ void DataInputDialog::Apply() {
     apply_started_at_ = std::chrono::steady_clock::now();
     last_load_elapsed_ms_ = -1.0f;
 
-    if (!IsApplySupported()) {
-        MarkApplyUnsupported(UnsupportedApplyMessage());
-        return;
-    }
-
     // Guard: Image category with a single file (not a folder) is not a
     // valid training use case. The user probably used the top-level file
     // picker instead of the Image Loading Options folder picker.
-    if (source_type_ == SourceType::File &&
-        file_category_ == FileCategory::Image &&
+    if (file_category_ == FileCategory::Image &&
         strlen(file_path_) > 0 && strlen(folder_path_) == 0) {
         apply_status_message_ = "Image training requires a folder of images, "
             "not a single file. Set the Folder path in the Image Loading "
@@ -289,9 +255,9 @@ void DataInputDialog::Apply() {
     //
     // TextDataset's constructor auto-detects file vs directory from the
     // path itself, so the only thing differing between the two paths is
-    // which field we pull the source from. The worker body runs the
-    // tokenizer + vocab build, then calls RegisterTextDataset under its
-    // own lock. PollAsyncLoadResult drains the result onto the UI thread
+    // which field we pull the source from. The worker body reads the
+    // texts and labels, then calls RegisterTextDataset under its own
+    // lock. PollAsyncLoadResult drains the result onto the UI thread
     // on the next frame.
     const bool text_single_ready =
         file_category_ == FileCategory::Text &&
@@ -301,12 +267,11 @@ void DataInputDialog::Apply() {
         file_category_ == FileCategory::Text &&
         text_layout_ == TextLayout::CorpusSubdirs &&
         strlen(folder_path_) > 0;
-    if (source_type_ == SourceType::File &&
-        (text_single_ready || text_corpus_ready)) {
+    if ((text_single_ready || text_corpus_ready)) {
         // Text load — routes through TextLoader. Branch takes priority
         // over the tabular branch below because a CSV file with Text
-        // category selected needs the tokenizer / vocab pipeline, not
-        // the plain Arrow path. TextDataset auto-detects file vs
+        // category selected registers text metadata, not just the plain
+        // Arrow path. TextDataset auto-detects file vs
         // directory from the source path, so we just pick the right
         // field (file_path_ for SingleFile, folder_path_ for
         // CorpusSubdirs) and the loader forwards it.
@@ -351,11 +316,6 @@ void DataInputDialog::Apply() {
         // the user picked a label column.
         ctx.text_has_labels       = text_corpus_ready ||
                                     (strlen(text_label_column_) > 0);
-        ctx.text_tokenizer_type   = text_tokenizer_type_;
-        ctx.text_max_length       = text_max_length_;
-        ctx.text_lowercase        = text_lowercase_;
-        ctx.text_min_freq         = text_min_freq_;
-        ctx.text_max_vocab_size   = text_max_vocab_size_;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
@@ -378,7 +338,7 @@ void DataInputDialog::Apply() {
         node_->parameters["dataset_name"] = loaded_dataset_name_;
         node_->parameters["data_loaded"]  = "false";
 
-        apply_status_message_ = std::string("Tokenizing ") +
+        apply_status_message_ = std::string("Reading ") +
             fs::path(text_source_path).filename().string() + "...";
         apply_status_timer_ = 0.0f;
 
@@ -390,7 +350,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(file_path_) > 0 &&
+    } else if (strlen(file_path_) > 0 &&
                (file_category_ == FileCategory::Tabular ||
                 file_category_ == FileCategory::TimeSeries)) {
         // Tabular / TimeSeries load. All sub-formats (CSV / TSV / TXT /
@@ -488,6 +448,7 @@ void DataInputDialog::Apply() {
         ctx.has_header         = has_header_;
         ctx.delimiter          = custom_delimiter_[0];
         ctx.decimal_point      = decimal_point_;
+        ctx.quote_char         = quote_char_[0];
         ctx.missing_value_tokens = missing_value_tokens_;
         ctx.skip_rows          = skip_rows_;
         ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
@@ -534,7 +495,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+    } else if (strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Audio) {
         // Audio folder load — routes through AudioLoader. Feature
         // extraction still runs lazily inside AudioDataset::GetItem
@@ -619,7 +580,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+    } else if (strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Image) {
         // Image folder load — routes through ImageLoader. Previously
         // this branch was unguarded (`strlen(folder_path_) > 0`) and

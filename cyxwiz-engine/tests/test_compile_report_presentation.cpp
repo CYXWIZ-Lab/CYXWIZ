@@ -228,12 +228,30 @@ void CheckMemoryRisk() {
 
 }  // namespace
 
+void CheckTextNotTokenized() {
+    Input in;
+    in.mode = Mode::Compile;
+    in.graph_name = "mental_health";
+    in.compiled_ok = false;
+    in.issues = {{IssueLevel::Error, 1, "Sentiment CSV",
+                  "'Sentiment CSV' gives text, and nothing turns it into numbers before the model: add a Text "
+                  "Tokenizer after it (or a TF-IDF / Count vectorizer)",
+                  errors::Compiler::TextNotTokenized}};
+    const Report r = BuildReport(in);
+    Check(r.findings.size() == 1 && r.findings[0].add_node == AddNodeFix::TextTokenizer &&
+              r.findings[0].code == "CW-C-0203" && !r.findings[0].open_dialog,
+          "text not tokenized: the fix adds a Text Tokenizer after the Data Input");
+    Check(BuildReport(SentimentNotLoaded()).findings[0].add_node == AddNodeFix::None, "other findings add nothing");
+}
+
 int main() {
     CheckFailedCompile();
     CheckReady();
     CheckBlocked();
     CheckAttentionFirst();
     CheckMemoryRisk();
-    std::cout << "compile report presentation: failed, ready, blocked, placement, memory risk. OK\n";
+    CheckTextNotTokenized();
+    std::cout << "compile report presentation: failed, ready, blocked, placement, memory risk, text not "
+                 "tokenized. OK\n";
     return 0;
 }

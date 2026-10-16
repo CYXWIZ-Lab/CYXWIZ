@@ -339,13 +339,13 @@ void TestTextAudit() {
     entry.label_column = "";
     entry.num_samples = 0;
     entry.num_classes = 0;
-    entry.vocab_size = 0;
 
     auto result = DatasetAudit::AuditText("reviews", entry);
     assert(result.HasErrors());
     assert(HasIssue(result, DatasetAuditSeverity::Error, "empty_dataset"));
     assert(HasIssue(result, DatasetAuditSeverity::Warning, "missing_label_column"));
-    assert(HasIssue(result, DatasetAuditSeverity::Warning, "empty_vocabulary"));
+    // Loading builds no vocabulary (the Text Tokenizer node does, TOFIX129 B-8).
+    assert(!HasIssue(result, DatasetAuditSeverity::Warning, "empty_vocabulary"));
 }
 
 void TestTextCsvSampleAudit() {
@@ -371,7 +371,6 @@ void TestTextCsvSampleAudit() {
     entry.num_samples = 4;
     entry.num_classes = 2;
     entry.class_names = {"A", "B"};
-    entry.vocab_size = 8;
 
     auto result = DatasetAudit::AuditText("reviews", entry);
     assert(!result.HasErrors());
@@ -408,7 +407,6 @@ void TestTextFolderSampleAudit() {
     entry.num_samples = 2;
     entry.num_classes = 1;
     entry.class_names = {"positive"};
-    entry.vocab_size = 4;
 
     auto result = DatasetAudit::AuditText("folder_reviews", entry);
     assert(HasIssue(result, DatasetAuditSeverity::Warning, "empty_text_samples"));
@@ -437,7 +435,6 @@ void TestTextJsonSampleAudit() {
     entry.num_samples = 2;
     entry.num_classes = 2;
     entry.class_names = {"A", "B"};
-    entry.vocab_size = 4;
 
     auto result = DatasetAudit::AuditText("json_reviews", entry);
     assert(!result.HasErrors());
@@ -456,7 +453,6 @@ void TestTextParquetSkipsPlainTextSampleAudit() {
     entry.num_samples = 2;
     entry.num_classes = 2;
     entry.class_names = {"negative", "positive"};
-    entry.vocab_size = 4;
 
     auto result = DatasetAudit::AuditText("reviews_parquet_audit", entry);
     assert(!result.HasErrors());

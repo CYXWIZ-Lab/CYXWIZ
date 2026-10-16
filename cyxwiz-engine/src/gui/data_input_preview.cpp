@@ -3,6 +3,7 @@
 #include "../core/data_input_parameters.h"
 #include "../core/project_data_path.h"
 #include "../core/data_input_formats.h"
+#include "../core/csv_ingestion_options.h"
 #include "loaders/text_csv_preflight.h"
 #include <algorithm>
 #include <fstream>
@@ -40,7 +41,10 @@ bool MatchesAppliedTabularPreview(
         return it != parameters.end() && it->second == value;
     };
     const auto path_it = parameters.find("file_path");
-    return path_it != parameters.end() &&
+    const auto quote_it = parameters.find("quote_char");
+    const char applied_quote = cyxwiz::QuoteCharFromParameter(
+        quote_it == parameters.end() ? nullptr : &quote_it->second);
+    return path_it != parameters.end() && applied_quote == source.quote_char &&
         cyxwiz::ResolveProjectDataPath(path_it->second, project_root) == source.path &&
         matches("has_header", source.has_header ? "true" : "false") &&
         matches("delimiter", source.delimiter) &&
@@ -56,7 +60,8 @@ PreviewTable LoadDelimitedPreview(
     char delimiter,
     int detected_type,
     int skip_rows,
-    int max_lines) {
+    int max_lines,
+    char quote_char) {
     PreviewTable table;
     if (path.empty()) {
         return table;
@@ -91,6 +96,12 @@ PreviewTable LoadDelimitedPreview(
         delim = '\t';
     }
 
+    if (file.peek() == 0xEF) {
+        char bom[3] = {};
+        file.read(bom, 3);
+        if (!(bom[1] == '\xBB' && bom[2] == '\xBF')) file.seekg(0);
+    }
+
     std::string line;
     const int rows_to_skip = std::max(0, skip_rows);
     int rows_skipped = 0;
@@ -109,7 +120,7 @@ PreviewTable LoadDelimitedPreview(
     while (line_count < max_lines) {
         std::vector<std::string> cells;
         std::string error;
-        if (!cyxwiz::loaders::ReadTextCsvRow(file, delim, cells, error)) {
+        if (!cyxwiz::loaders::ReadTextCsvRow(file, delim, cells, error, quote_char)) {
             if (!error.empty()) {
                 table.error = "Preview row " + std::to_string(line_count + 1) + ": " + error;
             }

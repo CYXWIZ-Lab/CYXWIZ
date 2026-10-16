@@ -13,6 +13,7 @@ inline constexpr const char* UnsupportedTrainingNode = "CW-C-0102";
 inline constexpr const char* InvalidConnectivity = "CW-C-0103";
 inline constexpr const char* DataNotLoaded = "CW-C-0201";
 inline constexpr const char* DataCheckSuggested = "CW-C-0202";
+inline constexpr const char* TextNotTokenized = "CW-C-0203";
 inline constexpr const char* TensorShapeMismatch = "CW-C-0301";
 inline constexpr const char* LabelOutputShapeMismatch = "CW-C-0302";
 inline constexpr const char* InvalidParameter = "CW-C-0401";
@@ -112,13 +113,14 @@ struct DiagnosticCodeDescriptor {
     const char* symbolic_name;
 };
 
-inline constexpr std::array<DiagnosticCodeDescriptor, 68> DiagnosticCodeCatalog{{
+inline constexpr std::array<DiagnosticCodeDescriptor, 69> DiagnosticCodeCatalog{{
     {Compiler::GenericIssue, "Compiler.GenericIssue"},
     {Compiler::MissingTrainingPathNode, "Compiler.MissingTrainingPathNode"},
     {Compiler::UnsupportedTrainingNode, "Compiler.UnsupportedTrainingNode"},
     {Compiler::InvalidConnectivity, "Compiler.InvalidConnectivity"},
     {Compiler::DataNotLoaded, "Compiler.DataNotLoaded"},
     {Compiler::DataCheckSuggested, "Compiler.DataCheckSuggested"},
+    {Compiler::TextNotTokenized, "Compiler.TextNotTokenized"},
     {Compiler::TensorShapeMismatch, "Compiler.TensorShapeMismatch"},
     {Compiler::LabelOutputShapeMismatch, "Compiler.LabelOutputShapeMismatch"},
     {Compiler::InvalidParameter, "Compiler.InvalidParameter"},

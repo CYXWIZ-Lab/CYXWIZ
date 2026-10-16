@@ -28,10 +28,12 @@ inline std::string DisplayTextCsvDelimiter(char delimiter) {
 } // namespace detail
 
 // Shared logical-record reader for loader validation and bounded source previews.
+// quote '\0' reads quote characters as ordinary text.
 inline bool ReadTextCsvRow(std::istream& in,
                            char delimiter,
                            std::vector<std::string>& out_fields,
-                           std::string& error) {
+                           std::string& error,
+                           char quote = '"') {
     out_fields.clear();
     std::string field;
     bool in_quotes = false;
@@ -41,9 +43,9 @@ inline bool ReadTextCsvRow(std::istream& in,
     while ((c = in.get()) != EOF) {
         any_char_read = true;
         if (in_quotes) {
-            if (c == '"') {
-                if (in.peek() == '"') {
-                    field.push_back('"');
+            if (c == quote) {
+                if (in.peek() == quote) {
+                    field.push_back(quote);
                     in.get();
                 } else {
                     in_quotes = false;
@@ -52,7 +54,7 @@ inline bool ReadTextCsvRow(std::istream& in,
                 field.push_back(static_cast<char>(c));
             }
         } else {
-            if (c == '"') {
+            if (quote != '\0' && c == quote) {
                 in_quotes = true;
             } else if (c == delimiter) {
                 out_fields.push_back(std::move(field));

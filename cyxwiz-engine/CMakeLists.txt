@@ -162,9 +162,7 @@ set(ENGINE_SOURCES
     src/core/quality_analyzer_presentation.cpp
     src/core/word_embeddings_presentation.cpp
     src/core/audio_dataset_batcher.cpp
-    src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
-    src/core/text_test_source.cpp
     src/core/text_arrow_adapter.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
@@ -228,7 +226,6 @@ set(ENGINE_SOURCES
     src/core/debug_training_graph_diff.cpp
     src/core/debug_error_code_timeline.cpp
     src/core/preflight_validator.cpp
-    src/core/text_preprocessing_tracer.cpp
     src/core/smoke_run_executor.cpp
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
@@ -424,8 +421,6 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_helpers.cpp
     src/gui/data_input_dialog_filter_tabs.cpp
     src/gui/data_input_dialog_status_tabs.cpp
-    src/gui/data_input_dialog_ml_dataset.cpp
-    src/gui/data_input_dialog_external_sources.cpp
     src/gui/data_input_dialog_summary.cpp
     src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
@@ -1759,7 +1754,6 @@ add_executable(test_debug_executor
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
-    src/core/text_dataset_batcher.cpp
     src/core/formats/text_dataset.cpp
 )
 target_link_libraries(test_debug_executor PRIVATE cyxwiz-training-core)
@@ -5047,46 +5041,6 @@ set_target_properties(test_text_arrow_adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: Text Dataset Batcher Arrow Delegation =====
-add_executable(test_text_dataset_batcher_arrow
-    tests/test_text_dataset_batcher_arrow.cpp
-    src/core/text_dataset_batcher.cpp
-    src/core/text_arrow_adapter.cpp
-    src/core/formats/text_dataset.cpp
-    src/core/node_executors/text_tokenizer_operator.cpp
-    src/core/node_executors/word_embeddings_operator.cpp
-    src/core/fasttext_model_store.cpp
-    src/core/word_vectors_training_record.cpp
-    src/core/word_embeddings_presentation.cpp
-    src/core/node_executors/tree_classification_utils.cpp
-    src/core/node_executors/text_token_windows.cpp
-)
-target_link_libraries(test_text_dataset_batcher_arrow PRIVATE cyxwiz-training-core)
-
-target_include_directories(test_text_dataset_batcher_arrow PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_text_dataset_batcher_arrow PRIVATE
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_text_dataset_batcher_arrow PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
-
-set_target_properties(test_text_dataset_batcher_arrow PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
 # ===== Test: Image/Audio Train-only drop_last =====
 add_executable(test_modality_batcher_drop_last
     tests/test_modality_batcher_drop_last.cpp
@@ -5186,8 +5140,6 @@ add_executable(test_debugger_contracts
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/text_token_windows.cpp
     src/core/preflight_validator.cpp
-    src/core/text_preprocessing_tracer.cpp
-    src/core/formats/text_dataset.cpp
 )
 target_link_libraries(test_debugger_contracts PRIVATE cyxwiz-training-core)
 
@@ -7011,7 +6963,6 @@ cyxwiz_enable_pch(cyxwiz-graph-compile-check)
 cyxwiz_enable_pch(test_compiled_node_presentation)
 cyxwiz_enable_pch(test_data_preview_service)
 cyxwiz_enable_pch(test_training_manager_session)
-cyxwiz_enable_pch(test_text_dataset_batcher_arrow)
 cyxwiz_enable_pch(test_modality_batcher_drop_last)
 cyxwiz_enable_pch(test_debugger_contracts)
 cyxwiz_enable_pch(test_cnn_graph_training)

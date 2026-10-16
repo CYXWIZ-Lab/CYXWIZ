@@ -53,7 +53,6 @@ enum class FileCategory {
     Tabular,
     Image,
     Audio,
-    Video,
     Text,
     TimeSeries,
 };
@@ -81,7 +80,6 @@ struct AsyncLoadState {
     std::string previous_source_path;
     std::string source_path;         // file_path or folder_path that was loaded
     size_t num_classes = 0;          // set by image/audio/text loaders
-    size_t vocab_size = 0;           // set by text loader
     int audit_errors = 0;            // metadata/data sanity audit result
     int audit_warnings = 0;
     std::string audit_message;       // compact status suffix for the UI
@@ -107,6 +105,7 @@ struct ApplyContext {
     bool has_header = true;
     char delimiter = ',';
     char decimal_point = '.';
+    char quote_char = '"';               // '\0' = no quoting
     // Data Input already runs on an AsyncTaskManager worker. Keep nested
     // Arrow CSV parsing off for interactive loads so rendering retains CPU.
     bool use_threads = false;
@@ -127,11 +126,6 @@ struct ApplyContext {
     std::string text_column;
     std::string text_label_column;
     bool text_has_labels = false;
-    int text_tokenizer_type = 1;
-    int text_max_length = 512;
-    bool text_lowercase = true;
-    int text_min_freq = 1;
-    int text_max_vocab_size = -1;
 
     // Image-specific (commit 3) ------------------------------------
     // image_layout mirrors DataInputDialog::ImageLayout as an int so
@@ -351,9 +345,7 @@ public:
 //
 // TabularLoader (also serving the TimeSeries category — same load path,
 // different params) is registered first; TextLoader, ImageLoader, and
-// AudioLoader follow. Video is deliberately unregistered — the guard at
-// the top of DataInputDialog::Apply fails video loads loudly before
-// reaching the dispatch.
+// AudioLoader follow.
 DataLoader* GetByCategory(FileCategory cat);
 
 // Resolves a registered dataset name back to its loader. Uses
