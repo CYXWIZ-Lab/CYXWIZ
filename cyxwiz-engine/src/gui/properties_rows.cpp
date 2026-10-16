@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <string>
 
 namespace gui::properties_rows {
 
@@ -55,6 +56,32 @@ void TruthTooltip(const Truth& truth) {
     if (!truth.message.empty()) ImGui::TextUnformatted(truth.message.c_str());
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
+}
+
+// A file path breaks after its folder separators, not letter by letter
+// (ImGui wraps at spaces only, so a long path in a narrow column split
+// mid-name). A part wider than the column still wraps.
+void PathText(const std::string& path, const ImVec4& colour) {
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    size_t start = 0;
+    while (start < path.size()) {
+        const size_t separator = path.find_first_of("/\\", start);
+        const size_t end = separator == std::string::npos ? path.size() : separator + 1;
+        const std::string part = path.substr(start, end - start);
+        if (start > 0) {
+            ImGui::SameLine(0.0f, 0.0f);
+            if (ImGui::GetCursorScreenPos().x + ImGui::CalcTextSize(part.c_str()).x > right) ImGui::NewLine();
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(colour, "%s", part.c_str());
+        ImGui::PopTextWrapPos();
+        start = end;
+    }
+}
+
+bool LooksLikePath(const std::string& value) {
+    return value.size() > 1 && value.find_first_of("/\\") != std::string::npos &&
+           value.find('\n') == std::string::npos;
 }
 
 void DetailsRow(const Truth& truth) {
@@ -145,9 +172,13 @@ void ReadOnly(const char* label, const std::string& value, const char* key) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     Label(label);
     ImGui::AlignTextToFramePadding();
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_bright, "%s", value.empty() ? "(not set)" : value.c_str());
-    ImGui::PopTextWrapPos();
+    if (LooksLikePath(value)) {
+        PathText(value, t.text_bright);
+    } else {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_bright, "%s", value.empty() ? "(not set)" : value.c_str());
+        ImGui::PopTextWrapPos();
+    }
     Status(key);
 }
 
