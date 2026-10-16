@@ -66,8 +66,12 @@ A Data Input kept on disk can feed training:
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each
   group. Validation and Test windows come from datasets of their own (a Data
-  Split with named inputs); a ratio split of a windows file on disk is
-  refused.
+  Split with named inputs). A share left to cut from the training set (for
+  example a 10% test share beside a Validation input) is refused on disk with
+  the reason; set it to 0 or give it an input of its own.
+- **A server node** (remote training) does the same: a Parquet file a job
+  brings that is larger than a quarter of the node's data budget stays on disk
+  and is read a row group at a time, for tables and for token windows.
 
 ## Running again
 

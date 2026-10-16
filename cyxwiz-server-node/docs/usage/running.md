@@ -105,6 +105,13 @@ Ports the daemon opens (from the config file):
 4. The node reports each job's result and the end of the reservation to the
    central server.
 
+Data a job brings is Parquet or Arrow IPC. A Parquet file larger than a quarter
+of the node's data budget (half of its memory) stays on disk and is read one
+row group at a time while training, so a node can train on data larger than
+its memory. Token windows on disk need each split share as its own file (a
+ratio split of a file on disk is refused with the reason); see the Engine's
+docs/usage/big_data.md.
+
 ## 5b. Sign-in
 
 The GUI signs in with your CyxWiz account and hands the token to the daemon
