@@ -44,7 +44,7 @@ GradientState& Gradients() {
 std::string ShapeError(const std::string& type_id, const std::map<std::string, std::string>& values) {
     const auto factory = cyxwiz::ExtensionNodeRegistry::Instance().TensorFactory(type_id);
     if (!factory) return {};
-    const auto result = factory->InferOutputShape({2, 3}, values);
+    const auto result = factory->InferOutputShape({3}, values);  // one sample of the check's [2, 3]
     return result.ok ? std::string() : result.error;
 }
 
@@ -64,8 +64,11 @@ cyxwiz::ExtensionGradientRecord RunGradientCheck(const cyxwiz::ExtensionNodeDesc
     }
     const auto result = cyxwiz::CheckModuleGradients(
         [&](const std::vector<size_t>& shape) {
+            // The checker's shapes include the batch; a factory is given the
+            // shape of one sample, as the model builder gives it.
+            const std::vector<size_t> sample(shape.begin() + (shape.empty() ? 0 : 1), shape.end());
             std::string error;
-            auto module = factory->CreateModule(shape, values, error);
+            auto module = factory->CreateModule(sample, values, error);
             if (!module) throw std::runtime_error(error.empty() ? "the module could not be created" : error);
             return module;
         },

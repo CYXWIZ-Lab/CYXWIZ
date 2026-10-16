@@ -80,7 +80,9 @@ public:
         const std::vector<size_t>& input_shape,
         const std::map<std::string, std::string>& parameters) = 0;
 
-    // nullptr with `error` set when the module cannot be created.
+    // input_shape is one sample's shape (no batch dimension), as for
+    // InferOutputShape. nullptr with `error` set when the module cannot be
+    // created.
     virtual std::unique_ptr<cyxwiz::Module> CreateModule(
         const std::string& type_name,
         const std::vector<size_t>& input_shape,

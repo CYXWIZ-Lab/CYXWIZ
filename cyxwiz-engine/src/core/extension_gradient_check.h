@@ -40,8 +40,10 @@ struct GradientCheckResult {
     std::string error;   // set when the module could not be checked at all
 };
 
-// make: creates a fresh module for an input shape (the factory's CreateModule
-// with the node's parameters). The module runs in evaluation mode.
+// make: creates a fresh module for an input shape that includes the batch
+// dimension. Callers that use a factory pass it the shape without the batch
+// (CreateModule takes one sample's shape, as the model builder passes it).
+// The module runs in evaluation mode.
 GradientCheckResult CheckModuleGradients(
     const std::function<std::unique_ptr<Module>(const std::vector<size_t>& input_shape)>& make,
     const GradientCheckOptions& options = {});

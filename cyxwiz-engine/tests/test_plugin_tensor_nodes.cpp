@@ -130,7 +130,8 @@ int main() {
         if (!factory) continue;
         const auto result = cyxwiz::CheckModuleGradients([&](const std::vector<size_t>& shape) {
             std::string error;
-            return factory->CreateModule(shape, {{"initial_a", "0.8"}}, error);
+            const std::vector<size_t> sample(shape.begin() + 1, shape.end());  // without the batch
+            return factory->CreateModule(sample, {{"initial_a", "0.8"}}, error);
         });
         Check(result.passed, std::string(name) + ": " + cyxwiz::DescribeGradientCheck(result));
     }
