@@ -7,6 +7,7 @@
 #include "../../core/word_vector_runs.h"
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <map>
 #include <memory>
 #include <imgui.h>
@@ -167,6 +168,13 @@ public:
         std::function<void(const std::string&)> callback) {
         materialization_action_callback_ = std::move(callback);
     }
+    // Asks where to save a file (the Engine's save dialog); returns the
+    // chosen path, or nullopt when cancelled.
+    using SavePathCallback =
+        std::function<std::optional<std::string>(const std::string& title, const std::string& default_name)>;
+    void SetSavePathCallback(SavePathCallback callback) {
+        save_path_callback_ = std::move(callback);
+    }
     void SetTrainingComplete(float total_time_seconds,
                              const std::string& terminal_status = "completed",
                              const std::string& terminal_reason = "",
@@ -298,6 +306,7 @@ public:
 
 private:
     std::function<void(const std::string&)> materialization_action_callback_;
+    SavePathCallback save_path_callback_;
 
     // UI state
     bool show_loss_plot_ = true;

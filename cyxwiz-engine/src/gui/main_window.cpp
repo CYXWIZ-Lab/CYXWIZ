@@ -578,6 +578,12 @@ MainWindow::MainWindow()
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
     // Prepared-data cache actions from the dashboard's Data preparation card.
+    training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
+        const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+        const std::string folder = root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
+        return cyxwiz::FileDialogs::SaveFile(title.c_str(), {{"CSV Files", "csv"}, {"All Files", "*"}},
+                                             folder.empty() ? nullptr : folder.c_str(), default_name.c_str());
+    });
     training_plot_panel_->SetMaterializationActionCallback(
         [weak_panel = std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_)](
             const std::string& action) {

@@ -13,11 +13,8 @@
 #include "../../core/training_trace_collector.h"
 #endif
 #include "../../core/training_run_comparison.h"
-#include "../../core/file_dialogs.h"
-#include "../../core/project_manager.h"
 #include "../../core/route_qualification_snapshot.h"
 #include "../icons.h"
-#include <filesystem>
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -2701,14 +2698,10 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     }
 
     const DashColors c = CurrentDashColors();
-    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c)) {
-        // A save dialog in the project's exports folder; it wrote
+    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c) && save_path_callback_) {
+        // The Engine's save dialog (project exports folder); it wrote
         // training_run_comparison.csv into the working directory unasked.
-        const std::string root = ProjectManager::Instance().GetProjectRoot();
-        const std::string folder = root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
-        const auto path = FileDialogs::SaveFile("Export Run CSV", {{"CSV Files", "csv"}, {"All Files", "*"}},
-                                                folder.empty() ? nullptr : folder.c_str(),
-                                                "training_run_comparison.csv");
+        const auto path = save_path_callback_("Export Run CSV", "training_run_comparison.csv");
         if (path) {
             std::string error;
             if (WriteTrainingRunComparisonCsv(*path, run_comparison_records_, &error)) {
