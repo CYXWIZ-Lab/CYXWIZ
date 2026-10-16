@@ -48,13 +48,17 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <imgui.h>
+#include <imgui_internal.h>  // ErrorRecoveryStoreState / ErrorRecoveryTryToRecoverState
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include <implot_internal.h>
 #include <implot3d.h>
+#include <implot3d_internal.h>
 #include "gui/plot/plot_style.h"
 #include "gui/plot/plot_capture_gl.h"
 #include <imnodes.h>
+#include <imnodes_internal.h>
 #include <cyxwiz/device.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -64,6 +68,25 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+
+// An exception out of the window's frame skips the End calls of everything
+// that was open where it was thrown: ImGui windows, children and ID scopes,
+// a plot, the node editor. Close them, innermost first, so the next frame
+// starts clean; ImGui alone recovers its own stacks, ImPlot and imnodes do
+// not (a Dashboard widget that threw every frame left them open, TOFIX157).
+static void CloseScopesLeftOpen(const ImGuiErrorRecoveryState& before) {
+    if (GImNodes) {
+        if (GImNodes->CurrentScope == ImNodesScope_Attribute) ImNodes::EndInputAttribute();
+        if (GImNodes->CurrentScope == ImNodesScope_Node) ImNodes::EndNode();
+        if (GImNodes->CurrentScope == ImNodesScope_Editor) ImNodes::EndNodeEditor();
+    }
+    if (ImPlot3DContext* p3 = ImPlot3D::GetCurrentContext(); p3 && p3->CurrentPlot) ImPlot3D::EndPlot();
+    if (ImPlotContext* p = ImPlot::GetCurrentContext()) {
+        if (p->CurrentPlot) ImPlot::EndPlot();
+        if (p->CurrentSubplot) ImPlot::EndSubplots();
+    }
+    ImGui::ErrorRecoveryTryToRecoverState(&before);
+}
 
 static void glfw_error_callback(int error, const char* description) {
     spdlog::error("GLFW Error {}: {}", error, description);
@@ -815,12 +838,31 @@ void CyxWizApp::Render() {
 
     // Render main window (with docking)
     if (main_window_) {
+        ImGuiErrorRecoveryState before;
+        ImGui::ErrorRecoveryStoreState(&before);
+        std::string failure;
         try {
             main_window_->Render();
         } catch (const std::exception& e) {
-            spdlog::error("Exception in main_window_->Render(): {}", e.what());
+            failure = e.what();
         } catch (...) {
-            spdlog::error("Unknown exception in main_window_->Render()");
+            failure = "unknown exception";
+        }
+        if (!failure.empty()) {
+            CloseScopesLeftOpen(before);
+            // Once per message, then a count every 10 s: a widget that throws
+            // throws every frame.
+            const auto now = std::chrono::steady_clock::now();
+            ++render_failures_;
+            if (failure != render_failure_ || now - render_failure_logged_ > std::chrono::seconds(10)) {
+                if (failure == render_failure_)
+                    spdlog::error("Exception in main_window_->Render() again ({} frames): {}", render_failures_, failure);
+                else
+                    spdlog::error("Exception in main_window_->Render(): {}", failure);
+                render_failure_ = failure;
+                render_failure_logged_ = now;
+                render_failures_ = 0;
+            }
         }
     }
 
