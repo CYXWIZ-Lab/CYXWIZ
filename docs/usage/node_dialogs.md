@@ -158,3 +158,28 @@ balancing for training batches: mode, target per class, seed),
 folder, start from an earlier checkpoint) and **Advanced** (worker threads,
 pin memory, report interval, generation previews). The Data Loader is the one
 place batching is set.
+
+## Row Filter
+
+**Keep the rows where** lists the conditions as rows: a column, an operator
+in words (*is*, *is not*, *is more than*, *is less than*, *is at least*, *is
+at most*) and a value. Rows after the first join with **and** or **or**
+(*and* binds first: `a and b or c` keeps rows matching both a and b, or c).
+**Add condition** adds a row; **Remove** takes one away (a filter keeps at
+least one).
+
+Once the pipeline has run the step's input, the column is picked by name
+from its columns, each shown with what it holds (numbers, text, true/false),
+and the value follows the column: a number box, a text box, or a true / false
+choice. Text and true/false columns compare only with *is* / *is not*.
+Columns holding dates or lists are counted but cannot be compared. Before the
+first run the column is typed by name, and the value's type is read from what
+is typed (`5` is a number, `true` a true/false, anything else text).
+
+**Runs as** shows the condition the step runs, for example
+`"status" = 'Anxiety'`; OK and Apply stay off, with the reason on hover,
+until every row can run (a column picked, a number where the column holds
+numbers, a column the input has). Reopening the dialog shows the saved
+condition as rows again. A condition written by hand with brackets in
+Properties does not fit rows: the dialog shows it as text to edit, with
+**Start over with rows**.

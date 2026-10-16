@@ -182,6 +182,7 @@ set(ENGINE_SOURCES
     src/core/dashboard/text_words.cpp
     src/core/dashboard/dashboard_session.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/filter_condition.cpp  # Row Filter condition language (TOFIX129 B-5)
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
@@ -411,6 +412,7 @@ set(ENGINE_SOURCES
     src/core/remote_job_presentation.cpp
     src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/filter_dialog.cpp
     src/gui/quality_analyzer_dialog.cpp
     src/gui/word_embeddings_dialog.cpp
     src/gui/embedding_dialog.cpp
@@ -2880,6 +2882,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/duckdb_connector.cpp
     src/core/image_utils.cpp
     src/core/pipeline_executor.cpp
+    src/core/filter_condition.cpp
     src/core/dataset_lineage.cpp
     src/core/sql_transform.cpp
     src/core/sql_step_presentation.cpp
@@ -4186,6 +4189,18 @@ if(WIN32)
 endif()
 set_target_properties(test_data_input_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME data_input_presentation COMMAND test_data_input_presentation)
+
+# ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
+add_executable(test_filter_condition
+    tests/test_filter_condition.cpp
+    src/core/filter_condition.cpp
+)
+target_include_directories(test_filter_condition PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_filter_condition PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_filter_condition PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME filter_condition COMMAND test_filter_condition)
 
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp

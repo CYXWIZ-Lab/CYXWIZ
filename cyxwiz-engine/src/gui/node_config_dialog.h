@@ -31,6 +31,7 @@
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
 #include "../core/data_preview_service.h"
+#include "../core/filter_condition.h"
 #include "../core/dataset_partitions.h"
 #include "../core/training_parameter_contract.h"
 
@@ -176,26 +177,42 @@ private:
 };
 
 /**
- * FilterDialog - Configuration dialog for Filter/Query nodes
+ * FilterDialog - the Row Filter: the condition as rows (gui/filter_dialog.cpp)
  */
 class FilterDialog : public NodeConfigDialog {
 public:
     FilterDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
+    ImVec2 GetDefaultSize() const override { return ImVec2(780, 440); }
+    bool TracksChanges() const override { return true; }
+    bool CanApply() const override;
+    const char* ApplyBlockedReason() const override;
 
 protected:
     void RenderContent() override;
 
 private:
-    struct FilterCondition {
-        int column_idx = 0;
-        int operator_idx = 0;
-        char value[256] = {};
-        int join_type = 0;
+    struct Column {
+        std::string name;
+        cyxwiz::FilterValueKind kind;
     };
-    std::vector<FilterCondition> conditions_;
-    std::vector<std::string> available_columns_;
+    void LoadFromNode();
+    void RefreshColumns();
+    const Column* FindColumn(const std::string& name) const;
+    std::string Problem() const;  // why the condition cannot run, or empty
+    void RenderRows();
+    void RenderWrittenCondition();
+
+    std::vector<cyxwiz::FilterRow> rows_;
+    std::vector<Column> columns_;  // the input's comparable columns, once it has run
+    size_t other_columns_ = 0;     // columns a filter cannot compare (dates, lists)
+    std::string input_name_;
+    double columns_time_ = -1.0;
+    // The saved condition does not fit rows (brackets): edit it as text.
+    bool written_ = false;
+    std::string written_text_;
+    mutable std::string blocked_reason_;
 };
 
 /**

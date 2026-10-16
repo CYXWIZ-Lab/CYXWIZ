@@ -17,6 +17,7 @@
 #include "core/guided_sql.h"
 #include "core/sql_plan.h"
 #include "core/sql_transform.h"
+#include "core/filter_condition.h"
 #include "core/dataset_profiler.h"
 #include "core/plot/node_result_plan.h"
 #include "core/graph_document.h"
@@ -6200,6 +6201,24 @@ int main(int argc, char** argv) {
           "FilterRows string condition should keep one matching row");
     Check(ReadStringValue(string_filtered_table, "phrase", 0) == "tea cup",
           "FilterRows string condition should keep the expected row");
+
+    // The Row Filter dialog's condition ("quoted" names) runs the same way.
+    {
+        cyxwiz::FilterRow row;
+        row.column = "phrase";
+        row.kind = cyxwiz::FilterValueKind::Text;
+        row.value = "tea cup";
+        nlohmann::json graph = nlohmann::json::parse(filter_string_json);
+        graph["nodes"][1]["id"] = 198;
+        graph["nodes"][1]["parameters"]["condition"] = cyxwiz::BuildFilterCondition({row});
+        graph["links"][0]["end_node"] = 198;
+        cyxwiz::PipelineExecutor dialog_executor;
+        Check(dialog_executor.ExecutePipeline(graph.dump()),
+              "the dialog's condition runs: " + dialog_executor.GetLastError());
+        auto dialog_filtered = registry.GetArrowDataset("ds_filter_198");
+        Check(dialog_filtered && dialog_filtered->GetArrowTable()->num_rows() == 1,
+              "the dialog's condition keeps the matching row");
+    }
 
     const std::string filter_missing_column_json =
         R"({"nodes":[)"
