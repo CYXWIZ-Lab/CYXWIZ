@@ -1537,13 +1537,26 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         ParquetBackedDataset::IsCacheFresh(path, cache_path);
 
     if (!use_disk_backed) {
+        // The same file with the same options already in memory under
+        // another name (a Data Input applied, then run): share its table.
+        const std::string load_key = TabularLoadKey(path, "csv|" + cache_signature);
+        const std::string final_name = name.empty() ? fs::path(path).stem().string() : name;
+        {
+            std::string shared_from;
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto shared = ShareLoadedTableUnlocked(load_key, final_name, path, &shared_from)) {
+                if (load_status) *load_status = shared_from == final_name ? "Already loaded" : "Shared with " + shared_from + " (already loaded)";
+                spdlog::info("LoadTabularCSV: '{}' is already in memory as '{}'; '{}' shares that table ({} rows)", path,
+                             shared_from, final_name, shared->GetNumRows());
+                if (progress_callback) (void)progress_callback(1.0f, "Already loaded");
+                return TabularLoadBackend::InMemory;
+            }
+        }
         if (cache_is_fresh) {
             if (progress_callback &&
                 !progress_callback(0.05f, "Restoring persistent ingestion cache")) {
                 return TabularLoadBackend::Failed;
             }
-            const std::string final_name =
-                name.empty() ? fs::path(path).stem().string() : name;
             auto cached_dataset = ArrowDataset::FromParquet(
                 cache_path, final_name);
             if (cached_dataset) {
@@ -1554,6 +1567,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                     parquet_backed_datasets_.erase(final_name);
                     sparse_feature_datasets_.erase(final_name);
                     RememberTabularSourcePathUnlocked(final_name, path);
+                    RecordTabularLoadUnlocked(final_name, load_key, cached_dataset);
                 }
                 if (load_status) {
                     *load_status = "Restored from persistent ingestion cache";
@@ -1591,6 +1605,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                 InvalidateTabularPublicationUnlocked(dataset->GetName());
                 parquet_backed_datasets_.erase(dataset->GetName());
             }
+            RecordTabularLoadUnlocked(dataset->GetName(), load_key, dataset);
         }
         if (progress_callback) {
             (void)progress_callback(0.995f, "Writing persistent ingestion cache");
@@ -1682,6 +1697,18 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularParquet(
 
     if (!use_disk_backed) {
         source.reset();
+        std::string columns;
+        for (const auto& column : selected_columns) columns += std::to_string(column.size()) + ":" + column + ";";
+        const std::string load_key = TabularLoadKey(path, "parquet|columns=" + columns);
+        {
+            std::string shared_from;
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto shared = ShareLoadedTableUnlocked(load_key, name, path, &shared_from)) {
+                if (load_status) *load_status = shared_from == name ? "Already loaded" : "Shared with " + shared_from + " (already loaded)";
+                spdlog::info("LoadTabularParquet: '{}' is already in memory as '{}'; '{}' shares that table", path, shared_from, name);
+                return TabularLoadBackend::InMemory;
+            }
+        }
         auto dataset = LoadParquetToArrow(path, name);
         if (!dataset) return TabularLoadBackend::Failed;
         if (!selected_columns.empty()) {
@@ -1691,7 +1718,11 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularParquet(
                 spdlog::error("LoadTabularParquet: selected columns do not match '{}'", path);
                 return TabularLoadBackend::Failed;
             }
-            RegisterArrowTable(projected->GetArrowTable(), dataset->GetName());
+            dataset = RegisterArrowTable(projected->GetArrowTable(), dataset->GetName());
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            RecordTabularLoadUnlocked(dataset->GetName(), load_key, dataset);
         }
         if (load_status) *load_status = "Loaded in memory";
         return TabularLoadBackend::InMemory;

@@ -21,6 +21,12 @@ The budget decides:
   in blocks sized from the budget. Selecting columns of a large Parquet file
   writes only those columns, one row group at a time. The Data Input's Memory
   tab option **Force disk-backed cache** keeps any file on disk.
+- **One copy per file**: a table in memory is held once. When the same file is
+  loaded again with the same options (Apply on the Data Input, then a run of
+  the graph, or the other way round), the second load shares the table that is
+  already there ("Shared with ... (already loaded)" in the log) instead of
+  reading the file again. A changed file, or other options (columns, rows,
+  delimiter, missing values), is read again.
 - **Results**: a step's result larger than a quarter of the budget stays a
   Parquet file in `cache/pipeline/results`; a smaller one is in memory as
   before.

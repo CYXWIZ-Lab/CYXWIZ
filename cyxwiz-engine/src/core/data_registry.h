@@ -753,6 +753,28 @@ private:
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
     std::map<std::string, MaterializationProvenance> materialization_provenance_;
+    // How each table LoadTabularCSV / LoadTabularParquet put in memory was
+    // loaded: the source file (path, size, time) and every option that
+    // changes the table. A second load of the same thing under another name
+    // shares that table instead of reading the file again (TOFIX157: Apply
+    // and a pipeline run each held their own copy of a Data Input). Weak:
+    // the entry counts only while that very dataset is still registered.
+    struct TabularLoad {
+        std::string key;
+        std::weak_ptr<class ArrowDataset> dataset;
+    };
+    std::map<std::string, TabularLoad> tabular_loads_;
+    // The key of a load of `path` with these options; empty when the file
+    // cannot be read (nothing is shared then).
+    static std::string TabularLoadKey(const std::string& path, const std::string& options);
+    // Registers `name` over the table of a dataset loaded with this key and
+    // returns it (the same dataset when `name` is that one); null when none
+    // is. `shared_from` gets the name it shares with.
+    std::shared_ptr<class ArrowDataset> ShareLoadedTableUnlocked(const std::string& key, const std::string& name,
+                                                                 const std::string& source_path,
+                                                                 std::string* shared_from);
+    void RecordTabularLoadUnlocked(const std::string& name, const std::string& key,
+                                   const std::shared_ptr<class ArrowDataset>& dataset);
     // Weak reservations avoid revisions/tombstones and cannot retain datasets.
     std::map<std::string, std::weak_ptr<const void>> tabular_publication_tokens_;
 

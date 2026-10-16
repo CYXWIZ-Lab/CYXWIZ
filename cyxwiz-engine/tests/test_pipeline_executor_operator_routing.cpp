@@ -835,6 +835,42 @@ void CheckPipelineDataInputUsesProjectIngestionCache() {
     Check(restored_dataset && restored_dataset->GetNumRows() == 2,
           "Pipeline DataInput should restore the cached Arrow dataset");
 
+    // The same file loaded again under another name (Apply after a run, or a
+    // run after Apply) shares the table instead of a second copy (TOFIX157);
+    // a changed file is read again.
+    {
+        std::string status;
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_91001", true, ',', 0, 0, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory,
+              "the second load of the same CSV runs");
+        auto applied = registry.GetArrowDataset("applied_91001");
+        Check(applied && applied->GetArrowTable() == restored_dataset->GetArrowTable() &&
+                  status.find("Shared with ds_datainput_91001") != std::string::npos,
+              "the same CSV with the same options shares the loaded table (" + status + ")");
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_rows_91001", true, ',', 0, 1, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+                  registry.GetArrowDataset("applied_rows_91001")->GetNumRows() == 1,
+              "another option (max_rows 1) reads its own table");
+        {
+            std::ofstream csv(csv_path, std::ios::binary | std::ios::app);
+            csv << "2020-01-01 00:00:20,3\n";
+        }
+        Check(registry.LoadTabularCSV(csv_path.string(), "applied_changed_91001", true, ',', 0, 0, false,
+                                      cyxwiz::ParseMissingValueTokens(""), {}, '.', true, {}, &status,
+                                      cache_root.string()) == cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+                  registry.GetArrowDataset("applied_changed_91001")->GetNumRows() == 3,
+              "a changed file is read again (" + status + ")");
+        registry.UnregisterTabularDataset("applied_91001");
+        registry.UnregisterTabularDataset("applied_rows_91001");
+        registry.UnregisterTabularDataset("applied_changed_91001");
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);  // the two rows the cases below read
+        csv << "timestamp,value\n"
+            << "2020-01-01 00:00:00,1\n"
+            << "2020-01-01 00:00:10,2\n";
+    }
+
     registry.UnregisterTabularDataset("ds_datainput_91001");
     const std::string disk_backed_json =
         R"({"nodes":[)"
