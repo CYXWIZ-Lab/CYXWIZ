@@ -3,6 +3,7 @@
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
 #include "data_preview_table_renderer.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "../core/async_task_manager.h"
 
@@ -23,16 +24,15 @@ void DataInputDialog::RenderPreviewPanel() {
         hdf5_inspector_.RenderPreview();
         return;
     }
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::TextColored(accent, "PREVIEW");
+    namespace ui = cyxwiz::ui;
+    // Shown, the tab reads its rows: the whole loaded dataset after Apply,
+    // else a sample from the start of the file (board 7: it emptied to a
+    // "Load Preview" button after Apply).
+    if (!preview_loaded_ && IsPreviewSupported() && (file_path_[0] || folder_path_[0])) LoadPreview();
     if (preview_loaded_) {
-        ImGui::SameLine();
-        if (ImGui::Button("Refresh preview")) LoadPreview();
+        if (ui::SecondaryButton("Refresh preview", true, nullptr, ui::ButtonSize::Small)) LoadPreview();
+        ImGui::Spacing();
     }
-    ImGui::Separator();
-    ImGui::Spacing();
 
     if (file_category_ == FileCategory::Text && !CanPageRegisteredPreview() &&
         text_layout_ == TextLayout::SingleFile && detected_type_ <= 2) {
@@ -44,26 +44,17 @@ void DataInputDialog::RenderPreviewPanel() {
     }
 
     if (!preview_loaded_) {
-        if (!IsPreviewSupported()) {
-            ImGui::BeginDisabled();
-            ImGui::Button("Load Preview", ImVec2(-1, 30));
-            ImGui::EndDisabled();
-            ImGui::Spacing();
-            ImGui::TextWrapped("%s", PreviewUnavailableMessage());
-            return;
-        }
-        if (ImGui::Button("Load Preview", ImVec2(-1, 30))) {
-            LoadPreview();
-        }
-        ImGui::Spacing();
-        ImGui::TextDisabled("Configure source and click\nLoad Preview to see data");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", IsPreviewSupported() ? "Choose a file or folder in Source; its rows show here."
+                                                       : PreviewUnavailableMessage());
+        ImGui::PopTextWrapPos();
+        return;
     } else if (!preview_error_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "Error: %s", preview_error_.c_str());
+        ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, "%s", preview_error_.c_str());
         ImGui::PopTextWrapPos();
         if (preview_is_paged_ && preview_failed_offset_ >= 0) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Retry preview")) {
+            if (ui::LinkButton("Retry")) {
                 const int64_t retry_offset = preview_failed_offset_;
                 preview_failed_offset_ = -1;
                 preview_error_.clear();
@@ -124,7 +115,7 @@ void DataInputDialog::RenderTabularPreview() {
                 static_cast<long long>(preview_loading_offset_ +
                     preview_page_cache_.PageSize()));
             ImGui::SameLine();
-            if (ImGui::SmallButton("Cancel preview load")) {
+            if (cyxwiz::ui::LinkButton("Cancel")) {
                 if (preview_page_task_id_ != 0) {
                     cyxwiz::AsyncTaskManager::Instance().Cancel(preview_page_task_id_);
                 }
@@ -195,7 +186,7 @@ void DataInputDialog::RenderTabularPreview() {
         ImGui::TextColored(cyxwiz::ui::CurrentTokens().caution,
                            "%s", preview_page_error_.c_str());
         ImGui::SameLine();
-        if (ImGui::SmallButton("Retry page")) {
+        if (cyxwiz::ui::LinkButton("Retry")) {
             const int64_t retry_offset = preview_failed_offset_;
             preview_failed_offset_ = -1;
             RequestPreviewPage(retry_offset);
@@ -239,47 +230,19 @@ void DataInputDialog::RenderAudioPreview() {
 }
 
 void DataInputDialog::RenderTextPreview() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     if (text_layout_ == TextLayout::CorpusSubdirs && !preview_is_paged_) {
-        if (strlen(folder_path_) == 0) {
-            ImGui::TextDisabled("No folder selected");
-            return;
-        }
-        if (!fs::exists(folder_path_)) {
-            ImGui::TextColored(t.error,
-                               "Folder does not exist");
-            return;
-        }
-        int subdir_count = 0, file_count = 0;
-        try {
-            for (const auto& entry : fs::directory_iterator(folder_path_)) {
-                if (!entry.is_directory()) continue;
-                subdir_count++;
-                for (const auto& sub : fs::recursive_directory_iterator(entry.path())) {
-                    if (!sub.is_regular_file()) continue;
-                    std::string ext = sub.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".txt" || ext == ".text" || ext == ".md") file_count++;
-                }
-            }
-        } catch (...) {}
-        ImGui::TextColored(accent, "Corpus scan");
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::Text("Folder:  %s", folder_path_);
-        ImGui::Text("Classes: %d subdirectories", subdir_count);
-        ImGui::Text("Samples: %d text files", file_count);
-        ImGui::Spacing();
-        ImGui::TextDisabled("Each subdirectory name becomes a class label. "
-                            "Apply reads the texts (runs on a worker thread).");
+        // The folder scan from Source (once per folder, not per frame).
+        if (folder_scan_path_ != folder_path_) RescanFolder();
+        ImGui::Text("%zu class folders, %d text files", folder_scan_.class_names.size(), folder_scan_.files);
+        ImGui::TextDisabled("Each class folder's name is the label. Apply reads the texts; then this tab shows "
+                            "them all.");
         return;
     }
 
     if (preview_columns_.empty()) {
-        ImGui::TextDisabled("No data to preview - click Load Preview above.");
+        ImGui::TextDisabled("No rows to show yet.");
         return;
     }
 
@@ -289,10 +252,7 @@ void DataInputDialog::RenderTextPreview() {
         return false;
     };
 
-    ImGui::TextColored(accent, "Column mapping");
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::Separator();
-    ImGui::Spacing();
 
     std::string text_col_str = text_column_;
     std::string label_col_str = text_label_column_;
