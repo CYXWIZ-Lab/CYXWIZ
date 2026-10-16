@@ -583,6 +583,7 @@ private:
 
     using PreviewLoadState = cyxwiz::DataConvertPreviewTaskResult;
     std::shared_ptr<cyxwiz::DataConvertTaskResult> conversion_state_;
+    uint64_t conversion_task_id_ = 0;
 
     char input_path_[512] = {};
     char output_path_[512] = {};

@@ -199,3 +199,29 @@ extension. A relative file path shows **Relative to**: the project folder
 (like Data Input paths) or the exports folder. **Writes to** shows the full
 path the run will write, and after a run **Last run** shows the file it wrote
 and when, or why it failed.
+
+## Data Convert
+
+Converts a table file to another format once, with an optional sidecar
+manifest. Six tabs:
+
+- **Source**: the input file with **Browse...** and its format (*Auto* reads
+  it from the extension). An XLSX input adds the worksheet (blank is the
+  first) and the start column; Plain Text notes that it gives one column
+  named `text`.
+- **Output**: the output file with **Save as...**, **Use the input's name
+  with this format's extension**, the format (picking one switches the
+  file's extension; a mismatch is flagged), and **When writing**: overwrite
+  an existing file, create missing folders, write a conversion manifest
+  beside it.
+- **Options**: *Reading the input* (delimiter, detected or typed; decimal
+  separator; header; line breaks inside quoted values; skip rows) and
+  *Writing Parquet* (compression, row group size). Settings that do not apply
+  to the chosen formats are dimmed with the reason.
+- **Preview**: **Preview schema** reads the input in the background and shows
+  its rows, columns, each column's type and whether it can be missing, and
+  sample rows.
+- **Run**: **Run conversion** (the tab's main button, with its progress), then
+  the output path, rows written, columns, size and manifest. The write
+  finishes even if the dialog closes; the footer's Apply saves the settings.
+- **Log**: the messages of this dialog session, with **Clear**.

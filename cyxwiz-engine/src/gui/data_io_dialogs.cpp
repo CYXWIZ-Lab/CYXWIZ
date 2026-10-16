@@ -9,6 +9,7 @@
 #include "../core/data_convert_formats.h"
 #include "../core/file_dialogs.h"
 #include "../core/arrow_dataset.h"
+#include "../core/data_input_presentation.h"
 #include "../core/data_registry.h"
 #include "../core/data_studio_publish.h"
 #include "../core/project_manager.h"
@@ -369,8 +370,7 @@ void DataConvertDialog::Apply() {
         node_->parameters["converted_output_path"] = last_result_.output_path;
         node_->parameters["parquet_output_path"] = last_result_.output_path;
         node_->parameters["manifest_path"] = last_result_.manifest_path;
-        node_->description = "Converted " +
-            std::to_string(last_result_.rows_written) + " rows";
+        node_->description = "Converted " + cyxwiz::data_input_view::FormatCount(last_result_.rows_written) + " rows";
     } else if (output_path_[0] != '\0') {
         node_->description = std::filesystem::path(output_path_).filename().string();
     }
@@ -393,24 +393,20 @@ void DataConvertDialog::Reset() {
 void DataConvertDialog::RenderContent() {
     PollPreviewResult();
     PollConversionResult();
+    const auto& t = cyxwiz::ui::CurrentTokens();
 
-    ImGui::TextWrapped(
-        "Convert source data between supported table file formats and write "
-        "an optional sidecar manifest.");
-    ImGui::Spacing();
-
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim,
+                       "Converts a table file to another format once, with an optional sidecar manifest.");
     if (conversion_state_) {
-        ImGui::TextWrapped("Conversion is running in the background. Closing or cancelling "
-                           "this dialog does not cancel the file write. See Tasks for completion.");
+        ImGui::TextColored(t.text_dim, "The conversion runs in the background: closing or cancelling this dialog "
+                                       "does not cancel the file write (see Tasks).");
     }
-
     if (!status_message_.empty()) {
-        const ImVec4 color = status_is_error_
-            ? cyxwiz::ui::CurrentTokens().error
-            : ImGui::GetStyleColorVec4(ImGuiCol_Text);
-        ImGui::TextColored(color, "%s", status_message_.c_str());
-        ImGui::Separator();
+        ImGui::TextColored(status_is_error_ ? t.error : t.text, "%s", status_message_.c_str());
     }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
 
     if (ImGui::BeginTabBar("DataConvertTabs")) {
         if (ImGui::BeginTabItem("Source")) {
@@ -439,7 +435,7 @@ void DataConvertDialog::RenderContent() {
             RenderRunTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Logs")) {
+        if (ImGui::BeginTabItem("Log")) {
             RenderLogsTab();
             ImGui::EndTabItem();
         }
@@ -447,174 +443,172 @@ void DataConvertDialog::RenderContent() {
     }
 }
 
-void DataConvertDialog::RenderSourceTab() {
-    ImGui::Spacing();
-    ImGui::Text("Input data file");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-    if (ImGui::InputText("##input_path", input_path_, sizeof(input_path_))) {
-        has_changes_ = true;
-    }
+namespace {
+
+// A file row: the label, then the path across the width with its button.
+bool PathRow(const char* label, const char* id, char* path, std::size_t size, const char* button,
+             bool& browse) {
+    namespace ui = cyxwiz::ui;
+    ImGui::TextUnformatted(label);
+    const float width = ui::ButtonWidth(button, ui::ButtonSize::Regular);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - width - ImGui::GetStyle().ItemSpacing.x);
+    const bool edited = ImGui::InputText(id, path, size);
     ImGui::SameLine();
-    if (ImGui::Button("Browse", ImVec2(80.0f, 0.0f)) &&
-        BrowseDataInput(input_path_, sizeof(input_path_))) {
-        has_changes_ = true;
-    }
+    browse = ui::SecondaryButton(button, true, nullptr, ui::ButtonSize::Regular);
+    return edited;
+}
+
+void Hint(const char* text) {
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "%s", text);
+}
+
+void Section(const char* title) {
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(title);
+    ImGui::Spacing();
+}
+
+}  // namespace
+
+void DataConvertDialog::RenderSourceTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    bool browse = false;
+    if (PathRow("Input", "##input_path", input_path_, sizeof(input_path_), "Browse...", browse)) has_changes_ = true;
+    if (browse && BrowseDataInput(input_path_, sizeof(input_path_))) has_changes_ = true;
 
     ImGui::Spacing();
-    ImGui::Text("Input format");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(160.0f);
-    if (RenderDataConvertFormatCombo("##input_format", input_format_, dc::Direction::Input, dc::kBuildFeatures)) {
+    Field("Format");
+    ImGui::SetNextItemWidth(200.0f);
+    if (RenderDataConvertFormatCombo("##input_format", input_format_, dc::Direction::Input, dc::kBuildFeatures))
         has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Auto detects from extension.");
+    Hint("Auto detects it from the extension.");
+
     const auto effective_format = dc::Resolve(input_format_,
         std::filesystem::path(input_path_).extension().string());
+    ImGui::PushTextWrapPos(0.0f);
     if (effective_format == dc::Format::Excel) {
-        ImGui::Spacing();
+        Section("Worksheet");
         if (!dc::Available(effective_format, dc::Direction::Input, dc::kBuildFeatures))
-            ImGui::TextWrapped("XLSX is unavailable in this build (OpenXLSX is required).");
-        ImGui::TextWrapped("%s", dc::kXlsxRestrictions);
+            ImGui::TextColored(t.warning, "XLSX is unavailable in this build (OpenXLSX is required).");
+        ImGui::TextColored(t.text_dim, "%s", dc::kXlsxRestrictions);
         ImGui::BeginDisabled(!dc::kBuildFeatures.xlsx);
-        if (ImGui::InputText("Worksheet", excel_sheet_, sizeof(excel_sheet_))) has_changes_ = true;
-        ImGui::TextDisabled("Blank selects the first worksheet.");
-        if (ImGui::InputText("Start column", excel_start_column_, sizeof(excel_start_column_))) has_changes_ = true;
-        ImGui::TextWrapped("Excel column label A to XFD (for example B or AA). Read from this column to the worksheet's last column. Set Skip rows under Options; the first remaining row is the header when enabled.");
+        Field("Worksheet");
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputTextWithHint("##worksheet", "the first one", excel_sheet_, sizeof(excel_sheet_)))
+            has_changes_ = true;
+        Field("Start column");
+        ImGui::SetNextItemWidth(80.0f);
+        if (ImGui::InputText("##start_column", excel_start_column_, sizeof(excel_start_column_))) has_changes_ = true;
+        Hint("A to XFD, for example B or AA");
+        ImGui::TextColored(t.text_dim, "Reads from this column to the worksheet's last column. Skip rows is under "
+                                       "Options; the first remaining row is the header when that is on.");
         ImGui::EndDisabled();
     }
-
-
     if (effective_format == dc::Format::Text) {
         ImGui::Spacing();
-        ImGui::TextColored(
-            cyxwiz::ui::CurrentTokens().warning,
-            "Plain Text produces one column named 'text'.");
-        ImGui::TextWrapped(
-            "For a semicolon-delimited .txt table, select CSV here and set the delimiter to semicolon. The file extension does not need to change.");
+        ImGui::TextColored(t.warning, "Plain Text produces one column named 'text'.");
+        ImGui::TextColored(t.text_dim, "For a semicolon-delimited .txt table, pick CSV here and set the delimiter "
+                                       "to semicolon under Options; the extension does not need to change.");
     }
+    ImGui::PopTextWrapPos();
 }
 
 void DataConvertDialog::RenderOptionsTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     const auto input = dc::Resolve(input_format_, std::filesystem::path(input_path_).extension().string());
     const bool delimited_input = input == dc::Format::Csv || input == dc::Format::Tsv;
     const bool excel_input = input == dc::Format::Excel;
-    ImGui::Spacing();
-    ImGui::Text("Input parsing");
-    ImGui::Separator();
-    ImGui::Spacing();
 
+    Section("Reading the input");
     if (!delimited_input) {
-        ImGui::TextColored(
-            cyxwiz::ui::CurrentTokens().warning,
-            "Delimiter settings apply only to CSV/TSV. Headers also apply to XLSX.");
-        ImGui::TextWrapped(
-            "Select CSV for comma-, semicolon-, or pipe-delimited data, including delimited files whose extension is .txt.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "Delimiter settings apply only to CSV and TSV; the header also applies to "
+                                       "XLSX. Pick CSV for comma-, semicolon- or pipe-delimited data, including a "
+                                       ".txt file.");
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
     }
 
     ImGui::BeginDisabled(!delimited_input);
-    if (ImGui::Checkbox("Auto-detect delimiter", &auto_detect_delimiter_)) {
-        has_changes_ = true;
-    }
+    Field("Delimiter");
+    if (ImGui::Checkbox("Detect it##auto_delimiter", &auto_detect_delimiter_)) has_changes_ = true;
     ImGui::SameLine();
-    ImGui::TextDisabled("Checks comma, tab, semicolon, and pipe.");
-
-    ImGui::Text("Delimiter");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(90.0f);
     ImGui::BeginDisabled(auto_detect_delimiter_);
-    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) {
-        has_changes_ = true;
-    }
+    ImGui::SetNextItemWidth(60.0f);
+    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) has_changes_ = true;
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled(auto_detect_delimiter_
-        ? "Detected when preview or conversion runs."
-        : "Use comma for CSV, tab for TSV.");
+    Hint(auto_detect_delimiter_ ? "comma, tab, semicolon or pipe, when the preview or conversion runs"
+                                : "comma for CSV, tab for TSV");
 
-    ImGui::Text("Decimal separator");
-    ImGui::SameLine(130.0f);
+    Field("Decimal separator");
     ImGui::SetNextItemWidth(120.0f);
     const char* decimal_separators[] = {"Dot (.)", "Comma (,)"};
     int decimal_index = decimal_point_ == ',' ? 1 : 0;
-    if (ImGui::Combo("##data_convert_decimal", &decimal_index,
-                     decimal_separators, 2)) {
+    if (ImGui::Combo("##data_convert_decimal", &decimal_index, decimal_separators, 2)) {
         decimal_point_ = decimal_index == 1 ? ',' : '.';
         has_changes_ = true;
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Used while parsing numeric input values.");
-
+    Hint("in numbers");
     ImGui::EndDisabled();
+
     ImGui::BeginDisabled(!delimited_input && !excel_input);
-    if (ImGui::Checkbox("First selected row contains headers", &has_header_)) {
-        has_changes_ = true;
-    }
+    Field("Header");
+    if (ImGui::Checkbox("The first row read holds the column names", &has_header_)) has_changes_ = true;
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!delimited_input);
-    if (ImGui::Checkbox("Allow quoted multiline values",
-                        &allow_newlines_in_values_)) {
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Needed for text columns that contain line breaks.");
+    Field("Line breaks");
+    if (ImGui::Checkbox("Allow them inside quoted values", &allow_newlines_in_values_)) has_changes_ = true;
+    Hint("for text columns with line breaks");
     ImGui::EndDisabled();
 
     ImGui::BeginDisabled(!delimited_input && !excel_input && input != dc::Format::Text);
-    ImGui::Text("Skip rows");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(90.0f);
+    Field("Skip rows");
+    ImGui::SetNextItemWidth(120.0f);
     if (ImGui::InputInt("##skip_rows", &skip_rows_)) {
         if (skip_rows_ < 0) skip_rows_ = 0;
         has_changes_ = true;
     }
     ImGui::EndDisabled();
 
-    ImGui::Spacing();
-    ImGui::Text("Parquet writer");
-    ImGui::Separator();
-    ImGui::Spacing();
-
+    Section("Writing Parquet");
     const auto output = dc::Resolve(output_format_, std::filesystem::path(output_path_).extension().string());
+    if (output != dc::Format::Parquet)
+        ImGui::TextColored(t.text_dim, "Applies when the output is Parquet.");
     ImGui::BeginDisabled(output != dc::Format::Parquet);
-    const char* compressions[] = {
-        "None", "Snappy", "Gzip", "Zstd", "Brotli"
-    };
-    ImGui::Text("Compression");
-    ImGui::SameLine(130.0f);
+    const char* compressions[] = {"None", "Snappy", "Gzip", "Zstd", "Brotli"};
+    Field("Compression");
     ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::Combo("##compression", &compression_, compressions, 5)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Row group size");
-    ImGui::SameLine(130.0f);
+    if (ImGui::Combo("##compression", &compression_, compressions, 5)) has_changes_ = true;
+    Field("Row group size");
     ImGui::SetNextItemWidth(140.0f);
     if (ImGui::InputInt("##row_group_size", &row_group_size_)) {
         if (row_group_size_ < 1) row_group_size_ = 1;
         has_changes_ = true;
     }
+    Hint("rows");
     ImGui::EndDisabled();
 }
 
 void DataConvertDialog::RenderOutputTab() {
     ImGui::Spacing();
-    ImGui::Text("Output data file");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-    if (ImGui::InputText("##output_path", output_path_, sizeof(output_path_))) {
+    bool browse = false;
+    if (PathRow("Output", "##output_path", output_path_, sizeof(output_path_), "Save as...", browse))
         has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save As", ImVec2(80.0f, 0.0f)) &&
-        BrowseDataOutput(output_path_, sizeof(output_path_), output_format_)) {
+    if (browse && BrowseDataOutput(output_path_, sizeof(output_path_), output_format_)) has_changes_ = true;
+    if (cyxwiz::ui::LinkButton("Use the input's name with this format's extension", input_path_[0] != '\0')) {
+        std::filesystem::path in(input_path_);
+        in.replace_extension(DataFormatExtension(output_format_));
+        CopyToBuffer(output_path_, sizeof(output_path_), in.string());
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-    ImGui::Text("Output format");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(160.0f);
+    Field("Format");
+    ImGui::SetNextItemWidth(200.0f);
     if (RenderDataConvertFormatCombo("##output_format", output_format_, dc::Direction::Output, dc::kBuildFeatures)) {
         if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0') {
             std::filesystem::path out(output_path_);
@@ -623,85 +617,60 @@ void DataConvertDialog::RenderOutputTab() {
         }
         has_changes_ = true;
     }
-
-    if (ImGui::Button("Use input name + selected extension")) {
-        std::filesystem::path in(input_path_);
-        if (!in.empty()) {
-            in.replace_extension(DataFormatExtension(output_format_));
-            CopyToBuffer(output_path_, sizeof(output_path_), in.string());
-            has_changes_ = true;
-        }
-    }
-
     if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0' &&
-        !DataFormatExtensionMatches(std::filesystem::path(output_path_),
-                                         output_format_)) {
-        ImGui::Spacing();
+        !DataFormatExtensionMatches(std::filesystem::path(output_path_), output_format_)) {
         ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                           "Output extension does not match the selected format. Expected %s.",
+                           "The file's extension does not match the format: expected %s.",
                            DataFormatExtension(output_format_));
     }
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Overwrite existing file", &overwrite_)) {
-        has_changes_ = true;
-    }
-    if (ImGui::Checkbox("Create parent folders", &create_parent_dirs_)) {
-        has_changes_ = true;
-    }
-    if (ImGui::Checkbox("Write conversion manifest", &write_manifest_)) {
-        has_changes_ = true;
-    }
+    Field("When writing");
+    if (ImGui::Checkbox("Overwrite an existing file", &overwrite_)) has_changes_ = true;
+    ImGui::SetCursorPosX(kFieldLabel);
+    if (ImGui::Checkbox("Create missing folders", &create_parent_dirs_)) has_changes_ = true;
+    ImGui::SetCursorPosX(kFieldLabel);
+    if (ImGui::Checkbox("Write a conversion manifest beside it", &write_manifest_)) has_changes_ = true;
 }
 
 void DataConvertDialog::RenderPreviewTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::Spacing();
-    ImGui::BeginDisabled(IsBusy());
-    if (ImGui::Button("Preview schema")) {
+    if (cyxwiz::ui::SecondaryButton("Preview schema", !IsBusy(), "Wait for it to finish", cyxwiz::ui::ButtonSize::Regular))
         PreviewInput();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
     if (preview_loading_) {
-        ImGui::TextDisabled("Preview is running in the background (Task %llu)...",
-                            static_cast<unsigned long long>(preview_task_id_));
+        Hint("reading the input in the background");
+        float progress = 0.0f;
+        if (const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(preview_task_id_))
+            progress = task->GetProgress();
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), "Reading the input");
     } else {
-        ImGui::TextDisabled("Reads the input and Arrow-inferred types.");
+        Hint("reads the input with the types Arrow infers");
     }
 
     ImGui::Spacing();
-    if (preview_loading_) {
-        float progress = 0.0f;
-        if (const auto task =
-                cyxwiz::AsyncTaskManager::Instance().GetTask(preview_task_id_)) {
-            progress = task->GetProgress();
-        }
-        ImGui::ProgressBar(progress,
-                           ImVec2(-1.0f, 0.0f),
-                           "Reading source without blocking the engine");
-    }
     if (!preview_.ok) {
         if (!preview_.error.empty()) {
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error,
-                               "%s", preview_.error.c_str());
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.error, "%s", preview_.error.c_str());
+            ImGui::PopTextWrapPos();
         }
         return;
     }
 
-    ImGui::Text("Rows: %lld   Columns: %lld",
-                static_cast<long long>(preview_.rows),
-                static_cast<long long>(preview_.columns));
-    if (ImGui::BeginTable("DataConvertSchema", 3,
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_Resizable)) {
+    ImGui::TextColored(t.text_dim, "%s rows, %s columns",
+                       cyxwiz::data_input_view::FormatCount(preview_.rows).c_str(),
+                       cyxwiz::data_input_view::FormatCount(preview_.columns).c_str());
+    if (ImGui::BeginTable("DataConvertSchema", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
         ImGui::TableSetupColumn("Column");
         ImGui::TableSetupColumn("Type");
-        ImGui::TableSetupColumn("Nullable");
+        ImGui::TableSetupColumn("Can be missing");
         ImGui::TableHeadersRow();
         for (const auto& column : preview_.schema) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(column.name.c_str());
+            if (column.name.empty()) ImGui::TextColored(t.text_dim, "(unnamed)");
+            else ImGui::TextUnformatted(column.name.c_str());
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(column.type.c_str());
             ImGui::TableSetColumnIndex(2);
@@ -710,30 +679,19 @@ void DataConvertDialog::RenderPreviewTab() {
         ImGui::EndTable();
     }
 
-    if (!preview_.sample_rows.empty()) {
-        ImGui::Spacing();
-        ImGui::Text("Sample rows");
-        if (ImGui::BeginTable("DataConvertSampleRows",
-                              static_cast<int>(preview_.schema.size()),
-                              ImGuiTableFlags_Borders |
-                              ImGuiTableFlags_RowBg |
-                              ImGuiTableFlags_Resizable |
-                              ImGuiTableFlags_ScrollX)) {
-            for (const auto& column : preview_.schema) {
-                ImGui::TableSetupColumn(column.name.c_str());
-            }
+    if (!preview_.sample_rows.empty() && !preview_.schema.empty()) {
+        Section("Sample rows");
+        if (ImGui::BeginTable("DataConvertSampleRows", static_cast<int>(preview_.schema.size()),
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX)) {
+            for (const auto& column : preview_.schema)
+                ImGui::TableSetupColumn(column.name.empty() ? "(unnamed)" : column.name.c_str());
             ImGui::TableHeadersRow();
             for (const auto& row : preview_.sample_rows) {
                 ImGui::TableNextRow();
-                for (int column = 0;
-                     column < static_cast<int>(preview_.schema.size());
-                     ++column) {
+                for (int column = 0; column < static_cast<int>(preview_.schema.size()); ++column) {
                     ImGui::TableSetColumnIndex(column);
-                    const char* value =
-                        column < static_cast<int>(row.size())
-                            ? row[static_cast<size_t>(column)].c_str()
-                            : "";
-                    ImGui::TextUnformatted(value);
+                    ImGui::TextUnformatted(column < static_cast<int>(row.size()) ? row[static_cast<size_t>(column)].c_str()
+                                                                                 : "");
                 }
             }
             ImGui::EndTable();
@@ -742,64 +700,59 @@ void DataConvertDialog::RenderPreviewTab() {
 }
 
 void DataConvertDialog::RenderRunTab() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::Spacing();
-    ImGui::TextWrapped(
-        "Run conversion when the source and output settings are correct. "
-        "Downstream nodes can consume the generated output directly. "
-        "Once queued, the file write runs to completion even if this dialog closes.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "Runs once the source and output are set. Nodes after this one read the file "
+                                   "it writes. Once queued, the write finishes even if this dialog closes.");
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
-    ImGui::BeginDisabled(IsBusy());
-    if (ImGui::Button("Run conversion", ImVec2(160.0f, 0.0f))) {
+    const bool ready = input_path_[0] != '\0' && output_path_[0] != '\0';
+    if (cyxwiz::ui::PrimaryButton("Run conversion", !IsBusy() && ready,
+                                  IsBusy() ? "A preview or conversion is running" : "Set the input and output files"))
         RunConversion();
+    if (conversion_state_) {
+        float progress = 0.0f;
+        if (const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(conversion_task_id_))
+            progress = task->GetProgress();
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), "Converting");
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply settings")) {
-        Apply();
-    }
-    ImGui::EndDisabled();
 
+    if (!last_result_.ok) return;
     ImGui::Spacing();
-    if (last_result_.ok) {
-        const std::string output_path = last_result_.output_path.empty()
-            ? std::string(output_path_)
-            : last_result_.output_path;
-        ImGui::TextWrapped("Output: %s", output_path.c_str());
-        ImGui::Text("Rows written: %lld",
-                    static_cast<long long>(last_result_.rows_written));
-        ImGui::Text("Columns: %lld",
-                    static_cast<long long>(last_result_.columns));
-        ImGui::Text("Bytes written: %lld",
-                    static_cast<long long>(last_result_.bytes_written));
-        if (!last_result_.manifest_path.empty()) {
-            ImGui::TextWrapped("Sidecar manifest: %s",
-                               last_result_.manifest_path.c_str());
-        }
+    const std::string output_path = last_result_.output_path.empty() ? std::string(output_path_)
+                                                                     : last_result_.output_path;
+    ImGui::PushTextWrapPos(0.0f);
+    Field("Output");
+    ImGui::TextUnformatted(output_path.c_str());
+    Field("Rows written");
+    ImGui::TextUnformatted(cyxwiz::data_input_view::FormatCount(last_result_.rows_written).c_str());
+    Field("Columns");
+    ImGui::TextUnformatted(cyxwiz::data_input_view::FormatCount(last_result_.columns).c_str());
+    Field("Size");
+    ImGui::TextUnformatted(
+        cyxwiz::data_input_view::FormatSize(static_cast<uint64_t>(last_result_.bytes_written)).c_str());
+    if (!last_result_.manifest_path.empty()) {
+        Field("Manifest");
+        ImGui::TextUnformatted(last_result_.manifest_path.c_str());
     }
+    ImGui::PopTextWrapPos();
 }
 
 void DataConvertDialog::RenderLogsTab() {
     ImGui::Spacing();
-    if (ImGui::Button("Clear logs")) {
-        log_lines_.clear();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Shows messages from this dialog session.");
+    if (cyxwiz::ui::SecondaryButton("Clear", !log_lines_.empty(), "Nothing to clear")) log_lines_.clear();
+    Hint("messages from this dialog session");
 
     ImGui::Spacing();
-    if (ImGui::BeginChild("DataConvertLogs",
-                          ImVec2(0.0f, 0.0f),
-                          true,
+    if (ImGui::BeginChild("DataConvertLogs", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
                           ImGuiWindowFlags_HorizontalScrollbar)) {
         if (log_lines_.empty()) {
-            ImGui::TextDisabled("No conversion messages yet.");
+            ImGui::TextColored(cyxwiz::ui::CurrentTokens().text_dim, "No conversion messages yet.");
         } else {
-            for (const auto& line : log_lines_) {
-                ImGui::TextWrapped("%s", line.c_str());
-            }
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
-            }
+            for (const auto& line : log_lines_) ImGui::TextWrapped("%s", line.c_str());
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         }
     }
     ImGui::EndChild();
@@ -862,8 +815,8 @@ void DataConvertDialog::PollPreviewResult() {
 
     if (preview_.ok) {
         std::ostringstream msg;
-        msg << "Preview loaded: " << preview_.rows << " rows, "
-            << preview_.columns << " columns.";
+        msg << "Preview loaded: " << cyxwiz::data_input_view::FormatCount(preview_.rows) << " rows, "
+            << cyxwiz::data_input_view::FormatCount(preview_.columns) << " columns.";
         if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(preview_.detected_delimiter) << ".";
@@ -892,7 +845,7 @@ void DataConvertDialog::RunConversion() {
     auto state = std::make_shared<cyxwiz::DataConvertTaskResult>();
     auto task = cyxwiz::MakeDataConvertTask(options, state);
     try {
-        cyxwiz::AsyncTaskManager::Instance().Submit(task);
+        conversion_task_id_ = cyxwiz::AsyncTaskManager::Instance().Submit(task);
         last_result_ = {};
         conversion_state_ = state;
         SetStatus("Conversion queued in the background; file writes cannot be cancelled.", false);
@@ -912,7 +865,7 @@ void DataConvertDialog::PollConversionResult() {
             msg << "Conversion skipped: existing output is fresh at "
                 << last_result_.output_path << ".";
         } else {
-            msg << "Conversion complete: " << last_result_.rows_written
+            msg << "Conversion complete: " << cyxwiz::data_input_view::FormatCount(last_result_.rows_written)
                 << " rows written to " << last_result_.output_path << ".";
         }
         if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
