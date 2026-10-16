@@ -91,10 +91,6 @@ protected:
     virtual float FooterHeight() const;
     virtual void RenderFooter(bool& should_close);
     virtual void OnClose() {}
-    void RenderSettingsTab();
-    void RenderAdvancedTab();
-    void RenderPreviewTab();
-    bool FileSelector(const char* label, std::string& path, const char* filter = "All Files\0*.*\0");
     void ValidationMessage(const std::string& message, bool is_error = true);
 
     std::string title_;
@@ -105,40 +101,6 @@ protected:
     int current_tab_ = 0;
     bool has_changes_ = false;
     std::map<std::string, std::string> original_params_;
-};
-
-/**
- * CSVReaderDialog - Configuration dialog for CSV/File Input nodes
- */
-class CSVReaderDialog : public NodeConfigDialog {
-public:
-    CSVReaderDialog(MLNode* node);
-    void Apply() override;
-    void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(800, 600); }
-
-protected:
-    void RenderContent() override;
-
-private:
-    void RenderFileSettingsTab();
-    void RenderTransformationTab();
-    void RenderAdvancedSettingsTab();
-    void RenderLimitRowsTab();
-    void RenderPreviewTab();
-    void LoadPreview();
-
-    char file_path_[512] = {};
-    int delimiter_idx_ = 0;
-    char custom_delimiter_[8] = {};
-    bool has_header_ = true;
-    bool skip_empty_lines_ = true;
-    int skip_first_n_ = 0;
-    int limit_rows_ = 1000;
-    std::vector<std::string> preview_headers_;
-    std::vector<std::vector<std::string>> preview_rows_;
-    bool preview_loaded_ = false;
-    std::string preview_error_;
 };
 
 /**
