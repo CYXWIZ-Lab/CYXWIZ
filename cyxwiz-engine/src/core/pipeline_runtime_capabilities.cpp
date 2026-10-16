@@ -1995,35 +1995,4 @@ bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
     return false;
 }
 
-PipelineExecutorInputStorageSupport ResolvePipelineExecutorInputStorageSupport(
-    gui::NodeType node_type, PipelineStorageBackend backend) {
-    const auto support = ResolvePipelineRuntimeSupport(node_type);
-    if (!support.pipeline_executor_supported ||
-        support.fail_mode != PipelineRuntimeFailMode::Real || support.source_node) {
-        return {false, "Operation has no qualified dataset-input execution contract"};
-    }
-    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked) {
-        const auto storage = ResolvePipelineMaterializerStorageBackendSupport(backend);
-        return {storage.materializer_supported, storage.reason};
-    }
-    // These executor methods explicitly obtain their inputs with GetArrowDataset.
-    // Extend this qualification here after auditing the consuming method, not in UI.
-    switch (node_type) {
-    case gui::NodeType::FilterRows:
-    case gui::NodeType::SelectColumns:
-    case gui::NodeType::SortRows:
-    case gui::NodeType::JoinTables:
-    case gui::NodeType::GroupByAggregate:
-    case gui::NodeType::TextCleanNode:
-    case gui::NodeType::ExportCSV:
-    case gui::NodeType::ExportJSON:
-    case gui::NodeType::ExportParquet:
-        return {backend == PipelineStorageBackend::ArrowTable,
-                backend == PipelineStorageBackend::ArrowTable ? nullptr :
-                "This executor requires an in-memory Arrow table; the selected storage is unsupported"};
-    default:
-        return {false, "Input storage support has not yet been qualified for this operation"};
-    }
-}
-
 } // namespace cyxwiz
