@@ -251,6 +251,21 @@ std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadColumn(const std:
     return column;
 }
 
+std::shared_ptr<arrow::ChunkedArray> ParquetBackedDataset::ReadRowGroupColumn(int row_group_idx,
+                                                                             const std::string& name) const {
+    if (!reader_ || !schema_) return nullptr;
+    if (row_group_idx < 0 || row_group_idx >= static_cast<int>(row_group_sizes_.size())) return nullptr;
+    const int index = schema_->GetFieldIndex(name);
+    if (index < 0) return nullptr;
+    std::shared_ptr<arrow::ChunkedArray> column;
+    auto status = reader_->RowGroup(row_group_idx)->Column(index)->Read(&column);
+    if (!status.ok()) {
+        spdlog::error("ParquetBackedDataset::ReadRowGroupColumn({}, {}): {}", row_group_idx, name, status.ToString());
+        return nullptr;
+    }
+    return column;
+}
+
 std::vector<std::string> ParquetBackedDataset::GetColumnNames() const {
     std::vector<std::string> names;
     if (!schema_) return names;

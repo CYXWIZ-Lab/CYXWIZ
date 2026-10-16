@@ -2,6 +2,7 @@
 #include "training_executor.h"
 
 #include "arrow_dataset.h"
+#include "data_budget.h"
 #include "classification_decision.h"
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
@@ -523,11 +524,6 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
 
     const std::string partition_col = config.is_time_series
         ? kSplitPartitionColumn : "";
-    if (config.stratified && !config.is_time_series) {
-        spdlog::warn("TrainingExecutor: stratified DataSplit is not available "
-                     "for disk-backed Parquet datasets yet; falling back to "
-                     "row-group train/validation/test slicing");
-    }
     const bool continuous_target = UsesContinuousTargetMetrics(config);
     if (config.balance_classes && !continuous_target) {
         spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
@@ -559,6 +555,30 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+
+    // A row-level split (TOFIX154), by the in-memory path's rules: its
+    // contiguous slices, or with a stratified Data Split each class's share
+    // (ratios and seed as BuildArrowTrainingBatchers passes them). One byte
+    // per row. Time series keep their partition column; all-Train needs none.
+    if (partition_col.empty() && dataset && config.train_ratio < 1.0f) {
+        const bool stratified = config.stratified && !continuous_target;
+        const std::string stratify = stratified ? class_label : std::string();
+        const std::array<double, 3> shares = stratified
+            ? std::array<double, 3>{config.train_ratio, config.val_ratio, config.test_ratio}
+            : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
+        {
+            std::string split_error;
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle,
+                                              static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
+            if (!split) throw std::runtime_error("Parquet split: " + split_error);
+            spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",
+                         stratify.empty() ? "" : " stratified by '" + stratify + "'", split->counts[0],
+                         split->counts[1], split->counts[2], FormatDataBytes(split->bucket.size()));
+            result.parquet_train->SetRowSplit(split);
+            result.parquet_val->SetRowSplit(split);
+            result.parquet_test->SetRowSplit(split);
+        }
+    }
 
     if (continuous_target) {
         const size_t target_width =

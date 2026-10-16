@@ -123,6 +123,10 @@ public:
     // nullptr when missing or unreadable.
     std::shared_ptr<arrow::ChunkedArray> ReadColumn(const std::string& name) const;
 
+    // One column of one row group (a pass over a column a row group at a
+    // time); nullptr when missing or unreadable.
+    std::shared_ptr<arrow::ChunkedArray> ReadRowGroupColumn(int row_group_idx, const std::string& name) const;
+
     // The whole table (an admitted step's input, TOFIX154).
     std::shared_ptr<arrow::Table> ReadAll() const;
 

@@ -62,6 +62,13 @@ A Data Input kept on disk can feed training:
   > (Standard Scaler, Min-Max Scaler, Log Transform, checks); raise the data
   > budget (Preferences > Data) to load it in memory.
 
+- **A table on disk** trains a row group at a time, with the Data Split
+  made row by row as in memory: without stratification Train is the first
+  rows of the file, then Validation, then Test; with **Stratified** each
+  class gets its share (in file order, or drawn by the split seed when
+  shuffling). The split takes one byte of memory per row (100 MB for 100
+  million rows). Class balancing in the Data Loader is not available on disk
+  yet (a warning says so).
 - **Causal-LM token windows** (a `tokens` list column) on disk are read one
   row group at a time while training: memory holds one row group's windows.
   The row-group order is shuffled every epoch, and the windows within each

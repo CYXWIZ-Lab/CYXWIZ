@@ -5,6 +5,7 @@
 #include "label_vocabulary.h"  // for the shared Batch struct
 
 #include <cyxwiz/tensor.h>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -14,6 +15,29 @@
 
 namespace cyxwiz {
 
+// Which split each row of a table on disk belongs to (0 train, 1 validation,
+// 2 test), one byte per row in file order (TOFIX154), by the in-memory
+// split's rules: unstratified, contiguous slices in file order
+// (ArrowDatasetBatcher); stratified, each class's CountsFor share
+// (split_partitioning.h) in file order, or drawn by `seed` when shuffled.
+struct ParquetRowSplit {
+    std::vector<uint8_t> bucket;        // per row, file order
+    std::vector<int64_t> group_offset;  // first row of each row group
+    std::array<size_t, 3> counts{};     // rows per split
+};
+
+// ratios: train, validation, test. Unstratified (empty stratify_column):
+// Train is the first floor(rows * train) rows, Validation the next
+// floor(rows * validation) (every other row when its ratio is 0), Test the
+// rest. Stratified: two passes over the column a row group at a time, one to
+// count each class, one to give each row a split from what its class still
+// needs (in file order, or a seeded draw when shuffle). Null with `error`
+// set when the column cannot be read.
+std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
+                                                            const std::string& stratify_column,
+                                                            const std::array<double, 3>& ratios,
+                                                            bool shuffle, uint32_t seed, std::string& error);
+
 /**
  * ParquetArrowBatcher - Training batcher for disk-backed Parquet datasets.
  *
@@ -22,10 +46,11 @@ namespace cyxwiz {
  * one row group at a time instead of holding the whole table in RAM.
  *
  * Row group strategy:
- *   - At construction time, row groups are partitioned between train and
- *     val splits by index (first train_split fraction -> train,
- *     remainder -> val). This is the simplest correct split; fine-grained
- *     row-level splitting would need per-row group subsampling.
+ *   - With a ParquetRowSplit (SetRowSplit), every row group is read and
+ *     only this split's rows are served: an exact row-level split, per
+ *     class when stratified (TOFIX154).
+ *   - Without one, row groups are partitioned between train and val splits
+ *     by index (first train_split fraction -> train, remainder -> val).
  *   - Shuffling happens at two levels: the *order* of row groups is
  *     permuted at epoch start (Reset()), and when a row group is loaded
  *     its rows are also shuffled into a local order. This keeps memory
@@ -87,6 +112,9 @@ public:
         if (enable) one_hot_ = false;
     }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
+    // Serve only this batcher's split of `split` (its phase); recounts and
+    // restarts the epoch.
+    void SetRowSplit(std::shared_ptr<const ParquetRowSplit> split);
     void SetRegressionTargetWidth(
         size_t width, const std::string& target_base = {});
 
@@ -104,6 +132,7 @@ private:
     BatcherPhase split_phase_ = BatcherPhase::Train;
     std::string partition_column_;
     int partition_value_ = 0;
+    std::shared_ptr<const ParquetRowSplit> row_split_;
 
     // Column layout (populated by InitializeColumns at construction)
     std::vector<int> feature_cols_;   // column indices that carry feature data
