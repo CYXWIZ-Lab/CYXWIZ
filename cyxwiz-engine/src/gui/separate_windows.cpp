@@ -63,7 +63,9 @@ bool InFront(const ImGuiContext& g, const ImGuiWindow* w) {
 // docked window's tab (the dock node follows the focused window). It is
 // asked again until the window is in front: a window opened this frame
 // exists only after its first Begin, and in the first frames a dock node
-// selects the tab saved in imgui.ini.
+// selects the tab saved in imgui.ini. A window of its own is a window of the
+// operating system, which ImGui's focus does not raise: once the main window
+// was clicked it stayed behind it, so the platform focus raises it too.
 void RunFront(ImGuiContext& g) {
     if (g_front.name.empty()) return;
     ImGuiWindow* w = ImGui::FindWindowByName(g_front.name.c_str());
@@ -76,7 +78,12 @@ void RunFront(ImGuiContext& g) {
         g_front = {};
         return;
     }
-    if (w) ImGui::FocusWindow(w);
+    if (!w) return;
+    ImGui::FocusWindow(w);
+    ImGuiViewportP* viewport = w->Viewport;
+    const ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    if (viewport && viewport != ImGui::GetMainViewport() && viewport->PlatformWindowCreated && pio.Platform_SetWindowFocus)
+        pio.Platform_SetWindowFocus(viewport);
 }
 
 // Start of the frame: the commands asked for during the last one, while no
