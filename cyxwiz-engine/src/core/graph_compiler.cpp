@@ -8050,4 +8050,21 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
     }
 }
 
+void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::string& project_root) {
+    if (project_root.empty()) return;
+    const std::filesystem::path root(project_root);
+    const auto absolute = [&](std::string& path) {
+        if (!path.empty() && std::filesystem::path(path).is_relative())
+            path = (root / path).lexically_normal().string();
+    };
+    if (config.embedding_output) absolute(config.embedding_output_path);
+    for (auto& layer : config.layers) {
+        for (const char* key : {"weights_file", "embedding_weights_file"}) {
+            auto it = layer.parameters.find(key);
+            if (it != layer.parameters.end()) absolute(it->second);
+        }
+    }
+    absolute(config.initialize_from_checkpoint);
+}
+
 } // namespace cyxwiz

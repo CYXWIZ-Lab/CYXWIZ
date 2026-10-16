@@ -17,6 +17,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace cyxwiz {
@@ -56,6 +57,9 @@ public:
                               const std::vector<gui::NodeLink>& links);
 
     std::chrono::milliseconds debounce{400};
+    // The open project's folder: the parameter count builds the model, which
+    // reads project-relative files (an Embedding's saved vectors).
+    std::string project_root;
 
 private:
     struct Result {

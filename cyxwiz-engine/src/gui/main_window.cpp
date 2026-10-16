@@ -3406,6 +3406,7 @@ void MainWindow::UpdateLiveCompile() {
     // Counting parameters builds the model once; not while training uses
     // the device.
     const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    live_compile_->project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
     live_compile_->Update(node_editor_->GetNodes(), node_editor_->GetLinks(), !training);
     if (live_compile_->ResultSerial() == live_compile_serial_seen_ || !live_compile_->Config()) return;
     live_compile_serial_seen_ = live_compile_->ResultSerial();
@@ -3963,35 +3964,9 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "StartTrainingFromGraph: using project checkpoint directory '{}'",
                 config.checkpoint_dir);
         }
-        // Embedding Output: a relative file path is in the project folder.
-        if (config.embedding_output && project.HasActiveProject() &&
-            std::filesystem::path(config.embedding_output_path).is_relative()) {
-            config.embedding_output_path =
-                (std::filesystem::path(project.GetProjectRoot()) / config.embedding_output_path)
-                    .lexically_normal()
-                    .string();
-        }
-        // An Embedding's weights file (a Word Embeddings node's saved vectors
-        // by default, artifacts/word_embeddings/...) is project-relative too.
-        if (project.HasActiveProject()) {
-            for (auto& layer : config.layers) {
-                for (const char* key : {"weights_file", "embedding_weights_file"}) {
-                    auto it = layer.parameters.find(key);
-                    if (it != layer.parameters.end() && !it->second.empty() &&
-                        std::filesystem::path(it->second).is_relative()) {
-                        it->second = (std::filesystem::path(project.GetProjectRoot()) / it->second)
-                                         .lexically_normal()
-                                         .string();
-                    }
-                }
-            }
-        }
-        // Like DataInput paths, a relative warm-start checkpoint is project-relative.
-        if (!config.initialize_from_checkpoint.empty() && project.HasActiveProject() &&
-            std::filesystem::path(config.initialize_from_checkpoint).is_relative()) {
-            config.initialize_from_checkpoint =
-                (std::filesystem::path(project.GetProjectRoot()) / config.initialize_from_checkpoint).string();
-        }
+        // Embedding weights, the warm-start checkpoint and the Embedding
+        // Output file are project-relative, like Data Input paths.
+        if (project.HasActiveProject()) cyxwiz::ResolveProjectRelativePaths(config, project.GetProjectRoot());
 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();

@@ -721,6 +721,13 @@ inline bool UsesContinuousTargetMetrics(
 // 224 x 224 without one. The image transforms start from this shape.
 cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config);
 
+// Makes the files a compiled graph names relative to its project absolute
+// under `project_root`: an Embedding's weights file (a Word Embeddings node's
+// saved vectors, artifacts/word_embeddings/...), the warm-start checkpoint and
+// the Embedding Output file. Everything that builds the model from the config
+// (Train, the live compile's parameter count) calls it; empty root: no change.
+void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::string& project_root);
+
 class GraphCompiler {
 public:
     GraphCompiler() = default;

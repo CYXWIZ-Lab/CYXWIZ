@@ -180,6 +180,33 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
 
 int main() {
     {
+        // Project-relative files a compiled graph names become absolute under
+        // the project (the live compile's parameter count reads the Embedding's
+        // saved vectors through this, as Train does); absolute ones stay.
+        cyxwiz::TrainingConfiguration config;
+        cyxwiz::CompiledLayer embedding;
+        embedding.parameters["weights_file"] = "artifacts/word_embeddings/vectors.vec";
+        cyxwiz::CompiledLayer absolute;
+        absolute.parameters["embedding_weights_file"] = "D:/data/v.vec";
+        config.layers = {embedding, absolute};
+        config.initialize_from_checkpoint = "checkpoints/best.cyxmodel";
+        config.embedding_output = true;
+        config.embedding_output_path = "exports/embeddings.parquet";
+        cyxwiz::ResolveProjectRelativePaths(config, "D:/tmp/project");
+        const auto expect = [](const std::string& relative) {
+            return (std::filesystem::path("D:/tmp/project") / relative).lexically_normal().string();
+        };
+        Check(config.layers[0].parameters["weights_file"] == expect("artifacts/word_embeddings/vectors.vec") &&
+                  config.layers[1].parameters["embedding_weights_file"] == "D:/data/v.vec" &&
+                  config.initialize_from_checkpoint == expect("checkpoints/best.cyxmodel") &&
+                  config.embedding_output_path == expect("exports/embeddings.parquet"),
+              "project-relative files resolve under the project");
+        cyxwiz::TrainingConfiguration untouched = config;
+        untouched.initialize_from_checkpoint = "relative.cyxmodel";
+        cyxwiz::ResolveProjectRelativePaths(untouched, "");
+        Check(untouched.initialize_from_checkpoint == "relative.cyxmodel", "no project: paths unchanged");
+    }
+    {
         cyxwiz::GraphCompiler compiler;
         const auto empty_config = compiler.Compile({}, {}, true);
         Check(!empty_config.is_valid,
