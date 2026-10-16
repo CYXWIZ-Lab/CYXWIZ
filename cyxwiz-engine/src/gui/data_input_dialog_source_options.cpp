@@ -16,43 +16,6 @@ namespace fs = std::filesystem;
 
 namespace gui {
 
-void DataInputDialog::RenderSourceSelector() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::TextColored(accent, "Data source");
-    ImGui::Spacing();
-
-    // Source type radio buttons in a row
-    int source_idx = static_cast<int>(source_type_);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(20, 4));
-    if (ImGui::RadioButton("File", &source_idx, 0)) {
-        source_type_ = SourceType::File;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("ML Dataset (planned)", &source_idx, 1)) {
-        source_type_ = SourceType::MLDataset;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Database (planned)", &source_idx, 2)) {
-        source_type_ = SourceType::Database;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Cloud (planned)", &source_idx, 3)) {
-        source_type_ = SourceType::Cloud;
-        has_changes_ = true;
-        preview_loaded_ = false;
-    }
-    ImGui::PopStyleVar();
-}
-
 void DataInputDialog::RenderFileSource() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
@@ -66,7 +29,7 @@ void DataInputDialog::RenderFileSource() {
 
     // Sequence (token tagging) loads as a tabular file and adds the tagging
     // contract, so it is its own radio index rather than a loader category.
-    constexpr int kSequenceIndex = 6;
+    constexpr int kSequenceIndex = 5;
     int cat_idx = sequence_tagging_ ? kSequenceIndex : static_cast<int>(file_category_);
     const auto pick = [this](FileCategory category, bool sequence) {
         file_category_ = category;
@@ -80,15 +43,13 @@ void DataInputDialog::RenderFileSource() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Audio", &cat_idx, 2)) pick(FileCategory::Audio, false);
     ImGui::SameLine();
-    if (ImGui::RadioButton("Video (planned)", &cat_idx, 3)) pick(FileCategory::Video, false);
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Text", &cat_idx, 4)) pick(FileCategory::Text, false);
+    if (ImGui::RadioButton("Text", &cat_idx, 3)) pick(FileCategory::Text, false);
     ImGui::SameLine();
     if (ImGui::RadioButton("Sequence (token tagging)", &cat_idx, kSequenceIndex)) {
         pick(FileCategory::Tabular, true);
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Time Series", &cat_idx, 5)) pick(FileCategory::TimeSeries, false);
+    if (ImGui::RadioButton("Time Series", &cat_idx, 4)) pick(FileCategory::TimeSeries, false);
 
     ImGui::Spacing();
 
@@ -96,7 +57,6 @@ void DataInputDialog::RenderFileSource() {
     // SingleFile layout mode. In CorpusSubdirs mode Text uses a folder
     // picker inside RenderTextOptions instead (mirroring image/audio).
     // Image uses its own folder/CSV inputs in RenderImageOptions.
-    // Audio/Video are not yet supported and show their own messages.
     // Hiding this for other categories prevents the user from picking
     // a .jpg in a file dialog that's meant for CSVs.
     const bool show_file_picker =
@@ -159,7 +119,6 @@ void DataInputDialog::RenderFileSource() {
         case FileCategory::Tabular:    RenderTabularOptions(); break;
         case FileCategory::Image:      RenderImageOptions(); break;
         case FileCategory::Audio:      RenderAudioOptions(); break;
-        case FileCategory::Video:      RenderVideoOptions(); break;
         case FileCategory::Text:       RenderTextOptions(); break;
         // Phase 4: Time Series shares the Tabular loader entirely — the
         // only semantic difference is the file_category="timeseries" stamp
@@ -684,17 +643,6 @@ void DataInputDialog::RenderAudioOptions() {
     ImGui::TextDisabled("Feature extraction defaults to MelSpectrogram (n_mels=128, n_fft=512).");
     ImGui::TextDisabled("Spectrogram / MFCC nodes will override this in a later phase.");
     ImGui::TextDisabled("Supported: WAV, FLAC, OGG, AIFF");
-}
-
-void DataInputDialog::RenderVideoOptions() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::TextColored(accent, "Video Loading");
-    ImGui::Spacing();
-    ImGui::TextWrapped("%s", UnsupportedApplyMessage());
-    ImGui::Spacing();
-    ImGui::TextDisabled("Use tabular, image, audio, text, or time series data for now.");
 }
 
 void DataInputDialog::RenderTextOptions() {

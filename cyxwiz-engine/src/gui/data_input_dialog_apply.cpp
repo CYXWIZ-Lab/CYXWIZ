@@ -66,7 +66,9 @@ void DataInputDialog::Apply() {
         }
     }
 
-    node_->parameters["source_type"] = data_input::SourceTypeParam(source_type_);
+    // Data Input reads files and folders; the pipeline executor refuses any
+    // other source type.
+    node_->parameters["source_type"] = "file";
     node_->parameters["file_category"] = data_input::FileCategoryParam(file_category_);
 
     // Prune stale per-category params when the user switched category
@@ -126,7 +128,7 @@ void DataInputDialog::Apply() {
     node_->parameters["audio_label_col"] = audio_label_col_;
 
     // Source-specific parameters
-    if (source_type_ == SourceType::File) {
+    {
         node_->parameters["file_type"] =
             data_input::FileTypeParam(detected_type_);
         node_->parameters.erase("type");
@@ -209,38 +211,6 @@ void DataInputDialog::Apply() {
             node_->description = p.filename().string() + "/";
         }
     }
-    else if (source_type_ == SourceType::MLDataset) {
-        node_->parameters["ml_dataset_type"] = data_input::MLDatasetTypeParam(ml_dataset_type_);
-        node_->parameters["dataset_name"] = dataset_name_;
-        node_->parameters["dataset_subset"] = dataset_subset_;
-        node_->parameters["cache_dir"] = cache_dir_;
-
-        if (ml_dataset_type_ == MLDatasetType::HuggingFace) {
-            node_->parameters["hf_token"] = hf_token_;
-        } else if (ml_dataset_type_ == MLDatasetType::Kaggle) {
-            node_->parameters["kaggle_slug"] = kaggle_slug_;
-        }
-
-        node_->description = dataset_name_;
-    }
-    else if (source_type_ == SourceType::Database) {
-        node_->parameters["database_type"] = data_input::DatabaseTypeParam(database_type_);
-        node_->parameters["db_host"] = db_host_;
-        node_->parameters["db_port"] = std::to_string(db_port_);
-        node_->parameters["db_name"] = db_name_;
-        node_->parameters["db_user"] = db_user_;
-        node_->parameters["db_file"] = db_file_;
-        node_->parameters["sql_query"] = sql_query_;
-
-        node_->description = std::string(db_name_) + " \xC2\xB7 SQL query";
-    }
-    else if (source_type_ == SourceType::Cloud) {
-        node_->parameters["cloud_bucket"] = cloud_bucket_;
-        node_->parameters["cloud_path"] = cloud_path_;
-        node_->parameters["cloud_credentials"] = cloud_credentials_;
-
-        node_->description = std::string(cloud_bucket_) + " \xC2\xB7 cloud";
-    }
 
     // === NEW: Actually load data and provide feedback ===
     apply_in_progress_ = true;
@@ -249,16 +219,10 @@ void DataInputDialog::Apply() {
     apply_started_at_ = std::chrono::steady_clock::now();
     last_load_elapsed_ms_ = -1.0f;
 
-    if (!IsApplySupported()) {
-        MarkApplyUnsupported(UnsupportedApplyMessage());
-        return;
-    }
-
     // Guard: Image category with a single file (not a folder) is not a
     // valid training use case. The user probably used the top-level file
     // picker instead of the Image Loading Options folder picker.
-    if (source_type_ == SourceType::File &&
-        file_category_ == FileCategory::Image &&
+    if (file_category_ == FileCategory::Image &&
         strlen(file_path_) > 0 && strlen(folder_path_) == 0) {
         apply_status_message_ = "Image training requires a folder of images, "
             "not a single file. Set the Folder path in the Image Loading "
@@ -301,8 +265,7 @@ void DataInputDialog::Apply() {
         file_category_ == FileCategory::Text &&
         text_layout_ == TextLayout::CorpusSubdirs &&
         strlen(folder_path_) > 0;
-    if (source_type_ == SourceType::File &&
-        (text_single_ready || text_corpus_ready)) {
+    if ((text_single_ready || text_corpus_ready)) {
         // Text load — routes through TextLoader. Branch takes priority
         // over the tabular branch below because a CSV file with Text
         // category selected needs the tokenizer / vocab pipeline, not
@@ -390,7 +353,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(file_path_) > 0 &&
+    } else if (strlen(file_path_) > 0 &&
                (file_category_ == FileCategory::Tabular ||
                 file_category_ == FileCategory::TimeSeries)) {
         // Tabular / TimeSeries load. All sub-formats (CSV / TSV / TXT /
@@ -534,7 +497,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+    } else if (strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Audio) {
         // Audio folder load — routes through AudioLoader. Feature
         // extraction still runs lazily inside AudioDataset::GetItem
@@ -619,7 +582,7 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         return;
-    } else if (source_type_ == SourceType::File && strlen(folder_path_) > 0 &&
+    } else if (strlen(folder_path_) > 0 &&
                file_category_ == FileCategory::Image) {
         // Image folder load — routes through ImageLoader. Previously
         // this branch was unguarded (`strlen(folder_path_) > 0`) and

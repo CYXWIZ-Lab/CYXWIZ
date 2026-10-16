@@ -53,7 +53,6 @@ enum class FileCategory {
     Tabular,
     Image,
     Audio,
-    Video,
     Text,
     TimeSeries,
 };
@@ -351,9 +350,7 @@ public:
 //
 // TabularLoader (also serving the TimeSeries category — same load path,
 // different params) is registered first; TextLoader, ImageLoader, and
-// AudioLoader follow. Video is deliberately unregistered — the guard at
-// the top of DataInputDialog::Apply fails video loads loudly before
-// reaching the dispatch.
+// AudioLoader follow.
 DataLoader* GetByCategory(FileCategory cat);
 
 // Resolves a registered dataset name back to its loader. Uses

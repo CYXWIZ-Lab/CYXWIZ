@@ -48,9 +48,6 @@ Registry& GetRegistry() {
         // Order of registration is observable via All(); keep it stable.
         // Commit 1: TabularLoader. Commit 2: TextLoader.
         // Commit 3: ImageLoader. Commit 4: AudioLoader.
-        // Video remains deliberately unregistered — the guard at the
-        // top of DataInputDialog::Apply fails the load loudly long
-        // before reaching the dispatch.
         push(std::make_unique<TabularLoader>());
         push(std::make_unique<TextLoader>());
         push(std::make_unique<ImageLoader>());
@@ -145,7 +142,6 @@ const std::vector<DataLoader*>& All() {
 FileCategory FileCategoryFromString(const std::string& s) {
     if (s == "image")      return FileCategory::Image;
     if (s == "audio")      return FileCategory::Audio;
-    if (s == "video")      return FileCategory::Video;
     if (s == "text")       return FileCategory::Text;
     if (s == "timeseries") return FileCategory::TimeSeries;
     return FileCategory::Tabular;  // "tabular" + unknown default

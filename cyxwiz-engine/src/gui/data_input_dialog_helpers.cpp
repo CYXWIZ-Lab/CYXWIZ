@@ -69,8 +69,7 @@ void DataInputDialog::LoadPreview() {
         return;
     }
 
-    if (source_type_ == SourceType::File &&
-        (file_category_ == FileCategory::Tabular ||
+    if ((file_category_ == FileCategory::Tabular ||
          file_category_ == FileCategory::Text ||
          file_category_ == FileCategory::TimeSeries)) {
         if (file_category_ == FileCategory::Text &&
@@ -136,7 +135,6 @@ void DataInputDialog::RefreshColumnList() {
 
     const bool is_delimited = data_input::IsDelimitedPreviewSource(file_path_, detected_type_);
     const bool is_tabular_source =
-        source_type_ == SourceType::File &&
         (file_category_ == FileCategory::Tabular ||
          file_category_ == FileCategory::Text ||
          file_category_ == FileCategory::TimeSeries);
@@ -162,7 +160,7 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
         const auto it = node_->parameters.find(key);
         return it != node_->parameters.end() && it->second == value;
     };
-    if (source_type_ == SourceType::File && file_category_ == FileCategory::Text &&
+    if (file_category_ == FileCategory::Text &&
         data_load_state_ == DataLoadState::InMemory && loaded_backend_ == 5) {
         auto& registry = cyxwiz::DataRegistry::Instance();
         // Compare against the dialog's applied source contract; do not retain
@@ -174,8 +172,7 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
             registry.IsTextDataset(loaded_dataset_name_) &&
             registry.IsArrowDataset(loaded_dataset_name_);
     }
-    if (source_type_ != SourceType::File ||
-        (file_category_ != FileCategory::Tabular &&
+    if ((file_category_ != FileCategory::Tabular &&
          file_category_ != FileCategory::TimeSeries) ||
         loaded_dataset_name_.empty() ||
         data_load_state_ != DataLoadState::InMemory ||
@@ -375,9 +372,6 @@ void DataInputDialog::BrowseFile() {
         case FileCategory::Audio:
             filters = {{"Audio Files", "wav,mp3,flac,ogg,m4a,aac"}, {"All Files", "*"}};
             break;
-        case FileCategory::Video:
-            filters = {{"Video Files", "mp4,avi,mov,mkv,webm,wmv"}, {"All Files", "*"}};
-            break;
         case FileCategory::Text:
             filters = {{"Text Data", "csv,tsv,json,jsonl,txt"}, {"CSV", "csv"},
                        {"TSV", "tsv"}, {"JSON", "json,jsonl"}, {"Plain Text", "txt"}, {"All Files", "*"}};
@@ -406,36 +400,16 @@ void DataInputDialog::BrowseFolder() {
 }
 
 std::string DataInputDialog::CurrentSourcePath() const {
-    if (source_type_ == SourceType::File) {
-        const bool uses_folder = data_input::UsesFolderPath(file_category_, text_layout_);
-        return uses_folder ? std::string(folder_path_) : std::string(file_path_);
-    }
-    if (source_type_ == SourceType::MLDataset) {
-        return std::string(dataset_name_);
-    }
-    if (source_type_ == SourceType::Database) {
-        if (database_type_ == DatabaseType::SQLite || database_type_ == DatabaseType::DuckDB) {
-            return std::string(db_file_);
-        }
-        return std::string(db_host_) + "/" + std::string(db_name_);
-    }
-    if (source_type_ == SourceType::Cloud) {
-        std::string source = cloud_bucket_;
-        if (strlen(cloud_path_) > 0) {
-            source += "/" + std::string(cloud_path_);
-        }
-        return source;
-    }
-    return {};
+    const bool uses_folder = data_input::UsesFolderPath(file_category_, text_layout_);
+    return uses_folder ? std::string(folder_path_) : std::string(file_path_);
 }
 
 std::string DataInputDialog::CurrentSourceLabel() const {
-    return data_input::CurrentSourceLabel(source_type_, file_category_, text_layout_);
+    return data_input::CurrentSourceLabel(file_category_, text_layout_);
 }
 
 std::string DataInputDialog::CurrentApplySummary() const {
     return data_input::CurrentApplySummary(
-        source_type_,
         file_category_,
         text_layout_,
         force_disk_backed_,
@@ -448,8 +422,7 @@ const char* DataInputDialog::BackendSummary() const {
 }
 
 bool DataInputDialog::IsHdf5Source() const {
-    if (source_type_ != SourceType::File ||
-        (file_category_ != FileCategory::Tabular && file_category_ != FileCategory::TimeSeries)) return false;
+    if ((file_category_ != FileCategory::Tabular && file_category_ != FileCategory::TimeSeries)) return false;
     const auto format_name = cyxwiz::data_input::ResolveFormat(data_input::FileTypeParam(detected_type_), file_path_);
     const auto* format = cyxwiz::data_input::FindFormat(format_name);
     return format && format->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection;
@@ -485,7 +458,6 @@ void DataInputDialog::RestoreOriginalHdf5Source() {
         return it == original_params_.end() ? std::string{} : it->second;
     };
     const auto path = original("file_path");
-    const auto source = data_input::SourceTypeFromParam(original("source_type"), SourceType::File);
     const auto category = data_input::FileCategoryFromParam(original("file_category"),
         data_input::DetectFileCategoryForPath(path, FileCategory::Tabular));
     int type = data_input::DetectFileTypeForPath(path, nullptr);
@@ -495,14 +467,13 @@ void DataInputDialog::RestoreOriginalHdf5Source() {
     if (!saved_type.empty()) type = data_input::FileTypeFromParam(saved_type, type);
     const auto* format = cyxwiz::data_input::FindFormat(
         cyxwiz::data_input::ResolveFormat(data_input::FileTypeParam(type), path));
-    const bool original_hdf5 = source == SourceType::File &&
+    const bool original_hdf5 =
         (category == FileCategory::Tabular || category == FileCategory::TimeSeries) &&
         format && format->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection;
     if (!original_hdf5 && !IsHdf5Source()) return;
 
     // Restore the source before its selection, including when the user edited
     // the file path or switched away from the original HDF5 category.
-    source_type_ = source;
     file_category_ = category;
     std::strncpy(file_path_, path.c_str(), sizeof(file_path_) - 1);
     file_path_[sizeof(file_path_) - 1] = '\0';
@@ -524,32 +495,12 @@ void DataInputDialog::OnClose() {
     ResetPreviewPaging();
 }
 
-bool DataInputDialog::IsApplySupported() const {
-    return data_input::IsApplySupported(source_type_, file_category_);
-}
-
 bool DataInputDialog::IsPreviewSupported() const {
-    return data_input::IsPreviewSupported(source_type_, file_category_);
-}
-
-const char* DataInputDialog::UnsupportedApplyMessage() const {
-    return data_input::UnsupportedApplyMessage(source_type_, file_category_);
+    return data_input::IsPreviewSupported(file_category_);
 }
 
 const char* DataInputDialog::PreviewUnavailableMessage() const {
-    return data_input::PreviewUnavailableMessage(source_type_, file_category_);
-}
-
-void DataInputDialog::MarkApplyUnsupported(const char* message) {
-    apply_status_message_ = message ? message : "This data source is not available yet.";
-    apply_success_ = false;
-    apply_status_timer_ = 8.0f;
-    if (node_) {
-        node_->parameters["data_loaded"] = "false";
-    }
-    apply_in_progress_ = false;
-    has_changes_ = false;
-    spdlog::warn("DataInputDialog: unsupported Apply path - {}", apply_status_message_);
+    return data_input::PreviewUnavailableMessage(file_category_);
 }
 
 std::string DataInputDialog::FormatBytes(size_t bytes) {
@@ -557,13 +508,7 @@ std::string DataInputDialog::FormatBytes(size_t bytes) {
 }
 
 std::string DataInputDialog::GenerateDatasetName() const {
-    return data_input::GenerateDatasetName(
-        source_type_,
-        file_path_,
-        folder_path_,
-        dataset_name_,
-        db_name_,
-        cloud_bucket_);
+    return data_input::GenerateDatasetName(file_path_, folder_path_);
 }
 
 } // namespace gui

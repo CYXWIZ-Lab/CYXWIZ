@@ -19,3 +19,11 @@ you do ("Nothing changed").
 
 A file field is a path box with **Browse...** beside it; typing a path works
 as well as browsing.
+
+## Data Input
+
+Data Input reads a file or a folder: a table (CSV, TSV, JSON Lines, Parquet,
+Feather, Arrow / IPC, a ZIP of text documents; HDF5 files can be inspected),
+text, a token-tagging table, a time series, a folder of images or a folder of
+audio. Databases come in through Data Studio's SQL Workbench, not through Data
+Input.
