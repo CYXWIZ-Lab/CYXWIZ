@@ -50,8 +50,6 @@ enum class GraphDatasetKind { Sparse, Image, Audio, Text };
 
 struct GraphTextDatasetInfo {
     size_t num_samples = 0;
-    size_t vocab_size = 0;
-    int max_length = 0;
 };
 
 // A Quality Analyzer's verdict on an image dataset (TOFIX140): the files

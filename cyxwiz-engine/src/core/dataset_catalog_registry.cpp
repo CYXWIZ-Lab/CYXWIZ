@@ -54,7 +54,7 @@ std::vector<DatasetCatalogItem> DataRegistry::CatalogItems() const {
     for (const auto& [name, e] : audio_dataset_entries_)
         out.push_back({name, kBackingAudio, e.num_samples, 0, e.num_classes, e.folder_path, HashOf(e.folder_path + "|" + e.csv_path, e.num_samples, e.num_classes)});
     for (const auto& [name, e] : text_dataset_entries_)
-        out.push_back({name, kBackingText, e.num_samples, 0, e.num_classes, e.source_path, HashOf(e.source_path + "|" + e.text_column, e.num_samples, e.vocab_size)});
+        out.push_back({name, kBackingText, e.num_samples, 0, e.num_classes, e.source_path, HashOf(e.source_path + "|" + e.text_column, e.num_samples, e.num_classes)});
     for (const auto& [name, ds] : datasets_) {
         if (!ds) continue;
         const DatasetInfo info = ds->GetInfo();

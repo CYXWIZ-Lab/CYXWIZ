@@ -23,7 +23,6 @@
 #include "loaders/text_loader.h"
 #include "../core/data_registry.h"
 #include "../core/formats/audio_dataset.h"
-#include "../core/formats/text_dataset.h"
 #include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/async_task_manager.h"

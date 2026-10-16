@@ -161,36 +161,11 @@ struct AudioPreprocessingConfig {
 };
 
 /**
- * Legacy text preprocessing override bundle.
- *
- * GraphCompiler no longer populates this from TextTokenizer /
- * TextVocabulary / TextPadding nodes. Those graph nodes route through
- * Arrow materialization: TextTokenizer is the real operator, while
- * TextVocabulary and TextPadding fold into its params in
- * PipelineMaterializer.
- *
- * This struct remains for explicit compatibility callers that construct
- * TextDatasetBatcher directly with overrides. When all presence flags are
- * false, TextDatasetBatcher uses the dialog-baked defaults on
- * DataRegistry::TextDatasetEntry.
+ * Text shape contract the compiler reads from the graph: the reachable Text
+ * Tokenizer's max_length (and pad value) or a vectorizer's max_features.
+ * Tokenizing itself runs in PipelineMaterializer.
  */
 struct TextPreprocessingConfig {
-    bool has_tokenizer_node = false;
-    bool has_vectorizer_node = false;
-    // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
-    int tokenizer_type = 1;
-    bool lowercase = true;
-    bool do_padding = true;
-    bool do_truncation = true;
-
-    // Vocabulary override for explicit compatibility callers.
-    bool has_vocabulary_node = false;
-    int min_word_freq = 1;
-    int max_vocab_size = -1;         // -1 = unlimited
-    std::string vocab_file;          // optional pre-built vocab path
-
-    // Padding override for explicit compatibility callers.
-    bool has_padding_node = false;
     int max_length = 512;
     int pad_value = 0;
 };

@@ -12,10 +12,10 @@ namespace cyxwiz::loaders {
 // source_path — the dialog puts either the file_path or folder_path
 // there based on the user's layout choice.
 //
-// The worker builds a TextDataset probe (tokenizer + vocab + sample
-// enumeration), then calls DataRegistry::RegisterTextDataset with
-// the resulting metadata. Feature tensors are materialized lazily at
-// training time by TextDatasetBatcher, not here.
+// The worker reads the raw texts and labels, registers them as an
+// Arrow table and calls DataRegistry::RegisterTextDataset with the
+// metadata. Tokenizing happens only in the Text Tokenizer node; text
+// never trains from this loader directly.
 class TextLoader : public DataLoader {
 public:
     FileCategory Category() const override { return FileCategory::Text; }

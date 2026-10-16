@@ -81,13 +81,7 @@ int main() {
         cfg.text_column = "body";
         cfg.label_column = "label";
         cfg.has_labels = true;
-        cfg.max_length = 4;
-        cyxwiz::TextDataset dataset(
-            jsonl.string(), cfg, cyxwiz::TextDatasetLoadMode::RawOnly);
-        Check(!dataset.IsTokenizerInitialized(),
-              "raw-only TextDataset should not initialize tokenizer");
-        Check(dataset.GetVocabSize() == 0,
-              "raw-only TextDataset should not build vocabulary");
+        cyxwiz::TextDataset dataset(jsonl.string(), cfg);
 
         auto table = BuildTableOrFail(dataset, "body", "label");
         Check(table->num_rows() == 2, "JSONL table row count");
@@ -105,7 +99,6 @@ int main() {
         cfg.text_column = "text";
         cfg.label_column = "label";
         cfg.has_labels = false;
-        cfg.max_length = 4;
         cyxwiz::TextDataset dataset(txt.string(), cfg);
 
         auto table = BuildTableOrFail(dataset, "text", "label");
@@ -124,7 +117,6 @@ int main() {
         cyxwiz::TextDatasetConfig cfg;
         cfg.text_column = "text";
         cfg.label_column = "label";
-        cfg.max_length = 4;
         cyxwiz::TextDataset dataset(corpus.string(), cfg);
 
         auto table = BuildTableOrFail(dataset, "text", "label");

@@ -66,10 +66,8 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::TimeSeriesFeatures, []() {
         return std::make_unique<TimeSeriesFeaturesOperator>();
     });
-    // Fix B (Phase 3 cleanup): TextTokenizer as a real Cat-1 operator.
-    // Inert for legacy text graphs that go through RegisterTextDataset
-    // (PipelineMaterializer skips non-Arrow datasets); active when
-    // DataInput is wired to register text CSVs as Arrow tables.
+    // Text: Data Input registers the raw text as an Arrow table; these
+    // operators turn it into numbers (TOFIX129 B-8).
     RegisterCreator(gui::NodeType::WordEmbeddings, []() {
         return std::make_unique<WordEmbeddingsOperator>();
     });

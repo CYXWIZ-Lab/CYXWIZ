@@ -8,7 +8,6 @@
 #include "../../core/formats/text_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
 #include "../../core/text_arrow_adapter.h"
-#include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -199,7 +198,7 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     raw_cfg.text_column  = text_col;
                     raw_cfg.label_column = label_col;
                     raw_cfg.has_labels   = has_labels;
-                    cyxwiz::TextDataset raw(path, raw_cfg, cyxwiz::TextDatasetLoadMode::RawOnly);
+                    cyxwiz::TextDataset raw(path, raw_cfg);
                     auto raw_table_result = cyxwiz::BuildRawTextArrowTable(raw, text_col, label_col);
                     if (!raw_table_result.ok() || !raw_table_result.ValueOrDie()) {
                         throw std::runtime_error(
@@ -313,35 +312,17 @@ cyxwiz::PreprocessingDomain TextLoader::Domain(
 }
 
 bool TextLoader::LaunchTraining(
-    cyxwiz::TrainingConfiguration config,
+    cyxwiz::TrainingConfiguration /*config*/,
     const std::string& dataset_name,
     const std::string& /*label_column*/,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback) {
-    auto* entry = cyxwiz::DataRegistry::Instance().GetTextDatasetEntry(dataset_name);
-    if (!entry) {
-        spdlog::error("TextLoader: text dataset '{}' is registered but entry "
-                      "could not be retrieved", dataset_name);
-        return false;
-    }
-    if (cyxwiz::DataRegistry::Instance().IsArrowDataset(dataset_name)) {
-        spdlog::info("TextLoader: '{}' also has raw Arrow backing. Using legacy "
-                     "TextDatasetBatcher because no materialized Cat-1 text table "
-                     "was selected; graphs with TextTokenizer materialize to "
-                     "'{}__materialized' and route through Arrow training.",
-                     dataset_name, dataset_name);
-    }
-    spdlog::info("TextLoader: Starting text training: dataset={}, epochs={}, "
-                 "batch_size={}, num_workers={}, {} samples, {} classes, "
-                 "max_length={}, vocab_size={}",
-                 dataset_name, epochs, batch_size, config.num_workers,
-                 entry->num_samples, entry->num_classes,
-                 entry->max_length, entry->vocab_size);
-    return cyxwiz::TrainingManager::Instance().StartTrainingText(
-        std::move(config), *entry, epochs, batch_size, plot_panel,
-        std::move(node_editor_callback));
+    int /*epochs*/,
+    int /*batch_size*/,
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> /*plot_panel*/,
+    std::function<void(bool)> /*node_editor_callback*/) {
+    spdlog::error("TextLoader: text dataset '{}' cannot train as raw text. Add a Text Tokenizer "
+                  "(or TF-IDF / Count Vectorizer) node; text trains through its tokenized table.",
+                  dataset_name);
+    return false;
 }
 
 std::vector<ParamSchema> TextLoader::NodeParams() const {

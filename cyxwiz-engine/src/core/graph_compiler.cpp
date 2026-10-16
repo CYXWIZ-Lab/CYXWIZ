@@ -561,10 +561,8 @@ void ValidateDenseTextVectorizerMaterializerMemory(
     }
 
     size_t sample_count = 0;
-    size_t full_vocab_size = 0;
     if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
         sample_count = text_info->num_samples;
-        full_vocab_size = text_info->vocab_size;
     }
     if (sample_count == 0) {
         if (auto arrow_ds = GraphArrowDataset(config.dataset_name)) {
@@ -601,13 +599,7 @@ void ValidateDenseTextVectorizerMaterializerMemory(
 
     std::ostringstream msg;
     msg << TextVectorizerName(vectorizer_node->type)
-        << " dense output is large: rows=" << sample_count;
-    if (full_vocab_size > 0) {
-        msg << ", full_vocab=" << full_vocab_size;
-    } else {
-        msg << ", full_vocab=unknown";
-    }
-    msg
+        << " dense output is large: rows=" << sample_count
         << ", max_features=" << max_features
         << ", ngram_range=" << ngram_range
         << ", stop_words=" << stop_words
@@ -661,7 +653,6 @@ void ValidateSparseFeatureTrainingContract(
     const auto* vectorizer = sparse_vectorizers.front();
     const size_t sparse_width = ParsePositiveSizeParam(
         *vectorizer, "max_features", 2000);
-    config.text_preprocessing.has_vectorizer_node = true;
     config.text_preprocessing.max_length = static_cast<int>(sparse_width);
     config.input_size = sparse_width;
     config.input_shape = {sparse_width};
@@ -2085,17 +2076,6 @@ void ApplyTextInputShape(TrainingConfiguration& config) {
     }
 
     int max_length = config.text_preprocessing.max_length;
-    const bool graph_overrides_length =
-        config.text_preprocessing.has_tokenizer_node ||
-        config.text_preprocessing.has_vectorizer_node ||
-        config.text_preprocessing.has_padding_node;
-
-    if (!graph_overrides_length && !config.dataset_name.empty()) {
-        if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
-            max_length = text_info->max_length;
-        }
-    }
-
     if (max_length <= 0) {
         max_length = 1;
     }
@@ -5964,12 +5944,12 @@ TrainingConfiguration GraphCompiler::Compile(
     //     batch size vs row count) run on the pre-materialized CSV —
     //     validating the user's raw column pick, not the post-window
     //     x_0..x_n schema.
-    //   - Audio / Text: either the graph has extractor nodes (Spectrogram
-    //     / MelSpec / MFCC for audio, TextTokenizer / TextVocabulary /
-    //     TextPadding for text) that populate config.audio_preprocessing
-    //     / text_preprocessing later, or we fall back to the dialog-
-    //     baked defaults on the registry entry. The end-of-Compile()
-    //     log reports which mode won.
+    //   - Audio: either the graph has extractor nodes (Spectrogram /
+    //     MelSpec / MFCC) that populate config.audio_preprocessing later,
+    //     or we fall back to the dialog-baked defaults on the registry
+    //     entry. The end-of-Compile() log reports which mode won.
+    //   - Text: tokenizing runs only in the Text Tokenizer (or a
+    //     vectorizer) operator; text without one is refused.
     if (dataset_node) {
         auto cat_it = dataset_node->parameters.find("file_category");
         const std::string cat = (cat_it != dataset_node->parameters.end())
@@ -7073,26 +7053,14 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
 // --- Text preprocessing (Arrow materializer path) ---
 // TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
-// current max_length instead of the registered dataset's dialog default.
+// current max_length.
 static void ExtractTextTokenizerShape(
     const gui::MLNode& node,
     TrainingConfiguration& config) {
-    config.text_preprocessing.has_tokenizer_node = true;
-    config.text_preprocessing.has_padding_node = true;
     if (node.parameters.count("max_length")) {
         config.text_preprocessing.max_length =
             static_cast<int>(ParseSizeParam(node.parameters, "max_length", 512));
     }
-    if (node.parameters.count("tokenizer_type")) {
-        config.text_preprocessing.tokenizer_type =
-            static_cast<int>(ParseSizeParam(node.parameters, "tokenizer_type", 1));
-    }
-    config.text_preprocessing.lowercase =
-        ParseBoolParam(node.parameters, "lowercase", config.text_preprocessing.tokenizer_type != 3);
-    config.text_preprocessing.do_padding =
-        ParseBoolParam(node.parameters, "padding", true);
-    config.text_preprocessing.do_truncation =
-        ParseBoolParam(node.parameters, "truncation", true);
     if (node.parameters.count("pad_value")) {
         config.text_preprocessing.pad_value =
             static_cast<int>(ParseSizeParam(node.parameters, "pad_value", 0));
@@ -7104,7 +7072,6 @@ static void ExtractTextTokenizerShape(
 static void ExtractTextVectorizerShape(
     const gui::MLNode& node,
     TrainingConfiguration& config) {
-    config.text_preprocessing.has_vectorizer_node = true;
     const int max_features = static_cast<int>(
         ParseSizeParam(node.parameters, "max_features", 2000));
     config.text_preprocessing.max_length = std::max(1, max_features);

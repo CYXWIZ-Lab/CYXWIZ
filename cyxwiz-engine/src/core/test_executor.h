@@ -5,7 +5,6 @@
 #include "dataset_batcher.h"
 #include "data_registry.h"
 #include "test_dataset_selection.h"
-#include "text_dataset_batcher.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
@@ -145,7 +144,7 @@ class TestExecutor {
 public:
     /**
      * Create a test executor for a host-built test batcher (e.g. DataRegistry
-     * or text datasets, see legacy_dataset_batchers.h).
+     * datasets, see legacy_dataset_batchers.h).
      */
     TestExecutor(TrainingConfiguration config, ExternalTestSource source);
     TestExecutor(TrainingConfiguration config,

@@ -255,9 +255,9 @@ void DataInputDialog::Apply() {
     //
     // TextDataset's constructor auto-detects file vs directory from the
     // path itself, so the only thing differing between the two paths is
-    // which field we pull the source from. The worker body runs the
-    // tokenizer + vocab build, then calls RegisterTextDataset under its
-    // own lock. PollAsyncLoadResult drains the result onto the UI thread
+    // which field we pull the source from. The worker body reads the
+    // texts and labels, then calls RegisterTextDataset under its own
+    // lock. PollAsyncLoadResult drains the result onto the UI thread
     // on the next frame.
     const bool text_single_ready =
         file_category_ == FileCategory::Text &&
@@ -270,8 +270,8 @@ void DataInputDialog::Apply() {
     if ((text_single_ready || text_corpus_ready)) {
         // Text load — routes through TextLoader. Branch takes priority
         // over the tabular branch below because a CSV file with Text
-        // category selected needs the tokenizer / vocab pipeline, not
-        // the plain Arrow path. TextDataset auto-detects file vs
+        // category selected registers text metadata, not just the plain
+        // Arrow path. TextDataset auto-detects file vs
         // directory from the source path, so we just pick the right
         // field (file_path_ for SingleFile, folder_path_ for
         // CorpusSubdirs) and the loader forwards it.

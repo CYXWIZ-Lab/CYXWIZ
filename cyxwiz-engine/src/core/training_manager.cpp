@@ -9,7 +9,6 @@
 #include "crash_run_recorder.h"
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
-#include "text_dataset_batcher.h"
 #include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
@@ -789,85 +788,6 @@ bool TrainingManager::StartTrainingAudio(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),
         "Training Model (Audio)", "Training from Audio Dataset");
-}
-
-bool TrainingManager::StartTrainingText(
-    TrainingConfiguration config,
-    const DataRegistry::TextDatasetEntry& text_entry,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start training - already training");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_training_.load()) return false;
-
-    // Normalize before constructing TextDatasetBatcher so its delegated
-    // ArrowDatasetBatchers receive the actual worker budget.
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    // Build the text batcher. TextDatasetBatcher owns a TextDataset
-    // internally which performs tokenization + vocab building on
-    // construction. Graph preprocessing nodes (Tokenizer / Vocabulary /
-    // Padding) override the dialog defaults stored on text_entry.
-    auto batcher = std::make_unique<TextDatasetBatcher>(
-        text_entry,
-        config.text_preprocessing,
-        batch_size,
-        config.train_ratio,
-        config.val_ratio,
-        config.test_ratio,
-        config.shuffle,
-        config.num_workers,
-        static_cast<uint32_t>(config.dataloader_seed),
-        config.stratified,
-        static_cast<uint32_t>(std::max(0, config.split_seed)),
-        config.balance_classes,
-        config.balance_mode,
-        config.balance_target,
-        static_cast<uint32_t>(std::max(0, config.balance_seed)));
-    batcher->SetDropLast(config.drop_last);
-
-    if (batcher->GetNumSamples() == 0) {
-        spdlog::error("TrainingManager: Text dataset has 0 samples");
-        return false;
-    }
-
-    // input_size is max_length (1D flat sequence of token IDs). The
-    // Embedding layer (if present as the first model layer) will
-    // project these to [batch, max_length, embed_dim]. Without an
-    // Embedding layer, the first Dense layer sees raw token IDs as
-    // features, which is unusual but allowed.
-    config.input_size = static_cast<size_t>(batcher->GetMaxLength());
-    config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
-
-    spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
-                 "(max_length), vocab_size={}, num_workers={}, seed={}",
-                 batcher->GetNumSamples(), config.input_size,
-                 batcher->GetVocabSize(), config.num_workers,
-                 config.dataloader_seed);
-
-    // Hand preprocessing / one-hot hints through to the batcher —
-    // same pattern as the image/audio paths.
-    if (UsesScalarBinaryTargets(config.loss_type)) {
-        batcher->SetScalarLabelMode(true);
-    } else if (config.preprocessing.has_onehot &&
-               config.preprocessing.num_classes > 0) {
-        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
-    }
-
-    batcher->TryApplyBalancedClassWeights(config);
-
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Text)", "Training from Text Dataset");
 }
 #endif
 
