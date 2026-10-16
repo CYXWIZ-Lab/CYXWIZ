@@ -147,6 +147,7 @@ bool AudioLoader::RestoreFromRegistry(const std::string& name,
 
     out.found   = true;
     out.rows    = static_cast<int64_t>(entry->num_samples);
+    out.classes = static_cast<int64_t>(entry->num_classes);
     out.cols    = 1;
     out.bytes   = 0;  // decoded per batch by the feature node
     out.backend = 4;

@@ -1,129 +1,79 @@
-// DataInputDialog dataset summary rendering.
+// DataInputDialog data strip: what the node loads and how far it got, above
+// the tabs (TOFIX129 B-2; words from core/data_input_presentation).
 
 #include "node_config_dialog.h"
 #include "ui_tokens.h"
+#include "ui_widgets.h"
+#include "../core/data_input_presentation.h"
 
+#include <chrono>
 #include <string>
 
 namespace gui {
 
-void DataInputDialog::RenderDatasetSummaryPanel() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+void DataInputDialog::RenderDataStrip() {
+    namespace view = cyxwiz::data_input_view;
+    const auto& t = cyxwiz::ui::CurrentTokens();
 
-    ImGui::TextColored(accent, "DATASET SUMMARY");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const bool loaded =
-        data_load_state_ == DataLoadState::InMemory &&
-        !loaded_dataset_name_.empty();
-
-    if (loaded) {
-        ImGui::Text("Dataset:");
-        ImGui::SameLine(120);
-        ImGui::TextUnformatted(loaded_dataset_name_.c_str());
-
-        ImGui::Text("Rows / samples:");
-        ImGui::SameLine(120);
-        ImGui::Text("%lld", static_cast<long long>(loaded_rows_));
-
-        if (loaded_cols_ > 0) {
-            ImGui::Text("Columns:");
-            ImGui::SameLine(120);
-            ImGui::Text("%lld", static_cast<long long>(loaded_cols_));
-        }
-
-        ImGui::Text("Backend:");
-        ImGui::SameLine(120);
-        ImGui::TextUnformatted(BackendSummary());
-
-        ImGui::Text("Footprint:");
-        ImGui::SameLine(120);
-        if (loaded_backend_ == 2) {
-            ImGui::Text("%s on disk", FormatBytes(loaded_memory_bytes_).c_str());
-        } else if (loaded_backend_ == 3) {
-            ImGui::TextUnformatted("decoded per batch at the Resize size");
-        } else if (loaded_backend_ == 4) {
-            ImGui::TextUnformatted("decoded per batch by the feature node");
-        } else if (loaded_memory_is_estimate_) {
-            ImGui::Text("~%s if fully cached", FormatBytes(loaded_memory_bytes_).c_str());
-        } else {
-            ImGui::Text("%s RAM", FormatBytes(loaded_memory_bytes_).c_str());
-        }
-
-        if (last_load_elapsed_ms_ >= 0.0f) {
-            ImGui::Text("Last Apply:");
-            ImGui::SameLine(120);
-            if (last_load_elapsed_ms_ < 1000.0f) {
-                ImGui::Text("%.0f ms", last_load_elapsed_ms_);
-            } else {
-                ImGui::Text("%.2f s", last_load_elapsed_ms_ / 1000.0f);
-            }
-        }
-
-        if (node_) {
-            auto errors = node_->parameters.find("audit_errors");
-            auto warnings = node_->parameters.find("audit_warnings");
-            if (errors != node_->parameters.end() || warnings != node_->parameters.end()) {
-                ImGui::Text("Audit:");
-                ImGui::SameLine(120);
-                ImGui::Text("%s errors, %s warnings",
-                            errors != node_->parameters.end() ? errors->second.c_str() : "0",
-                            warnings != node_->parameters.end() ? warnings->second.c_str() : "0");
-            }
-        }
-        return;
+    view::StripInput in;
+    in.source = CurrentSourcePath();
+    const bool table = file_category_ == FileCategory::Tabular || file_category_ == FileCategory::TimeSeries;
+    in.kind = table && in.source == file_path_ ? std::string(GetFileTypeName()) + " table" : CurrentSourceLabel();
+    in.file_size = file_size_;
+    in.loading = is_loading_async_;
+    if (in.loading) {
+        in.loading_message = apply_status_message_;
+        while (!in.loading_message.empty() && in.loading_message.back() == '.') in.loading_message.pop_back();
+        const auto running = std::chrono::steady_clock::now() - apply_started_at_;
+        in.loading_seconds = std::chrono::duration<double>(running).count();
     }
+    in.loaded = data_load_state_ == DataLoadState::InMemory && !loaded_dataset_name_.empty();
+    in.dataset_name = loaded_dataset_name_;
+    in.rows = loaded_rows_;
+    in.cols = loaded_cols_;
+    in.classes = loaded_classes_;
+    in.backend = static_cast<view::Backend>(loaded_backend_);
+    in.bytes = loaded_memory_bytes_;
+    in.bytes_estimate = loaded_memory_is_estimate_;
+    in.load_seconds = last_load_elapsed_ms_ >= 0.0f ? last_load_elapsed_ms_ / 1000.0 : -1.0;
+    if (node_) {
+        const auto count = [this](const char* key) {
+            const auto it = node_->parameters.find(key);
+            try { return it == node_->parameters.end() ? -1 : std::stoi(it->second); } catch (...) { return -1; }
+        };
+        in.audit_errors = count("audit_errors");
+        in.audit_warnings = count("audit_warnings");
+    }
+    if (!in.loading && !apply_success_ && !apply_status_message_.empty()) {
+        in.failed = true;
+        in.failure = apply_status_message_;
+    }
+    const view::Strip strip = view::BuildStrip(in);
 
-    if (is_loading_async_) {
-        ImGui::Text("State:");
-        ImGui::SameLine(120);
-        ImGui::TextUnformatted("Loading");
-        if (async_load_state_ && !async_load_state_->dataset_name.empty()) {
-            ImGui::Text("Dataset:");
-            ImGui::SameLine(120);
-            ImGui::TextUnformatted(async_load_state_->dataset_name.c_str());
+    const ImVec4 tone = strip.tone == view::LoadTone::Loaded    ? t.success
+                        : strip.tone == view::LoadTone::Loading ? t.accent_text
+                        : strip.tone == view::LoadTone::Failed  ? t.error
+                                                                : t.warning;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(strip.title.c_str());
+    ImGui::SameLine(0.0f, t.space_lg);
+    ImGui::TextColored(tone, "%s", strip.state.c_str());
+    if (!strip.detail.empty()) {
+        ImGui::SameLine(0.0f, t.space_md);
+        ImGui::TextColored(t.text_dim, "%s", strip.detail.c_str());
+    }
+    if (!strip.facts.empty()) {
+        cyxwiz::ui::FlowRow row;
+        for (const auto& fact : strip.facts) {
+            const std::string text = fact.value + " " + fact.label;
+            row.Next(ImGui::CalcTextSize(text.c_str()).x);
+            ImGui::TextUnformatted(fact.value.c_str());
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextColored(t.text_dim, "%s", fact.label.c_str());
         }
-        const std::string source = CurrentSourcePath();
-        if (!source.empty()) {
-            ImGui::Text("Source:");
-            ImGui::SameLine(120);
-            ImGui::TextUnformatted(source.c_str());
-        }
-        ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
-        return;
     }
-
-    const std::string source = CurrentSourcePath();
-    if (source.empty()) {
-        ImGui::TextDisabled("No source selected.");
-    } else {
-        ImGui::Text("Source:");
-        ImGui::SameLine(120);
-        ImGui::TextUnformatted(source.c_str());
-    }
-
-    ImGui::Text("Type:");
-    ImGui::SameLine(120);
-    ImGui::TextUnformatted(CurrentSourceLabel().c_str());
-
-    if (preview_loaded_ && preview_error_.empty()) {
-        ImGui::Text("Preview:");
-        ImGui::SameLine(120);
-        ImGui::Text("%zu rows, %zu columns",
-                    preview_data_.size(), preview_columns_.size());
-    }
-
-    if (file_size_ > 0) {
-        ImGui::Text("Disk size:");
-        ImGui::SameLine(120);
-        ImGui::TextUnformatted(FormatBytes(file_size_).c_str());
-    }
-
-    RenderSequenceSummary();
-
-    ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
+    if (!strip.note.empty()) ImGui::TextColored(t.text_faint, "%s", strip.note.c_str());
+    ImGui::PopTextWrapPos();
 }
 
 } // namespace gui

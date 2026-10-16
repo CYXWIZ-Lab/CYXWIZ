@@ -24,7 +24,6 @@ void DataInputDialog::Apply() {
     if (IsHdf5Source()) {
         apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
         apply_success_ = false;
-        apply_status_timer_ = 8.0f;
         return;
     }
 
@@ -42,6 +41,7 @@ void DataInputDialog::Apply() {
                 loaded_dataset_name_ = existing->second;
                 loaded_rows_ = restored.rows;
                 loaded_cols_ = restored.cols;
+                loaded_classes_ = restored.classes;
                 loaded_memory_bytes_ = restored.bytes;
                 loaded_backend_ = restored.backend;
                 loaded_memory_is_estimate_ = restored.memory_is_estimate;
@@ -56,7 +56,6 @@ void DataInputDialog::Apply() {
                 apply_success_ = true;
                 apply_status_message_ = "Already loaded - reused " +
                     existing->second;
-                apply_status_timer_ = 5.0f;
                 apply_in_progress_ = false;
                 spdlog::info(
                     "DataInputDialog: unchanged Apply reused registered dataset '{}'",
@@ -232,7 +231,6 @@ void DataInputDialog::Apply() {
             "not a single file. Set the Folder path in the Image Loading "
             "Options section above.";
         apply_success_ = false;
-        apply_status_timer_ = 8.0f;
         node_->parameters["data_loaded"] = "false";
         apply_in_progress_ = false;
         has_changes_ = false;
@@ -288,7 +286,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Text";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: TextLoader not registered");
@@ -324,7 +321,6 @@ void DataInputDialog::Apply() {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: text validate - {}", err);
@@ -342,7 +338,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Reading ") +
             fs::path(text_source_path).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -384,7 +379,6 @@ void DataInputDialog::Apply() {
             // this should never fire in practice.
             apply_status_message_ = "No loader registered for this category";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: no loader for tabular category");
@@ -415,7 +409,6 @@ void DataInputDialog::Apply() {
                 apply_status_message_ =
                     "Select at least one column in the Transformation tab";
                 apply_success_ = false;
-                apply_status_timer_ = 7.0f;
                 apply_in_progress_ = false;
                 spdlog::warn("DataInputDialog: column projection is empty");
                 return;
@@ -428,7 +421,6 @@ void DataInputDialog::Apply() {
                 apply_status_message_ =
                     "The selected label column must remain included";
                 apply_success_ = false;
-                apply_status_timer_ = 7.0f;
                 apply_in_progress_ = false;
                 spdlog::warn(
                     "DataInputDialog: selected label column '{}' was excluded",
@@ -465,7 +457,6 @@ void DataInputDialog::Apply() {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: tabular validate - {}", err);
@@ -487,7 +478,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Loading ") +
             fs::path(file_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -515,7 +505,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Audio";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: AudioLoader not registered");
@@ -546,7 +535,6 @@ void DataInputDialog::Apply() {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: audio validate - {}", err);
@@ -564,7 +552,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Scanning ") +
             fs::path(folder_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -597,7 +584,6 @@ void DataInputDialog::Apply() {
         if (!loader) {
             apply_status_message_ = "No loader registered for Image";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: ImageLoader not registered");
@@ -624,7 +610,6 @@ void DataInputDialog::Apply() {
             apply_status_message_ = err;
             node_->parameters["data_loaded"] = "false";
             apply_success_ = false;
-            apply_status_timer_ = 6.0f;
             apply_in_progress_ = false;
             has_changes_ = false;
             spdlog::error("DataInputDialog: image validate - {}", err);
@@ -642,7 +627,6 @@ void DataInputDialog::Apply() {
 
         apply_status_message_ = std::string("Scanning ") +
             fs::path(folder_path_).filename().string() + "...";
-        apply_status_timer_ = 0.0f;
 
         loading_task_id_ = loader->LaunchAsyncLoad(ctx, state);
 
@@ -654,8 +638,7 @@ void DataInputDialog::Apply() {
         return;
     }
 
-    apply_in_progress_ = false;
-    apply_status_timer_ = 5.0f;  // Show for 5 seconds
+    apply_in_progress_ = false;  // Show for 5 seconds
 
     has_changes_ = false;
     spdlog::info("DataInputDialog: Applied settings");
@@ -691,6 +674,7 @@ void DataInputDialog::PollAsyncLoadResult() {
         loaded_dataset_name_ = state->previous_dataset_name;
         loaded_rows_ = restored.rows;
         loaded_cols_ = restored.cols;
+        loaded_classes_ = restored.classes;
         loaded_memory_bytes_ = restored.bytes;
         loaded_backend_ = restored.backend;
         loaded_memory_is_estimate_ = restored.memory_is_estimate;
@@ -709,6 +693,9 @@ void DataInputDialog::PollAsyncLoadResult() {
     if (state->success) {
         loaded_rows_ = state->rows;
         loaded_cols_ = state->cols;
+        // Image, audio and text loads count their classes; a table's label
+        // column is counted in Profile.
+        loaded_classes_ = state->backend >= 3 ? static_cast<int64_t>(state->num_classes) : -1;
         loaded_memory_bytes_ = state->bytes;
         loaded_backend_ = state->backend;
         loaded_dataset_name_ = state->dataset_name;
@@ -810,6 +797,14 @@ void DataInputDialog::PollAsyncLoadResult() {
         if (restore_previous_node_state()) {
             apply_status_message_ +=
                 " Previous loaded dataset remains active.";
+        } else {
+            // Nothing stays loaded: the strip and Memory tab say so.
+            data_load_state_ = DataLoadState::NotLoaded;
+            loaded_dataset_name_.clear();
+            loaded_rows_ = 0;
+            loaded_cols_ = 0;
+            loaded_classes_ = -1;
+            loaded_memory_bytes_ = 0;
         }
         spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
     }
@@ -819,8 +814,6 @@ void DataInputDialog::PollAsyncLoadResult() {
         last_load_elapsed_ms_ =
             std::chrono::duration<float, std::milli>(elapsed).count();
     }
-
-    apply_status_timer_ = 5.0f;  // 5 second fade-out
     apply_in_progress_ = false;
 }
 } // namespace gui

@@ -79,3 +79,18 @@ dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
 (after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
 folder holds nothing in memory: images are decoded per batch at the Resize
 size.
+
+### The data strip and the tabs
+
+Above Data Input's tabs a strip says what the node loads and how far it got,
+on every tab: the file or folder, its state (*Not loaded*, *Loading: ...*
+with the seconds so far, *Loaded in 1.79 s as sentiment_mental_health
+(text)*, or a red *Not loaded* with the reason and what to do), the counts
+(*52,681 samples, 7 classes, 30.0 MB on disk*) and how the data is held
+(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded per batch at
+the Resize size*). When an Apply fails while an earlier load stays, the
+strip keeps the earlier load and says the last Apply failed.
+
+The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
+(which columns to load, then the rows to skip and the row limit),
+**Memory** and **Audit**.

@@ -38,12 +38,6 @@ bool UsesFolderPath(cyxwiz::loaders::FileCategory file_category, TextLayout text
 std::string CurrentSourceLabel(
     cyxwiz::loaders::FileCategory file_category,
     TextLayout text_layout);
-std::string CurrentApplySummary(
-    cyxwiz::loaders::FileCategory file_category,
-    TextLayout text_layout,
-    bool force_disk_backed,
-    int max_rows,
-    int skip_rows);
 const char* BackendSummary(int loaded_backend);
 std::string GenerateDatasetName(const std::string& file_path, const std::string& folder_path);
 std::string FormatBytes(std::size_t bytes);

@@ -32,11 +32,6 @@ std::string LowerExtension(const std::string& path) {
     return ext;
 }
 
-bool IsTabularCategory(FileCategory file_category) {
-    return file_category == FileCategory::Tabular ||
-           file_category == FileCategory::TimeSeries;
-}
-
 } // namespace
 
 FileCategory FileCategoryFromParam(const std::string& value, FileCategory fallback) {
@@ -148,46 +143,6 @@ std::string CurrentSourceLabel(
         case FileCategory::TimeSeries: return "Time series file";
     }
     return "Unknown";
-}
-
-std::string CurrentApplySummary(
-    FileCategory file_category,
-    TextLayout text_layout,
-    bool force_disk_backed,
-    int max_rows,
-    int skip_rows) {
-    std::string summary;
-    switch (file_category) {
-        case FileCategory::Tabular:
-            summary = "load the selected file into DataRegistry as tabular data";
-            break;
-        case FileCategory::TimeSeries:
-            summary = "load the selected file through the tabular loader and mark it as time series";
-            break;
-        case FileCategory::Image:
-            summary = "scan the selected folder and register a lazy image dataset";
-            break;
-        case FileCategory::Audio:
-            summary = "scan the selected folder and register a lazy audio dataset";
-            break;
-        case FileCategory::Text:
-            summary = text_layout == TextLayout::CorpusSubdirs
-                ? "read each class folder's texts; a Text Tokenizer node tokenizes them"
-                : "read the text and label columns; a Text Tokenizer node tokenizes them";
-            break;
-    }
-
-    if (force_disk_backed && IsTabularCategory(file_category)) {
-        summary += " using the forced Parquet cache path";
-    }
-    if (max_rows > 0 && IsTabularCategory(file_category)) {
-        summary += " with a row limit of " + std::to_string(max_rows);
-    }
-    if (skip_rows > 0 && IsTabularCategory(file_category)) {
-        summary += " after skipping " + std::to_string(skip_rows) + " rows";
-    }
-    summary += ".";
-    return summary;
 }
 
 const char* BackendSummary(int loaded_backend) {

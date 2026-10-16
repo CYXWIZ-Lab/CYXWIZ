@@ -194,6 +194,7 @@ struct RestoreState {
     bool found = false;              // false → dataset not in registry
     int64_t rows = 0;
     int64_t cols = 0;
+    int64_t classes = -1;            // -1 = not counted (tables)
     size_t bytes = 0;
     int backend = 0;                 // BackendTag that was used (1..5)
     bool memory_is_estimate = false; // true for image/audio/text (lazy)

@@ -280,6 +280,7 @@ bool TextLoader::RestoreFromRegistry(const std::string& name,
 
     out.found   = true;
     out.rows    = static_cast<int64_t>(entry->num_samples);
+    out.classes = static_cast<int64_t>(entry->num_classes);
     out.cols    = 1;
     const auto stored = cyxwiz::DataRegistry::Instance().GetArrowDataset(name);
     out.bytes   = stored ? stored->GetMemoryUsage() : 0;

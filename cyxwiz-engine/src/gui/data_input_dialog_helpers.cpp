@@ -409,15 +409,6 @@ std::string DataInputDialog::CurrentSourceLabel() const {
     return data_input::CurrentSourceLabel(file_category_, text_layout_);
 }
 
-std::string DataInputDialog::CurrentApplySummary() const {
-    return data_input::CurrentApplySummary(
-        file_category_,
-        text_layout_,
-        force_disk_backed_,
-        max_rows_,
-        skip_rows_);
-}
-
 const char* DataInputDialog::BackendSummary() const {
     return data_input::BackendSummary(loaded_backend_);
 }

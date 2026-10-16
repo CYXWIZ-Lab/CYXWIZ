@@ -268,7 +268,10 @@ private:
     void RenderFileSource();
     void RenderOptionsPanel();
     void RenderPreviewPanel();
-    void RenderDatasetSummaryPanel();
+    // The data strip above the tabs: source, load state, facts (B-2).
+    void RenderDataStrip();
+    // Rows and columns tab: the column choice, then the row limits.
+    void RenderRowsAndColumnsTab();
 
     // File source sub-renderers
     void RenderTabularOptions();
@@ -331,7 +334,6 @@ private:
     const char* PreviewUnavailableMessage() const;
     std::string CurrentSourcePath() const;
     std::string CurrentSourceLabel() const;
-    std::string CurrentApplySummary() const;
     const char* BackendSummary() const;
     const char* GetFileTypeName() const;
 
@@ -445,7 +447,6 @@ private:
     bool is_loading_async_ = false;
     uint64_t loading_task_id_ = 0;
     // Animated dot count for the "Loading..." UI placeholder.
-    float loading_anim_phase_ = 0.0f;
 
     // Drains the async load result if the worker has finished. Called from
     // RenderContent() every frame; cheap when no load is in flight. Writes
@@ -491,11 +492,11 @@ private:
     bool apply_in_progress_ = false;
     bool apply_success_ = false;
     std::string apply_status_message_;
-    float apply_status_timer_ = 0.0f;
     std::chrono::steady_clock::time_point apply_started_at_{};
     float last_load_elapsed_ms_ = -1.0f;
     int64_t loaded_rows_ = 0;
     int64_t loaded_cols_ = 0;
+    int64_t loaded_classes_ = -1;   // -1 = not known (tables)
     size_t loaded_memory_bytes_ = 0;
     // True for image/audio datasets where loaded_memory_bytes_ is the
     // *if-fully-cached* size estimate, not actual RAM use. The Memory tab

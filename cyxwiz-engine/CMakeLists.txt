@@ -376,6 +376,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/data_input_presentation.cpp
     src/core/test_results_presentation.cpp
     src/core/test_results_export.cpp
     src/core/model_export_presentation.cpp
@@ -4175,6 +4176,17 @@ add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ===== Test: compile report, blocked training, memory risk (TOFIX129 B3) =====
+add_executable(test_data_input_presentation
+    tests/test_data_input_presentation.cpp
+    src/core/data_input_presentation.cpp
+)
+target_include_directories(test_data_input_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_data_input_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_data_input_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME data_input_presentation COMMAND test_data_input_presentation)
+
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp

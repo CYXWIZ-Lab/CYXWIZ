@@ -315,6 +315,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
             if (loader && loader->RestoreFromRegistry(loaded_dataset_name_, *node_, rs) && rs.found) {
                 loaded_rows_ = rs.rows;
                 loaded_cols_ = rs.cols;
+                loaded_classes_ = rs.classes;
                 loaded_memory_bytes_ = rs.bytes;
                 loaded_backend_ = rs.backend;
                 loaded_memory_is_estimate_ = rs.memory_is_estimate;
@@ -368,117 +369,41 @@ void DataInputDialog::RenderContent() {
     PollAsyncLoadResult();
     PollPreviewPageResult();
 
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-    const ImVec4 muted = style.Colors[ImGuiCol_TextDisabled];
-
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 8.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
 
-    ImGui::TextColored(accent, "Connect data");
-    ImGui::TextColored(muted,
-        "Choose a file or folder, inspect it, then apply it to this DataInput node.");
+    // The data strip stays above the tabs, so the load state shows on each.
+    RenderDataStrip();
     ImGui::Spacing();
 
-    {
-        if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Settings")) {
-                RenderFileSource();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Preview")) {
-                RenderPreviewPanel();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Data Profiling")) {
-                RenderDataProfilingTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Transformation")) {
-                RenderTransformationTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Limit Rows")) {
-                RenderLimitRowsTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Memory")) {
-                RenderMemoryTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Audit")) {
-                RenderAuditTab();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
+    if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
+        if (ImGui::BeginTabItem("Source")) {
+            RenderFileSource();
+            ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Preview")) {
+            RenderPreviewPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Profile")) {
+            RenderDataProfilingTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Rows and columns")) {
+            RenderRowsAndColumnsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Memory")) {
+            RenderMemoryTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Audit")) {
+            RenderAuditTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
 
-    // === Status bar (Apply feedback) ===
-    // Three states:
-    //   1. is_loading_async_ -> indeterminate progress bar + ticking dots
-    //   2. apply_status_timer_ > 0 -> fade-out success/error from a finished
-    //      apply (sync OR async)
-    //   3. otherwise -> nothing
-    if (is_loading_async_) {
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        ImVec4 loading_color(0.3f, 0.6f, 1.0f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, loading_color);
-
-        // Animated dots: 1-3 dots, ~2 cycles per second.
-        loading_anim_phase_ += ImGui::GetIO().DeltaTime * 2.0f;
-        int dots = 1 + (static_cast<int>(loading_anim_phase_) % 3);
-        std::string anim_dots(dots, '.');
-        std::string label = apply_status_message_.empty()
-            ? "Loading"
-            : apply_status_message_;
-        // Trim a trailing "..." from the message so we don't end up
-        // with five dots.
-        while (!label.empty() && label.back() == '.') label.pop_back();
-        ImGui::Text("%s%s", label.c_str(), anim_dots.c_str());
-
-        ImGui::PopStyleColor();
-
-        // Indeterminate-ish progress bar driven by the same phase.
-        float bar_phase = std::fmod(loading_anim_phase_ * 0.5f, 1.0f);
-        ImGui::ProgressBar(bar_phase, ImVec2(-1, 6.0f), "");
-
-        ImGui::TextDisabled("This dialog is non-blocking — you can close it; "
-                            "the load continues in the background.");
-    } else if (apply_status_timer_ > 0.0f) {
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        // Fade out effect
-        float alpha = std::min(1.0f, apply_status_timer_);
-        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
-        ImVec4 color = apply_success_
-            ? cyxwiz::ui::WithAlpha(t.success, alpha)
-            : cyxwiz::ui::WithAlpha(t.error, alpha);
-
-        ImGui::PushStyleColor(ImGuiCol_Text, color);
-
-        // Icon
-        if (apply_success_) {
-            ImGui::TextUnformatted("\xE2\x9C\x93");  // Checkmark (UTF-8)
-        } else {
-            ImGui::TextUnformatted("\xE2\x9C\x97");  // X mark (UTF-8)
-        }
-        ImGui::SameLine();
-        ImGui::TextUnformatted(apply_status_message_.c_str());
-
-        ImGui::PopStyleColor();
-
-        // Decrease timer (assuming ~60fps, subtract per frame)
-        apply_status_timer_ -= ImGui::GetIO().DeltaTime;
-    }
-
-    // Dataset summary
-    ImGui::Spacing();
-    ImGui::Spacing();
-    RenderDatasetSummaryPanel();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 }
