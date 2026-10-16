@@ -4461,7 +4461,11 @@ add_test(NAME separate_windows_contract COMMAND test_separate_windows)
 add_executable(test_data_preview_controls
     tests/test_data_preview_controls.cpp
     src/gui/data_preview_table_renderer.cpp
+    src/gui/ui_buttons.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
 )
+target_include_directories(test_data_preview_controls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_data_preview_controls PRIVATE imgui::imgui)
 if(WIN32)
     target_compile_definitions(test_data_preview_controls PRIVATE NOMINMAX)
