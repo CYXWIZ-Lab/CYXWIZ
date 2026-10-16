@@ -75,7 +75,8 @@ finds them.
    cosine similarity, a quick check that the vectors make sense. With fastText
    a word the vectors lack still gets neighbours from its pieces, noted "not
    in the training words · from 26 pieces" (the model of this session's run,
-   or the `.bin` read again for that word).
+   else the model saved with the vectors, or the pretrained `.bin` read again
+   for that word).
 6. **Outputs**: where the vectors are saved, and **Row vectors** for the Rows
    pin.
 
@@ -104,7 +105,8 @@ Training runs again when:
 - a setting of the method changes (vector size, window, epochs, seed, ...),
   or the Missing words rules when a vocabulary is used;
 - the vocabulary file is chosen, removed or edited;
-- the saved `.vec` is replaced or edited.
+- the saved `.vec` is replaced or edited;
+- fastText: the saved model (`.bin`) is replaced, edited or deleted.
 
 **Row vectors**, the save path, and settings of the other methods (GloVe's
 window for a word2vec run) do not count. To train again with nothing changed,
@@ -115,7 +117,17 @@ After the project is reopened, the dialog shows the saved training ("Trained
 2026-10-15 19:40 in 92.3 s", its summary and line-up), and **Nearest words**
 looks words up in the saved vectors. When the settings in the dialog differ
 from that training's, it says "The settings changed since this training".
-fastText's lookups of untrained words need the model of a run in this session.
+
+A fastText training also saves its model beside the vectors, in fastText's
+own `.bin` format: `sentiment_fasttext.vec` gets `sentiment_fasttext.bin`
+(a vectors path that already ends in `.bin` gets `<name>.bin.model.bin`).
+The `.vec` holds the trained words only; the model keeps the pieces' rows, so
+after a reopen **Nearest words** still builds words the training never saw
+("anxietyy" -> anxiety). The model is about as large on disk as the buckets
+are on the device (800 MB at 2,000,000 buckets and 100 values); fewer buckets
+make it smaller. fastText and gensim open it too
+(`gensim.models.fasttext.load_facebook_model`), and the Word Embeddings node
+reads it as a pretrained fastText model.
 
 ## On the Training Dashboard
 
@@ -356,7 +368,9 @@ The check graph is `word_embeddings_check.cyxgraph` in the test project
   row means and word2vec steps against gensim 4.4.0 / PyTorch fixtures; GloVe
   counts, AdaGrad steps and group quality against numpy / PyTorch
   (`reference/generate_glove_fixtures.py`); fastText hash, pieces, steps,
-  vectors, group quality (words and unseen variants) and a fastText `.bin`
+  vectors, group quality (words and unseen variants), a trained model saved
+  as `.bin` and read back (header, words, the same vectors for known and
+  unseen words) and a fastText `.bin`
   (header, vectors, a vocabulary lined up with pieces) against gensim /
   PyTorch (`reference/generate_fasttext_fixtures.py`). Runs on CUDA, OpenCL
   and CPU.
@@ -365,7 +379,9 @@ The check graph is `word_embeddings_check.cyxgraph` in the test project
   repeat, GloVe's two progress stages, the dashboard's figures: settings,
   vocabulary, pairs, each epoch's loss or cost, the line-up, the end;
   fastText trained and lined up with a token built from pieces, Words not
-  trained as missing, the model kept for the dialog, a fastText `.bin` read
+  trained as missing, the model kept for the dialog and saved as `.bin`
+  (reused with both files, trained again when the `.bin` is deleted), a
+  fastText `.bin` read
   for a vocabulary; refusals).
 - `test_word_embeddings_presentation`: the dialog's wording (with the
   pieces in the line-up, the fastText file summary, the unseen-word note).

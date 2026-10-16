@@ -12,8 +12,9 @@
 
 namespace cyxwiz {
 
-// Raised when a change to the trainers makes earlier vectors stale.
-inline constexpr int kWordVectorsTrainingVersion = 1;
+// Raised when a change to the trainers makes earlier vectors stale (2: a
+// fastText training saves its model beside the vectors).
+inline constexpr int kWordVectorsTrainingVersion = 2;
 
 struct WordVectorsTrainingRecord {
     int version = kWordVectorsTrainingVersion;
@@ -27,16 +28,25 @@ struct WordVectorsTrainingRecord {
     // The saved file as written; another size or time means it was replaced.
     uint64_t vectors_bytes = 0;
     int64_t vectors_time = 0;
+    // fastText: the model saved at FastTextModelPath, as written.
+    bool fasttext_model = false;
+    uint64_t model_bytes = 0;
+    int64_t model_time = 0;
 };
 
 std::string WordVectorsTrainingRecordPath(const std::string& vectors_path);
+// Where a fastText training saves its model (.bin) beside the vectors:
+// "words.vec" -> "words.bin" ("words.bin" -> "words.bin.model.bin").
+std::string FastTextModelPath(const std::string& vectors_path);
 
-// Writes the record beside `vectors_path`, taking the file's size and time now.
+// Writes the record beside `vectors_path`, taking the file's size and time now
+// (and the model's, with fasttext_model).
 bool WriteWordVectorsTrainingRecord(const std::string& vectors_path, WordVectorsTrainingRecord record,
                                     std::string* error = nullptr);
 
 // The record of `vectors_path`; empty when there is none, it is unreadable or
-// of another version, or the vectors file changed since it was written.
+// of another version, or the vectors file (or the fastText model) changed or
+// went since it was written.
 std::optional<WordVectorsTrainingRecord> ReadWordVectorsTrainingRecord(const std::string& vectors_path);
 
 }  // namespace cyxwiz

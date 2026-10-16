@@ -355,7 +355,7 @@ void CheckGloVeTraining() {
 
 // fastText trained on the text and lined up: a token the text lacks is built
 // from its pieces (or missing with unseen_words = missing); the model is kept
-// for the dialog's unseen words.
+// for the dialog's unseen words and saved beside the vectors (.bin).
 void CheckFastTextTraining(const fs::path& dir) {
     std::vector<std::string> texts;
     for (int i = 0; i < 300; ++i) texts.push_back(i % 2 ? "cat dog cat mouse dog cat" : "red blue green red blue red");
@@ -402,6 +402,27 @@ void CheckFastTextTraining(const fs::path& dir) {
     Check(mice > 0.0f && bangs == 0.0f, "mice has a vector from its pieces, !! zeros");
     const auto kept = cyxwiz::FindFastTextModel(saved.string());
     Check(kept && kept->bucket == 200 && kept->words.size() == 6, "the model is kept for the dialog");
+    // The model is saved beside the vectors for unseen words after the session;
+    // a run without it trains again (Train reuse needs both files).
+    const fs::path model_file = dir / "fasttext.bin";
+    const auto record = cyxwiz::ReadWordVectorsTrainingRecord(saved.string());
+    Check(fs::exists(model_file) && record && record->fasttext_model,
+          "fastText saves its model (fasttext.bin) and the record names it");
+    std::vector<cyxwiz::FastTextSource> sources;
+    const std::vector<std::string> unseen = {"mice"};
+    const auto from_file = cyxwiz::WordEmbeddings::LoadFastTextBin(model_file.string(), &unseen, &sources);
+    Check(from_file.success && sources.size() == 1 && sources[0] == cyxwiz::FastTextSource::Pieces,
+          "the saved model builds an unseen word from its pieces: " + from_file.error_message);
+    cyxwiz::WordEmbeddingsOperator again;
+    Check(again.Configure(params("pieces"), error) && again.Apply(TextTable(texts)).ok() &&
+              cyxwiz::ReusedVectorsOutcome(again.OutcomeSummary()),
+          "fastText with both files saved reuses them: " + again.OutcomeSummary());
+    fs::remove(model_file);
+    Check(!cyxwiz::ReadWordVectorsTrainingRecord(saved.string()), "without its model the record no longer holds");
+    cyxwiz::WordEmbeddingsOperator retrain;
+    Check(retrain.Configure(params("pieces"), error) && retrain.Apply(TextTable(texts)).ok() &&
+              !cyxwiz::ReusedVectorsOutcome(retrain.OutcomeSummary()) && fs::exists(model_file),
+          "fastText without its saved model trains again and saves it: " + retrain.OutcomeSummary());
 
     cyxwiz::WordEmbeddingsOperator missing_op;
     figures.clear();

@@ -403,6 +403,37 @@ double NearestKnownAccuracy(const cyxwiz::WordVectors& vectors, const cyxwiz::Wo
     return static_cast<double>(same) / static_cast<double>(vectors.words.size());
 }
 
+// A trained model saved as a fastText .bin reads back with its settings, and
+// gives the same vectors for its words and for unseen words (from pieces).
+void CheckFastTextSave(const cyxwiz::FastTextModel& model, const cyxwiz::FastTextOptions& options,
+                       const std::vector<std::string>& words, const std::vector<std::string>& unseen,
+                       const std::string& name) {
+    const fs::path path = fs::temp_directory_path() / "cyxwiz_fasttext_saved.bin";
+    std::string error;
+    Check(WordEmbeddings::SaveFastTextBin(model, options, path.string(), &error), name + ": save .bin: " + error);
+    const auto info = WordEmbeddings::ReadFastTextInfo(path.string());
+    Check(info.success && info.words == model.words && info.dim == model.dim && info.min_n == model.min_n &&
+              info.max_n == model.max_n && info.bucket == model.bucket &&
+              info.model == (options.cbow ? "cbow" : "skip-gram"),
+          name + ": the saved .bin's header and words: " + info.error_message);
+    std::vector<std::string> wanted = words;
+    wanted.insert(wanted.end(), unseen.begin(), unseen.end());
+    std::vector<cyxwiz::FastTextSource> trained_sources, read_sources;
+    const auto trained = WordEmbeddings::FastTextVectors(model, &wanted, &trained_sources);
+    const auto read = WordEmbeddings::LoadFastTextBin(path.string(), &wanted, &read_sources);
+    Check(read.success && read.words == wanted && read_sources == trained_sources,
+          name + ": the saved .bin reads back: " + read.error_message);
+    double worst = 0.0;
+    for (size_t i = 0; i < trained.values.size() && i < read.values.size(); ++i)
+        worst = std::max(worst, static_cast<double>(std::abs(trained.values[i] - read.values[i])));
+    Check(read.values.size() == trained.values.size() && worst <= 1e-6,
+          name + ": the saved .bin gives the model's vectors (largest difference " + std::to_string(worst) + ")");
+    cyxwiz::FastTextModel empty;
+    Check(!WordEmbeddings::SaveFastTextBin(empty, options, path.string(), &error) && !error.empty(),
+          name + ": an untrained model is not saved");
+    fs::remove(path);
+}
+
 // Trained on the device with gensim's settings: the groups (and unseen
 // variants built from pieces) are as separable as gensim makes them (within
 // 0.1), the loss falls, and a run repeats for a seed.
@@ -459,6 +490,7 @@ void RunFastTextQuality(const json& c) {
               << model.epoch_loss.front() << " -> " << model.epoch_loss.back() << std::endl;
     Check(accuracy >= reference - 0.1 && unseen_accuracy >= unseen_reference - 0.1,
           name + ": group accuracy " + std::to_string(accuracy) + " / unseen " + std::to_string(unseen_accuracy));
+    CheckFastTextSave(model, options, names, unseen, name);
     const auto again = WordEmbeddings::TrainFastText(sentences, options);
     Check(again.success && again.word_rows == model.word_rows && again.ngram_rows == model.ngram_rows,
           name + ": a run repeats for one seed");

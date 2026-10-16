@@ -572,6 +572,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> WordEmbeddingsOperator::Apply(const
         std::string error;
         if (!WordEmbeddings::SaveText(vectors, vectors_path_, &error))
             return arrow::Status::IOError(op + ": cannot save the vectors: " + error);
+        // fastText: the model too, so words the training never saw get
+        // vectors after the session (the .vec holds the known words only).
+        if (fasttext_model) {
+            const std::string model_path = FastTextModelPath(vectors_path_);
+            report("Saving", "Saving the fastText model " + std::filesystem::path(model_path).filename().string(),
+                   0.93);
+            if (!WordEmbeddings::SaveFastTextBin(*fasttext_model, fasttext_, model_path, &error))
+                return arrow::Status::IOError(op + ": cannot save the fastText model: " + error);
+            record.fasttext_model = true;
+        }
         if (trained) {
             record.trained_at = LocalTimeNow();
             record.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

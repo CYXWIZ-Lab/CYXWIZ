@@ -266,6 +266,12 @@ public:
     // without reading the whole model.
     static WordVectors LoadFastTextBinFor(const std::string& path, const std::vector<std::string>& vocabulary,
                                           bool lowercase_fallback, FastTextFileInfo* info = nullptr);
+    // Writes a trained model as a fastText .bin (version 12, as fastText and
+    // gensim's save_facebook_model write it), so the vectors of words the
+    // training never saw can be built again from its n-gram rows, here or in
+    // fastText / gensim. `options` gives the header's training settings.
+    static bool SaveFastTextBin(const FastTextModel& model, const FastTextOptions& options, const std::string& path,
+                                std::string* error = nullptr);
 
     // The vectors in the order of `vocabulary` (token id = position); with
     // options.pieces, tokens with a letter or digit that are not found take

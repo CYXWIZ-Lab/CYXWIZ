@@ -9,7 +9,8 @@
 // Only the rows the wanted words need are read (a word of the model: its row
 // and its n-grams' rows; another word: its n-grams' rows), in file order and
 // in chunks of words, so a 7 GB model never sits whole in memory; the means
-// are taken on the device. fastText gives "</s>" no n-grams.
+// are taken on the device. fastText gives "</s>" no n-grams. A trained model
+// is written in the same layout (SaveFastTextBin).
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -38,9 +39,26 @@ constexpr int32_t kFastTextMagic = 793712314;
 constexpr size_t kWordsPerChunk = 65536;
 const char* const kEndOfSentence = "</s>";
 
+constexpr int32_t kFastTextVersion = 12;
+
 template <typename T>
 bool ReadValue(std::ifstream& in, T& value) {
     return static_cast<bool>(in.read(reinterpret_cast<char*>(&value), sizeof(T)));
+}
+
+template <typename T>
+void WriteValue(std::ofstream& out, T value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+// fastText's matrix: bool quantized (false), int64 rows, int64 dim, the values.
+void WriteMatrix(std::ofstream& out, const std::vector<float>& first, const std::vector<float>& second, int64_t dim) {
+    WriteValue<uint8_t>(out, 0);
+    WriteValue<int64_t>(out, static_cast<int64_t>((first.size() + second.size()) / static_cast<size_t>(dim)));
+    WriteValue<int64_t>(out, dim);
+    for (const auto* part : {&first, &second})
+        out.write(reinterpret_cast<const char*>(part->data()),
+                  static_cast<std::streamsize>(part->size() * sizeof(float)));
 }
 
 // The header and dictionary, and where the input matrix's values start.
@@ -228,6 +246,52 @@ WordVectors WordEmbeddings::LoadFastTextBin(const std::string& path, const std::
         return out;
     }
     return LoadParsed(path, file, words, sources, max_words);
+}
+
+bool WordEmbeddings::SaveFastTextBin(const FastTextModel& model, const FastTextOptions& options,
+                                     const std::string& path, std::string* error) {
+    const auto fail = [&](const std::string& message) {
+        if (error) *error = message;
+        return false;
+    };
+    const size_t words = model.words.size();
+    const size_t dim = static_cast<size_t>(model.dim);
+    if (!model.success || dim == 0 || words == 0 || model.counts.size() != words ||
+        model.word_rows.size() != words * dim || model.output_vectors.size() != words * dim ||
+        model.ngram_rows.size() != static_cast<size_t>(model.bucket) * dim)
+        return fail("The fastText model is incomplete; train it before saving");
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return fail("Cannot write " + path);
+    WriteValue(out, kFastTextMagic);
+    WriteValue(out, kFastTextVersion);
+    // args: dim, ws, epoch, min_count, neg, word_ngrams, loss (2 = negative
+    // sampling), model (1 = cbow, 2 = skip-gram), bucket, minn, maxn,
+    // lr_update_rate, t.
+    const int32_t args[12] = {model.dim, options.window, options.epochs, options.min_count, options.negative, 1, 2,
+                              options.cbow ? 1 : 2, model.bucket, model.min_n, model.max_n, 100};
+    for (const int32_t arg : args) WriteValue(out, arg);
+    WriteValue(out, options.sample);
+    // dictionary: size, nwords, nlabels, ntokens (the kept words' count),
+    // pruneidx_size; per word the word, a NUL, int64 count, int8 type 0.
+    long long tokens = 0;
+    for (const long long count : model.counts) tokens += count;
+    WriteValue(out, static_cast<int32_t>(words));
+    WriteValue(out, static_cast<int32_t>(words));
+    WriteValue<int32_t>(out, 0);
+    WriteValue<int64_t>(out, tokens);
+    WriteValue<int64_t>(out, 0);
+    for (size_t w = 0; w < words; ++w) {
+        out.write(model.words[w].data(), static_cast<std::streamsize>(model.words[w].size()));
+        out.put('\0');
+        WriteValue<int64_t>(out, model.counts[w]);
+        WriteValue<int8_t>(out, 0);
+    }
+    // input [words + bucket, dim], then output [words, dim].
+    WriteMatrix(out, model.word_rows, model.ngram_rows, static_cast<int64_t>(dim));
+    WriteMatrix(out, model.output_vectors, {}, static_cast<int64_t>(dim));
+    out.close();
+    if (!out) return fail("Cannot write " + path + " (is the disk full?)");
+    return true;
 }
 
 WordVectors WordEmbeddings::LoadFastTextBinFor(const std::string& path, const std::vector<std::string>& vocabulary,

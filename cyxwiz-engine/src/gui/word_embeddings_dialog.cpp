@@ -838,7 +838,7 @@ void WordEmbeddingsDialog::RenderWord2VecSettings() {
             Label("Buckets");
             IntField("##bucket", "bucket", kSmallField);
             ImGui::SameLine(0.0f, t.space_md);
-            Dim(std::string(memory) + " on the device");
+            Dim(std::string(memory) + " on the device, and on disk in the saved model (.bin)");
             Faint("Pieces are hashed into the buckets (fastText's hash), so the table has a fixed size whatever the "
                   "text. 2,000,000 is fastText's and gensim's default; fewer buckets save device memory. Model, "
                   "window, negative samples, epochs and the learning rate are word2vec's settings, shared.");
@@ -966,6 +966,9 @@ void WordEmbeddingsDialog::RenderSavedCard() {
                                    ".");
         } else {
             Faint("Saved in " + FileName(saved_path_) +
+                  (saved_->fasttext_model ? ", with the model " + FileName(cyxwiz::FastTextModelPath(saved_path_)) +
+                                                " for words the training never saw"
+                                          : std::string()) +
                   ". Train reuses it while the text, settings and vocabulary stay the same.");
         }
     }
@@ -1026,10 +1029,18 @@ bool WordEmbeddingsDialog::UnseenWordVector(const std::string& word, std::vector
     cyxwiz::WordVectors built;
     if (Training()) {
         if (!FastText()) return false;
-        const auto model = cyxwiz::FindFastTextModel(VectorsPath());
-        if (!model) return false;
-        built = cyxwiz::WordEmbeddings::FastTextVectors(*model, &wanted, &sources);
-        pieces = cyxwiz::WordEmbeddings::FastTextBuckets(word, model->min_n, model->max_n, model->bucket).size();
+        // This session's run, else the model saved with the vectors.
+        if (const auto model = cyxwiz::FindFastTextModel(VectorsPath())) {
+            built = cyxwiz::WordEmbeddings::FastTextVectors(*model, &wanted, &sources);
+            pieces = cyxwiz::WordEmbeddings::FastTextBuckets(word, model->min_n, model->max_n, model->bucket).size();
+        } else if (saved_ && saved_->fasttext_model) {
+            cyxwiz::FastTextFileInfo info;
+            built = cyxwiz::WordEmbeddings::LoadFastTextBin(cyxwiz::FastTextModelPath(saved_path_), &wanted, &sources,
+                                                            &info);
+            pieces = cyxwiz::WordEmbeddings::FastTextBuckets(word, info.min_n, info.max_n, info.bucket).size();
+        } else {
+            return false;
+        }
         trained = true;
     } else {
         if (!read_fasttext_) return false;
