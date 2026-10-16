@@ -1,4 +1,5 @@
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/node_executors/text_column_utils.h"
 
 #include <arrow/api.h>
 #include <parquet/arrow/reader.h>
@@ -251,6 +252,10 @@ int main() {
     auto y = output->GetColumnByName("y");
     Check(y != nullptr, "missing y column");
     Check(y->type()->id() == arrow::Type::INT32, "y should be int32");
+    // The class numbers keep their names, in the order the numbers were given.
+    const auto names = cyxwiz::ClassNamesOfField(*output->schema()->GetFieldByName("y"));
+    Check(names == std::vector<std::string>({"positive", "negative"}),
+          "y carries its class names in label order");
 
     const auto vocab_file =
         std::filesystem::temp_directory_path() /

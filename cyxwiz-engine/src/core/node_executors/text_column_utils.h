@@ -1,6 +1,7 @@
 #pragma once
 
 #include <arrow/api.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
 #include <functional>
@@ -83,6 +84,30 @@ inline bool ReadColumnAsStrings(
         }
     }
     return true;
+}
+
+// The names of a label column's class numbers (the Text Tokenizer encodes a
+// text label as 0..n-1), kept on its Arrow field so training and Run Test
+// name the classes instead of "Class 0".
+inline constexpr const char* kClassNamesMetadataKey = "cyxwiz.class_names";
+
+inline std::shared_ptr<const arrow::KeyValueMetadata> ClassNamesMetadata(const std::vector<std::string>& names) {
+    return arrow::key_value_metadata({kClassNamesMetadataKey}, {nlohmann::json(names).dump()});
+}
+
+inline std::vector<std::string> ClassNamesOfField(const arrow::Field& field) {
+    const auto& metadata = field.metadata();
+    if (!metadata) return {};
+    const int index = metadata->FindKey(kClassNamesMetadataKey);
+    if (index < 0) return {};
+    const auto parsed = nlohmann::json::parse(metadata->value(index), nullptr, false);
+    if (!parsed.is_array()) return {};
+    std::vector<std::string> names;
+    for (const auto& name : parsed) {
+        if (!name.is_string()) return {};
+        names.push_back(name.get<std::string>());
+    }
+    return names;
 }
 
 /// Read a label column. If the column is numeric, copies as int. If

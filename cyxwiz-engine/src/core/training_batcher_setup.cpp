@@ -6,6 +6,7 @@
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
 #include "worker_defaults.h"
+#include "node_executors/text_column_utils.h"
 
 #include <spdlog/spdlog.h>
 
@@ -351,6 +352,10 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
             result.label_classes = vocabulary->names;
             spdlog::info("TrainingExecutor: label column '{}' holds text; {} classes encoded in sorted order",
                          class_label, vocabulary->names.size());
+        } else if (const auto table = dataset->GetArrowTable()) {
+            // Class numbers from a Text Tokenizer carry their names.
+            if (const auto field = table->schema()->GetFieldByName(class_label))
+                result.label_classes = ClassNamesOfField(*field);
         }
     }
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
@@ -507,6 +512,9 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
             result.label_classes = vocabulary->names;
             spdlog::info("TrainingExecutor: label column '{}' holds text; {} classes in sorted order",
                          class_label, vocabulary->names.size());
+        } else if (position >= 0) {
+            // Class numbers from a Text Tokenizer carry their names.
+            result.label_classes = ClassNamesOfField(*schema->field(position));
         }
     }
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);

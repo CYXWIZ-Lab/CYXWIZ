@@ -866,7 +866,10 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::shared_ptr<arrow::Array> arr;
         ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
         arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("y", arrow::int32()));
+        // The class numbers keep their names (Run Test shows them).
+        fields.push_back(class_names.empty()
+                             ? arrow::field("y", arrow::int32())
+                             : arrow::field("y", arrow::int32(), true, ClassNamesMetadata(class_names)));
     }
 
     auto out_schema = arrow::schema(fields);
