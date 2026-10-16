@@ -219,8 +219,7 @@ void DataInputDialog::RenderFileSource() {
         if (sequence_tagging_) RenderSequenceColumns();
         else if (file_category_ == FileCategory::Text) RenderTextColumns();
         else RenderLabelColumn();
-        if (file_category_ == FileCategory::TimeSeries)
-            ImGui::TextColored(t.text_dim, "Rows are used in the file's order (windows and the split follow it).");
+        if (file_category_ == FileCategory::TimeSeries) RenderTimeColumn();
     } else if (is_folder && folder_scan_.kind != data_input::FolderKind::Unknown) {
         SectionTitle(folder_scan_.kind == data_input::FolderKind::Images  ? "2. Use as Images"
                      : folder_scan_.kind == data_input::FolderKind::Audio ? "2. Use as Audio"
@@ -331,6 +330,40 @@ void DataInputDialog::RenderFormatOptions() {
         }
         ImGui::TextDisabled("Reads UTF-8 (a byte order mark is skipped).");
     }
+}
+
+void DataInputDialog::RenderTimeColumn() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    FieldLabel("Time column");
+    if (available_columns_.empty()) {
+        ImGui::TextColored(t.text_faint, "The columns show once the file is read (Preview or Apply).");
+        return;
+    }
+    if (ColumnPicker("##timecol", time_column_, sizeof(time_column_), available_columns_, "(none: the file's order)")) {
+        for (size_t i = 0; i < available_columns_.size() && i < selected_columns_.size(); ++i)
+            if (available_columns_[i] == time_column_) selected_columns_[i] = true;
+        has_changes_ = true;
+    }
+    if (time_column_[0] == '\0') {
+        // A column named like a time: offer it.
+        for (const auto& name : available_columns_) {
+            std::string lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "date" || lower == "time" || lower == "timestamp" || lower == "datetime" || lower == "ds") {
+                ImGui::SameLine();
+                ImGui::TextColored(t.text_dim, "'%s' looks like the time", name.c_str());
+                ImGui::SameLine();
+                if (cyxwiz::ui::LinkButton("Use it")) {
+                    std::strncpy(time_column_, name.c_str(), sizeof(time_column_) - 1);
+                    has_changes_ = true;
+                }
+                break;
+            }
+        }
+    }
+    ImGui::TextColored(t.text_dim, time_column_[0] != '\0'
+                                       ? "Rows are kept in time order, for windowing and a chronological split."
+                                       : "Rows are used in the file's order (windows and the split follow it).");
 }
 
 void DataInputDialog::RenderLabelColumn() {

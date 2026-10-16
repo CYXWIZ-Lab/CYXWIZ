@@ -6253,6 +6253,42 @@ int main(int argc, char** argv) {
         fs::remove(empty_csv);
     }
 
+    // A time series Data Input keeps its rows in the order of its time column.
+    {
+        const fs::path series_csv = fs::temp_directory_path() / "cyxwiz_time_series_order.csv";
+        {
+            std::ofstream out(series_csv);
+            out << "date,sales\n2024-03-01,30\n2024-01-01,10\n,99\n2024-02-01,20\n";
+        }
+        const auto load = [&](int id, const std::string& time_column, std::string& error) {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({
+                    {{"id", id}, {"type", "DataInput"}, {"name", "Series"},
+                     {"parameters", {{"source_type", "file"}, {"file_path", series_csv.string()}, {"type", "csv"},
+                                     {"has_header", "true"}, {"file_category", "timeseries"},
+                                     {"time_column", time_column}}}}})},
+                {"links", nlohmann::json::array()}};
+            cyxwiz::PipelineExecutor executor;
+            const bool ok = executor.ExecutePipeline(graph.dump());
+            error = executor.GetLastError();
+            return ok ? registry.GetArrowDataset("ds_datainput_" + std::to_string(id)) : nullptr;
+        };
+        std::string error;
+        auto sorted = load(93121, "date", error);
+        Check(sorted != nullptr, "a time series loads sorted: " + error);
+        const auto series_table = sorted->GetArrowTable();
+        // Read as text: the registry narrows integer columns.
+        std::string sales;
+        const auto column = series_table->GetColumnByName("sales");
+        for (int64_t i = 0; i < column->length(); ++i) sales += (*column->GetScalar(i))->ToString() + " ";
+        Check(sales == "10 20 30 99 ", "rows in date order, the missing date last (got " + sales + ")");
+        auto unsorted = load(93123, "", error);
+        Check(unsorted && unsorted->GetArrowTable()->num_rows() == 4, "no time column keeps the file's order");
+        Check(!load(93125, "when", error) && error.find("when") != std::string::npos,
+              "an unknown time column is refused by name: " + error);
+        fs::remove(series_csv);
+    }
+
     const std::string filter_missing_column_json =
         R"({"nodes":[)"
         R"({"id":192,"type":"DataInput","name":"Input","parameters":{)"

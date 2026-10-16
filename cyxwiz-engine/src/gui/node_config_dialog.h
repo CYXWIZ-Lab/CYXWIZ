@@ -272,6 +272,7 @@ private:
     void SetSource(const std::string& path);
     void RescanFolder();
     void RenderFormatOptions();
+    void RenderTimeColumn();
     void RenderLabelColumn();
     void RenderTextColumns();
     void RenderImageLabels();
@@ -379,6 +380,7 @@ private:
     // its vocabulary from the text corpus.
     char text_column_[128] = "text";
     char text_label_column_[128] = "label";
+    char time_column_[128] = {};  // time series: rows sorted by it on load ("" = file order)
 
     AudioLayout audio_layout_ = AudioLayout::ClassSubdirs;
 

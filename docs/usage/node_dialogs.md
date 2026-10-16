@@ -110,8 +110,13 @@ and **Browse folder...**. Under it, **Detected** says what it is:
 **2. Use the rows as** offers only the uses that fit the source. A table
 file can be used as **Table** (a label column; every other column is an
 input feature), **Text** (a text column and a label column), **Token
-tagging** (token, tag, POS and sentence columns) or **Time series**. A
-folder of images is used as images (**Labels from**: class folders, or a
+tagging** (token, tag, POS and sentence columns) or **Time series** (a
+label column and a **Time column**: the rows are put in that column's order
+on load, missing times last, so windows and a chronological split follow
+time; a column named date, time, timestamp, datetime or ds is offered with
+**Use it**; with none the rows keep the file's order; the strip then reads
+*as sales (time series by date)*; a table kept on disk cannot be put in
+order and the load says so). A folder of images is used as images (**Labels from**: class folders, or a
 flat folder and a labels CSV), a folder of audio as audio (labels, sample
 rate, length), a folder of text files as text. Training, validation and
 test roles come from the graph's Data Split, not from this node.

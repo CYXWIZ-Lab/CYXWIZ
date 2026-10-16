@@ -32,6 +32,7 @@ struct StripInput {
     int64_t cols = 0;
     int64_t classes = -1;      // -1 = not known
     Backend backend = Backend::None;
+    std::string time_column;   // a time series loaded in the order of this column
     uint64_t bytes = 0;
     bool bytes_estimate = false;
     double load_seconds = -1.0;

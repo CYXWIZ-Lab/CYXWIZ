@@ -4302,6 +4302,25 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             return false;
         }
 
+        // A time series keeps its rows in the order of its time column.
+        const auto category = node.parameters.find("file_category");
+        const auto time_column = node.parameters.find("time_column");
+        if (category != node.parameters.end() && category->second == "timeseries" &&
+            time_column != node.parameters.end() && !time_column->second.empty() &&
+            (arrow_dataset || disk_backed)) {
+            if (disk_backed) {
+                ReportError("DataInput: the table is kept on disk, so its rows cannot be put in time order; "
+                            "clear Time column or sort the file first");
+                return false;
+            }
+            std::string sort_error;
+            if (!registry.SortArrowTableByColumn(dataset_name, time_column->second, sort_error)) {
+                ReportError("DataInput: " + sort_error);
+                return false;
+            }
+            arrow_dataset = registry.GetArrowDataset(dataset_name);
+        }
+
         const auto table = registry.GetTableRef(dataset_name);
         if ((!arrow_dataset && !disk_backed) || !table) {
             ReportError("DataInput: Failed to load dataset");

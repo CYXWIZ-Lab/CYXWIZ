@@ -310,6 +310,10 @@ public:
     // Apache Arrow columnar data support (Data Studio foundation)
     std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    // Puts an in-memory table's rows in ascending order of `column` (missing
+    // values last), keeping its name and source file: a time series in time
+    // order. False with `error` when the table is not in memory or lacks it.
+    bool SortArrowTableByColumn(const std::string& name, const std::string& column, std::string& error);
     // A reservation for the current registration (including absence). Copies
     // share validity; any writer of this name invalidates all outstanding copies.
     class TabularPublicationToken {

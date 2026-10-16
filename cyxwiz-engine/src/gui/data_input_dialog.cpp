@@ -216,6 +216,10 @@ DataInputDialog::DataInputDialog(MLNode* node)
                     e.what());
             }
         }
+        if (const auto time = node_->parameters.find("time_column"); time != node_->parameters.end()) {
+            std::strncpy(time_column_, time->second.c_str(), sizeof(time_column_) - 1);
+            time_column_[sizeof(time_column_) - 1] = '\0';
+        }
         if (node_->parameters.count("label_column") &&
             !node_->parameters["label_column"].empty()) {
             const std::string& label_column = node_->parameters["label_column"];

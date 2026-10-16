@@ -141,6 +141,11 @@ void DataInputDialog::Apply() {
         node_->parameters["max_rows"] = std::to_string(max_rows_);
         // Files are read as UTF-8; the encoding choice it saved was never read.
         node_->parameters.erase("encoding");
+        // A time series keeps its rows in the order of its time column.
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0')
+            node_->parameters["time_column"] = time_column_;
+        else
+            node_->parameters.erase("time_column");
 
         if (file_category_ == FileCategory::Image) {
             // The size and normalizing are the Resize / Normalize nodes'
@@ -428,6 +433,13 @@ void DataInputDialog::Apply() {
                 return;
             }
         }
+        if (file_category_ == FileCategory::TimeSeries && time_column_[0] != '\0' && !included_columns.empty() &&
+            std::find(included_columns.begin(), included_columns.end(), time_column_) == included_columns.end()) {
+            apply_status_message_ = "The time column must remain included";
+            apply_success_ = false;
+            apply_in_progress_ = false;
+            return;
+        }
         node_->parameters["selected_columns"] =
             nlohmann::json(included_columns).dump();
 
@@ -451,6 +463,7 @@ void DataInputDialog::Apply() {
         ctx.json_lines         = json_lines_;
         ctx.excel_sheet_idx    = sheet_idx_;
         ctx.label_column       = node_->parameters["label_column"];
+        ctx.time_column        = file_category_ == FileCategory::TimeSeries ? time_column_ : "";
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {
@@ -792,6 +805,15 @@ void DataInputDialog::PollAsyncLoadResult() {
             ? std::string("Failed to load data")
             : state->message;
 
+        // A load under the same name that failed after registering (the time
+        // order) gives the registry back its earlier table first.
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        if (state->previous_dataset_name == state->dataset_name && !registry.GetArrowDataset(state->dataset_name) &&
+            !registry.GetParquetBackedDataset(state->dataset_name) &&
+            (state->previous_arrow_dataset || state->previous_parquet_dataset)) {
+            registry.RestoreTabularDataset(state->previous_dataset_name, state->previous_arrow_dataset,
+                                           state->previous_parquet_dataset, state->previous_source_path);
+        }
         // Failed replacements leave the prior registration intact. Restore
         // the node's runtime state so it remains usable.
         if (restore_previous_node_state()) {

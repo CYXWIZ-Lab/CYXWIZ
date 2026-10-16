@@ -116,6 +116,7 @@ struct ApplyContext {
     bool json_lines = false;
     int excel_sheet_idx = 0;
     std::string label_column;
+    std::string time_column;              // time series: rows sorted by it after the load
 
     // Text-specific (commit 2) -------------------------------------
     // text_has_labels is `true` when the corpus is class-subdir layout

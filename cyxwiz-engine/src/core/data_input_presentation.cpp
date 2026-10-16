@@ -103,7 +103,10 @@ Strip BuildStrip(const StripInput& in) {
 
     s.tone = LoadTone::Loaded;
     s.state = in.load_seconds >= 0.0 ? "Loaded in " + FormatSeconds(in.load_seconds) : "Loaded";
-    if (!in.dataset_name.empty()) s.detail = "as " + in.dataset_name + " (" + KindWord(in.backend) + ")";
+    if (!in.dataset_name.empty()) {
+        const std::string kind = in.time_column.empty() ? KindWord(in.backend) : "time series by " + in.time_column;
+        s.detail = "as " + in.dataset_name + " (" + kind + ")";
+    }
     s.facts.push_back({FormatCount(in.rows), RowWord(in.backend)});
     if (in.classes >= 0) s.facts.push_back({FormatCount(in.classes), in.classes == 1 ? "class" : "classes"});
     if (in.cols > 1) s.facts.push_back({FormatCount(in.cols), "columns"});

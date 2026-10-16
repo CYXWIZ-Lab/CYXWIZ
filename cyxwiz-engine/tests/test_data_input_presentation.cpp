@@ -78,6 +78,16 @@ void CheckLoaded() {
           "facts: samples, classes, size");
     Check(s.note == "30.4 MB in memory", "held: " + s.note);
 
+    // A time series names the column its rows are ordered by.
+    StripInput series;
+    series.source = "D:/tmp/sales.csv";
+    series.kind = "CSV table";
+    series.loaded = true;
+    series.dataset_name = "sales";
+    series.backend = Backend::ArrowMemory;
+    series.time_column = "date";
+    Check(BuildStrip(series).detail == "as sales (time series by date)", "time series detail");
+
     StripInput images;
     images.source = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog";
     images.loaded = true;

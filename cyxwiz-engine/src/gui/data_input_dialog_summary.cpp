@@ -33,6 +33,10 @@ void DataInputDialog::RenderDataStrip() {
     in.cols = loaded_cols_;
     in.classes = loaded_classes_;
     in.backend = static_cast<view::Backend>(loaded_backend_);
+    if (file_category_ == FileCategory::TimeSeries && node_) {
+        const auto time = node_->parameters.find("time_column");
+        if (time != node_->parameters.end()) in.time_column = time->second;
+    }
     in.bytes = loaded_memory_bytes_;
     in.bytes_estimate = loaded_memory_is_estimate_;
     in.load_seconds = last_load_elapsed_ms_ >= 0.0f ? last_load_elapsed_ms_ / 1000.0 : -1.0;
