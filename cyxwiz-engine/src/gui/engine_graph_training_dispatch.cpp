@@ -2,6 +2,7 @@
 
 #include "loaders/data_loader.h"
 #include "../core/data_registry.h"
+#include "../core/arrow_dataset.h"
 #ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
 #include "../core/legacy_dataset_batchers.h"
 #endif
@@ -24,17 +25,33 @@ GraphTrainingDispatch MakeEngineGraphTrainingDispatch(cyxwiz::DataRegistry& regi
 
         if (dispatch_config.sequence_batch.enabled) {
             auto arrow_dataset = registry.GetArrowDataset(dataset_name);
-            auto dev = dispatch_config.dataset_roles.dev.IsSupplied()
-                ? registry.GetArrowDataset(dispatch_config.dataset_roles.dev.dataset_name) : nullptr;
-            auto test = dispatch_config.dataset_roles.test.IsSupplied()
-                ? registry.GetArrowDataset(dispatch_config.dataset_roles.test.dataset_name) : nullptr;
-            if ((dispatch_config.dataset_roles.dev.IsSupplied() && !dev) ||
-                (dispatch_config.dataset_roles.test.IsSupplied() && !test)) {
-                spdlog::error("Supplied sequence roles require registered in-memory Arrow datasets; Apply each source before Train");
+            // A role's windows: a table in memory, or a file kept on disk.
+            auto source_of = [&registry](const std::string& name) {
+                cyxwiz::SequenceWindowSource source;
+                if (auto memory = registry.GetArrowDataset(name)) source.table = memory->GetArrowTable();
+                else source.file = registry.GetParquetBackedDataset(name);
+                return source;
+            };
+            const auto& roles = dispatch_config.dataset_roles;
+            const auto dev_source = roles.dev.IsSupplied() ? source_of(roles.dev.dataset_name) : cyxwiz::SequenceWindowSource{};
+            const auto test_source = roles.test.IsSupplied() ? source_of(roles.test.dataset_name) : cyxwiz::SequenceWindowSource{};
+            if ((roles.dev.IsSupplied() && dev_source.Empty()) || (roles.test.IsSupplied() && test_source.Empty())) {
+                spdlog::error("Supplied sequence roles require registered datasets; Apply each source before Train");
                 return false;
             }
-            auto sequence = cyxwiz::BuildSequenceBatcherFromArrowDataset(
-                arrow_dataset, dispatch_config, batch_size, dev, test);
+            // A training set kept on disk streams a row group at a time (TOFIX154).
+            const bool on_disk = !arrow_dataset && registry.GetParquetBackedDataset(dataset_name);
+            auto dev = roles.dev.IsSupplied() ? registry.GetArrowDataset(roles.dev.dataset_name) : nullptr;
+            auto test = roles.test.IsSupplied() ? registry.GetArrowDataset(roles.test.dataset_name) : nullptr;
+            if (!on_disk && ((roles.dev.IsSupplied() && !dev) || (roles.test.IsSupplied() && !test))) {
+                spdlog::error("Supplied sequence roles kept on disk need the training set on disk too; "
+                              "raise the data budget or keep all of them in memory");
+                return false;
+            }
+            auto sequence = on_disk
+                ? cyxwiz::BuildSequenceBatcherFromWindowSources(source_of(dataset_name), dispatch_config, batch_size,
+                                                                dev_source, test_source)
+                : cyxwiz::BuildSequenceBatcherFromArrowDataset(arrow_dataset, dispatch_config, batch_size, dev, test);
             if (!sequence.success()) {
                 spdlog::error("StartTrainingFromGraph: sequence batcher "
                               "materialization failed: {}",
