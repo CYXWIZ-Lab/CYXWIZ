@@ -377,6 +377,7 @@ set(ENGINE_SOURCES
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
+    src/core/compile_report_presentation.cpp
     src/core/properties_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
@@ -4283,6 +4284,36 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 # Reads examples/cyxgraph/NER from the repository.
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ===== Test: compile report, blocked training, memory risk (TOFIX129 B3) =====
+add_executable(test_compile_report_presentation
+    tests/test_compile_report_presentation.cpp
+    src/core/compile_report_presentation.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_include_directories(test_compile_report_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_compile_report_presentation PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_compile_report_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_compile_report_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME compile_report_presentation COMMAND test_compile_report_presentation)
 
 set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
