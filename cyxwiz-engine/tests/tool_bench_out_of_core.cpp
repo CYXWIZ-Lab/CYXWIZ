@@ -16,7 +16,7 @@
 //       Executor bookkeeping (inventory item 10): two independent SQL steps
 //       after one Data Input, run twice on the same executor. Serial branches
 //       show as total = load + both steps; lazy reuse as a faster second run.
-//   cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P]
+//   cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P] [--parquet-only]
 //       Runs every pipeline on both files (the CSV also with --disk), each in
 //       a child process under a
 //       Job Object memory limit (the budget), and records time, peak memory
@@ -31,6 +31,7 @@
 #include <parquet/arrow/writer.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -67,7 +68,7 @@ int Usage() {
     std::cerr << "usage: cyxwiz-bench-out-of-core generate --dir D --gb N\n"
                  "       cyxwiz-bench-out-of-core run --pipeline P --file F [--disk] [--budget-mb B]\n"
                  "       cyxwiz-bench-out-of-core probe --file F\n"
-                 "       cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P]\n";
+                 "       cyxwiz-bench-out-of-core suite --dir D --budget-mb M [--out results.jsonl] [--only P] [--parquet-only]\n";
     return 2;
 }
 
@@ -354,12 +355,13 @@ json RunChild(const std::string& self, const std::string& pipeline, const fs::pa
 #endif
 
 int Suite(const std::string& self, const fs::path& dir, uint64_t budget_mb, const fs::path& out,
-          const std::string& only) {
+          const std::string& only, bool parquet_only) {
 #ifdef _WIN32
     std::ofstream results(out, std::ios::app);
     int failures = 0;
     const std::pair<const char*, bool> inputs[] = {{"bench.parquet", false}, {"bench.csv", false}, {"bench.csv", true}};
     for (const auto& [name, disk] : inputs) {
+        if (parquet_only && std::string(name) != "bench.parquet") continue;
         for (const char* pipeline : kPipelines) {
             if (!only.empty() && only != pipeline) continue;
             fs::remove_all(dir / "cache");
@@ -373,7 +375,7 @@ int Suite(const std::string& self, const fs::path& dir, uint64_t budget_mb, cons
     }
     return failures == 0 ? 0 : 1;
 #else
-    (void)self; (void)dir; (void)budget_mb; (void)out; (void)only;
+    (void)self; (void)dir; (void)budget_mb; (void)out; (void)only; (void)parquet_only;
     std::cerr << "suite needs Windows Job Objects\n";
     return 2;
 #endif
@@ -415,7 +417,8 @@ int main(int argc, char** argv) {
         if (GetModuleFileNameW(nullptr, module, MAX_PATH)) self = fs::path(module).string();
 #endif
         return Suite(self, dir, std::stoull(Arg(argc, argv, "--budget-mb", "2048")), out,
-                     Arg(argc, argv, "--only"));
+                     Arg(argc, argv, "--only"),
+                     std::find(argv + 2, argv + argc, std::string("--parquet-only")) != argv + argc);
     }
     return Usage();
 }
