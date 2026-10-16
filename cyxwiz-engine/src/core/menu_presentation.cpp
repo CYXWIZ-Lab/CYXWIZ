@@ -558,7 +558,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Loads saved weights to test them.")}));
         i.push_back(Sep());
         i.push_back(Action(f, "train.dashboard", "Training Dashboard", "Opens the Training panel."));
-        i.push_back(Action(f, "train.optimizer_settings", "Optimizer Settings...", "Opens the optimizer settings."));
+        i.push_back(Action(f, "train.optimizer_settings", "Optimizer Settings...", "Shows the graph's optimizer node in Properties."));
         i.push_back(Action(f, "train.hyperparam_search", "Hyperparameter Search",
                            "Opens the Hyperparameter Search panel."));
         model.menus.push_back(std::move(m));

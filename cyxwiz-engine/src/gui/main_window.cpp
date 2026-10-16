@@ -106,7 +106,6 @@
 #include "panels/log_transform_panel.h"
 #include "panels/boxcox_panel.h"
 #include "panels/feature_scaling_panel.h"
-#include "panels/optimizer_settings_panel.h"
 #include "panels/matrix_calculator_panel.h"
 #include "panels/eigen_decomp_panel.h"
 #include "panels/svd_panel.h"
@@ -706,7 +705,6 @@ MainWindow::MainWindow()
     log_transform_panel_ = std::make_unique<cyxwiz::LogTransformPanel>();
     boxcox_panel_ = std::make_unique<cyxwiz::BoxCoxPanel>();
     feature_scaling_panel_ = std::make_unique<cyxwiz::FeatureScalingPanel>();
-    optimizer_settings_panel_ = std::make_unique<cyxwiz::OptimizerSettingsPanel>();
 
     // Linear Algebra panels (Phase 7)
     matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
@@ -1246,12 +1244,19 @@ MainWindow::MainWindow()
         }
     });
 
-    // Optimizer Settings - opens dedicated Optimizer Settings panel
+    // Optimizer Settings: training takes its optimizer from the graph, so the
+    // item selects the graph's optimizer node (its settings show in
+    // Properties) instead of a separate window with its own copy.
     toolbar_->SetOptimizerSettingsCallback([this]() {
-        if (optimizer_settings_panel_) {
-            optimizer_settings_panel_->SetVisible(true);
-            spdlog::info("Opened Optimizer Settings panel");
+        const cyxwiz::TrainingConfiguration* config = live_compile_ ? live_compile_->Config() : nullptr;
+        if (node_editor_ && config && config->optimizer_node_id >= 0) {
+            node_editor_->FocusNode(config->optimizer_node_id);
+            return;
         }
+        ShowOperationError("No optimizer in this graph",
+                           "Training takes its optimizer from the graph. Add one from the Nodes panel "
+                           "(Training: Adam, AdamW, SGD, ...), connect it to the loss, and its settings show in "
+                           "Properties.");
     });
 
     // Set up Run Test callback
@@ -3277,7 +3282,6 @@ void MainWindow::Render() {
     TimedRender("log transform", log_transform_panel_);
     TimedRender("boxcox", boxcox_panel_);
     TimedRender("feature scaling", feature_scaling_panel_);
-    TimedRender("optimizer settings", optimizer_settings_panel_);
 
     // Linear Algebra panels (Phase 7)
     TimedRender("matrix calculator", matrix_calculator_panel_);
