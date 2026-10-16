@@ -94,20 +94,6 @@ public:
     // Shutdown only: never wait while holding the worker cleanup mutex.
     void WaitForTestingStop();
 
-    /**
-     * Export results to CSV file
-     * @param filepath Path to output file
-     * @return true on success
-     */
-    bool ExportResultsToCSV(const std::string& filepath);
-
-    /**
-     * Export results to JSON file
-     * @param filepath Path to output file
-     * @return true on success
-     */
-    bool ExportResultsToJSON(const std::string& filepath);
-
     // Callbacks for testing events
     using TestingStartCallback = std::function<void(const std::string& description)>;
     using TestingEndCallback = std::function<void(bool success, const TestingMetrics& metrics)>;

@@ -1,16 +1,56 @@
 #include "test_results_panel.h"
-#include "../../core/test_manager.h"
+#include "../../core/compiled_node_presentation.h"
 #include "../../core/file_dialogs.h"
-#include "../theme.h"
+#include "../../core/project_manager.h"
+#include "../../core/test_results_export.h"
+#include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <filesystem>
 
 namespace cyxwiz {
+
+namespace {
+
+ImVec4 ToneColour(test_report::Tone tone) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (tone) {
+        case test_report::Tone::Ok: return t.success;
+        case test_report::Tone::Warning: return t.warning;
+        case test_report::Tone::Error: return t.error;
+        case test_report::Tone::Info: return t.info;
+        case test_report::Tone::Neutral: return t.text_dim;
+    }
+    return t.text_dim;
+}
+
+ImVec4 MetricColour(float value) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (value >= 0.9f) return t.success;
+    if (value >= 0.7f) return t.warning;
+    if (value >= 0.5f) return t.caution;
+    return t.error;
+}
+
+void Wrapped(const ImVec4& colour, const std::string& text) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+}
+
+// Where exports go first: the project's exports folder.
+std::string ExportsFolder() {
+    const std::string root = ProjectManager::Instance().GetProjectRoot();
+    return root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
+}
+
+}  // namespace
 
 TestResultsPanel::TestResultsPanel()
     : Panel("Test Results", false)  // Hidden by default
@@ -19,524 +59,248 @@ TestResultsPanel::TestResultsPanel()
 
 void TestResultsPanel::SetResults(const TestingMetrics& results) {
     std::lock_guard<std::mutex> lock(results_mutex_);
-    if (has_results_) {
-        previous_results_ = results_;
-        has_previous_ = true;
-    }
-    results_ = results;
-    has_results_ = true;
-    if (results.causal_lm_mode) {
-        spdlog::info("TestResultsPanel: Received causal LM results: {} windows, {} tokens",
-            results.total_samples, results.total_target_values);
-    } else if (results.regression_mode) {
-        spdlog::info(
-            "TestResultsPanel: Received regression results (MAE={:.6f}, "
-            "RMSE={:.6f})",
-            results.test_mae,
-            results.test_rmse);
+    if (test_report::IsFailedRun(results)) {
+        // The last successful results stay (and stay what Comparison compares).
+        failure_message_ = results.status_message;
+        spdlog::warn("TestResultsPanel: the test failed: {}", results.status_message);
     } else {
-        spdlog::info(
-            "TestResultsPanel: Received classification results with accuracy "
-            "{:.2f}%",
-            results.test_accuracy * 100);
+        if (has_results_) {
+            previous_results_ = results_;
+            has_previous_ = true;
+        }
+        results_ = results;
+        has_results_ = true;
+        failure_message_.clear();
     }
+    export_note_.clear();
+    view_dirty_ = true;
 }
 
 void TestResultsPanel::Clear() {
     std::lock_guard<std::mutex> lock(results_mutex_);
     results_ = TestingMetrics();
+    previous_results_ = TestingMetrics();
     has_results_ = false;
+    has_previous_ = false;
+    failure_message_.clear();
+    export_note_.clear();
+    view_dirty_ = true;
+}
+
+void TestResultsPanel::ExportReport() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    ExportToJSON();
+}
+
+void TestResultsPanel::ShowComparison() {
+    Show();
+    select_comparison_tab_ = true;
 }
 
 void TestResultsPanel::Render() {
     if (!visible_) return;
-
-    ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
-
+    ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(name_.c_str(), &visible_)) {
+        std::lock_guard<std::mutex> lock(results_mutex_);
+        if (view_dirty_) {
+            view_ = test_report::BuildView(results_, has_previous_ ? &previous_results_ : nullptr);
+            view_dirty_ = false;
+        }
+        const ui::Tokens& t = ui::CurrentTokens();
+        if (!failure_message_.empty()) {
+            ImGui::TextColored(t.error, ICON_FA_CIRCLE_XMARK " The test failed");
+            Wrapped(t.text, failure_message_);
+            Wrapped(t.text_dim, has_results_ ? "The last successful run's results are below."
+                                             : "Task View shows the failed testing task; engine_log.txt has the details.");
+            ImGui::Dummy(ImVec2(0.0f, t.space_sm));
+        }
         if (!has_results_) {
-            ImGui::TextDisabled("No test results available.");
-            ImGui::TextDisabled("Run a test using Train > Run Test.");
+            if (failure_message_.empty())
+                ui::EmptyState(ICON_FA_GAUGE, "No test results yet",
+                               "Train the graph, then Train > Test > Run Test (F8).");
         } else {
-            bool failed = false;
-            std::string failure_message;
-            bool regression_mode = false;
-            bool causal_lm_mode = false;
-            bool metric_learning_mode = false;
-            {
-                std::lock_guard<std::mutex> lock(results_mutex_);
-                failed = !results_.is_complete &&
-                         !results_.status_message.empty();
-                failure_message = results_.status_message;
-                regression_mode = results_.regression_mode;
-                causal_lm_mode = results_.causal_lm_mode;
-                metric_learning_mode = results_.metric_learning_mode;
-            }
-            if (failed) {
-                ImGui::TextColored(ui::CurrentTokens().error,
-                                   "Test failed");
-                ImGui::Separator();
-                ImGui::TextWrapped("%s", failure_message.c_str());
-                ImGui::Spacing();
-                ImGui::TextDisabled(
-                    "Open Tasks for the failed testing task and inspect "
-                    "engine_log.txt for technical details.");
-                ImGui::End();
-                return;
-            }
-
-            RenderToolbar();
-
-            ImGui::Separator();
-
-            // Tab bar
-            if (ImGui::BeginTabBar("TestResultsTabs")) {
-                if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " Overview")) {
-                    selected_tab_ = 0;
-                    RenderOverviewTab();
-                    ImGui::EndTabItem();
+            RenderHeader();
+            const float footer_h = ui::ButtonHeight(ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+            if (ImGui::BeginTabBar("##test_results_tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+                const auto tab = [&](const char* label, void (TestResultsPanel::*body)(), ImGuiTabItemFlags flags = 0) {
+                    if (ImGui::BeginTabItem(label, nullptr, flags)) {
+                        ImGui::BeginChild("##tab_body", ImVec2(0.0f, -footer_h));
+                        (this->*body)();
+                        ImGui::EndChild();
+                        ImGui::EndTabItem();
+                    }
+                };
+                tab("Overview###overview", &TestResultsPanel::RenderOverviewTab);
+                if (view_.classification) {
+                    tab("Confusion matrix###matrix", &TestResultsPanel::RenderConfusionMatrixTab);
+                    tab("Classes###classes", &TestResultsPanel::RenderClassesTab);
+                    if (!results_.metric_learning_mode) tab("Curves###curves", &TestResultsPanel::RenderCurvesTab);
+                    tab("Predictions###predictions", &TestResultsPanel::RenderPredictionsTab);
                 }
-
-                if (!regression_mode && !causal_lm_mode &&
-                    ImGui::BeginTabItem(ICON_FA_TABLE " Confusion Matrix")) {
-                    selected_tab_ = 1;
-                    RenderConfusionMatrixTab();
-                    ImGui::EndTabItem();
-                }
-
-                if (!regression_mode && !causal_lm_mode &&
-                    ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
-                    selected_tab_ = 2;
-                    RenderPerClassTab();
-                    ImGui::EndTabItem();
-                }
-
-                if (!regression_mode && !causal_lm_mode && !metric_learning_mode &&
-                    ImGui::BeginTabItem(ICON_FA_CHART_AREA " Curves")) {
-                    selected_tab_ = 5;
-                    RenderCurvesTab();
-                    ImGui::EndTabItem();
-                }
-
-                if (!regression_mode && !causal_lm_mode &&
-                    ImGui::BeginTabItem(ICON_FA_MAGNIFYING_GLASS " Predictions")) {
-                    selected_tab_ = 3;
-                    RenderPredictionsTab();
-                    ImGui::EndTabItem();
-                }
-
-                const ImGuiTabItemFlags comparison_flags =
-                    select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-                if (ImGui::BeginTabItem(ICON_FA_RIGHT_LEFT " Comparison", nullptr, comparison_flags)) {
-                    selected_tab_ = 4;
-                    select_comparison_tab_ = false;
-                    RenderComparisonTab();
-                    ImGui::EndTabItem();
-                }
-
+                tab("Comparison###comparison", &TestResultsPanel::RenderComparisonTab,
+                    select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None);
+                select_comparison_tab_ = false;
                 ImGui::EndTabBar();
             }
+            RenderFooter();
         }
     }
     ImGui::End();
 }
 
-void TestResultsPanel::RenderToolbar() {
-    // Export buttons
-    if (ImGui::Button(ICON_FA_DOWNLOAD " Export CSV")) {
-        ExportToCSV();
+void TestResultsPanel::RenderHeader() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    {
+        ui::FontScope heading(ui::Font::Heading);
+        ImGui::TextColored(ToneColour(view_.headline_tone), "%s", view_.headline.c_str());
     }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_FILE_CODE " Export JSON")) {
-        ExportToJSON();
+    Wrapped(t.text_dim, view_.subtitle);
+    if (!view_.note.empty()) Wrapped(t.caution, view_.note);
+    ui::FlowRow chips;
+    for (const auto& chip : view_.chips) {
+        chips.Next(ui::ChipWidth(chip.text.c_str()));
+        ui::Chip(chip.text.c_str(), ToneColour(chip.tone));
     }
-    ImGui::SameLine();
-
-    // Clear button
-    if (ImGui::Button(ICON_FA_TRASH " Clear")) {
-        Clear();
-    }
-
-    ImGui::SameLine();
-    ImGui::Separator();
-    ImGui::SameLine();
-
-    // Quick stats
-    std::lock_guard<std::mutex> lock(results_mutex_);
-    if (results_.regression_mode) {
-        ImGui::Text("MAE: %.4f | RMSE: %.4f",
-                    results_.test_mae, results_.test_rmse);
-    } else {
-        ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
-        ImGui::TextColored(acc_color, "Accuracy: %.2f%%",
-                           results_.test_accuracy * 100);
-    }
-    ImGui::SameLine();
-    ImGui::Text("| Samples: %d", results_.total_samples);
-    ImGui::SameLine();
-    ImGui::Text("| Time: %.2fs", results_.total_time_seconds);
+    ImGui::Dummy(ImVec2(0.0f, t.space_xs));
 }
 
 void TestResultsPanel::RenderOverviewTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
-
-    if (results_.partial) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Quick test: the first %d of %d batches (%d samples). Use Train > Test > Run Test for the whole test split.",
-                            results_.batch_limit, results_.total_batches, results_.total_samples);
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-    }
-
-    if (results_.causal_lm_mode) {
-        ImGui::Text("Next-token evaluation");
-        ImGui::Separator();
-        ImGui::Text("Test loss: %.6f", results_.test_loss);
-        ImGui::Text("Token accuracy: %.2f%%", results_.test_accuracy * 100);
-        ImGui::Text("Windows: %d", results_.total_samples);
-        ImGui::Text("Valid target tokens: %zu", results_.total_target_values);
-        ImGui::Text("Time: %.3fs", results_.total_time_seconds);
-        return;
-    }
-
-    // Main metrics section
-    ImGui::BeginChild("OverviewMetrics", ImVec2(0, 0), true);
-
-    if (results_.regression_mode) {
-        ImGui::Text("Regression Evaluation");
-        ImGui::Separator();
-        ImGui::Text("Test Loss");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%.4f", results_.test_loss);
-        ImGui::Text("MAE");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%.4f", results_.test_mae);
-        ImGui::Text("RMSE");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%.4f", results_.test_rmse);
-        ImGui::Text("Forecast windows");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%d", results_.total_samples);
-        ImGui::Text("Target values");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%zu", results_.total_target_values);
-        ImGui::Text("Evaluation time");
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(170);
-        ImGui::Text("%.3fs", results_.total_time_seconds);
-        ImGui::EndChild();
-        return;
-    }
-
-    // Accuracy with large display
-    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);  // Use default font
-    ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
-
-    // A metric-learning model is tested as a 1-NN classifier (TOFIX140 A5).
-    ImGui::TextColored(acc_color, results_.metric_learning_mode ? "1-NN Accuracy" : "Accuracy");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(150);
-    ImGui::TextColored(acc_color, "%.2f%%", results_.test_accuracy * 100);
-    ImGui::PopFont();
-    if (results_.metric_learning_mode) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Each test row takes the class of its nearest other test row in the embedding space.");
-        ImGui::PopTextWrapPos();
-    }
-
-    ImGui::Separator();
-
-    // Two-column layout for metrics
-    ImGui::Columns(2, "metrics_cols", true);
-
-    // Left column - Loss & Timing
-    ImGui::Text("Test Loss");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(120);
-    ImGui::Text("%.4f", results_.test_loss);
-
-    ImGui::Text("Samples");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(120);
-    ImGui::Text("%d", results_.total_samples);
-
-    ImGui::Text("Time");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(120);
-    ImGui::Text("%.2f sec", results_.total_time_seconds);
-
-    ImGui::Text("Throughput");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(120);
-    ImGui::Text("%.0f samples/sec", results_.samples_per_second);
-
-    ImGui::NextColumn();
-
-    // Right column - Aggregate metrics
-    ImGui::Text("Macro Precision");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetColumnOffset(1) + 130);
-    ImGui::TextColored(GetMetricColor(results_.macro_precision), "%.4f", results_.macro_precision);
-
-    ImGui::Text("Macro Recall");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetColumnOffset(1) + 130);
-    ImGui::TextColored(GetMetricColor(results_.macro_recall), "%.4f", results_.macro_recall);
-
-    ImGui::Text("Macro F1");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetColumnOffset(1) + 130);
-    ImGui::TextColored(GetMetricColor(results_.macro_f1), "%.4f", results_.macro_f1);
-
-    ImGui::Text("Weighted F1");
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetColumnOffset(1) + 130);
-    ImGui::TextColored(GetMetricColor(results_.weighted_f1), "%.4f", results_.weighted_f1);
-
-    ImGui::Columns(1);
-
-    ImGui::Separator();
-
-    if (results_.pair_metrics || results_.retrieval_metrics) {
-        if (results_.retrieval_metrics) {
-            const auto& r = *results_.retrieval_metrics;
-            ImGui::Text("Recall@%zu", r.k);
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(170);
-            ImGui::TextColored(GetMetricColor(static_cast<float>(r.recall_at_k)), "%.4f", r.recall_at_k);
-            ImGui::Text("MRR");
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(170);
-            ImGui::TextColored(GetMetricColor(static_cast<float>(r.mean_reciprocal_rank)), "%.4f",
-                               r.mean_reciprocal_rank);
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (!view_.tiles.empty()) {
+        ui::FlowRow tiles;
+        for (const auto& tile : view_.tiles) {
+            float w = 0.0f;
+            {
+                ui::FontScope medium(ui::Font::Medium);
+                w = ImGui::CalcTextSize(tile.value.c_str()).x;
+            }
+            w = (std::max)(w, ImGui::CalcTextSize(tile.label.c_str()).x) + t.space_lg;
+            tiles.Next(w);
+            ImGui::BeginGroup();
+            {
+                ui::FontScope medium(ui::Font::Medium);
+                ImGui::TextUnformatted(tile.value.c_str());
+            }
+            ImGui::TextColored(t.text_dim, "%s", tile.label.c_str());
+            ImGui::EndGroup();
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::Dummy(ImVec2(t.space_lg, 0.0f));
         }
-        if (results_.pair_metrics) {
-            const auto& pm = *results_.pair_metrics;
-            ImGui::Text("Pair Accuracy");
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(170);
-            ImGui::TextColored(GetMetricColor(static_cast<float>(pm.accuracy)), "%.4f", pm.accuracy);
-            ImGui::SameLine();
-            ImGui::TextDisabled("threshold %g, %zu pairs", pm.threshold, pm.pair_count);
-            ImGui::Text("Mean Distance");
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(170);
-            ImGui::Text("same class %.4f / other class %.4f", pm.positive_distance_mean, pm.negative_distance_mean);
-        }
-        ImGui::Separator();
+        ImGui::NewLine();
+        ImGui::Dummy(ImVec2(0.0f, t.space_sm));
     }
-
-    // Class summary
-    if (!results_.per_class_metrics.empty()) {
-        ImGui::Text("Classes: %d", static_cast<int>(results_.per_class_metrics.size()));
-
-        // Find best and worst classes
-        int best_class = 0, worst_class = 0;
-        float best_f1 = results_.per_class_metrics[0].f1_score;
-        float worst_f1 = results_.per_class_metrics[0].f1_score;
-
-        for (size_t i = 1; i < results_.per_class_metrics.size(); ++i) {
-            if (results_.per_class_metrics[i].f1_score > best_f1) {
-                best_f1 = results_.per_class_metrics[i].f1_score;
-                best_class = static_cast<int>(i);
-            }
-            if (results_.per_class_metrics[i].f1_score < worst_f1) {
-                worst_f1 = results_.per_class_metrics[i].f1_score;
-                worst_class = static_cast<int>(i);
-            }
-        }
-
-        ImGui::Text("Best Class:");
-        ImGui::SameLine();
-        ImGui::TextColored(ui::CurrentTokens().success, "%s (F1: %.4f)",
-                           results_.per_class_metrics[best_class].class_name.c_str(), best_f1);
-
-        ImGui::Text("Worst Class:");
-        ImGui::SameLine();
-        ImGui::TextColored(ui::CurrentTokens().error, "%s (F1: %.4f)",
-                           results_.per_class_metrics[worst_class].class_name.c_str(), worst_f1);
-    }
-
-    ImGui::EndChild();
-}
-
-void TestResultsPanel::RenderConfusionMatrixTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
-
-    const auto& conf = results_.confusion_matrix;
-    if (conf.num_classes == 0) {
-        ImGui::TextDisabled("No confusion matrix data.");
-        return;
-    }
-
-    // Controls
-    ImGui::Checkbox("Normalize", &normalize_confusion_);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
-    ImGui::SliderFloat("Cell Size", &cell_size_, 20.0f, 60.0f, "%.0f");
-
-    ImGui::Separator();
-
-    // Find max value for color scaling
-    int max_value = 1;
-    for (int i = 0; i < conf.num_classes; ++i) {
-        for (int j = 0; j < conf.num_classes; ++j) {
-            max_value = std::max(max_value, conf.matrix[i][j]);
-        }
-    }
-
-    // Draw matrix
-    ImGui::BeginChild("ConfMatrix", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-
-    // Header row with predicted labels
-    ImGui::SetCursorPosX(cell_size_ + 10);
-    for (int j = 0; j < conf.num_classes; ++j) {
-        ImGui::SetCursorPosX((j + 1) * (cell_size_ + 5) + 40);
-        ImGui::Text("%d", j);
-    }
-    ImGui::Text("");  // New line
-
-    // Matrix rows
-    for (int i = 0; i < conf.num_classes; ++i) {
-        // Row label
-        ImGui::Text("%2d ", i);
-        ImGui::SameLine();
-
-        for (int j = 0; j < conf.num_classes; ++j) {
-            int value = conf.matrix[i][j];
-            float display_value = normalize_confusion_ && conf.matrix[i][j] > 0 ?
-                static_cast<float>(value) / results_.per_class_metrics[i].support : static_cast<float>(value);
-
-            ImVec4 bg_color = GetConfusionCellColor(value, max_value);
-            if (i == j) {
-                // Diagonal cells - good predictions
-                bg_color = ui::Mix(ui::CurrentTokens().bg_raised, ui::CurrentTokens().success,
-                                   0.5f + 0.5f * (static_cast<float>(value) / max_value));
-            }
-
-            ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg_color);
-            ImGui::PushStyleColor(ImGuiCol_Text, ui::ReadableOn(ui::CurrentTokens(), bg_color));
-
-            char label[32];
-            if (normalize_confusion_) {
-                snprintf(label, sizeof(label), "%.2f", display_value);
-            } else {
-                snprintf(label, sizeof(label), "%d", value);
-            }
-
-            ImGui::SetCursorPosX((j + 1) * (cell_size_ + 5) + 30);
-            ImGui::Button(label, ImVec2(cell_size_, cell_size_));
-
-            ImGui::PopStyleColor(4);
-
-            // Tooltip
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("Actual: %d, Predicted: %d", i, j);
-                ImGui::Text("Count: %d", value);
-                if (results_.per_class_metrics[i].support > 0) {
-                    ImGui::Text("Percentage: %.1f%%",
-                                100.0f * value / results_.per_class_metrics[i].support);
-                }
-                ImGui::EndTooltip();
-            }
-
-            ImGui::SameLine();
-        }
-        ImGui::Text("");  // New line
-    }
-
-    // Legend
-    ImGui::Separator();
-    ImGui::Text("Rows: Actual class | Columns: Predicted class");
-    ImGui::Text("Diagonal: Correct predictions");
-
-    ImGui::EndChild();
-}
-
-void TestResultsPanel::RenderPerClassTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
-
-    if (results_.per_class_metrics.empty()) {
-        ImGui::TextDisabled("No per-class metrics available.");
-        return;
-    }
-
-    // Filter
-    ImGui::SetNextItemWidth(200);
-    ImGui::InputTextWithHint("##filter", "Filter classes...", filter_text_, sizeof(filter_text_));
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) {
-        filter_text_[0] = '\0';
-    }
-
-    ImGui::Separator();
-
-    // Table
-    if (ImGui::BeginTable("PerClassTable", 7,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-            ImGuiTableFlags_Sortable | ImGuiTableFlags_ScrollY,
-            ImVec2(0, ImGui::GetContentRegionAvail().y))) {
-
-        ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("Precision", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("Recall", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("F1 Score", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("TP", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-        ImGui::TableSetupColumn("FP", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-        ImGui::TableSetupColumn("Support", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableHeadersRow();
-
-        std::string filter_str(filter_text_);
-        std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
-
-        for (const auto& cm : results_.per_class_metrics) {
-            // Filter
-            if (!filter_str.empty()) {
-                std::string class_lower = cm.class_name;
-                std::transform(class_lower.begin(), class_lower.end(), class_lower.begin(), ::tolower);
-                if (class_lower.find(filter_str) == std::string::npos) {
-                    continue;
-                }
-            }
-
+    if (view_.facts.empty()) return;
+    if (ImGui::BeginTable("##facts", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        for (const auto& [key, value] : view_.facts) {
             ImGui::TableNextRow();
-
             ImGui::TableNextColumn();
-            ImGui::Text("%s", cm.class_name.c_str());
-
+            Wrapped(t.text_dim, key);
             ImGui::TableNextColumn();
-            ImGui::TextColored(GetMetricColor(cm.precision), "%.4f", cm.precision);
-
-            ImGui::TableNextColumn();
-            ImGui::TextColored(GetMetricColor(cm.recall), "%.4f", cm.recall);
-
-            ImGui::TableNextColumn();
-            ImGui::TextColored(GetMetricColor(cm.f1_score), "%.4f", cm.f1_score);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", cm.true_positives);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", cm.false_positives);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", cm.support);
+            Wrapped(key.rfind("Worst", 0) == 0 ? t.error : key == "Best class" ? t.success : t.text, value);
         }
-
         ImGui::EndTable();
     }
 }
 
+void TestResultsPanel::RenderConfusionMatrixTab() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto& mx = view_.matrix;
+    if (mx.counts.empty()) {
+        ImGui::TextColored(t.text_dim, "No confusion matrix for this run.");
+        return;
+    }
+    static const char* const kModes[] = {"Counts", "Share of each true class"};
+    ui::SegmentedControl("##matrix_mode", kModes, 2, &matrix_mode_);
+    if (!mx.largest_confusion.empty()) Wrapped(t.text_dim, mx.largest_confusion);
+    ImGui::Dummy(ImVec2(0.0f, t.space_xs));
+
+    const int n = static_cast<int>(mx.counts.size());
+    const ImGuiTableFlags flags = ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+    if (!ImGui::BeginTable("##confusion", n + 1, flags)) return;
+    ImGui::TableSetupScrollFreeze(1, 1);
+    ImGui::TableSetupColumn("true \\ predicted");
+    for (int j = 0; j < n; ++j) ImGui::TableSetupColumn(mx.names[static_cast<size_t>(j)].c_str());
+    ImGui::TableHeadersRow();
+    for (int i = 0; i < n; ++i) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(t.text_dim, "%s", mx.names[static_cast<size_t>(i)].c_str());
+        const int total = mx.row_totals[static_cast<size_t>(i)];
+        for (int j = 0; j < n; ++j) {
+            ImGui::TableNextColumn();
+            const auto& row = mx.counts[static_cast<size_t>(i)];
+            const int value = static_cast<size_t>(j) < row.size() ? row[static_cast<size_t>(j)] : 0;
+            const float intensity = mx.max_count > 0 ? static_cast<float>(value) / static_cast<float>(mx.max_count) : 0.0f;
+            const ImVec4 cell = i == j ? ui::Mix(t.bg_raised, t.success, 0.25f + 0.55f * intensity)
+                                       : ui::Mix(t.bg_raised, t.error, value > 0 ? 0.15f + 0.6f * intensity : 0.0f);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::GetColorU32(cell));
+            char label[32];
+            if (matrix_mode_ == 1) std::snprintf(label, sizeof(label), "%.2f", total > 0 ? static_cast<double>(value) / total : 0.0);
+            else std::snprintf(label, sizeof(label), "%d", value);
+            ImGui::TextColored(ui::ReadableOn(t, cell), "%s", label);
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("True %s, predicted %s", mx.names[static_cast<size_t>(i)].c_str(),
+                            mx.names[static_cast<size_t>(j)].c_str());
+                ImGui::Text("%d of %d (%.1f%% of the true class)", value, total, total > 0 ? 100.0 * value / total : 0.0);
+                ImGui::EndTooltip();
+            }
+        }
+    }
+    ImGui::EndTable();
+}
+
+void TestResultsPanel::RenderClassesTab() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (view_.classes.empty()) {
+        ImGui::TextColored(t.text_dim, "No per-class metrics for this run.");
+        return;
+    }
+    ImGui::SetNextItemWidth((std::min)(240.0f, ImGui::GetContentRegionAvail().x));
+    ImGui::InputTextWithHint("##filter", "Filter classes", filter_text_, sizeof(filter_text_));
+    // Fit to the headers and numbers; a narrow panel scrolls sideways.
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable | ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit;
+    if (!ImGui::BeginTable("##classes", 7, flags)) return;
+    ImGui::TableSetupScrollFreeze(1, 1);
+    ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_DefaultSort);
+    for (const char* column : {"Precision", "Recall", "F1", "Found", "False alarms", "Support"})
+        ImGui::TableSetupColumn(column);
+    ImGui::TableHeadersRow();
+    if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs(); specs && specs->SpecsCount > 0) {
+        static const test_report::ClassSort kColumns[] = {
+            test_report::ClassSort::Name,  test_report::ClassSort::Precision,   test_report::ClassSort::Recall,
+            test_report::ClassSort::F1,    test_report::ClassSort::Found,       test_report::ClassSort::FalseAlarms,
+            test_report::ClassSort::Support};
+        const auto& spec = specs->Specs[0];
+        sort_by_ = kColumns[std::clamp(static_cast<int>(spec.ColumnIndex), 0, 6)];
+        sort_ascending_ = spec.SortDirection == ImGuiSortDirection_Ascending;
+    }
+    const auto rows = test_report::SortClasses(view_.classes, sort_by_, sort_ascending_, filter_text_);
+    for (const auto& row : rows) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(row.name.c_str());
+        if (row.never_predicted && ImGui::IsItemHovered()) ImGui::SetTooltip("Never predicted in this run.");
+        ImGui::TableNextColumn();
+        ImGui::TextColored(MetricColour(row.precision), "%.4f", row.precision);
+        ImGui::TableNextColumn();
+        ImGui::TextColored(MetricColour(row.recall), "%.4f", row.recall);
+        ImGui::TableNextColumn();
+        ImGui::TextColored(MetricColour(row.f1), "%.4f", row.f1);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", row.found);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", row.false_alarms);
+        ImGui::TableNextColumn();
+        ImGui::Text("%d", row.support);
+    }
+    ImGui::EndTable();
+}
+
 void TestResultsPanel::RenderCurvesTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
     const ui::Tokens& t = ui::CurrentTokens();
     const auto& roc = results_.roc;
     const auto& pr = results_.pr;
@@ -546,32 +310,19 @@ void TestResultsPanel::RenderCurvesTab() {
                                                     : results_.curves_note.c_str());
         return;
     }
-
     const bool multiclass = !roc->class_auc.empty();
-    const auto class_name = [this](size_t c) {
-        return c < results_.per_class_metrics.size() && !results_.per_class_metrics[c].class_name.empty()
-                   ? results_.per_class_metrics[c].class_name
-                   : "Class " + std::to_string(c);
-    };
-
-    // Headline: AUC and AP (macro over classes for multi-class).
     {
         ui::FontScope heading(ui::Font::Heading);
         ImGui::Text("AUC %.4f", roc->auc);
         ImGui::SameLine(0.0f, 24.0f);
         ImGui::Text("AP %.4f", pr->average_precision);
     }
-    ImGui::TextColored(t.text_dim, "%s",
-                       multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
-                                  : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
-    if (!results_.curves_note.empty()) {  // classes left out
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.caution, "%s", results_.curves_note.c_str());
-        ImGui::PopTextWrapPos();
-    }
+    Wrapped(t.text_dim, multiclass ? "One-vs-rest per class; AUC and AP are the macro means."
+                                   : "Positive class: 1. F1 is one threshold; the curves show every threshold.");
+    if (!results_.curves_note.empty()) Wrapped(t.caution, results_.curves_note);
     ImGui::Spacing();
 
-    const float plot_height = std::max(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
+    const float plot_height = (std::max)(ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y, 220.0f);
     if (!ImGui::BeginTable("##curves", 2, ImGuiTableFlags_SizingStretchSame)) return;
     ImGui::TableNextColumn();
     if (ImPlot::BeginPlot("ROC", ImVec2(-1, plot_height), ImPlotFlags_NoMenus)) {
@@ -582,10 +333,12 @@ void TestResultsPanel::RenderCurvesTab() {
         ImPlot::PlotLine("##chance", diagonal, diagonal, 2);
         if (multiclass) {
             for (size_t c = 0; c < roc->class_fpr.size(); ++c) {
-                if (roc->class_fpr[c].empty()) continue;  // skipped: no test sample of the class
-                const std::string label = class_name(c) + " (AUC " + std::to_string(roc->class_auc[c]).substr(0, 5) + ")";
+                if (roc->class_fpr[c].empty()) continue;  // no test sample of the class
+                char label[160];
+                std::snprintf(label, sizeof(label), "%s (AUC %.3f)",
+                              test_report::ClassName(results_, static_cast<int>(c)).c_str(), roc->class_auc[c]);
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
-                ImPlot::PlotLine(label.c_str(), roc->class_fpr[c].data(), roc->class_tpr[c].data(),
+                ImPlot::PlotLine(label, roc->class_fpr[c].data(), roc->class_tpr[c].data(),
                                  static_cast<int>(roc->class_fpr[c].size()));
             }
         } else {
@@ -601,9 +354,11 @@ void TestResultsPanel::RenderCurvesTab() {
         if (multiclass) {
             for (size_t c = 0; c < pr->class_recall.size(); ++c) {
                 if (pr->class_recall[c].empty()) continue;
-                const std::string label = class_name(c) + " (AP " + std::to_string(pr->class_ap[c]).substr(0, 5) + ")";
+                char label[160];
+                std::snprintf(label, sizeof(label), "%s (AP %.3f)",
+                              test_report::ClassName(results_, static_cast<int>(c)).c_str(), pr->class_ap[c]);
                 ImPlot::SetNextLineStyle(ui::SeriesColour(t, c), 2.0f);
-                ImPlot::PlotLine(label.c_str(), pr->class_recall[c].data(), pr->class_precision[c].data(),
+                ImPlot::PlotLine(label, pr->class_recall[c].data(), pr->class_precision[c].data(),
                                  static_cast<int>(pr->class_recall[c].size()));
             }
         } else {
@@ -616,210 +371,131 @@ void TestResultsPanel::RenderCurvesTab() {
 }
 
 void TestResultsPanel::RenderPredictionsTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
-
-    if (results_.predictions.empty()) {
-        ImGui::TextDisabled("No prediction data available.");
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t samples = std::min(results_.predictions.size(), results_.ground_truth.size());
+    if (samples == 0) {
+        ImGui::TextColored(t.text_dim, "No predictions were kept for this run.");
         return;
     }
-
-    ImGui::Text("Total predictions: %zu", results_.predictions.size());
-
-    // Show only misclassifications option
-    static bool show_only_errors = false;
-    ImGui::Checkbox("Show only misclassifications", &show_only_errors);
-
-    ImGui::Separator();
-
-    // Table
-    if (ImGui::BeginTable("PredictionsTable", 4,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-            ImVec2(0, ImGui::GetContentRegionAvail().y))) {
-
-        ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("Predicted", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("Actual", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("Confidence", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
-
-        // Use clipper for performance with large datasets
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(results_.predictions.size()));
-
-        while (clipper.Step()) {
-            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                int pred = results_.predictions[i];
-                int actual = results_.ground_truth[i];
-                float conf = i < static_cast<int>(results_.confidences.size()) ?
-                             results_.confidences[i] : 0.0f;
-                bool correct = (pred == actual);
-
-                if (show_only_errors && correct) {
-                    continue;
-                }
-
-                ImGui::TableNextRow();
-
-                // Index
-                ImGui::TableNextColumn();
-                ImGui::Text("%d", i);
-
-                // Predicted
-                ImGui::TableNextColumn();
-                if (correct) {
-                    ImGui::TextColored(ui::CurrentTokens().success, "%d", pred);
-                } else {
-                    ImGui::TextColored(ui::CurrentTokens().error, "%d", pred);
-                }
-
-                // Actual
-                ImGui::TableNextColumn();
-                ImGui::Text("%d", actual);
-
-                // Confidence bar
-                ImGui::TableNextColumn();
-                const ui::Tokens& t = ui::CurrentTokens();
-                ImVec4 conf_color = conf > 0.8f ? t.success :
-                                    conf > 0.5f ? t.warning :
-                                                  t.caution;
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, conf_color);
-                ImGui::ProgressBar(conf, ImVec2(-1, 0), "");
-                ImGui::PopStyleColor();
-                ImGui::SameLine();
-                ImGui::Text("%.1f%%", conf * 100);
-            }
-        }
-
-        ImGui::EndTable();
-    }
-}
-
-ImVec4 TestResultsPanel::GetAccuracyColor(float accuracy) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (accuracy >= 0.95f) return t.success;
-    if (accuracy >= 0.85f) return ui::Mix(t.success, t.warning, 0.5f);
-    if (accuracy >= 0.70f) return t.warning;
-    if (accuracy >= 0.50f) return t.caution;
-    return t.error;
-}
-
-ImVec4 TestResultsPanel::GetMetricColor(float value) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (value >= 0.9f) return t.success;
-    if (value >= 0.7f) return t.warning;
-    if (value >= 0.5f) return t.caution;
-    return t.error;
-}
-
-ImVec4 TestResultsPanel::GetConfusionCellColor(int value, int max_value) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    if (max_value == 0) return t.bg_raised;
-    float intensity = static_cast<float>(value) / max_value;
-    return ui::Mix(t.bg_raised, t.error, 0.3f + 0.5f * intensity);
-}
-
-void TestResultsPanel::ExportToCSV() {
-    auto result = FileDialogs::SaveFile(
-        "Export Test Results",
-        {{"CSV Files", "csv"}, {"All Files", "*"}},
-        nullptr,
-        "test_results.csv"
-    );
-    if (result) {
-        if (TestManager::Instance().ExportResultsToCSV(*result)) {
-            spdlog::info("Exported results to: {}", *result);
+    const std::string all = "All " + FormatCompiledCount(static_cast<long long>(samples));
+    const std::string mistakes = "Only mistakes " + FormatCompiledCount(static_cast<long long>(view_.mistakes.size()));
+    const char* modes[] = {all.c_str(), mistakes.c_str()};
+    ui::SegmentedControl("##predictions_mode", modes, 2, &predictions_mode_);
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##predictions", 4, flags)) return;
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("#", 0, 0.5f);
+    ImGui::TableSetupColumn("Predicted", 0, 1.2f);
+    ImGui::TableSetupColumn("Actual", 0, 1.2f);
+    ImGui::TableSetupColumn("Confidence", 0, 1.2f);
+    ImGui::TableHeadersRow();
+    // The clipper walks the rows that are shown, so scrolling stays even
+    // with only the mistakes.
+    const bool only_mistakes = predictions_mode_ == 1;
+    const int count = only_mistakes ? static_cast<int>(view_.mistakes.size()) : static_cast<int>(samples);
+    ImGuiListClipper clipper;
+    clipper.Begin(count);
+    while (clipper.Step()) {
+        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
+            const int i = only_mistakes ? view_.mistakes[static_cast<size_t>(r)] : r;
+            const int predicted = results_.predictions[static_cast<size_t>(i)];
+            const int actual = results_.ground_truth[static_cast<size_t>(i)];
+            const float confidence =
+                static_cast<size_t>(i) < results_.confidences.size() ? results_.confidences[static_cast<size_t>(i)] : 0.0f;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", i);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(predicted == actual ? t.success : t.error, "%s",
+                               test_report::ClassName(results_, predicted).c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(test_report::ClassName(results_, actual).c_str());
+            ImGui::TableNextColumn();
+            char overlay[16];
+            std::snprintf(overlay, sizeof(overlay), "%.0f%%", confidence * 100.0f);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
+                                  confidence > 0.8f ? t.success : confidence > 0.5f ? t.warning : t.caution);
+            ImGui::ProgressBar(confidence, ImVec2(-FLT_MIN, 0.0f), overlay);
+            ImGui::PopStyleColor();
         }
     }
-}
-
-void TestResultsPanel::ExportToJSON() {
-    auto result = FileDialogs::SaveFile(
-        "Export Test Results",
-        {{"JSON Files", "json"}, {"All Files", "*"}},
-        nullptr,
-        "test_results.json"
-    );
-    if (result) {
-        if (TestManager::Instance().ExportResultsToJSON(*result)) {
-            spdlog::info("Exported results to: {}", *result);
-        }
-    }
-}
-
-void TestResultsPanel::ShowComparison() {
-    Show();
-    select_comparison_tab_ = true;
+    ImGui::EndTable();
 }
 
 void TestResultsPanel::RenderComparisonTab() {
-    std::lock_guard<std::mutex> lock(results_mutex_);
-    if (!has_results_) {
-        ImGui::TextDisabled("Run a test first. The Comparison tab shows the latest run beside the one before it.");
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (view_.comparison.empty()) {
+        Wrapped(t.text_dim, "One run so far. Run a second test to compare it with this one.");
         return;
     }
-    if (!has_previous_) {
-        ImGui::TextDisabled("One run so far. Run a second test to compare it with this one.");
-        return;
-    }
-    const TestingMetrics& a = previous_results_;
-    const TestingMetrics& b = results_;
-
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Previous run beside the latest run. The change column is latest minus previous; "
-                        "for loss, MAE and RMSE a negative change is an improvement.");
-    ImGui::PopTextWrapPos();
-    ImGui::Spacing();
-
-    struct Row { const char* name; float prev; float cur; bool percent; bool lower_is_better; bool show; };
-    const bool classification = !b.regression_mode && !b.causal_lm_mode;
-    const Row rows[] = {
-        {"Loss", a.test_loss, b.test_loss, false, true, true},
-        {"Accuracy", a.test_accuracy, b.test_accuracy, true, false, !b.regression_mode},
-        {"Macro precision", a.macro_precision, b.macro_precision, true, false, classification},
-        {"Macro recall", a.macro_recall, b.macro_recall, true, false, classification},
-        {"Macro F1", a.macro_f1, b.macro_f1, true, false, classification},
-        {"Weighted F1", a.weighted_f1, b.weighted_f1, true, false, classification},
-        {"MAE", a.test_mae, b.test_mae, false, true, b.regression_mode},
-        {"RMSE", a.test_rmse, b.test_rmse, false, true, b.regression_mode},
-        {"Samples", static_cast<float>(a.total_samples), static_cast<float>(b.total_samples), false, false, true},
-        {"Time (s)", a.total_time_seconds, b.total_time_seconds, false, true, true},
-    };
-
-    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings;
-    if (ImGui::BeginTable("##comparison", 4, flags)) {
-        ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableSetupColumn("Previous", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Latest", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Change", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    Wrapped(t.text_dim, "The run before beside the latest run. Change is latest minus before; for loss, MAE and RMSE "
+                        "a negative change is an improvement.");
+    if (ImGui::BeginTable("##comparison", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Metric", 0, 1.4f);
+        ImGui::TableSetupColumn("Before", 0, 1.0f);
+        ImGui::TableSetupColumn("Latest", 0, 1.0f);
+        ImGui::TableSetupColumn("Change", 0, 1.0f);
         ImGui::TableHeadersRow();
-        for (const Row& r : rows) {
-            if (!r.show) continue;
+        for (const auto& row : view_.comparison) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(r.name);
-            const float scale = r.percent ? 100.0f : 1.0f;
-            const char* fmt = r.percent ? "%.2f%%" : "%.4f";
+            ImGui::TextUnformatted(row.metric.c_str());
             ImGui::TableNextColumn();
-            ImGui::Text(fmt, r.prev * scale);
+            ImGui::TextUnformatted(row.previous.c_str());
             ImGui::TableNextColumn();
-            ImGui::Text(fmt, r.cur * scale);
+            ImGui::TextUnformatted(row.latest.c_str());
             ImGui::TableNextColumn();
-            const float delta = (r.cur - r.prev) * scale;
-            const bool better = r.lower_is_better ? delta < 0.0f : delta > 0.0f;
-            const bool same = delta == 0.0f;
-            const ImVec4 colour = same ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                                       : (better ? ui::CurrentTokens().success : ui::CurrentTokens().caution);
-            ImGui::TextColored(colour, r.percent ? "%+.2f%%" : "%+.4f", delta);
+            ImGui::TextColored(ToneColour(row.change_tone), "%s", row.change.c_str());
         }
         ImGui::EndTable();
     }
-    if (a.partial || b.partial) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("%s", b.partial && a.partial ? "Both runs were quick tests (first batches only)."
-                            : b.partial ? "The latest run was a quick test (first batches only)."
-                                        : "The previous run was a quick test (first batches only).");
+    if (!view_.comparison_note.empty()) Wrapped(t.text_dim, view_.comparison_note);
+}
+
+void TestResultsPanel::RenderFooter() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+    ui::FlowRow row;
+    row.Next(ui::ButtonWidth("Export CSV...", ui::ButtonSize::Small));
+    if (ui::SecondaryButton("Export CSV...", true, nullptr, ui::ButtonSize::Small)) ExportToCSV();
+    row.Next(ui::ButtonWidth("Export JSON...", ui::ButtonSize::Small));
+    if (ui::SecondaryButton("Export JSON...", true, nullptr, ui::ButtonSize::Small)) ExportToJSON();
+    row.Next(ui::ButtonWidth("Clear", ui::ButtonSize::Small));
+    const bool clear = ui::DangerButton("Clear", true, nullptr, ui::ButtonSize::Small);
+    if (run_test_) {
+        row.Next(ui::ButtonWidth("Run test again", ui::ButtonSize::Regular));
+        if (ui::PrimaryButton("Run test again")) run_test_();
     }
+    if (!export_note_.empty()) Wrapped(export_failed_ ? t.error : t.success, export_note_);
+    if (clear) {
+        results_ = TestingMetrics();
+        previous_results_ = TestingMetrics();
+        has_results_ = false;
+        has_previous_ = false;
+        failure_message_.clear();
+        export_note_.clear();
+        view_dirty_ = true;
+    }
+}
+
+void TestResultsPanel::ExportToCSV() {
+    const std::string folder = ExportsFolder();
+    const auto path = FileDialogs::SaveFile("Export Test Results", {{"CSV Files", "csv"}, {"All Files", "*"}},
+                                            folder.empty() ? nullptr : folder.c_str(), "test_results.csv");
+    if (!path) return;
+    std::string error;
+    export_failed_ = !WriteTestResultsCsv(results_, *path, &error);
+    export_note_ = export_failed_ ? "Could not export: " + error : "Saved " + *path;
+}
+
+void TestResultsPanel::ExportToJSON() {
+    const std::string folder = ExportsFolder();
+    const auto path = FileDialogs::SaveFile("Export Test Results", {{"JSON Files", "json"}, {"All Files", "*"}},
+                                            folder.empty() ? nullptr : folder.c_str(), "test_results.json");
+    if (!path) return;
+    std::string error;
+    export_failed_ = !WriteTestResultsJson(results_, *path, &error);
+    export_note_ = export_failed_ ? "Could not export: " + error : "Saved " + *path;
 }
 
 } // namespace cyxwiz

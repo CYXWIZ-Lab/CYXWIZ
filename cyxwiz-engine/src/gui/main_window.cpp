@@ -1276,6 +1276,11 @@ MainWindow::MainWindow()
             StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         }
     });
+    if (test_results_panel_) {
+        test_results_panel_->SetRunTestCallback([this]() {
+            if (node_editor_) StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+        });
+    }
     toolbar_->SetCompareTestResultsCallback([this]() {
         if (test_results_panel_) test_results_panel_->ShowComparison();
     });
