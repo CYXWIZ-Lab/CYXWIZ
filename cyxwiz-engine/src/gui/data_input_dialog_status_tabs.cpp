@@ -32,6 +32,10 @@ void DataInputDialog::RenderMemoryTab() {
                 ImGui::TextColored(t.info, "On disk (Parquet)");
                 ImGui::SameLine();
                 ImGui::TextDisabled("- %s on disk", FormatBytes(loaded_memory_bytes_).c_str());
+            } else if (loaded_backend_ == 3) {
+                ImGui::TextColored(t.success, "Lazy-loaded");
+                ImGui::SameLine();
+                ImGui::TextDisabled("- decoded per batch at the Resize size; nothing is held");
             } else if (loaded_memory_is_estimate_) {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();

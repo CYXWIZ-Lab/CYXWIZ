@@ -26,9 +26,8 @@
 #include <vector>
 
 // Forward-declared MLNode: loader RestoreFromRegistry needs read-only
-// access to node->parameters to pull per-node hints (e.g. image
-// target_width / target_height / rgb overrides) without dragging the
-// full node_editor.h into this header.
+// access to node->parameters without dragging the full node_editor.h
+// into this header.
 namespace gui { struct MLNode; }
 
 // Forward declarations for LaunchTraining. The full types come from
@@ -136,9 +135,6 @@ struct ApplyContext {
     // for the Memory tab; pixels are loaded lazily at training time.
     std::string image_labels_csv;
     int image_layout = 0;
-    int image_width = 224;
-    int image_height = 224;
-    int image_channels = 3;
 
     // Audio-specific (commit 4) ------------------------------------
     // audio_labeled_subdirs == true  → folder/<class>/*.wav layout.
@@ -267,8 +263,7 @@ public:
     // Populates `out` from the registry entry for `name`. Returns false
     // if the dataset isn't in the registry (dialog treats this as
     // "dataset was closed or cleared — show Not Loaded"). The `node`
-    // argument gives read-only access to per-node params like
-    // target_width/target_height/rgb for image memory estimates.
+    // argument gives read-only access to per-node params.
     virtual bool RestoreFromRegistry(const std::string& name,
                                      const gui::MLNode& node,
                                      RestoreState& out) const = 0;

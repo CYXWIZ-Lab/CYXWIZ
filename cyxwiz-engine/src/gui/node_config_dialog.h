@@ -296,9 +296,11 @@ private:
     void RenderImageOptions();
     void RenderAudioOptions();
     void RenderTextOptions();
-    // The nodes after this input that turn its text into numbers (Text
-    // Tokenizer, vectorizers, Word Embeddings), or Add a Text Tokenizer.
-    void RenderTextTurnedIntoNumbersBy();
+    // "Preprocessing (done by nodes)": the nodes after this input that do
+    // its preprocessing (text: tokenizer / vectorizers / Word Embeddings;
+    // images: Resize, Normalize; audio: Spectrogram / Mel / MFCC), with Open
+    // and Show on canvas, or Add the missing one (TOFIX129 B-8, B-9).
+    void RenderPreprocessingNodes();
 
     // KNIME-style tabs
     void RenderTransformationTab();
@@ -359,16 +361,11 @@ private:
 
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;
-    int target_width_ = 224;
-    int target_height_ = 224;
-    bool normalize_images_ = true;
-    bool rgb_mode_ = true;
     char labels_csv_[512] = {};
 
     // STATE: Audio options
     int sample_rate_ = 16000;
     float duration_sec_ = 5.0f;     // pad/truncate to this length
-    bool mono_ = true;
 
     // STATE: Text options (Phase 3). Populated by RenderTextOptions
     // and consumed by the text branch of Apply(). The dialog's text

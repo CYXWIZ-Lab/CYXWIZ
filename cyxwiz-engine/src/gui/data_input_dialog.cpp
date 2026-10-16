@@ -140,6 +140,21 @@ DataInputDialog::DataInputDialog(MLNode* node)
             force_disk_backed_ = true;
         }
 
+        if (node_->parameters.count("labels_csv")) {
+            strncpy(labels_csv_, node_->parameters["labels_csv"].c_str(), sizeof(labels_csv_) - 1);
+            labels_csv_[sizeof(labels_csv_) - 1] = '\0';
+        }
+        // Audio loading: sample rate and length (it was never saved; the
+        // examples call it max_duration).
+        if (node_->parameters.count("sample_rate")) {
+            try { sample_rate_ = (std::max)(1, std::stoi(node_->parameters["sample_rate"])); }
+            catch (...) {}
+        }
+        if (node_->parameters.count("max_duration")) {
+            try { duration_sec_ = (std::max)(0.1f, std::stof(node_->parameters["max_duration"])); }
+            catch (...) {}
+        }
+
         // Restore the image layout strategy from node params.
         if (node_->parameters.count("image_layout")) {
             try {

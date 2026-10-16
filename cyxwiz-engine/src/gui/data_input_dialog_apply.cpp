@@ -144,15 +144,17 @@ void DataInputDialog::Apply() {
         node_->parameters.erase("encoding");
 
         if (file_category_ == FileCategory::Image) {
-            node_->parameters["target_width"] = std::to_string(target_width_);
-            node_->parameters["target_height"] = std::to_string(target_height_);
-            node_->parameters["normalize"] = normalize_images_ ? "true" : "false";
-            node_->parameters["rgb"] = rgb_mode_ ? "true" : "false";
+            // The size and normalizing are the Resize / Normalize nodes'
+            // (TOFIX129 B-9); the settings Data Input kept, unused, go.
+            for (const char* key : {"target_width", "target_height", "normalize", "rgb"})
+                node_->parameters.erase(key);
             node_->parameters["labels_csv"] = labels_csv_;
             node_->parameters["image_layout"] = std::to_string(static_cast<int>(image_layout_));
         } else if (file_category_ == FileCategory::Audio) {
             node_->parameters["sample_rate"] = std::to_string(sample_rate_);
-            node_->parameters["mono"] = mono_ ? "true" : "false";
+            node_->parameters["max_duration"] = std::to_string(duration_sec_);
+            // Audio is always mixed to mono; the checkbox did nothing.
+            node_->parameters.erase("mono");
         } else if (file_category_ == FileCategory::Text) {
             // Persist text dialog state so reopening the dialog restores
             // the layout choice and column mapping. Tokenizing is the Text
@@ -624,9 +626,6 @@ void DataInputDialog::Apply() {
         ctx.previous_dataset_name = previous_dataset_name;
         ctx.image_labels_csv      = labels_csv_;
         ctx.image_layout          = static_cast<int>(image_layout_);
-        ctx.image_width           = target_width_;
-        ctx.image_height          = target_height_;
-        ctx.image_channels        = rgb_mode_ ? 3 : 1;
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {

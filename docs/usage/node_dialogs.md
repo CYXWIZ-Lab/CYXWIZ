@@ -68,3 +68,14 @@ from a **Mel Spectrogram**, **Spectrogram** or **MFCC** node after the Data
 Loader; Compile refuses an audio graph without one (*CW-C-0205*) and offers
 the three. The added node goes after the Data Loader's data output (the
 labels keep their link) and opens its settings.
+
+Data Input's Image options set only the layout, the folder and (flat
+layout) the labels CSV; its Audio options the layout, folder, labels CSV,
+sample rate and length ("seconds, padded or cut"). Audio is always mixed to
+mono. Under **Preprocessing (done by nodes)** the dialog names the Resize
+(*Resized by Resize 64x64, 64 x 64*) and Normalize nodes, or the audio
+feature node, with **Show on canvas** (and **Open it** for nodes with a
+dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
+(after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
+folder holds nothing in memory: images are decoded per batch at the Resize
+size.

@@ -462,37 +462,7 @@ void DataInputDialog::RenderImageOptions() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-
-    // Resize options
-    if (ImGui::CollapsingHeader("Resize", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Target size:");
-        ImGui::SameLine(100);
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputInt("##width", &target_width_);
-        ImGui::SameLine();
-        ImGui::Text("x");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputInt("##height", &target_height_);
-
-        // Preset sizes
-        ImGui::Text("Presets:");
-        ImGui::SameLine(100);
-        if (ImGui::Button("224x224")) { target_width_ = target_height_ = 224; has_changes_ = true; }
-        ImGui::SameLine();
-        if (ImGui::Button("256x256")) { target_width_ = target_height_ = 256; has_changes_ = true; }
-        ImGui::SameLine();
-        if (ImGui::Button("512x512")) { target_width_ = target_height_ = 512; has_changes_ = true; }
-    }
-
-    if (ImGui::CollapsingHeader("Normalization")) {
-        if (ImGui::Checkbox("Normalize to [0, 1]", &normalize_images_)) {
-            has_changes_ = true;
-        }
-        if (ImGui::Checkbox("Convert to RGB", &rgb_mode_)) {
-            has_changes_ = true;
-        }
-    }
+    RenderPreprocessingNodes();
 }
 
 void DataInputDialog::RenderAudioOptions() {
@@ -541,13 +511,13 @@ void DataInputDialog::RenderAudioOptions() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Browse##audiocsv")) {
-            // Reuse the same file browser as everything else
-            BrowseFile();
-            // BrowseFile writes to file_path_; copy it to the CSV field
-            if (strlen(file_path_) > 0) {
-                strncpy(audio_labels_csv_, file_path_,
-                        sizeof(audio_labels_csv_) - 1);
+            // Its own picker: the shared one wrote the main file path.
+            if (auto selected = cyxwiz::FileDialogs::OpenFile(
+                    "Select Labels CSV", {{"CSV Files", "csv"}, {"All Files", "*"}},
+                    audio_labels_csv_[0] == '\0' ? nullptr : audio_labels_csv_)) {
+                strncpy(audio_labels_csv_, selected->c_str(), sizeof(audio_labels_csv_) - 1);
                 audio_labels_csv_[sizeof(audio_labels_csv_) - 1] = '\0';
+                has_changes_ = true;
             }
         }
 
@@ -638,23 +608,21 @@ void DataInputDialog::RenderAudioOptions() {
     ImGui::SameLine();
     ImGui::TextDisabled("Hz");
 
-    ImGui::Text("Max duration:");
+    ImGui::Text("Length:");
     ImGui::SameLine(140);
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputFloat("##duration", &duration_sec_, 0.5f, 1.0f, "%.1f")) {
+        if (duration_sec_ < 0.1f) duration_sec_ = 0.1f;
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("seconds (pad/truncate)");
-
-    if (ImGui::Checkbox("Convert to mono", &mono_)) {
-        has_changes_ = true;
-    }
+    ImGui::TextDisabled("seconds, padded or cut");
+    ImGui::TextDisabled("Audio is mixed to mono (channels averaged). Supported: WAV, FLAC, OGG, AIFF");
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Feature extraction defaults to MelSpectrogram (n_mels=128, n_fft=512).");
-    ImGui::TextDisabled("Spectrogram / MFCC nodes will override this in a later phase.");
-    ImGui::TextDisabled("Supported: WAV, FLAC, OGG, AIFF");
+    ImGui::Separator();
+    ImGui::Spacing();
+    RenderPreprocessingNodes();
 }
 
 void DataInputDialog::RenderTextOptions() {
@@ -786,83 +754,141 @@ void DataInputDialog::RenderTextOptions() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    RenderTextTurnedIntoNumbersBy();
+    RenderPreprocessingNodes();
 
     ImGui::Spacing();
     ImGui::TextDisabled("Supported: CSV, TSV, JSON, TXT (one line per sample), folder of text files");
 }
 
-void DataInputDialog::RenderTextTurnedIntoNumbersBy() {
+void DataInputDialog::RenderPreprocessingNodes() {
     const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_HeaderActive], "Preprocessing (done by nodes)");
     ImGui::Spacing();
+    const bool text = file_category_ == FileCategory::Text;
+    const bool image = file_category_ == FileCategory::Image;
     if (!node_editor_ || !node_) {
-        ImGui::TextDisabled("A Text Tokenizer node after this input tokenizes the text.");
+        ImGui::TextDisabled(text ? "A Text Tokenizer node after this input tokenizes the text."
+                            : image ? "A Resize node after the Data Loader sets the image size."
+                                    : "A Mel Spectrogram, Spectrogram or MFCC node makes the audio features.");
         return;
     }
-    // The nodes after this input that turn its text into numbers; each
-    // branch stops at the first one.
+    // What this kind of data needs from its nodes (TOFIX129 B-8, B-9).
+    const auto wanted = [&](NodeType type) {
+        if (text)
+            return type == NodeType::TextTokenizer || type == NodeType::TFIDFVectorizer ||
+                   type == NodeType::CountVectorizer || type == NodeType::WordEmbeddings;
+        if (image) return type == NodeType::Resize || type == NodeType::Normalize;
+        return type == NodeType::Spectrogram || type == NodeType::MelSpectrogram || type == NodeType::MFCC;
+    };
     const auto& nodes = node_editor_->GetNodes();
     const auto& links = node_editor_->GetLinks();
     const auto find = [&](int id) {
         const auto it = std::find_if(nodes.begin(), nodes.end(), [id](const MLNode& n) { return n.id == id; });
         return it == nodes.end() ? nullptr : &*it;
     };
+    // The wanted nodes after this input, nearest first.
     std::vector<const MLNode*> found;
     std::set<int> seen{node_->id};
     std::vector<int> frontier{node_->id};
-    while (!frontier.empty()) {
-        const int from = frontier.back();
-        frontier.pop_back();
+    for (size_t i = 0; i < frontier.size(); ++i) {
         for (const auto& link : links) {
-            if (link.from_node != from || !seen.insert(link.to_node).second) continue;
+            if (link.from_node != frontier[i] || !seen.insert(link.to_node).second) continue;
             const MLNode* next = find(link.to_node);
             if (!next) continue;
-            if (next->type == NodeType::TextTokenizer || next->type == NodeType::TFIDFVectorizer ||
-                next->type == NodeType::CountVectorizer || next->type == NodeType::WordEmbeddings) {
-                found.push_back(next);
-            } else {
-                frontier.push_back(next->id);
-            }
+            if (wanted(next->type)) found.push_back(next);
+            // Text stops at the node that tokenizes it; images and audio go on.
+            if (!text || !wanted(next->type)) frontier.push_back(next->id);
         }
     }
     const auto param = [](const MLNode& n, const char* key) {
         const auto it = n.parameters.find(key);
         return it == n.parameters.end() ? std::string() : it->second;
     };
+    const auto& factory = NodeConfigDialogFactory::Instance();
     int open_id = -1, focus_id = -1;
+    const MLNode* resize = nullptr;
+    bool normalized = false;
     for (const MLNode* n : found) {
         ImGui::PushID(n->id);
-        const char* role = n->type == NodeType::TextTokenizer ? "Tokenized by"
-                           : n->type == NodeType::WordEmbeddings ? "Word vectors by"
-                                                                  : "Vectorized by";
-        ImGui::TextColored(t.text_dim, "%s", role);
+        std::string role, facts;
+        switch (n->type) {
+            case NodeType::TextTokenizer: {
+                role = "Tokenized by";
+                if (const auto vocab = param(*n, "vocab_file"); !vocab.empty())
+                    facts = "vocabulary " + fs::path(vocab).filename().string();
+                if (const auto length = param(*n, "max_length"); !length.empty())
+                    facts += (facts.empty() ? "" : ", ") + length + " ids per row";
+                break;
+            }
+            case NodeType::WordEmbeddings: role = "Word vectors by"; break;
+            case NodeType::TFIDFVectorizer:
+            case NodeType::CountVectorizer: role = "Vectorized by"; break;
+            case NodeType::Resize:
+                role = "Resized by";
+                if (!resize) resize = n;
+                facts = param(*n, "width") + " x " + param(*n, "height");
+                break;
+            case NodeType::Normalize:
+                role = "Normalized by";
+                normalized = true;
+                facts = "mean " + param(*n, "mean") + ", std " + param(*n, "std");
+                break;
+            case NodeType::MFCC:
+                role = "Features by";
+                facts = param(*n, "n_mfcc") + " coefficients";
+                break;
+            case NodeType::MelSpectrogram:
+                role = "Features by";
+                facts = param(*n, "n_mels") + " mel bins, n_fft " + param(*n, "n_fft");
+                break;
+            default:
+                role = "Features by";
+                facts = "n_fft " + param(*n, "n_fft");
+                break;
+        }
+        ImGui::TextColored(t.text_dim, "%s", role.c_str());
         ImGui::SameLine();
         ImGui::TextUnformatted(n->name.c_str());
-        std::string facts;
-        if (n->type == NodeType::TextTokenizer) {
-            const auto vocab = param(*n, "vocab_file");
-            if (!vocab.empty()) facts = "vocabulary " + fs::path(vocab).filename().string();
-            if (const auto length = param(*n, "max_length"); !length.empty())
-                facts += (facts.empty() ? "" : ", ") + length + " ids per row";
-        }
         if (!facts.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(t.text_dim, "%s", facts.c_str());
         }
-        ImGui::SameLine();
-        if (cyxwiz::ui::LinkButton("Open it")) open_id = n->id;
+        // Nodes without a dialog are set in Properties: Show on canvas selects them.
+        if (factory.HasDialog(n->type)) {
+            ImGui::SameLine();
+            if (cyxwiz::ui::LinkButton("Open it")) open_id = n->id;
+        }
         ImGui::SameLine();
         if (cyxwiz::ui::LinkButton("Show on canvas")) focus_id = n->id;
         ImGui::PopID();
     }
-    if (found.empty()) {
+    if (text && found.empty()) {
         ImGui::TextColored(t.warning, "Nothing after this input tokenizes the text yet.");
         if (cyxwiz::ui::LinkButton("Add a Text Tokenizer"))
             node_editor_->AddTextTokenizerAfter(node_->id, text_column_, text_label_column_);
+    } else if (image && !resize) {
+        ImGui::TextColored(t.warning, "No Resize yet: images of different sizes cannot share a batch.");
+        if (cyxwiz::ui::LinkButton("Add a Resize")) node_editor_->AddModelInputStepAfter(node_->id, NodeType::Resize);
+    } else if (!text && !image && found.empty()) {
+        ImGui::TextColored(t.warning, "No feature node yet: the model cannot read raw audio.");
+        if (cyxwiz::ui::LinkButton("Add Mel Spectrogram"))
+            node_editor_->AddModelInputStepAfter(node_->id, NodeType::MelSpectrogram);
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Add Spectrogram"))
+            node_editor_->AddModelInputStepAfter(node_->id, NodeType::Spectrogram);
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Add MFCC")) node_editor_->AddModelInputStepAfter(node_->id, NodeType::MFCC);
+    }
+    if (image && resize && !normalized) {
+        ImGui::TextColored(t.text_dim, "Normalized by");
+        ImGui::SameLine();
+        ImGui::TextDisabled("no Normalize node (pixels are read as 0 to 1)");
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton("Add Normalize")) node_editor_->RequestStepAfter(resize->id, NodeType::Normalize);
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("The tokenizer's settings live in its node only.");
+    ImGui::TextDisabled(text ? "The tokenizer's settings live in its node only."
+                             : "These settings live in their nodes only; this dialog only loads the files.");
     ImGui::PopTextWrapPos();
     if (open_id >= 0) node_editor_->RequestOpenNode(open_id);
     if (focus_id >= 0) node_editor_->FocusNode(focus_id);
