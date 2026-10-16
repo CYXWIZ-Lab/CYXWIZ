@@ -809,7 +809,8 @@ void DataInputDialog::PollAsyncLoadResult() {
         spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
     }
 
-    if (apply_started_at_ != std::chrono::steady_clock::time_point{}) {
+    // A failed Apply keeps the time of the load that stays.
+    if (apply_success_ && apply_started_at_ != std::chrono::steady_clock::time_point{}) {
         const auto elapsed = std::chrono::steady_clock::now() - apply_started_at_;
         last_load_elapsed_ms_ =
             std::chrono::duration<float, std::milli>(elapsed).count();

@@ -114,14 +114,8 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     // registry map than the one the async worker will register into.
     registry.UnregisterTabularDataset(ctx.dataset_name);
 
-    // Drop the previous text entry if the user re-Applied with a
-    // different file (different dataset_name). Matches the pre-
-    // refactor behavior.
-    if (!ctx.previous_dataset_name.empty() &&
-        ctx.previous_dataset_name != ctx.dataset_name) {
-        registry.UnregisterTextDataset(ctx.previous_dataset_name);
-        registry.UnregisterTabularDataset(ctx.previous_dataset_name);
-    }
+    // A previous dataset under another name stays until this load succeeds:
+    // PollAsyncLoadResult drops it then, and keeps it when this one fails.
     // NOTE: we intentionally do NOT pre-clear a same-name text entry
     // here. RegisterTextDataset uses map[name]=entry which atomically
     // replaces any prior entry, so a premature unregister just opens a
@@ -137,6 +131,7 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const bool has_labels        = ctx.text_has_labels;
 
     state->dataset_name = name;
+    state->previous_dataset_name = ctx.previous_dataset_name;
     state->source_path  = path;
 
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();

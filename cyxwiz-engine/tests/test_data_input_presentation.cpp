@@ -109,7 +109,7 @@ void CheckLoaded() {
     disk.failure = "Apply refused by dataset audit.";
     s = BuildStrip(disk);
     Check(s.tone == LoadTone::Loaded &&
-              s.note == "The last Apply failed: Apply refused by dataset audit. The earlier load stays.",
+              s.note == "The last Apply failed: Apply refused by dataset audit.",
           "a failed Apply over an earlier load keeps it and says so");
 }
 

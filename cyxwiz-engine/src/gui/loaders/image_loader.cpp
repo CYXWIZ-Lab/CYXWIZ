@@ -47,16 +47,13 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                       std::shared_ptr<AsyncLoadState> state) {
     if (!state) return 0;
 
-    // Cross-Apply cleanup: drop the prior image registration owned by
-    // this node before probing again. Re-applying the same folder on
-    // the same node keeps the same base dataset_name ("cat_dog"), so
-    // only clearing when the name changes leaves the old datasets_
-    // entry alive and forces DataRegistry::GenerateUniqueName() to
-    // drift to "cat_dog_1". That in turn desynchronizes the node's
-    // persisted dataset_name from the registry if the dialog closes
-    // before the async completion callback updates the node params.
+    // Re-applying the same folder: drop its registration first, or
+    // DataRegistry::GenerateUniqueName() drifts to "cat_dog_1" and the node's
+    // dataset_name no longer matches the registry. A previous dataset under
+    // another name stays until this load succeeds (PollAsyncLoadResult drops
+    // it then, and keeps it when this one fails).
     auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!ctx.previous_dataset_name.empty()) {
+    if (!ctx.previous_dataset_name.empty() && ctx.previous_dataset_name == ctx.dataset_name) {
         registry.UnregisterImageDataset(ctx.previous_dataset_name);
     }
 
@@ -67,6 +64,7 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const int layout         = ctx.image_layout;
 
     state->dataset_name = name;
+    state->previous_dataset_name = ctx.previous_dataset_name;
     state->source_path  = folder;
 
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();

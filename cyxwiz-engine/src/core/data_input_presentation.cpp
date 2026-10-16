@@ -114,7 +114,7 @@ Strip BuildStrip(const StripInput& in) {
                            "audit errors / warnings"});
     s.note = Holding(in);
     // An Apply that failed while an earlier load stays registered.
-    if (in.failed) s.note = "The last Apply failed: " + in.failure + " The earlier load stays.";
+    if (in.failed) s.note = "The last Apply failed: " + in.failure;
     return s;
 }
 

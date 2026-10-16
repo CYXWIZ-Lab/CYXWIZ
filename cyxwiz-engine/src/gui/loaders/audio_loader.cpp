@@ -39,12 +39,8 @@ uint64_t AudioLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                       std::shared_ptr<AsyncLoadState> state) {
     if (!state) return 0;
 
-    // Cross-Apply cleanup for a changed folder.
-    auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!ctx.previous_dataset_name.empty() &&
-        ctx.previous_dataset_name != ctx.dataset_name) {
-        registry.UnregisterAudioDataset(ctx.previous_dataset_name);
-    }
+    // A previous dataset under another name stays until this load succeeds:
+    // PollAsyncLoadResult drops it then, and keeps it when this one fails.
 
     // Build the registry entry skeleton on the UI thread; the worker
     // fills num_samples / num_classes / class_names from a folder scan.
@@ -64,6 +60,7 @@ uint64_t AudioLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string name   = ctx.dataset_name;
 
     state->dataset_name = name;
+    state->previous_dataset_name = ctx.previous_dataset_name;
     state->source_path  = folder;
 
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
