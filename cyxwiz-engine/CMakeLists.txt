@@ -84,7 +84,6 @@ endif()
 add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/plugin_context.cpp
     src/plugin/registries/plugin_panel_registry.cpp
-    src/plugin/plugin_session.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
@@ -390,6 +389,7 @@ set(ENGINE_SOURCES
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
     src/core/plugin_presentation.cpp
+    src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
     src/core/python_scan_cache.cpp
