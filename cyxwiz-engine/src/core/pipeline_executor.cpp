@@ -938,6 +938,25 @@ private:
             return false;
         }
 
+        if (Peek().kind == FilterConditionTokenKind::Is) {
+            // column IS [NOT] EMPTY: missing, and for text also ''.
+            Consume();
+            const bool negated = Peek().kind == FilterConditionTokenKind::Not;
+            if (negated) Consume();
+            if (Peek().kind != FilterConditionTokenKind::Empty) {
+                error = "FilterRows: expected EMPTY after IS for column '" + column + "'";
+                return false;
+            }
+            Consume();
+            const std::string name = QuoteSqlIdentifier(column);
+            const bool text = IsStringArrowType(table_->schema()->field(column_index)->type());
+            if (negated) {
+                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : name + " IS NOT NULL";
+            } else {
+                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : name + " IS NULL";
+            }
+            return true;
+        }
         if (Peek().kind != FilterConditionTokenKind::ComparisonOperator) {
             error = "FilterRows: expected a comparison operator after column '" +
                     column + "'";

@@ -5,10 +5,12 @@
 //
 //   condition  := term (OR term)*
 //   term       := factor (AND factor)*
-//   factor     := '(' condition ')' | column op literal
+//   factor     := '(' condition ')' | column op literal | column IS [NOT] EMPTY
 //   column     := name | "quoted name"
 //   op         := = | == | != | <> | < | > | <= | >=
 //   literal    := 'text' | number | true | false
+//
+// EMPTY is a missing value; for text, also ''.
 
 #include <optional>
 #include <string>
@@ -22,6 +24,9 @@ enum class FilterConditionTokenKind {
     NumericLiteral,
     BooleanLiteral,
     ComparisonOperator,
+    Is,
+    Not,
+    Empty,
     And,
     Or,
     LeftParen,
@@ -42,7 +47,7 @@ bool TokenizeFilterCondition(const std::string& condition,
 
 // ---- The dialog's rows ----
 
-enum class FilterOp { Is, IsNot, MoreThan, LessThan, AtLeast, AtMost };
+enum class FilterOp { Is, IsNot, MoreThan, LessThan, AtLeast, AtMost, IsEmpty, IsNotEmpty };
 enum class FilterValueKind { Number, Text, TrueFalse };
 
 struct FilterRow {
@@ -50,13 +55,16 @@ struct FilterRow {
     std::string column;
     FilterOp op = FilterOp::Is;
     FilterValueKind kind = FilterValueKind::Text;
-    std::string value;     // the number, the text, or "true" / "false"
+    std::string value;     // the number, the text, or "true" / "false"; unused for the empty tests
 };
 
 // "is", "is not", "is more than", ...
 const char* FilterOpWords(FilterOp op);
-// Text and true/false values compare only with is / is not.
+// Text and true/false values compare only with is / is not (and the empty
+// tests, which any column has).
 bool FilterOpAllowed(FilterOp op, FilterValueKind kind);
+// is empty / is not empty take no value.
+bool FilterOpTakesValue(FilterOp op);
 
 // What is wrong with a row, or empty when it can run.
 std::string FilterRowProblem(const FilterRow& row);

@@ -6220,6 +6220,39 @@ int main(int argc, char** argv) {
               "the dialog's condition keeps the matching row");
     }
 
+    // is empty / is not empty: a missing number, and missing or '' text.
+    {
+        const fs::path empty_csv = fs::temp_directory_path() / "cyxwiz_filter_empty.csv";
+        {
+            std::ofstream out(empty_csv);
+            out << "name,score\na,1\n,2\nc,\nd,4\n";
+        }
+        const auto run = [&](int id, const std::string& condition) -> int64_t {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({
+                    {{"id", id}, {"type", "DataInput"}, {"name", "Input"},
+                     {"parameters", {{"source_type", "file"}, {"file_path", empty_csv.string()},
+                                     {"type", "csv"}, {"has_header", "true"}}}},
+                    {{"id", id + 1}, {"type", "FilterRows"}, {"name", "Filter"},
+                     {"parameters", {{"condition", condition}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", id}, {"end_node", id + 1}}})}};
+            cyxwiz::PipelineExecutor executor;
+            if (!executor.ExecutePipeline(graph.dump())) {
+                std::cerr << condition << ": " << executor.GetLastError() << "\n";
+                return -1;
+            }
+            auto out = registry.GetArrowDataset("ds_filter_" + std::to_string(id + 1));
+            return out ? out->GetArrowTable()->num_rows() : -1;
+        };
+        Check(run(93101, "\"name\" IS NOT EMPTY") == 3, "text that is not empty: 3 of 4 rows");
+        Check(run(93103, "name is empty") == 1, "empty text ('' or missing): 1 row");
+        Check(run(93105, "\"score\" IS EMPTY") == 1, "a missing number: 1 row");
+        Check(run(93107, "name IS EMPTY OR score IS EMPTY") == 2, "either empty: 2 rows");
+        Check(run(93109, "score IS NOT EMPTY AND score >= 2") == 2, "an empty test joins comparisons");
+        Check(run(93111, "score IS 5") == -1, "IS needs EMPTY");
+        fs::remove(empty_csv);
+    }
+
     const std::string filter_missing_column_json =
         R"({"nodes":[)"
         R"({"id":192,"type":"DataInput","name":"Input","parameters":{)"

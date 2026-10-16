@@ -46,6 +46,8 @@ const char* OpSymbol(FilterOp op) {
         case FilterOp::LessThan: return "<";
         case FilterOp::AtLeast: return ">=";
         case FilterOp::AtMost: return "<=";
+        case FilterOp::IsEmpty: return "IS EMPTY";
+        case FilterOp::IsNotEmpty: return "IS NOT EMPTY";
     }
     return "=";
 }
@@ -88,6 +90,12 @@ bool TokenizeFilterCondition(const std::string& condition,
             const std::string upper_value = ToUpperAscii(value);
             if (upper_value == "AND") {
                 tokens.push_back({FilterConditionTokenKind::And, value});
+            } else if (upper_value == "IS") {
+                tokens.push_back({FilterConditionTokenKind::Is, upper_value});
+            } else if (upper_value == "NOT") {
+                tokens.push_back({FilterConditionTokenKind::Not, upper_value});
+            } else if (upper_value == "EMPTY") {
+                tokens.push_back({FilterConditionTokenKind::Empty, upper_value});
             } else if (upper_value == "TRUE" || upper_value == "FALSE") {
                 tokens.push_back({FilterConditionTokenKind::BooleanLiteral, upper_value});
             } else if (upper_value == "OR") {
@@ -233,12 +241,19 @@ const char* FilterOpWords(FilterOp op) {
         case FilterOp::LessThan: return "is less than";
         case FilterOp::AtLeast: return "is at least";
         case FilterOp::AtMost: return "is at most";
+        case FilterOp::IsEmpty: return "is empty";
+        case FilterOp::IsNotEmpty: return "is not empty";
     }
     return "is";
 }
 
+bool FilterOpTakesValue(FilterOp op) {
+    return op != FilterOp::IsEmpty && op != FilterOp::IsNotEmpty;
+}
+
 bool FilterOpAllowed(FilterOp op, FilterValueKind kind) {
-    return kind == FilterValueKind::Number || op == FilterOp::Is || op == FilterOp::IsNot;
+    return kind == FilterValueKind::Number || !FilterOpTakesValue(op) || op == FilterOp::Is ||
+           op == FilterOp::IsNot;
 }
 
 std::string FilterRowProblem(const FilterRow& row) {
@@ -246,7 +261,8 @@ std::string FilterRowProblem(const FilterRow& row) {
     if (!FilterOpAllowed(row.op, row.kind))
         return "\"" + row.column + "\" holds " +
                (row.kind == FilterValueKind::Text ? "text" : "true/false") +
-               ": it can only be compared with is or is not";
+               ": it can only be compared with is, is not or the empty tests";
+    if (!FilterOpTakesValue(row.op)) return {};
     if (row.kind == FilterValueKind::Number && !IsValidNumericLiteral(row.value))
         return "\"" + row.column + "\" holds numbers: enter a number";
     if (row.kind == FilterValueKind::TrueFalse && row.value != "true" && row.value != "false")
@@ -259,7 +275,9 @@ std::string BuildFilterCondition(const std::vector<FilterRow>& rows) {
     for (size_t i = 0; i < rows.size(); ++i) {
         const auto& row = rows[i];
         if (i > 0) out += row.or_join ? " OR " : " AND ";
-        out += QuoteName(row.column) + " " + OpSymbol(row.op) + " ";
+        out += QuoteName(row.column) + " " + OpSymbol(row.op);
+        if (!FilterOpTakesValue(row.op)) continue;
+        out += " ";
         switch (row.kind) {
             case FilterValueKind::Number: out += row.value; break;
             case FilterValueKind::Text: out += QuoteText(row.value); break;
@@ -283,10 +301,18 @@ std::optional<std::vector<FilterRow>> ParseFilterCondition(const std::string& co
             ++i;
         }
         // End closes the list, so a column and an operator have a token after them.
-        if (tokens[i].kind != FilterConditionTokenKind::Identifier ||
-            tokens[i + 1].kind != FilterConditionTokenKind::ComparisonOperator)
-            return std::nullopt;
+        if (tokens[i].kind != FilterConditionTokenKind::Identifier) return std::nullopt;
         row.column = tokens[i].value;
+        if (tokens[i + 1].kind == FilterConditionTokenKind::Is) {
+            const bool negated = tokens[i + 2].kind == FilterConditionTokenKind::Not;
+            const size_t empty = i + (negated ? 3 : 2);
+            if (tokens[empty].kind != FilterConditionTokenKind::Empty) return std::nullopt;
+            row.op = negated ? FilterOp::IsNotEmpty : FilterOp::IsEmpty;
+            rows.push_back(std::move(row));
+            i = empty + 1;
+            continue;
+        }
+        if (tokens[i + 1].kind != FilterConditionTokenKind::ComparisonOperator) return std::nullopt;
         const auto op = OpFromSymbol(tokens[i + 1].value);
         if (!op) return std::nullopt;
         row.op = *op;

@@ -5,6 +5,7 @@
 #include "node_editor.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "../core/data_input_presentation.h"
 #include "../core/sql_transform.h"
 
 #include <arrow/api.h>
@@ -47,6 +48,7 @@ const char* KindWords(cyxwiz::FilterValueKind kind) {
 constexpr cyxwiz::FilterOp kOps[] = {
     cyxwiz::FilterOp::Is,       cyxwiz::FilterOp::IsNot,   cyxwiz::FilterOp::MoreThan,
     cyxwiz::FilterOp::LessThan, cyxwiz::FilterOp::AtLeast, cyxwiz::FilterOp::AtMost,
+    cyxwiz::FilterOp::IsEmpty,  cyxwiz::FilterOp::IsNotEmpty,
 };
 
 }  // namespace
@@ -78,16 +80,30 @@ void FilterDialog::LoadFromNode() {
 void FilterDialog::RefreshColumns() {
     columns_.clear();
     input_name_.clear();
+    last_run_.clear();
     other_columns_ = 0;
     if (!node_editor_ || !node_) return;
     const auto context = node_editor_->GetDataStepContext(node_->id);
     if (context.inputs.empty()) return;
     const auto& input = context.inputs.front();
     input_name_ = input.name;
+    // The input's table from its last run, else the dataset a Data Input
+    // loaded (a run needs a valid condition first).
     const auto& facts = node_editor_->GetNodeRunFacts();
     const auto fact = facts.find(input.id);
-    if (fact == facts.end() || fact->second.output_dataset.empty()) return;
-    const auto source = cyxwiz::SqlInputForDataset("input", fact->second.output_dataset);
+    std::string dataset;
+    if (fact != facts.end() && !fact->second.output_dataset.empty()) {
+        dataset = fact->second.output_dataset;
+        const auto own = facts.find(node_->id);
+        if (own != facts.end() && own->second.error.empty() && own->second.rows >= 0 && fact->second.rows > 0)
+            last_run_ = cyxwiz::data_input_view::FormatCount(own->second.rows) + " of " +
+                        cyxwiz::data_input_view::FormatCount(fact->second.rows) + " rows pass (last run).";
+    } else if (input.type == "DataInput") {
+        const auto name = input.parameters.find("dataset_name");
+        if (name != input.parameters.end()) dataset = name->second;
+    }
+    if (dataset.empty()) return;
+    const auto source = cyxwiz::SqlInputForDataset("input", dataset);
     const auto schema = source.table ? source.table->schema() : source.schema;
     if (!schema) return;
     for (const auto& field : schema->fields()) {
@@ -166,7 +182,7 @@ void FilterDialog::RenderContent() {
             from += " (" + std::to_string(other_columns_) + " more hold dates or lists, which a filter cannot compare)";
         ImGui::TextColored(t.text_dim, "%s", from.c_str());
     } else if (!input_name_.empty()) {
-        ImGui::TextColored(t.text_dim, "Run the pipeline once to pick the columns of \"%s\" by name.",
+        ImGui::TextColored(t.text_dim, "Load \"%s\" (or run the pipeline) to pick its columns by name.",
                            input_name_.c_str());
     } else {
         ImGui::TextColored(t.text_dim, "Connect a table to the step's input to pick its columns by name.");
@@ -223,8 +239,12 @@ void FilterDialog::RenderRows() {
             if (ImGui::BeginCombo("##column", preview, ImGuiComboFlags_HeightLarge)) {
                 for (const auto& column : columns_) {
                     const bool selected = column.name == row.column;
-                    std::string label = column.name + "  (" + KindWords(column.kind) + ")";
-                    if (ImGui::Selectable(label.c_str(), selected)) {
+                    // A column with no name (a CSV's index column) cannot be named in a row.
+                    const bool unnamed = column.name.empty();
+                    const std::string label =
+                        (unnamed ? std::string("(unnamed)") : column.name) + "  (" + KindWords(column.kind) + ")";
+                    if (ImGui::Selectable(label.c_str(), selected,
+                                          unnamed ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None)) {
                         if (row.kind != column.kind) {
                             row.value = column.kind == cyxwiz::FilterValueKind::TrueFalse ? "true" : "";
                             if (!cyxwiz::FilterOpAllowed(row.op, column.kind)) row.op = cyxwiz::FilterOp::Is;
@@ -233,6 +253,8 @@ void FilterDialog::RenderRows() {
                         row.kind = column.kind;
                         has_changes_ = true;
                     }
+                    if (unnamed && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("This column has no name; name it in Data Input or a SQL step to filter on it.");
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
@@ -261,10 +283,12 @@ void FilterDialog::RenderRows() {
         }
         ImGui::SameLine();
 
-        // Value.
+        // Value (none for the empty tests).
         ImGui::SetNextItemWidth(value_w);
         const bool known = FindColumn(row.column) != nullptr;
-        if (row.kind == cyxwiz::FilterValueKind::TrueFalse && known) {
+        if (!cyxwiz::FilterOpTakesValue(row.op)) {
+            ImGui::Dummy(ImVec2(value_w, ImGui::GetFrameHeight()));
+        } else if (row.kind == cyxwiz::FilterValueKind::TrueFalse && known) {
             const char* values[] = {"true", "false"};
             int value = row.value == "false" ? 1 : 0;
             if (ImGui::Combo("##value", &value, values, 2)) {
@@ -309,6 +333,12 @@ void FilterDialog::RenderRows() {
     const bool has_or = std::any_of(rows_.begin() + 1, rows_.end(), [](const auto& r) { return r.or_join; });
     if (has_and && has_or)
         ImGui::TextColored(t.text_dim, "\"and\" binds first: a and b or c keeps rows matching both a and b, or c.");
+    // What the last run kept, while the condition is still the one it ran.
+    if (!last_run_.empty() && node_) {
+        const auto saved = node_->parameters.find("condition");
+        if (saved != node_->parameters.end() && saved->second == cyxwiz::BuildFilterCondition(rows_))
+            ImGui::TextColored(t.text_dim, "%s", last_run_.c_str());
+    }
     ImGui::PopTextWrapPos();
 }
 

@@ -84,6 +84,29 @@ void CheckHandWritten() {
     Check(none && none->empty(), "an empty condition gives no rows");
 }
 
+void CheckEmptyTests() {
+    const std::vector<FilterRow> rows = {
+        Row("status", FilterOp::IsNot, FilterValueKind::Text, "Normal"),
+        Row("statement", FilterOp::IsNotEmpty, FilterValueKind::Text, ""),
+        Row("score", FilterOp::IsEmpty, FilterValueKind::Number, "", true),
+    };
+    const std::string condition = BuildFilterCondition(rows);
+    Check(condition == "\"status\" != 'Normal' AND \"statement\" IS NOT EMPTY OR \"score\" IS EMPTY",
+          "the empty tests take no value: " + condition);
+    const auto back = ParseFilterCondition(condition);
+    Check(back && back->size() == 3 && (*back)[1].op == FilterOp::IsNotEmpty &&
+              (*back)[1].column == "statement" && (*back)[2].op == FilterOp::IsEmpty && (*back)[2].or_join,
+          "the empty tests read back");
+    const auto typed = ParseFilterCondition("name is not empty and x IS empty");
+    Check(typed && typed->size() == 2 && (*typed)[0].op == FilterOp::IsNotEmpty && (*typed)[1].op == FilterOp::IsEmpty,
+          "is [not] empty in any case");
+    Check(!ParseFilterCondition("name IS NOT 5"), "IS needs EMPTY");
+    Check(FilterRowProblem(Row("ok", FilterOp::IsEmpty, FilterValueKind::TrueFalse, "")).empty(),
+          "any column can be tested for empty, with no value");
+    Check(FilterOpAllowed(FilterOp::IsNotEmpty, FilterValueKind::Text) && !FilterOpTakesValue(FilterOp::IsEmpty),
+          "the empty tests suit text and take no value");
+}
+
 void CheckProblems() {
     Check(FilterRowProblem(Row("", FilterOp::Is, FilterValueKind::Text, "x")) == "Pick a column", "a column is needed");
     Check(!FilterRowProblem(Row("label", FilterOp::MoreThan, FilterValueKind::Text, "x")).empty(),
@@ -108,6 +131,7 @@ int main() {
     CheckBuild();
     CheckRoundTrip();
     CheckHandWritten();
+    CheckEmptyTests();
     CheckProblems();
     std::cout << "test_filter_condition: all checks passed\n";
     return 0;

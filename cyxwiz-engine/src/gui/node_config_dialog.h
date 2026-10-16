@@ -208,6 +208,7 @@ private:
     std::vector<Column> columns_;  // the input's comparable columns, once it has run
     size_t other_columns_ = 0;     // columns a filter cannot compare (dates, lists)
     std::string input_name_;
+    std::string last_run_;  // "3,888 of 53,043 rows pass (last run)."
     double columns_time_ = -1.0;
     // The saved condition does not fit rows (brackets): edit it as text.
     bool written_ = false;
