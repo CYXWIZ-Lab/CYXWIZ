@@ -231,9 +231,18 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromWindowSources(
                                token_column + "'); other sequence data must fit in memory (raise the data budget).";
         return result;
     }
-    if (config.has_data_split && validation.Empty() && test.Empty()) {
-        result.error_message = "Token windows on disk need their validation windows as a dataset of their own "
-                               "(a Data Split with named inputs); ratio splitting a file on disk is not supported yet.";
+    // In memory a share without an input of its own is cut from Train by
+    // document; a file on disk cannot be cut that way, so each share above 0
+    // needs its own input (else the run would quietly train on that share).
+    const bool validation_share = validation.Empty() && config.val_ratio > 0.0f;
+    const bool test_share = test.Empty() && config.test_ratio > 0.0f;
+    if (config.has_data_split && (validation_share || test_share)) {
+        const std::string role = validation_share && test_share ? "validation and test windows"
+                                 : validation_share             ? "validation windows"
+                                                                : "test windows";
+        result.error_message = "Token windows on disk need their " + role + " as a dataset of their own "
+                               "(a Data Split with named inputs), or that share set to 0; ratio splitting a file on "
+                               "disk is not supported yet.";
         return result;
     }
     if (train.Units() == 0) {

@@ -244,14 +244,19 @@ void CheckWindowsOnDisk() {
     std::sort(rows.begin(), rows.end()); std::sort(expected.begin(), expected.end());
     REQUIRE(rows == expected);  // the same windows, another order
     // Validation from a table in memory beside a training set on disk.
-    cfg = Config(); cfg.has_data_split = true;
+    cfg = Config(); cfg.has_data_split = true; cfg.test_ratio = 0.0f;
     SequenceWindowSource dev; dev.table = all->Slice(3, 1);
     auto with_dev = BuildSequenceBatcherFromWindowSources(train, cfg, 2, dev);
     INFO(with_dev.error_message); REQUIRE(with_dev.success());
     REQUIRE(with_dev.batcher->HasPhase(BatcherPhase::Val)); REQUIRE_FALSE(with_dev.batcher->HasPhase(BatcherPhase::Test));
     with_dev.batcher->SetPhase(BatcherPhase::Val); REQUIRE(AllRows(*with_dev.batcher).size() == 1);
-    // A ratio split of a file is refused; a role with other metadata too.
+    // A ratio split of a file is refused (also a test share left to cut from
+    // Train beside a supplied validation set); a role with other metadata too.
     REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2).success());
+    auto test_share = cfg; test_share.test_ratio = 0.1f;
+    const auto refused_share = BuildSequenceBatcherFromWindowSources(train, test_share, 2, dev);
+    REQUIRE_FALSE(refused_share.success());
+    REQUIRE(refused_share.error_message.find("test windows") != std::string::npos);
     SequenceWindowSource bare; bare.table = all->Slice(3, 1)->ReplaceSchemaMetadata(nullptr);
     REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2, bare).success());
     std::error_code ignored;  // the batchers above still map the file
