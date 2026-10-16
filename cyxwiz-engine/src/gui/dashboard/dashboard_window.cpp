@@ -670,18 +670,13 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                 }
             } else if (w.type == WidgetType::Missing && r.table) {
                 // Columns with missing values: a bar of their share each.
-                const double rows = r.table->num_rows() ? std::max(1.0, [&] {
-                    auto s = r.table->GetColumnByName("rows")->GetScalar(0);
-                    return s.ok() ? std::stod((*s)->ToString()) : 1.0;
-                }()) : 1.0;
+                const double counted = Number(r.table, "rows");
+                const double rows = counted >= 1.0 ? counted : 1.0;
                 int shown = 0;
                 const float bar_w = ImGui::GetContentRegionAvail().x * 0.45f;
                 for (size_t i = 0; i < profile_->columns.size(); ++i) {
-                    auto col = r.table->GetColumnByName("m" + std::to_string(i));
-                    if (!col) continue;
-                    auto s = col->GetScalar(0);
-                    const double m = s.ok() ? std::stod((*s)->ToString()) : 0.0;
-                    if (m <= 0) continue;
+                    const double m = Number(r.table, "m" + std::to_string(i));  // NULL when a filter keeps no rows
+                    if (!(m > 0)) continue;
                     ++shown;
                     ImGui::TextColored(t.text_dim, "%s", profile_->columns[i].facts.name.c_str());
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.42f);

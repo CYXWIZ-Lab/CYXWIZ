@@ -32,16 +32,6 @@ std::string Fingerprint(const std::string& dataset, uint64_t generation, uint64_
     return dataset + "#" + std::to_string(generation) + "#" + std::to_string(epoch) + "#" + content + "#" + where + "#" + ParamsText(params);
 }
 
-double Number(const std::shared_ptr<arrow::Table>& t, const std::string& col) {
-    if (!t || t->num_rows() == 0) return NAN;
-    auto c = t->GetColumnByName(col);
-    if (!c) return NAN;
-    auto s = c->GetScalar(0);
-    if (!s.ok() || !(*s)->is_valid) return NAN;
-    auto d = (*s)->CastTo(arrow::float64());
-    return d.ok() ? std::static_pointer_cast<arrow::DoubleScalar>(*d)->value : NAN;
-}
-
 std::string Text(const std::shared_ptr<arrow::Table>& t, const std::string& col) {
     if (!t || t->num_rows() == 0) return {};
     auto c = t->GetColumnByName(col);

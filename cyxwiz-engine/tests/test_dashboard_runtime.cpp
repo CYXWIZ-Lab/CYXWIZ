@@ -136,6 +136,19 @@ int main() {
         Check(r.ok && D(r, "rows") == 30 && D(r, "m0") == 1 && D(r, "m1") == 10, "missing: 1 null duration, 10 'compilation' as missing: " + r.error);
         r = engine.Run(MissingQuery(miss, "Spotify", spec.filters, {"duration"}, {}));
         Check(r.ok && D(r, "rows") == 10, "missing under the filters");
+        // A filter that keeps no rows: the counts are NULL, read as NaN (the
+        // window parsed their text with stod, which threw every frame; TOFIX157).
+        {
+            FilterState none;
+            FilterPredicate p;
+            p.field = "album_type";
+            p.values = {"no such type"};
+            none.Set(p);
+            r = engine.Run(MissingQuery(miss, "Spotify", none, {"duration", "album_type"}, {}));
+            Check(r.ok && Number(r.table, "rows") == 0 && std::isnan(Number(r.table, "m0")) && std::isnan(Number(r.table, "m1")),
+                  "a filter keeping no rows: 0 rows, counts NaN (" + r.error + ")");
+            Check(std::isnan(Number(r.table, "no_such_column")) && std::isnan(Number(nullptr, "rows")), "no column, no table: NaN");
+        }
 
         // A date X counted per year, and its range filter on the year.
         {
