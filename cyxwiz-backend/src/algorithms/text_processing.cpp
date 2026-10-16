@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
-#include <cctype>
 #include <regex>
 #include <numeric>
 #include <iomanip>
@@ -173,13 +172,15 @@ std::vector<std::string> TextProcessing::TokenizeSentence(const std::string& tex
             // Check if it's actually end of sentence (not abbreviation)
             bool is_end = true;
             if (text[i] == '.') {
-                // Simple check: if next char is uppercase or space followed by uppercase
-                if (i + 1 < text.length()) {
-                    char next = text[i + 1];
-                    if (std::isalpha(static_cast<unsigned char>(next)) &&
-                        !std::isupper(static_cast<unsigned char>(next))) {
-                        is_end = false;
-                    }
+                // A lowercase Latin, Greek or Cyrillic letter right after the
+                // dot ("e.g", "3.x"), read by UTF-8 character, not through
+                // the locale.
+                char32_t next = 0;
+                size_t length = 1;
+                if (i + 1 < text.length() && text_utf8::Next(text, i + 1, next, length) &&
+                    next < 0x530 && text_utf8::IsLetterOrDigit(next) && !(next >= '0' && next <= '9') &&
+                    text_utf8::Lower(next) == next) {
+                    is_end = false;
                 }
             }
 

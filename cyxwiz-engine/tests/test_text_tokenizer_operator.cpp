@@ -168,6 +168,10 @@ void CheckUtf8Words() {
         Check(cyxwiz::TextProcessing::CleanText("caf\xC3\xA9 \xF0\x9F\x98\x8A!", false, false, false, true) ==
                   "caf\xC3\xA9 !",
               std::string("special characters cleaned by character in locale ") + locale);
+        // A dot followed by a lowercase letter (here an accented one) does not end a sentence.
+        Check(cyxwiz::TextProcessing::SplitSentences("Voil\xC3\xA0.\xC3\xA9t\xC3\xA9 ok. Next one.") ==
+                  std::vector<std::string>({"Voil\xC3\xA0.\xC3\xA9t\xC3\xA9 ok.", "Next one."}),
+              std::string("sentences by character in locale ") + locale);
         cyxwiz::Tokenizer characters(cyxwiz::TokenizerType::Character);
         characters.SetLowercase(false);
         characters.Train({text});
